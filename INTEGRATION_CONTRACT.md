@@ -54,7 +54,7 @@ cannot impersonate Camaro or Chevelle.**
 
 Each runtime stores its token in **its own** `.env` as a single variable —
 recommended name: `MONOREPO_INGEST_TOKEN`. The base URL is also a runtime env:
-`MONOREPO_BASE_URL` (e.g. `https://b177ffdc-73ff-45fb-9ba4-f1e63e5e4274.preview.emergentagent.com`).
+`MONOREPO_BASE_URL` (e.g. `https://mission.risedual.ai`).
 
 ---
 

@@ -113,7 +113,7 @@ Make sure `httpx>=0.27` is in `backend/requirements.txt`. If it isn't, add it an
 ## STEP 2 — Append these 3 vars to `backend/.env`
 
 ```
-MONOREPO_BASE_URL=https://b177ffdc-73ff-45fb-9ba4-f1e63e5e4274.preview.emergentagent.com
+MONOREPO_BASE_URL=https://mission.risedual.ai
 MONOREPO_INGEST_TOKEN=camaro-ingest-7b2e1f8a-9c1d-4e2b-8a3f-2d6c4e8f1b09
 RUNTIME_NAME=camaro
 ```
@@ -221,7 +221,7 @@ Run this inside the runtime container after restart:
 ```bash
 python - <<'PY'
 import asyncio, os
-os.environ.setdefault("MONOREPO_BASE_URL", "https://b177ffdc-73ff-45fb-9ba4-f1e63e5e4274.preview.emergentagent.com")
+os.environ.setdefault("MONOREPO_BASE_URL", "https://mission.risedual.ai")
 os.environ.setdefault("MONOREPO_INGEST_TOKEN", "camaro-ingest-7b2e1f8a-9c1d-4e2b-8a3f-2d6c4e8f1b09")
 os.environ.setdefault("RUNTIME_NAME", "camaro")
 from services.risedual_monorepo_client import heartbeat, emit_receipt

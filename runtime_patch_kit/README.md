@@ -34,21 +34,21 @@ has all three. Pull only the one for the runtime you're patching.
 
 ### Alpha (`RISEDUAL-AI-2`)
 ```
-MONOREPO_BASE_URL=https://b177ffdc-73ff-45fb-9ba4-f1e63e5e4274.preview.emergentagent.com
+MONOREPO_BASE_URL=https://mission.risedual.ai
 MONOREPO_INGEST_TOKEN=alpha-ingest-2cf91b5e-3a44-4c1b-9e07-4e1b7d2c3a55
 RUNTIME_NAME=alpha
 ```
 
 ### Camaro (`RD4_0421`)
 ```
-MONOREPO_BASE_URL=https://b177ffdc-73ff-45fb-9ba4-f1e63e5e4274.preview.emergentagent.com
+MONOREPO_BASE_URL=https://mission.risedual.ai
 MONOREPO_INGEST_TOKEN=camaro-ingest-7b2e1f8a-9c1d-4e2b-8a3f-2d6c4e8f1b09
 RUNTIME_NAME=camaro
 ```
 
 ### Chevelle (`conflict_090526_0410`)
 ```
-MONOREPO_BASE_URL=https://b177ffdc-73ff-45fb-9ba4-f1e63e5e4274.preview.emergentagent.com
+MONOREPO_BASE_URL=https://mission.risedual.ai
 MONOREPO_INGEST_TOKEN=chevelle-ingest-d4a8e6c2-1b5f-4a3d-9e7c-3f8b1a5c6d72
 RUNTIME_NAME=chevelle
 ```
