@@ -1,0 +1,254 @@
+# PASTE THIS ENTIRE FILE INTO THE CHEVELLE (conflict_090526_0410) EMERGENT AGENT
+
+> Hand the message below to the Emergent agent of the **Chevelle** project
+> (`conflict_090526_0410`). It is fully self-contained. Do not edit it. Do not
+> give this same file to Alpha or Camaro — they have their own.
+
+---
+
+Hi. Wire this runtime into the **RISEDUAL monorepo** as a **sidecar** (observation-only mirror).
+
+**Doctrine**:
+- Do NOT change any decision logic.
+- Local audit / firewall / calibration writes stay UNTOUCHED.
+- The monorepo is a downstream MIRROR, never a replacement.
+- The mirror client NEVER raises — if the monorepo is down, this runtime keeps running normally.
+- This runtime is `chevelle`.
+
+---
+
+## STEP 1 — Create the sidecar client file
+
+Create the file `backend/services/risedual_monorepo_client.py` with the following exact contents:
+
+```python
+"""Sidecar client for writing observation data to the RISEDUAL monorepo.
+Per doctrine: this is the ONLY file in this runtime that knows about the
+monorepo's shared collections. Decision logic stays out of here.
+
+Failures NEVER raise — the monorepo being down must not take down this runtime.
+"""
+from __future__ import annotations
+
+import os
+import logging
+import httpx
+
+log = logging.getLogger("risedual.monorepo_client")
+
+
+def _base() -> str:
+    return os.environ["MONOREPO_BASE_URL"].rstrip("/")
+
+
+def _token() -> str:
+    return os.environ["MONOREPO_INGEST_TOKEN"]
+
+
+def _runtime() -> str:
+    return os.environ["RUNTIME_NAME"]
+
+
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(timeout=5.0)
+    return _client
+
+
+async def _post(path: str, body: dict) -> dict:
+    body = {"runtime": _runtime(), **body}
+    try:
+        r = await _get_client().post(
+            f"{_base()}/api/ingest/{path}",
+            json=body,
+            headers={"X-Runtime-Token": _token()},
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:  # noqa: BLE001
+        log.warning("monorepo ingest %s failed: %s", path, e)
+        return {"ok": False, "error": str(e)}
+
+
+async def emit_receipt(action: str, intent: dict, executed: bool = False) -> dict:
+    """Mirror an ADL receipt. Server forces executed=False unless monorepo's
+    BROKER_LIVE_ORDER_ENABLED=true."""
+    return await _post("receipts", {"action": action, "intent": intent or {}, "executed": bool(executed)})
+
+
+async def emit_memory_label(label: str, reason: str = "", payload_summary: str = "") -> dict:
+    """label must be 'safe' | 'review' | 'quarantine'."""
+    return await _post("memory-labels", {
+        "label": label, "reason": reason or "", "payload_summary": payload_summary or "",
+    })
+
+
+async def register_calibrator(name: str, version: str, method: str, fit_at: str | None = None) -> dict:
+    """Idempotent. Call after every refit."""
+    return await _post("calibrators", {
+        "name": name, "version": version, "method": method, "fit_at": fit_at,
+    })
+
+
+async def register_artifact(artifact: str, version: str, sha: str, registered_at: str | None = None) -> dict:
+    """Idempotent. Call at startup + on retrain."""
+    return await _post("artifacts", {
+        "artifact": artifact, "version": version, "sha": sha, "registered_at": registered_at,
+    })
+
+
+async def heartbeat(status: str = "ok", detail: dict | None = None) -> dict:
+    """Liveness ping. Call every 30-60s in a background task."""
+    return await _post("heartbeat", {"status": status, "detail": detail or {}})
+```
+
+Make sure `httpx>=0.27` is in `backend/requirements.txt`. If it isn't, add it and `pip install -r backend/requirements.txt`.
+
+---
+
+## STEP 2 — Append these 3 vars to `backend/.env`
+
+```
+MONOREPO_BASE_URL=https://b177ffdc-73ff-45fb-9ba4-f1e63e5e4274.preview.emergentagent.com
+MONOREPO_INGEST_TOKEN=chevelle-ingest-d4a8e6c2-1b5f-4a3d-9e7c-3f8b1a5c6d72
+RUNTIME_NAME=chevelle
+```
+
+> This token is scoped to this runtime. A leaked Chevelle token cannot
+> impersonate Alpha or Camaro — the monorepo enforces this server-side.
+
+---
+
+## STEP 3 — Add mirror calls next to existing local writes
+
+For each row below, find the file in this codebase and add the mirror call
+**immediately after** the existing local write. Do not remove or modify the
+local write. Do not refactor surrounding code.
+
+| Mirror call | File in this runtime | Where to place it |
+|---|---|---|
+| `emit_receipt(...)` | `backend/services/audit_trail.py` | After every audit-trail append |
+| `emit_receipt(...)` | `backend/services/decision_pipeline.py` | When a final decision/authority call is recorded |
+| `emit_memory_label(...)` | `backend/services/chevelle_memory_labeler.py` | After every label decision (safe / review / quarantine) |
+| `register_calibrator(...)` | `backend/services/calibration_writer.py` | After every successful write |
+| `register_calibrator(...)` | `backend/services/calibration_scheduler.py` | After every scheduled refit |
+| `register_calibrator(...)` | `backend/services/calibration_layer.py` (the `refit` method on the singleton) | After successful refit |
+| `register_artifact(...)` | `backend/server.py` (startup) | Once per loaded ML artifact: `backend/ml/models/strategist.pt`, all `backend/ml/models/symbolic/*.joblib` (anomaly, catalyst, regime, sizing, slippage, vol), and `backend/ml/models/calibration/latest.joblib` |
+| `heartbeat()` | `backend/server.py` | In a 45–60s background asyncio task |
+
+The pattern is always the same:
+
+```python
+# ──────────────── existing local write — DO NOT CHANGE ────────────────
+await audit_trail.append(...)
+# ──────────────── NEW: monorepo mirror (1 line) ────────────────
+from services.risedual_monorepo_client import emit_receipt
+await emit_receipt(action="authority_call", intent={"symbol": "ZB", "horizon": "30m", "call": "abstain"})
+```
+
+For memory firewall (chevelle_memory_labeler):
+```python
+from services.risedual_monorepo_client import emit_memory_label
+await emit_memory_label(label=label, reason=reason, payload_summary=summary)
+```
+
+For calibrator refit / scheduler / writer:
+```python
+from services.risedual_monorepo_client import register_calibrator
+await register_calibrator(name="chevelle_iso_v1", version="1.1.0", method="isotonic")
+```
+
+For artifacts at startup (one call per artifact):
+```python
+from services.risedual_monorepo_client import register_artifact
+await register_artifact(artifact="chevelle_strategist", version="v0.2.1", sha="<file sha>")
+await register_artifact(artifact="chevelle_symbolic_anomaly", version="v0.2.1", sha="<file sha>")
+await register_artifact(artifact="chevelle_symbolic_catalyst", version="v0.2.1", sha="<file sha>")
+await register_artifact(artifact="chevelle_symbolic_regime", version="v0.2.1", sha="<file sha>")
+await register_artifact(artifact="chevelle_symbolic_sizing", version="v0.2.1", sha="<file sha>")
+await register_artifact(artifact="chevelle_symbolic_slippage", version="v0.2.1", sha="<file sha>")
+await register_artifact(artifact="chevelle_symbolic_vol", version="v0.2.1", sha="<file sha>")
+await register_artifact(artifact="chevelle_calibration_latest", version="latest", sha="<file sha>")
+```
+
+---
+
+## STEP 4 — Heartbeat + artifact registration in `backend/server.py` startup
+
+Add to the existing `@app.on_event("startup")` (or `lifespan` startup block):
+
+```python
+import asyncio
+from services.risedual_monorepo_client import heartbeat, register_artifact
+
+async def _monorepo_heartbeat_loop():
+    while True:
+        await heartbeat(status="ok", detail={})
+        await asyncio.sleep(45)
+
+# ─── Inside the existing startup function ───
+# Register all loaded artifacts (see list in Step 3 above) once.
+# ... await register_artifact(...) for each ...
+
+# Then kick off the heartbeat loop:
+asyncio.create_task(_monorepo_heartbeat_loop())
+```
+
+---
+
+## STEP 5 — Smoke test
+
+Run this inside the runtime container after restart:
+
+```bash
+python - <<'PY'
+import asyncio, os
+os.environ.setdefault("MONOREPO_BASE_URL", "https://b177ffdc-73ff-45fb-9ba4-f1e63e5e4274.preview.emergentagent.com")
+os.environ.setdefault("MONOREPO_INGEST_TOKEN", "chevelle-ingest-d4a8e6c2-1b5f-4a3d-9e7c-3f8b1a5c6d72")
+os.environ.setdefault("RUNTIME_NAME", "chevelle")
+from services.risedual_monorepo_client import heartbeat, emit_receipt
+async def main():
+    print(await heartbeat(detail={"smoke": True}))
+    print(await emit_receipt("smoke_test", {"symbol":"TEST","qty":0,"confidence":0.5}))
+asyncio.run(main())
+PY
+```
+
+Expected:
+```
+{'ok': True, 'last_seen': '2026-…'}
+{'ok': True, 'id': '…', 'executed': False}
+```
+
+---
+
+## STEP 6 — What you must NOT do
+
+- ❌ Do **not** stop or alter local audit / firewall / calibration writes.
+- ❌ Do **not** move ML models or calibrators **files** into the monorepo.
+  Only metadata (name + version + sha) is registered.
+- ❌ Do **not** trust the monorepo for execution gating. This runtime owns its
+  own enforce flags (`CHEVELLE_AUTHORITY_ENABLED`, broker controls, etc.).
+- ❌ Do **not** flip any enforce flag during this work. Stay observation-only.
+- ❌ Do **not** import anything from the monorepo. The only direction of
+  knowledge is **runtime → monorepo**, via the client file in Step 1.
+- ❌ Do **not** add retries, queues, or persistence to the mirror client.
+  Failures are logged and dropped on purpose. The runtime stays upstream.
+
+---
+
+## DONE
+
+After steps 1–5 succeed and the smoke test prints `ok: true` twice, the wiring
+is complete. The unified RISEDUAL Mission Control dashboard will show this
+runtime's heartbeat going green within ~60s, and authority-call receipts /
+memory-labels will start streaming in as the runtime's normal flow exercises them.
+
+Report back to the operator with:
+- Which files you modified (paths + line counts changed)
+- Whether smoke test passed
+- Any local writes you could not find a clean hook for (so the operator can decide)
