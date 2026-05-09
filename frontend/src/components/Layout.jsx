@@ -22,6 +22,7 @@ const NAV = [
   { to: "/feature-builders", label: "Feature Builders", icon: Stack, testid: "nav-features" },
   { to: "/artifacts", label: "Artifacts", icon: Cube, testid: "nav-artifacts" },
   { to: "/diagnostics", label: "Diagnostics", icon: Pulse, testid: "nav-diagnostics" },
+  { to: "/recent", label: "Live Tail", icon: Pulse, testid: "nav-recent" },
   { to: "/flags", label: "Runtime Flags", icon: Flag, testid: "nav-flags" },
   { to: "/promotion", label: "Promotion", icon: TrendUp, testid: "nav-promotion" },
 ];

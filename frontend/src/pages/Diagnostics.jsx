@@ -87,7 +87,14 @@ export default function Diagnostics() {
                         {r.last_receipt_ts ? `${fmtTime(r.last_receipt_ts)} (${relTime(r.last_receipt_ts)})` : "—"}
                       </td>
                       <td className="px-4 py-2.5">
-                        <Badge color="#FBBF24">OBSERVING</Badge>
+                        <Badge color={r.heartbeat_stale ? "#EF4444" : "#FBBF24"}>
+                          {r.heartbeat_stale ? "STALE" : "OBSERVING"}
+                        </Badge>
+                        {r.heartbeat_age_seconds != null && (
+                          <span className="ml-2 text-rd-dim">
+                            {Math.floor(r.heartbeat_age_seconds)}s
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );

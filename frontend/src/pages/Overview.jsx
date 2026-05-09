@@ -130,6 +130,15 @@ export default function Overview() {
                         <Badge color="#EF4444">{rt.role_violation_count} BLOCKED</Badge>
                       } />
                     )}
+                    {rt.heartbeat_stale && (
+                      <Row label="HEARTBEAT" value={
+                        <Badge color="#EF4444" testid={`heartbeat-stale-${rt.runtime}`}>
+                          STALE — {rt.heartbeat_age_seconds == null
+                            ? "no signal"
+                            : `${Math.floor(rt.heartbeat_age_seconds)}s`}
+                        </Badge>
+                      } />
+                    )}
                     <Row label="LAST SIGNAL" value={
                       <span className="font-mono text-xs text-rd-muted">
                         {rt.last_receipt ? relTime(rt.last_receipt.timestamp) : "—"}

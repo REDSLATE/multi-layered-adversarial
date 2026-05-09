@@ -93,3 +93,26 @@ async def register_artifact(artifact: str, version: str, sha: str, registered_at
 async def heartbeat(status: str = "ok", detail: dict | None = None) -> dict:
     """Liveness ping. Call every 30-60s in a background task."""
     return await _post("heartbeat", {"status": status, "detail": detail or {}})
+
+
+async def emit_promotion_artifact(
+    target_authority: str,
+    metrics: dict,
+    notes: str = "",
+) -> dict:
+    """Patent G — runtime files evidence that it has met the bar for an
+    authority elevation. Server stores it; the operator decides via
+    Patent J + countersign.
+
+    Promotion never happens automatically — this only files evidence.
+
+    target_authority: 'challenger' | 'advisor' | 'co_trader' | 'primary'
+    metrics: should include keys 'ece' (float), 'brier' (float),
+             'resolved_rows' (int), 'disagreement_stability' (float),
+             'audit_integrity_pass' (bool). Extra keys are stored verbatim.
+    """
+    return await _post("promotion-artifact", {
+        "target_authority": target_authority,
+        "metrics": metrics or {},
+        "notes": notes or "",
+    })

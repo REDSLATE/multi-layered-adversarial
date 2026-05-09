@@ -111,6 +111,12 @@ PROMOTION_THRESHOLDS = {
     "heartbeat_max_age_seconds": 300,   # liveness floor
 }
 
+# Heartbeat staleness threshold for the dashboard alert. A runtime is "stale"
+# if its last_seen is older than this. Tuned so a single missed heartbeat
+# (45s loop) is forgiven, but two consecutive misses raise the alarm.
+# Visibility-only — does NOT change authority, broker behavior, or receipt enforcement.
+HEARTBEAT_STALE_AFTER_SECONDS = 90
+
 
 def runtime_can_execute_state(authority_state: str) -> bool:
     """Single source of truth: only authority states on the trading ladder

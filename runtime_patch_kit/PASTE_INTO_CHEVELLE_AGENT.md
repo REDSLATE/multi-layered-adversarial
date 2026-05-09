@@ -104,6 +104,21 @@ async def register_artifact(artifact: str, version: str, sha: str, registered_at
 async def heartbeat(status: str = "ok", detail: dict | None = None) -> dict:
     """Liveness ping. Call every 30-60s in a background task."""
     return await _post("heartbeat", {"status": status, "detail": detail or {}})
+
+
+async def emit_promotion_artifact(
+    target_authority: str,
+    metrics: dict,
+    notes: str = "",
+) -> dict:
+    """Patent G — files evidence for an authority elevation. Operator decides.
+    target_authority: 'challenger' | 'advisor' | 'co_trader' | 'primary'
+    metrics keys: ece, brier, resolved_rows, disagreement_stability, audit_integrity_pass."""
+    return await _post("promotion-artifact", {
+        "target_authority": target_authority,
+        "metrics": metrics or {},
+        "notes": notes or "",
+    })
 ```
 
 Make sure `httpx>=0.27` is in `backend/requirements.txt`. If it isn't, add it and `pip install -r backend/requirements.txt`.
