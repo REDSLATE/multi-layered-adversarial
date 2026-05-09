@@ -187,6 +187,11 @@ async def propose_from_latest_artifact(
     artifact = await db[SHARED_PROMOTION_ARTIFACTS].find_one(q, {"_id": 0}, sort=[("emitted_at", -1)])
     readiness = await evaluate_readiness(runtime, target_authority, artifact)
 
+    # Dual-sign rule: elevation TO primary requires two distinct operator signatures.
+    # Every other rung on the ladder remains single-sign. The countersign cannot
+    # bypass a failed Patent J gate either way.
+    required_signatures = 2 if target_authority == "primary" else 1
+
     proposal_id = str(uuid.uuid4())
     doc = {
         "proposal_id": proposal_id,
@@ -195,7 +200,12 @@ async def propose_from_latest_artifact(
         "target_authority": target_authority,
         "readiness": readiness,
         "artifact_id": (artifact or {}).get("artifact_id"),
-        "status": "pending",          # pending | approved | rejected
+        # status flow:
+        #   pending → (single-sign target) approved | rejected
+        #   pending → (primary target, 1st sign) awaiting_second_sign → approved | rejected
+        "status": "pending",
+        "required_signatures": required_signatures,
+        "signers": [],
         "created_at": _iso(),
         "created_by": user.get("email"),
         "decided_at": None,
@@ -203,7 +213,12 @@ async def propose_from_latest_artifact(
         "decision_note": None,
     }
     await db[SHARED_PROMOTION_PROPOSALS].insert_one(doc)
-    return {"ok": True, "proposal_id": proposal_id, "readiness_passed": readiness["passed"]}
+    return {
+        "ok": True,
+        "proposal_id": proposal_id,
+        "readiness_passed": readiness["passed"],
+        "required_signatures": required_signatures,
+    }
 
 
 @router.get("/proposals")
@@ -239,30 +254,69 @@ async def readiness_now(runtime: str, _user: dict = Depends(get_current_user)):
 @router.post("/{proposal_id}/countersign")
 async def countersign(proposal_id: str, body: CountersignBody, user: dict = Depends(get_current_user)):
     """Operator countersign — performs the actual authority elevation IF the
-    proposal's readiness gate passed. The countersign cannot bypass a failed
+    proposal's readiness gate passed AND the required number of distinct operator
+    signatures has been collected. The countersign cannot bypass a failed
     readiness gate; if you need to override, raise the gate thresholds in
-    config and re-propose."""
+    config and re-propose.
+
+    Dual-sign rule: target_authority == "primary" requires two distinct operator
+    signatures. The first countersign records the signer and parks the proposal
+    in `awaiting_second_sign`. The second countersign (from a different operator)
+    finalises the elevation. Self-double-signing is rejected.
+    """
     proposal = await db[SHARED_PROMOTION_PROPOSALS].find_one({"proposal_id": proposal_id}, {"_id": 0})
     if not proposal:
         raise HTTPException(status_code=404, detail="proposal not found")
-    if proposal["status"] != "pending":
-        raise HTTPException(status_code=409, detail=f"proposal already {proposal['status']}")
+    status = proposal["status"]
+    if status not in ("pending", "awaiting_second_sign"):
+        raise HTTPException(status_code=409, detail=f"proposal already {status}")
     if not proposal["readiness"]["passed"]:
         raise HTTPException(status_code=412, detail="readiness gate has not passed; cannot countersign")
 
     runtime = proposal["runtime"]
     target = proposal["target_authority"]
+    required = proposal.get("required_signatures", 1)
+    signers = list(proposal.get("signers", []))
+    operator_email = (user.get("email") or "").lower()
 
-    # Re-check current state to avoid races
+    # No operator may countersign the same proposal twice — dual-sign requires
+    # two distinct human reviewers.
+    if any((s.get("operator") or "").lower() == operator_email for s in signers):
+        raise HTTPException(
+            status_code=409,
+            detail="this operator has already countersigned this proposal; a second, distinct operator is required",
+        )
+
+    new_signer = {"operator": user.get("email"), "at": _iso(), "note": body.note}
+    signers.append(new_signer)
+
+    # Re-check current state to avoid races with other elevations
     state = await _current_state(runtime)
     current = state["authority_state"]
     if AUTHORITY_LEVEL.get(target, -1) <= AUTHORITY_LEVEL.get(current, -1):
         raise HTTPException(status_code=409, detail="runtime authority has changed; please re-propose")
 
+    # Not enough signatures yet → park as awaiting_second_sign
+    if len(signers) < required:
+        await db[SHARED_PROMOTION_PROPOSALS].update_one(
+            {"proposal_id": proposal_id},
+            {"$set": {"signers": signers, "status": "awaiting_second_sign"}},
+        )
+        return {
+            "ok": True,
+            "awaiting_more_signatures": True,
+            "signed": len(signers),
+            "required": required,
+            "from_state": current,
+            "target_authority": target,
+        }
+
+    # Required signatures collected → elevate authority
     history_entry = {
         "from_state": current, "to_state": target,
         "at": _iso(), "via": "operator_countersign",
         "operator": user.get("email"), "proposal_id": proposal_id,
+        "signers": [s.get("operator") for s in signers],
     }
     await db[SHARED_AUTHORITY_STATE].update_one(
         {"runtime": runtime},
@@ -272,12 +326,19 @@ async def countersign(proposal_id: str, body: CountersignBody, user: dict = Depe
         {"proposal_id": proposal_id},
         {"$set": {
             "status": "approved",
+            "signers": signers,
             "decided_at": _iso(),
             "decided_by": user.get("email"),
             "decision_note": body.note,
         }},
     )
-    return {"ok": True, "from_state": current, "to_state": target}
+    return {
+        "ok": True,
+        "from_state": current,
+        "to_state": target,
+        "signed": len(signers),
+        "required": required,
+    }
 
 
 @router.post("/{proposal_id}/reject")
@@ -285,7 +346,7 @@ async def reject(proposal_id: str, body: CountersignBody, user: dict = Depends(g
     proposal = await db[SHARED_PROMOTION_PROPOSALS].find_one({"proposal_id": proposal_id}, {"_id": 0})
     if not proposal:
         raise HTTPException(status_code=404, detail="proposal not found")
-    if proposal["status"] != "pending":
+    if proposal["status"] not in ("pending", "awaiting_second_sign"):
         raise HTTPException(status_code=409, detail=f"proposal already {proposal['status']}")
     await db[SHARED_PROMOTION_PROPOSALS].update_one(
         {"proposal_id": proposal_id},

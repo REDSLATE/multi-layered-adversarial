@@ -43,6 +43,19 @@ Doctrine: **one shared nervous system, three separate decision brains.**
 - Backend tests: 38/38 PASS (iteration_1)
 - Frontend tests: 16/16 PASS (iteration_2)
 
+## What's Implemented (2026-02 — Visibility & Governance)
+- **Build 5 — Heartbeat staleness alerts** (visibility-only, no broker side-effects)
+- **Build 1 — Promotion Artifact emitter** in runtime patch-kits (Patent G evidence)
+- **Build 4 — Recent Ingests live tail** page with polling
+- **Build 3 — Dual-sign primary countersign** (2026-02-09)
+  - Elevation TO `primary` requires two distinct operator signatures
+  - First sign parks proposal in `awaiting_second_sign`
+  - Same operator cannot occupy both slots (409 enforced server-side)
+  - History records both signers; dashboard shows `n/m` signature progress
+  - Patent J failure still blocks both signatures (gate cannot be bypassed)
+  - Backend tests: 7/7 PASS (`tests/test_dual_sign_promotion.py`)
+  - Existing single-sign rungs unchanged (back-compat verified)
+
 ## Core Requirements (static)
 - Doctrine: shared infrastructure, isolated decision authority
 - Observation-only first deploy (every enforce flag false)
@@ -50,17 +63,14 @@ Doctrine: **one shared nervous system, three separate decision brains.**
 - Each runtime route reads only its namespaced collection
 
 ## Backlog / Next
-**P0**
-- Promotion-gate workflow (operator-initiated, audit-logged) for flipping enforce
-  flags out of observation mode (per-runtime, never collective).
 **P1**
+- **Build 2 — Demote / freeze workflow** (operator-initiated downgrade + hard-freeze
+  endpoints, both audit-logged). On hold pending Build 3 production verification.
 - TTL index on `login_attempts.ts` (currently unbounded — backend testing flagged
   as optional hardening).
 - Refresh-token Bearer support: accept refresh token from JSON body / Authorization
   header (today only the cookie path is wired).
 **P2**
-- Receipt write API per runtime (currently the dispatcher exists but no inbound
-  POST is exposed).
 - Real-time updates (websocket) for receipts + diagnostics.
 - Drop-in slots for real Alpha/Camaro/Chevelle code (folder layout already mirrors
   the eventual import points).

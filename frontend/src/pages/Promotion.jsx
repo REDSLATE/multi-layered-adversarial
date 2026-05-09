@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { api, RUNTIME_META, fmtTime, relTime } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
-import { CheckCircle, XCircle, ShieldCheck, Gavel, Lock } from "@phosphor-icons/react";
+import { CheckCircle, XCircle, ShieldCheck, Gavel, Lock, Users } from "@phosphor-icons/react";
 
 const LADDER = ["observer", "challenger", "advisor", "co_trader", "primary"];
 const LADDER_META = {
@@ -13,6 +14,7 @@ const LADDER_META = {
 };
 
 export default function Promotion() {
+  const { user } = useAuth();
   const [states, setStates] = useState(null);
   const [proposals, setProposals] = useState(null);
   const [artifacts, setArtifacts] = useState(null);
@@ -68,7 +70,11 @@ export default function Promotion() {
     try {
       const { data } = await api.post(`/admin/promotion/${proposalId}/${action}`, { note });
       if (action === "countersign") {
-        setInfo(`Elevated ${data.from_state} → ${data.to_state}`);
+        if (data.awaiting_more_signatures) {
+          setInfo(`Signature ${data.signed}/${data.required} recorded · awaiting a second, distinct operator before elevation`);
+        } else {
+          setInfo(`Elevated ${data.from_state} → ${data.to_state} (${data.signed}/${data.required} signatures)`);
+        }
       } else {
         setInfo("Proposal rejected");
       }
@@ -203,10 +209,11 @@ export default function Promotion() {
             {!proposals && <LoadingRow />}
             {proposals && (
               <ProposalsTable
-                items={proposals.items.filter((p) => p.status === "pending")}
+                items={proposals.items.filter((p) => p.status === "pending" || p.status === "awaiting_second_sign")}
                 onCountersign={(id) => decide(id, "countersign")}
                 onReject={(id) => decide(id, "reject")}
                 busy={busy}
+                currentUserEmail={user?.email}
                 emptyMessage="No proposals awaiting decision."
               />
             )}
@@ -220,7 +227,7 @@ export default function Promotion() {
             </div>
             {proposals && (
               <ProposalsTable
-                items={proposals.items.filter((p) => p.status !== "pending")}
+                items={proposals.items.filter((p) => p.status !== "pending" && p.status !== "awaiting_second_sign")}
                 emptyMessage="No decided proposals yet."
                 showDecision
               />
@@ -267,8 +274,9 @@ export default function Promotion() {
   );
 }
 
-function ProposalsTable({ items, onCountersign, onReject, busy, emptyMessage, showDecision }) {
+function ProposalsTable({ items, onCountersign, onReject, busy, currentUserEmail, emptyMessage, showDecision }) {
   if (!items.length) return <EmptyState message={emptyMessage} />;
+  const me = (currentUserEmail || "").toLowerCase();
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs font-mono">
@@ -278,12 +286,22 @@ function ProposalsTable({ items, onCountersign, onReject, busy, emptyMessage, sh
             <th className="text-left px-4 py-3 border-b border-rd-border">Runtime</th>
             <th className="text-left px-4 py-3 border-b border-rd-border">From → Target</th>
             <th className="text-left px-4 py-3 border-b border-rd-border">Patent J</th>
+            <th className="text-left px-4 py-3 border-b border-rd-border">Signatures</th>
             <th className="text-left px-4 py-3 border-b border-rd-border">{showDecision ? "Decision" : "Action"}</th>
           </tr>
         </thead>
         <tbody>
           {items.map((p) => {
             const meta = RUNTIME_META[p.runtime];
+            const required = p.required_signatures ?? 1;
+            const signers = p.signers || [];
+            const signed = signers.length;
+            const alreadySigned = signers.some(
+              (s) => (s.operator || "").toLowerCase() === me
+            );
+            const isDualSign = required > 1;
+            const elevatesToPrimary = p.target_authority === "primary";
+            const sigBadgeColor = signed >= required ? "#10B981" : (signed > 0 ? "#F59E0B" : "#A1A1AA");
             return (
               <tr key={p.proposal_id} className="border-b border-rd-border last:border-b-0 hover:bg-rd-bg3"
                   data-testid={`proposal-row-${p.proposal_id}`}>
@@ -291,11 +309,33 @@ function ProposalsTable({ items, onCountersign, onReject, busy, emptyMessage, sh
                 <td className="px-4 py-2.5">
                   <span style={{ color: meta?.color }} className="font-bold">{meta?.label}</span>
                 </td>
-                <td className="px-4 py-2.5">{p.from_state} → <span className="text-rd-text font-bold">{p.target_authority}</span></td>
+                <td className="px-4 py-2.5">
+                  {p.from_state} → <span className="text-rd-text font-bold">{p.target_authority}</span>
+                  {elevatesToPrimary && (
+                    <span className="ml-2 inline-block">
+                      <Badge color="#FBBF24">DUAL-SIGN</Badge>
+                    </span>
+                  )}
+                </td>
                 <td className="px-4 py-2.5">
                   <Badge color={p.readiness?.passed ? "#10B981" : "#EF4444"}>
                     {p.readiness?.passed ? "PASS" : "FAIL"}
                   </Badge>
+                </td>
+                <td className="px-4 py-2.5" data-testid={`signatures-${p.proposal_id}`}>
+                  <div className="flex items-center gap-2">
+                    <Users size={11} weight="bold" className="text-rd-dim" />
+                    <Badge color={sigBadgeColor}>{signed}/{required}</Badge>
+                  </div>
+                  {signed > 0 && (
+                    <div className="mt-1 text-[10px] text-rd-dim leading-tight">
+                      {signers.map((s) => (
+                        <div key={s.operator + s.at} className="truncate" title={`${s.operator} · ${fmtTime(s.at)}`}>
+                          ✓ {s.operator}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-2.5">
                   {showDecision ? (
@@ -303,25 +343,50 @@ function ProposalsTable({ items, onCountersign, onReject, busy, emptyMessage, sh
                       {p.status.toUpperCase()} · {p.decided_by || "—"}
                     </span>
                   ) : (
-                    <div className="flex gap-2">
-                      <button
-                        disabled={!p.readiness?.passed || busy === `countersign-${p.proposal_id}`}
-                        onClick={() => onCountersign(p.proposal_id)}
-                        className="btn-sharp px-3 py-1.5 border border-rd-chevelle text-rd-chevelle hover:bg-rd-chevelle hover:text-black disabled:opacity-40 disabled:cursor-not-allowed"
-                        data-testid={`countersign-${p.proposal_id}`}
-                        title={p.readiness?.passed ? "" : "Patent J gate has not passed"}
-                      >
-                        <ShieldCheck size={12} weight="bold" className="inline mr-1" />
-                        Countersign
-                      </button>
-                      <button
-                        disabled={busy === `reject-${p.proposal_id}`}
-                        onClick={() => onReject(p.proposal_id)}
-                        className="btn-sharp px-3 py-1.5 border border-rd-border text-rd-muted hover:border-rd-danger hover:text-rd-danger"
-                        data-testid={`reject-${p.proposal_id}`}
-                      >
-                        Reject
-                      </button>
+                    <div className="flex flex-col gap-1">
+                      <div className="flex gap-2">
+                        <button
+                          disabled={
+                            !p.readiness?.passed ||
+                            alreadySigned ||
+                            busy === `countersign-${p.proposal_id}`
+                          }
+                          onClick={() => onCountersign(p.proposal_id)}
+                          className="btn-sharp px-3 py-1.5 border border-rd-chevelle text-rd-chevelle hover:bg-rd-chevelle hover:text-black disabled:opacity-40 disabled:cursor-not-allowed"
+                          data-testid={`countersign-${p.proposal_id}`}
+                          title={
+                            !p.readiness?.passed
+                              ? "Patent J gate has not passed"
+                              : alreadySigned
+                              ? "You have already signed this proposal — a second, distinct operator is required"
+                              : (isDualSign && signed === 0)
+                              ? "First of two required signatures"
+                              : (isDualSign && signed === 1)
+                              ? "Second & final signature — will elevate on submit"
+                              : ""
+                          }
+                        >
+                          <ShieldCheck size={12} weight="bold" className="inline mr-1" />
+                          {isDualSign && signed < required - 1
+                            ? "Sign (1st of 2)"
+                            : isDualSign
+                            ? "Co-sign & elevate"
+                            : "Countersign"}
+                        </button>
+                        <button
+                          disabled={busy === `reject-${p.proposal_id}`}
+                          onClick={() => onReject(p.proposal_id)}
+                          className="btn-sharp px-3 py-1.5 border border-rd-border text-rd-muted hover:border-rd-danger hover:text-rd-danger"
+                          data-testid={`reject-${p.proposal_id}`}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                      {alreadySigned && signed < required && (
+                        <span className="text-[10px] text-rd-warn font-mono uppercase tracking-widest">
+                          waiting on a second operator
+                        </span>
+                      )}
                     </div>
                   )}
                 </td>
