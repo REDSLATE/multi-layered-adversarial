@@ -1,5 +1,46 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
+## ⚠️ Cross-Session Repo Map (read first, agents)
+
+The user operates **two distinct Git roots**, both named in the RISEDUAL family.
+This `/app` is **only one of them**. Do not assume the other one's files exist
+here.
+
+| Tree | Role | Where |
+|---|---|---|
+| **REDEYE / runtime stack** *(this repo, `/app`)* | Mission Control monorepo: shared nervous system, FastAPI ingest, governed promotion, dashboard, runtime patch-kits | this Emergent session |
+| **RISEDUALAI / Camaro side** *(other repo, NOT here)* | Full Camaro app: Governance Console UI, audit trail, REDEYE bridge HTTP wrapper, AI Core, Patents A–I | a different Emergent session |
+
+### What lives only in the OTHER repo (do not look for them here)
+- `/app/backend/services/redeye_short_bridge.py` *(consumer-side copy)*
+- `/app/backend/services/redeye_features.py`
+- `/app/backend/services/redeye_long_short_focus.py`
+- `/app/backend/routes/research.py`
+  - `POST /api/research/redeye/camaro-signal`
+  - `POST /api/research/redeye/camaro-signal/from-market`
+  - `_emit_camaro_audit()` — writes audit row, tolerates missing `alpha_alignment`
+- `/app/backend/tests/test_redeye_short_bridge.py`
+- `/app/backend/tests/test_redeye_long_short_focus.py`
+- `/app/frontend/src/components/GovernancePanel.jsx`
+  - `RedeyeCamaroFeedCard()` — last-10 viewer of audit rows
+  - `RedeyePulseCard()` — live Pulse widget
+
+### What this repo authoritatively owns
+- The REDEYE → Camaro **contract** (`/app/runtime_patch_kit/redeye/PULSE_CONTRACT.md`)
+- The bridge **producer** module (`/app/runtime_patch_kit/redeye/services/redeye_short_bridge.py`)
+- CLI patch instructions (`/app/runtime_patch_kit/redeye/CLI_PATCH.md`)
+- The `alpha_alignment` forward-compat field (validated REDEYE-side, tolerated RISEDUALAI-side)
+- All 3 isolated-brain runtime patch-kits (Alpha / Camaro / Chevelle)
+- Mission Control backend, frontend dashboard, governed promotion (incl. dual-sign)
+
+### Forward-compat rule between the two repos
+1. **REDEYE always emits** every field defined in `PULSE_CONTRACT.md` (including `alpha_alignment`, default `null`).
+2. **RISEDUALAI tolerates absence** — `_emit_camaro_audit` reads with `.get(...)` for any non-required field.
+3. Schema additions are non-breaking when added as optional + null-default first.
+4. Bump `contract_version` before any rename/repurpose.
+
+---
+
 ## Original Problem Statement
 Refactor three RISEDUAL projects (RISEDUAL-AI-2 → **Alpha**, RD4_0421 → **Camaro**,
 2.1-APP → **Chevelle**) into one monorepo-style backend with **shared infrastructure** and
@@ -67,6 +108,15 @@ Doctrine: **one shared nervous system, three separate decision brains.**
     on the trading ladder by design.
   - Local smoke test (`smoke_test.py`) verifies SHORT/HOLD gates and the
     borrow-block override. PASS.
+- **REDEYE Pulse contract — `alpha_alignment` forward-compat** (2026-02-09, A1)
+  - New file: `/app/runtime_patch_kit/redeye/PULSE_CONTRACT.md`
+  - Bridge gains optional `alpha_alignment` parameter (∈ `null|"aligned"|"divergent"|"contradicts"`)
+  - Validation REDEYE-side: invalid value raises `ValueError` before payload leaves.
+  - Default `null` always emitted so RISEDUALAI's `_emit_camaro_audit` always sees the field.
+  - CLI patch updated: `--alpha-alignment` arg added.
+  - Smoke test extended: default null, all 3 valid values round-trip, invalid raises. PASS.
+  - Cross-session repo map added at top of this PRD so future forked agents don't
+    confuse the two RISEDUAL repos.
 
 ## Core Requirements (static)
 - Doctrine: shared infrastructure, isolated decision authority

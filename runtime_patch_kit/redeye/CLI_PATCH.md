@@ -49,6 +49,7 @@ def cmd_shorts(args) -> int:
         args.symbol,
         features,
         model_score=args.model_score,
+        alpha_alignment=args.alpha_alignment,
     )
 
     payload = export_for_camaro(signal)
@@ -75,6 +76,12 @@ def cmd_shorts(args) -> int:
     sp.add_argument("--liquidity-block", action="store_true")
     sp.add_argument("--borrow-block", action="store_true")
     sp.add_argument("--model-score", type=float, default=None)
+    sp.add_argument(
+        "--alpha-alignment",
+        choices=("aligned", "divergent", "contradicts"),
+        default=None,
+        help="REDEYE's read on Alpha's current long thesis. Optional; default null.",
+    )
     sp.set_defaults(func=cmd_shorts)
 ```
 

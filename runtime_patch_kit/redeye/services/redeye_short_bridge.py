@@ -21,6 +21,15 @@ MIN_BEAR_CONFIDENCE = 0.62
 MAX_REDEYE_RISK_MULTIPLIER = 0.75
 MIN_REDEYE_RISK_MULTIPLIER = 0.25
 
+# Forward-compat field consumed by RISEDUALAI's `_emit_camaro_audit`.
+# REDEYE's read on whether this short contradicts Alpha's current long thesis.
+#   None           — REDEYE has no view (default; always safe)
+#   "aligned"      — Alpha is flat / bearish; REDEYE short reinforces
+#   "divergent"    — Alpha has no position; REDEYE short is independent
+#   "contradicts"  — Alpha is long; REDEYE short directly contradicts → Camaro escalates
+# RISEDUALAI tolerates the field's absence (forward-compat); REDEYE always emits it.
+ALPHA_ALIGNMENT_VALUES = ("aligned", "divergent", "contradicts")
+
 
 @dataclass
 class RedeyeShortSignal:
@@ -36,6 +45,7 @@ class RedeyeShortSignal:
     reports_to: str
     created_at: str
     raw: Dict[str, Any]
+    alpha_alignment: Optional[str] = None
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -47,6 +57,7 @@ def build_redeye_short_signal(
     features: Dict[str, Any],
     *,
     model_score: Optional[float] = None,
+    alpha_alignment: Optional[str] = None,
 ) -> RedeyeShortSignal:
     """
     Converts market features into a REDEYE short-side advisory signal.
@@ -54,7 +65,17 @@ def build_redeye_short_signal(
     This does NOT execute trades.
     This does NOT report to Alpha.
     This only reports to Camaro.
+
+    `alpha_alignment` is a forward-compat hint to Camaro about whether this
+    short contradicts Alpha's current long thesis. See ALPHA_ALIGNMENT_VALUES
+    above. Optional; default None means "REDEYE has no view".
     """
+
+    if alpha_alignment is not None and alpha_alignment not in ALPHA_ALIGNMENT_VALUES:
+        raise ValueError(
+            f"alpha_alignment must be None or one of {ALPHA_ALIGNMENT_VALUES}; "
+            f"got {alpha_alignment!r}"
+        )
 
     price_change_pct = float(features.get("price_change_pct", 0.0) or 0.0)
     rsi = float(features.get("rsi_14", 50.0) or 50.0)
@@ -155,6 +176,7 @@ def build_redeye_short_signal(
             "features": features,
             "model_score": model_score,
         },
+        alpha_alignment=alpha_alignment,
     )
 
 

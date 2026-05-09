@@ -99,7 +99,44 @@ def main() -> int:
             print(f" - {f}", file=sys.stderr)
         return 1
 
+    # ---- alpha_alignment forward-compat checks ----
+    align_failures = []
+
+    # Default: field is present and null.
+    default_payload = export_for_camaro(
+        build_redeye_short_signal("TSLA", features, model_score=0.82)
+    )
+    if "alpha_alignment" not in default_payload:
+        align_failures.append("alpha_alignment missing from default payload")
+    if default_payload.get("alpha_alignment") is not None:
+        align_failures.append(
+            f"default alpha_alignment must be None (got {default_payload.get('alpha_alignment')!r})"
+        )
+
+    # Each valid value round-trips.
+    for v in ("aligned", "divergent", "contradicts"):
+        p = export_for_camaro(
+            build_redeye_short_signal("TSLA", features, model_score=0.82, alpha_alignment=v)
+        )
+        if p.get("alpha_alignment") != v:
+            align_failures.append(f"alpha_alignment={v!r} did not round-trip (got {p.get('alpha_alignment')!r})")
+
+    # Invalid value raises ValueError BEFORE leaving REDEYE.
+    try:
+        build_redeye_short_signal("TSLA", features, alpha_alignment="bogus")
+    except ValueError:
+        pass
+    else:
+        align_failures.append("invalid alpha_alignment must raise ValueError")
+
+    if align_failures:
+        print("\nALPHA_ALIGNMENT VIOLATIONS:", file=sys.stderr)
+        for f in align_failures:
+            print(f" - {f}", file=sys.stderr)
+        return 1
+
     print("\nOK: REDEYE → Camaro contract holds. SHORT/HOLD gates work. Borrow-block enforced.")
+    print("OK: alpha_alignment forward-compat — default null, all valid values round-trip, invalid raises.")
     return 0
 
 
