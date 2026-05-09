@@ -1,0 +1,85 @@
+{
+  "theme": "dark",
+  "archetype": "4 (Swiss & High-Contrast)",
+  "vibe": "Operator-focused, dense, trustworthy, calm watchful, Bloomberg terminal energy",
+  "colors": {
+    "background": {
+      "primary": "#0A0A0A",
+      "secondary": "#111111",
+      "tertiary": "#1A1A1A"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A1A1AA",
+      "muted": "#71717A"
+    },
+    "accents": {
+      "alpha": "#3B82F6",
+      "camaro": "#F59E0B",
+      "chevelle": "#10B981"
+    },
+    "semantic": {
+      "observation_banner": "#FBBF24",
+      "success": "#10B981",
+      "warning": "#F59E0B",
+      "danger": "#EF4444"
+    },
+    "border": {
+      "default": "#27272A",
+      "focus": "#52525B"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": "Chivo",
+      "body": "JetBrains Mono"
+    },
+    "sizing": {
+      "h1": "text-3xl tracking-tighter font-bold",
+      "h2": "text-2xl tracking-tight font-bold",
+      "h3": "text-lg font-medium tracking-tight",
+      "body": "text-sm",
+      "data": "text-sm font-mono tracking-tight",
+      "label": "text-xs uppercase tracking-[0.2em] font-bold text-zinc-500"
+    }
+  },
+  "layout_and_spacing": {
+    "grid_system": "Control Room Grid (grid-cols-1 md:grid-cols-3 xl:grid-cols-4 for dense dashboards)",
+    "container_padding": "p-4 md:p-6",
+    "gap": "gap-4 md:gap-6",
+    "borders": "Visible skeleton. Use sharp distinct cards.",
+    "border_radius": "rounded-none or rounded-sm",
+    "shadows": "None. Use 1px borders to define hierarchy, not shadows."
+  },
+  "components_strategy": {
+    "cards": "bg-[#111111] border border-zinc-800 p-5",
+    "tables": "Dense. border-b border-zinc-800. JetBrains Mono for all numbers.",
+    "buttons": "Square edges. Primary action is high contrast (bg-zinc-100 text-zinc-900). Secondary is outline (border border-zinc-700).",
+    "badges": "px-2 py-0.5 text-xs font-mono uppercase border border-current bg-transparent",
+    "forms": "Inputs should have sharp borders, dark backgrounds, and bright focus rings."
+  },
+  "key_features": {
+    "observation_banner": "Fixed top bar. bg-amber-400 text-black font-mono text-xs uppercase font-bold text-center py-1.5 tracking-widest. Content: 'OBSERVATION ONLY MODE — BROKER_LIVE_ORDER_ENABLED=false'",
+    "runtime_cards": "Each runtime (Alpha, Camaro, Chevelle) gets a dedicated status card. Use a top border (border-t-2) matching their accent color.",
+    "diagnostics_panel": "Log-style viewer for mongo connectivity, health, and receipts.",
+    "memory_firewall": "Terminal-like log view (shared_labeled_memories).",
+    "navigation": "Minimal top nav. Focus should be on the dashboard data."
+  },
+  "media": {
+    "login_background": "https://images.unsplash.com/photo-1626231479028-bc27e49a715c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2MjJ8MHwxfHNlYXJjaHwxfHxibGFjayUyMGFuZCUyMHdoaXRlJTIwZ3JpZHxlbnwwfHx8fDE3NzgzMTQ3NTB8MA&ixlib=rb-4.1.0&q=85"
+  },
+  "icons": {
+    "library": "@phosphor-icons/react",
+    "style": "Regular, size 16px or 20px"
+  },
+  "instructions_to_main_agent": [
+    "Run: yarn add @phosphor-icons/react",
+    "Apply Archetype 4 (Swiss/Terminal) strictly in DARK MODE. Backgrounds should be black/deep zinc.",
+    "Use JetBrains Mono for almost everything to simulate a quant/trading environment. Use Chivo for large headers only.",
+    "Color-code Alpha (Blue), Camaro (Amber), Chevelle (Green) in their respective UI zones using borders or text colors.",
+    "Build the dashboard as a dense 'Mission Control'. No empty whitespace for the sake of it. Pack the data cleanly.",
+    "Ensure 'data-testid' attributes are on all interactive elements.",
+    "Do NOT use Shadcn Card component if it forces rounded corners and shadows. Build custom sharp cards using Tailwind.",
+    "Include the observation banner prominently at the top of the application."
+  ]
+}
