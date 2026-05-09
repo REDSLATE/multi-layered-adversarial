@@ -11,6 +11,7 @@ import FeatureBuilders from "@/pages/FeatureBuilders";
 import Artifacts from "@/pages/Artifacts";
 import Diagnostics from "@/pages/Diagnostics";
 import Flags from "@/pages/Flags";
+import Promotion from "@/pages/Promotion";
 import RuntimeDetail from "@/pages/RuntimeDetail";
 import "@/App.css";
 
@@ -49,6 +50,7 @@ function App() {
             <Route path="artifacts" element={<Artifacts />} />
             <Route path="diagnostics" element={<Diagnostics />} />
             <Route path="flags" element={<Flags />} />
+            <Route path="promotion" element={<Promotion />} />
             <Route path="runtime/:runtime" element={<RuntimeDetail />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

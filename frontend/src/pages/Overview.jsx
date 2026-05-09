@@ -74,13 +74,16 @@ export default function Overview() {
                       >
                         {meta.label}
                       </div>
-                      <div className="mt-2 flex items-center gap-2">
+                      <div className="mt-2 flex items-center gap-2 flex-wrap">
                         <Badge color={meta.color} testid={`runtime-role-${rt.runtime}`}>
                           {meta.roleTitle.toUpperCase()}
                         </Badge>
-                        <span className="text-[10px] text-rd-dim uppercase tracking-widest">
-                          {meta.roleTagline}
-                        </span>
+                        <Badge
+                          color={rt.authority_state === "governor" ? "#A1A1AA" : meta.color}
+                          testid={`runtime-authority-${rt.runtime}`}
+                        >
+                          {(rt.authority_state || "").replace("_", " ").toUpperCase()}
+                        </Badge>
                       </div>
                       <div className="text-[10px] text-rd-muted uppercase tracking-widest mt-2 leading-relaxed">
                         {meta.note}

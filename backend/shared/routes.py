@@ -79,12 +79,18 @@ async def overview(_user: dict = Depends(get_current_user)):
         last_receipt = await db[SHARED_RECEIPTS].find_one(
             {"runtime": rt}, {"_id": 0}, sort=[("timestamp", -1)]
         )
+        # Authority state — single source of truth for execution
+        state_doc = await db["shared_authority_state"].find_one({"runtime": rt}, {"_id": 0})
+        authority_state = state_doc["authority_state"] if state_doc else "observer"
+        execution_allowed = authority_state in {"co_trader", "primary"}
+
         out.append({
             "runtime": rt,
             "role": ROLES[rt]["role"],
             "role_title": ROLES[rt]["title"],
             "role_tagline": ROLES[rt]["tagline"],
-            "execution_allowed": ROLES[rt]["execution_allowed"],
+            "authority_state": authority_state,
+            "execution_allowed": execution_allowed,
             "mode": "observation",
             "receipts_count": receipts_count,
             "memory_labels_count": labels_count,

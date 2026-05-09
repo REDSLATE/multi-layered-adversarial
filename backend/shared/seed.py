@@ -5,8 +5,9 @@ from datetime import datetime, timezone, timedelta
 
 from namespaces import (
     SHARED_RECEIPTS, SHARED_MEMORY, SHARED_CALIBRATORS,
-    SHARED_FEATURE_BUILDERS, SHARED_ARTIFACTS,
+    SHARED_FEATURE_BUILDERS, SHARED_ARTIFACTS, SHARED_AUTHORITY_STATE,
     ALPHA_DECISION_LOG, CAMARO_SHADOW_ROWS, CHEVELLE_MEMORY_LABELS,
+    DEFAULT_AUTHORITY,
 )
 
 
@@ -15,6 +16,21 @@ def _ts(minutes_ago: int) -> str:
 
 
 async def seed_all(db) -> None:
+    # Authority state: install default per runtime if not present
+    for rt, default_state in DEFAULT_AUTHORITY.items():
+        existing = await db[SHARED_AUTHORITY_STATE].find_one({"runtime": rt})
+        if existing is None:
+            await db[SHARED_AUTHORITY_STATE].insert_one({
+                "runtime": rt,
+                "authority_state": default_state,
+                "history": [{
+                    "to_state": default_state, "from_state": None,
+                    "at": _ts(0), "via": "default_install",
+                    "operator": None, "proposal_id": None,
+                }],
+                "created_at": _ts(0),
+            })
+
     # Feature builders (shared)
     if await db[SHARED_FEATURE_BUILDERS].count_documents({}) == 0:
         await db[SHARED_FEATURE_BUILDERS].insert_many([
@@ -67,6 +83,8 @@ async def seed_all(db) -> None:
                 },
                 "observed": True,
                 "executed": False,
+                "role_violation": False,
+                "authority_state_at_emit": DEFAULT_AUTHORITY[rt],
                 "timestamp": _ts(i * 7),
             })
         await db[SHARED_RECEIPTS].insert_many(bulk)

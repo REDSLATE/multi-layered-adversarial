@@ -29,3 +29,10 @@ async def ensure_indexes() -> None:
 
     # Heartbeats (one row per runtime, upserted)
     await db.shared_heartbeats.create_index("runtime", unique=True)
+
+    # Authority + promotion
+    await db.shared_authority_state.create_index("runtime", unique=True)
+    await db.shared_promotion_artifacts.create_index([("runtime", 1), ("emitted_at", -1)])
+    await db.shared_promotion_artifacts.create_index("artifact_id", unique=True)
+    await db.shared_promotion_proposals.create_index([("runtime", 1), ("status", 1), ("created_at", -1)])
+    await db.shared_promotion_proposals.create_index("proposal_id", unique=True)

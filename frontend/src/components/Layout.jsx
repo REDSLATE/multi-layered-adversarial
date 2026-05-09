@@ -10,6 +10,7 @@ import {
   Stack,
   Pulse,
   Flag,
+  TrendUp,
   SignOut,
 } from "@phosphor-icons/react";
 
@@ -22,6 +23,7 @@ const NAV = [
   { to: "/artifacts", label: "Artifacts", icon: Cube, testid: "nav-artifacts" },
   { to: "/diagnostics", label: "Diagnostics", icon: Pulse, testid: "nav-diagnostics" },
   { to: "/flags", label: "Runtime Flags", icon: Flag, testid: "nav-flags" },
+  { to: "/promotion", label: "Promotion", icon: TrendUp, testid: "nav-promotion" },
 ];
 
 const RUNTIMES = [

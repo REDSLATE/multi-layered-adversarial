@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 from db import db
 from namespaces import (
     SHARED_RECEIPTS, SHARED_MEMORY, SHARED_CALIBRATORS, SHARED_ARTIFACTS,
-    SHARED_HEARTBEATS, RUNTIMES, runtime_can_execute,
+    SHARED_HEARTBEATS, SHARED_PROMOTION_ARTIFACTS, SHARED_AUTHORITY_STATE,
+    RUNTIMES, runtime_can_execute_state, DEFAULT_AUTHORITY,
 )
 from runtime_auth import verify_runtime_token
 
@@ -25,6 +26,32 @@ def _now_iso() -> str:
 
 def _broker_live_enabled() -> bool:
     return os.environ.get("BROKER_LIVE_ORDER_ENABLED", "false").lower() == "true"
+
+
+async def _current_authority(runtime: str) -> str:
+    """Look up the runtime's current authority state, creating a default
+    record if none exists. This is the single source of truth for the
+    receipt-execution check."""
+    doc = await db[SHARED_AUTHORITY_STATE].find_one({"runtime": runtime}, {"_id": 0})
+    if doc:
+        return doc["authority_state"]
+    # Lazy-install default
+    default_state = DEFAULT_AUTHORITY.get(runtime, "observer")
+    await db[SHARED_AUTHORITY_STATE].update_one(
+        {"runtime": runtime},
+        {"$setOnInsert": {
+            "runtime": runtime,
+            "authority_state": default_state,
+            "history": [{
+                "to_state": default_state, "from_state": None,
+                "at": _now_iso(), "via": "default_install",
+                "operator": None, "proposal_id": None,
+            }],
+            "created_at": _now_iso(),
+        }},
+        upsert=True,
+    )
+    return default_state
 
 
 # ------------------------------- Receipts -------------------------------
@@ -42,18 +69,23 @@ async def ingest_receipt(
 ):
     verify_runtime_token(body.runtime, x_runtime_token or "")
 
-    # ─── Role enforcement (the doctrine, in code) ───
-    # Only the Trader role (Alpha) may ever set executed=true.
-    # If Camaro or Chevelle attempt it, we coerce + flag the violation so
-    # operators see the misbehavior immediately. We do NOT 4xx the call —
-    # the runtime stays alive; the audit trail wins.
+    # ─── Authority enforcement (Patent J in code) ───
+    # Execution authority comes from the runtime's CURRENT authority state,
+    # which only changes via governed promotion (PromotionArtifact + Patent J
+    # readiness + operator countersign). It is NOT a static property of the
+    # runtime. A runtime cannot promote itself.
+    authority_state = await _current_authority(body.runtime)
     role_violation = False
-    if body.executed and not runtime_can_execute(body.runtime):
+    if body.executed and not runtime_can_execute_state(authority_state):
         role_violation = True
         executed = False
     else:
-        # Even for Trader, observation invariant still applies.
-        executed = bool(body.executed) and _broker_live_enabled() and runtime_can_execute(body.runtime)
+        # Even with execution authority, observation invariant still applies.
+        executed = (
+            bool(body.executed)
+            and runtime_can_execute_state(authority_state)
+            and _broker_live_enabled()
+        )
 
     doc = {
         "id": str(uuid.uuid4()),
@@ -63,10 +95,15 @@ async def ingest_receipt(
         "observed": True,
         "executed": executed,
         "role_violation": role_violation,
+        "authority_state_at_emit": authority_state,
         "timestamp": _now_iso(),
     }
     await db[SHARED_RECEIPTS].insert_one(doc)
-    return {"ok": True, "id": doc["id"], "executed": executed, "role_violation": role_violation}
+    return {
+        "ok": True, "id": doc["id"],
+        "executed": executed, "role_violation": role_violation,
+        "authority_state": authority_state,
+    }
 
 
 # ----------------------------- Memory labels -----------------------------
@@ -180,3 +217,41 @@ async def ingest_heartbeat(
         {"runtime": body.runtime}, {"$set": doc}, upsert=True
     )
     return {"ok": True, "last_seen": doc["last_seen"]}
+
+
+# ----------------------------- Promotion artifact -----------------------------
+class PromotionEvidenceIn(BaseModel):
+    """Patent G evidence packet — runtime declares it believes it has met
+    the bar for an authority elevation. Server stores it and (if it passes
+    Patent J) creates an operator proposal. Promotion never happens
+    automatically — operator countersign required."""
+    runtime: Literal["alpha", "camaro", "chevelle"]
+    target_authority: Literal["challenger", "advisor", "co_trader", "primary"]
+    metrics: dict = Field(..., description=(
+        "Required keys: ece (float), brier (float), resolved_rows (int), "
+        "disagreement_stability (float), audit_integrity_pass (bool). "
+        "Optional: any additional evidence the runtime wants to attach."
+    ))
+    notes: str = Field("", max_length=2048)
+
+
+@router.post("/promotion-artifact")
+async def ingest_promotion_artifact(
+    body: PromotionEvidenceIn,
+    x_runtime_token: str | None = Header(default=None, alias="X-Runtime-Token"),
+):
+    """Runtime emits a PromotionArtifact to claim it has met the bar for
+    an authority elevation. This DOES NOT change the authority state —
+    that requires Patent J pass + operator countersign (see /api/admin/promotion)."""
+    verify_runtime_token(body.runtime, x_runtime_token or "")
+    artifact_id = str(uuid.uuid4())
+    doc = {
+        "artifact_id": artifact_id,
+        "runtime": body.runtime,
+        "target_authority": body.target_authority,
+        "metrics": body.metrics,
+        "notes": body.notes,
+        "emitted_at": _now_iso(),
+    }
+    await db[SHARED_PROMOTION_ARTIFACTS].insert_one(doc)
+    return {"ok": True, "artifact_id": artifact_id}
