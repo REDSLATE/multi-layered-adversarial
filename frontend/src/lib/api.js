@@ -51,7 +51,10 @@ export const RUNTIME_META = {
     bgClass: "bg-rd-alpha",
     enforceFlag: "alpha_phase6_enforce_enabled",
     enforceLabel: "PHASE6_ENFORCE_ENABLED",
-    note: "Base/stable runtime",
+    role: "trader",
+    roleTitle: "Trader",
+    roleTagline: "has hands",
+    note: "Generates executable signals — only stack eligible for live execution",
   },
   camaro: {
     label: "CAMARO",
@@ -62,7 +65,10 @@ export const RUNTIME_META = {
     bgClass: "bg-rd-camaro",
     enforceFlag: "camaro_executor_enforce_enabled",
     enforceLabel: "CAMARO_EXECUTOR_ENFORCE_ENABLED",
-    note: "Executor stack",
+    role: "challenger",
+    roleTitle: "Challenger",
+    roleTagline: "has teeth",
+    note: "Shadows Alpha · attacks the thesis · cannot place trades",
   },
   chevelle: {
     label: "CHEVELLE",
@@ -73,7 +79,10 @@ export const RUNTIME_META = {
     bgClass: "bg-rd-chevelle",
     enforceFlag: "chevelle_authority_enabled",
     enforceLabel: "CHEVELLE_AUTHORITY_ENABLED",
-    note: "Authority stack",
+    role: "governor",
+    roleTitle: "Governor",
+    roleTagline: "has the keys",
+    note: "Memory firewall · readiness · calibration · audit · promotion",
   },
 };
 

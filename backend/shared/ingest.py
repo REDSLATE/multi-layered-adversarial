@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from db import db
 from namespaces import (
     SHARED_RECEIPTS, SHARED_MEMORY, SHARED_CALIBRATORS, SHARED_ARTIFACTS,
-    SHARED_HEARTBEATS, RUNTIMES,
+    SHARED_HEARTBEATS, RUNTIMES, runtime_can_execute,
 )
 from runtime_auth import verify_runtime_token
 
@@ -41,9 +41,20 @@ async def ingest_receipt(
     x_runtime_token: str | None = Header(default=None, alias="X-Runtime-Token"),
 ):
     verify_runtime_token(body.runtime, x_runtime_token or "")
-    # Observation invariant: even if a runtime claims executed=True, we coerce
-    # to False unless BROKER_LIVE_ORDER_ENABLED is true.
-    executed = bool(body.executed) and _broker_live_enabled()
+
+    # ─── Role enforcement (the doctrine, in code) ───
+    # Only the Trader role (Alpha) may ever set executed=true.
+    # If Camaro or Chevelle attempt it, we coerce + flag the violation so
+    # operators see the misbehavior immediately. We do NOT 4xx the call —
+    # the runtime stays alive; the audit trail wins.
+    role_violation = False
+    if body.executed and not runtime_can_execute(body.runtime):
+        role_violation = True
+        executed = False
+    else:
+        # Even for Trader, observation invariant still applies.
+        executed = bool(body.executed) and _broker_live_enabled() and runtime_can_execute(body.runtime)
+
     doc = {
         "id": str(uuid.uuid4()),
         "runtime": body.runtime,
@@ -51,10 +62,11 @@ async def ingest_receipt(
         "intent": body.intent,
         "observed": True,
         "executed": executed,
+        "role_violation": role_violation,
         "timestamp": _now_iso(),
     }
     await db[SHARED_RECEIPTS].insert_one(doc)
-    return {"ok": True, "id": doc["id"], "executed": executed}
+    return {"ok": True, "id": doc["id"], "executed": executed, "role_violation": role_violation}
 
 
 # ----------------------------- Memory labels -----------------------------

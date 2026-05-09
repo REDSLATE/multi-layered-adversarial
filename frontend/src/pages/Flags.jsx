@@ -48,7 +48,7 @@ export default function Flags() {
             project="RISEDUAL-AI-2"
             flag="PHASE6_ENFORCE_ENABLED"
             on={data.enforce_flags.alpha_phase6_enforce_enabled}
-            note="Promotes Alpha's Phase-6 proposals from advisory to enforced."
+            note="ROLE: TRADER · has hands. Only stack with execution authority. Promotes Alpha's Phase-6 proposals from advisory to enforced."
             testid="flag-alpha"
           />
           <FlagCard
@@ -57,7 +57,7 @@ export default function Flags() {
             project="RD4_0421"
             flag="CAMARO_EXECUTOR_ENFORCE_ENABLED"
             on={data.enforce_flags.camaro_executor_enforce_enabled}
-            note="Allows Camaro's executor to act on shadow rows."
+            note="ROLE: CHALLENGER · has teeth. Shadows Alpha and recommends veto/reduce/watch. Cannot place trades — server-enforced."
             testid="flag-camaro"
           />
           <FlagCard
@@ -66,7 +66,7 @@ export default function Flags() {
             project="2.1-APP"
             flag="CHEVELLE_AUTHORITY_ENABLED"
             on={data.enforce_flags.chevelle_authority_enabled}
-            note="Grants Chevelle authority calls binding power."
+            note="ROLE: GOVERNOR · has the keys. Memory firewall, readiness, calibration, audit, promotion control. Cannot place trades — server-enforced."
             testid="flag-chevelle"
           />
 

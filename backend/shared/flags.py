@@ -4,6 +4,7 @@ import os
 from fastapi import APIRouter, Depends
 
 from auth import get_current_user
+from namespaces import ROLES, RUNTIMES
 
 router = APIRouter(prefix="/admin/flags", tags=["flags"])
 
@@ -21,7 +22,11 @@ def get_flags_snapshot() -> dict:
             "camaro_executor_enforce_enabled": _b("CAMARO_EXECUTOR_ENFORCE_ENABLED"),
             "chevelle_authority_enabled": _b("CHEVELLE_AUTHORITY_ENABLED"),
         },
-        "doctrine": "observation-only — execution authority disabled across all runtimes",
+        "roles": {rt: ROLES[rt] for rt in RUNTIMES},
+        "doctrine": (
+            "observation-only — execution authority disabled across all runtimes. "
+            "Only Alpha has hands. Camaro has teeth. Chevelle has the keys."
+        ),
     }
 
 

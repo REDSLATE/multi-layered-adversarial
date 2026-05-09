@@ -16,6 +16,7 @@ async def ensure_indexes() -> None:
 
     # Shared infrastructure
     await db.shared_adl_receipts.create_index([("runtime", 1), ("timestamp", -1)])
+    await db.shared_adl_receipts.create_index([("role_violation", 1), ("timestamp", -1)])
     await db.shared_labeled_memories.create_index([("runtime", 1), ("timestamp", -1)])
     await db.shared_calibrators.create_index([("runtime", 1), ("name", 1)])
     await db.shared_feature_builders.create_index("name", unique=True)

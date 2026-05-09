@@ -74,7 +74,15 @@ export default function Overview() {
                       >
                         {meta.label}
                       </div>
-                      <div className="text-[10px] text-rd-dim uppercase tracking-widest mt-1">
+                      <div className="mt-2 flex items-center gap-2">
+                        <Badge color={meta.color} testid={`runtime-role-${rt.runtime}`}>
+                          {meta.roleTitle.toUpperCase()}
+                        </Badge>
+                        <span className="text-[10px] text-rd-dim uppercase tracking-widest">
+                          {meta.roleTagline}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-rd-muted uppercase tracking-widest mt-2 leading-relaxed">
                         {meta.note}
                       </div>
                     </div>
@@ -90,6 +98,11 @@ export default function Overview() {
                   <div className="space-y-1.5">
                     <Row label="MODE" value={
                       <Badge color="#FBBF24">{rt.mode}</Badge>
+                    } />
+                    <Row label="EXECUTION" value={
+                      <Badge color={rt.execution_allowed ? "#10B981" : "#71717A"}>
+                        {rt.execution_allowed ? "AUTHORIZED" : "FORBIDDEN"}
+                      </Badge>
                     } />
                     <Row label="ENFORCE" value={
                       <Badge color={enforce ? "#10B981" : "#71717A"}>
@@ -109,6 +122,11 @@ export default function Overview() {
                     <Row label="MEMORY LABELS" value={
                       <span className="font-mono text-sm">{rt.memory_labels_count}</span>
                     } />
+                    {rt.role_violation_count > 0 && (
+                      <Row label="ROLE VIOLATIONS" value={
+                        <Badge color="#EF4444">{rt.role_violation_count} BLOCKED</Badge>
+                      } />
+                    )}
                     <Row label="LAST SIGNAL" value={
                       <span className="font-mono text-xs text-rd-muted">
                         {rt.last_receipt ? relTime(rt.last_receipt.timestamp) : "—"}
@@ -122,26 +140,22 @@ export default function Overview() {
 
           {/* Doctrine + Flags strip */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-            <Card className="lg:col-span-2" testid="doctrine-card">
-              <div className="label-eyebrow mb-3">Doctrine</div>
-              <div className="font-display text-xl font-bold tracking-tight leading-snug mb-4">
-                Merge the infrastructure.
-                <br />
-                <span className="text-rd-warn">Do not merge the brains.</span>
-              </div>
-              <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-xs font-mono text-rd-muted">
-                <li>· Shared MongoDB (namespaced collections)</li>
-                <li>· Shared memory labeling firewall</li>
-                <li>· Shared ADL receipts</li>
-                <li>· Shared calibration tooling</li>
-                <li>· Shared diagnostics</li>
-                <li>· Shared feature builders</li>
-                <li>· Shared admin dashboard</li>
-                <li className="text-rd-warn">· Separate model artifacts & calibrators</li>
-                <li className="text-rd-warn">· Separate runtime flags & promotion gates</li>
-                <li className="text-rd-warn">· Separate execution authority & broker controls</li>
-              </ul>
-            </Card>
+          <Card className="lg:col-span-2" testid="doctrine-card">
+            <div className="label-eyebrow mb-3">Adversarial doctrine</div>
+            <div className="font-display text-xl font-bold tracking-tight leading-snug mb-4">
+              Only Alpha has hands.<br />
+              Camaro has teeth.<br />
+              <span className="text-rd-warn">Chevelle has the keys.</span>
+            </div>
+            <ul className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-1 text-xs font-mono text-rd-muted">
+              <li><span className="text-rd-alpha">Alpha · Trader</span> — generates executable signals. Only stack eligible for live execution. Must still pass RoadGuard / Envelope / Patent J.</li>
+              <li><span className="text-rd-camaro">Camaro · Challenger</span> — shadows Alpha, attacks the thesis, logs counterfactuals. Can recommend veto / reduce / watch. <span className="text-rd-warn">Cannot place trades.</span></li>
+              <li><span className="text-rd-chevelle">Chevelle · Governor</span> — memory firewall, readiness gate, calibration gate, audit verification, promotion control. <span className="text-rd-warn">Cannot place trades.</span></li>
+            </ul>
+            <div className="text-[10px] text-rd-dim uppercase tracking-widest mt-4">
+              Server-enforced at /api/ingest/receipts. Any non-Trader receipt with executed=true is coerced and recorded as role_violation.
+            </div>
+          </Card>
 
             <Card testid="flags-strip">
               <div className="label-eyebrow mb-3">Runtime flags</div>
