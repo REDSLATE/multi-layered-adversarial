@@ -31,6 +31,13 @@ here.
 - CLI patch instructions (`/app/runtime_patch_kit/redeye/CLI_PATCH.md`)
 - The `alpha_alignment` forward-compat field (validated REDEYE-side, tolerated RISEDUALAI-side)
 - All 3 isolated-brain runtime patch-kits (Alpha / Camaro / Chevelle)
+- **Code Evolution v0 patch-kit** (`/app/runtime_patch_kit/code_evolution/`)
+  — paste-in folder for ALL FOUR stacks (Alpha/Camaro/Chevelle/REDEYE).
+  Each stack hosts its own gate; each stack has its own audit trail.
+  Doctrine: AI may audit, recommend tests, write receipts. AI may NOT
+  run shell, promote code, or modify the gate. PROTECTED paths return
+  HTTP 423 in-band; CRITICAL paths require dual-sign (mirrors Build 3).
+  9/9 smoke tests pass, lint clean.
 - Mission Control backend, frontend dashboard, governed promotion (incl. dual-sign)
 
 ### Forward-compat rule between the two repos
@@ -117,6 +124,29 @@ Doctrine: **one shared nervous system, three separate decision brains.**
   - Smoke test extended: default null, all 3 valid values round-trip, invalid raises. PASS.
   - Cross-session repo map added at top of this PRD so future forked agents don't
     confuse the two RISEDUAL repos.
+- **Code Evolution v0 — per-stack AI gate for code patches** (2026-02-09)
+  - New folder: `/app/runtime_patch_kit/code_evolution/`
+  - Six service files (~960 LOC total): `schemas.py`, `ast_invariants.py`,
+    `code_auditor.py`, `promotion_policy.py`, `receipts.py`, `api.py`,
+    `deps.py` (the only stack-specific file).
+  - Doctrine baked into source:
+    * `may_auto_promote()` returns `False` under any args combination.
+    * `PROTECTED_PATHS` blocks any in-band patch to the gate itself (HTTP 423).
+    * No `subprocess` import in any file — AI cannot run shell.
+  - Classification → action mapping: PROTECTED→423, CRITICAL→dual-sign,
+    HIGH→single+24h cool-down, MEDIUM→single, LOW→single.
+  - AST-based invariant scanner (not regex on diffs): catches forbidden
+    constant assignments (`BROKER_LIVE_ORDER_ENABLED=True`,
+    `risk_multiplier > 1.25`, etc.), forbidden calls (`paper_trades.insert*`,
+    `drop_collection`, `delete_many`), syntax errors, and `target_files` vs
+    `post_patch_files` drift.
+  - Mongo persistence via `MotorDispatcher` (single collection
+    `code_evolution_proposals`); `InMemoryDispatcher` provided for tests.
+  - Endpoints: `POST /audit`, `GET /proposals`, `GET /proposals/{id}`,
+    `POST /{id}/countersign`, `POST /{id}/reject`. All require auth.
+  - Per-stack paste shells: `PASTE_INTO_{ALPHA,CAMARO,CHEVELLE,REDEYE}_AGENT.md`
+    each tweak `EXECUTION_PATHS` and `FORBIDDEN_ASSIGNMENTS` for that stack.
+  - 9/9 doctrine smoke tests pass; lint clean.
 
 ## Core Requirements (static)
 - Doctrine: shared infrastructure, isolated decision authority
