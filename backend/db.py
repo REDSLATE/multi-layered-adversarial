@@ -25,3 +25,6 @@ async def ensure_indexes() -> None:
     await db.alpha_decision_log.create_index([("timestamp", -1)])
     await db.camaro_shadow_rows.create_index([("timestamp", -1)])
     await db.chevelle_memory_labels.create_index([("timestamp", -1)])
+
+    # Heartbeats (one row per runtime, upserted)
+    await db.shared_heartbeats.create_index("runtime", unique=True)

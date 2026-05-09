@@ -13,4 +13,7 @@ ALPHA_DECISION_LOG = "alpha_decision_log"
 CAMARO_SHADOW_ROWS = "camaro_shadow_rows"
 CHEVELLE_MEMORY_LABELS = "chevelle_memory_labels"
 
+# Heartbeats from runtime sidecars (one upserted doc per runtime)
+SHARED_HEARTBEATS = "shared_heartbeats"
+
 RUNTIMES = ("alpha", "camaro", "chevelle")
