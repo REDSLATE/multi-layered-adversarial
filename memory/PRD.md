@@ -55,6 +55,18 @@ Doctrine: **one shared nervous system, three separate decision brains.**
   - Patent J failure still blocks both signatures (gate cannot be bypassed)
   - Backend tests: 7/7 PASS (`tests/test_dual_sign_promotion.py`)
   - Existing single-sign rungs unchanged (back-compat verified)
+- **REDEYE → Camaro short-side bridge patch-kit** (2026-02-09)
+  - Path: `/app/runtime_patch_kit/redeye/`
+  - Bridge module: `services/redeye_short_bridge.py` (pure stdlib)
+  - Doctrine: REDEYE = short-side adversarial scout, reports to **Camaro only**,
+    never Alpha. Camaro retains final execution authority.
+  - `camaro_contract` block on every payload: `may_execute=False`,
+    `may_override_alpha=False`, `final_authority=CAMARO`,
+    `role=short_side_advisor`.
+  - REDEYE not added as a 4th runtime in `namespaces.py` — it has no authority
+    on the trading ladder by design.
+  - Local smoke test (`smoke_test.py`) verifies SHORT/HOLD gates and the
+    borrow-block override. PASS.
 
 ## Core Requirements (static)
 - Doctrine: shared infrastructure, isolated decision authority
