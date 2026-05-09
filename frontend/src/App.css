@@ -1,34 +1,142 @@
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=Chivo:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+
+:root {
+    color-scheme: dark;
+    --rd-bg: #0a0a0a;
+    --rd-bg-2: #111111;
+    --rd-bg-3: #1a1a1a;
+    --rd-border: #27272a;
+    --rd-border-strong: #52525b;
+    --rd-text: #ffffff;
+    --rd-muted: #a1a1aa;
+    --rd-dim: #71717a;
+    --rd-alpha: #3b82f6;
+    --rd-camaro: #f59e0b;
+    --rd-chevelle: #10b981;
+    --rd-warn: #fbbf24;
+    --rd-danger: #ef4444;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
+html,
+body,
+#root {
+    background: var(--rd-bg);
+    color: var(--rd-text);
+    min-height: 100%;
+}
+
+body {
+    margin: 0;
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings:
+        "ss01" on,
+        "cv11" on;
+}
+
+.font-display {
+    font-family: "Chivo", system-ui, sans-serif;
+}
+
+.label-eyebrow {
+    font-size: 10px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--rd-dim);
+    font-weight: 700;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: #0a0a0a;
+}
+::-webkit-scrollbar-thumb {
+    background: #27272a;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #3f3f46;
+}
+
+/* Selection */
+::selection {
+    background: #fbbf24;
+    color: #0a0a0a;
+}
+
+/* Subtle scanline grain on body for terminal feel */
+body::before {
+    content: "";
+    pointer-events: none;
+    position: fixed;
+    inset: 0;
+    background-image: repeating-linear-gradient(
+        0deg,
+        rgba(255, 255, 255, 0.012) 0,
+        rgba(255, 255, 255, 0.012) 1px,
+        transparent 1px,
+        transparent 3px
+    );
+    z-index: 1;
+    mix-blend-mode: overlay;
+}
+
+/* App container above grain */
+.app-shell {
+    position: relative;
+    z-index: 2;
+}
+
+/* Sharp button base */
+.btn-sharp {
+    border-radius: 0;
+    font-family: "JetBrains Mono", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+    font-weight: 700;
+    transition:
+        background-color 120ms,
+        color 120ms,
+        border-color 120ms,
+        transform 80ms;
+}
+.btn-sharp:active {
+    transform: translateY(1px);
+}
+
+/* Ticker pulse */
+@keyframes pulse-dot {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.4;
     }
 }
-
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+.pulse-dot {
+    animation: pulse-dot 1.6s ease-in-out infinite;
 }
 
-.App-link {
-    color: #61dafb;
-}
-
-@keyframes App-logo-spin {
+/* Reveal */
+@keyframes fadeUp {
     from {
-        transform: rotate(0deg);
+        opacity: 0;
+        transform: translateY(6px);
     }
     to {
-        transform: rotate(360deg);
+        opacity: 1;
+        transform: translateY(0);
     }
+}
+.reveal {
+    animation: fadeUp 320ms ease-out both;
 }
