@@ -24,6 +24,7 @@ SHARED_PROMOTION_PROPOSALS = "shared_promotion_proposals"   # pending operator c
 # Cross-brain discussion layer (mediated; pull-only on consumers)
 SHARED_OPINIONS = "shared_brain_opinions"                   # threaded discussion across brains
 SHARED_OUTCOMES = "shared_brain_outcomes"                   # operator/chevelle-resolved outcomes per opinion
+SHARED_CONFLICTS = "shared_brain_conflicts"                 # auto-detected disagreement pairs
 
 RUNTIMES = ("alpha", "camaro", "chevelle")
 

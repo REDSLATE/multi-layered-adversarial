@@ -57,6 +57,22 @@ here.
   prescriptive — they don't gate promotions; Patent J + dual-sign still does.
   Runtime endpoint `/runtime-discussion/scorecard` is schema-scoped: a brain
   cannot read another brain's metrics via runtime auth.
+- **Conflict Memory v0** (`/app/backend/shared/conflicts.py` +
+  `/app/frontend/src/pages/Conflicts.jsx`) — Step 4 of the training plan.
+  Auto-detection: when two brains post opposing stances on the same topic
+  within 4h, the disagreement is flagged as a conflict. Idempotent on
+  pair_ids. Auto-resolution from outcomes: when both participants are
+  resolved, the conflict closes with the win-side as winner (or stale if
+  neither won). Manual operator override path. Pair-scorecards show "X
+  is right Y% of the times when contradicting Z" across all six pairs.
+  Doctrine line on every payload.
+- **Doctrine loosening (2026-02-09)**: communication is unrestricted.
+  Stance vocabulary expanded (added `agree`, `disagree`, `refine`,
+  `retract`, `hypothesis`). Topic kinds permissive (any
+  `[a-z_][a-z0-9_]*:value`, e.g. `regime:trend`, `theory:momentum_decay`).
+  Evidence cap raised to 64 KB. Thread depth raised to 64.
+  Trading remains hard-locked: `may_execute=true` schema-rejected at every
+  layer; observation banner present.
 - Mission Control backend, frontend dashboard, governed promotion (incl. dual-sign)
 
 ### Forward-compat rule between the two repos

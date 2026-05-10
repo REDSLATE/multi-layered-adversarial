@@ -17,6 +17,7 @@ import RuntimeDetail from "@/pages/RuntimeDetail";
 import Redeye from "@/pages/Redeye";
 import Discussion from "@/pages/Discussion";
 import Scorecards from "@/pages/Scorecards";
+import Conflicts from "@/pages/Conflicts";
 import "@/App.css";
 
 function Protected({ children }) {
@@ -60,6 +61,7 @@ function App() {
             <Route path="redeye" element={<Redeye />} />
             <Route path="discussion" element={<Discussion />} />
             <Route path="scorecards" element={<Scorecards />} />
+            <Route path="conflicts" element={<Conflicts />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

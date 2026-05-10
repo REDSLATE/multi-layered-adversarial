@@ -38,20 +38,30 @@ from runtime_auth import verify_runtime_token
 
 # ──────────────────────── config (small, deliberate) ────────────────────────
 
-# Allowed stances — closed set. Anything else rejected at the schema layer.
-STANCE_VALUES = ("long", "short", "veto", "endorse", "question", "observation")
+# Stance vocabulary — expanded so brains can express more than just direction.
+# Doctrine: communication is not a learning bottleneck; expand freely.
+STANCE_VALUES = (
+    # Directional calls
+    "long", "short", "veto", "endorse",
+    # Discourse moves
+    "question", "observation",
+    # Peer engagement
+    "agree", "disagree", "refine", "retract",
+    # Theorising
+    "hypothesis",
+)
 
-# Topic prefixes — the format is "<kind>:<value>" or "free".
-#   symbol:TSLA        — opinion about a market symbol
-#   patent_j:camaro→advisor — opinion about a promotion readiness call
-#   roles:redeye       — opinion about another brain's role/behaviour
-#   free               — open discussion, no specific anchor
-TOPIC_KIND_VALUES = ("symbol", "patent_j", "roles", "free")
+# Topic kinds — anchors a discussion thread to a thing. Permissive: any
+# `<kind>:<value>` is accepted as long as kind is a valid identifier and
+# value is non-empty. The closed whitelist was a learning bottleneck; gone.
+import re as _re
+_TOPIC_KIND_RE = _re.compile(r"^[a-z_][a-z0-9_]*$")
 
-# Hard caps — prevent leaking internal state under "evidence" cover.
-MAX_BODY_CHARS = 4_000
-MAX_EVIDENCE_BYTES = 16_384       # ~16 KB JSON serialised
-MAX_THREAD_DEPTH = 32             # cycle / runaway-thread guard
+# Hard caps — kept generous enough not to throttle learning; still bounded
+# so a single payload can't denial-of-service the layer.
+MAX_BODY_CHARS = 8_000
+MAX_EVIDENCE_BYTES = 65_536       # 64 KB JSON serialised
+MAX_THREAD_DEPTH = 64             # cycle / runaway-thread guard
 
 
 # ──────────────────────── ingest (write) ────────────────────────
@@ -60,7 +70,12 @@ class OpinionIn(BaseModel):
     """Schema for posting an opinion. `runtime` is the speaker."""
     runtime: Literal["alpha", "camaro", "chevelle", "redeye"]
     topic: str = Field(..., min_length=1, max_length=128)
-    stance: Literal["long", "short", "veto", "endorse", "question", "observation"]
+    stance: Literal[
+        "long", "short", "veto", "endorse",
+        "question", "observation",
+        "agree", "disagree", "refine", "retract",
+        "hypothesis",
+    ]
     confidence: float = Field(0.5, ge=0.0, le=1.0)
     body: str = Field(..., min_length=1, max_length=MAX_BODY_CHARS)
     evidence: dict = Field(default_factory=dict)
@@ -75,11 +90,14 @@ class OpinionIn(BaseModel):
             return v
         if ":" not in v:
             raise ValueError(
-                "topic must be 'free' or '<kind>:<value>' (e.g. 'symbol:TSLA')"
+                "topic must be 'free' or '<kind>:<value>' (e.g. 'symbol:TSLA', "
+                "'regime:trend', 'theory:momentum_decay')"
             )
         kind, _, value = v.partition(":")
-        if kind not in TOPIC_KIND_VALUES:
-            raise ValueError(f"topic kind must be one of {TOPIC_KIND_VALUES}; got {kind!r}")
+        if not _TOPIC_KIND_RE.match(kind):
+            raise ValueError(
+                f"topic kind must match [a-z_][a-z0-9_]*; got {kind!r}"
+            )
         if not value:
             raise ValueError("topic value cannot be empty")
         return v
@@ -167,11 +185,17 @@ async def post_opinion(
         "posted_at": _now_iso(),
     }
     await db[SHARED_OPINIONS].insert_one(doc)
+
+    # Conflict auto-detection — never blocks the post.
+    from shared.conflicts import detect_conflicts_for_opinion  # noqa: WPS433
+    new_conflicts = await detect_conflicts_for_opinion(doc)
+
     return {
         "ok": True,
         "opinion_id": opinion_id,
         "thread_root": doc["thread_root"],
         "depth": depth,
+        "conflicts_detected": [c["conflict_id"] for c in new_conflicts],
     }
 
 

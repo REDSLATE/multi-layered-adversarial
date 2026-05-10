@@ -119,12 +119,19 @@ async def post_outcome(
         "notes": body.notes,
     }
     await db[SHARED_OUTCOMES].insert_one(doc)
+
+    # Outcome attached → try to auto-resolve any conflicts that include
+    # this opinion. Never blocks the resolve.
+    from shared.conflicts import attempt_resolve_conflicts_for_opinion  # noqa: WPS433
+    auto_resolved = await attempt_resolve_conflicts_for_opinion(body.opinion_id)
+
     return {
         "ok": True,
         "outcome_id": doc["outcome_id"],
         "opinion_id": body.opinion_id,
         "runtime": doc["runtime"],
         "actual": body.actual,
+        "auto_resolved_conflicts": [c["conflict_id"] for c in auto_resolved],
     }
 
 
@@ -162,12 +169,17 @@ async def post_outcome_admin(
         "notes": body.notes,
     }
     await db[SHARED_OUTCOMES].insert_one(doc)
+
+    from shared.conflicts import attempt_resolve_conflicts_for_opinion  # noqa: WPS433
+    auto_resolved = await attempt_resolve_conflicts_for_opinion(body.opinion_id)
+
     return {
         "ok": True,
         "outcome_id": doc["outcome_id"],
         "opinion_id": body.opinion_id,
         "runtime": doc["runtime"],
         "actual": body.actual,
+        "auto_resolved_conflicts": [c["conflict_id"] for c in auto_resolved],
     }
 
 
