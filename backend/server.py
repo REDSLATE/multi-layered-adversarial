@@ -20,6 +20,7 @@ from db import db, client, ensure_indexes
 from auth import router as auth_router, seed_admin
 from shared.routes import router as shared_router
 from shared.ingest import router as ingest_router
+from shared.opinions import router as opinions_router
 from shared.promotion import router as promotion_router
 from shared.diagnostics import router as diagnostics_router
 from shared.flags import router as flags_router, get_flags_snapshot
@@ -75,6 +76,7 @@ async def health():
 api_router.include_router(auth_router)
 api_router.include_router(shared_router)
 api_router.include_router(ingest_router)
+api_router.include_router(opinions_router)
 api_router.include_router(promotion_router)
 api_router.include_router(diagnostics_router)
 api_router.include_router(flags_router)

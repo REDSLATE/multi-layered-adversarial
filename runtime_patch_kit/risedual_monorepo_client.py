@@ -116,3 +116,96 @@ async def emit_promotion_artifact(
         "metrics": metrics or {},
         "notes": notes or "",
     })
+
+
+# ─── Discussion layer (cross-brain opinions; pull-only consumption) ───
+#
+# Doctrine:
+#   - Brains share OPINIONS (heuristic outputs, observations, disagreements).
+#   - Brains do NOT share INTERNAL STATE. Keep `evidence` to references.
+#   - No brain may execute on another's opinion. The schema rejects
+#     may_execute=True; this client never sets it.
+
+async def post_opinion(
+    topic: str,
+    stance: str,
+    body: str,
+    *,
+    confidence: float = 0.5,
+    evidence: dict | None = None,
+    in_reply_to: str | None = None,
+) -> dict:
+    """Post an opinion into the shared discussion layer.
+
+    topic:       'free' or '<kind>:<value>' where kind in
+                 {'symbol','patent_j','roles'}. e.g. 'symbol:TSLA'.
+    stance:      one of {'long','short','veto','endorse','question','observation'}.
+    body:        the brain's own words. Keep short; this is a discussion turn,
+                 not a memo.
+    evidence:    optional small JSON of references (not raw state).
+                 Capped at 16KB server-side.
+    in_reply_to: opinion_id to reply to. Server walks the chain for cycle
+                 detection; max thread depth 32.
+    """
+    return await _post("opinion", {
+        "topic": topic,
+        "stance": stance,
+        "confidence": float(confidence),
+        "body": body,
+        "evidence": evidence or {},
+        "in_reply_to": in_reply_to,
+        "may_execute": False,  # belt and braces; schema rejects True anyway
+    })
+
+
+async def read_opinions(
+    *,
+    runtime: str | None = None,
+    topic: str | None = None,
+    symbol: str | None = None,
+    thread: str | None = None,
+    since: str | None = None,
+    limit: int = 100,
+) -> dict:
+    """Pull opinions from the shared discussion layer. Pull-only by design —
+    this brain never receives a push from any peer."""
+    params: dict[str, str] = {"caller": _runtime()}
+    if runtime:
+        params["runtime"] = runtime
+    if topic:
+        params["topic"] = topic
+    if symbol:
+        params["symbol"] = symbol
+    if thread:
+        params["thread"] = thread
+    if since:
+        params["since"] = since
+    params["limit"] = str(int(limit))
+    try:
+        r = await _get_client().get(
+            f"{_base()}/api/runtime-discussion/opinions",
+            params=params,
+            headers={"X-Runtime-Token": _token()},
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:  # noqa: BLE001
+        log.warning("monorepo opinions read failed: %s", e)
+        return {"items": [], "count": 0, "error": str(e)}
+
+
+async def read_roles_manifest() -> dict:
+    """Read the cross-brain roles manifest. Each brain calls this on boot
+    and on a refresh interval to learn its peers — what they are, what
+    they're allowed to do, and their current authority state."""
+    try:
+        r = await _get_client().get(
+            f"{_base()}/api/runtime-discussion/roles-manifest",
+            params={"caller": _runtime()},
+            headers={"X-Runtime-Token": _token()},
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:  # noqa: BLE001
+        log.warning("monorepo roles-manifest read failed: %s", e)
+        return {"items": [], "count": 0, "error": str(e)}

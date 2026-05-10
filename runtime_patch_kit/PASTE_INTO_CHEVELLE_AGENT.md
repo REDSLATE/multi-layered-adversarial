@@ -267,3 +267,14 @@ Report back to the operator with:
 - Which files you modified (paths + line counts changed)
 - Whether smoke test passed
 - Any local writes you could not find a clean hook for (so the operator can decide)
+
+---
+
+## OPTIONAL STEP — Discussion layer (cross-brain opinions)
+
+After the above is wired and smoke-tested, the operator will hand you
+**`DISCUSSION_LAYER_PATCH.md`** from this same kit. It adds three new
+methods to `risedual_monorepo_client.py` (`post_opinion`, `read_opinions`,
+`read_roles_manifest`) so this brain can speak, listen, and learn its
+peers via Mission Control. Apply that patch only after the base sidecar
+is verified working.

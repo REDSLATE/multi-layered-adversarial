@@ -21,7 +21,18 @@ SHARED_AUTHORITY_STATE = "shared_authority_state"           # one doc per runtim
 SHARED_PROMOTION_ARTIFACTS = "shared_promotion_artifacts"   # Patent G evidence emitted by runtimes
 SHARED_PROMOTION_PROPOSALS = "shared_promotion_proposals"   # pending operator countersign
 
+# Cross-brain discussion layer (mediated; pull-only on consumers)
+SHARED_OPINIONS = "shared_brain_opinions"                   # threaded discussion across brains
+
 RUNTIMES = ("alpha", "camaro", "chevelle")
+
+# Advisors are not on the trading ladder. They speak (post opinions) but
+# never appear in RUNTIMES — granting them ladder authority would violate
+# their advisor-only role. REDEYE reports to Camaro; never bypasses it.
+ADVISORS: tuple[str, ...] = ("redeye",)
+
+# Convenience set of every brain that may participate in the discussion layer.
+DISCUSSION_PARTICIPANTS: tuple[str, ...] = RUNTIMES + ADVISORS
 
 # ───────────────────────────────────────────────────────────────────────
 # RUNTIME ROLES — the FUNCTIONAL kind of brain. Fixed.
@@ -67,6 +78,21 @@ ROLES: dict[str, dict] = {
         "allowed_actions": [
             "readiness_gate", "calibration_gate", "audit_verify",
             "promotion_decision", "authority_call",
+        ],
+    },
+    "redeye": {
+        "role": "advisor",
+        "title": "Short-Side Advisor",
+        "tagline": "reports to Camaro",
+        "description": (
+            "Bearish/short-side adversarial scout. Off-ladder. Sends advice "
+            "to Camaro; cannot execute, cannot override Alpha. Speaks via the "
+            "shared discussion layer; reads peer opinions but never modifies "
+            "their state."
+        ),
+        "allowed_actions": [
+            "post_opinion", "read_opinions", "read_roles_manifest",
+            "short_advisory", "alpha_alignment_hint",
         ],
     },
 }

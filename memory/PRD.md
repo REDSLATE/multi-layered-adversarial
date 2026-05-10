@@ -38,6 +38,13 @@ here.
   run shell, promote code, or modify the gate. PROTECTED paths return
   HTTP 423 in-band; CRITICAL paths require dual-sign (mirrors Build 3).
   9/9 smoke tests pass, lint clean.
+- **Cross-brain discussion layer** (`/app/backend/shared/opinions.py` +
+  `/app/runtime_patch_kit/DISCUSSION_LAYER_PATCH.md`) — mediated through
+  Mission Control, pull-only consumption, schema-enforced no-execution.
+  Brains post opinions, read peers, and learn each other via the
+  `/api/shared/roles-manifest` endpoint. None of the four brains can
+  execute (paper or live) — `may_execute` is a closed field that schema-rejects
+  any value other than `false`.
 - Mission Control backend, frontend dashboard, governed promotion (incl. dual-sign)
 
 ### Forward-compat rule between the two repos
