@@ -109,6 +109,38 @@ async def read_roles_manifest() -> dict:
     except Exception as e:  # noqa: BLE001
         log.warning("monorepo roles-manifest read failed: %s", e)
         return {"items": [], "count": 0, "error": str(e)}
+
+
+async def read_my_scorecard(since: str | None = None) -> dict:
+    """Read THIS brain's role-specific scorecard. Schema-scoped — there is
+    no `runtime=` parameter, so this brain physically cannot see another
+    brain's metrics via this endpoint.
+
+    Returned shape varies by role:
+      - alpha:    {lens:'longs', summary, brier, calibration_bands}
+      - redeye:   {lens:'shorts', ..., alpha_alignment_breakdown}
+      - camaro:   {lens:'judgement_calls', ..., per_stance}
+      - chevelle: {lens:'source_reliability', ..., topic_breakdown}
+
+    Doctrine: scorecards are descriptive, not prescriptive. They never
+    gate promotions; Patent J + operator countersign still does. A brain
+    may use its own scorecard to refine its own heuristics — never to
+    rewrite another brain's authority.
+    """
+    params: dict[str, str] = {"caller": _runtime()}
+    if since:
+        params["since"] = since
+    try:
+        r = await _get_client().get(
+            f"{_base()}/api/runtime-discussion/scorecard",
+            params=params,
+            headers={"X-Runtime-Token": _token()},
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:  # noqa: BLE001
+        log.warning("monorepo scorecard read failed: %s", e)
+        return {"runtime": _runtime(), "summary": {}, "error": str(e)}
 ```
 
 ## STEP 2 — REDEYE only: add the ingest token

@@ -45,6 +45,18 @@ here.
   `/api/shared/roles-manifest` endpoint. None of the four brains can
   execute (paper or live) — `may_execute` is a closed field that schema-rejects
   any value other than `false`.
+- **Role Scoring v0** (`/app/backend/shared/outcomes.py` +
+  `/app/frontend/src/pages/Scorecards.jsx`) — Step 2 of the cross-brain
+  training plan. Each brain gets a role-specific scorecard:
+    * Alpha: "When am I good at longs?" — hit rate, Brier, calibration bands.
+    * REDEYE: "When am I good at shorts?" — same + alpha_alignment breakdown.
+    * Camaro: "When should I trust/reduce/veto/execute?" — per-stance metrics.
+    * Chevelle: "Which outside signals are reliable?" — topic_breakdown.
+  Operators (or Chevelle as the auditor) attach outcomes; brains may not
+  resolve their own opinions. Scorecards are descriptive, never
+  prescriptive — they don't gate promotions; Patent J + dual-sign still does.
+  Runtime endpoint `/runtime-discussion/scorecard` is schema-scoped: a brain
+  cannot read another brain's metrics via runtime auth.
 - Mission Control backend, frontend dashboard, governed promotion (incl. dual-sign)
 
 ### Forward-compat rule between the two repos

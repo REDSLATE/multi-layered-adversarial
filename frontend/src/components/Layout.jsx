@@ -11,6 +11,7 @@ import {
   Pulse,
   Flag,
   TrendUp,
+  Trophy,
   ChatCircleDots,
   SignOut,
 } from "@phosphor-icons/react";
@@ -25,6 +26,7 @@ const NAV = [
   { to: "/diagnostics", label: "Diagnostics", icon: Pulse, testid: "nav-diagnostics" },
   { to: "/recent", label: "Live Tail", icon: Pulse, testid: "nav-recent" },
   { to: "/discussion", label: "Discussion", icon: ChatCircleDots, testid: "nav-discussion" },
+  { to: "/scorecards", label: "Scorecards", icon: Trophy, testid: "nav-scorecards" },
   { to: "/flags", label: "Runtime Flags", icon: Flag, testid: "nav-flags" },
   { to: "/promotion", label: "Promotion", icon: TrendUp, testid: "nav-promotion" },
 ];
