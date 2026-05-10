@@ -147,6 +147,22 @@ Doctrine: **one shared nervous system, three separate decision brains.**
   - Per-stack paste shells: `PASTE_INTO_{ALPHA,CAMARO,CHEVELLE,REDEYE}_AGENT.md`
     each tweak `EXECUTION_PATHS` and `FORBIDDEN_ASSIGNMENTS` for that stack.
   - 9/9 doctrine smoke tests pass; lint clean.
+- **REDEYE dashboard page (admin-only)** (2026-02-09)
+  - New file: `/app/frontend/src/pages/Redeye.jsx` mounted at `/redeye`.
+  - Sidebar gets a new **"Advisors"** section, distinct from the
+    "Runtimes" section, so REDEYE is visually marked as a Camaro-side
+    advisor, not a peer brain. Red accent (`#DC2626`).
+  - Page renders the doctrine corrected per operator: REDEYE advises
+    Camaro; **neither executes**. Execution lives elsewhere on the
+    ladder (Alpha + authority_state ∈ {co_trader, primary} + Patent J
+    + operator countersign + observation-mode flag).
+  - Sections: chain of authority, camaro_contract table (with the
+    "final_authority=CAMARO is over advice, not a license to execute"
+    clarification), alpha_alignment forward-compat semantics, frozen
+    bridge thresholds, live-feed placeholder (pending Camaro forwarding
+    endpoint), file references.
+  - Admin-only access is automatic — every page except `/login` is
+    behind the existing JWT-cookie + admin-seeded user gate.
 
 ## Core Requirements (static)
 - Doctrine: shared infrastructure, isolated decision authority

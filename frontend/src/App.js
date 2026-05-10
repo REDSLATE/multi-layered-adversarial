@@ -14,6 +14,7 @@ import Flags from "@/pages/Flags";
 import Promotion from "@/pages/Promotion";
 import RecentIngests from "@/pages/RecentIngests";
 import RuntimeDetail from "@/pages/RuntimeDetail";
+import Redeye from "@/pages/Redeye";
 import "@/App.css";
 
 function Protected({ children }) {
@@ -54,6 +55,7 @@ function App() {
             <Route path="promotion" element={<Promotion />} />
             <Route path="recent" element={<RecentIngests />} />
             <Route path="runtime/:runtime" element={<RuntimeDetail />} />
+            <Route path="redeye" element={<Redeye />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
