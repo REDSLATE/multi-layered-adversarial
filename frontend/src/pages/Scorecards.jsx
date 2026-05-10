@@ -211,6 +211,51 @@ function ScorecardPanel({ runtime, card }) {
             </div>
           )}
 
+          {runtime === "camaro" && card.regime_breakdown && (
+            <div className="px-4 py-3 border-b border-rd-border" data-testid="camaro-regime-breakdown">
+              <div className="text-[10px] text-rd-dim uppercase tracking-widest mb-2">
+                Endorse hit rate by regime · "which stack do I trust now?"
+              </div>
+              {(card.regime_breakdown.endorse_only || []).length === 0 ? (
+                <div className="text-[11px] font-mono text-rd-dim">
+                  No endorse-tagged outcomes yet. Post opinions with{" "}
+                  <code className="text-rd-text">regime</code> and stance=endorse.
+                </div>
+              ) : (
+                <div className="border border-rd-border">
+                  <table className="w-full text-[11px] font-mono">
+                    <thead>
+                      <tr className="bg-rd-bg3 text-rd-dim uppercase tracking-widest">
+                        <th className="text-left px-2 py-1.5">Regime</th>
+                        <th className="text-right px-2 py-1.5">Endorse hit</th>
+                        <th className="text-right px-2 py-1.5">W</th>
+                        <th className="text-right px-2 py-1.5">L</th>
+                        <th className="text-right px-2 py-1.5">n</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {card.regime_breakdown.endorse_only.map((row) => (
+                        <tr key={row.regime} className="border-t border-rd-border">
+                          <td className="px-2 py-1.5 text-rd-text">
+                            {row.regime === "_untagged" ? (
+                              <span className="text-rd-dim italic">_untagged</span>
+                            ) : row.regime}
+                          </td>
+                          <td className="px-2 py-1.5 text-right" style={{ color: meta.color }}>
+                            {fmtPct(row.hit_rate)}
+                          </td>
+                          <td className="px-2 py-1.5 text-right text-rd-text">{row.wins}</td>
+                          <td className="px-2 py-1.5 text-right text-rd-text">{row.losses}</td>
+                          <td className="px-2 py-1.5 text-right text-rd-dim">{row.n}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
           {runtime === "chevelle" && (card.topic_breakdown || []).length > 0 && (
             <div className="px-4 py-3 border-b border-rd-border">
               <div className="text-[10px] text-rd-dim uppercase tracking-widest mb-2">
@@ -224,6 +269,44 @@ function ScorecardPanel({ runtime, card }) {
                     <span className="text-rd-dim">n={t.n}</span>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {runtime === "chevelle" && (card.source_breakdown || []).length > 0 && (
+            <div className="px-4 py-3 border-b border-rd-border" data-testid="chevelle-source-breakdown">
+              <div className="text-[10px] text-rd-dim uppercase tracking-widest mb-2">
+                Source reliability · evidence.source
+              </div>
+              <div className="border border-rd-border">
+                <table className="w-full text-[11px] font-mono">
+                  <thead>
+                    <tr className="bg-rd-bg3 text-rd-dim uppercase tracking-widest">
+                      <th className="text-left px-2 py-1.5">Source</th>
+                      <th className="text-right px-2 py-1.5">Hit rate</th>
+                      <th className="text-right px-2 py-1.5">W</th>
+                      <th className="text-right px-2 py-1.5">L</th>
+                      <th className="text-right px-2 py-1.5">n</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {card.source_breakdown.slice(0, 12).map((row) => (
+                      <tr key={row.source} className="border-t border-rd-border">
+                        <td className="px-2 py-1.5 text-rd-text truncate max-w-[180px]" title={row.source}>
+                          {row.source === "_unsourced" ? (
+                            <span className="text-rd-dim italic">_unsourced</span>
+                          ) : row.source}
+                        </td>
+                        <td className="px-2 py-1.5 text-right" style={{ color: meta.color }}>
+                          {fmtPct(row.hit_rate)}
+                        </td>
+                        <td className="px-2 py-1.5 text-right text-rd-text">{row.wins}</td>
+                        <td className="px-2 py-1.5 text-right text-rd-text">{row.losses}</td>
+                        <td className="px-2 py-1.5 text-right text-rd-dim">{row.n}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}

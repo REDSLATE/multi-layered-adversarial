@@ -56,6 +56,12 @@ STANCE_VALUES = (
 # value is non-empty. The closed whitelist was a learning bottleneck; gone.
 import re as _re
 _TOPIC_KIND_RE = _re.compile(r"^[a-z_][a-z0-9_]*$")
+# Market regime tag — free-form snake_case identifier, capped length.
+# Examples: "trend", "chop", "high_vol", "risk_on", "earnings_week".
+# Doctrine: the operator-controlled vocabulary; no closed whitelist so
+# Camaro can learn whatever regime decomposition turns out to be useful.
+_REGIME_RE = _re.compile(r"^[a-z_][a-z0-9_]*$")
+MAX_REGIME_LEN = 48
 
 # Hard caps — kept generous enough not to throttle learning; still bounded
 # so a single payload can't denial-of-service the layer.
@@ -80,6 +86,10 @@ class OpinionIn(BaseModel):
     body: str = Field(..., min_length=1, max_length=MAX_BODY_CHARS)
     evidence: dict = Field(default_factory=dict)
     in_reply_to: Optional[str] = None
+    # Optional market regime tag (Step 5 — Camaro command training).
+    # Snake_case identifier; brains include this so we can later compute
+    # "endorse hit rate by regime" without joining external context.
+    regime: Optional[str] = Field(default=None, max_length=MAX_REGIME_LEN)
     # ALWAYS False. Schema-rejected if anything else is sent.
     may_execute: bool = False
 
@@ -127,6 +137,18 @@ class OpinionIn(BaseModel):
             raise ValueError(
                 f"evidence exceeds {MAX_EVIDENCE_BYTES} bytes; trim before posting "
                 f"(only references — never raw internal state)"
+            )
+        return v
+
+    @field_validator("regime")
+    @classmethod
+    def _regime_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        if not _REGIME_RE.match(v):
+            raise ValueError(
+                "regime must be a snake_case identifier ([a-z_][a-z0-9_]*); "
+                f"got {v!r}"
             )
         return v
 
@@ -181,6 +203,7 @@ async def post_opinion(
         "in_reply_to": body.in_reply_to,
         "thread_root": thread_root or opinion_id,
         "depth": depth,
+        "regime": body.regime,           # optional snake_case tag; None if unset
         "may_execute": False,           # belt and braces — stored explicitly false
         "posted_at": _now_iso(),
     }

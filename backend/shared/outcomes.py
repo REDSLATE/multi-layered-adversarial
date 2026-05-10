@@ -112,6 +112,7 @@ async def post_outcome(
         "topic": opinion["topic"],
         "stance": opinion["stance"],
         "confidence": float(opinion.get("confidence", 0.5)),
+        "regime": opinion.get("regime"),   # copy regime tag for fast aggregation
         "posted_at": opinion["posted_at"],
         "resolved_at": _now_iso(),
         "resolved_by": resolved_by,
@@ -162,6 +163,7 @@ async def post_outcome_admin(
         "topic": opinion["topic"],
         "stance": opinion["stance"],
         "confidence": float(opinion.get("confidence", 0.5)),
+        "regime": opinion.get("regime"),   # copy regime tag for fast aggregation
         "posted_at": opinion["posted_at"],
         "resolved_at": _now_iso(),
         "resolved_by": user.get("email") or "operator",
@@ -288,6 +290,79 @@ def _topic_breakdown(rows: list[dict]) -> list[dict]:
     return out[:50]
 
 
+def _source_breakdown(rows: list[dict]) -> list[dict]:
+    """Chevelle source reliability (Step 3) — slice outcomes by
+    `evidence.source` key. Rows missing a source are bucketed as
+    "_unsourced" so the operator can see the gap.
+
+    Each row is expected to carry `_source` (hydrated by `_gather_rows`).
+    """
+    by_source: dict[str, list[dict]] = {}
+    for r in rows:
+        src = r.get("_source") or "_unsourced"
+        by_source.setdefault(src, []).append(r)
+    out: list[dict] = []
+    for src, items in by_source.items():
+        decisive = [r for r in items if r["actual"] in ("win", "loss")]
+        wins = sum(1 for x in decisive if x["actual"] == "win")
+        losses = sum(1 for x in decisive if x["actual"] == "loss")
+        out.append({
+            "source": src,
+            "n": len(items),
+            "decisive": len(decisive),
+            "wins": wins,
+            "losses": losses,
+            "hit_rate": round(wins / len(decisive), 4) if decisive else None,
+        })
+    # Most-used sources first — that's where reliability evidence is strongest.
+    out.sort(key=lambda x: (x["n"], x["decisive"]), reverse=True)
+    return out[:50]
+
+
+def _regime_breakdown(rows: list[dict]) -> dict:
+    """Camaro command training (Step 5) — endorse hit rate by regime.
+
+    Returns two views:
+      `overall`: hit rate per regime across ALL camaro stances
+      `endorse_only`: hit rate per regime for stance=='endorse' (the call
+                      "trust this stack now"). This is the core Camaro
+                      question — "which stack should I trust under which
+                      market regime?".
+
+    Rows missing a regime are bucketed under "_untagged" so the operator
+    can see the coverage gap.
+    """
+    overall: dict[str, list[dict]] = {}
+    endorse: dict[str, list[dict]] = {}
+    for r in rows:
+        reg = r.get("regime") or "_untagged"
+        overall.setdefault(reg, []).append(r)
+        if r.get("stance") == "endorse":
+            endorse.setdefault(reg, []).append(r)
+
+    def _summarise(buckets: dict[str, list[dict]]) -> list[dict]:
+        out: list[dict] = []
+        for reg, items in buckets.items():
+            decisive = [r for r in items if r["actual"] in ("win", "loss")]
+            wins = sum(1 for x in decisive if x["actual"] == "win")
+            losses = sum(1 for x in decisive if x["actual"] == "loss")
+            out.append({
+                "regime": reg,
+                "n": len(items),
+                "decisive": len(decisive),
+                "wins": wins,
+                "losses": losses,
+                "hit_rate": round(wins / len(decisive), 4) if decisive else None,
+            })
+        out.sort(key=lambda x: (x["n"], x["decisive"]), reverse=True)
+        return out
+
+    return {
+        "overall": _summarise(overall),
+        "endorse_only": _summarise(endorse),
+    }
+
+
 # ──────────────────────── scorecard builder ────────────────────────
 
 async def _gather_rows(runtime: str, since: Optional[str]) -> list[dict]:
@@ -313,6 +388,19 @@ async def _gather_rows(runtime: str, since: Optional[str]) -> list[dict]:
                 r["_alpha_alignment"] = (ev_by_id.get(r["opinion_id"]) or {}).get(
                     "alpha_alignment"
                 )
+    elif runtime == "chevelle":
+        # Hydrate evidence.source for source-reliability breakdown (Step 3).
+        ids = [r["opinion_id"] for r in rows]
+        if ids:
+            opinions = await db[SHARED_OPINIONS].find(
+                {"opinion_id": {"$in": ids}}, {"_id": 0, "opinion_id": 1, "evidence": 1}
+            ).to_list(len(ids))
+            ev_by_id = {o["opinion_id"]: (o.get("evidence") or {}) for o in opinions}
+            for r in rows:
+                src = (ev_by_id.get(r["opinion_id"]) or {}).get("source")
+                # Normalise: anything non-string becomes None so the unsourced
+                # bucket is consistent.
+                r["_source"] = src if isinstance(src, str) and src else None
     return rows
 
 
@@ -347,10 +435,16 @@ def _build_scorecard(runtime: str, rows: list[dict]) -> dict:
         for r in rows:
             by_stance.setdefault(r["stance"], []).append(r)
         base["per_stance"] = {s: _hit_rate(items) for s, items in by_stance.items()}
+        # Step 5 — endorse hit rate by regime. Surfaces "which stack do I
+        # trust under which market regime?".
+        base["regime_breakdown"] = _regime_breakdown(rows)
     elif runtime == "chevelle":
         base["lens"] = "source_reliability"
         base["question_answered"] = "Which outside signals are reliable?"
         base["topic_breakdown"] = _topic_breakdown(rows)
+        # Step 3 — slice by evidence.source so reliability is per-source,
+        # not just per-topic.
+        base["source_breakdown"] = _source_breakdown(rows)
     else:
         base["lens"] = "generic"
     return base

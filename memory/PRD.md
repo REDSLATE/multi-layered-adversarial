@@ -70,6 +70,24 @@ here.
   ALPHA vs REDEYE = BLAZING with 11 decisive (45%/55%) — the dual-axis
   read separates skill from friction so the operator can tell where to
   focus learning vs where doctrine itself may need rethinking.
+- **Regime + Source slicing (Steps 3 & 5)** (2026-02-09, after Conflict Memory)
+  - `OpinionIn` gains optional top-level `regime` field (snake_case
+    identifier, max 48 chars; `422` on garbage). Stored on each opinion
+    and copied onto the outcome doc at resolve-time so aggregation is
+    a single query.
+  - Camaro scorecard (`runtime=camaro`) gains
+    `regime_breakdown.{overall, endorse_only}` — answers "which stack
+    do I trust under which regime?". Stance-stratified; endorse-only is
+    the headline.
+  - Chevelle scorecard (`runtime=chevelle`) gains `source_breakdown`
+    keyed off each opinion's `evidence.source` (with `_unsourced`
+    catch-all bucket). Sits alongside `topic_breakdown`.
+  - Frontend (`Scorecards.jsx`) renders both panels with sortable
+    hit-rate / wins / losses / n tables.
+  - Patch-kit doc: `/app/runtime_patch_kit/REGIME_AND_SOURCE_TAGGING.md`
+    explains the tagging contract for Camaro and Chevelle sidecars.
+  - Tests: `/app/backend/tests/test_regime_and_source.py` (5/5 PASS).
+    Total backend pytest = 98/98.
 - **Doctrine loosening (2026-02-09)**: communication is unrestricted.
   Stance vocabulary expanded (added `agree`, `disagree`, `refine`,
   `retract`, `hypothesis`). Topic kinds permissive (any
