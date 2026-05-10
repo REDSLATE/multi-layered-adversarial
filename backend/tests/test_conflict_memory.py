@@ -250,6 +250,23 @@ class TestPairScorecard:
         assert d["decisive"] >= 0
         assert (d["a_wins"] + d["b_wins"]) == d["decisive"]
 
+    def test_pair_scorecard_includes_temperature_and_heat(self):
+        tok = _login()
+        r = requests.get(
+            f"{BASE_URL}/api/shared/conflicts/pair-scorecard?a=alpha&b=redeye",
+            headers=_hdr(tok), timeout=20,
+        )
+        d = r.json()
+        # Temperature block present with three windows
+        assert "temperature" in d
+        for window in ("24h", "7d", "30d"):
+            assert window in d["temperature"]
+            t = d["temperature"][window]
+            assert "conflicts" in t and "decisive" in t and "stale_or_open" in t
+            assert t["decisive"] + t["stale_or_open"] == t["conflicts"]
+        # Heat band present and one of the known values
+        assert d["heat"] in ("cold", "cool", "warm", "hot", "blazing")
+
     def test_pair_scorecard_invalid_runtime(self):
         tok = _login()
         r = requests.get(

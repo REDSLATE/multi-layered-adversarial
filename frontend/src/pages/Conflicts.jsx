@@ -16,6 +16,14 @@ const STATUS_META = {
   stale:    { color: "#A1A1AA", label: "STALE" },
 };
 
+const HEAT_META = {
+  cold:    { color: "#52525B", label: "COLD",    note: "no recent disagreements" },
+  cool:    { color: "#3B82F6", label: "COOL",    note: "occasional friction" },
+  warm:    { color: "#FBBF24", label: "WARM",    note: "regular friction" },
+  hot:     { color: "#F97316", label: "HOT",     note: "high friction · learning opportunity" },
+  blazing: { color: "#DC2626", label: "BLAZING", note: "intense friction · doctrine review?" },
+};
+
 const PAIRS = [
   ["alpha", "redeye"],
   ["alpha", "camaro"],
@@ -95,7 +103,17 @@ export default function Conflicts() {
 
       {/* Pair scorecards */}
       <Card className="mb-4" testid="pair-scorecards">
-        <div className="label-eyebrow mb-3">Pair scorecards · who is right when contradicting whom</div>
+        <div className="flex items-baseline justify-between mb-3">
+          <div className="label-eyebrow">Pair scorecards · skill (win rate) + friction (heat)</div>
+          <div className="flex items-center gap-1.5 text-[10px] text-rd-dim">
+            {Object.entries(HEAT_META).map(([k, m]) => (
+              <span key={k} className="flex items-center gap-1">
+                <span className="inline-block w-2 h-2" style={{ background: m.color }} />
+                <span className="uppercase tracking-widest">{m.label.toLowerCase()}</span>
+              </span>
+            ))}
+          </div>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
           {PAIRS.map(([a, b]) => {
             const p = pairs[`${a}:${b}`];
@@ -108,12 +126,27 @@ export default function Conflicts() {
                   <span style={{ color: ma.color }} className="font-bold">{ma.label}</span>
                   <span className="text-rd-dim">vs</span>
                   <span style={{ color: mb.color }} className="font-bold">{mb.label}</span>
-                  <span className="ml-auto text-[10px] text-rd-dim uppercase tracking-widest">
-                    decisive · {decisive}
+                  <span className="ml-auto">
+                    <Badge color={(HEAT_META[p.heat] || HEAT_META.cold).color} testid={`heat-${a}-${b}`}>
+                      {(HEAT_META[p.heat] || HEAT_META.cold).label}
+                    </Badge>
                   </span>
                 </div>
+
+                {/* Temperature row — friction over rolling windows */}
+                <div className="flex items-center gap-3 text-[10px] font-mono text-rd-dim mb-2">
+                  <span>24h · <span className="text-rd-text">{p.temperature?.["24h"]?.conflicts ?? 0}</span></span>
+                  <span>7d · <span className="text-rd-text">{p.temperature?.["7d"]?.conflicts ?? 0}</span></span>
+                  <span>30d · <span className="text-rd-text">{p.temperature?.["30d"]?.conflicts ?? 0}</span></span>
+                  <span className="ml-auto uppercase tracking-widest">decisive · {decisive}</span>
+                </div>
+
                 {decisive === 0 ? (
-                  <div className="text-[10px] text-rd-dim font-mono">no resolved disagreements yet</div>
+                  <div className="text-[10px] text-rd-dim font-mono">
+                    {p.heat === "cold"
+                      ? "no resolved disagreements yet"
+                      : "fights logged · awaiting outcomes"}
+                  </div>
                 ) : (
                   <div className="space-y-1">
                     <Bar label={ma.label} pct={p.a_win_rate} color={ma.color} count={p.a_wins} />

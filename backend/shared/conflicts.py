@@ -298,7 +298,14 @@ async def pair_scorecard(
     _user: dict = Depends(get_current_user),
 ):
     """X-vs-Y scorecard: of resolved conflicts where these two brains
-    disagreed, who was right and how often?"""
+    disagreed, who was right and how often?
+
+    Also returns a `temperature` block — how often this pair has been in
+    opposing stances over rolling windows. Friction, not skill. A pair
+    that fights a lot AND has a clear winner is where to focus learning;
+    a pair that fights a lot with no clear winner is where the doctrine
+    itself may need rethinking.
+    """
     if a not in DISCUSSION_PARTICIPANTS or b not in DISCUSSION_PARTICIPANTS:
         raise HTTPException(
             status_code=400,
@@ -321,6 +328,50 @@ async def pair_scorecard(
     a_wins = sum(1 for c in items if c.get("winner") == a)
     b_wins = sum(1 for c in items if c.get("winner") == b)
     decisive = a_wins + b_wins
+
+    # ── Temperature: count ALL conflicts (any status) for this pair over
+    # rolling windows. Excludes "stale" from decisive counts but includes
+    # them in raw conflict counts because friction == "they fought",
+    # regardless of who won.
+    now = datetime.now(timezone.utc)
+    windows = {
+        "24h": (now - timedelta(hours=24)).isoformat(),
+        "7d":  (now - timedelta(days=7)).isoformat(),
+        "30d": (now - timedelta(days=30)).isoformat(),
+    }
+    temperature: dict = {}
+    for label, since_iso in windows.items():
+        window_q = {
+            "$and": [
+                {"participants.runtime": a},
+                {"participants.runtime": b},
+                {"detected_at": {"$gte": since_iso}},
+            ],
+        }
+        n = await db[SHARED_CONFLICTS].count_documents(window_q)
+        decisive_n = await db[SHARED_CONFLICTS].count_documents(
+            {**window_q, "status": "resolved"}
+        )
+        temperature[label] = {
+            "conflicts": n,
+            "decisive": decisive_n,
+            "stale_or_open": n - decisive_n,
+        }
+
+    # Heat band based on 7d frequency. Calibrated to be useful at low N
+    # without screaming "hot" the moment two brains disagree once.
+    seven_d = temperature["7d"]["conflicts"]
+    if seven_d == 0:
+        heat = "cold"
+    elif seven_d < 3:
+        heat = "cool"
+    elif seven_d < 8:
+        heat = "warm"
+    elif seven_d < 20:
+        heat = "hot"
+    else:
+        heat = "blazing"
+
     return {
         "pair": [a, b],
         "decisive": decisive,
@@ -329,6 +380,8 @@ async def pair_scorecard(
         "a_win_rate": round(a_wins / decisive, 4) if decisive else None,
         "b_win_rate": round(b_wins / decisive, 4) if decisive else None,
         "recent": items[:25],
+        "temperature": temperature,
+        "heat": heat,
         "doctrine": (
             "Pair scorecards are descriptive. They do not modify any "
             "brain's authority. Communication is unrestricted; trading is "

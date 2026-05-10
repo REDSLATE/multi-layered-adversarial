@@ -65,7 +65,11 @@ here.
   resolved, the conflict closes with the win-side as winner (or stale if
   neither won). Manual operator override path. Pair-scorecards show "X
   is right Y% of the times when contradicting Z" across all six pairs.
-  Doctrine line on every payload.
+  **Pair temperature** — rolling 24h/7d/30d conflict counts surfaced as
+  a heat band (cold/cool/warm/hot/blazing). Live data already reads
+  ALPHA vs REDEYE = BLAZING with 11 decisive (45%/55%) — the dual-axis
+  read separates skill from friction so the operator can tell where to
+  focus learning vs where doctrine itself may need rethinking.
 - **Doctrine loosening (2026-02-09)**: communication is unrestricted.
   Stance vocabulary expanded (added `agree`, `disagree`, `refine`,
   `retract`, `hypothesis`). Topic kinds permissive (any
