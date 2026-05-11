@@ -207,6 +207,37 @@ here.
     historical correctness — live and replay returns at different
     timestamps give different values from the same DB state.
   - Total backend pytest = **137/137**.
+- **Brain Roster — dynamic role assignment** (2026-02-09)
+  - Four roles: `decider`, `executor`, `governor`, `advisor`. Four
+    brains: alpha, camaro, chevelle, redeye. Operator assigns 1:1.
+    Defaults match doctrine (camaro/alpha/chevelle/redeye in role order).
+  - Backend: `/api/admin/roster` (GET) + `/assign` + `/swap` + `/reset`
+    + `/audit`. Operator JWT auth. Singleton doc in MongoDB; audit log
+    appends every change.
+  - Doctrine guard: the roster is **descriptive metadata only**.
+    `may_execute` remains schema-pinned False on every endpoint and
+    every patch kit regardless of which brain holds "executor". The
+    role labels record operator intent ("if execution were enabled,
+    this brain would carry the orders") not authority.
+  - Assignment behavior: putting a brain into a new role automatically
+    vacates its previous role (no auto-fill — operator decides).
+    `brain=None` explicitly vacates a role.
+  - Opinion stamping: when any opinion is ingested, the brain's current
+    role is captured into `posted_as` on the opinion doc. Best-effort
+    (roster lookup failures don't block opinion writes). Lets the
+    operator later see "Camaro endorsed *as decider*" vs.
+    "Camaro endorsed *as advisor*" after a role change.
+  - Frontend: `RosterPanel.jsx` on the Mission page (above the Feeder
+    slots). Four role columns showing current occupant + role
+    description; click "change" to swap in another brain; "vacate" to
+    empty a role; "reset" restores defaults. Picker warns if a chosen
+    brain currently holds a different role so the operator sees the
+    cascade before committing.
+  - Tests: `/app/backend/tests/test_roster.py` (12/12 PASS) — defaults,
+    assign + auto-vacate, swap, swap-same-role rejection, bad role/brain
+    422, reset, audit-log capture, auth required, opinion stamping with
+    posted_as, posted_as reflects post-swap roster.
+  - Total backend pytest = **149/149**.
 - **Doctrine loosening (2026-02-09)**: communication is unrestricted.
   Stance vocabulary expanded (added `agree`, `disagree`, `refine`,
   `retract`, `hypothesis`). Topic kinds permissive (any

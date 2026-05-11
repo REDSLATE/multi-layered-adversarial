@@ -50,3 +50,6 @@ async def ensure_indexes() -> None:
 
     # Kraken connection — singleton credential doc + append-only audit log
     await db.kraken_audit_log.create_index([("ts", -1)])
+
+    # Brain roster — append-only audit log of role assignments
+    await db.roster_audit_log.create_index([("ts", -1)])

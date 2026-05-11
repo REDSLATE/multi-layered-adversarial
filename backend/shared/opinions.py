@@ -192,6 +192,15 @@ async def post_opinion(
         thread_root = None  # filled in after insert with own opinion_id
 
     opinion_id = str(uuid.uuid4())
+    # Look up the brain's current role at posting time. Best-effort —
+    # roster failures must never block an opinion.
+    posted_as: Optional[str] = None
+    try:
+        from shared.roster import get_role_of  # noqa: WPS433
+        posted_as = await get_role_of(body.runtime)
+    except Exception:  # noqa: BLE001
+        posted_as = None
+
     doc = {
         "opinion_id": opinion_id,
         "runtime": body.runtime,
@@ -204,6 +213,7 @@ async def post_opinion(
         "thread_root": thread_root or opinion_id,
         "depth": depth,
         "regime": body.regime,           # optional snake_case tag; None if unset
+        "posted_as": posted_as,          # role from live roster at post time
         "may_execute": False,           # belt and braces — stored explicitly false
         "posted_at": _now_iso(),
     }

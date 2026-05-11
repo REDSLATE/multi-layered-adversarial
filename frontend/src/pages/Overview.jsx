@@ -5,6 +5,7 @@ import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
 import { ArrowUpRight } from "@phosphor-icons/react";
 import TechnicalsPanel from "@/components/TechnicalsPanel";
 import FeedersStrip from "@/components/FeedersStrip";
+import RosterPanel from "@/components/RosterPanel";
 
 export default function Overview() {
   const [overview, setOverview] = useState(null);
@@ -153,6 +154,7 @@ export default function Overview() {
           </div>
 
           {/* Shared Technical Feed — Mission-page panel */}
+          <RosterPanel />
           <FeedersStrip />
           <div className="mb-6">
             <TechnicalsPanel />

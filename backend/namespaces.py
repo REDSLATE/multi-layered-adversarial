@@ -40,6 +40,17 @@ SHARED_INDICATOR_SNAPSHOTS = "shared_indicator_snapshots"
 KRAKEN_CREDENTIALS = "kraken_credentials"
 KRAKEN_AUDIT_LOG = "kraken_audit_log"
 
+# Brain Roster — dynamic role assignment across the four brains.
+# Doctrine: the roster is descriptive metadata. Assigning Camaro to
+# "executor" does NOT grant Camaro execution authority. `may_execute`
+# remains schema-pinned False on every endpoint, every patch kit. The
+# roster simply records "if execution were enabled, this is the brain
+# the operator currently trusts in that seat." Roles: decider, executor,
+# governor, advisor. Defaults match the original doctrine; swappable on
+# demand by the operator.
+BRAIN_ROSTER = "brain_roster"
+ROSTER_AUDIT_LOG = "roster_audit_log"
+
 RUNTIMES = ("alpha", "camaro", "chevelle")
 
 # Advisors are not on the trading ladder. They speak (post opinions) but
