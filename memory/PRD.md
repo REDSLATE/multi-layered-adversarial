@@ -120,6 +120,22 @@ here.
     indicator math fixtures, idempotency, batch ingest, feeder-auth
     rejection paths, operator/runtime read shape, symbol 404.
   - Total backend pytest = **118/118**.
+- **Feeder Slots strip** (2026-02-09, follow-up)
+  - `GET /api/shared/technical/feeders` aggregates per-feeder status:
+    last_bar_ts, symbol coverage, tf coverage, bar count, configured /
+    awaiting / fresh / stale / live. tf-aware staleness (1h = 24h
+    window, 1d = 48h window).
+  - `FeedersStrip.jsx` Mission-page component — three slot cards
+    (Kraken Pro headline, ThinkOrSwim, Manual). Click to expand setup
+    details: endpoint URL, X-Feeder-Token env-var name, source field
+    value, currently-feeding symbols/tfs, copy-to-clipboard helpers, and
+    a pointer to the patch-kit doc.
+  - **Login bug fix**: replaced the axios client in `lib/api.js` with a
+    native-fetch shim (drop-in API surface — `api.get/post/put/delete`
+    return `{data}`, errors expose `err.response`). axios 1.x's XHR
+    adapter intermittently hung under the Cloudflare-fronted preview
+    deploy. Also disabled PostHog session recording (it was wrapping
+    fetch for replay).
 - **Doctrine loosening (2026-02-09)**: communication is unrestricted.
   Stance vocabulary expanded (added `agree`, `disagree`, `refine`,
   `retract`, `hypothesis`). Topic kinds permissive (any

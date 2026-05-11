@@ -273,6 +273,84 @@ async def list_symbols(
     return {"items": docs, "count": len(docs)}
 
 
+@router.get("/shared/technical/feeders")
+async def list_feeders(
+    _user: dict = Depends(get_current_user),
+):
+    """Per-feeder status overview for the Mission Control feeders strip.
+
+    For each configured feeder (kraken_pro / thinkorswim / manual), returns:
+      - configured: is the env-var token set?
+      - status: live | stale | awaiting | unconfigured
+      - last_bar_ts: most recent bar timestamp this feeder has produced
+      - symbols: list of symbols this feeder is feeding (capped at 20)
+      - bars_count: total bars stored from this feeder
+    Live/stale threshold is tf-aware — a 1h feed that hasn't ingested in
+    24h is "stale"; a 1d feed gets a 48h grace period.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    now = datetime.now(timezone.utc)
+
+    # Group bars by source to get last_bar_ts + symbol coverage.
+    pipeline = [
+        {"$group": {
+            "_id": "$source",
+            "last_bar_ts": {"$max": "$ts"},
+            "bars_count": {"$sum": 1},
+            "symbols": {"$addToSet": "$symbol"},
+            "tfs": {"$addToSet": "$tf"},
+        }},
+    ]
+    agg = await db[SHARED_OHLCV_BARS].aggregate(pipeline).to_list(50)
+    by_source = {a["_id"]: a for a in agg}
+
+    items: list[dict] = []
+    for key, env_key in FEEDERS.items():
+        configured = bool(os.environ.get(env_key))
+        info = by_source.get(key)
+
+        if info:
+            last_ts_str = info["last_bar_ts"]
+            try:
+                last_ts = datetime.fromisoformat(last_ts_str.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                last_ts = None
+            tfs = set(info.get("tfs", []))
+            # Pick the most permissive stale threshold — if the feeder is
+            # carrying daily bars, give a 48h window; otherwise 24h.
+            stale_after = timedelta(hours=48 if "1d" in tfs else 24)
+            age = (now - last_ts) if last_ts else None
+            if age is None:
+                status = "unknown"
+            elif age <= timedelta(hours=2 if "1d" not in tfs else 26):
+                status = "live"
+            elif age <= stale_after:
+                status = "fresh"
+            else:
+                status = "stale"
+            symbols = sorted(info.get("symbols", []))[:20]
+            bars_count = info["bars_count"]
+        else:
+            status = "awaiting" if configured else "unconfigured"
+            last_ts_str = None
+            symbols = []
+            bars_count = 0
+
+        items.append({
+            "key": key,
+            "env_key": env_key,
+            "configured": configured,
+            "status": status,
+            "last_bar_ts": last_ts_str,
+            "symbols": symbols,
+            "symbols_count": len(symbols),
+            "bars_count": bars_count,
+            "tfs": sorted(info.get("tfs", [])) if info else [],
+        })
+    return {"items": items, "endpoint": "/api/ingest/ohlcv"}
+
+
 @router.get("/shared/technical/{symbol:path}")
 async def get_technical(
     symbol: str,
