@@ -21,13 +21,76 @@ export function setToken(t) {
   }
 }
 
-export const api = axios.create({ baseURL: API });
+// ──────────────────────────────────────────────────────────────────────
+// fetch-based client. Replaces axios because axios 1.x's XHR adapter
+// intermittently hangs (request sent, response never returns to the JS
+// promise) under our Cloudflare-fronted preview deploy. Surface matches
+// what callers already use: api.get/post/put/delete returning {data},
+// errors with shape err.response.{status,data}.
+// ──────────────────────────────────────────────────────────────────────
 
-api.interceptors.request.use((cfg) => {
-  const t = getToken();
-  if (t) cfg.headers = { ...cfg.headers, Authorization: `Bearer ${t}` };
-  return cfg;
-});
+function buildUrl(path, params) {
+  let url = path.startsWith("http") ? path : `${API}${path.startsWith("/") ? path : `/${path}`}`;
+  if (params && Object.keys(params).length) {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null) continue;
+      qs.append(k, String(v));
+    }
+    const sep = url.includes("?") ? "&" : "?";
+    url += sep + qs.toString();
+  }
+  return url;
+}
+
+async function request(method, path, body, cfg = {}) {
+  const url = buildUrl(path, cfg.params);
+  const headers = { ...(cfg.headers || {}) };
+  const tok = getToken();
+  if (tok && !headers.Authorization) headers.Authorization = `Bearer ${tok}`;
+  if (body !== undefined && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (e) {
+    const err = new Error(e.message || "Network error");
+    err.response = null;
+    throw err;
+  }
+
+  const ct = resp.headers.get("content-type") || "";
+  let data;
+  if (ct.includes("application/json")) {
+    try { data = await resp.json(); } catch { data = null; }
+  } else {
+    try { data = await resp.text(); } catch { data = null; }
+  }
+
+  if (!resp.ok) {
+    const err = new Error(`HTTP ${resp.status}`);
+    err.response = { status: resp.status, data };
+    throw err;
+  }
+  return { data, status: resp.status };
+}
+
+export const api = {
+  get:    (path, cfg) => request("GET", path, undefined, cfg),
+  post:   (path, body, cfg) => request("POST", path, body ?? {}, cfg),
+  put:    (path, body, cfg) => request("PUT", path, body ?? {}, cfg),
+  patch:  (path, body, cfg) => request("PATCH", path, body ?? {}, cfg),
+  delete: (path, cfg) => request("DELETE", path, undefined, cfg),
+};
+
+// Keep axios import alive so existing usages of `axios` directly (if any
+// future code reaches for it) still resolve. The exported `api` above is
+// the only client used by the app today.
+export const _axios = axios;
 
 export function formatApiErrorDetail(detail) {
   if (detail == null) return "Something went wrong. Please try again.";

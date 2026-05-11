@@ -148,10 +148,12 @@
             posthog.init("phc_xAvL2Iq4tFmANRE7kzbKwaSqp1HJjN7x48s3vr0CMjs", {
                 api_host: "https://us.i.posthog.com",
                 person_profiles: "identified_only", // or 'always' to create profiles for anonymous users as well,
-                session_recording: {
-                    recordCrossOriginIframes: true,
-                    capturePerformance: false,
-                },
+                // Session recording wraps window.fetch / XHR for replay. Under
+                // our Cloudflare-fronted deploy this wrapper intermittently
+                // hangs ingest-side requests (login etc.), so we disable it.
+                // Analytics events still flow.
+                disable_session_recording: true,
+                capture_performance: false,
             });
         </script>
     </body>
