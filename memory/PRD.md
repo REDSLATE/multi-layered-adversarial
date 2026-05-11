@@ -260,6 +260,52 @@ here.
     a 4×4 ALLOW/BLOCK matrix; ineligible brains are greyed out and
     marked "BLOCKED" in the role picker.
   - Total backend pytest = **156/156**.
+- **IBKR Web API integration — Phase 1 (read-only)** (2026-02-11)
+  - `shared/ibkr.py` — httpx OAuth 2.0 Bearer client against
+    `api.ibkr.com`. Probe (`/iserver/auth/status` + `/iserver/accounts`),
+    test, accounts, positions, tickle (single tick + 5-minute background
+    loop), disconnect, execution-toggle gate, audit log.
+  - Encrypted token storage uses the same Fernet path as Kraken
+    (`shared/credentials.py`). The token is never returned past
+    `redact()`; the encrypted blob lives in `ibkr_credentials`.
+  - Endpoints (`/api/admin/ibkr/*`): connect, status, test, tickle,
+    accounts, positions, disconnect, execution, audit. Every endpoint
+    requires operator JWT.
+  - Tickler: background asyncio task pings `/v1/api/tickle` every
+    5 minutes so the IBKR session does not time out. Started on save,
+    stopped on disconnect. Auto-revives on app boot if creds exist
+    (lifespan hook in `server.py`).
+  - Doctrine: trade endpoints (`/iserver/account/.../orders`, `/reply/*`)
+    are **NOT** wired by this router. `execution_enabled` defaults False
+    and is groundwork for the eventual Phase 2 dual-sign promotion.
+  - Frontend: `IBKRConnect.jsx` modal under the new IBKR broker slot in
+    `FeedersStrip.jsx` — paste access_token, optional account_id, base_url;
+    test-and-connect; connected view shows auth status, tickler state,
+    detected accounts, positions loader, exec-toggle confirm-phrase flow.
+  - Tests: `/app/backend/tests/test_ibkr.py` (14/14 PASS) — disconnected
+    status shape, schema rejection paths (short token, missing token,
+    non-https base_url), 404s on every endpoint when unconfigured,
+    disconnect idempotency, execution-toggle confirm-phrase guard
+    against a seeded credential doc, audit log capture, JWT auth required
+    on every admin path, `get_active()` returns None when nothing stored.
+  - Total backend pytest = **170/170**.
+- **Heat-map matrix — at-a-glance pair view** (2026-02-11)
+  - Backend: `GET /api/shared/conflicts/matrix` aggregates ALL six
+    brain-pair combinations into a single payload: skill (win rate,
+    a_wins, b_wins, decisive), friction (temperature over 24h/7d/30d),
+    and a 7d-derived heat band (cold/cool/warm/hot/blazing). One
+    round-trip replaces N pair-scorecard fetches on the dashboard.
+    Operator JWT required.
+  - Frontend: `HeatMatrix` table on `Conflicts.jsx` above the existing
+    pair scorecards — 4×4 grid where the row brain's win rate over the
+    column brain is the headline number, the cell background hue is the
+    7d friction colour, and the subline shows wins/decisive · 7d count.
+    Diagonal shows `—`. Tooltip carries the raw counts.
+  - Tests: `/app/backend/tests/test_conflict_matrix.py` (3/3 PASS) —
+    response shape (6 cells for 4 brains, all required keys, no dupes),
+    JWT required, matrix cell values cross-match the per-pair scorecard
+    endpoint exactly (decisive, a_wins, b_wins, 7d friction, heat band).
+  - Total backend pytest = **170/170**.
 - **Doctrine loosening (2026-02-09)**: communication is unrestricted.
   Stance vocabulary expanded (added `agree`, `disagree`, `refine`,
   `retract`, `hypothesis`). Topic kinds permissive (any

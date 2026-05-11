@@ -225,6 +225,8 @@ function FeederSlot({ feeder, isOpen, onToggle, endpoint }) {
             <span className="text-rd-text">MC_URL</span> on that host. Polls run on a schedule;
             re-ingest of the same bar is idempotent.
           </div>
+            </>
+          )}
         </div>
       )}
     </div>

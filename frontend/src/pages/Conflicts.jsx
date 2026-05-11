@@ -33,9 +33,12 @@ const PAIRS = [
   ["camaro", "chevelle"],
 ];
 
+const BRAIN_ORDER = ["alpha", "camaro", "chevelle", "redeye"];
+
 export default function Conflicts() {
   const [items, setItems] = useState(null);
   const [pairs, setPairs] = useState({});
+  const [matrix, setMatrix] = useState(null);
   const [filter, setFilter] = useState({ status: "", runtime: "" });
   const [err, setErr] = useState("");
 
@@ -46,13 +49,15 @@ export default function Conflicts() {
       params.set("limit", "200");
       if (filter.status) params.set("status", filter.status);
       if (filter.runtime) params.set("runtime", filter.runtime);
-      const [conflicts, ...pairResults] = await Promise.all([
+      const [conflicts, matrixR, ...pairResults] = await Promise.all([
         api.get(`/shared/conflicts?${params.toString()}`),
+        api.get(`/shared/conflicts/matrix`),
         ...PAIRS.map(([a, b]) =>
           api.get(`/shared/conflicts/pair-scorecard?a=${a}&b=${b}`)
         ),
       ]);
       setItems(conflicts.data.items);
+      setMatrix(matrixR.data);
       const pairMap = {};
       PAIRS.forEach((p, i) => { pairMap[p.join(":")] = pairResults[i].data; });
       setPairs(pairMap);
@@ -99,6 +104,19 @@ export default function Conflicts() {
         <div className="border border-rd-danger text-rd-danger px-3 py-2 mb-4 text-xs font-mono">
           {err}
         </div>
+      )}
+
+      {/* Heat-map matrix · 4×4 at-a-glance */}
+      {matrix && (
+        <Card className="mb-4" testid="conflict-matrix">
+          <div className="flex items-baseline justify-between mb-3">
+            <div className="label-eyebrow">Heat-map · all pairs (skill diagonal · friction colour)</div>
+            <div className="text-[10px] text-rd-dim font-mono">
+              cell hue = 7d friction · number = win rate of row brain over column brain
+            </div>
+          </div>
+          <HeatMatrix matrix={matrix} />
+        </Card>
       )}
 
       {/* Pair scorecards */}
@@ -316,5 +334,99 @@ function ConflictCard({ c, onManualResolve }) {
         </div>
       )}
     </Card>
+  );
+}
+
+function HeatMatrix({ matrix }) {
+  // Build a lookup: ordered-pair key "a:b" → cell with orientation.
+  const lookup = {};
+  for (const c of matrix.cells || []) {
+    lookup[`${c.a}:${c.b}`] = c;
+  }
+  const brains = BRAIN_ORDER.filter((b) => (matrix.brains || []).includes(b));
+
+  return (
+    <div className="overflow-x-auto" data-testid="heatmap-grid">
+      <table className="text-[11px] font-mono border-collapse w-full">
+        <thead>
+          <tr>
+            <th className="p-2 text-rd-dim text-left">↓ wins vs →</th>
+            {brains.map((b) => (
+              <th
+                key={b}
+                className="p-2 text-center font-bold"
+                style={{ color: BRAIN_META[b]?.color }}
+              >
+                {BRAIN_META[b]?.label || b}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {brains.map((row) => (
+            <tr key={row}>
+              <td
+                className="p-2 font-bold border-t border-rd-border"
+                style={{ color: BRAIN_META[row]?.color }}
+              >
+                {BRAIN_META[row]?.label || row}
+              </td>
+              {brains.map((col) => {
+                if (row === col) {
+                  return (
+                    <td
+                      key={col}
+                      className="p-2 text-center text-rd-dim border-t border-rd-border bg-rd-bg2"
+                      data-testid={`heat-${row}-${col}`}
+                    >
+                      —
+                    </td>
+                  );
+                }
+                // Lookup cell — pair is stored as unordered (a < b alphabetically per backend)
+                const direct = lookup[`${row}:${col}`];
+                const flipped = lookup[`${col}:${row}`];
+                const cell = direct || flipped;
+                if (!cell) {
+                  return (
+                    <td key={col} className="p-2 text-center text-rd-dim border-t border-rd-border">·</td>
+                  );
+                }
+                const rowIsA = cell.a === row;
+                const winRate = rowIsA ? cell.a_win_rate : cell.b_win_rate;
+                const wins = rowIsA ? cell.a_wins : cell.b_wins;
+                const heatColor = (HEAT_META[cell.heat] || HEAT_META.cold).color;
+                const frictionN = cell.temperature?.["7d"]?.conflicts ?? 0;
+                return (
+                  <td
+                    key={col}
+                    className="p-2 text-center border-t border-rd-border relative"
+                    style={{
+                      background: `${heatColor}26`,
+                      borderTop: `2px solid ${heatColor}`,
+                    }}
+                    data-testid={`heat-${row}-${col}`}
+                    title={`${row.toUpperCase()} vs ${col.toUpperCase()} · 7d friction: ${frictionN} · decisive: ${cell.decisive}`}
+                  >
+                    <div
+                      className="text-rd-text font-bold"
+                      data-testid={`heat-winrate-${row}-${col}`}
+                    >
+                      {winRate == null ? "—" : `${(winRate * 100).toFixed(0)}%`}
+                    </div>
+                    <div className="text-[9px] text-rd-dim tracking-widest uppercase mt-0.5">
+                      {wins}/{cell.decisive} · {frictionN} 7d
+                    </div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="mt-2 text-[9px] text-rd-muted font-mono">
+        {matrix.doctrine}
+      </div>
+    </div>
   );
 }

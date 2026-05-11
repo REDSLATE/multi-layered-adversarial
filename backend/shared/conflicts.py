@@ -390,6 +390,98 @@ async def pair_scorecard(
     }
 
 
+# ──────────────────────── matrix (all pairs) ────────────────────────
+
+# Heat-band thresholds — must stay in sync with the per-pair scorecard
+# above (7d conflict count).
+def _heat_for(seven_d: int) -> str:
+    if seven_d == 0:
+        return "cold"
+    if seven_d < 3:
+        return "cool"
+    if seven_d < 8:
+        return "warm"
+    if seven_d < 20:
+        return "hot"
+    return "blazing"
+
+
+@router.get("/shared/conflicts/matrix")
+async def conflicts_matrix(_user: dict = Depends(get_current_user)):
+    """All-pairs heat-map aggregation.
+
+    Returns a flat list of every unordered brain pair with:
+      - decisive / a_wins / b_wins / a_win_rate / b_win_rate (skill)
+      - temperature {24h,7d,30d}.{conflicts,decisive,stale_or_open} (friction)
+      - heat band derived from 7d conflict count
+
+    One round-trip replaces N pair-scorecard fetches on the dashboard
+    and lets the operator see all six pairs as a single grid.
+    """
+    brains = list(DISCUSSION_PARTICIPANTS)
+    now = datetime.now(timezone.utc)
+    windows = {
+        "24h": (now - timedelta(hours=24)).isoformat(),
+        "7d":  (now - timedelta(days=7)).isoformat(),
+        "30d": (now - timedelta(days=30)).isoformat(),
+    }
+
+    cells: list[dict] = []
+    for i in range(len(brains)):
+        for j in range(i + 1, len(brains)):
+            a, b = brains[i], brains[j]
+            pair_q = {
+                "$and": [
+                    {"participants.runtime": a},
+                    {"participants.runtime": b},
+                ],
+            }
+            # Resolved (decisive) skill
+            resolved = await db[SHARED_CONFLICTS].find(
+                {**pair_q, "status": "resolved"},
+                {"_id": 0, "winner": 1},
+            ).to_list(2000)
+            a_wins = sum(1 for c in resolved if c.get("winner") == a)
+            b_wins = sum(1 for c in resolved if c.get("winner") == b)
+            decisive = a_wins + b_wins
+
+            # Friction over windows
+            temperature: dict = {}
+            for label, since_iso in windows.items():
+                w_q = {**pair_q, "detected_at": {"$gte": since_iso}}
+                n = await db[SHARED_CONFLICTS].count_documents(w_q)
+                decisive_n = await db[SHARED_CONFLICTS].count_documents(
+                    {**w_q, "status": "resolved"}
+                )
+                temperature[label] = {
+                    "conflicts": n,
+                    "decisive": decisive_n,
+                    "stale_or_open": n - decisive_n,
+                }
+
+            cells.append({
+                "a": a,
+                "b": b,
+                "decisive": decisive,
+                "a_wins": a_wins,
+                "b_wins": b_wins,
+                "a_win_rate": round(a_wins / decisive, 4) if decisive else None,
+                "b_win_rate": round(b_wins / decisive, 4) if decisive else None,
+                "temperature": temperature,
+                "heat": _heat_for(temperature["7d"]["conflicts"]),
+            })
+
+    return {
+        "brains": brains,
+        "cells": cells,
+        "generated_at": _now_iso(),
+        "doctrine": (
+            "Heat-map is descriptive. A blazing pair does NOT modify "
+            "authority; it tells the operator where friction concentrates."
+        ),
+    }
+
+
 @router.get("/shared/conflicts/{conflict_id}")
 async def get_conflict(
     conflict_id: str,
