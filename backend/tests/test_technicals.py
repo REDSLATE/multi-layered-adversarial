@@ -322,3 +322,66 @@ class TestIngestAndRead:
         assert r.status_code == 200
         items = r.json()["items"]
         assert any(it["symbol"] == sym and it["source"] == "thinkorswim" for it in items)
+
+    def test_replay_at_past_timestamp(self):
+        """Indicator recompute from bars ≤ as_of — confirms the audit
+        path returns historical (not live) values."""
+        sym = f"RPL{int(time.time()) % 100000}"
+        ts_series = _hour_series("2025-08-01T00:00:00+00:00", 30)
+        # Strictly rising price series — old snapshot close < new.
+        bars = [
+            _bar(sym, ts, 50.0 + i, source="thinkorswim")
+            for i, ts in enumerate(ts_series)
+        ]
+        r = requests.post(
+            f"{BASE_URL}/api/ingest/ohlcv/batch",
+            headers={"X-Feeder-Token": TOS_TOKEN, "Content-Type": "application/json"},
+            json={"bars": bars}, timeout=30,
+        )
+        assert r.status_code == 200
+
+        tok = _login()
+        # Live snapshot — should see the most recent close (50 + 29 = 79).
+        r_live = requests.get(
+            f"{BASE_URL}/api/shared/technical/{sym}",
+            params={"tf": "1h"}, headers=_hdr(tok), timeout=20,
+        )
+        assert r_live.status_code == 200
+        live_close = r_live.json()["snapshot"]["indicators"]["last_close"]
+        assert live_close == 79.0
+        assert r_live.json()["replayed"] is False
+
+        # Replay at hour 10 — should see close = 50+10 = 60.
+        as_of = ts_series[10]
+        r_replay = requests.get(
+            f"{BASE_URL}/api/shared/technical/{sym}",
+            params={"tf": "1h", "as_of": as_of}, headers=_hdr(tok), timeout=20,
+        )
+        assert r_replay.status_code == 200, r_replay.text
+        d = r_replay.json()
+        assert d["replayed"] is True
+        assert d["as_of"] == as_of
+        replay_close = d["snapshot"]["indicators"]["last_close"]
+        assert replay_close == 60.0
+        # And the replayed close is strictly less than the live one,
+        # proving we're truly recomputing as-of.
+        assert replay_close < live_close
+
+    def test_replay_404_when_no_bars_before_as_of(self):
+        tok = _login()
+        sym = f"RP4{int(time.time()) % 100000}"
+        # Ingest one bar in 2025
+        r = requests.post(
+            f"{BASE_URL}/api/ingest/ohlcv",
+            headers={"X-Feeder-Token": TOS_TOKEN, "Content-Type": "application/json"},
+            json=_bar(sym, "2025-09-01T00:00:00+00:00", 100.0, source="thinkorswim"),
+            timeout=20,
+        )
+        assert r.status_code == 200
+        # Ask for replay BEFORE the bar exists.
+        r = requests.get(
+            f"{BASE_URL}/api/shared/technical/{sym}",
+            params={"tf": "1h", "as_of": "2024-01-01T00:00:00+00:00"},
+            headers=_hdr(tok), timeout=20,
+        )
+        assert r.status_code == 404

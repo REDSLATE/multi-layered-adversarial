@@ -357,9 +357,13 @@ async def get_technical(
     tf: str = Query("1h"),
     source: Optional[str] = Query(None, description="kraken_pro|thinkorswim|manual"),
     bars: int = Query(50, ge=1, le=300),
+    as_of: Optional[str] = Query(
+        None,
+        description="ISO 8601 timestamp; recompute snapshot using bars ≤ this moment (audit replay)",
+    ),
     _user: dict = Depends(get_current_user),
 ):
-    return await _read_technical(symbol.upper(), tf, source, bars)
+    return await _read_technical(symbol.upper(), tf, source, bars, as_of)
 
 
 # ──────────────────────── read (runtime) ────────────────────────
@@ -371,6 +375,7 @@ async def runtime_get_technical(
     tf: str = Query("1h"),
     source: Optional[str] = Query(None),
     bars: int = Query(50, ge=1, le=300),
+    as_of: Optional[str] = Query(None),
     x_runtime_token: str | None = Header(default=None, alias="X-Runtime-Token"),
 ):
     """Same payload as the operator endpoint, but runtime-token auth so
@@ -383,10 +388,10 @@ async def runtime_get_technical(
             status_code=400,
             detail=f"caller must be one of {DISCUSSION_PARTICIPANTS}",
         )
-    return await _read_technical(symbol.upper(), tf, source, bars)
+    return await _read_technical(symbol.upper(), tf, source, bars, as_of)
 
 
-async def _read_technical(symbol: str, tf: str, source: Optional[str], bars_n: int) -> dict:
+async def _read_technical(symbol: str, tf: str, source: Optional[str], bars_n: int, as_of: Optional[str] = None) -> dict:
     if tf not in TIMEFRAMES:
         raise HTTPException(status_code=400, detail=f"tf must be one of {TIMEFRAMES}")
 
@@ -406,27 +411,69 @@ async def _read_technical(symbol: str, tf: str, source: Optional[str], bars_n: i
     elif source not in FEEDERS:
         raise HTTPException(status_code=400, detail=f"source must be one of {tuple(FEEDERS)}")
 
-    snap = await db[SHARED_INDICATOR_SNAPSHOTS].find_one(
-        {"source": source, "symbol": symbol, "tf": tf}, {"_id": 0},
-    )
-    if not snap:
-        raise HTTPException(
-            status_code=404, detail=f"no snapshot for {symbol} {tf} via {source}",
+    # ────────────────────── live (no as_of) ──────────────────────
+    if not as_of:
+        snap = await db[SHARED_INDICATOR_SNAPSHOTS].find_one(
+            {"source": source, "symbol": symbol, "tf": tf}, {"_id": 0},
         )
+        if not snap:
+            raise HTTPException(
+                status_code=404, detail=f"no snapshot for {symbol} {tf} via {source}",
+            )
 
-    tail = await db[SHARED_OHLCV_BARS].find(
-        {"source": source, "symbol": symbol, "tf": tf}, {"_id": 0},
-    ).sort("ts", -1).to_list(bars_n)
-    tail.reverse()
+        tail = await db[SHARED_OHLCV_BARS].find(
+            {"source": source, "symbol": symbol, "tf": tf}, {"_id": 0},
+        ).sort("ts", -1).to_list(bars_n)
+        tail.reverse()
 
+        return {
+            "source": source,
+            "symbol": symbol,
+            "tf": tf,
+            "bars": tail,
+            "snapshot": snap,
+            "replayed": False,
+            "doctrine": (
+                "Shared technical evidence. Same bars, four brains, four "
+                "interpretations. No execution authority is conveyed here."
+            ),
+        }
+
+    # ────────────────────── replay (as_of supplied) ──────────────────────
+    # Recompute the snapshot using ONLY bars whose ts ≤ as_of. This is the
+    # audit-replay path: brains attach evidence.technical_ref with
+    # snapshot.computed_at and we can later show the operator the exact
+    # numbers the brain consulted.
+    bars = await db[SHARED_OHLCV_BARS].find(
+        {"source": source, "symbol": symbol, "tf": tf, "ts": {"$lte": as_of}},
+        {"_id": 0},
+    ).sort("ts", -1).to_list(SNAPSHOT_LOOKBACK_BARS)
+    bars.reverse()
+    if not bars:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no bars for {symbol} {tf} via {source} at-or-before {as_of}",
+        )
+    replayed_snap = {
+        "source": source,
+        "symbol": symbol,
+        "tf": tf,
+        "last_bar_ts": bars[-1]["ts"],
+        "computed_at": as_of,
+        "replayed": True,
+        "indicators": build_snapshot(bars),
+    }
+    tail = bars[-bars_n:]
     return {
         "source": source,
         "symbol": symbol,
         "tf": tf,
         "bars": tail,
-        "snapshot": snap,
+        "snapshot": replayed_snap,
+        "replayed": True,
+        "as_of": as_of,
         "doctrine": (
-            "Shared technical evidence. Same bars, four brains, four "
-            "interpretations. No execution authority is conveyed here."
+            "Audit replay — indicators recomputed from bars ≤ as_of using "
+            "the same pure-function pipeline as live snapshots."
         ),
     }

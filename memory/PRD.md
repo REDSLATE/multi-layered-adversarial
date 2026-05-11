@@ -182,6 +182,31 @@ here.
     schema rejection paths, execution-toggle confirm-phrase guard,
     audit-log capture.
   - Total backend pytest = **135/135**.
+- **Brain ↔ Technical Feed wiring (Option A)** (2026-02-09)
+  - Backend: `GET /api/shared/technical/{symbol}` (and runtime variant)
+    accept `as_of=<ISO 8601>`. When supplied, the indicator snapshot is
+    recomputed from retained bars ≤ as_of using the same pure pipeline
+    that builds live snapshots. Same response shape; `replayed: true`
+    flag distinguishes audit replays from live reads.
+  - Camaro patch kit (`PASTE_INTO_CAMARO_TECHNICALS.md`): explicit
+    `read_technical → decide → post_opinion` pattern showing how Camaro
+    pulls a snapshot, makes its judgement, and attaches
+    `evidence.technical_ref` (source, symbol, tf, computed_at, indicators_used)
+    plus `evidence.values` (the specific numbers it quoted) to the
+    opinion. Note documents that other brains can paste the same
+    pattern when they get sidecars later.
+  - Frontend: `AuditReplay.jsx` component injected into the Discussion
+    page. When any opinion carries `evidence.technical_ref`, the
+    operator sees a "replay technical evidence" toggle. Click → fetches
+    the historical snapshot via the new `as_of` path and renders an
+    8-cell grid (Close, RSI, MACD hist, BB position, SMAs, ATR%) with
+    quoted-vs-recomputed values side-by-side. Highlighted cells show
+    the indicators Camaro explicitly cited in `evidence.values`.
+  - Tests: `test_replay_at_past_timestamp`,
+    `test_replay_404_when_no_bars_before_as_of`. Confirm strict
+    historical correctness — live and replay returns at different
+    timestamps give different values from the same DB state.
+  - Total backend pytest = **137/137**.
 - **Doctrine loosening (2026-02-09)**: communication is unrestricted.
   Stance vocabulary expanded (added `agree`, `disagree`, `refine`,
   `retract`, `hypothesis`). Topic kinds permissive (any

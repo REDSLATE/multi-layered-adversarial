@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { api, fmtTime, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 import { ChatCircleDots, ArrowBendUpRight, Lock, MagnifyingGlass } from "@phosphor-icons/react";
+import AuditReplay from "@/components/AuditReplay";
 
 // Brain colours — must match Layout.jsx + RUNTIME_META.
 const BRAIN_META = {
@@ -194,6 +195,12 @@ export default function Discussion() {
                       <div className="mt-1.5 text-xs font-mono text-rd-text whitespace-pre-wrap leading-relaxed">
                         {m.body}
                       </div>
+                      {m.evidence?.technical_ref && (
+                        <AuditReplay
+                          technicalRef={m.evidence.technical_ref}
+                          quotedValues={m.evidence.values}
+                        />
+                      )}
                       {m.evidence && Object.keys(m.evidence).length > 0 && (
                         <details className="mt-2">
                           <summary className="text-[10px] uppercase tracking-widest text-rd-dim cursor-pointer hover:text-rd-muted flex items-center gap-1">
