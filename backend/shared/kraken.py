@@ -165,6 +165,11 @@ SCOPE_PROBES = [
 ]
 
 
+import logging
+
+logger = logging.getLogger("risedual.kraken")
+
+
 async def probe_scopes(public_key: str, private_key_b64: str) -> dict[str, bool | str]:
     """Probe the five common read scopes.
 
@@ -189,9 +194,11 @@ async def probe_scopes(public_key: str, private_key_b64: str) -> dict[str, bool 
             msg = "; ".join(e.errors)
             out[scope] = False
             errors[scope] = msg
+            logger.warning("Kraken probe %s: %s", scope, msg)
         except httpx.HTTPError as e:
             out[scope] = False
             errors[scope] = f"transport: {e}"
+            logger.warning("Kraken probe %s transport error: %s", scope, e)
         # Tiny gap to be friendly with the rate limit.
         await asyncio.sleep(0.15)
     out["_balance_preview"] = balance_preview
