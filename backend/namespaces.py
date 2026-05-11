@@ -26,6 +26,12 @@ SHARED_OPINIONS = "shared_brain_opinions"                   # threaded discussio
 SHARED_OUTCOMES = "shared_brain_outcomes"                   # operator/chevelle-resolved outcomes per opinion
 SHARED_CONFLICTS = "shared_brain_conflicts"                 # auto-detected disagreement pairs
 
+# Shared technical evidence (OHLCV + indicator snapshots; pull-only)
+# Doctrine: the technical layer is shared evidence — same bars, four
+# brains read it, each forms its own opinion. No brain owns it.
+SHARED_OHLCV_BARS = "shared_ohlcv_bars"
+SHARED_INDICATOR_SNAPSHOTS = "shared_indicator_snapshots"
+
 RUNTIMES = ("alpha", "camaro", "chevelle")
 
 # Advisors are not on the trading ladder. They speak (post opinions) but

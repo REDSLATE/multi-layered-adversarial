@@ -36,3 +36,14 @@ async def ensure_indexes() -> None:
     await db.shared_promotion_artifacts.create_index("artifact_id", unique=True)
     await db.shared_promotion_proposals.create_index([("runtime", 1), ("status", 1), ("created_at", -1)])
     await db.shared_promotion_proposals.create_index("proposal_id", unique=True)
+
+    # Shared technical evidence (OHLCV + indicators)
+    await db.shared_ohlcv_bars.create_index(
+        [("source", 1), ("symbol", 1), ("tf", 1), ("ts", -1)],
+        unique=True,
+    )
+    await db.shared_ohlcv_bars.create_index([("symbol", 1), ("tf", 1), ("ts", -1)])
+    await db.shared_indicator_snapshots.create_index(
+        [("source", 1), ("symbol", 1), ("tf", 1)],
+        unique=True,
+    )

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, RUNTIME_META, fmtTime, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
 import { ArrowUpRight } from "@phosphor-icons/react";
+import TechnicalsPanel from "@/components/TechnicalsPanel";
 
 export default function Overview() {
   const [overview, setOverview] = useState(null);
@@ -148,6 +149,11 @@ export default function Overview() {
                 </Card>
               );
             })}
+          </div>
+
+          {/* Shared Technical Feed — Mission-page panel */}
+          <div className="mb-6">
+            <TechnicalsPanel />
           </div>
 
           {/* Doctrine + Flags strip */}

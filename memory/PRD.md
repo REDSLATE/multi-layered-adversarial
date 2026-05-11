@@ -87,7 +87,39 @@ here.
   - Patch-kit doc: `/app/runtime_patch_kit/REGIME_AND_SOURCE_TAGGING.md`
     explains the tagging contract for Camaro and Chevelle sidecars.
   - Tests: `/app/backend/tests/test_regime_and_source.py` (5/5 PASS).
-    Total backend pytest = 98/98.
+- **Shared Technical Evidence Layer** (2026-02-09, replaces "per-brain charts")
+  - **Doctrine**: OHLCV + indicators are shared evidence; same bars,
+    four brains, four interpretations. No brain owns the feed.
+  - **Write path**: `POST /api/ingest/ohlcv` (single) and
+    `/api/ingest/ohlcv/batch` (up to 2000 bars) authenticated with
+    `X-Feeder-Token`. Feeders configured today: `kraken_pro` (crypto),
+    `thinkorswim` (other markets), `manual` (backfill). Each has its
+    own env-var token so revocation is one line.
+  - **Idempotency**: bars keyed on `(source, symbol, tf, ts)`. Re-ingest
+    of same key updates the bar and recomputes the snapshot.
+  - **Indicator engine**: pure-Python (`/app/backend/shared/indicators.py`)
+    — SMA(20/50/200), EMA(12/26), RSI(14), MACD(12,26,9), BBands(20,2),
+    ATR(14). Computed on ingest, stored as one snapshot per (source,
+    symbol, tf); historical bars retained for replay.
+  - **Read paths**:
+    * `GET /api/shared/technical/symbols` — universe + last-bar times.
+    * `GET /api/shared/technical/{symbol:path}?tf=&source=&bars=` —
+      operator JWT, supports slashed symbols (`BTC/USD`).
+    * `GET /api/runtime-discussion/technical/{symbol:path}?caller=&tf=`
+      — runtime-token auth so brain sidecars can pull without an
+      operator JWT. Same payload shape ⇒ replayable.
+  - **Mission-page panel**: `TechnicalsPanel.jsx` embedded on Overview
+    (no new route per operator directive). Shows the universe with
+    source/symbol/tf rows; click to expand a snapshot card (Close, RSI,
+    MACD hist, BB position, SMA20/50/200, ATR%). Polls every 20s.
+  - **Feeder kit**: `/app/runtime_patch_kit/technicals/README.md`
+    includes a complete Kraken Pro REST polling sidecar and a TOS shell
+    + the `evidence.technical_ref` audit-replay handshake brains use
+    when posting opinions that referenced the snapshot.
+  - **Tests**: `/app/backend/tests/test_technicals.py` (20/20 PASS) —
+    indicator math fixtures, idempotency, batch ingest, feeder-auth
+    rejection paths, operator/runtime read shape, symbol 404.
+  - Total backend pytest = **118/118**.
 - **Doctrine loosening (2026-02-09)**: communication is unrestricted.
   Stance vocabulary expanded (added `agree`, `disagree`, `refine`,
   `retract`, `hypothesis`). Topic kinds permissive (any
