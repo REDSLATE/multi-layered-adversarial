@@ -207,11 +207,20 @@ async def connect(body: ConnectIn, user: dict = Depends(get_current_user)):
 
     # Require at least query_funds to consider the keys valid.
     if not scopes.get("query_funds"):
+        scope_errors = scopes.get("_errors", {}) or {}
+        balance_err = scope_errors.get("query_funds", "")
+        # Surface Kraken's actual complaint so the operator can tell apart
+        # "wrong key", "bad permissions", "IP-restricted", "no funds account
+        # tier", etc.
+        kraken_says = f" — Kraken: {balance_err}" if balance_err else ""
         raise HTTPException(
             status_code=400,
             detail=(
-                "keys rejected: Balance probe returned no permission. "
-                "Verify the API key is enabled and has 'Query Funds'."
+                f"keys rejected: Balance probe denied{kraken_says}. "
+                "Most common causes: (1) wrong key (recopy from Kraken — no "
+                "spaces), (2) missing 'Query Funds' permission, "
+                "(3) IP restriction not whitelisting this server, "
+                "(4) key just created — Kraken takes ~30s to activate."
             ),
         )
 
