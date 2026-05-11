@@ -190,6 +190,136 @@ class TestRosterBasics:
         assert r.status_code in (401, 403)
 
 
+class TestEligibility:
+    def test_default_matrix(self):
+        tok = _login()
+        requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
+        r = requests.get(f"{BASE_URL}/api/admin/roster/eligibility", headers=_hdr(tok), timeout=10)
+        assert r.status_code == 200
+        m = r.json()["matrix"]
+        # Chevelle = governor only
+        assert m["chevelle"]["governor"] is True
+        assert m["chevelle"]["decider"] is False
+        assert m["chevelle"]["executor"] is False
+        assert m["chevelle"]["advisor"] is False
+        # REDEYE = advisor only
+        assert m["redeye"]["advisor"] is True
+        assert m["redeye"]["decider"] is False
+        # Alpha/Camaro = decider/executor/advisor, NOT governor
+        for b in ("alpha", "camaro"):
+            assert m[b]["governor"] is False
+            assert m[b]["decider"] is True
+            assert m[b]["executor"] is True
+            assert m[b]["advisor"] is True
+
+    def test_assign_blocked_by_default_matrix(self):
+        tok = _login()
+        _reset(tok)
+        requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
+        # REDEYE→decider is blocked by default
+        r = requests.post(
+            f"{BASE_URL}/api/admin/roster/assign",
+            headers=_hdr(tok),
+            json={"role": "decider", "brain": "redeye"},
+            timeout=10,
+        )
+        assert r.status_code == 400
+        assert "not eligible" in r.text.lower()
+
+    def test_toggle_eligibility_then_assign(self):
+        tok = _login()
+        _reset(tok)
+        requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
+        # Flip the switch
+        r = requests.post(
+            f"{BASE_URL}/api/admin/roster/eligibility",
+            headers=_hdr(tok),
+            json={"brain": "redeye", "role": "decider", "allowed": True},
+            timeout=10,
+        )
+        assert r.status_code == 200
+        # Now the assign succeeds
+        r = requests.post(
+            f"{BASE_URL}/api/admin/roster/assign",
+            headers=_hdr(tok),
+            json={"role": "decider", "brain": "redeye"},
+            timeout=10,
+        )
+        assert r.status_code == 200
+        assert r.json()["assignments"]["decider"] == "redeye"
+        # Restore
+        _reset(tok)
+        requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
+
+    def test_cannot_disallow_current_occupant(self):
+        tok = _login()
+        _reset(tok)
+        requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
+        # Camaro currently holds decider (default). Try to mark decider
+        # disallowed for camaro → 400.
+        r = requests.post(
+            f"{BASE_URL}/api/admin/roster/eligibility",
+            headers=_hdr(tok),
+            json={"brain": "camaro", "role": "decider", "allowed": False},
+            timeout=10,
+        )
+        assert r.status_code == 400
+        assert "currently occupy" in r.text.lower()
+
+    def test_swap_blocked_by_eligibility(self):
+        tok = _login()
+        _reset(tok)
+        requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
+        # Swap governor ↔ decider would put chevelle into decider
+        # (chevelle is NOT eligible for decider by default).
+        r = requests.post(
+            f"{BASE_URL}/api/admin/roster/swap",
+            headers=_hdr(tok),
+            json={"role_a": "decider", "role_b": "governor"},
+            timeout=10,
+        )
+        assert r.status_code == 400
+
+
+class TestTenure:
+    def test_tenure_response_shape(self):
+        tok = _login()
+        _reset(tok)
+        r = requests.get(f"{BASE_URL}/api/admin/roster/tenure", headers=_hdr(tok), timeout=10)
+        assert r.status_code == 200
+        d = r.json()
+        assert "per_role" in d
+        assert {row["role"] for row in d["per_role"]} == {"decider", "executor", "governor", "advisor"}
+        assert "average_tenure_days" in d
+        assert "churn_state" in d
+        assert d["churn_state"] in ("LOW", "MEDIUM", "HIGH")
+        assert "doctrine_invariant" in d
+        # Invariant must mention execution
+        assert "execution" in d["doctrine_invariant"].lower()
+
+    def test_tenure_resets_on_swap(self):
+        tok = _login()
+        _reset(tok)
+        # Move alpha into governor would fail (eligibility), so swap two
+        # eligible roles instead — decider ↔ executor.
+        before = requests.get(f"{BASE_URL}/api/admin/roster/tenure", headers=_hdr(tok), timeout=10).json()
+        before_decider_days = next(r["days_in_role"] for r in before["per_role"] if r["role"] == "decider")
+
+        requests.post(
+            f"{BASE_URL}/api/admin/roster/swap",
+            headers=_hdr(tok),
+            json={"role_a": "decider", "role_b": "executor"},
+            timeout=10,
+        )
+        after = requests.get(f"{BASE_URL}/api/admin/roster/tenure", headers=_hdr(tok), timeout=10).json()
+        after_decider_days = next(r["days_in_role"] for r in after["per_role"] if r["role"] == "decider")
+        # New occupant just entered → days_in_role is now ~0 (definitely
+        # less than whatever it was before)
+        if before_decider_days is not None:
+            assert after_decider_days < before_decider_days or after_decider_days < 0.01
+        _reset(tok)
+
+
 class TestOpinionStamping:
     def test_opinion_gets_posted_as(self):
         tok = _login()

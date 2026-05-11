@@ -233,11 +233,33 @@ here.
     empty a role; "reset" restores defaults. Picker warns if a chosen
     brain currently holds a different role so the operator sees the
     cascade before committing.
-  - Tests: `/app/backend/tests/test_roster.py` (12/12 PASS) — defaults,
+  - Tests: `/app/backend/tests/test_roster.py` (19/19 PASS) — defaults,
     assign + auto-vacate, swap, swap-same-role rejection, bad role/brain
     422, reset, audit-log capture, auth required, opinion stamping with
-    posted_as, posted_as reflects post-swap roster.
-  - Total backend pytest = **149/149**.
+    posted_as, posted_as reflects post-swap roster, **Eligibility matrix
+    defaults + assign/swap enforcement + can't-disallow-current-occupant
+    safety**, **Tenure KPI response shape + tenure resets on swap**.
+  - **Role Tenure KPI** (`/api/admin/roster/tenure`): per-role
+    `current_role_started_at`, `days_in_role`, `tenure_display`
+    ("14d" / "3h"), `previous_role`. System-level:
+    `total_swaps_90d`, `average_tenure_days`, `churn_state`
+    (LOW ≤4 swaps · MEDIUM ≤12 · HIGH >12 in 90d), `last_swap`.
+    Computed from the audit log (no new collection). Invariant
+    documented in payload: tenure must never affect execution.
+  - **Eligibility matrix** (`/api/admin/roster/eligibility`): operator
+    switches deciding which seats each brain may occupy. Defaults
+    encode training reality — chevelle = governor only, redeye =
+    advisor only, alpha/camaro = decider/executor/advisor (not
+    governor). `/assign` and `/swap` refuse to violate the matrix
+    (400 with clear error). Disabling a switch is blocked while the
+    brain currently holds that seat (vacate or swap first).
+  - **Frontend** (`RosterPanel.jsx`): tenure shown inline per role
+    ("in role: 14d") + churn badge in the header + footer KPI row
+    (avg tenure, swaps 90d, last swap age, doctrine invariant).
+    Eligibility switches toggle pane (collapsed by default) renders
+    a 4×4 ALLOW/BLOCK matrix; ineligible brains are greyed out and
+    marked "BLOCKED" in the role picker.
+  - Total backend pytest = **156/156**.
 - **Doctrine loosening (2026-02-09)**: communication is unrestricted.
   Stance vocabulary expanded (added `agree`, `disagree`, `refine`,
   `retract`, `hypothesis`). Topic kinds permissive (any

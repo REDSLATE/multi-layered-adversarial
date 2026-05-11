@@ -50,6 +50,11 @@ KRAKEN_AUDIT_LOG = "kraken_audit_log"
 # demand by the operator.
 BRAIN_ROSTER = "brain_roster"
 ROSTER_AUDIT_LOG = "roster_audit_log"
+# Per-(brain, role) eligibility matrix. Singleton doc keyed "current".
+# Doctrine: operator-controlled access list deciding WHICH seats each
+# brain is allowed to hold. Like the roster itself, this is descriptive
+# (it doesn't grant execution; it constrains role assignment).
+BRAIN_ELIGIBILITY = "brain_eligibility"
 
 RUNTIMES = ("alpha", "camaro", "chevelle")
 
