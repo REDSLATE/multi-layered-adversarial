@@ -124,7 +124,18 @@ function ConnectForm({ onSaved }) {
       setApiKey(""); setPrivateKey("");
       onSaved?.();
     } catch (e) {
-      setErr(e?.response?.data?.detail || e.message);
+      const detail = e?.response?.data?.detail || e.message;
+      // Recognise Kraken's lockout signal and surface a clear remediation.
+      if (typeof detail === "string" && detail.includes("Temporary lockout")) {
+        setErr(
+          "Kraken has temporarily locked the API key from too many failed " +
+          "auth attempts. WAIT ~15 MINUTES before retrying. After that, " +
+          "carefully re-paste both keys (triple-click → copy, no manual retype). " +
+          "If it persists, delete and regenerate the key on Kraken's side."
+        );
+      } else {
+        setErr(detail);
+      }
     } finally {
       setSubmitting(false);
     }
