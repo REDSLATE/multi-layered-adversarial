@@ -8,6 +8,7 @@ from db import db, client
 from namespaces import (
     SHARED_RECEIPTS, SHARED_MEMORY, SHARED_HEARTBEATS,
     ALPHA_DECISION_LOG, CAMARO_SHADOW_ROWS, CHEVELLE_MEMORY_LABELS, RUNTIMES,
+    SHARED_OPINIONS,
     HEARTBEAT_STALE_AFTER_SECONDS,
 )
 
@@ -23,11 +24,16 @@ async def _last_receipt_ts(runtime: str) -> str | None:
 
 
 async def _runtime_log_count(runtime: str) -> int:
+    # REDEYE was promoted from sidecar to a full seat (2026-02-11) — it
+    # has no per-brain decision-log collection like the trading runtimes,
+    # so we count its opinion posts instead. That's its primary output.
     coll = {
         "alpha": ALPHA_DECISION_LOG,
         "camaro": CAMARO_SHADOW_ROWS,
         "chevelle": CHEVELLE_MEMORY_LABELS,
-    }[runtime]
+    }.get(runtime)
+    if coll is None:
+        return await db[SHARED_OPINIONS].count_documents({"runtime": runtime})
     return await db[coll].count_documents({})
 
 

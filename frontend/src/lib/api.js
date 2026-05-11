@@ -147,6 +147,20 @@ export const RUNTIME_META = {
     roleTagline: "has the keys",
     note: "Memory firewall · readiness · calibration · audit · promotion",
   },
+  redeye: {
+    label: "REDEYE",
+    project: "REDEYE",
+    color: "#DC2626",
+    accentClass: "text-rd-redeye",
+    borderClass: "border-rd-redeye",
+    bgClass: "bg-rd-redeye",
+    enforceFlag: null,            // no per-runtime enforce flag yet
+    enforceLabel: null,
+    role: "short_advisor",
+    roleTitle: "Short-Side Advisor",
+    roleTagline: "argues the short side",
+    note: "Bearish scout · stamps short stance on every position · cannot execute",
+  },
 };
 
 export function fmtTime(iso) {

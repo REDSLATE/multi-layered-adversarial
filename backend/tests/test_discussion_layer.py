@@ -68,10 +68,12 @@ class TestRolesManifest:
         assert {"alpha", "camaro", "chevelle", "redeye"} <= runtimes
         for x in d["items"]:
             assert x["may_execute"] is False, f"{x['runtime']} must not claim execution"
-        # REDEYE is an advisor, not a runtime
+        # REDEYE is now a full-seat runtime (2026-02-11) — promoted from
+        # advisor sidecar. Its authority_state defaults to 'advisor', but
+        # kind is 'runtime'.
         redeye = next(x for x in d["items"] if x["runtime"] == "redeye")
-        assert redeye["kind"] == "advisor"
-        assert redeye["authority_state"] is None
+        assert redeye["kind"] == "runtime"
+        assert redeye["authority_state"] == "advisor"
 
     def test_runtime_view_via_x_token(self):
         r = requests.get(

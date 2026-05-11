@@ -36,8 +36,8 @@ export default function Overview() {
     <div className="reveal" data-testid="overview-page">
       <PageHeader
         eyebrow="Mission Control · Overview"
-        title="Three brains. One nervous system."
-        sub="Shared infrastructure connects Alpha, Camaro, and Chevelle. Decision authority remains isolated. All runtimes are in observation mode — receipts are recorded, nothing is executed."
+        title="Four brains. One nervous system."
+        sub="Shared infrastructure connects Alpha (executor), Camaro (decider), Chevelle (governor), and REDEYE (short advisor). Decision authority remains isolated; every brain stamps stances on a shared position primitive but only the executor seat makes the call. All runtimes are in observation mode — no trades fire."
         right={
           <div className="hidden md:flex items-center gap-2" data-testid="overview-mode-pill">
             <Badge color="#FBBF24">{flags?.deploy_mode || "—"}</Badge>
@@ -57,10 +57,16 @@ export default function Overview() {
       {ready && (
         <>
           {/* Runtime cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-6" data-testid="runtime-cards">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-6" data-testid="runtime-cards">
             {overview.runtimes.map((rt) => {
-              const meta = RUNTIME_META[rt.runtime];
-              const enforce = flags.enforce_flags[meta.enforceFlag];
+              const meta = RUNTIME_META[rt.runtime] || {
+                label: rt.runtime.toUpperCase(), project: "—", color: "#A1A1AA",
+                roleTitle: rt.role || "—", note: "",
+                enforceFlag: null,
+              };
+              const enforce = meta.enforceFlag
+                ? flags.enforce_flags[meta.enforceFlag]
+                : null;
               return (
                 <Card
                   key={rt.runtime}
@@ -110,11 +116,13 @@ export default function Overview() {
                         {rt.execution_allowed ? "AUTHORIZED" : "FORBIDDEN"}
                       </Badge>
                     } />
-                    <Row label="ENFORCE" value={
-                      <Badge color={enforce ? "#10B981" : "#71717A"}>
-                        {enforce ? "ENABLED" : "DISABLED"}
-                      </Badge>
-                    } />
+                    {meta.enforceFlag && (
+                      <Row label="ENFORCE" value={
+                        <Badge color={enforce ? "#10B981" : "#71717A"}>
+                          {enforce ? "ENABLED" : "DISABLED"}
+                        </Badge>
+                      } />
+                    )}
                     <Row label="ARTIFACT" value={
                       <span className="font-mono text-xs">
                         {rt.latest_artifact?.version || "—"}

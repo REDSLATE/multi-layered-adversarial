@@ -56,7 +56,7 @@ async def _current_authority(runtime: str) -> str:
 
 # ------------------------------- Receipts -------------------------------
 class ReceiptIn(BaseModel):
-    runtime: Literal["alpha", "camaro", "chevelle"]
+    runtime: Literal["alpha", "camaro", "chevelle", "redeye"]
     action: str = Field(..., min_length=1, max_length=64)
     intent: dict = Field(default_factory=dict)
     executed: bool = False  # observation mode forces False on the way in
@@ -108,7 +108,7 @@ async def ingest_receipt(
 
 # ----------------------------- Memory labels -----------------------------
 class MemoryLabelIn(BaseModel):
-    runtime: Literal["alpha", "camaro", "chevelle"]
+    runtime: Literal["alpha", "camaro", "chevelle", "redeye"]
     label: Literal["safe", "review", "quarantine"]
     reason: str = Field("", max_length=512)
     payload_summary: str = Field("", max_length=1024)
@@ -134,7 +134,7 @@ async def ingest_memory_label(
 
 # ----------------------------- Calibrators -----------------------------
 class CalibratorIn(BaseModel):
-    runtime: Literal["alpha", "camaro", "chevelle"]
+    runtime: Literal["alpha", "camaro", "chevelle", "redeye"]
     name: str = Field(..., min_length=1, max_length=128)
     version: str = Field(..., min_length=1, max_length=64)
     method: str = Field(..., min_length=1, max_length=64)
@@ -165,7 +165,7 @@ async def ingest_calibrator(
 
 # ----------------------------- Artifacts -----------------------------
 class ArtifactIn(BaseModel):
-    runtime: Literal["alpha", "camaro", "chevelle"]
+    runtime: Literal["alpha", "camaro", "chevelle", "redeye"]
     artifact: str = Field(..., min_length=1, max_length=128)
     version: str = Field(..., min_length=1, max_length=64)
     sha: str = Field(..., min_length=1, max_length=128)
@@ -196,7 +196,7 @@ async def ingest_artifact(
 
 # ----------------------------- Heartbeat -----------------------------
 class HeartbeatIn(BaseModel):
-    runtime: Literal["alpha", "camaro", "chevelle"]
+    runtime: Literal["alpha", "camaro", "chevelle", "redeye"]
     status: str = Field("ok", max_length=32)
     detail: dict = Field(default_factory=dict)
 
@@ -225,7 +225,7 @@ class PromotionEvidenceIn(BaseModel):
     the bar for an authority elevation. Server stores it and (if it passes
     Patent J) creates an operator proposal. Promotion never happens
     automatically — operator countersign required."""
-    runtime: Literal["alpha", "camaro", "chevelle"]
+    runtime: Literal["alpha", "camaro", "chevelle", "redeye"]
     target_authority: Literal["challenger", "advisor", "co_trader", "primary"]
     metrics: dict = Field(..., description=(
         "Required keys: ece (float), brier (float), resolved_rows (int), "

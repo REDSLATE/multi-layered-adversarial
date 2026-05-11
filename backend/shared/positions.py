@@ -1,0 +1,499 @@
+"""Position primitive — the discrete object all 4 brains argue over.
+
+Doctrine (2026-02-11):
+    A Position is "we are debating long/short on SYMBOL right now."
+    It is created by the operator (or a brain, in a future iteration);
+    every brain stamps a stance (long / short / abstain) with confidence
+    + notes; the brain in the executor seat (per Roster — default Alpha)
+    makes the final call. Phase 1 is discussion-only — no order
+    placement, no broker side-effects.
+
+State machine:
+    proposed       — created, no stances yet
+    discussing     — at least one stance posted
+    consensus_long — executor called LONG (state advance, audit-logged)
+    consensus_short— executor called SHORT
+    rejected       — executor walked away (no trade thesis)
+    stale          — auto-expires after STALE_AFTER_HOURS with no activity
+
+Doctrine guards:
+    - `may_execute` stays schema-pinned False on every endpoint.
+    - The executor's "call" is a state-machine advance, NOT a trade.
+    - Brain stance ingestion uses the existing X-Runtime-Token header
+      (per-brain). Operator stance ingestion uses the JWT path. Brains
+      cannot impersonate each other.
+    - Every state change is audit-logged with actor + before/after.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Literal, Optional
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from pydantic import BaseModel, Field, field_validator
+
+from auth import get_current_user
+from db import db
+from namespaces import (
+    DISCUSSION_PARTICIPANTS,
+    SHARED_POSITION_AUDIT,
+    SHARED_POSITION_STANCES,
+    SHARED_POSITIONS,
+)
+from runtime_auth import verify_runtime_token
+from shared.roster import get_roster
+
+
+STATE_PROPOSED = "proposed"
+STATE_DISCUSSING = "discussing"
+STATE_CONSENSUS_LONG = "consensus_long"
+STATE_CONSENSUS_SHORT = "consensus_short"
+STATE_REJECTED = "rejected"
+STATE_STALE = "stale"
+
+OPEN_STATES = frozenset({STATE_PROPOSED, STATE_DISCUSSING})
+TERMINAL_STATES = frozenset({
+    STATE_CONSENSUS_LONG, STATE_CONSENSUS_SHORT, STATE_REJECTED, STATE_STALE,
+})
+
+STANCE_LONG = "long"
+STANCE_SHORT = "short"
+STANCE_ABSTAIN = "abstain"
+VALID_STANCES = frozenset({STANCE_LONG, STANCE_SHORT, STANCE_ABSTAIN})
+
+STALE_AFTER_HOURS = 48
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def _audit(action: str, actor: str, position_id: str, payload: dict) -> None:
+    await db[SHARED_POSITION_AUDIT].insert_one({
+        "ts": _now_iso(),
+        "action": action,
+        "actor": actor,
+        "position_id": position_id,
+        "payload": payload,
+    })
+
+
+# ──────────────────────── models ────────────────────────
+
+BrainT = Literal["alpha", "camaro", "chevelle", "redeye"]
+StanceT = Literal["long", "short", "abstain"]
+DirectionT = Literal["long", "short"]
+
+
+class ProposeIn(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=32)
+    regime_tag: Optional[str] = Field(default=None, max_length=48)
+    thesis: str = Field("", max_length=2048)
+    proposed_by: str = Field(..., description="brain name or 'operator'")
+
+    @field_validator("symbol")
+    @classmethod
+    def _norm_symbol(cls, v: str) -> str:
+        return v.strip().upper()
+
+    @field_validator("proposed_by")
+    @classmethod
+    def _proposed_by_check(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v != "operator" and v not in DISCUSSION_PARTICIPANTS:
+            raise ValueError(
+                f"proposed_by must be 'operator' or one of {DISCUSSION_PARTICIPANTS}"
+            )
+        return v
+
+
+class StanceIn(BaseModel):
+    stance: StanceT
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
+    notes: str = Field("", max_length=2048)
+
+
+class OperatorStanceIn(StanceIn):
+    """Operator posting a stance on behalf of a brain (or themselves)."""
+    brain: BrainT
+
+
+class ExecutorCallIn(BaseModel):
+    """Operator advances the position via the executor seat's decision.
+    direction='long' → consensus_long; 'short' → consensus_short;
+    a separate /reject endpoint handles walk-away.
+    """
+    direction: DirectionT
+    notes: str = Field("", max_length=2048)
+
+
+class RejectIn(BaseModel):
+    notes: str = Field("", max_length=2048)
+
+
+# ──────────────────────── helpers ────────────────────────
+
+async def _executor_seat() -> Optional[str]:
+    """Returns the brain currently holding the executor seat, or None
+    if vacated."""
+    r = await get_roster()
+    return r["assignments"].get("executor")
+
+
+async def _stance_summary(position_id: str) -> dict:
+    """Aggregate per-brain stance into a compact summary for list views."""
+    rows = await db[SHARED_POSITION_STANCES].find(
+        {"position_id": position_id}, {"_id": 0},
+    ).sort("posted_at", 1).to_list(64)
+    by_brain: dict[str, dict] = {}
+    for r in rows:
+        # Latest wins (a brain can refine its stance — last one stands).
+        by_brain[r["brain"]] = r
+    counts = {"long": 0, "short": 0, "abstain": 0}
+    for stance in by_brain.values():
+        if stance["stance"] in counts:
+            counts[stance["stance"]] += 1
+    return {
+        "stances_by_brain": by_brain,
+        "stance_counts": counts,
+        "brains_engaged": len(by_brain),
+    }
+
+
+async def _hydrate(doc: dict) -> dict:
+    summary = await _stance_summary(doc["position_id"])
+    return {
+        **doc,
+        **summary,
+        "executor_seat": await _executor_seat(),
+    }
+
+
+async def _advance_state_if_needed(position_id: str) -> Optional[dict]:
+    """Auto-bump proposed → discussing on first stance."""
+    doc = await db[SHARED_POSITIONS].find_one(
+        {"position_id": position_id}, {"_id": 0},
+    )
+    if not doc:
+        return None
+    if doc["state"] == STATE_PROPOSED:
+        await db[SHARED_POSITIONS].update_one(
+            {"position_id": position_id},
+            {"$set": {
+                "state": STATE_DISCUSSING,
+                "updated_at": _now_iso(),
+            }},
+        )
+        doc["state"] = STATE_DISCUSSING
+    return doc
+
+
+# ──────────────────────── router ────────────────────────
+
+router = APIRouter(tags=["positions"])
+
+
+@router.post("/shared/positions")
+async def propose_position(
+    body: ProposeIn,
+    user: dict = Depends(get_current_user),
+):
+    """Operator (or a brain via a future runtime endpoint) opens a new
+    position for discussion. Idempotent on (symbol, day) is NOT enforced —
+    operator can open multiple positions on the same symbol intentionally
+    (different theses, different time-frames)."""
+    now = _now_iso()
+    doc = {
+        "position_id": str(uuid.uuid4()),
+        "symbol": body.symbol,
+        "regime_tag": body.regime_tag,
+        "thesis": body.thesis,
+        "proposed_by": body.proposed_by,
+        "state": STATE_PROPOSED,
+        "direction": None,
+        "executor_call_by": None,
+        "executor_call_at": None,
+        "created_at": now,
+        "updated_at": now,
+        "created_by_operator": user.get("email") or "operator",
+    }
+    await db[SHARED_POSITIONS].insert_one(doc)
+    await _audit("propose", body.proposed_by, doc["position_id"], {
+        "symbol": body.symbol, "regime_tag": body.regime_tag,
+    })
+    out = {k: v for k, v in doc.items() if k != "_id"}
+    return await _hydrate(out)
+
+
+@router.get("/shared/positions")
+async def list_positions(
+    state: Optional[str] = Query(None),
+    symbol: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    _user: dict = Depends(get_current_user),
+):
+    q: dict = {}
+    if state == "open":
+        q["state"] = {"$in": list(OPEN_STATES)}
+    elif state == "terminal":
+        q["state"] = {"$in": list(TERMINAL_STATES)}
+    elif state:
+        q["state"] = state
+    if symbol:
+        q["symbol"] = symbol.upper()
+    rows = await db[SHARED_POSITIONS].find(q, {"_id": 0}).sort(
+        "updated_at", -1,
+    ).to_list(limit)
+    hydrated = [await _hydrate(r) for r in rows]
+    return {"items": hydrated, "count": len(hydrated)}
+
+
+@router.get("/shared/positions/{position_id}")
+async def get_position(
+    position_id: str,
+    _user: dict = Depends(get_current_user),
+):
+    doc = await db[SHARED_POSITIONS].find_one(
+        {"position_id": position_id}, {"_id": 0},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="position not found")
+    out = await _hydrate(doc)
+    out["audit"] = await db[SHARED_POSITION_AUDIT].find(
+        {"position_id": position_id}, {"_id": 0},
+    ).sort("ts", -1).to_list(50)
+    return out
+
+
+# ── stance posting: operator path (JWT) ──
+
+@router.post("/admin/positions/{position_id}/stance")
+async def operator_post_stance(
+    position_id: str,
+    body: OperatorStanceIn,
+    user: dict = Depends(get_current_user),
+):
+    """Operator stamps a stance on behalf of a brain (or to override what
+    a brain wrote). Used when a brain's sidecar isn't running but the
+    operator wants the position to reflect that brain's posture."""
+    doc = await db[SHARED_POSITIONS].find_one(
+        {"position_id": position_id}, {"_id": 0},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="position not found")
+    if doc["state"] in TERMINAL_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"position is {doc['state']}; stance closed",
+        )
+
+    actor = user.get("email") or "operator"
+    return await _persist_stance(
+        position_id=position_id, brain=body.brain, stance=body.stance,
+        confidence=body.confidence, notes=body.notes,
+        posted_via="operator", actor=actor,
+    )
+
+
+# ── stance posting: brain path (X-Runtime-Token) ──
+
+@router.post("/runtime-discussion/positions/{position_id}/stance")
+async def runtime_post_stance(
+    position_id: str,
+    body: StanceIn,
+    runtime: str = Query(..., description="brain posting the stance"),
+    x_runtime_token: str | None = Header(default=None, alias="X-Runtime-Token"),
+):
+    """Brain sidecar stamps its own stance. Auth uses the per-runtime
+    ingest token (same scheme as opinions / heartbeats)."""
+    verify_runtime_token(runtime, x_runtime_token or "")
+
+    doc = await db[SHARED_POSITIONS].find_one(
+        {"position_id": position_id}, {"_id": 0},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="position not found")
+    if doc["state"] in TERMINAL_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"position is {doc['state']}; stance closed",
+        )
+
+    return await _persist_stance(
+        position_id=position_id, brain=runtime, stance=body.stance,
+        confidence=body.confidence, notes=body.notes,
+        posted_via="runtime", actor=runtime,
+    )
+
+
+async def _persist_stance(
+    *, position_id: str, brain: str, stance: str,
+    confidence: float, notes: str, posted_via: str, actor: str,
+) -> dict:
+    if stance not in VALID_STANCES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"stance must be one of {sorted(VALID_STANCES)}",
+        )
+    now = _now_iso()
+    # Capture current roster role for "posted_as" so future role swaps
+    # don't erase the historical context. Best-effort.
+    posted_as = None
+    try:
+        roster = await get_roster()
+        for role, occupant in roster["assignments"].items():
+            if occupant == brain:
+                posted_as = role
+                break
+    except Exception:  # noqa: BLE001
+        posted_as = None
+
+    stance_doc = {
+        "stance_id": str(uuid.uuid4()),
+        "position_id": position_id,
+        "brain": brain,
+        "stance": stance,
+        "confidence": float(confidence),
+        "notes": notes,
+        "posted_as": posted_as,
+        "posted_via": posted_via,
+        "posted_at": now,
+        "actor": actor,
+    }
+    await db[SHARED_POSITION_STANCES].insert_one(stance_doc)
+    await db[SHARED_POSITIONS].update_one(
+        {"position_id": position_id},
+        {"$set": {"updated_at": now}},
+    )
+    await _advance_state_if_needed(position_id)
+    await _audit("stance", actor, position_id, {
+        "brain": brain, "stance": stance, "confidence": confidence,
+        "posted_as": posted_as, "posted_via": posted_via,
+    })
+
+    # Return refreshed position
+    doc = await db[SHARED_POSITIONS].find_one(
+        {"position_id": position_id}, {"_id": 0},
+    )
+    return await _hydrate(doc)
+
+
+# ── executor call (operator advances state) ──
+
+@router.post("/admin/positions/{position_id}/executor-call")
+async def executor_call(
+    position_id: str,
+    body: ExecutorCallIn,
+    user: dict = Depends(get_current_user),
+):
+    """Operator records the executor seat's call (long/short).
+    Doctrine: this is a state-machine advance, NOT a trade. Order
+    placement is gated by the broker exec-toggle, which lives on a
+    separate path and stays default-off until Phase 2."""
+    doc = await db[SHARED_POSITIONS].find_one(
+        {"position_id": position_id}, {"_id": 0},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="position not found")
+    if doc["state"] in TERMINAL_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"position already {doc['state']}",
+        )
+
+    executor = await _executor_seat()
+    if not executor:
+        raise HTTPException(
+            status_code=400,
+            detail="no brain currently holds the executor seat — assign one on /api/admin/roster first",
+        )
+
+    new_state = (
+        STATE_CONSENSUS_LONG if body.direction == "long"
+        else STATE_CONSENSUS_SHORT
+    )
+    now = _now_iso()
+    actor = user.get("email") or "operator"
+    await db[SHARED_POSITIONS].update_one(
+        {"position_id": position_id},
+        {"$set": {
+            "state": new_state,
+            "direction": body.direction,
+            "executor_call_by": executor,
+            "executor_call_at": now,
+            "executor_call_notes": body.notes,
+            "executor_call_recorded_by": actor,
+            "updated_at": now,
+        }},
+    )
+    await _audit("executor_call", actor, position_id, {
+        "executor": executor,
+        "direction": body.direction,
+        "before_state": doc["state"],
+        "after_state": new_state,
+    })
+    refreshed = await db[SHARED_POSITIONS].find_one(
+        {"position_id": position_id}, {"_id": 0},
+    )
+    return await _hydrate(refreshed)
+
+
+@router.post("/admin/positions/{position_id}/reject")
+async def reject_position(
+    position_id: str,
+    body: RejectIn,
+    user: dict = Depends(get_current_user),
+):
+    """Walk away — no trade thesis. Records and audits."""
+    doc = await db[SHARED_POSITIONS].find_one(
+        {"position_id": position_id}, {"_id": 0},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="position not found")
+    if doc["state"] in TERMINAL_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"position already {doc['state']}",
+        )
+    now = _now_iso()
+    actor = user.get("email") or "operator"
+    await db[SHARED_POSITIONS].update_one(
+        {"position_id": position_id},
+        {"$set": {
+            "state": STATE_REJECTED,
+            "executor_call_notes": body.notes,
+            "executor_call_recorded_by": actor,
+            "updated_at": now,
+        }},
+    )
+    await _audit("reject", actor, position_id, {
+        "before_state": doc["state"], "after_state": STATE_REJECTED,
+        "notes": body.notes,
+    })
+    refreshed = await db[SHARED_POSITIONS].find_one(
+        {"position_id": position_id}, {"_id": 0},
+    )
+    return await _hydrate(refreshed)
+
+
+# ── stale sweep (read-side, returns "would-be-stale" without mutating) ──
+
+@router.get("/shared/positions/stale-sweep")
+async def stale_sweep_preview(_user: dict = Depends(get_current_user)):
+    """Show positions that have not been touched in STALE_AFTER_HOURS but
+    are still open. Operator can mark them stale via /reject (with notes)
+    or just leave them — auto-marking belongs in a background job we'll
+    add later."""
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(hours=STALE_AFTER_HOURS)
+    ).isoformat()
+    rows = await db[SHARED_POSITIONS].find(
+        {"state": {"$in": list(OPEN_STATES)}, "updated_at": {"$lt": cutoff}},
+        {"_id": 0},
+    ).sort("updated_at", 1).to_list(100)
+    return {
+        "items": rows,
+        "count": len(rows),
+        "stale_after_hours": STALE_AFTER_HOURS,
+    }

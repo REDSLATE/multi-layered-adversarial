@@ -14,6 +14,7 @@ import {
   Trophy,
   LightningSlash,
   ChatCircleDots,
+  Crosshair,
   SignOut,
 } from "@phosphor-icons/react";
 
@@ -27,6 +28,7 @@ const NAV = [
   { to: "/diagnostics", label: "Diagnostics", icon: Pulse, testid: "nav-diagnostics" },
   { to: "/recent", label: "Live Tail", icon: Pulse, testid: "nav-recent" },
   { to: "/discussion", label: "Discussion", icon: ChatCircleDots, testid: "nav-discussion" },
+  { to: "/positions", label: "Positions", icon: Crosshair, testid: "nav-positions" },
   { to: "/scorecards", label: "Scorecards", icon: Trophy, testid: "nav-scorecards" },
   { to: "/conflicts", label: "Conflicts", icon: LightningSlash, testid: "nav-conflicts" },
   { to: "/flags", label: "Runtime Flags", icon: Flag, testid: "nav-flags" },
@@ -37,17 +39,13 @@ const RUNTIMES = [
   { to: "/runtime/alpha", label: "Alpha", color: "#3B82F6", testid: "nav-runtime-alpha" },
   { to: "/runtime/camaro", label: "Camaro", color: "#F59E0B", testid: "nav-runtime-camaro" },
   { to: "/runtime/chevelle", label: "Chevelle", color: "#10B981", testid: "nav-runtime-chevelle" },
+  { to: "/redeye", label: "REDEYE", color: "#DC2626", testid: "nav-runtime-redeye" },
 ];
 
-const ADVISORS = [
-  {
-    to: "/redeye",
-    label: "REDEYE",
-    color: "#DC2626",
-    reportsTo: "Camaro",
-    testid: "nav-advisor-redeye",
-  },
-];
+// REDEYE was promoted from advisor sidecar to a full seat (2026-02-11).
+// Empty for now; if you re-introduce true advisor sidecars later, they
+// go here.
+const ADVISORS = [];
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -131,40 +129,44 @@ export default function Layout() {
               ))}
             </ul>
 
-            <div className="label-eyebrow px-2 mt-6 mb-2">Advisors</div>
-            <ul className="space-y-px">
-              {ADVISORS.map((a) => (
-                <li key={a.to}>
-                  <NavLink
-                    to={a.to}
-                    data-testid={a.testid}
-                    className={({ isActive }) =>
-                      `flex items-start gap-2 px-3 py-2 text-xs uppercase tracking-widest font-bold transition-colors ${
-                        isActive
-                          ? "bg-rd-bg3 text-rd-text"
-                          : "text-rd-muted hover:text-rd-text hover:bg-rd-bg3"
-                      }`
-                    }
-                    style={{
-                      borderLeft: `2px solid ${
-                        loc.pathname === a.to ? a.color : "transparent"
-                      }`,
-                    }}
-                  >
-                    <span
-                      className="inline-block w-2 h-2 mt-[5px]"
-                      style={{ background: a.color }}
-                    />
-                    <span className="flex flex-col leading-tight">
-                      <span>{a.label}</span>
-                      <span className="text-[9px] text-rd-dim font-normal normal-case tracking-normal">
-                        → {a.reportsTo}
-                      </span>
-                    </span>
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
+            {ADVISORS.length > 0 && (
+              <>
+                <div className="label-eyebrow px-2 mt-6 mb-2">Advisors</div>
+                <ul className="space-y-px">
+                  {ADVISORS.map((a) => (
+                    <li key={a.to}>
+                      <NavLink
+                        to={a.to}
+                        data-testid={a.testid}
+                        className={({ isActive }) =>
+                          `flex items-start gap-2 px-3 py-2 text-xs uppercase tracking-widest font-bold transition-colors ${
+                            isActive
+                              ? "bg-rd-bg3 text-rd-text"
+                              : "text-rd-muted hover:text-rd-text hover:bg-rd-bg3"
+                          }`
+                        }
+                        style={{
+                          borderLeft: `2px solid ${
+                            loc.pathname === a.to ? a.color : "transparent"
+                          }`,
+                        }}
+                      >
+                        <span
+                          className="inline-block w-2 h-2 mt-[5px]"
+                          style={{ background: a.color }}
+                        />
+                        <span className="flex flex-col leading-tight">
+                          <span>{a.label}</span>
+                          <span className="text-[9px] text-rd-dim font-normal normal-case tracking-normal">
+                            → {a.reportsTo}
+                          </span>
+                        </span>
+                      </NavLink>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </nav>
 
           <div className="border-t border-rd-border px-3 py-3">

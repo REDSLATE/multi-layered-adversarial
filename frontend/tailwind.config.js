@@ -27,6 +27,7 @@ module.exports = {
                     alpha: "#3B82F6",
                     camaro: "#F59E0B",
                     chevelle: "#10B981",
+                    redeye: "#DC2626",
                     warn: "#FBBF24",
                     danger: "#EF4444",
                 },

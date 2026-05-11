@@ -35,28 +35,34 @@ from db import db
 from namespaces import BRAIN_ELIGIBILITY, BRAIN_ROSTER, DISCUSSION_PARTICIPANTS, ROSTER_AUDIT_LOG
 
 
-ROLES: tuple[str, ...] = ("decider", "executor", "governor", "advisor")
+ROLES: tuple[str, ...] = (
+    "decider", "executor", "governor", "long_advisor", "short_advisor",
+)
 BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("alpha", "camaro", "chevelle", "redeye")
 
-# Default assignment — matches the doctrine described in the runtime
-# patch kits and the user's mental model. Swap freely from here.
-DEFAULT_ASSIGNMENTS: dict[str, str] = {
-    "decider":  "camaro",
-    "executor": "alpha",
-    "governor": "chevelle",
-    "advisor":  "redeye",
+# Default assignment — matches the doctrine. The legacy single "advisor"
+# seat was split into long_advisor + short_advisor (2026-02-11) when
+# REDEYE was promoted from sidecar to a full seat. REDEYE defaults to
+# short_advisor (it argues the short side); long_advisor starts vacated
+# for the operator to assign — there is no doctrine pick for "naturally
+# long advisor" and we'd rather have an empty seat than the wrong brain.
+DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
+    "decider":       "camaro",
+    "executor":      "alpha",
+    "governor":      "chevelle",
+    "long_advisor":  None,       # operator-assigned
+    "short_advisor": "redeye",
 }
 
-# Default eligibility — reflects training reality and doctrine intent.
-# Chevelle is the governor only (its job is auditing; doesn't make calls
-# or execute). REDEYE is in training, advisor only. Alpha and Camaro are
-# interchangeable across the three "active" roles (decider / executor /
-# advisor) — governance is Chevelle's specialty.
+# Default eligibility — REDEYE is short-only by training. Alpha and
+# Camaro can take long_advisor (and the other active seats). Chevelle
+# remains governor-only. No brain is eligible for both advisor seats
+# at once — operator-discretion if you need to override that.
 DEFAULT_ELIGIBILITY: dict[str, dict[str, bool]] = {
-    "alpha":    {"decider": True,  "executor": True,  "governor": False, "advisor": True},
-    "camaro":   {"decider": True,  "executor": True,  "governor": False, "advisor": True},
-    "chevelle": {"decider": False, "executor": False, "governor": True,  "advisor": False},
-    "redeye":   {"decider": False, "executor": False, "governor": False, "advisor": True},
+    "alpha":    {"decider": True,  "executor": True,  "governor": False, "long_advisor": True,  "short_advisor": False},
+    "camaro":   {"decider": True,  "executor": True,  "governor": False, "long_advisor": True,  "short_advisor": False},
+    "chevelle": {"decider": False, "executor": False, "governor": True,  "long_advisor": False, "short_advisor": False},
+    "redeye":   {"decider": False, "executor": False, "governor": False, "long_advisor": False, "short_advisor": True},
 }
 
 
@@ -143,7 +149,7 @@ async def _audit(action: str, actor: str, payload: dict) -> None:
 
 # ──────────────────────── models ────────────────────────
 
-RoleT = Literal["decider", "executor", "governor", "advisor"]
+RoleT = Literal["decider", "executor", "governor", "long_advisor", "short_advisor"]
 BrainT = Literal["alpha", "camaro", "chevelle", "redeye"]
 
 

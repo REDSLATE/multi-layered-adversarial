@@ -71,12 +71,21 @@ IBKR_AUDIT_LOG = "ibkr_audit_log"
 PUBLIC_CREDENTIALS = "public_credentials"
 PUBLIC_AUDIT_LOG = "public_audit_log"
 
-RUNTIMES = ("alpha", "camaro", "chevelle")
+# Position primitive (2026-02-11) — discrete thesis object the 4 brains
+# discuss. Every brain stamps a stance (long / short / abstain) with
+# confidence + notes; the brain in the executor seat (per Roster) makes
+# the final long/short call. Phase 1 is discussion only — no order
+# placement, no broker side-effects.
+SHARED_POSITIONS = "shared_positions"
+SHARED_POSITION_STANCES = "shared_position_stances"
+SHARED_POSITION_AUDIT = "shared_position_audit"
 
-# Advisors are not on the trading ladder. They speak (post opinions) but
-# never appear in RUNTIMES — granting them ladder authority would violate
-# their advisor-only role. REDEYE reports to Camaro; never bypasses it.
-ADVISORS: tuple[str, ...] = ("redeye",)
+RUNTIMES = ("alpha", "camaro", "chevelle", "redeye")
+
+# Historical: REDEYE used to be an "advisor sidecar". We've since promoted
+# it to a full seat (2026-02-11). Kept for back-compat with older patch
+# kits that read this constant; new code should iterate RUNTIMES.
+ADVISORS: tuple[str, ...] = ()
 
 # Convenience set of every brain that may participate in the discussion layer.
 DISCUSSION_PARTICIPANTS: tuple[str, ...] = RUNTIMES + ADVISORS
@@ -128,18 +137,19 @@ ROLES: dict[str, dict] = {
         ],
     },
     "redeye": {
-        "role": "advisor",
+        "role": "short_advisor",
         "title": "Short-Side Advisor",
-        "tagline": "reports to Camaro",
+        "tagline": "argues the short side",
         "description": (
-            "Bearish/short-side adversarial scout. Off-ladder. Sends advice "
-            "to Camaro; cannot execute, cannot override Alpha. Speaks via the "
-            "shared discussion layer; reads peer opinions but never modifies "
-            "their state."
+            "Bearish/short-side adversarial scout. Off-ladder. Argues the "
+            "short side on every position. Whoever holds the executor seat "
+            "(default: Alpha) makes the final long/short call. REDEYE "
+            "speaks via the shared discussion layer and the position "
+            "primitive — peers may read, never modify, its stances."
         ),
         "allowed_actions": [
             "post_opinion", "read_opinions", "read_roles_manifest",
-            "short_advisory", "alpha_alignment_hint",
+            "short_advisory", "alpha_alignment_hint", "stance_short",
         ],
     },
 }
@@ -165,12 +175,15 @@ GOVERNOR_STATE = "governor"
 # Authority states that grant execution authority.
 EXECUTION_AUTHORITY_STATES = frozenset({"co_trader", "primary"})
 
+# DEFAULT_AUTHORITY moved up — see right after the ROLES definition.
+
 # Default authority per runtime on first boot. Promotion writes new history;
 # the default is what we install when the doc is missing.
 DEFAULT_AUTHORITY: dict[str, str] = {
-    "alpha": "co_trader",   # only stack with execution authority today
+    "alpha": "co_trader",     # only stack with execution authority today
     "camaro": "challenger",
     "chevelle": GOVERNOR_STATE,
+    "redeye": "advisor",      # full-seat short-side advisor
 }
 
 # Patent J readiness thresholds (operator-tunable later).

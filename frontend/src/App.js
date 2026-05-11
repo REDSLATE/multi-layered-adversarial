@@ -18,6 +18,7 @@ import Redeye from "@/pages/Redeye";
 import Discussion from "@/pages/Discussion";
 import Scorecards from "@/pages/Scorecards";
 import Conflicts from "@/pages/Conflicts";
+import Positions from "@/pages/Positions";
 import "@/App.css";
 
 function Protected({ children }) {
@@ -62,6 +63,7 @@ function App() {
             <Route path="discussion" element={<Discussion />} />
             <Route path="scorecards" element={<Scorecards />} />
             <Route path="conflicts" element={<Conflicts />} />
+            <Route path="positions" element={<Positions />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
