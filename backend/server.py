@@ -25,6 +25,7 @@ from shared.outcomes import router as outcomes_router
 from shared.conflicts import router as conflicts_router
 from shared.technicals import router as technicals_router
 from shared.kraken_routes import router as kraken_router, start_poller_if_needed, stop_poller
+from shared.ibkr import router as ibkr_router, start_tickler_if_needed, stop_tickler
 from shared.roster import router as roster_router
 from shared.promotion import router as promotion_router
 from shared.diagnostics import router as diagnostics_router
@@ -54,8 +55,13 @@ async def lifespan(app: FastAPI):
     if kraken_doc:
         start_poller_if_needed()
         logger.info("Kraken auto-poller started")
+    ibkr_doc = await db["ibkr_credentials"].find_one({"_id": "singleton"}, {"_id": 1})
+    if ibkr_doc:
+        start_tickler_if_needed()
+        logger.info("IBKR tickler started")
     yield
     await stop_poller()
+    await stop_tickler()
     client.close()
 
 
@@ -93,6 +99,7 @@ api_router.include_router(outcomes_router)
 api_router.include_router(conflicts_router)
 api_router.include_router(technicals_router)
 api_router.include_router(kraken_router)
+api_router.include_router(ibkr_router)
 api_router.include_router(roster_router)
 api_router.include_router(promotion_router)
 api_router.include_router(diagnostics_router)

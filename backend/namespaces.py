@@ -56,6 +56,12 @@ ROSTER_AUDIT_LOG = "roster_audit_log"
 # (it doesn't grant execution; it constrains role assignment).
 BRAIN_ELIGIBILITY = "brain_eligibility"
 
+# IBKR Web API connection — encrypted access_token storage. Singleton.
+# Doctrine: same as Kraken — `execution_enabled` defaults False, all
+# trade endpoints intentionally not wired in this phase.
+IBKR_CREDENTIALS = "ibkr_credentials"
+IBKR_AUDIT_LOG = "ibkr_audit_log"
+
 RUNTIMES = ("alpha", "camaro", "chevelle")
 
 # Advisors are not on the trading ladder. They speak (post opinions) but

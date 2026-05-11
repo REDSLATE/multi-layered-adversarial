@@ -4,6 +4,7 @@ import { Card, Badge } from "@/components/ui-bits";
 import { Plug, Pulse, WarningCircle, Power, Copy } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import KrakenConnect from "./KrakenConnect";
+import IBKRConnect from "./IBKRConnect";
 
 const FEEDER_META = {
   kraken_pro: {
@@ -19,6 +20,13 @@ const FEEDER_META = {
     color: "#22C55E",
     market: "Equities / Futures",
     docsUrl: "/runtime_patch_kit/technicals/README.md",
+  },
+  ibkr: {
+    label: "IBKR",
+    short: "IBKR",
+    color: "#FF7B5C",
+    market: "Multi-asset broker",
+    docsUrl: null,
   },
   manual: {
     label: "MANUAL",
@@ -51,9 +59,30 @@ export default function FeedersStrip() {
 
   const refresh = useCallback(async () => {
     try {
-      const { data } = await api.get("/shared/technical/feeders");
-      setItems(data.items || []);
-      setEndpoint(data.endpoint);
+      const [feeders, ibkr] = await Promise.all([
+        api.get("/shared/technical/feeders"),
+        api.get("/admin/ibkr/status").catch(() => ({ data: null })),
+      ]);
+      const baseItems = feeders.data.items || [];
+      // Append IBKR as a synthetic broker slot so the operator can see
+      // and manage the broker connection alongside the bar feeders.
+      const ibkrData = ibkr?.data;
+      const ibkrItem = {
+        key: "ibkr",
+        env_key: "—",
+        configured: Boolean(ibkrData?.connected),
+        status: ibkrData?.connected
+          ? (ibkrData.auth_status?.authenticated ? "live" : "stale")
+          : "unconfigured",
+        last_bar_ts: ibkrData?.last_tickle?.ts || null,
+        symbols: (ibkrData?.accounts || []).map(a => a.id).filter(Boolean),
+        symbols_count: (ibkrData?.accounts || []).length,
+        bars_count: 0,
+        tfs: [],
+        is_broker: true,
+      };
+      setItems([...baseItems, ibkrItem]);
+      setEndpoint(feeders.data.endpoint);
       setErr("");
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
@@ -66,8 +95,8 @@ export default function FeedersStrip() {
     return () => clearInterval(id);
   }, [refresh]);
 
-  // Sort: kraken_pro first, then thinkorswim, then manual.
-  const order = { kraken_pro: 0, thinkorswim: 1, manual: 2 };
+  // Sort: kraken_pro first, then thinkorswim, then ibkr, then manual.
+  const order = { kraken_pro: 0, thinkorswim: 1, ibkr: 2, manual: 3 };
   const sorted = [...items].sort((a, b) =>
     (order[a.key] ?? 99) - (order[b.key] ?? 99),
   );
@@ -91,7 +120,7 @@ export default function FeedersStrip() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-rd-border">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-rd-border">
         {sorted.map((f) => (
           <FeederSlot
             key={f.key}
@@ -135,7 +164,17 @@ function FeederSlot({ feeder, isOpen, onToggle, endpoint }) {
           </span>
         </div>
         <div className="text-[11px] font-mono text-rd-dim leading-relaxed">
-          {feeder.bars_count > 0 ? (
+          {feeder.is_broker ? (
+            feeder.configured ? (
+              <>
+                {feeder.symbols_count} account{feeder.symbols_count === 1 ? "" : "s"} · broker connection
+                <br />
+                last tickle {feeder.last_bar_ts ? relTime(feeder.last_bar_ts) : "—"}
+              </>
+            ) : (
+              <>broker not connected</>
+            )
+          ) : feeder.bars_count > 0 ? (
             <>
               {feeder.bars_count} bars · {feeder.symbols_count} symbols
               <br />
@@ -162,7 +201,14 @@ function FeederSlot({ feeder, isOpen, onToggle, endpoint }) {
               <KrakenConnect />
             </div>
           )}
-          <SetupLine label="Endpoint" value={`POST ${endpoint}`} />
+          {feeder.key === "ibkr" && (
+            <div className="pb-2 mb-2 border-b border-rd-border">
+              <IBKRConnect />
+            </div>
+          )}
+          {!feeder.is_broker && (
+            <>
+              <SetupLine label="Endpoint" value={`POST ${endpoint}`} />
           <SetupLine label="Auth header" value={`X-Feeder-Token: $${feeder.env_key}`} />
           <SetupLine label="source field" value={feeder.key} />
           {feeder.symbols.length > 0 && (
