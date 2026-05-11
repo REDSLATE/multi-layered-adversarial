@@ -24,6 +24,7 @@ from shared.opinions import router as opinions_router
 from shared.outcomes import router as outcomes_router
 from shared.conflicts import router as conflicts_router
 from shared.technicals import router as technicals_router
+from shared.kraken_routes import router as kraken_router, start_poller_if_needed, stop_poller
 from shared.promotion import router as promotion_router
 from shared.diagnostics import router as diagnostics_router
 from shared.flags import router as flags_router, get_flags_snapshot
@@ -46,7 +47,14 @@ async def lifespan(app: FastAPI):
     await seed_all(db)
     flags = get_flags_snapshot()
     logger.info("RISEDUAL boot: deploy_mode=%s flags=%s", flags["deploy_mode"], flags["enforce_flags"])
+    # Start the Kraken auto-poller if credentials exist. Safe no-op when
+    # nothing is configured — the loop short-circuits on empty doc.
+    kraken_doc = await db["kraken_credentials"].find_one({"_id": "singleton"}, {"_id": 1})
+    if kraken_doc:
+        start_poller_if_needed()
+        logger.info("Kraken auto-poller started")
     yield
+    await stop_poller()
     client.close()
 
 
@@ -83,6 +91,7 @@ api_router.include_router(opinions_router)
 api_router.include_router(outcomes_router)
 api_router.include_router(conflicts_router)
 api_router.include_router(technicals_router)
+api_router.include_router(kraken_router)
 api_router.include_router(promotion_router)
 api_router.include_router(diagnostics_router)
 api_router.include_router(flags_router)

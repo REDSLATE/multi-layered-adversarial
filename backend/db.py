@@ -47,3 +47,6 @@ async def ensure_indexes() -> None:
         [("source", 1), ("symbol", 1), ("tf", 1)],
         unique=True,
     )
+
+    # Kraken connection — singleton credential doc + append-only audit log
+    await db.kraken_audit_log.create_index([("ts", -1)])

@@ -3,6 +3,7 @@ import { api, relTime } from "@/lib/api";
 import { Card, Badge } from "@/components/ui-bits";
 import { Plug, Pulse, WarningCircle, Power, Copy } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import KrakenConnect from "./KrakenConnect";
 
 const FEEDER_META = {
   kraken_pro: {
@@ -156,6 +157,11 @@ function FeederSlot({ feeder, isOpen, onToggle, endpoint }) {
           className="px-4 py-3 bg-rd-bg2 border-t border-rd-border space-y-2 text-[11px] font-mono"
           data-testid={`feeder-setup-${feeder.key}`}
         >
+          {feeder.key === "kraken_pro" && (
+            <div className="pb-2 mb-2 border-b border-rd-border">
+              <KrakenConnect />
+            </div>
+          )}
           <SetupLine label="Endpoint" value={`POST ${endpoint}`} />
           <SetupLine label="Auth header" value={`X-Feeder-Token: $${feeder.env_key}`} />
           <SetupLine label="source field" value={feeder.key} />

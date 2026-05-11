@@ -136,6 +136,52 @@ here.
     adapter intermittently hung under the Cloudflare-fronted preview
     deploy. Also disabled PostHog session recording (it was wrapping
     fetch for replay).
+- **Kraken Pro live connection** (2026-02-09)
+  - **Encrypted credential storage**: `shared/credentials.py` — Fernet
+    symmetric encryption with key in `CREDENTIALS_ENCRYPTION_KEY`
+    (auto-generated and persisted to `backend/.env` on first run in
+    local dev; required env-var in prod). API key + private key stored
+    encrypted at rest; private key never returned by any endpoint.
+  - **Kraken client**: `shared/kraken.py` — public OHLC fetch +
+    HMAC-SHA512 signed private calls. Monotonic nonce persisted on the
+    singleton doc, atomic max-bump on every call. Scope probe over
+    Balance / OpenPositions / ClosedOrders / TradesHistory / Ledgers so
+    UI can show which permissions the key was granted. Symbol mapping
+    table for BTC/ETH/SOL/XRP/ADA/DOGE pairs.
+  - **Endpoints** (`shared/kraken_routes.py`):
+    * `POST /api/admin/kraken/connect` — probe-then-store-then-start.
+      Refuses to persist keys if Balance probe denies.
+    * `GET /api/admin/kraken/status` — connection summary (redacted).
+    * `POST /api/admin/kraken/reprobe` — re-run scope probe.
+    * `POST /api/admin/kraken/test` — cheap Balance call.
+    * `POST /api/admin/kraken/poll` — force OHLC poll outside schedule.
+    * `DELETE /api/admin/kraken/disconnect` — wipe creds + stop poller.
+    * `POST /api/admin/kraken/execution` — flip the execution-allowed
+      gate. Defaults False. Requires literal confirm phrase
+      ("I authorize execution on Kraken" / "Disable execution"). Every
+      flip is audit-logged.
+    * `GET /api/admin/kraken/audit` — append-only action log.
+  - **Auto-poller**: FastAPI lifespan task. Pulls configured pairs/tf
+    every `poll_interval_seconds` (default 60s). Pushes bars through
+    existing technicals ingest → snapshot recompute. Idempotent on bar
+    key, so re-polled overlap doesn't dupe. Replaces the seeded
+    synthetic BTC/ETH bars on first successful poll.
+  - **Doctrine**: only read-scope endpoints are called by Mission
+    Control. Trading endpoints (AddOrder/CancelOrder) are intentionally
+    not wired. `execution_enabled` is a flag for the eventual wire-up;
+    the brain layer's `may_execute` stays schema-pinned False.
+  - **Frontend**: `KrakenConnect.jsx` — modal under the Kraken slot
+    with paste-once API+private inputs, pair multiselect, tf picker,
+    test-and-connect button. Connected view shows redacted previews,
+    detected scopes (✓/✗), balance preview (top 3 assets), poller
+    status, last-tick info, and the execution-toggle confirmation
+    flow. Disconnect button wipes creds and stops the poller.
+  - **Tests**: `/app/backend/tests/test_kraken.py` (17/17 PASS) —
+    signing math against Kraken's documented test vector, Fernet
+    round-trip, redact masking, all admin endpoints' auth + 404 +
+    schema rejection paths, execution-toggle confirm-phrase guard,
+    audit-log capture.
+  - Total backend pytest = **135/135**.
 - **Doctrine loosening (2026-02-09)**: communication is unrestricted.
   Stance vocabulary expanded (added `agree`, `disagree`, `refine`,
   `retract`, `hypothesis`). Topic kinds permissive (any

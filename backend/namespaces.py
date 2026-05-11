@@ -32,6 +32,14 @@ SHARED_CONFLICTS = "shared_brain_conflicts"                 # auto-detected disa
 SHARED_OHLCV_BARS = "shared_ohlcv_bars"
 SHARED_INDICATOR_SNAPSHOTS = "shared_indicator_snapshots"
 
+# Kraken Pro connection — encrypted credential storage + execution toggle.
+# Single-tenant: at most one connected key set lives here. Stored as one
+# document with key `"singleton"`. Doctrine: keys store reads-only data by
+# default; `execution_enabled` defaults False and must be flipped by the
+# operator with an audit-logged action.
+KRAKEN_CREDENTIALS = "kraken_credentials"
+KRAKEN_AUDIT_LOG = "kraken_audit_log"
+
 RUNTIMES = ("alpha", "camaro", "chevelle")
 
 # Advisors are not on the trading ladder. They speak (post opinions) but
