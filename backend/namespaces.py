@@ -62,6 +62,15 @@ BRAIN_ELIGIBILITY = "brain_eligibility"
 IBKR_CREDENTIALS = "ibkr_credentials"
 IBKR_AUDIT_LOG = "ibkr_audit_log"
 
+# Public.com connection — two-step auth. We store the operator's
+# long-lived SECRET KEY (Fernet-encrypted) and cache short-lived
+# ACCESS TOKENS (also encrypted) along with the expiry timestamp; the
+# client refreshes on demand and on a periodic schedule. Doctrine: same
+# as Kraken/IBKR — Phase 1 is read-only; `execution_enabled` defaults
+# False and trade endpoints are intentionally not wired.
+PUBLIC_CREDENTIALS = "public_credentials"
+PUBLIC_AUDIT_LOG = "public_audit_log"
+
 RUNTIMES = ("alpha", "camaro", "chevelle")
 
 # Advisors are not on the trading ladder. They speak (post opinions) but

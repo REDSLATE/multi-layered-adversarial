@@ -5,6 +5,7 @@ import { Plug, Pulse, WarningCircle, Power, Copy } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import KrakenConnect from "./KrakenConnect";
 import IBKRConnect from "./IBKRConnect";
+import PublicConnect from "./PublicConnect";
 
 const FEEDER_META = {
   kraken_pro: {
@@ -26,6 +27,13 @@ const FEEDER_META = {
     short: "IBKR",
     color: "#FF7B5C",
     market: "Multi-asset broker",
+    docsUrl: null,
+  },
+  public: {
+    label: "PUBLIC.COM",
+    short: "PUB",
+    color: "#00C896",
+    market: "Stocks / Options · NO PDT",
     docsUrl: null,
   },
   manual: {
@@ -59,9 +67,10 @@ export default function FeedersStrip() {
 
   const refresh = useCallback(async () => {
     try {
-      const [feeders, ibkr] = await Promise.all([
+      const [feeders, ibkr, publicSt] = await Promise.all([
         api.get("/shared/technical/feeders"),
         api.get("/admin/ibkr/status").catch(() => ({ data: null })),
+        api.get("/admin/public/status").catch(() => ({ data: null })),
       ]);
       const baseItems = feeders.data.items || [];
       // Append IBKR as a synthetic broker slot so the operator can see
@@ -81,7 +90,23 @@ export default function FeedersStrip() {
         tfs: [],
         is_broker: true,
       };
-      setItems([...baseItems, ibkrItem]);
+      // Public.com — second broker slot (no PDT restrictions).
+      const publicData = publicSt?.data;
+      const publicItem = {
+        key: "public",
+        env_key: "—",
+        configured: Boolean(publicData?.connected),
+        status: publicData?.connected
+          ? (publicData.refresher_running ? "live" : "stale")
+          : "unconfigured",
+        last_bar_ts: publicData?.last_refresh?.ts || null,
+        symbols: (publicData?.accounts || []).map(a => a.id).filter(Boolean),
+        symbols_count: (publicData?.accounts || []).length,
+        bars_count: 0,
+        tfs: [],
+        is_broker: true,
+      };
+      setItems([...baseItems, ibkrItem, publicItem]);
       setEndpoint(feeders.data.endpoint);
       setErr("");
     } catch (e) {
@@ -95,8 +120,8 @@ export default function FeedersStrip() {
     return () => clearInterval(id);
   }, [refresh]);
 
-  // Sort: kraken_pro first, then thinkorswim, then ibkr, then manual.
-  const order = { kraken_pro: 0, thinkorswim: 1, ibkr: 2, manual: 3 };
+  // Sort: kraken_pro first, then thinkorswim, then ibkr, then public, then manual.
+  const order = { kraken_pro: 0, thinkorswim: 1, ibkr: 2, public: 3, manual: 4 };
   const sorted = [...items].sort((a, b) =>
     (order[a.key] ?? 99) - (order[b.key] ?? 99),
   );
@@ -204,6 +229,11 @@ function FeederSlot({ feeder, isOpen, onToggle, endpoint }) {
           {feeder.key === "ibkr" && (
             <div className="pb-2 mb-2 border-b border-rd-border">
               <IBKRConnect />
+            </div>
+          )}
+          {feeder.key === "public" && (
+            <div className="pb-2 mb-2 border-b border-rd-border">
+              <PublicConnect />
             </div>
           )}
           {!feeder.is_broker && (

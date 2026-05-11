@@ -306,6 +306,56 @@ here.
     JWT required, matrix cell values cross-match the per-pair scorecard
     endpoint exactly (decisive, a_wins, b_wins, 7d friction, heat band).
   - Total backend pytest = **170/170**.
+- **Public.com retail brokerage — Phase 1 (read-only)** (2026-02-11)
+  - **Why a third broker:** Public.com cash accounts have **no PDT
+    restrictions** — when Phase 2 ships, this is the venue the executor
+    brain can use for sub-$25k day-trade activity without IBKR's PDT
+    gate or Kraken's crypto-only scope. Stocks, ETFs, options, and
+    multi-leg strategies on the same key.
+  - **Two-step auth** (per public.com/api/docs/quickstart):
+    1. Operator generates a long-lived SECRET KEY at
+       `public.com/settings/security/api`.
+    2. We exchange the secret for a short-lived ACCESS TOKEN via
+       `POST /userapiauthservice/personal/access-tokens` with
+       `{validityInMinutes, secret}`. Default validity 24h, operator
+       configurable 5 min … 7 d.
+    3. Subsequent calls use the access_token as `Authorization: Bearer`.
+  - **Encrypted storage**: secret + cached access_token both Fernet-encrypted
+    via `shared/credentials.py` (same key path as Kraken/IBKR). Secret is
+    never returned past `redact()`; plaintext token is never exposed.
+  - **Background refresher**: asyncio task that polls every 60s and rolls
+    the access token when it has ≤ 5 min remaining. Started on connect,
+    stopped on disconnect. Auto-revives on app boot if creds exist.
+  - **Endpoints** (`/api/admin/public/*`):
+    * `POST /connect` — probe (token-exchange + account-discovery) then
+      persist. Refuses to store if the secret can't exchange.
+    * `GET /status` — redacted summary incl. token expiry, refresher state.
+    * `POST /test` — calls `/userapigateway/trading/account`.
+    * `POST /refresh-token` — operator-forced refresh.
+    * `GET /accounts` — full account list.
+    * `GET /portfolio` — positions + balances via
+      `/userapigateway/trading/{accountId}/portfolio/v2`.
+    * `DELETE /disconnect` — wipe secret + cached token + stop refresher.
+    * `POST /execution` — flip the gate behind the same confirmation
+      phrase ("I authorize execution on Public" / "Disable execution").
+    * `GET /audit` — append-only action log.
+  - **Doctrine**: Phase 1 is read-only. Order placement endpoints
+    (`/userapigateway/trading/order/*`) are intentionally **NOT** wired;
+    `execution_enabled` defaults False and is groundwork for Phase 2.
+  - **Frontend**: `PublicConnect.jsx` modal under a new PUBLIC.COM
+    broker slot in `FeedersStrip.jsx` (5 slots total now: Kraken / TOS
+    / IBKR / Public / Manual). Operator pastes secret, optional
+    account_id, base_url, token-validity-minutes; connected view shows
+    token expiry countdown, refresher state, detected accounts,
+    portfolio loader, exec-toggle confirm-phrase flow.
+  - **Tests**: `/app/backend/tests/test_public.py` (15/15 PASS) —
+    disconnected status shape, schema rejection paths (short secret,
+    missing secret, non-https base_url, zero validity, excessive
+    validity > 7 d), 404s on every endpoint when unconfigured,
+    disconnect idempotency, execution-toggle confirm-phrase guard
+    against a seeded credential doc, audit log capture, JWT auth
+    required on every admin path.
+  - Total backend pytest = **185/185**.
 - **Doctrine loosening (2026-02-09)**: communication is unrestricted.
   Stance vocabulary expanded (added `agree`, `disagree`, `refine`,
   `retract`, `hypothesis`). Topic kinds permissive (any

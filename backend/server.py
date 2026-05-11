@@ -26,6 +26,7 @@ from shared.conflicts import router as conflicts_router
 from shared.technicals import router as technicals_router
 from shared.kraken_routes import router as kraken_router, start_poller_if_needed, stop_poller
 from shared.ibkr import router as ibkr_router, start_tickler_if_needed, stop_tickler
+from shared.public import router as public_router, start_refresher_if_needed as start_public_refresher, stop_refresher as stop_public_refresher
 from shared.roster import router as roster_router
 from shared.promotion import router as promotion_router
 from shared.diagnostics import router as diagnostics_router
@@ -59,9 +60,14 @@ async def lifespan(app: FastAPI):
     if ibkr_doc:
         start_tickler_if_needed()
         logger.info("IBKR tickler started")
+    public_doc = await db["public_credentials"].find_one({"_id": "singleton"}, {"_id": 1})
+    if public_doc:
+        start_public_refresher()
+        logger.info("Public.com token refresher started")
     yield
     await stop_poller()
     await stop_tickler()
+    await stop_public_refresher()
     client.close()
 
 
@@ -100,6 +106,7 @@ api_router.include_router(conflicts_router)
 api_router.include_router(technicals_router)
 api_router.include_router(kraken_router)
 api_router.include_router(ibkr_router)
+api_router.include_router(public_router)
 api_router.include_router(roster_router)
 api_router.include_router(promotion_router)
 api_router.include_router(diagnostics_router)
