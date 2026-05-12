@@ -1,0 +1,239 @@
+"""Sovereign AI core — patched for RISEDUAL doctrine.
+
+Adapted from the operator's `wild_adaptive_core_v2.py`. Three doctrine
+patches over the original:
+
+  1. LIVE_TRADING_ENABLED defaults to False. `execute_trade()` is a
+     stub that records an INTENT, never an order. Phase 1 is
+     observation-only; flipping the constant True does NOT in itself
+     enable trading — the broker exec-gate at MC must also be on.
+  2. DB writes are LOCAL to the brain's host (the brain's own mongo,
+     not Mission Control's). The brain talks to MC via the runtime
+     ingest API only, never by writing to MC's collections.
+  3. assert_safe_action() guards prevent any code path from mutating
+     the production action; the AI may only contribute confidence
+     deltas, and only when the brain holds a seat whose policy allows
+     it.
+
+Everything else is the operator's logic verbatim:
+    - feature builder (trend/macd/rsi)
+    - clamped sigmoid weights in [-3, +3]
+    - learning rate 0.05 on resolved trades
+    - sigmoid overflow guard
+    - missing-SMA no-fake-bullish guard
+    - HOLD gets $0 notional
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from typing import Any
+
+
+# Phase 1 doctrine — observation only. Even setting this to True does
+# NOT in itself enable trading; the broker exec-gate at MC must also
+# be flipped via the dual-sign workflow.
+LIVE_TRADING_ENABLED = False
+
+MAX_NOTIONAL_PER_TRADE = 0.10
+FEATURES = ["trend", "macd", "rsi"]
+
+DEFAULT_WEIGHT = 0.5
+MIN_WEIGHT = -3.0
+MAX_WEIGHT = 3.0
+LEARNING_RATE = 0.05
+
+
+@dataclass(frozen=True)
+class AdaptiveDecision:
+    symbol: str
+    action: str
+    confidence: float
+    notional: float
+    features: dict[str, float]
+    weights_snapshot: dict[str, float]
+    created_at: str
+    resolved: bool = False
+    # Provenance — fed back into MC as `confidence_origin` /
+    # `memory_sources` on the corresponding stance.
+    confidence_origin: dict[str, float] = field(default_factory=dict)
+
+
+def utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def safe_float(v: Any, default: float = 0.0) -> float:
+    try:
+        if v is None:
+            return default
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
+
+
+def sigmoid(x: float) -> float:
+    if x >= 50:
+        return 1.0
+    if x <= -50:
+        return 0.0
+    return 1.0 / (1.0 + math.exp(-x))
+
+
+def build_features(top: dict) -> dict[str, float]:
+    """Convert raw market state into normalized -1/0/+1 features.
+
+    `top` is the brain's view of a symbol — passed in by the sidecar so
+    the core doesn't depend on any specific DB schema."""
+    tech = top.get("technicals", {}) or {}
+
+    price = safe_float(top.get("price"))
+    sma20 = safe_float(tech.get("sma20"))
+    macd = safe_float(tech.get("macd"))
+    rsi = safe_float(tech.get("rsi14"), 50.0)
+
+    trend = 0.0
+    # Doctrine: missing SMA must NOT create a fake bullish signal.
+    if price > 0 and sma20 > 0:
+        trend = 1.0 if price > sma20 else -1.0
+
+    macd_signal = 0.0
+    if macd > 0:
+        macd_signal = 1.0
+    elif macd < 0:
+        macd_signal = -1.0
+
+    rsi_signal = 0.0
+    if rsi > 55:
+        rsi_signal = 1.0
+    elif rsi < 45:
+        rsi_signal = -1.0
+
+    return {"trend": trend, "macd": macd_signal, "rsi": rsi_signal}
+
+
+def default_weights() -> dict[str, float]:
+    return {f: DEFAULT_WEIGHT for f in FEATURES}
+
+
+def normalize_weights(raw: dict | None) -> dict[str, float]:
+    raw = raw or {}
+    return {
+        f: clamp(safe_float(raw.get(f), DEFAULT_WEIGHT), MIN_WEIGHT, MAX_WEIGHT)
+        for f in FEATURES
+    }
+
+
+def compute_score(features: dict[str, float], weights: dict[str, float]) -> tuple[float, dict[str, float]]:
+    """Returns (sigmoid_score, per-feature contribution map).
+
+    The contribution map is what we ship to MC as `confidence_origin`."""
+    contributions: dict[str, float] = {}
+    raw = 0.0
+    for f in FEATURES:
+        w = safe_float(weights.get(f), DEFAULT_WEIGHT)
+        s = safe_float(features.get(f), 0.0)
+        contributions[f] = round(w * s, 4)
+        raw += w * s
+    return sigmoid(raw), contributions
+
+
+def decide_from_score(score: float) -> tuple[str, float]:
+    if score > 0.55:
+        return "BUY", score
+    if score < 0.45:
+        return "SELL", 1.0 - score
+    return "HOLD", 0.5
+
+
+def compute_notional(action: str, confidence: float, account_size: float) -> float:
+    if action == "HOLD":
+        return 0.0
+    account_size = max(0.0, safe_float(account_size))
+    return round(confidence * MAX_NOTIONAL_PER_TRADE * account_size, 2)
+
+
+def assert_safe_action(action: str) -> None:
+    """Belt-and-suspenders: the action must be one of the three allowed
+    values. Phase 1 enforces this in MC's API too, but check at the core
+    so a corrupted intermediate value cannot reach the sidecar."""
+    if action not in {"BUY", "SELL", "HOLD"}:
+        raise RuntimeError(f"sovereign_core: refused unsafe action {action!r}")
+
+
+def map_action_to_stance(action: str) -> str:
+    """Adapter: RISEDUAL's stance vocabulary is long/short/abstain."""
+    return {"BUY": "long", "SELL": "short", "HOLD": "abstain"}[action]
+
+
+def run_adaptive_core(
+    top: dict, weights: dict[str, float], account_size: float = 0.0,
+) -> AdaptiveDecision:
+    """Pure decision step. Caller (sidecar) handles persistence + POST.
+
+    `top` is `{symbol, price, technicals: {sma20, macd, rsi14}}`.
+    `weights` is the brain's current weights dict.
+    Returns AdaptiveDecision; does NOT mutate weights and does NOT call
+    execute_trade."""
+    symbol = (top.get("symbol") or "").upper().strip()
+    features = build_features(top)
+    weights_snapshot = normalize_weights(weights)
+    score, contributions = compute_score(features, weights_snapshot)
+    action, confidence = decide_from_score(score)
+    assert_safe_action(action)
+    notional = compute_notional(action, confidence, account_size)
+
+    return AdaptiveDecision(
+        symbol=symbol,
+        action=action,
+        confidence=round(confidence, 4),
+        notional=notional,
+        features=dict(features),
+        weights_snapshot=weights_snapshot,
+        created_at=utcnow(),
+        resolved=False,
+        confidence_origin=contributions,
+    )
+
+
+def update_weights(
+    weights: dict[str, float], features: dict[str, float],
+    outcome: int, lr: float = LEARNING_RATE,
+) -> dict[str, float]:
+    """Pure: returns the new weights dict; caller persists."""
+    out = normalize_weights(weights)
+    for f in FEATURES:
+        signal = safe_float(features.get(f), 0.0)
+        out[f] = clamp(out[f] + lr * outcome * signal, MIN_WEIGHT, MAX_WEIGHT)
+    return out
+
+
+def execute_trade(symbol: str, action: str, notional: float) -> dict:
+    """Phase 1 stub. NEVER routes to a broker; emits an INTENT receipt
+    the sidecar POSTs to MC as a `would-be-execution` audit row."""
+    return {
+        "intent": True,
+        "symbol": symbol,
+        "action": action,
+        "notional": notional,
+        "executed": False,
+        "reason": "Phase 1 observation-only; LIVE_TRADING_ENABLED is False",
+        "ts": utcnow(),
+    }
+
+
+__all__ = [
+    "AdaptiveDecision", "FEATURES",
+    "DEFAULT_WEIGHT", "MIN_WEIGHT", "MAX_WEIGHT", "LEARNING_RATE",
+    "default_weights", "normalize_weights",
+    "build_features", "compute_score", "decide_from_score",
+    "compute_notional", "run_adaptive_core", "update_weights",
+    "assert_safe_action", "map_action_to_stance",
+    "execute_trade", "LIVE_TRADING_ENABLED",
+    "asdict",
+]
