@@ -389,6 +389,71 @@ here.
   - `tests/test_roster.py` + `tests/test_positions.py` migrated for
     the seat rename and policy snapshot fields.
   - Total backend pytest = **184/184**.
+- **Public API for risedual.ai (Direction C, Phase 1)** (2026-02-13)
+  - **Doctrine codified**: Two faces, one brain. risedual.ai keeps its
+    Stripe + credits + 4-tier auth + UI; MC becomes the silent
+    intelligence backend. Trust contract = `X-RiseDual-Token` (shared
+    secret) + `X-RiseDual-User-Tier` (free/starter/pro/pro_max
+    propagated from risedual.ai's user model; free and starter both
+    treated as non-paid; only pro/pro_max get uncapped digest rows).
+  - **MC env var**: `RISEDUAL_PUBLIC_TOKEN`. Missing → 503; wrong → 401;
+    unknown tier → 422.
+  - **Endpoints** at `/api/public/*`, all read-only, all sanitized:
+    * `GET /signals` — Active Signals + aggregate AI Consensus
+      (BULLISH/BEARISH/NEUTRAL/MIXED + buy/sell/hold percentages).
+    * `GET /signals/{id}` — both framings of the same position:
+      adversarial (Bull/Bear/Commander ↔ decider/opponent/executor
+      seats) AND governance (Strategist/Auditor/Synthesized Signal ↔
+      decider/governor/executor). Hides memory provenance, quorum
+      blindness, seat_epoch.
+    * `GET /digest` — predictions / smart_money / alerts with caps
+      `{2/2/1}` for free+starter (+ locked-CTA rows) and `{25/25/25}`
+      for pro/pro_max. Shapes match risedual.ai's existing
+      `collect_digest_data` exactly.
+    * `GET /scanner/presets` + `/scan?preset_id=…` — 10 presets
+      (macd_bullish_cross, macd_bearish_cross, bollinger_squeeze,
+      ema_golden_cross, volume_spike, near_52w_high, near_52w_low,
+      rsi_overbought, rsi_oversold, momentum_breakout). Detection
+      logic uses MC's stored indicator snapshots + recent OHLCV.
+      Match shape `{symbol, strength, detail}`.
+    * `GET /agent-activity/feed?since=&limit=` — polled feed
+      synthesized from position audit + conflicts + outcomes.
+      ~10s cadence on the client.
+    * `GET /models-mind/{symbol}` — 10-feature panel
+      (score_2W, distance_from_mw, macro_regime_flag, atr_id,
+      earnings_proximity, momentum_3d, sector_rs, pattern_score,
+      rsi_id, vol_zscore). MC defines these canonically (names didn't
+      exist in risedual.ai's actual backend); computed from real
+      technicals; `coverage: "not_wired"` for features MC can't yet
+      compute (earnings_proximity, sector_rs).
+    * `GET /heatmap` — per-symbol 24h % change + color band
+      (strong_buy / mild_buy / neutral / mild_sell / strong_sell).
+    * `GET /sectors` — XLK/XLF/XLV/XLY/XLP/XLE/XLI/XLU/XLB/XLRE/XLC
+      universe. `degraded: true` until sector ETFs are wired into a
+      feeder.
+  - **Module split**: `/app/backend/shared/public_api/` with one file
+    per endpoint group (`auth.py`, `signals.py`, `digest.py`,
+    `scanner.py`, `agent_activity.py`, `models_mind.py`, `heatmap.py`,
+    `router.py`).
+  - **Paste-in kit** at `/app/runtime_patch_kit/risedual_public/`:
+    * `README.md` — architecture, trust contract, rollout plan.
+    * `types.ts` — exhaustive TypeScript types for every endpoint.
+    * `mcPublicClient.ts` — drop-in Node/Next backend client.
+    * `python_types.py` — Pydantic v2 mirrors for backend re-validation.
+    * `SWAP_NOTES.md` — per-page mapping for risedual.ai's frontend.
+    * `ENV_CHECKLIST.md` — env vars + rotation procedure.
+  - **What MC does NOT do**: no Stripe, no credit ledger, no user
+    accounts, no PCI scope. risedual.ai keeps all of it. MC's tier
+    header only governs content sanitization (locked rows), not
+    feature gating (risedual.ai's existing tier checks gate that).
+  - **Tests**: `/app/backend/tests/test_public_api.py` (26/26 PASS) —
+    trust auth (missing/wrong/unknown-tier), default-free tier,
+    starter is unpaid, pro_max unlimited; signal card shape, both
+    framings, 404; digest free/starter caps, pro/pro_max uncapped,
+    locked-row shape; scanner 10 presets, match shape, unknown-preset
+    404; agent-activity shape + since filter; models-mind 10-feature
+    shape + not-wired markers + 404; heatmap + sectors universe.
+  - **Total backend pytest = 243/243** (195 prior + 22 sovereign + 26 public).
 - **Sovereign Sidecar Template** (2026-02-13)
   - **Doctrine**: each of the four brains can run as a deterministic
     sovereign sidecar — same intelligence core
