@@ -142,13 +142,26 @@ export default function Overview() {
                       } />
                     )}
                     {rt.heartbeat_stale && (
-                      <Row label="HEARTBEAT" value={
-                        <Badge color="#EF4444" testid={`heartbeat-stale-${rt.runtime}`}>
-                          STALE — {rt.heartbeat_age_seconds == null
-                            ? "no signal"
-                            : `${Math.floor(rt.heartbeat_age_seconds)}s`}
-                        </Badge>
-                      } />
+                      <>
+                        <Row label="HEARTBEAT" value={
+                          <Badge color="#EF4444" testid={`heartbeat-stale-${rt.runtime}`}>
+                            STALE — {rt.heartbeat_age_seconds == null
+                              ? "no signal"
+                              : `${Math.floor(rt.heartbeat_age_seconds)}s`}
+                          </Badge>
+                        } />
+                        <Row label="" value={
+                          <a
+                            href={`/ping/${rt.runtime}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[10px] text-rd-muted hover:text-rd-text font-mono underline"
+                            data-testid={`ping-link-${rt.runtime}`}
+                          >
+                            open ping page →
+                          </a>
+                        } />
+                      </>
                     )}
                     <Row label="LAST SIGNAL" value={
                       <span className="font-mono text-xs text-rd-muted">

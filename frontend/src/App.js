@@ -19,6 +19,7 @@ import Discussion from "@/pages/Discussion";
 import Scorecards from "@/pages/Scorecards";
 import Conflicts from "@/pages/Conflicts";
 import Positions from "@/pages/Positions";
+import Ping from "@/pages/Ping";
 import "@/App.css";
 
 function Protected({ children }) {
@@ -40,6 +41,7 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/ping/:brain" element={<Ping />} />
           <Route
             path="/"
             element={
