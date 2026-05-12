@@ -30,6 +30,10 @@ from shared.public import router as public_router, start_refresher_if_needed as 
 from shared.positions import router as positions_router
 from shared.sovereign_mode_guard import router as sovereign_router
 from shared.public_api import router as public_api_router
+from shared.public_api.traffic import (
+    public_traffic_middleware,
+    router as public_traffic_router,
+)
 from shared.heartbeat_ping import router as heartbeat_ping_router
 from shared.seat_performance import router as seat_performance_router
 from shared.roster import router as roster_router
@@ -111,6 +115,7 @@ api_router.include_router(conflicts_router)
 api_router.include_router(positions_router)
 api_router.include_router(sovereign_router)
 api_router.include_router(public_api_router)
+api_router.include_router(public_traffic_router)
 api_router.include_router(heartbeat_ping_router)
 api_router.include_router(seat_performance_router)
 api_router.include_router(technicals_router)
@@ -126,6 +131,11 @@ api_router.include_router(camaro_router)
 api_router.include_router(chevelle_router)
 
 app.include_router(api_router)
+
+# Public-API traffic logger — best-effort, never blocks the request.
+# Mounted before CORS so logging captures the response status after all
+# downstream middleware has been applied.
+app.middleware("http")(public_traffic_middleware)
 
 app.add_middleware(
     CORSMiddleware,

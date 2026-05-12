@@ -33,6 +33,7 @@ const NAV = [
   { to: "/conflicts", label: "Conflicts", icon: LightningSlash, testid: "nav-conflicts" },
   { to: "/flags", label: "Runtime Flags", icon: Flag, testid: "nav-flags" },
   { to: "/promotion", label: "Promotion", icon: TrendUp, testid: "nav-promotion" },
+  { to: "/public-traffic", label: "Public Traffic", icon: Pulse, testid: "nav-public-traffic" },
 ];
 
 const RUNTIMES = [

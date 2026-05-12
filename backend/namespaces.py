@@ -98,6 +98,11 @@ SOVEREIGN_AUDIT_LOG = "sovereign_audit_log"
 PUBLIC_CHAT_MESSAGES = "public_chat_messages"
 PUBLIC_NARRATIVE_CACHE = "public_narrative_cache"
 
+# Per-request log for the operator-only traffic verification page
+# (/public-traffic). One row per /api/public/* call: endpoint, tier,
+# status, latency_ms, timestamp. Bounded via TTL index (24h default).
+PUBLIC_REQUEST_LOG = "public_request_log"
+
 RUNTIMES = ("alpha", "camaro", "chevelle", "redeye")
 
 # Historical: REDEYE used to be an "advisor sidecar". We've since promoted

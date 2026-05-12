@@ -19,6 +19,7 @@ import Discussion from "@/pages/Discussion";
 import Scorecards from "@/pages/Scorecards";
 import Conflicts from "@/pages/Conflicts";
 import Positions from "@/pages/Positions";
+import PublicTraffic from "@/pages/PublicTraffic";
 import Ping from "@/pages/Ping";
 import "@/App.css";
 
@@ -66,6 +67,7 @@ function App() {
             <Route path="scorecards" element={<Scorecards />} />
             <Route path="conflicts" element={<Conflicts />} />
             <Route path="positions" element={<Positions />} />
+            <Route path="public-traffic" element={<PublicTraffic />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

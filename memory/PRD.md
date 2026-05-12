@@ -389,6 +389,24 @@ here.
   - `tests/test_roster.py` + `tests/test_positions.py` migrated for
     the seat rename and policy snapshot fields.
   - Total backend pytest = **184/184**.
+- **Public Traffic verification page** (2026-02-13)
+  - **Backend middleware** `public_traffic_middleware` mounted globally:
+    captures every `/api/public/*` request — path, method, query,
+    status, latency_ms, tier header, caller_ip. Fire-and-forget log
+    insert; never blocks the live request even if Mongo hiccups.
+  - **Admin endpoints** (`/api/admin/public-traffic/*`, JWT-gated):
+    * `GET /admin/public-traffic` — last N rows, filterable by path /
+      status / tier.
+    * `GET /admin/public-traffic/summary?hours=N` — total + by-endpoint
+      / by-tier / by-status counts + p50/p95/p99 latency.
+    * `DELETE /admin/public-traffic` — clear all rows (manual reset).
+  - **Frontend** `/public-traffic` page (operator-only, in nav):
+    summary tiles (Total, Latency p50/p95/p99, By Tier, By Status),
+    By-Endpoint horizontal bar chart, live tail table with status +
+    tier color-coding, filters (window 1h-7d, path contains, status,
+    tier), auto-refresh every 5s, clear-log button.
+  - Smoke-tested live: 12 mixed requests across free/starter/pro/pro_max
+    + 401s render correctly with proper coloring and aggregation.
 - **Public API Phase 2 — LLM features + dual-token rotation** (2026-02-13)
   - **Integration**: Emergent LLM key (universal). Two models, picked
     for cost/quality fit:
