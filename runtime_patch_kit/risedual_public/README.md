@@ -58,12 +58,16 @@ If MC env var isn't set → MC returns **503**.
 | `GET /api/public/signals` | Active Signals tile + AI Consensus hero | list of signal cards + aggregate consensus |
 | `GET /api/public/signals/{id}` | War Room (single signal detail) | adversarial + governance views in one payload |
 | `GET /api/public/digest` | Daily Market Digest | predictions / smart_money / alerts, capped per tier |
+| `GET /api/public/digest/narrative` | "Market Overview" prose block | 3-5 sentence LLM-summarized prose (Gemini 3 Flash, 5-min cached) |
 | `GET /api/public/scanner/presets` | Scanner preset list | 10 presets (MACD cross, BB squeeze, RSI extremes, etc.) |
 | `GET /api/public/scanner/scan?preset_id=…` | Scanner results | matches array with strength + detail |
 | `GET /api/public/agent-activity/feed?since=…&limit=…` | Agent Activity / Workspace tape | polled feed, ~10s cadence |
 | `GET /api/public/models-mind/{symbol}` | Model's Mind feature panel | 10 features per symbol, normalized to 0-100 |
 | `GET /api/public/heatmap` | Market Heatmap | per-symbol 24h % change + color band |
 | `GET /api/public/sectors` | Sector Rotation | sector ETF universe; marks `degraded:true` until ETFs are fed |
+| `POST /api/public/chat` | RiseDualGPT chat | Pro Max only; multi-turn grounded conversation (Claude Sonnet 4.5) |
+| `GET /api/public/chat/history/{session_id}` | Repaint chat panel | Pro Max only; full message tape for a session |
+| `DELETE /api/public/chat/history/{session_id}` | End chat session | Pro Max only; clears session memory |
 
 ## Tier behavior summary
 

@@ -67,12 +67,24 @@ These stay on your side — MC is intelligence-only:
 
 - **My Watchlist** — your DB. Stays.
 - **Stripe webhooks + credit ledger** — your DB. Stays.
-- **AI Chat (RiseDualGPT)** — your existing implementation. Phase 2 may add a grounded chat endpoint to MC if you want it backed by MC's positions/technicals, but it's optional.
 - **User auth / sessions** — your DB. Stays.
 - **Onboarding / Tour / Referrals** — yours.
 - **Connect Broker** — yours (you have your own broker UI; MC has separate operator-only broker connections for its own ingest).
 - **Bots** — yours. MC doesn't trade in Phase 1.
-- **Kill switch UI** — yours, OR proxy through MC's existing operator endpoint. If you want it surfaced publicly to admin users, ask for `/api/public/admin/kill-switch` (Phase 2).
+- **Kill switch UI** — yours, OR proxy through MC's existing operator endpoint. If you want it surfaced publicly to admin users, ask for `/api/public/admin/kill-switch` (Phase 3).
+
+## Phase 2 — LLM-backed features
+
+| Existing widget | New source |
+|---|---|
+| **Market Overview** narrative blurb (above the metric cards on Digest) | `digestNarrative()` — 3-5 sentence prose, Gemini 3 Flash, cached 5 min server-side. |
+| **RiseDualGPT** chat (Pro Max users only) | `chat({message, session_id})` returns `{session_id, reply, ...}`. First call: omit `session_id` (MC creates one); subsequent calls in the same conversation: pass it back. |
+| Chat panel **history repaint** | `chatHistory(sessionId)` — full message tape if the user reloads. |
+| Chat **end session** button | `chatClear(sessionId)` — clears server-side memory. |
+
+> **Important — chat tier gate**: MC returns **403** for any tier other than `pro_max`. Your tier check + credit deduction MUST happen BEFORE you call `mcPublic(tier).chat(...)`. Treat MC's 403 as a defense-in-depth backstop, not your primary gate.
+
+> **Chat doctrine**: the model is grounded — system prompt anchors it on MC's live data (open signals, recent technicals, AI consensus). It refuses non-trading topics and refuses to give buy/sell advice ("observation-only" doctrine). If users complain it's too cautious, that's working as intended.
 
 ## Suggested rollout order
 

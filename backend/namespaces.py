@@ -90,6 +90,14 @@ SOVEREIGN_STATE = "sovereign_state"
 SOVEREIGN_STATE_HISTORY = "sovereign_state_history"
 SOVEREIGN_AUDIT_LOG = "sovereign_audit_log"
 
+# Public-API LLM features (Phase 2 — Direction C).
+# Chat messages are stored per (tier, session_id) so risedual.ai's
+# multi-turn conversations survive MC backend restarts. Narrative cache
+# memoizes the digest LLM summary for a short window so we don't burn
+# tokens on every dashboard refresh.
+PUBLIC_CHAT_MESSAGES = "public_chat_messages"
+PUBLIC_NARRATIVE_CACHE = "public_narrative_cache"
+
 RUNTIMES = ("alpha", "camaro", "chevelle", "redeye")
 
 # Historical: REDEYE used to be an "advisor sidecar". We've since promoted

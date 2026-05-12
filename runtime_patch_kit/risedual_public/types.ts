@@ -143,6 +143,47 @@ export interface DigestResponse {
 export const isLockedRow = (row: unknown): row is LockedRow =>
   typeof row === "object" && row !== null && (row as LockedRow).locked === true;
 
+// ──────────────────────── /digest/narrative ────────────────────────
+
+export interface NarrativeResponse {
+  text: string;
+  cached: boolean;
+  generated_at: string;
+  model: string;            // "gemini:gemini-3-flash-preview"
+  tier: Tier;
+}
+
+// ──────────────────────── /chat ────────────────────────
+
+export interface ChatRequest {
+  message: string;
+  session_id?: string;
+}
+
+export interface ChatResponse {
+  session_id: string;
+  reply: string;
+  model: string;            // "anthropic:claude-sonnet-4-5-20250929"
+  tier: Tier;               // always "pro_max"
+  turn_count: number;
+  new_session: boolean;
+}
+
+export interface ChatMessage {
+  message_id: string;
+  session_id: string;
+  role: "user" | "assistant";
+  text: string;
+  ts: string;
+}
+
+export interface ChatHistoryResponse {
+  session_id: string;
+  messages: ChatMessage[];
+  count: number;
+  tier: Tier;
+}
+
 // ──────────────────────── /scanner ────────────────────────
 
 export type ScannerPresetId =

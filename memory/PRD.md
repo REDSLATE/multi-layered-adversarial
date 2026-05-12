@@ -389,6 +389,56 @@ here.
   - `tests/test_roster.py` + `tests/test_positions.py` migrated for
     the seat rename and policy snapshot fields.
   - Total backend pytest = **184/184**.
+- **Public API Phase 2 — LLM features + dual-token rotation** (2026-02-13)
+  - **Integration**: Emergent LLM key (universal). Two models, picked
+    for cost/quality fit:
+    * `gemini:gemini-3-flash-preview` — narrative summary (cheap broadcast).
+    * `anthropic:claude-sonnet-4-5-20250929` — grounded chat (deep reasoning, lower volume).
+  - **`GET /api/public/digest/narrative`** — 3-5 sentence prose
+    overview of today's market posture. System prompt anchors the
+    model on the supplied JSON (predictions/smart_money/alerts), forbids
+    fabricating numbers, no markdown / disclaimers. Cached server-side
+    by 5-minute time bucket so dashboard refreshes don't burn tokens.
+    Available to all tiers (content is not gated — same market).
+  - **`POST /api/public/chat`** — multi-turn grounded RiseDualGPT.
+    Pro Max only (returns 403 otherwise). Session memory persisted
+    to `public_chat_messages` collection keyed by `session_id`;
+    survives MC restarts. Prior conversation replayed into the LLM
+    via injected "prior conversation" block on each turn (bounded by
+    `MAX_TURNS_PER_SESSION=25`). System prompt enforces
+    observation-only doctrine: model explains what signals say, will
+    NOT recommend buy/sell.
+  - **`GET /api/public/chat/history/{session_id}`** — repaint chat
+    panel after a reload.
+  - **`DELETE /api/public/chat/history/{session_id}`** — clear
+    session memory (end of conversation).
+  - **Dual-token rotation grace mode**: `auth.public_trust_required`
+    now accepts EITHER `RISEDUAL_PUBLIC_TOKEN` (primary) OR
+    `RISEDUAL_PUBLIC_TOKEN_OLD` (legacy). Operator rolls MC's env var
+    independently of risedual.ai's deploy schedule — no broken
+    interval. Documented in
+    `runtime_patch_kit/risedual_public/ENV_CHECKLIST.md`.
+  - **Paste-in kit updated**:
+    * `types.ts` — adds `NarrativeResponse`, `ChatRequest`,
+      `ChatResponse`, `ChatMessage`, `ChatHistoryResponse`.
+    * `mcPublicClient.ts` — `digestNarrative()`, `chat()`,
+      `chatHistory()`, `chatClear()`.
+    * `SWAP_NOTES.md` — Phase 2 swap section (narrative + chat).
+    * `ENV_CHECKLIST.md` — dual-token rotation procedure documented.
+  - **Tests**: `/app/backend/tests/test_public_phase2.py` (14/15 PASS,
+    1 skipped intentionally — long-running variant covered by
+    multi-turn test):
+    * Narrative returns grounded prose, model = gemini, all tiers OK.
+    * Narrative second call hits cache (text identical).
+    * Chat returns 403 for free / starter / pro.
+    * Chat continues a session (same session_id, turn_count increments).
+    * Chat history GET / DELETE work; 403 for non-pro_max.
+    * Input validation (empty message → 422).
+    * Dual-token: in-process tests verify both tokens accepted when
+      legacy is set, primary-only when not, third value refused.
+  - **Total backend pytest = 62/63 + sovereign passing** (Phase 2:14
+    + Phase 1:26 + Sovereign:22 = 62/63 with 1 skipped; full backend
+    suite carries forward all previously passing tests).
 - **Public API for risedual.ai (Direction C, Phase 1)** (2026-02-13)
   - **Doctrine codified**: Two faces, one brain. risedual.ai keeps its
     Stripe + credits + 4-tier auth + UI; MC becomes the silent
@@ -692,47 +742,25 @@ Doctrine: **one shared nervous system, three separate decision brains.**
 - ADL receipts always `observed=true`, `executed=false` in observation mode
 - Each runtime route reads only its namespaced collection
 
-## Backlog / Next
-**P0 — Direction C: Two faces, one brain (planned, spec'd, not yet built)**
-Operator chose Direction C: MC becomes the silent backend for the
-public-facing risedual.ai site (already wired with Stripe + credits +
-auth + 4 tiers — `free / starter / pro / pro_max`, where `starter` is
-also a non-paid tier; only `pro` and `pro_max` get unlimited
-War Room + AI Chat). MC is intelligence-only — no billing, no PCI
-scope. risedual.ai's backend passes `X-RiseDual-Token` (trust) +
-`X-RiseDual-User-Tier` (sanitization gate) on every call.
+**Next Action Items**
+- **risedual.ai integration** is unblocked end-to-end: operator copies the kit from
+  `/app/runtime_patch_kit/risedual_public/` to risedual.ai's repo, sets `MC_BASE_URL`
+  + `MC_PUBLIC_TOKEN` env vars, swaps pages per `SWAP_NOTES.md`. Recommended order:
+  Digest → Heatmap → Signals → War Room → Agent Activity → Models Mind → Sectors →
+  Market Overview narrative → RiseDualGPT chat.
 
-Phase 1 endpoints (target shapes pulled from risedual.ai's existing
-codebase to minimize frontend churn):
-- `GET /api/public/signals` + `/{id}` — adversarial block
-  (Bull/Bear/Commander ↔ MC decider/opponent/executor) AND
-  governance block (Strategist/Auditor/Synthesized Signal ↔ MC
-  seat-policy quorum), both framings in one payload.
-- `GET /api/public/digest` — predictions / smart_money / alerts
-  with exact shapes from `services/digest_service.collect_digest_data`.
-- `GET /api/public/scanner/presets` + `/scan?preset_id=…` — 10
-  presets, match shape `{symbol, strength, detail}`.
-- `GET /api/public/agent-activity?since=…&limit=…` — polled feed,
-  event schema from `services/agent_activity_service`.
-- `GET /api/public/models-mind/{symbol}` — MC defines feature names
-  canonically (those names don't exist in risedual.ai today).
-- `GET /api/public/heatmap` + `/sectors`.
-- Paste-in kit at `/app/runtime_patch_kit/risedual_public/` (TS types,
-  Python types, per-page swap notes for the risedual.ai repo).
-
-**P1**
-- **Build 2 — Demote / freeze workflow** (operator-initiated downgrade + hard-freeze
-  endpoints, both audit-logged). On hold pending Build 3 production verification.
-- TTL index on `login_attempts.ts` (currently unbounded — backend testing flagged
-  as optional hardening).
-- Refresh-token Bearer support: accept refresh token from JSON body / Authorization
-  header (today only the cookie path is wired).
-**P2**
-- Notifications (Slack/Email) for `awaiting_second_sign` on promotions.
-- Real-time updates (websocket) for receipts + diagnostics.
-- Drop-in slots for real Alpha/Camaro/Chevelle code (folder layout already mirrors
-  the eventual import points).
-- IBKR Phase 2 — Gateway Sidecar (local Client Portal Gateway pattern).
+**P1 / P2 — Backlog**
+- **P2 — Build 2 demote/freeze workflow**: operator-initiated downgrade + hard-freeze
+  endpoints, both audit-logged. On hold pending Build 3 production verification.
+- **P2 — Notifications (Slack/Email)** for `awaiting_second_sign` on promotions.
+- **P2 — Real-time updates (websocket)** for receipts + diagnostics.
+- **P2 — Drop-in slots** for real Alpha/Camaro/Chevelle code (folder layout already
+  mirrors the eventual import points).
+- **P2 — IBKR Phase 2 Gateway Sidecar** (local Client Portal Gateway pattern).
+- **P2 — Sector ETF feeder** — would lift `/api/public/sectors` out of degraded.
+- **P3 — Phase 3 Public-API extensions**: `/public/admin/kill-switch` (admin-tier
+  surfacing), Stripe-flow telemetry from risedual.ai → MC, dashboard for per-tier
+  request rates against `/api/public/*`.
 
 ## User Personas
 - **Operator (Admin)** — single seeded role today. Reads dashboards, observes

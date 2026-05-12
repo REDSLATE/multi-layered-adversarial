@@ -30,12 +30,28 @@ your backend's proxy routes. If you find yourself wanting to put
 `MC_PUBLIC_TOKEN` in `NEXT_PUBLIC_*` or any client-bundled env, stop —
 that defeats the trust model.
 
-## Rotation procedure
+## Rotation procedure (dual-token grace mode)
 
-1. On MC: generate a new value, add as `RISEDUAL_PUBLIC_TOKEN_NEW` env var, restart backend (now accepts both).
-   - (Note: today MC only reads `RISEDUAL_PUBLIC_TOKEN`. For zero-downtime rotation, ask for a dual-token grace mode — Phase 2 enhancement. For now, rotate during a brief maintenance window.)
-2. On risedual.ai backend: update `MC_PUBLIC_TOKEN` to the new value, restart / redeploy.
-3. On MC: remove the old `RISEDUAL_PUBLIC_TOKEN` value (replace with the new), restart backend.
+MC supports a `RISEDUAL_PUBLIC_TOKEN_OLD` env var alongside the primary
+`RISEDUAL_PUBLIC_TOKEN`. While both are set, MC accepts EITHER value —
+so you can roll your backend independently of MC and never have a
+broken interval.
+
+Zero-downtime rotation:
+
+1. On MC, generate a new value. Set:
+   ```
+   RISEDUAL_PUBLIC_TOKEN=<new-value>
+   RISEDUAL_PUBLIC_TOKEN_OLD=<previous-value>
+   ```
+   Restart MC's backend. Both tokens now work.
+2. On risedual.ai's backend, update `MC_PUBLIC_TOKEN` to the new value
+   and redeploy at your normal pace.
+3. After your deploy is fully out, on MC remove `RISEDUAL_PUBLIC_TOKEN_OLD`
+   and restart. Only the new token is now accepted.
+
+No request-failure window. The old token expires on YOUR schedule, not
+MC's. Auditors love this pattern.
 
 ## Health check
 

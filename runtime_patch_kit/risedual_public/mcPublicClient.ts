@@ -21,9 +21,13 @@
  */
 import type {
   AgentActivityResponse,
+  ChatHistoryResponse,
+  ChatRequest,
+  ChatResponse,
   DigestResponse,
   HeatmapResponse,
   ModelsMindResponse,
+  NarrativeResponse,
   ScannerPresetId,
   ScannerPresetsResponse,
   ScannerScanResponse,
@@ -86,6 +90,9 @@ export function mcPublic(tier: Tier) {
 
     digest: (): Promise<DigestResponse> => call(`/api/public/digest`, tier),
 
+    digestNarrative: (): Promise<NarrativeResponse> =>
+      call(`/api/public/digest/narrative`, tier),
+
     scannerPresets: (): Promise<ScannerPresetsResponse> =>
       call(`/api/public/scanner/presets`, tier),
 
@@ -108,6 +115,26 @@ export function mcPublic(tier: Tier) {
     heatmap: (): Promise<HeatmapResponse> => call(`/api/public/heatmap`, tier),
 
     sectors: (): Promise<SectorsResponse> => call(`/api/public/sectors`, tier),
+
+    // ── Pro Max only ────────────────────────────────────────────
+    // Caller MUST verify the user's tier is "pro_max" before invoking
+    // chat or chat-history. MC returns 403 otherwise, but you should
+    // also deduct credits BEFORE calling MC per your existing pricing
+    // (chat=1 credit per turn).
+
+    chat: (body: ChatRequest): Promise<ChatResponse> =>
+      call(`/api/public/chat`, tier, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+
+    chatHistory: (sessionId: string): Promise<ChatHistoryResponse> =>
+      call(`/api/public/chat/history/${encodeURIComponent(sessionId)}`, tier),
+
+    chatClear: (sessionId: string): Promise<{ deleted: number; session_id: string }> =>
+      call(`/api/public/chat/history/${encodeURIComponent(sessionId)}`, tier, {
+        method: "DELETE",
+      }),
   };
 }
 

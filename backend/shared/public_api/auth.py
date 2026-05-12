@@ -60,13 +60,22 @@ def public_trust_required(
         default=None, alias="X-RiseDual-User-Tier",
     ),
 ) -> PublicCaller:
-    expected = os.environ.get("RISEDUAL_PUBLIC_TOKEN")
-    if not expected:
+    # Dual-token grace mode for zero-downtime rotation.
+    # `RISEDUAL_PUBLIC_TOKEN` is the current token; `RISEDUAL_PUBLIC_TOKEN_OLD`
+    # (optional) is honored during rotation so risedual.ai can update its
+    # env var on its own deploy schedule. Once rotation completes, the
+    # operator removes `RISEDUAL_PUBLIC_TOKEN_OLD` from MC's env.
+    primary = os.environ.get("RISEDUAL_PUBLIC_TOKEN")
+    legacy = os.environ.get("RISEDUAL_PUBLIC_TOKEN_OLD")
+    if not primary:
         raise HTTPException(
             status_code=503,
             detail="public API not configured (RISEDUAL_PUBLIC_TOKEN unset)",
         )
-    if not x_risedual_token or x_risedual_token != expected:
+    accepted = {primary}
+    if legacy:
+        accepted.add(legacy)
+    if not x_risedual_token or x_risedual_token not in accepted:
         raise HTTPException(status_code=401, detail="invalid public trust token")
 
     tier_raw = (x_risedual_user_tier or "free").strip().lower()
