@@ -30,6 +30,10 @@ from shared.public import router as public_router, start_refresher_if_needed as 
 from shared.positions import router as positions_router
 from shared.sovereign_mode_guard import router as sovereign_router
 from shared.public_api import router as public_api_router
+from shared.public_api.rate_limit import (
+    ensure_ttl_index as _rate_limit_ensure_ttl,
+    rate_limit_middleware,
+)
 from shared.public_api.traffic import (
     public_traffic_middleware,
     router as public_traffic_router,
@@ -73,6 +77,8 @@ async def lifespan(app: FastAPI):
     if public_doc:
         start_public_refresher()
         logger.info("Public.com token refresher started")
+    # Public-API rate-limit collection — TTL index for buckets.
+    await _rate_limit_ensure_ttl()
     yield
     await stop_poller()
     await stop_tickler()
@@ -132,9 +138,14 @@ api_router.include_router(chevelle_router)
 
 app.include_router(api_router)
 
-# Public-API traffic logger — best-effort, never blocks the request.
-# Mounted before CORS so logging captures the response status after all
-# downstream middleware has been applied.
+# Public-API middleware stack.
+# Starlette runs `middleware("http")` in REVERSE order — last added is
+# outermost. We want:
+#   outermost: traffic logger  → sees the final response (incl. 429s)
+#   inner:     rate limiter    → can short-circuit with 429
+# So we add the rate limiter FIRST (inner) and the traffic logger LAST
+# (outer). Don't reorder these without re-reading this comment.
+app.middleware("http")(rate_limit_middleware)
 app.middleware("http")(public_traffic_middleware)
 
 app.add_middleware(

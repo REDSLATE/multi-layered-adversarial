@@ -148,6 +148,18 @@ async def public_traffic_summary(
     }
 
 
+@router.get("/admin/public-traffic/limits")
+async def public_traffic_limits(_user: dict = Depends(get_current_user)):
+    """Return the current per-tier rate limits (per minute) so the
+    operator console can display them next to live counts."""
+    from .rate_limit import DEFAULTS_PER_MIN, UNKNOWN_TIER_CAP, tier_limit
+    return {
+        "limits_per_min": {t: tier_limit(t) for t in DEFAULTS_PER_MIN.keys()},
+        "unknown_tier_cap": UNKNOWN_TIER_CAP,
+        "window_seconds": 60,
+    }
+
+
 @router.delete("/admin/public-traffic")
 async def clear_public_traffic(_user: dict = Depends(get_current_user)):
     r = await db[PUBLIC_REQUEST_LOG].delete_many({})

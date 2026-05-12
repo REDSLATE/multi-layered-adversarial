@@ -389,6 +389,45 @@ here.
   - `tests/test_roster.py` + `tests/test_positions.py` migrated for
     the seat rename and policy snapshot fields.
   - Total backend pytest = **184/184**.
+- **Per-tier rate limits on /api/public/*** (2026-02-13)
+  - **Defaults (per minute)**: free 30 · starter 60 · pro 300 · pro_max 1200.
+    `unknown` tier (caller misspelled the header) caps at 20 as a
+    belt-and-suspenders defense. Each tier's limit overrideable via env:
+    `RATE_LIMIT_{FREE,STARTER,PRO,PRO_MAX}_PER_MIN`.
+  - **Mechanism**: per-minute bucket counter in
+    `public_rate_limits` collection, atomic `$inc` via
+    `find_one_and_update(upsert=True, return_document=True)`. TTL index
+    on `expire_at_epoch` drops buckets after 2 minutes — collection
+    stays tiny regardless of traffic. Fails OPEN on Mongo hiccups —
+    the rate limiter must never become a 5xx source for callers.
+  - **Behavior**:
+    * 200 responses carry `X-RateLimit-Tier`, `-Limit`, `-Remaining`,
+      `-Window` so risedual.ai's backend can surface remaining quota.
+    * 429 responses carry the same headers plus `Retry-After` (seconds
+      until the next bucket).
+    * Missing `X-RiseDual-Token` skips the rate-limit increment so
+      random scrapers can't lock out legit callers (the trust dep
+      still 401s).
+    * Unknown tier values normalize to `unknown` (sentinel) so arbitrary
+      strings don't pollute the bucket key space.
+  - **Middleware ordering (important)**: `rate_limit_middleware` is
+    inner, `public_traffic_middleware` is outer — so 429s emitted by
+    the rate limiter are still seen + logged by the traffic logger.
+  - **Admin endpoint** `GET /api/admin/public-traffic/limits` returns
+    the current cap table — surfaced as a "Tier Rate Limits" tile on
+    the `/public-traffic` operator page.
+  - **Tests** `tests/test_public_rate_limit.py` (8/8 PASS, ~3.5min
+    because the tests wait for minute-bucket rollover):
+    * `/limits` endpoint requires JWT and returns the cap table.
+    * 200 responses carry the X-RateLimit-* headers (verified for pro_max).
+    * Free-tier 30/min cap: 35 calls → exactly 30×200 + 5×429.
+    * 429 carries `Retry-After`, `X-RateLimit-Tier=free`,
+      `X-RateLimit-Limit=30`, `X-RateLimit-Remaining=0`.
+    * Pro Max immune to free-tier cap (50 consecutive calls all 200).
+    * Missing trust token: not rate-limited, but still 401 (auth dep
+      handles it).
+    * 429 rows appear in the public-traffic log with `status=429` and
+      the proper `tier` value — operator can filter for them.
 - **Public Traffic verification page** (2026-02-13)
   - **Backend middleware** `public_traffic_middleware` mounted globally:
     captures every `/api/public/*` request — path, method, query,

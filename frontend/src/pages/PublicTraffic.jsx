@@ -18,6 +18,7 @@ const STATUS_COLORS = {
   403: "#FBBF24",
   404: "#71717A",
   422: "#F97316",
+  429: "#F97316",
   500: "#DC2626",
   502: "#DC2626",
   503: "#DC2626",
@@ -52,6 +53,7 @@ function fmtRelative(iso) {
 export default function PublicTraffic() {
   const [summary, setSummary] = useState(null);
   const [rows, setRows] = useState([]);
+  const [limits, setLimits] = useState(null);
   const [hours, setHours] = useState(24);
   const [pathFilter, setPathFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -67,12 +69,14 @@ export default function PublicTraffic() {
       if (pathFilter) params.set("path_contains", pathFilter);
       if (statusFilter) params.set("status", statusFilter);
       if (tierFilter) params.set("tier", tierFilter);
-      const [sumRes, listRes] = await Promise.all([
+      const [sumRes, listRes, limitsRes] = await Promise.all([
         api.get(`/admin/public-traffic/summary?hours=${hours}`),
         api.get(`/admin/public-traffic?${params.toString()}`),
+        limits ? Promise.resolve({ data: limits }) : api.get(`/admin/public-traffic/limits`),
       ]);
       setSummary(sumRes.data);
       setRows(listRes.data.items || []);
+      if (!limits) setLimits(limitsRes.data);
     } catch (e) {
       setError(e?.response?.data?.detail || "Failed to load public traffic");
     } finally {
@@ -156,6 +160,7 @@ export default function PublicTraffic() {
               <option value="401">401</option>
               <option value="403">403</option>
               <option value="422">422</option>
+              <option value="429">429</option>
               <option value="502">502</option>
               <option value="503">503</option>
             </select>
@@ -279,6 +284,26 @@ export default function PublicTraffic() {
                 </div>
               );
             })}
+          </div>
+        </Card>
+      )}
+
+      {/* Tier rate limits */}
+      {limits && (
+        <Card testid="public-traffic-limits">
+          <div className="flex items-center justify-between mb-3">
+            <div className="label-eyebrow">Tier Rate Limits</div>
+            <div className="text-rd-dim text-[10px] font-mono">
+              per {limits.window_seconds}s · 429 returned when exceeded
+            </div>
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-[11px] font-mono">
+            {Object.entries(limits.limits_per_min).map(([t, cap]) => (
+              <div key={t} className="flex items-center justify-between bg-rd-bg3/40 px-3 py-2 rounded">
+                <Badge color={tierColor(t)}>{t}</Badge>
+                <span className="text-rd-text">{cap}/min</span>
+              </div>
+            ))}
           </div>
         </Card>
       )}

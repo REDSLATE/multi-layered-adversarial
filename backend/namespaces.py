@@ -103,6 +103,11 @@ PUBLIC_NARRATIVE_CACHE = "public_narrative_cache"
 # status, latency_ms, timestamp. Bounded via TTL index (24h default).
 PUBLIC_REQUEST_LOG = "public_request_log"
 
+# Rate-limit counters per (tier, minute-bucket). One doc per tier per
+# minute, $inc atomically. TTL index drops docs after 2 minutes so the
+# collection stays tiny regardless of traffic.
+PUBLIC_RATE_LIMITS = "public_rate_limits"
+
 RUNTIMES = ("alpha", "camaro", "chevelle", "redeye")
 
 # Historical: REDEYE used to be an "advisor sidecar". We've since promoted
