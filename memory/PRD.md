@@ -813,7 +813,6 @@ Doctrine: **one shared nervous system, three separate decision brains.**
 - **P2 — Real-time updates (websocket)** for receipts + diagnostics.
 - **P2 — Drop-in slots** for real Alpha/Camaro/Chevelle code (folder layout already
   mirrors the eventual import points).
-- **P2 — IBKR Phase 2 Gateway Sidecar** (local Client Portal Gateway pattern).
 - **P2 — Sector ETF feeder** — would lift `/api/public/sectors` out of degraded.
 - **P3 — Phase 3 Public-API extensions**: `/public/admin/kill-switch` (admin-tier
   surfacing), Stripe-flow telemetry from risedual.ai → MC, dashboard for per-tier
