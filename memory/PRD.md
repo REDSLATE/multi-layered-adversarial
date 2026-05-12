@@ -389,6 +389,34 @@ here.
   - `tests/test_roster.py` + `tests/test_positions.py` migrated for
     the seat rename and policy snapshot fields.
   - Total backend pytest = **184/184**.
+- **Sovereign onboarding packets + DEPLOY runbook** (2026-02-13)
+  - **Smoke-test cleanup**: dropped 4 sovereign_state rows + 70 history
+    rows + 70 audit rows + chat / narrative / traffic / rate-limit
+    collections so the operator console shows the honest empty state
+    ("No sovereign snapshot on file") until real brains connect.
+  - **`DEPLOY.md`** at `/app/runtime_patch_kit/sovereign/` —
+    5-minute deploy recipe (clone kit → set env → smoke test → run
+    sidecar), systemd unit example, Dockerfile example, troubleshooting
+    matrix, mode-switching notes (DTD↔PRD), broker-feed wiring path.
+  - **Per-brain onboarding packets**: one self-contained markdown file
+    per brain with the exact ingest token, suggested initial weights
+    (creating distinct personalities), suggested symbol list, and
+    copy/paste quickstart:
+    * `ONBOARDING_ALPHA.md` — trend follower (trend +0.85, macd +0.65,
+      rsi −0.25), lr 0.06, default seat Decider.
+    * `ONBOARDING_CAMARO.md` — mean reverter (trend −0.45, macd +0.20,
+      rsi +0.80), lr 0.05, default seat Advisor/Opponent.
+    * `ONBOARDING_CHEVELLE.md` — risk auditor / governor (balanced 0.35
+      across features), lr 0.02 (slow, deliberate), default seat
+      Governor (holds the veto bit).
+    * `ONBOARDING_REDEYE.md` — contrarian (trend −0.70, macd −0.30,
+      rsi +0.55), lr 0.05, default seat Opponent.
+  - **Doctrine reminder in every packet**: `LIVE_TRADING_ENABLED=False`
+    is non-negotiable; brains write only to local state and via the
+    three MC HTTP endpoints; PRD mode disallows training.
+  - **Current state**: zero brain hosts connected. Architecture ready
+    end-to-end; the deploy is a 5-minute per-brain task whenever the
+    operator decides to run it.
 - **Per-tier rate limits on /api/public/*** (2026-02-13)
   - **Defaults (per minute)**: free 30 · starter 60 · pro 300 · pro_max 1200.
     `unknown` tier (caller misspelled the header) caps at 20 as a
