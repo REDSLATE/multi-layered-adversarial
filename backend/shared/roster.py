@@ -36,33 +36,31 @@ from namespaces import BRAIN_ELIGIBILITY, BRAIN_ROSTER, DISCUSSION_PARTICIPANTS,
 
 
 ROLES: tuple[str, ...] = (
-    "decider", "executor", "governor", "long_advisor", "short_advisor",
+    "decider", "executor", "governor", "advisor", "opponent",
 )
 BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("alpha", "camaro", "chevelle", "redeye")
 
-# Default assignment — matches the doctrine. The legacy single "advisor"
-# seat was split into long_advisor + short_advisor (2026-02-11) when
-# REDEYE was promoted from sidecar to a full seat. REDEYE defaults to
-# short_advisor (it argues the short side); long_advisor starts vacated
-# for the operator to assign — there is no doctrine pick for "naturally
-# long advisor" and we'd rather have an empty seat than the wrong brain.
+# Default assignment — matches the doctrine. REDEYE defaults to opponent
+# (its training intent is adversarial / argue-the-contrary). `advisor`
+# starts vacated — there's no doctrinal pick for a neutral-counsel seat,
+# and we'd rather leave it empty than miscast a brain.
 DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
-    "decider":       "camaro",
-    "executor":      "alpha",
-    "governor":      "chevelle",
-    "long_advisor":  None,       # operator-assigned
-    "short_advisor": "redeye",
+    "decider":  "camaro",
+    "executor": "alpha",
+    "governor": "chevelle",
+    "advisor":  None,        # operator-assigned
+    "opponent": "redeye",
 }
 
-# Default eligibility — REDEYE is short-only by training. Alpha and
-# Camaro can take long_advisor (and the other active seats). Chevelle
-# remains governor-only. No brain is eligible for both advisor seats
-# at once — operator-discretion if you need to override that.
+# Default eligibility — REDEYE is opponent-only by training. Alpha and
+# Camaro can take advisor (and the other active seats). Chevelle remains
+# governor-only. No brain defaults eligible for both advisor and opponent
+# at the same time; operator may override via the eligibility switch.
 DEFAULT_ELIGIBILITY: dict[str, dict[str, bool]] = {
-    "alpha":    {"decider": True,  "executor": True,  "governor": False, "long_advisor": True,  "short_advisor": False},
-    "camaro":   {"decider": True,  "executor": True,  "governor": False, "long_advisor": True,  "short_advisor": False},
-    "chevelle": {"decider": False, "executor": False, "governor": True,  "long_advisor": False, "short_advisor": False},
-    "redeye":   {"decider": False, "executor": False, "governor": False, "long_advisor": False, "short_advisor": True},
+    "alpha":    {"decider": True,  "executor": True,  "governor": False, "advisor": True,  "opponent": False},
+    "camaro":   {"decider": True,  "executor": True,  "governor": False, "advisor": True,  "opponent": False},
+    "chevelle": {"decider": False, "executor": False, "governor": True,  "advisor": False, "opponent": False},
+    "redeye":   {"decider": False, "executor": False, "governor": False, "advisor": False, "opponent": True},
 }
 
 
@@ -76,15 +74,34 @@ async def get_roster() -> dict:
     """Return the live roster doc, creating defaults on first read."""
     doc = await db[BRAIN_ROSTER].find_one({"_id": "current"}, {"_id": 0})
     if doc:
+        # Backfill seat_epoch on legacy docs (one if missing).
+        if "seat_epoch" not in doc:
+            doc["seat_epoch"] = 1
         return doc
     seed = {
         "_id": "current",
         "assignments": dict(DEFAULT_ASSIGNMENTS),
+        # seat_epoch increments on every reassignment. Every opinion /
+        # stance / decision stamped with this number can be later joined
+        # back to the roster history that was in effect at write time.
+        "seat_epoch": 1,
         "updated_at": _now_iso(),
         "updated_by": "system_default",
     }
     await db[BRAIN_ROSTER].replace_one({"_id": "current"}, seed, upsert=True)
     return {k: v for k, v in seed.items() if k != "_id"}
+
+
+async def _bump_epoch() -> int:
+    """Increment + return the new seat_epoch. Called by any roster mutation."""
+    r = await db[BRAIN_ROSTER].find_one_and_update(
+        {"_id": "current"},
+        {"$inc": {"seat_epoch": 1}, "$set": {"updated_at": _now_iso()}},
+        upsert=True,
+        return_document=True,
+        projection={"_id": 0, "seat_epoch": 1},
+    )
+    return int(r.get("seat_epoch") or 1)
 
 
 async def get_role_of(brain: str) -> Optional[str]:
@@ -149,7 +166,7 @@ async def _audit(action: str, actor: str, payload: dict) -> None:
 
 # ──────────────────────── models ────────────────────────
 
-RoleT = Literal["decider", "executor", "governor", "long_advisor", "short_advisor"]
+RoleT = Literal["decider", "executor", "governor", "advisor", "opponent"]
 BrainT = Literal["alpha", "camaro", "chevelle", "redeye"]
 
 
@@ -197,17 +214,22 @@ async def get_current(_user: dict = Depends(get_current_user)):
     """Live roster + eligibility matrix + doctrine reminders for the UI."""
     r = await get_roster()
     elig = await get_eligibility()
+    from shared.seat_policy import SEAT_POLICY
     return {
         "assignments": r["assignments"],
         "roles": list(ROLES),
         "brains": list(BRAINS),
         "eligibility": elig,
+        "seat_epoch": r.get("seat_epoch", 1),
+        "policy": SEAT_POLICY,
         "updated_at": r.get("updated_at"),
         "updated_by": r.get("updated_by"),
         "doctrine": (
-            "Roster is descriptive metadata. Assigning a brain to "
-            "'executor' does not grant execution authority. "
-            "may_execute remains schema-pinned False on every endpoint."
+            "Identity does not grant authority — seat policy does. "
+            "Assigning a brain to 'executor' attaches the executor "
+            "permissions snapshot to every stance that brain posts "
+            "while in the seat. may_execute remains schema-pinned "
+            "False at every endpoint in Phase 1."
         ),
     }
 
@@ -235,6 +257,7 @@ async def assign(body: AssignIn, user: dict = Depends(get_current_user)):
         return await get_current(user)
 
     actor = user.get("email") or "operator"
+    new_epoch = await _bump_epoch()
     await db[BRAIN_ROSTER].update_one(
         {"_id": "current"},
         {"$set": {
@@ -250,6 +273,7 @@ async def assign(body: AssignIn, user: dict = Depends(get_current_user)):
         "to": body.brain,
         "before": prev,
         "after": new_assignments,
+        "seat_epoch": new_epoch,
     })
     return await get_current(user)
 
@@ -271,6 +295,7 @@ async def swap(body: SwapIn, user: dict = Depends(get_current_user)):
         return await get_current(user)
 
     actor = user.get("email") or "operator"
+    new_epoch = await _bump_epoch()
     await db[BRAIN_ROSTER].update_one(
         {"_id": "current"},
         {"$set": {
@@ -285,6 +310,7 @@ async def swap(body: SwapIn, user: dict = Depends(get_current_user)):
         "role_b": body.role_b,
         "before": prev,
         "after": new_assignments,
+        "seat_epoch": new_epoch,
     })
     return await get_current(user)
 
@@ -297,6 +323,7 @@ async def reset_defaults(user: dict = Depends(get_current_user)):
     if prev == DEFAULT_ASSIGNMENTS:
         return await get_current(user)
     actor = user.get("email") or "operator"
+    new_epoch = await _bump_epoch()
     await db[BRAIN_ROSTER].update_one(
         {"_id": "current"},
         {"$set": {
@@ -306,7 +333,9 @@ async def reset_defaults(user: dict = Depends(get_current_user)):
         }},
         upsert=True,
     )
-    await _audit("reset", actor, {"before": prev, "after": DEFAULT_ASSIGNMENTS})
+    await _audit("reset", actor, {
+        "before": prev, "after": DEFAULT_ASSIGNMENTS, "seat_epoch": new_epoch,
+    })
     return await get_current(user)
 
 

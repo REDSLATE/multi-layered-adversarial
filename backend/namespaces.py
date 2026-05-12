@@ -137,19 +137,21 @@ ROLES: dict[str, dict] = {
         ],
     },
     "redeye": {
-        "role": "short_advisor",
-        "title": "Short-Side Advisor",
-        "tagline": "argues the short side",
+        "role": "opponent",
+        "title": "Opponent",
+        "tagline": "argues the contrary case",
         "description": (
-            "Bearish/short-side adversarial scout. Off-ladder. Argues the "
-            "short side on every position. Whoever holds the executor seat "
-            "(default: Alpha) makes the final long/short call. REDEYE "
-            "speaks via the shared discussion layer and the position "
-            "primitive — peers may read, never modify, its stances."
+            "Adversarial scout. Off-ladder. Argues the contrary case on "
+            "every position (today: typically the short side, but the "
+            "seat does not bind direction — the seat binds intent). "
+            "Whoever holds the executor seat makes the final call. "
+            "REDEYE speaks via the shared discussion layer and the "
+            "position primitive — peers may read, never modify, its "
+            "stances."
         ),
         "allowed_actions": [
             "post_opinion", "read_opinions", "read_roles_manifest",
-            "short_advisory", "alpha_alignment_hint", "stance_short",
+            "adversarial_advisory", "stance_contrary",
         ],
     },
 }

@@ -356,6 +356,39 @@ here.
     against a seeded credential doc, audit log capture, JWT auth
     required on every admin path.
   - Total backend pytest = **185/185**.
+- **Seat policy is authority — identity is just training history** (2026-02-12)
+  - **Doctrine codified**: `shared/seat_policy.py` declares per-seat
+    permissions (`may_decide`, `may_execute`, `may_override`, `may_veto`,
+    `speaks_as`) as a single source of truth. Every stance / decision /
+    audit row snapshots the policy of the seat the brain held at write
+    time, with `seat_epoch` to join back to roster history.
+  - **Seat names cleaned**: `long_advisor` → `advisor` (neutral counsel),
+    `short_advisor` → `opponent` (adversarial). 5 seats: decider,
+    executor, governor, advisor, opponent. REDEYE → opponent. Advisor
+    starts vacated. All eligibility + tenure + tests + frontend labels
+    migrated.
+  - **Per-position call mode** (`auto` | `manual`): operator chooses at
+    propose-time. In `auto` mode, the first long/short stance from the
+    brain holding the executor seat **immediately** advances state to
+    `consensus_long`/`consensus_short` — drop any stack into Executor
+    and it "just calls". Non-executor stances on auto positions DO NOT
+    advance. `abstain` on auto positions does NOT advance.
+  - **Per-(brain, seat) analytics** at `/api/admin/roster/seat-performance`:
+    aggregates stances + executor calls + tenure-days for every
+    (brain, seat) pair the brain has ever held. Answers "how good was
+    Camaro as Executor?" with hard numbers instead of gut feel.
+  - **`/api/admin/roster` payload** now includes the full `policy` dict
+    and current `seat_epoch` so the frontend (and brain sidecars) can
+    consult permissions without a second round-trip.
+  - **Tests**: `/app/backend/tests/test_seat_policy_and_auto.py`
+    (10/10 PASS) — policy exposed, snapshot fields on every stance,
+    seat_epoch bumps on assign, auto-advance on executor long/short,
+    no-advance on non-executor or executor-abstain, manual-mode never
+    auto-advances, default call_mode is manual, seat-performance
+    matrix returns expected rows, JWT auth required on analytics.
+  - `tests/test_roster.py` + `tests/test_positions.py` migrated for
+    the seat rename and policy snapshot fields.
+  - Total backend pytest = **184/184**.
 - **Doctrine loosening (2026-02-09)**: communication is unrestricted.
   Stance vocabulary expanded (added `agree`, `disagree`, `refine`,
   `retract`, `hypothesis`). Topic kinds permissive (any

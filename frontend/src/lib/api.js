@@ -156,10 +156,10 @@ export const RUNTIME_META = {
     bgClass: "bg-rd-redeye",
     enforceFlag: null,            // no per-runtime enforce flag yet
     enforceLabel: null,
-    role: "short_advisor",
-    roleTitle: "Short-Side Advisor",
-    roleTagline: "argues the short side",
-    note: "Bearish scout · stamps short stance on every position · cannot execute",
+    role: "opponent",
+    roleTitle: "Opponent",
+    roleTagline: "argues the contrary case",
+    note: "Adversarial scout · stamps the contrary case on every position · cannot execute",
   },
 };
 

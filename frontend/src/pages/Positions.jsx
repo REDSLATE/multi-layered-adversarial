@@ -183,6 +183,11 @@ function PositionCard({ p, onChange }) {
           {p.regime_tag && (
             <Badge color="#A1A1AA">{p.regime_tag}</Badge>
           )}
+          {p.call_mode === "auto" && (
+            <Badge color="#FBBF24" testid={`call-mode-badge-${p.position_id}`}>
+              AUTO · executor decides
+            </Badge>
+          )}
           <span className="text-[10px] text-rd-dim font-mono">
             proposed by {p.proposed_by} · {relTime(p.created_at)}
           </span>
@@ -326,6 +331,7 @@ function ProposeDialog({ open, onClose, onCreated }) {
   const [symbol, setSymbol] = useState("");
   const [regimeTag, setRegimeTag] = useState("");
   const [thesis, setThesis] = useState("");
+  const [callMode, setCallMode] = useState("manual");
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState("");
 
@@ -339,9 +345,10 @@ function ProposeDialog({ open, onClose, onCreated }) {
         regime_tag: regimeTag.trim() || null,
         thesis: thesis.trim(),
         proposed_by: "operator",
+        call_mode: callMode,
       });
-      toast.success(`Position proposed · ${symbol.trim().toUpperCase()}`);
-      setSymbol(""); setRegimeTag(""); setThesis("");
+      toast.success(`Position proposed · ${symbol.trim().toUpperCase()} · ${callMode}`);
+      setSymbol(""); setRegimeTag(""); setThesis(""); setCallMode("manual");
       onCreated();
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
@@ -405,6 +412,40 @@ function ProposeDialog({ open, onClose, onCreated }) {
               placeholder="e.g. Earnings tomorrow, IV crush risk, but trend is up..."
             />
           </div>
+
+          <div>
+            <Label className="text-[10px] uppercase tracking-widest text-rd-dim">
+              Call mode <span className="text-rd-muted">· who advances state?</span>
+            </Label>
+            <div className="grid grid-cols-2 gap-2 mt-1">
+              {[
+                { key: "manual", label: "OPERATOR DECIDES", desc: "You click CALL LONG / CALL SHORT after seeing all stances. Audit-clean, no surprises." },
+                { key: "auto",   label: "EXECUTOR AUTO",    desc: "The brain in the EXECUTOR seat's first long/short stance advances state immediately. Drop in, go." },
+              ].map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => setCallMode(opt.key)}
+                  className={`text-left px-3 py-2 border ${
+                    callMode === opt.key
+                      ? "border-rd-text bg-rd-bg3"
+                      : "border-rd-border hover:border-rd-borderStrong"
+                  }`}
+                  data-testid={`call-mode-${opt.key}`}
+                >
+                  <div className={`text-[10px] font-mono font-bold tracking-widest ${
+                    callMode === opt.key ? "text-rd-text" : "text-rd-muted"
+                  }`}>
+                    {opt.label}
+                  </div>
+                  <div className="text-[10px] text-rd-dim font-mono mt-1 leading-snug">
+                    {opt.desc}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
           {err && (
             <div className="border border-rd-danger text-rd-danger px-3 py-2 text-[11px] font-mono">
               {err}

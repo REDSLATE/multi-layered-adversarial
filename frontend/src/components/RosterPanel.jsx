@@ -7,11 +7,11 @@ import {
 import { toast } from "sonner";
 
 const ROLE_META = {
-  decider:       { label: "DECIDER",        desc: "Forms the trust / reduce / veto / observation call",          color: "#F59E0B" },
-  executor:      { label: "EXECUTOR",       desc: "Calls the long/short direction. Would route orders if exec were enabled", color: "#3B82F6" },
-  governor:      { label: "GOVERNOR",       desc: "Audits, gates, freezes — never decides, never executes",      color: "#10B981" },
-  long_advisor:  { label: "LONG ADVISOR",   desc: "Argues the long side. Off-ladder. Never executes",            color: "#22C55E" },
-  short_advisor: { label: "SHORT ADVISOR",  desc: "Argues the short side. Off-ladder. Never executes",           color: "#DC2626" },
+  decider:   { label: "DECIDER",   desc: "Forms the trust / reduce / veto / observation call",          color: "#F59E0B" },
+  executor:  { label: "EXECUTOR",  desc: "Calls the long/short direction. Phase 2 will route orders here", color: "#3B82F6" },
+  governor:  { label: "GOVERNOR",  desc: "Audits, gates, freezes — never decides, never executes",      color: "#10B981" },
+  advisor:   { label: "ADVISOR",   desc: "Gives neutral counsel. Off-ladder. Never decides, never executes", color: "#22C55E" },
+  opponent:  { label: "OPPONENT",  desc: "Argues the contrary case. Off-ladder. Never decides, never executes", color: "#DC2626" },
 };
 
 const BRAIN_META = {
@@ -21,7 +21,7 @@ const BRAIN_META = {
   redeye:   { label: "REDEYE",   color: "#DC2626" },
 };
 
-const ROLES = ["decider", "executor", "governor", "long_advisor", "short_advisor"];
+const ROLES = ["decider", "executor", "governor", "advisor", "opponent"];
 const BRAINS = ["alpha", "camaro", "chevelle", "redeye"];
 
 const CHURN_COLOR = { LOW: "#22C55E", MEDIUM: "#F59E0B", HIGH: "#DC2626" };

@@ -125,12 +125,22 @@ class TestRuntimeStance:
         assert final["stance_counts"]["short"] == 1
         assert final["stance_counts"]["abstain"] == 1
         assert final["brains_engaged"] == 4
-        # REDEYE's posted_as should be 'short_advisor' (post-promotion)
+        # REDEYE's posted_as should be 'opponent' (post-rename)
         redeye_stance = final["stances_by_brain"]["redeye"]
-        assert redeye_stance["posted_as"] == "short_advisor"
+        assert redeye_stance["posted_as"] == "opponent"
+        # REDEYE in opponent seat has NO execute authority — verify the
+        # policy snapshot stamped at stance-write-time reflects that.
+        assert redeye_stance["may_execute"] is False
+        assert redeye_stance["may_decide"] is False
         # ALPHA's posted_as should be 'executor' (current seat)
         alpha_stance = final["stances_by_brain"]["alpha"]
         assert alpha_stance["posted_as"] == "executor"
+        # Alpha in executor seat HAS execute authority on the snapshot
+        # (the bit is operationally inert in Phase 1 — no orders fire —
+        # but the contract field must be True so the Phase 2 broker
+        # exec-gate can consult it).
+        assert alpha_stance["may_execute"] is True
+        assert alpha_stance["may_decide"] is True
 
     def test_runtime_bad_token_401(self):
         tok = _login()

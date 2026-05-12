@@ -73,11 +73,11 @@ class TestRosterBasics:
             "decider": "camaro",
             "executor": "alpha",
             "governor": "chevelle",
-            "long_advisor": None,
-            "short_advisor": "redeye",
+            "advisor": None,
+            "opponent": "redeye",
         }
         # Doctrine note must be present in the response
-        assert "may_execute" in d["doctrine"]
+        assert "authority" in d["doctrine"].lower()
 
     def test_assign_vacates_old_role(self):
         tok = _login()
@@ -102,11 +102,11 @@ class TestRosterBasics:
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
-            json={"role": "short_advisor", "brain": None},
+            json={"role": "opponent", "brain": None},
             timeout=10,
         )
         assert r.status_code == 200
-        assert r.json()["assignments"]["short_advisor"] is None
+        assert r.json()["assignments"]["opponent"] is None
 
     def test_swap_atomic(self):
         tok = _login()
@@ -168,8 +168,8 @@ class TestRosterBasics:
             "decider": "camaro",
             "executor": "alpha",
             "governor": "chevelle",
-            "long_advisor": None,
-            "short_advisor": "redeye",
+            "advisor": None,
+            "opponent": "redeye",
         }
 
     def test_audit_log_captures_changes(self):
@@ -179,7 +179,7 @@ class TestRosterBasics:
         requests.post(
             f"{BASE_URL}/api/admin/roster/swap",
             headers=_hdr(tok),
-            json={"role_a": "decider", "role_b": "short_advisor"},
+            json={"role_a": "decider", "role_b": "opponent"},
             timeout=10,
         )
         r = requests.get(f"{BASE_URL}/api/admin/roster/audit", headers=_hdr(tok), timeout=10)
@@ -203,19 +203,19 @@ class TestEligibility:
         assert m["chevelle"]["governor"] is True
         assert m["chevelle"]["decider"] is False
         assert m["chevelle"]["executor"] is False
-        assert m["chevelle"]["long_advisor"] is False
-        assert m["chevelle"]["short_advisor"] is False
-        # REDEYE = short_advisor only (was sidecar-advisor, now full short seat)
-        assert m["redeye"]["short_advisor"] is True
-        assert m["redeye"]["long_advisor"] is False
+        assert m["chevelle"]["advisor"] is False
+        assert m["chevelle"]["opponent"] is False
+        # REDEYE = opponent only (was sidecar-advisor, now full opponent seat)
+        assert m["redeye"]["opponent"] is True
+        assert m["redeye"]["advisor"] is False
         assert m["redeye"]["decider"] is False
-        # Alpha/Camaro = decider/executor/long_advisor, NOT governor or short_advisor
+        # Alpha/Camaro = decider/executor/advisor, NOT governor or opponent
         for b in ("alpha", "camaro"):
             assert m[b]["governor"] is False
-            assert m[b]["short_advisor"] is False
+            assert m[b]["opponent"] is False
             assert m[b]["decider"] is True
             assert m[b]["executor"] is True
-            assert m[b]["long_advisor"] is True
+            assert m[b]["advisor"] is True
 
     def test_assign_blocked_by_default_matrix(self):
         tok = _login()
@@ -294,7 +294,7 @@ class TestTenure:
         assert r.status_code == 200
         d = r.json()
         assert "per_role" in d
-        assert {row["role"] for row in d["per_role"]} == {"decider", "executor", "governor", "long_advisor", "short_advisor"}
+        assert {row["role"] for row in d["per_role"]} == {"decider", "executor", "governor", "advisor", "opponent"}
         assert "average_tenure_days" in d
         assert "churn_state" in d
         assert d["churn_state"] in ("LOW", "MEDIUM", "HIGH")
