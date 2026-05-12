@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { api, RUNTIME_META, fmtTime, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 import SovereignTile from "@/components/SovereignTile";
+import LivePulse from "@/components/LivePulse";
 
 const SUB_ENDPOINT = {
   alpha: { url: "/runtime/alpha/decisions", title: "alpha_decision_log", cols: ["timestamp", "decision", "symbol", "score"] },
@@ -54,7 +55,12 @@ export default function RuntimeDetail() {
         eyebrow={`Runtime · ${meta.project}`}
         title={meta.label}
         sub={`${meta.note}. Decision authority is isolated to this runtime — no cross-runtime reads.`}
-        right={<Badge color={meta.color}>{meta.label}</Badge>}
+        right={
+          <div className="flex items-center gap-3">
+            <LivePulse runtime={runtime} />
+            <Badge color={meta.color}>{meta.label}</Badge>
+          </div>
+        }
         testid={`runtime-header-${runtime}`}
       />
 

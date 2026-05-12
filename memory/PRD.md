@@ -389,6 +389,23 @@ here.
   - `tests/test_roster.py` + `tests/test_positions.py` migrated for
     the seat rename and policy snapshot fields.
   - Total backend pytest = **184/184**.
+- **LivePulse connection indicator on /runtime/{brain}** (2026-02-13)
+  - **Backend**: new read-only `GET /api/heartbeat-status/{brain}`
+    endpoint (no auth — same exposure as the existing public /ping
+    pages). Returns `connected` band (`never` / `fresh` / `stale` /
+    `dead`), `last_seen` ISO timestamp, and `age_seconds`. Banding:
+    fresh < 90s, stale < 10min, dead beyond.
+  - **Frontend**: `LivePulse` component polls `/heartbeat-status/{brain}`
+    every 5s, renders a pulsing dot in the page header next to the
+    brain badge. Green pulse when fresh (connected · 21s ago), amber
+    static for stale, red for dead, grey for never. The pulse uses
+    `animate-ping` so a brain coming online is impossible to miss
+    visually.
+  - **Tests** `tests/test_heartbeat_status.py` (4/4 PASS): unknown
+    brain → 404, never-pinged state, fresh-after-ping state, no JWT
+    required.
+  - **Heartbeats collection reset** so the dashboard shows the honest
+    "no heartbeat yet" state until a real brain host connects.
 - **Sovereign onboarding packets + DEPLOY runbook** (2026-02-13)
   - **Smoke-test cleanup**: dropped 4 sovereign_state rows + 70 history
     rows + 70 audit rows + chat / narrative / traffic / rate-limit

@@ -112,3 +112,51 @@ async def heartbeat_ping(
     effective_token = token or x_runtime_token or ""
     ua = request.headers.get("user-agent", "")
     return await _do_ping(brain.lower(), effective_token, ua)
+
+
+@router.get("/heartbeat-status/{brain}")
+async def heartbeat_status(brain: str):
+    """Read-only status for the operator dashboard. No auth required —
+    leaks only that the brain has/hasn't pinged recently, which the
+    public /ping pages already expose.
+
+    Returns:
+        connected: never-pinged / fresh / stale / dead
+        last_seen: ISO timestamp of last heartbeat (null if never)
+        age_seconds: how long ago, or null
+    """
+    brain = brain.lower()
+    if brain not in DISCUSSION_PARTICIPANTS:
+        raise HTTPException(status_code=404, detail=f"unknown brain {brain!r}")
+
+    hb = await db[SHARED_HEARTBEATS].find_one({"runtime": brain}, {"_id": 0})
+    if not hb or not hb.get("last_seen"):
+        return {
+            "runtime": brain,
+            "connected": "never",
+            "last_seen": None,
+            "age_seconds": None,
+        }
+    try:
+        last = datetime.fromisoformat(hb["last_seen"].replace("Z", "+00:00"))
+        age = (datetime.now(timezone.utc) - last).total_seconds()
+    except (ValueError, AttributeError):
+        return {
+            "runtime": brain,
+            "connected": "never",
+            "last_seen": hb.get("last_seen"),
+            "age_seconds": None,
+        }
+    # Banding: fresh < 90s, stale < 10min, dead beyond that.
+    if age < 90:
+        status = "fresh"
+    elif age < 600:
+        status = "stale"
+    else:
+        status = "dead"
+    return {
+        "runtime": brain,
+        "connected": status,
+        "last_seen": hb["last_seen"],
+        "age_seconds": round(age, 1),
+    }
