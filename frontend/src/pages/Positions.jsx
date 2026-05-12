@@ -175,6 +175,34 @@ function PositionCard({ p, onChange }) {
 
   return (
     <Card className="p-0 overflow-hidden" testid={`position-${p.position_id}`}>
+      {/* Quorum stripe — surfaces adversarial / governance blindness */}
+      {p.quorum?.degraded && (
+        <div
+          className="px-4 py-1.5 flex items-center gap-3 text-[10px] font-mono uppercase tracking-widest"
+          style={{
+            background: p.quorum.adversarial_blindness ? "rgba(220,38,38,0.10)" : "rgba(245,158,11,0.10)",
+            borderBottom: `1px solid ${p.quorum.adversarial_blindness ? "#DC2626" : "#F59E0B"}`,
+            color: p.quorum.adversarial_blindness ? "#FCA5A5" : "#FCD34D",
+          }}
+          data-testid={`quorum-stripe-${p.position_id}`}
+        >
+          <span>⚠ QUORUM DEGRADED</span>
+          {p.quorum.adversarial_blindness && (
+            <span data-testid={`adversarial-blindness-${p.position_id}`}>
+              · adversarial blindness (opponent silent)
+            </span>
+          )}
+          {p.quorum.governance_blindness && (
+            <span data-testid={`governance-blindness-${p.position_id}`}>
+              · governance blindness (governor silent)
+            </span>
+          )}
+          <span className="ml-auto opacity-80">
+            missing: {(p.quorum.seats_missing || []).join(", ") || "—"}
+          </span>
+        </div>
+      )}
+
       <div className="px-4 py-3 border-b border-rd-border flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           <span className="font-display text-2xl font-black tracking-tighter">
@@ -246,6 +274,37 @@ function PositionCard({ p, onChange }) {
                   {stance.notes && (
                     <div className="text-[10px] text-rd-muted font-mono mt-1 line-clamp-2">
                       {stance.notes}
+                    </div>
+                  )}
+                  {/* Memory provenance — only renders if brain reported */}
+                  {Array.isArray(stance.memory_sources) && stance.memory_sources.length > 0 && (
+                    <div
+                      className="mt-1.5 text-[9px] font-mono"
+                      data-testid={`memory-sources-${p.position_id}-${brain}`}
+                    >
+                      <span className="text-rd-dim uppercase tracking-widest">memory · </span>
+                      <span className="text-rd-muted">
+                        {stance.memory_sources.slice(0, 3).join(" · ")}
+                        {stance.memory_sources.length > 3 && ` (+${stance.memory_sources.length - 3})`}
+                      </span>
+                    </div>
+                  )}
+                  {stance.confidence_origin && Object.keys(stance.confidence_origin).length > 0 && (
+                    <div
+                      className="mt-1 text-[9px] font-mono"
+                      data-testid={`confidence-origin-${p.position_id}-${brain}`}
+                      title={Object.entries(stance.confidence_origin).map(([k,v]) => `${k}: ${v >= 0 ? "+" : ""}${v.toFixed(2)}`).join("\n")}
+                    >
+                      <span className="text-rd-dim uppercase tracking-widest">origin · </span>
+                      <span className="text-rd-muted">
+                        {Object.entries(stance.confidence_origin).slice(0, 3).map(([k, v]) => (
+                          <span key={k} className="mr-2">
+                            {k}: <span className={v >= 0 ? "text-rd-text" : "text-rd-danger"}>
+                              {v >= 0 ? "+" : ""}{Number(v).toFixed(2)}
+                            </span>
+                          </span>
+                        ))}
+                      </span>
                     </div>
                   )}
                   <div className="text-[9px] text-rd-dim font-mono mt-1">

@@ -28,6 +28,7 @@ class SeatPolicy(TypedDict):
     may_execute: bool      # may route orders (gated again at the broker layer)
     may_override: bool     # may overrule a peer's stance (decider primarily)
     may_veto: bool         # may halt promotion / freeze a runtime (governor)
+    seat_required: bool    # quorum: if True and seat unstamped, position is degraded
     speaks_as: str         # human-readable label printed on stances
 
 
@@ -37,6 +38,9 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         "may_execute": False,
         "may_override": True,
         "may_veto": False,
+        # Decider is informational quorum — useful but not safety-critical.
+        # A position without a decider stance is "incomplete", not "blind".
+        "seat_required": False,
         "speaks_as": "decider",
     },
     "executor": {
@@ -47,6 +51,9 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         "may_execute": True,
         "may_override": False,
         "may_veto": False,
+        # Executor stance is needed to advance auto-mode positions —
+        # required for quorum on every position regardless of call_mode.
+        "seat_required": True,
         "speaks_as": "executor",
     },
     "governor": {
@@ -54,6 +61,10 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         "may_execute": False,
         "may_override": False,
         "may_veto": True,
+        # Governor silence on a position = governance blindness.
+        # Operator must SEE this loudly — that's how Chevelle going dark
+        # gets caught before a bad call gets locked in.
+        "seat_required": True,
         "speaks_as": "governor",
     },
     "advisor": {
@@ -61,6 +72,7 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         "may_execute": False,
         "may_override": False,
         "may_veto": False,
+        "seat_required": False,
         "speaks_as": "advisor",
     },
     "opponent": {
@@ -70,6 +82,10 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         "may_execute": False,
         "may_override": False,
         "may_veto": False,
+        # Opponent silence = adversarial blindness, the exact failure
+        # mode the operator flagged: "if REDEYE dies, you stop hearing
+        # the contrary case and silently dial up risk." Required.
+        "seat_required": True,
         "speaks_as": "opponent",
     },
 }
@@ -113,3 +129,8 @@ def snapshot(seat: str | None) -> dict:
         "may_override": p["may_override"],
         "may_veto": p["may_veto"],
     }
+
+
+def required_seats() -> tuple[str, ...]:
+    """Seats whose silence triggers a degraded-quorum flag on positions."""
+    return tuple(s for s, p in SEAT_POLICY.items() if p["seat_required"])

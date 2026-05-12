@@ -43,7 +43,7 @@ from namespaces import (
 )
 from runtime_auth import verify_runtime_token
 from shared.roster import get_roster
-from shared.seat_policy import snapshot as seat_snapshot
+from shared.seat_policy import SEAT_POLICY, required_seats, snapshot as seat_snapshot
 
 
 STATE_PROPOSED = "proposed"
@@ -126,6 +126,55 @@ class StanceIn(BaseModel):
     stance: StanceT
     confidence: float = Field(0.5, ge=0.0, le=1.0)
     notes: str = Field("", max_length=2048)
+    # Memory provenance (optional — brains opt in once they emit it).
+    # When a brain reports which memory artefacts shaped this stance,
+    # we record them so future audits can trace memory poisoning, stale
+    # priors, or reinforcement loops. Empty list is acceptable.
+    memory_sources: list[str] = Field(default_factory=list, max_length=32)
+    # Confidence origin breakdown (optional). Brains that can decompose
+    # their confidence into named components (model, memory,
+    # contradiction_penalty, regime_alignment, …) report them here.
+    # Validated below to keep keys/values bounded.
+    confidence_origin: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("memory_sources")
+    @classmethod
+    def _norm_sources(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        for s in v:
+            if not isinstance(s, str):
+                raise ValueError("memory_sources must be strings")
+            t = s.strip()
+            if not t:
+                continue
+            if len(t) > 128:
+                raise ValueError(f"memory_source too long: {t[:32]}...")
+            out.append(t)
+        return out
+
+    @field_validator("confidence_origin")
+    @classmethod
+    def _norm_confidence_origin(cls, v: dict) -> dict[str, float]:
+        if len(v) > 12:
+            raise ValueError("confidence_origin can have at most 12 components")
+        out: dict[str, float] = {}
+        for k, val in v.items():
+            if not isinstance(k, str) or not k:
+                raise ValueError("confidence_origin keys must be non-empty strings")
+            if len(k) > 64:
+                raise ValueError(f"confidence_origin key too long: {k[:32]}...")
+            try:
+                f = float(val)
+            except (TypeError, ValueError) as e:
+                raise ValueError(
+                    f"confidence_origin[{k!r}] must be a number"
+                ) from e
+            if not (-1.0 <= f <= 1.0):
+                raise ValueError(
+                    f"confidence_origin[{k!r}]={f} must be in [-1, 1]"
+                )
+            out[k.strip()] = f
+        return out
 
 
 class OperatorStanceIn(StanceIn):
@@ -175,12 +224,60 @@ async def _stance_summary(position_id: str) -> dict:
     }
 
 
+async def _compute_quorum(stances_by_seat: dict[str, dict],
+                          roster_assignments: dict[str, Optional[str]]) -> dict:
+    """Quorum awareness — surfaces silent adversarial / governance
+    blindness so a missing OPPONENT (REDEYE down) doesn't quietly
+    dial up risk.
+
+    Computes:
+      - seats_engaged: list of seats that have stamped a stance
+      - seats_required: list of seats marked seat_required=True
+      - seats_missing: seats that are required but unstamped
+      - vacant_required_seats: required seats that have no brain assigned
+        (worse than just unstamped — there's literally no one to ask)
+      - adversarial_blindness: opponent seat is required and unstamped
+      - governance_blindness: governor seat is required and unstamped
+      - degraded: any required seat is unstamped or vacant
+    """
+    req = list(required_seats())
+    engaged = list(stances_by_seat.keys())
+    vacant_required = [s for s in req if not roster_assignments.get(s)]
+    missing = [s for s in req if s not in engaged]
+    return {
+        "seats_engaged": engaged,
+        "seats_required": req,
+        "seats_missing": missing,
+        "vacant_required_seats": vacant_required,
+        "adversarial_blindness": "opponent" in missing,
+        "governance_blindness": "governor" in missing,
+        "degraded": len(missing) > 0,
+    }
+
+
 async def _hydrate(doc: dict) -> dict:
     summary = await _stance_summary(doc["position_id"])
+    roster = {}
+    try:
+        roster = await get_roster()
+    except Exception:  # noqa: BLE001
+        roster = {"assignments": {}}
+    # Build seat → stance map (latest stance from whichever brain held
+    # that seat at write time).
+    stances_by_seat: dict[str, dict] = {}
+    for stance in summary["stances_by_brain"].values():
+        seat = stance.get("posted_as")
+        if seat:
+            stances_by_seat[seat] = stance
+    quorum = await _compute_quorum(
+        stances_by_seat, roster.get("assignments") or {},
+    )
     return {
         **doc,
         **summary,
+        "stances_by_seat": stances_by_seat,
         "executor_seat": await _executor_seat(),
+        "quorum": quorum,
     }
 
 
@@ -309,6 +406,8 @@ async def operator_post_stance(
         position_id=position_id, brain=body.brain, stance=body.stance,
         confidence=body.confidence, notes=body.notes,
         posted_via="operator", actor=actor,
+        memory_sources=body.memory_sources,
+        confidence_origin=body.confidence_origin,
     )
 
 
@@ -340,6 +439,8 @@ async def runtime_post_stance(
         position_id=position_id, brain=runtime, stance=body.stance,
         confidence=body.confidence, notes=body.notes,
         posted_via="runtime", actor=runtime,
+        memory_sources=body.memory_sources,
+        confidence_origin=body.confidence_origin,
     )
 
 
@@ -347,8 +448,10 @@ def _stance_doc(
     *, position_id: str, brain: str, stance: str, confidence: float,
     notes: str, seat: Optional[str], seat_epoch: Optional[int],
     policy: dict, posted_via: str, actor: str, now_iso: str,
+    memory_sources: list[str], confidence_origin: dict[str, float],
 ) -> dict:
-    """Assemble the stance document with full seat-policy snapshot."""
+    """Assemble the stance document with full seat-policy snapshot
+    AND memory-provenance fields."""
     return {
         "stance_id": str(uuid.uuid4()),
         "position_id": position_id,
@@ -365,6 +468,12 @@ def _stance_doc(
         "may_execute": policy["may_execute"],
         "may_override": policy["may_override"],
         "may_veto": policy["may_veto"],
+        # Memory provenance — opt-in by the brain sidecar. Empty arrays
+        # are perfectly valid and indicate the brain doesn't (yet)
+        # report provenance. Future "memory poisoning" audits will join
+        # on these fields.
+        "memory_sources": list(memory_sources),
+        "confidence_origin": dict(confidence_origin),
         "posted_via": posted_via,
         "posted_at": now_iso,
         "actor": actor,
@@ -437,6 +546,8 @@ async def _maybe_auto_advance(
 async def _persist_stance(
     *, position_id: str, brain: str, stance: str,
     confidence: float, notes: str, posted_via: str, actor: str,
+    memory_sources: list[str] | None = None,
+    confidence_origin: dict[str, float] | None = None,
 ) -> dict:
     if stance not in VALID_STANCES:
         raise HTTPException(
@@ -452,6 +563,8 @@ async def _persist_stance(
         confidence=confidence, notes=notes,
         seat=seat, seat_epoch=seat_epoch, policy=policy,
         posted_via=posted_via, actor=actor, now_iso=now,
+        memory_sources=memory_sources or [],
+        confidence_origin=confidence_origin or {},
     ))
     await db[SHARED_POSITIONS].update_one(
         {"position_id": position_id},

@@ -389,6 +389,46 @@ here.
   - `tests/test_roster.py` + `tests/test_positions.py` migrated for
     the seat rename and policy snapshot fields.
   - Total backend pytest = **184/184**.
+- **Quorum awareness + memory provenance** (2026-02-12)
+  - **Doctrine added**: each seat in `SEAT_POLICY` carries a
+    `seat_required` bit. Defaults: `executor`, `governor`, and
+    `opponent` are required; `decider` and `advisor` are informational.
+    The required bits are what surface adversarial / governance
+    blindness when the brain in that seat goes silent.
+  - **Quorum block on every position** (computed in `_hydrate`):
+    - `seats_engaged` (the seats that have stamped)
+    - `seats_required` (the seats marked required)
+    - `seats_missing` (required but unstamped)
+    - `vacant_required_seats` (required seats with NO brain assigned —
+      worse than just unstamped; there's literally no one to ask)
+    - `adversarial_blindness: bool` (opponent silent)
+    - `governance_blindness: bool` (governor silent)
+    - `degraded: bool` (any required seat unstamped)
+  - **Frontend**: red/amber quorum stripe at the top of every degraded
+    position card showing the exact failure mode + which seats are
+    missing. Adversarial blindness uses red (the loud failure); pure
+    governance blindness uses amber.
+  - **Memory provenance** (B): every stance accepts two optional fields:
+    * `memory_sources: list[str]` (≤ 32 entries, each ≤ 128 chars) —
+      which memory artefacts shaped this stance. Empty list valid.
+    * `confidence_origin: dict[str, float]` (≤ 12 keys, each value in
+      [-1, 1]) — confidence decomposition (model / memory /
+      contradiction_penalty / regime_alignment / …).
+  - Validated at the schema layer (422 on out-of-range or oversized
+    payloads). Persisted on the stance doc; surfaced on each brain's
+    stance card on the Positions page as `MEMORY · src_a · src_b · …`
+    and `ORIGIN · model: +0.71 · memory: +0.12 · contradiction: -0.09`
+    (negative contributions shown in red so you can spot which factors
+    pulled the confidence DOWN).
+  - **Tests**: `/app/backend/tests/test_quorum_and_provenance.py`
+    (11/11 PASS) — fresh position has all required seats missing,
+    opponent-silent flags adversarial_blindness, governor-silent flags
+    governance_blindness, full quorum clears all flags, vacant required
+    seat surfaced separately, stance persists memory_sources + origin,
+    provenance is optional (empty defaults), out-of-range origin value
+    rejected, > 32 memory_sources rejected, > 12 origin components
+    rejected, operator path also supports provenance.
+  - Total backend pytest = **195/195**.
 - **Doctrine loosening (2026-02-09)**: communication is unrestricted.
   Stance vocabulary expanded (added `agree`, `disagree`, `refine`,
   `retract`, `hypothesis`). Topic kinds permissive (any
