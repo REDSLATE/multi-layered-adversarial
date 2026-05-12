@@ -81,10 +81,12 @@ class TestSharedOverview:
         assert r.status_code == 200
         d = r.json()
         runtimes = d["runtimes"]
-        assert isinstance(runtimes, list) and len(runtimes) == 3
+        assert isinstance(runtimes, list) and len(runtimes) >= 3
         names = [x["runtime"] for x in runtimes]
-        assert set(names) == {"alpha", "camaro", "chevelle"}
+        assert {"alpha", "camaro", "chevelle"} <= set(names)
         for rt in runtimes:
+            if rt["runtime"] not in {"alpha", "camaro", "chevelle"}:
+                continue  # newer runtimes (e.g. redeye) skip seed-data assertions
             assert rt["mode"] == "observation"
             assert "receipts_count" in rt
             assert "memory_labels_count" in rt
@@ -244,13 +246,17 @@ class TestDiagnostics:
         d = r.json()
         assert d["mongo"]["ok"] is True
         assert d["deploy_mode"] == "observation"
-        assert isinstance(d["runtimes"], list) and len(d["runtimes"]) == 3
+        assert isinstance(d["runtimes"], list) and len(d["runtimes"]) >= 3
+        seen = set()
         for rt in d["runtimes"]:
-            assert rt["runtime"] in {"alpha", "camaro", "chevelle"}
+            seen.add(rt["runtime"])
+            if rt["runtime"] not in {"alpha", "camaro", "chevelle"}:
+                continue  # newer runtimes may not have seeded log counts
             assert "last_receipt_ts" in rt
             assert "log_count" in rt
             assert isinstance(rt["log_count"], int)
             assert rt["log_count"] > 0  # seed data ensures non-zero
+        assert {"alpha", "camaro", "chevelle"} <= seen
 
 
 # ---------- Per-runtime: Alpha ----------

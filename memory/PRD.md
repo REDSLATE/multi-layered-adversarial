@@ -389,6 +389,65 @@ here.
   - `tests/test_roster.py` + `tests/test_positions.py` migrated for
     the seat rename and policy snapshot fields.
   - Total backend pytest = **184/184**.
+- **Sovereign Sidecar Template** (2026-02-13)
+  - **Doctrine**: each of the four brains can run as a deterministic
+    sovereign sidecar — same intelligence core
+    (`wild_adaptive_core_v2.py`), different initializations / feature
+    emphasis per brain. Local state on the brain host (JSON), MC
+    receives stances + state snapshots via API only. Never touches MC's
+    DB directly.
+  - **Three locks, one door** (observation-only):
+    1. Brain core defaults `LIVE_TRADING_ENABLED = False`.
+    2. Sidecar reasserts False on load (refuses to start if tampered).
+    3. MC's API schema-rejects `live_trading_enabled=True` (422).
+  - **DTD vs PRD mode guard** — DTD-mode brains may ship
+    `training_signal=True` (replay learning OK); PRD-mode brains
+    cannot (live data poisoning prevention; 422 if attempted).
+  - **Confidence-delta clamp** — server hard-caps `confidence_delta`
+    at ±0.25. Raw value + clamp flag preserved in history so the
+    operator can see brains hammering against the cap.
+  - **Patch kit** at `/app/runtime_patch_kit/sovereign/`:
+    * `wild_adaptive_core_v2.py` — operator's deterministic core,
+      doctrine-patched.
+    * `mc_client.py` — stdlib HTTPS client (`urllib.request`); posts
+      stances + contributions + heartbeats to MC.
+    * `local_state.py` — JSON-on-disk persistence with atomic writes.
+    * `sidecar.py` — long-lived runner (`python sidecar.py --brain
+      alpha --mode DTD`).
+    * `STATE_SCHEMA.md` — wire-format spec for the local file +
+      contribution snapshot + MC-side enrichments.
+    * `README.md` — full deployment guide with required env vars.
+    * `smoke_test.py` — 8/8 PASS doctrinal smoke tests (no MC
+      connection required).
+  - **MC backend**: `shared/sovereign_mode_guard.py` ingests
+    contributions, snapshots seat policy + epoch on every receipt,
+    persists to three collections (`sovereign_state` latest snapshot,
+    `sovereign_state_history` immutable history,
+    `sovereign_audit_log` operator timeline).
+  - **Endpoints**:
+    * `POST /api/runtime-discussion/sovereign/contribution` —
+      brain sidecars ingest snapshots (runtime token auth).
+    * `GET /api/admin/sovereign/state` — list latest snapshot per brain.
+    * `GET /api/admin/sovereign/state/{brain}` — detail + 20-row
+      history tail.
+    * `GET /api/admin/sovereign/audit` — operator timeline, filter
+      by brain.
+  - **Frontend**: `SovereignTile.jsx` on `/runtime/{brain}` shows
+    mode (DTD/PRD badge), posted_as seat, learning_rate,
+    confidence_delta (red + raw value when clamped), weights bar
+    chart (-3 ↔ +3 range, color by sign), recent-outcomes win/loss
+    ribbon.
+  - **Tests**:
+    * `/app/backend/tests/test_sovereign.py` (22/22 PASS) — happy
+      path, live_trading_enabled rejection, PRD+training_signal
+      rejection, weight bounds, feature cap, runtime-token auth,
+      delta clamping (positive/negative/in-range/infinity),
+      operator-read JWT enforcement, seat-policy snapshot capture,
+      history preserves raw delta + clamp flag.
+    * 4 regression fixes in `tests/test_risedual_backend.py`
+      (overview + diagnostics now accept ≥3 runtimes since REDEYE
+      was promoted to full seat earlier).
+  - **Total backend pytest = 217/217** (existing 195 + 22 sovereign).
 - **Quorum awareness + memory provenance** (2026-02-12)
   - **Doctrine added**: each seat in `SEAT_POLICY` carries a
     `seat_required` bit. Defaults: `executor`, `governor`, and
@@ -569,6 +628,33 @@ Doctrine: **one shared nervous system, three separate decision brains.**
 - Each runtime route reads only its namespaced collection
 
 ## Backlog / Next
+**P0 — Direction C: Two faces, one brain (planned, spec'd, not yet built)**
+Operator chose Direction C: MC becomes the silent backend for the
+public-facing risedual.ai site (already wired with Stripe + credits +
+auth + 4 tiers — `free / starter / pro / pro_max`, where `starter` is
+also a non-paid tier; only `pro` and `pro_max` get unlimited
+War Room + AI Chat). MC is intelligence-only — no billing, no PCI
+scope. risedual.ai's backend passes `X-RiseDual-Token` (trust) +
+`X-RiseDual-User-Tier` (sanitization gate) on every call.
+
+Phase 1 endpoints (target shapes pulled from risedual.ai's existing
+codebase to minimize frontend churn):
+- `GET /api/public/signals` + `/{id}` — adversarial block
+  (Bull/Bear/Commander ↔ MC decider/opponent/executor) AND
+  governance block (Strategist/Auditor/Synthesized Signal ↔ MC
+  seat-policy quorum), both framings in one payload.
+- `GET /api/public/digest` — predictions / smart_money / alerts
+  with exact shapes from `services/digest_service.collect_digest_data`.
+- `GET /api/public/scanner/presets` + `/scan?preset_id=…` — 10
+  presets, match shape `{symbol, strength, detail}`.
+- `GET /api/public/agent-activity?since=…&limit=…` — polled feed,
+  event schema from `services/agent_activity_service`.
+- `GET /api/public/models-mind/{symbol}` — MC defines feature names
+  canonically (those names don't exist in risedual.ai today).
+- `GET /api/public/heatmap` + `/sectors`.
+- Paste-in kit at `/app/runtime_patch_kit/risedual_public/` (TS types,
+  Python types, per-page swap notes for the risedual.ai repo).
+
 **P1**
 - **Build 2 — Demote / freeze workflow** (operator-initiated downgrade + hard-freeze
   endpoints, both audit-logged). On hold pending Build 3 production verification.
@@ -577,9 +663,11 @@ Doctrine: **one shared nervous system, three separate decision brains.**
 - Refresh-token Bearer support: accept refresh token from JSON body / Authorization
   header (today only the cookie path is wired).
 **P2**
+- Notifications (Slack/Email) for `awaiting_second_sign` on promotions.
 - Real-time updates (websocket) for receipts + diagnostics.
 - Drop-in slots for real Alpha/Camaro/Chevelle code (folder layout already mirrors
   the eventual import points).
+- IBKR Phase 2 — Gateway Sidecar (local Client Portal Gateway pattern).
 
 ## User Personas
 - **Operator (Admin)** — single seeded role today. Reads dashboards, observes

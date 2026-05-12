@@ -80,6 +80,16 @@ SHARED_POSITIONS = "shared_positions"
 SHARED_POSITION_STANCES = "shared_position_stances"
 SHARED_POSITION_AUDIT = "shared_position_audit"
 
+# Sovereign sidecar contributions — periodic snapshots of each brain's
+# internal deterministic state (weights, learning rate, recent outcomes).
+# `SOVEREIGN_STATE` is one doc per brain (latest snapshot).
+# `SOVEREIGN_STATE_HISTORY` is immutable: one row per contribution, kept
+# for replay + drift analysis. `SOVEREIGN_AUDIT_LOG` is the operator-
+# readable timeline of contributions, mode flips, and clamp events.
+SOVEREIGN_STATE = "sovereign_state"
+SOVEREIGN_STATE_HISTORY = "sovereign_state_history"
+SOVEREIGN_AUDIT_LOG = "sovereign_audit_log"
+
 RUNTIMES = ("alpha", "camaro", "chevelle", "redeye")
 
 # Historical: REDEYE used to be an "advisor sidecar". We've since promoted

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api, RUNTIME_META, fmtTime, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
+import SovereignTile from "@/components/SovereignTile";
 
 const SUB_ENDPOINT = {
   alpha: { url: "/runtime/alpha/decisions", title: "alpha_decision_log", cols: ["timestamp", "decision", "symbol", "score"] },
@@ -91,6 +92,11 @@ export default function RuntimeDetail() {
                 {status.doctrine}
               </div>
             </Card>
+          </div>
+
+          {/* Sovereign state — periodic snapshot from the brain's deterministic core */}
+          <div className="mb-6">
+            <SovereignTile runtime={runtime} accent={meta.color} />
           </div>
 
           {/* Decision log */}

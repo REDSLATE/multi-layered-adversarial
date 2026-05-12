@@ -28,6 +28,7 @@ from shared.kraken_routes import router as kraken_router, start_poller_if_needed
 from shared.ibkr import router as ibkr_router, start_tickler_if_needed, stop_tickler
 from shared.public import router as public_router, start_refresher_if_needed as start_public_refresher, stop_refresher as stop_public_refresher
 from shared.positions import router as positions_router
+from shared.sovereign_mode_guard import router as sovereign_router
 from shared.heartbeat_ping import router as heartbeat_ping_router
 from shared.seat_performance import router as seat_performance_router
 from shared.roster import router as roster_router
@@ -107,6 +108,7 @@ api_router.include_router(opinions_router)
 api_router.include_router(outcomes_router)
 api_router.include_router(conflicts_router)
 api_router.include_router(positions_router)
+api_router.include_router(sovereign_router)
 api_router.include_router(heartbeat_ping_router)
 api_router.include_router(seat_performance_router)
 api_router.include_router(technicals_router)
