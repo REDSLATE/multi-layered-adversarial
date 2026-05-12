@@ -46,8 +46,8 @@ BACKEND_ENV = _read_env("/app/backend/.env")
 MONGO_URL = BACKEND_ENV.get("MONGO_URL") or os.environ.get("MONGO_URL")
 DB_NAME = BACKEND_ENV.get("DB_NAME") or os.environ.get("DB_NAME")
 
-ADMIN_EMAIL = "admin@risedual.io"
-ADMIN_PASSWORD = "risedual-admin-2026"
+ADMIN_EMAIL = os.environ.get("TEST_ADMIN_EMAIL", "admin@risedual.io")
+ADMIN_PASSWORD = os.environ.get("TEST_ADMIN_PASSWORD", "risedual-admin-2026")
 
 # Second operator we provision purely for this test
 OP_B_EMAIL = "dualsign-op-b@risedual.io"

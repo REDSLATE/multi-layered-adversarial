@@ -288,7 +288,10 @@ function ConnectedView({ status, onChange, onClose }) {
           ) : (
             <div className="space-y-0.5">
               {(positions.items || []).slice(0, 10).map((p, i) => (
-                <div key={i} className="flex items-baseline gap-2">
+                <div
+                  key={p.conid ?? p.contract_id ?? `${p.contractDesc || p.contract_desc || "pos"}-${i}`}
+                  className="flex items-baseline gap-2"
+                >
                   <span className="text-rd-text">{p.contractDesc || p.contract_desc || p.conid}</span>
                   <span className="text-rd-dim">qty {p.position}</span>
                   <span className="text-rd-dim ml-auto">{p.mktValue ?? p.market_value}</span>

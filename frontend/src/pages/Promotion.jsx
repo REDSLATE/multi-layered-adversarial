@@ -39,8 +39,11 @@ export default function Promotion() {
         try {
           const rd = await api.get(`/admin/promotion/readiness/${item.runtime}`);
           r[item.runtime] = rd.data;
-        } catch {
-          /* ignore */
+        } catch (e) {
+          // Per-runtime readiness is best-effort: a single 404 (no
+          // promotion artifact yet) should not blank out the whole
+          // panel. Log and continue.
+          console.warn(`[promotion] readiness fetch failed for ${item.runtime}:`, e?.response?.status, e?.response?.data?.detail || e?.message);
         }
       }
       setReadiness(r);

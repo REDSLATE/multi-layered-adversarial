@@ -59,6 +59,18 @@ const STATUS_META = {
  * because it's the active crypto feeder; ThinkOrSwim and Manual sit
  * alongside. Click a slot to see setup details.
  */
+// IBKR slot is PARKED (2026-02-12). IBKR's retail path requires the
+// Client Portal Gateway running locally on the operator's machine — the
+// cloud-based OAuth path we built first is gated behind their Campus /
+// institutional registration which most retail accounts cannot get. We
+// already have working live connections via Kraken Pro (crypto) and
+// Public.com (stocks/options, no PDT), which cover the position-debate
+// loop. The IBKR backend code + tests are intact in case we come back
+// to this for Phase 2 execution; the slot is just hidden from the UI to
+// avoid the "Connect IBKR" footgun (it asks for a token retail users
+// don't have).
+const SHOW_IBKR_SLOT = false;
+
 export default function FeedersStrip() {
   const [items, setItems] = useState([]);
   const [endpoint, setEndpoint] = useState("/api/ingest/ohlcv");
@@ -67,30 +79,12 @@ export default function FeedersStrip() {
 
   const refresh = useCallback(async () => {
     try {
-      const [feeders, ibkr, publicSt] = await Promise.all([
+      const [feeders, publicSt] = await Promise.all([
         api.get("/shared/technical/feeders"),
-        api.get("/admin/ibkr/status").catch(() => ({ data: null })),
         api.get("/admin/public/status").catch(() => ({ data: null })),
       ]);
       const baseItems = feeders.data.items || [];
-      // Append IBKR as a synthetic broker slot so the operator can see
-      // and manage the broker connection alongside the bar feeders.
-      const ibkrData = ibkr?.data;
-      const ibkrItem = {
-        key: "ibkr",
-        env_key: "—",
-        configured: Boolean(ibkrData?.connected),
-        status: ibkrData?.connected
-          ? (ibkrData.auth_status?.authenticated ? "live" : "stale")
-          : "unconfigured",
-        last_bar_ts: ibkrData?.last_tickle?.ts || null,
-        symbols: (ibkrData?.accounts || []).map(a => a.id).filter(Boolean),
-        symbols_count: (ibkrData?.accounts || []).length,
-        bars_count: 0,
-        tfs: [],
-        is_broker: true,
-      };
-      // Public.com — second broker slot (no PDT restrictions).
+      // Public.com — broker slot (no PDT restrictions).
       const publicData = publicSt?.data;
       const publicItem = {
         key: "public",
@@ -106,7 +100,10 @@ export default function FeedersStrip() {
         tfs: [],
         is_broker: true,
       };
-      setItems([...baseItems, ibkrItem, publicItem]);
+      const broker_items = SHOW_IBKR_SLOT
+        ? [/* re-enable when Gateway sidecar ships */]
+        : [];
+      setItems([...baseItems, ...broker_items, publicItem]);
       setEndpoint(feeders.data.endpoint);
       setErr("");
     } catch (e) {

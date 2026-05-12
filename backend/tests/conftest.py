@@ -14,8 +14,8 @@ if not BASE_URL:
                     break
 BASE_URL = (BASE_URL or "").rstrip("/")
 
-ADMIN_EMAIL = "admin@risedual.io"
-ADMIN_PASSWORD = "risedual-admin-2026"
+ADMIN_EMAIL = os.environ.get("TEST_ADMIN_EMAIL", "admin@risedual.io")
+ADMIN_PASSWORD = os.environ.get("TEST_ADMIN_PASSWORD", "risedual-admin-2026")
 
 
 @pytest.fixture(scope="session")

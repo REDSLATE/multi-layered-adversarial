@@ -68,7 +68,11 @@ async def seed_all(db) -> None:
         runtimes = ["alpha", "camaro", "chevelle"]
         actions = ["enter_long", "enter_short", "exit", "scale_in", "hold"]
         symbols = ["ES", "NQ", "CL", "GC", "ZB"]
-        rng = random.Random(7)
+        # NOTE: `random` (not `secrets`) is correct here. This is
+        # seed data for dashboard demo rows, not security material.
+        # The seed (7) makes the generated rows reproducible — a
+        # cryptographic RNG would break that.
+        rng = random.Random(7)  # noqa: S311 — non-crypto demo data
         bulk = []
         for i in range(45):
             rt = runtimes[i % 3]
@@ -94,7 +98,7 @@ async def seed_all(db) -> None:
         runtimes = ["alpha", "camaro", "chevelle"]
         labels = ["safe", "review", "quarantine"]
         bulk = []
-        rng = random.Random(11)
+        rng = random.Random(11)  # noqa: S311 — non-crypto demo data
         for i in range(36):
             rt = runtimes[i % 3]
             lbl = rng.choices(labels, weights=[7, 2, 1])[0]

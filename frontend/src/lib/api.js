@@ -8,7 +8,11 @@ const TOKEN_KEY = "risedual_access_token";
 export function getToken() {
   try {
     return localStorage.getItem(TOKEN_KEY);
-  } catch {
+  } catch (e) {
+    // localStorage can be denied in some sandboxed iframes / Safari
+    // private mode; warn so we know why auth feels broken in those
+    // environments, but never throw.
+    console.warn("[api] getToken: localStorage unavailable —", e?.message);
     return null;
   }
 }
@@ -16,8 +20,8 @@ export function setToken(t) {
   try {
     if (t) localStorage.setItem(TOKEN_KEY, t);
     else localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    /* ignore */
+  } catch (e) {
+    console.warn("[api] setToken: localStorage unavailable —", e?.message);
   }
 }
 

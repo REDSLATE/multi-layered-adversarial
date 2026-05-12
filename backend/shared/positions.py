@@ -343,6 +343,97 @@ async def runtime_post_stance(
     )
 
 
+def _stance_doc(
+    *, position_id: str, brain: str, stance: str, confidence: float,
+    notes: str, seat: Optional[str], seat_epoch: Optional[int],
+    policy: dict, posted_via: str, actor: str, now_iso: str,
+) -> dict:
+    """Assemble the stance document with full seat-policy snapshot."""
+    return {
+        "stance_id": str(uuid.uuid4()),
+        "position_id": position_id,
+        "brain": brain,
+        "stance": stance,
+        "confidence": float(confidence),
+        "notes": notes,
+        # Seat policy snapshot — this is the authority record. If the
+        # brain later changes seats, this row STILL reflects what the
+        # rules were at write time.
+        "posted_as": policy["posted_as"],
+        "seat_epoch": seat_epoch,
+        "may_decide": policy["may_decide"],
+        "may_execute": policy["may_execute"],
+        "may_override": policy["may_override"],
+        "may_veto": policy["may_veto"],
+        "posted_via": posted_via,
+        "posted_at": now_iso,
+        "actor": actor,
+    }
+
+
+async def _current_seat_and_epoch(brain: str) -> tuple[Optional[str], Optional[int]]:
+    """Resolve which seat the brain currently holds + the live seat_epoch.
+    Best-effort: roster lookup failures resolve to (None, None) so callers
+    can still ingest with the safest-default policy snapshot."""
+    try:
+        roster = await get_roster()
+    except Exception:  # noqa: BLE001
+        return None, None
+    seat_epoch = roster.get("seat_epoch")
+    for role, occupant in roster["assignments"].items():
+        if occupant == brain:
+            return role, seat_epoch
+    return None, seat_epoch
+
+
+async def _maybe_auto_advance(
+    *, position_id: str, brain: str, stance: str, policy: dict,
+    seat_epoch: Optional[int], now_iso: str,
+) -> None:
+    """If the position is in auto call_mode AND the brain holds the
+    executor seat AND the stance is long/short, advance position state.
+    Logs `executor_call_auto` so it's distinguishable from operator calls."""
+    doc = await db[SHARED_POSITIONS].find_one(
+        {"position_id": position_id}, {"_id": 0},
+    )
+    if not doc:
+        return
+    if doc.get("call_mode") != CALL_MODE_AUTO:
+        return
+    if doc["state"] not in OPEN_STATES:
+        return
+    if not policy["may_execute"]:
+        return
+    if stance not in (STANCE_LONG, STANCE_SHORT):
+        return
+
+    new_state = (
+        STATE_CONSENSUS_LONG if stance == STANCE_LONG
+        else STATE_CONSENSUS_SHORT
+    )
+    await db[SHARED_POSITIONS].update_one(
+        {"position_id": position_id},
+        {"$set": {
+            "state": new_state,
+            "direction": stance,
+            "executor_call_by": brain,
+            "executor_call_at": now_iso,
+            "executor_call_notes": f"auto-advanced from executor seat ({brain})",
+            "executor_call_recorded_by": "auto",
+            "executor_call_seat_epoch": seat_epoch,
+            "updated_at": now_iso,
+        }},
+    )
+    await _audit("executor_call_auto", brain, position_id, {
+        "executor": brain,
+        "direction": stance,
+        "before_state": doc["state"],
+        "after_state": new_state,
+        "trigger": "auto_mode_executor_stance",
+        "seat_epoch": seat_epoch,
+    })
+
+
 async def _persist_stance(
     *, position_id: str, brain: str, stance: str,
     confidence: float, notes: str, posted_via: str, actor: str,
@@ -353,46 +444,15 @@ async def _persist_stance(
             detail=f"stance must be one of {sorted(VALID_STANCES)}",
         )
     now = _now_iso()
-    # Snapshot the brain's current seat + policy. Best-effort — if the
-    # roster lookup fails we still record the stance, but with `posted_as`
-    # = None and all permission bits False. Better to ingest with the
-    # safest defaults than reject.
-    roster = None
-    seat = None
-    seat_epoch = None
-    try:
-        roster = await get_roster()
-        seat_epoch = roster.get("seat_epoch")
-        for role, occupant in roster["assignments"].items():
-            if occupant == brain:
-                seat = role
-                break
-    except Exception:  # noqa: BLE001
-        pass
+    seat, seat_epoch = await _current_seat_and_epoch(brain)
     policy = seat_snapshot(seat)
 
-    stance_doc = {
-        "stance_id": str(uuid.uuid4()),
-        "position_id": position_id,
-        "brain": brain,
-        "stance": stance,
-        "confidence": float(confidence),
-        "notes": notes,
-        # Seat policy snapshot — this is the authority record. If the
-        # brain later changes seats, this row STILL reflects what the
-        # rules were at write time. Tampering with this field after the
-        # fact would be detectable via the audit log.
-        "posted_as": policy["posted_as"],
-        "seat_epoch": seat_epoch,
-        "may_decide": policy["may_decide"],
-        "may_execute": policy["may_execute"],
-        "may_override": policy["may_override"],
-        "may_veto": policy["may_veto"],
-        "posted_via": posted_via,
-        "posted_at": now,
-        "actor": actor,
-    }
-    await db[SHARED_POSITION_STANCES].insert_one(stance_doc)
+    await db[SHARED_POSITION_STANCES].insert_one(_stance_doc(
+        position_id=position_id, brain=brain, stance=stance,
+        confidence=confidence, notes=notes,
+        seat=seat, seat_epoch=seat_epoch, policy=policy,
+        posted_via=posted_via, actor=actor, now_iso=now,
+    ))
     await db[SHARED_POSITIONS].update_one(
         {"position_id": position_id},
         {"$set": {"updated_at": now}},
@@ -405,48 +465,14 @@ async def _persist_stance(
         "may_execute": policy["may_execute"],
         "posted_via": posted_via,
     })
+    await _maybe_auto_advance(
+        position_id=position_id, brain=brain, stance=stance,
+        policy=policy, seat_epoch=seat_epoch, now_iso=now,
+    )
 
-    # ── Auto-advance: if the position is in 'auto' call_mode AND the
-    # brain that just posted holds the executor seat (may_execute=True)
-    # AND the stance is a directional bet (long/short), advance the
-    # position state. The decision is audit-logged with action
-    # 'executor_call_auto' so it's distinguishable from operator calls.
     doc = await db[SHARED_POSITIONS].find_one(
         {"position_id": position_id}, {"_id": 0},
     )
-    if (doc and doc.get("call_mode") == CALL_MODE_AUTO
-            and doc["state"] in OPEN_STATES
-            and policy["may_execute"]
-            and stance in (STANCE_LONG, STANCE_SHORT)):
-        new_state = (
-            STATE_CONSENSUS_LONG if stance == STANCE_LONG
-            else STATE_CONSENSUS_SHORT
-        )
-        await db[SHARED_POSITIONS].update_one(
-            {"position_id": position_id},
-            {"$set": {
-                "state": new_state,
-                "direction": stance,
-                "executor_call_by": brain,
-                "executor_call_at": now,
-                "executor_call_notes": f"auto-advanced from executor seat ({brain})",
-                "executor_call_recorded_by": "auto",
-                "executor_call_seat_epoch": seat_epoch,
-                "updated_at": now,
-            }},
-        )
-        await _audit("executor_call_auto", brain, position_id, {
-            "executor": brain,
-            "direction": stance,
-            "before_state": doc["state"],
-            "after_state": new_state,
-            "trigger": "auto_mode_executor_stance",
-            "seat_epoch": seat_epoch,
-        })
-        doc = await db[SHARED_POSITIONS].find_one(
-            {"position_id": position_id}, {"_id": 0},
-        )
-
     return await _hydrate(doc)
 
 
