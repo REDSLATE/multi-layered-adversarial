@@ -15,10 +15,13 @@ import { api } from "@/lib/api";
  * No auth — heartbeat-status endpoint is public (banding only, no leak).
  */
 const STATE_META = {
-  never:  { color: "#71717A", label: "no heartbeat yet",   pulse: false },
-  fresh:  { color: "#10B981", label: "connected",          pulse: true  },
-  stale:  { color: "#FBBF24", label: "stale",              pulse: false },
-  dead:   { color: "#DC2626", label: "no heartbeat",       pulse: false },
+  never:     { color: "#71717A", label: "no heartbeat yet",   pulse: false },
+  connected: { color: "#10B981", label: "connected",          pulse: true  },
+  partial:   { color: "#FBBF24", label: "heartbeat only",     pulse: false },
+  stale:     { color: "#F97316", label: "stale",              pulse: false },
+  dead:      { color: "#DC2626", label: "no heartbeat",       pulse: false },
+  // Back-compat: older endpoint used `fresh` as the green state.
+  fresh:     { color: "#10B981", label: "connected",          pulse: true  },
 };
 
 function fmtAge(seconds) {
@@ -60,12 +63,23 @@ export default function LivePulse({ runtime }) {
   const meta = STATE_META[state.connected] || STATE_META.never;
   const age = fmtAge(state.age_seconds);
 
+  // Human-readable diagnostic for the hover tooltip — surfaces WHY a
+  // brain is in `partial` / `stale` state so the operator doesn't have
+  // to dig through the API.
+  const hbAge = fmtAge(state.heartbeat_age_seconds);
+  const svAge = fmtAge(state.contribution_age_seconds);
+  const tip = [
+    state.last_seen ? `last seen ${state.last_seen}` : "never connected",
+    `heartbeat: ${hbAge || "never"}`,
+    `contribution: ${svAge || "never"}`,
+  ].join(" · ");
+
   return (
     <div
       data-testid={`live-pulse-${runtime}`}
       data-state={state.connected}
       className="inline-flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest"
-      title={state.last_seen ? `last seen ${state.last_seen}` : "never connected"}
+      title={tip}
     >
       <span className="relative inline-flex items-center justify-center w-2.5 h-2.5">
         {meta.pulse && (

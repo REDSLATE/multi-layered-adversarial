@@ -27,7 +27,7 @@ from fastapi import APIRouter, HTTPException, Header, Query, Request
 from pydantic import BaseModel
 
 from db import db
-from namespaces import DISCUSSION_PARTICIPANTS, SHARED_HEARTBEATS
+from namespaces import DISCUSSION_PARTICIPANTS, SHARED_HEARTBEATS, SOVEREIGN_STATE
 
 
 def _now_iso() -> str:
@@ -120,43 +120,91 @@ async def heartbeat_status(brain: str):
     leaks only that the brain has/hasn't pinged recently, which the
     public /ping pages already expose.
 
-    Returns:
-        connected: never-pinged / fresh / stale / dead
-        last_seen: ISO timestamp of last heartbeat (null if never)
-        age_seconds: how long ago, or null
+    Combines TWO signals so legacy ingest traffic doesn't false-green
+    the indicator:
+
+      * `heartbeat`: shared_heartbeats row (any heartbeat source)
+      * `contribution`: sovereign_state row (the proof that a real
+        sovereign sidecar is running and posting its weights)
+
+    Combined verdict:
+      * `connected`  — heartbeat <90s AND contribution <300s
+                       (real sidecar is alive AND posting state)
+      * `partial`    — heartbeat <90s but contribution missing or
+                       stale (legacy ingest only, or sidecar crashed
+                       between contributions)
+      * `stale`      — contribution last seen 5-30 min ago
+      * `dead`       — neither signal recent
+      * `never`      — neither signal has EVER been seen for this brain
+
+    The frontend LivePulse renders `connected` as the pulsing green
+    state. `partial` is amber and surfaces the most common confusion
+    mode ("legacy heartbeats / no real sidecar").
     """
     brain = brain.lower()
     if brain not in DISCUSSION_PARTICIPANTS:
         raise HTTPException(status_code=404, detail=f"unknown brain {brain!r}")
 
+    now = datetime.now(timezone.utc)
+
+    def _age(iso: str | None) -> float | None:
+        if not iso:
+            return None
+        try:
+            t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            return (now - t).total_seconds()
+        except (ValueError, AttributeError):
+            return None
+
     hb = await db[SHARED_HEARTBEATS].find_one({"runtime": brain}, {"_id": 0})
-    if not hb or not hb.get("last_seen"):
-        return {
-            "runtime": brain,
-            "connected": "never",
-            "last_seen": None,
-            "age_seconds": None,
-        }
-    try:
-        last = datetime.fromisoformat(hb["last_seen"].replace("Z", "+00:00"))
-        age = (datetime.now(timezone.utc) - last).total_seconds()
-    except (ValueError, AttributeError):
-        return {
-            "runtime": brain,
-            "connected": "never",
-            "last_seen": hb.get("last_seen"),
-            "age_seconds": None,
-        }
-    # Banding: fresh < 90s, stale < 10min, dead beyond that.
-    if age < 90:
-        status = "fresh"
-    elif age < 600:
-        status = "stale"
+    hb_iso = (hb or {}).get("last_seen")
+    hb_age = _age(hb_iso)
+
+    sv = await db[SOVEREIGN_STATE].find_one({"brain": brain}, {"_id": 0})
+    sv_iso = (sv or {}).get("updated_at")
+    sv_age = _age(sv_iso)
+
+    hb_fresh = hb_age is not None and hb_age < 90
+    sv_fresh = sv_age is not None and sv_age < 300       # ≤ 5 min
+    sv_stale_band = sv_age is not None and sv_age < 1800  # ≤ 30 min
+
+    if hb_iso is None and sv_iso is None:
+        connected = "never"
+    elif hb_fresh and sv_fresh:
+        connected = "connected"
+    elif hb_fresh and not sv_fresh:
+        # Heartbeat looks alive but no real sovereign contribution —
+        # either legacy ingest traffic only, or sidecar crashed
+        # between ticks.
+        connected = "partial"
+    elif sv_stale_band:
+        connected = "stale"
     else:
-        status = "dead"
+        connected = "dead"
+
+    # Pick the more recent of the two signals as the "last_seen" that
+    # the operator UI surfaces (matches whichever side of the wire is
+    # most alive).
+    ages = [(a, iso) for a, iso in [(hb_age, hb_iso), (sv_age, sv_iso)] if a is not None]
+    last_seen_iso = None
+    last_seen_age = None
+    if ages:
+        ages.sort(key=lambda x: x[0])
+        last_seen_age = round(ages[0][0], 1)
+        last_seen_iso = ages[0][1]
+
     return {
         "runtime": brain,
-        "connected": status,
-        "last_seen": hb["last_seen"],
-        "age_seconds": round(age, 1),
+        "connected": connected,
+        "last_seen": last_seen_iso,
+        "age_seconds": last_seen_age,
+        # Diagnostic detail so the operator can see WHY a brain is
+        # marked partial / stale (e.g., "heartbeat 4s, contribution
+        # never").
+        "heartbeat_age_seconds": (
+            round(hb_age, 1) if hb_age is not None else None
+        ),
+        "contribution_age_seconds": (
+            round(sv_age, 1) if sv_age is not None else None
+        ),
     }

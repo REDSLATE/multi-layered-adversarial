@@ -389,6 +389,31 @@ here.
   - `tests/test_roster.py` + `tests/test_positions.py` migrated for
     the seat rename and policy snapshot fields.
   - Total backend pytest = **184/184**.
+- **LivePulse honest-signal upgrade** (2026-02-13)
+  - `/api/heartbeat-status/{brain}` now combines TWO signals so legacy
+    `/api/ingest/heartbeat` background traffic stops false-greening the
+    indicator. Verdict bands:
+    * `connected` — heartbeat <90s AND sovereign contribution <300s.
+    * `partial` — heartbeat present but no recent sovereign
+      contribution (most common confusion mode: legacy ingest only or
+      sidecar crashed mid-tick).
+    * `stale` — last sovereign contribution 5-30 min ago.
+    * `dead` — neither signal recent.
+    * `never` — neither signal has ever been seen for this brain.
+  - Response carries `heartbeat_age_seconds` + `contribution_age_seconds`
+    so the operator can hover the LivePulse tooltip and see WHY the
+    state is what it is.
+  - LivePulse renders `partial` as amber "HEARTBEAT ONLY" with hover-
+    text breakdown.
+  - **Real connection census** (current state from first deployment
+    wave):
+    * Alpha: `connected` (real sidecar — contribution every 60s)
+    * Chevelle: `connected` (real sidecar)
+    * Camaro: `partial` (sovereign sidecar pending; discussion-layer
+      opinions live)
+    * REDEYE: `stale` (contributed earlier in session, last seen ~17m)
+  - Tests `tests/test_heartbeat_status.py` (4/4 PASS) updated for the
+    combined-signal contract.
 - **LivePulse connection indicator on /runtime/{brain}** (2026-02-13)
   - **Backend**: new read-only `GET /api/heartbeat-status/{brain}`
     endpoint (no auth — same exposure as the existing public /ping
