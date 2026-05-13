@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, formatApiErrorDetail } from "@/lib/api";
 import { Card, Badge } from "@/components/ui-bits";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -75,7 +75,28 @@ export default function AlpacaConnect() {
       toast.success(`Alpaca paper connected · acct ${res.data?.account_number || "—"}`);
       refresh();
     } catch (e) {
-      setErr(e?.response?.data?.detail || e.message);
+      const data = e?.response?.data;
+      const status = e?.response?.status;
+      let msg = null;
+      if (data && typeof data === "object") {
+        msg = formatApiErrorDetail(data.detail);
+      } else if (typeof data === "string" && data.trim()) {
+        msg = data;
+      }
+      if (!msg || msg === "Something went wrong. Please try again.") {
+        // Surface a meaningful fallback when the response body was
+        // stripped/empty between the backend and the browser. The
+        // backend's actual 400 detail is always "Alpaca rejected the keys..."
+        // and only ever 401/404/500 in other paths.
+        if (status === 400) {
+          msg = "Alpaca rejected the keys. Common causes: (1) used live keys instead of paper, (2) typo in API Key ID or Secret, (3) account suspended.";
+        } else if (status === 401) {
+          msg = "Not authenticated.";
+        } else {
+          msg = e?.message || "Connection failed";
+        }
+      }
+      setErr(msg);
     } finally {
       setBusy(false);
     }

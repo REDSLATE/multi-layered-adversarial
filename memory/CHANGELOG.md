@@ -2,6 +2,47 @@
 
 Append-only. Newest at top.
 
+## 2026-02-14 — Alpaca Paper Broker + Real Execution Pipeline (Week 1, Day 1)
+
+MC now owns a broker. Intents that pass the full gate chain route to **Alpaca paper** as $10 notional market-day orders. No brain ever sees broker keys.
+
+**New backend modules:**
+- `/app/backend/shared/broker/__init__.py`, `base.py`, `alpaca.py`, `alpaca_routes.py` — `BrokerAdapter` ABC + `AlpacaPaperAdapter` (wraps `alpaca-py 0.43.4`, `paper=True` hard-coded) + admin connect/status/test/account/positions/orders/disconnect endpoints
+- `/app/backend/shared/exposure_caps.py` — hardcoded rails: **$10/order, $50/day, $100 open notional**. No operator surface to relax them (change-and-redeploy)
+- `/app/backend/shared/execution.py` — full 8-gate chain (schema_invariants · action_routable · executor_seat_check · live_trading_disabled · broker_connected · cap_per_order · cap_per_day · cap_open_notional) + `/api/execution/{dry_run, submit, receipts, caps}`. Submit requires `confirm="execute"` and stamps an execution receipt; intents are idempotent (409 on re-submit)
+
+**New endpoints:**
+- `POST /api/admin/alpaca/connect` — Fernet-encrypted key storage; probes ping BEFORE persisting
+- `GET  /api/admin/alpaca/status` — redacted preview + last_ping
+- `POST /api/admin/alpaca/test` — cheap broker ping
+- `GET  /api/admin/alpaca/{account,positions,orders}` — broker reads
+- `DELETE /api/admin/alpaca/{disconnect,orders/<id>,positions/<symbol>}`
+- `POST /api/execution/dry_run?intent_id=&order_notional_usd=` — gate chain evaluation only
+- `POST /api/execution/submit` — gated order routing, `confirm="execute"` required
+- `GET  /api/execution/{receipts,caps}` — operator visibility
+
+**Frontend:**
+- `/app/frontend/src/components/AlpacaConnect.jsx` — credentials modal + status tile, mounted on `/admin/intents` below the Executor Seat tile. Shows acct, equity, daily-spend / cap, open-notional / cap, last-ping
+- `/app/frontend/src/pages/Intents.jsx` — each intent row gains a **submit** button when gate_state is dry_run_passed/passed; executed intents show a green executed badge with the broker_order_id in the detail panel
+- `/app/frontend/src/lib/api.js` — fetch wrapper now surfaces backend `detail` strings in `err.message` (no more "HTTP 400" placeholder)
+
+**DB collections:**
+- `alpaca_credentials` (singleton, Fernet-encrypted at rest)
+- `alpaca_audit_log` (every state change)
+- `execution_receipts` (one row per routed order)
+
+**Tests:**
+- `tests/test_alpaca_broker.py` — 6 unit tests (mocked SDK)
+- `tests/test_execution_gates.py` — 8 gate-chain unit tests
+- testing-agent integration suite: 10/10 new + 14/14 unit pass
+
+**Doctrine preserved:**
+- Brains do NOT execute. Only MC routes orders.
+- Executor seat held + still held = required at submit time. Stale rotations block.
+- LIVE_TRADING_ENABLED stays False. Live broker is a separate adapter.
+
+
+
 ## 2026-02-13 — Patch distribution channel + Decision Machine v1.0
 
 MC now serves drop-in code patches over HTTPS. Brains pull their own updates via `X-Runtime-Token` auth — no copy-paste required. First patch published: **Decision Machine** (intent envelopes).

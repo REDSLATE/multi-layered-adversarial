@@ -68,16 +68,44 @@ async function request(method, path, body, cfg = {}) {
   }
 
   const ct = resp.headers.get("content-type") || "";
-  let data;
-  if (ct.includes("application/json")) {
-    try { data = await resp.json(); } catch { data = null; }
-  } else {
-    try { data = await resp.text(); } catch { data = null; }
+  let data = null;
+  // Snapshot the body as text first — body can only be consumed once,
+  // and we need a fallback path when JSON parsing fails (proxy strips
+  // content-type, server returns half-formed JSON, etc.).
+  let rawText = "";
+  try { rawText = await resp.text(); } catch { rawText = ""; }
+  if (rawText) {
+    if (ct.includes("application/json") || rawText.trim().startsWith("{") || rawText.trim().startsWith("[")) {
+      try { data = JSON.parse(rawText); } catch { data = rawText; }
+    } else {
+      data = rawText;
+    }
   }
 
   if (!resp.ok) {
-    const err = new Error(`HTTP ${resp.status}`);
-    err.response = { status: resp.status, data };
+    // Surface a helpful message by default. Components can still read
+    // err.response.{status,data} for structured handling.
+    let msg = `HTTP ${resp.status}`;
+    try {
+      if (data && typeof data === "object") {
+        const detail = data.detail;
+        if (typeof detail === "string" && detail.trim()) {
+          msg = detail;
+        } else if (Array.isArray(detail) && detail.length) {
+          // FastAPI validation errors: array of {msg, loc, type}
+          msg = detail
+            .map((d) => (d && typeof d.msg === "string" ? d.msg : ""))
+            .filter(Boolean)
+            .join(" · ") || msg;
+        } else if (detail && typeof detail === "object" && typeof detail.reason === "string") {
+          msg = detail.reason;
+        }
+      } else if (typeof data === "string" && data.trim()) {
+        msg = data.length > 400 ? `${data.slice(0, 400)}…` : data;
+      }
+    } catch (_e) { /* keep default msg */ }
+    const err = new Error(msg);
+    err.response = { status: resp.status, data, rawText };
     throw err;
   }
   return { data, status: resp.status };

@@ -1,5 +1,15 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
+
+## 🚀 Latest (2026-02-14): Alpaca Paper Broker Pipeline Live
+- **Broker adapter** (`shared/broker/alpaca.py`) wraps `alpaca-py` SDK; paper-only hard-coded
+- **Hard caps** ($10/order · $50/day · $100 open notional) enforced in code (`shared/exposure_caps.py`)
+- **Full 8-gate chain** at `/api/execution/{dry_run, submit}` — schema · routability · executor seat · live-disable · broker connected · 3× exposure caps
+- **Operator UI**: `AlpacaConnect.jsx` tile on `/admin/intents` (encrypted keys, status, ping). Per-intent `submit` button visible only when dry-run passes.
+- Status: backend + frontend testing-agent verified. 24/24 unit + 10/10 integration tests pass.
+- Awaiting user: paste Alpaca paper keys via the Connect Alpaca modal on `/admin/intents` to enable end-to-end paper execution.
+
+
 ## ⚠️ Cross-Session Repo Map (read first, agents)
 
 The user operates **two distinct Git roots**, both named in the RISEDUAL family.
