@@ -13,6 +13,7 @@ import {
   TrendUp,
   Trophy,
   LightningSlash,
+  Lightning,
   ChatCircleDots,
   Crosshair,
   SignOut,
@@ -33,6 +34,7 @@ const NAV = [
   { to: "/admin/conflicts", label: "Conflicts", icon: LightningSlash, testid: "nav-conflicts" },
   { to: "/admin/flags", label: "Runtime Flags", icon: Flag, testid: "nav-flags" },
   { to: "/admin/promotion", label: "Promotion", icon: TrendUp, testid: "nav-promotion" },
+  { to: "/admin/intents", label: "Intents", icon: Lightning, testid: "nav-intents" },
   { to: "/admin/public-traffic", label: "Public Traffic", icon: Pulse, testid: "nav-public-traffic" },
 ];
 

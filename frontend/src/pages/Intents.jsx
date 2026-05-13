@@ -1,0 +1,409 @@
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { api, RUNTIME_META, relTime } from "@/lib/api";
+import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
+import {
+  Lightning, ArrowsClockwise, Funnel, Pulse,
+  CheckCircle, XCircle, Hourglass, Eye, CaretDown, CaretUp,
+} from "@phosphor-icons/react";
+
+const BRAIN_META = {
+  ...RUNTIME_META,
+  redeye: { label: "REDEYE", color: "#DC2626" },
+};
+
+const ACTION_COLOR = {
+  BUY: "#10B981",
+  SELL: "#DC2626",
+  SHORT: "#A78BFA",
+  COVER: "#3B82F6",
+  HOLD: "#A1A1AA",
+};
+
+const GATE_COLOR = {
+  pending: "#A1A1AA",
+  passed: "#10B981",
+  blocked: "#DC2626",
+  dry_run_passed: "#10B981",
+  dry_run_blocked: "#F59E0B",
+};
+
+const GATE_ICON = {
+  pending: Hourglass,
+  passed: CheckCircle,
+  blocked: XCircle,
+  dry_run_passed: CheckCircle,
+  dry_run_blocked: XCircle,
+};
+
+const STACKS = ["all", "alpha", "camaro", "chevelle", "redeye"];
+const ACTIONS = ["all", "BUY", "SELL", "SHORT", "COVER", "HOLD"];
+const GATE_STATES = ["all", "pending", "passed", "blocked", "dry_run_passed", "dry_run_blocked"];
+
+function FilterPill({ label, value, options, onChange, testid }) {
+  return (
+    <div className="flex items-center gap-1.5" data-testid={testid}>
+      <span className="text-[10px] uppercase tracking-widest text-rd-dim">{label}</span>
+      <div className="flex rounded-sm border border-rd-border bg-rd-bg p-0.5">
+        {options.map((opt) => {
+          const active = opt === value;
+          return (
+            <button
+              key={opt}
+              onClick={() => onChange(opt)}
+              data-testid={`${testid}-${opt}`}
+              className={
+                "px-2 py-1 text-[10px] font-mono uppercase tracking-wide rounded-sm transition-colors " +
+                (active
+                  ? "bg-rd-accent text-black"
+                  : "text-rd-dim hover:text-rd-text")
+              }
+            >
+              {opt}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StatTile({ label, value, color, testid }) {
+  return (
+    <div
+      className="border border-rd-border bg-rd-bg p-3"
+      data-testid={testid}
+    >
+      <div className="flex items-center gap-2 mb-1.5">
+        <span
+          className="inline-block w-1.5 h-1.5 rounded-full"
+          style={{ background: color || "#A1A1AA" }}
+        />
+        <span className="text-[10px] uppercase tracking-widest text-rd-dim">{label}</span>
+      </div>
+      <div className="font-display text-xl font-bold text-rd-text leading-none">{value}</div>
+    </div>
+  );
+}
+
+function IntentRow({ intent, expanded, onToggle, onDryRun, dryRunResult }) {
+  const meta = BRAIN_META[intent.stack] || { label: intent.stack, color: "#A1A1AA" };
+  const GateIcon = GATE_ICON[intent.gate_state] || Hourglass;
+  const gateColor = GATE_COLOR[intent.gate_state] || "#A1A1AA";
+  const actionColor = ACTION_COLOR[intent.action] || "#A1A1AA";
+
+  return (
+    <>
+      <tr
+        className="border-b border-rd-border hover:bg-rd-bg cursor-pointer transition-colors"
+        onClick={onToggle}
+        data-testid={`intent-row-${intent.intent_id}`}
+      >
+        <td className="px-3 py-2 font-mono text-[10px] text-rd-muted whitespace-nowrap">
+          {relTime(intent.ingest_ts)}
+        </td>
+        <td className="px-3 py-2">
+          <Badge color={meta.color}>{meta.label}</Badge>
+        </td>
+        <td className="px-3 py-2 font-display text-sm text-rd-text">{intent.symbol}</td>
+        <td className="px-3 py-2">
+          <span
+            className="font-mono text-[11px] font-bold tracking-wider"
+            style={{ color: actionColor }}
+          >
+            {intent.action}
+          </span>
+        </td>
+        <td className="px-3 py-2 font-mono text-xs text-rd-text">
+          {Number(intent.confidence).toFixed(3)}
+        </td>
+        <td className="px-3 py-2 font-mono text-xs text-rd-text">
+          {Number(intent.risk_multiplier).toFixed(3)}
+        </td>
+        <td className="px-3 py-2">
+          <span
+            className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider"
+            style={{ color: gateColor }}
+          >
+            <GateIcon size={11} weight="bold" />
+            {intent.gate_state}
+          </span>
+        </td>
+        <td className="px-3 py-2 text-right">
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={(e) => { e.stopPropagation(); onDryRun(); }}
+              data-testid={`intent-dryrun-${intent.intent_id}`}
+              className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border border-rd-border text-rd-dim hover:text-rd-text hover:border-rd-text"
+              title="Run gate chain against this intent (no broker call)"
+            >
+              <Lightning size={10} weight="bold" className="inline mr-1" />
+              dry-run
+            </button>
+            {expanded ? (
+              <CaretUp size={12} weight="bold" className="text-rd-dim" />
+            ) : (
+              <CaretDown size={12} weight="bold" className="text-rd-dim" />
+            )}
+          </div>
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="bg-rd-bg" data-testid={`intent-detail-${intent.intent_id}`}>
+          <td colSpan={8} className="px-3 py-4">
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
+              <div>
+                <div className="label-eyebrow mb-2">Rationale</div>
+                <p className="text-xs text-rd-text leading-relaxed font-mono whitespace-pre-wrap break-words">
+                  {intent.rationale || "—"}
+                </p>
+                {intent.evidence && Object.keys(intent.evidence).length > 0 && (
+                  <>
+                    <div className="label-eyebrow mt-4 mb-2">Evidence</div>
+                    <pre className="text-[11px] text-rd-text font-mono bg-rd-bg2 border border-rd-border p-3 overflow-x-auto leading-relaxed">
+                      {JSON.stringify(intent.evidence, null, 2)}
+                    </pre>
+                  </>
+                )}
+                {dryRunResult && (
+                  <>
+                    <div className="label-eyebrow mt-4 mb-2">
+                      Dry-run verdict ·{" "}
+                      <span style={{
+                        color: dryRunResult.verdict === "would_pass" ? "#10B981" : "#F59E0B",
+                      }}>
+                        {dryRunResult.verdict?.replace("_", " ")?.toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="border border-rd-border bg-rd-bg2 divide-y divide-rd-border">
+                      {(dryRunResult.gates || []).map((g) => (
+                        <div key={g.name} className="px-3 py-2 flex items-start gap-3" data-testid={`gate-${g.name}`}>
+                          {g.passed ? (
+                            <CheckCircle size={13} weight="bold" className="text-rd-success mt-0.5 shrink-0" />
+                          ) : (
+                            <XCircle size={13} weight="bold" className="text-rd-danger mt-0.5 shrink-0" />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="font-mono text-[11px] text-rd-text">{g.name}</div>
+                            <div className="text-[10px] text-rd-muted leading-relaxed mt-0.5">{g.reason}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="text-[11px] font-mono space-y-2">
+                <div className="label-eyebrow mb-2">Stamped by MC</div>
+                {[
+                  ["intent_id", intent.intent_id],
+                  ["seat_at_post_time", intent.seat_at_post_time || "—"],
+                  ["ingest_method", intent.ingest_method || "—"],
+                  ["regime", intent.regime || "—"],
+                  ["decision_id", intent.decision_id || "—"],
+                  ["may_execute", String(intent.may_execute)],
+                  ["requires_gate_pass", String(intent.requires_gate_pass)],
+                  ["executed", String(intent.executed)],
+                ].map(([k, v]) => (
+                  <div key={k} className="flex justify-between gap-2 border-b border-rd-border pb-1">
+                    <span className="text-rd-dim">{k}</span>
+                    <span className="text-rd-text truncate" title={String(v)}>{String(v)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+export default function Intents() {
+  const [intents, setIntents] = useState(null);
+  const [err, setErr] = useState("");
+  const [stack, setStack] = useState("all");
+  const [action, setAction] = useState("all");
+  const [gateState, setGateState] = useState("all");
+  const [expanded, setExpanded] = useState(null);
+  const [dryRunByIntent, setDryRunByIntent] = useState({});
+  const [autoRefresh, setAutoRefresh] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      const params = { limit: 100 };
+      if (stack !== "all") params.stack = stack;
+      if (gateState !== "all") params.gate_state = gateState;
+      // action filter happens client-side since the API doesn't expose it
+      const res = await api.get("/intents", {
+        params,
+        // Need any runtime token to read intents; use alpha by convention
+        // since admin JWT alone isn't accepted on this endpoint.
+        headers: {
+          "X-Runtime-Token": "alpha-ingest-2cf91b5e-3a44-4c1b-9e07-4e1b7d2c3a55",
+        },
+      });
+      setIntents(res.data?.items || []);
+      setErr("");
+    } catch (e) {
+      setErr(e?.response?.data?.detail || e.message);
+    }
+  }, [stack, gateState]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const t = setInterval(load, 8000);
+    return () => clearInterval(t);
+  }, [autoRefresh, load]);
+
+  const filtered = useMemo(() => {
+    if (!intents) return null;
+    if (action === "all") return intents;
+    return intents.filter((it) => it.action === action);
+  }, [intents, action]);
+
+  const stats = useMemo(() => {
+    if (!filtered) return null;
+    const byStack = {};
+    const byGate = {};
+    const byAction = {};
+    for (const it of filtered) {
+      byStack[it.stack] = (byStack[it.stack] || 0) + 1;
+      byGate[it.gate_state] = (byGate[it.gate_state] || 0) + 1;
+      byAction[it.action] = (byAction[it.action] || 0) + 1;
+    }
+    return { total: filtered.length, byStack, byGate, byAction };
+  }, [filtered]);
+
+  const runDryRun = async (intentId) => {
+    setDryRunByIntent((m) => ({ ...m, [intentId]: { loading: true } }));
+    try {
+      const res = await api.post(`/execution/dry_run?intent_id=${encodeURIComponent(intentId)}`);
+      setDryRunByIntent((m) => ({ ...m, [intentId]: res.data }));
+      setExpanded(intentId);
+      // refresh to pick up gate_state change
+      load();
+    } catch (e) {
+      setDryRunByIntent((m) => ({
+        ...m,
+        [intentId]: { error: e?.response?.data?.detail || e.message },
+      }));
+    }
+  };
+
+  return (
+    <div className="reveal" data-testid="intents-page">
+      <PageHeader
+        eyebrow="Decision Machine"
+        title="Intents"
+        sub="Intent envelopes emitted by the four brains. Every intent is a candidate; MC's gate chain decides if it lives. Schema pins may_execute=false and requires_gate_pass=true — brains cannot route an order through this surface."
+        right={
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setAutoRefresh((v) => !v)}
+              data-testid="intents-autorefresh"
+              className={
+                "px-2 py-1 text-[10px] font-mono uppercase tracking-wider border " +
+                (autoRefresh
+                  ? "border-rd-success text-rd-success"
+                  : "border-rd-border text-rd-dim")
+              }
+              title="Auto-refresh every 8s"
+            >
+              <Pulse size={10} weight="bold" className="inline mr-1" />
+              {autoRefresh ? "live · 8s" : "paused"}
+            </button>
+            <button
+              onClick={load}
+              data-testid="intents-reload"
+              className="p-1.5 border border-rd-border text-rd-dim hover:text-rd-text hover:border-rd-text"
+              title="Reload now"
+            >
+              <ArrowsClockwise size={11} weight="bold" />
+            </button>
+          </div>
+        }
+        testid="intents-header"
+      />
+
+      {/* Stats */}
+      {stats && (
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mb-6" data-testid="intents-stats">
+          <StatTile label="Total" value={stats.total} testid="stat-total" />
+          {STACKS.filter((s) => s !== "all").map((s) => (
+            <StatTile
+              key={s}
+              label={s.toUpperCase()}
+              value={stats.byStack[s] || 0}
+              color={BRAIN_META[s]?.color}
+              testid={`stat-stack-${s}`}
+            />
+          ))}
+          <StatTile
+            label="Pending"
+            value={stats.byGate.pending || 0}
+            color="#A1A1AA"
+            testid="stat-pending"
+          />
+        </div>
+      )}
+
+      {/* Filters */}
+      <Card className="mb-4" testid="intents-filters">
+        <div className="flex items-center gap-3 mb-3">
+          <Funnel size={13} weight="bold" className="text-rd-dim" />
+          <span className="label-eyebrow">Filters</span>
+        </div>
+        <div className="flex flex-wrap gap-4">
+          <FilterPill label="Stack" value={stack} options={STACKS} onChange={setStack} testid="filter-stack" />
+          <FilterPill label="Action" value={action} options={ACTIONS} onChange={setAction} testid="filter-action" />
+          <FilterPill label="Gate" value={gateState} options={GATE_STATES} onChange={setGateState} testid="filter-gate" />
+        </div>
+      </Card>
+
+      {err && (
+        <div className="border border-rd-danger text-rd-danger px-3 py-2 mb-4 text-xs font-mono" data-testid="intents-error">
+          {err}
+        </div>
+      )}
+
+      {/* Table */}
+      <Card className="p-0" testid="intents-table-card">
+        {filtered === null ? (
+          <LoadingRow />
+        ) : filtered.length === 0 ? (
+          <EmptyState message="No intents match these filters." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left" data-testid="intents-table">
+              <thead className="bg-rd-bg border-b border-rd-border">
+                <tr className="text-[10px] font-mono uppercase tracking-widest text-rd-dim">
+                  <th className="px-3 py-2 font-normal">When</th>
+                  <th className="px-3 py-2 font-normal">Stack</th>
+                  <th className="px-3 py-2 font-normal">Symbol</th>
+                  <th className="px-3 py-2 font-normal">Action</th>
+                  <th className="px-3 py-2 font-normal">Conf</th>
+                  <th className="px-3 py-2 font-normal">R·Mult</th>
+                  <th className="px-3 py-2 font-normal">Gate</th>
+                  <th className="px-3 py-2 font-normal text-right">—</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((it) => (
+                  <IntentRow
+                    key={it.intent_id}
+                    intent={it}
+                    expanded={expanded === it.intent_id}
+                    onToggle={() => setExpanded((e) => (e === it.intent_id ? null : it.intent_id))}
+                    onDryRun={() => runDryRun(it.intent_id)}
+                    dryRunResult={dryRunByIntent[it.intent_id]}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
