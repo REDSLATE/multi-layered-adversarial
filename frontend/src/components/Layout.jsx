@@ -16,6 +16,7 @@ import {
   Lightning,
   ChatCircleDots,
   Crosshair,
+  Sparkle,
   SignOut,
 } from "@phosphor-icons/react";
 
@@ -35,6 +36,7 @@ const NAV = [
   { to: "/admin/flags", label: "Runtime Flags", icon: Flag, testid: "nav-flags" },
   { to: "/admin/promotion", label: "Promotion", icon: TrendUp, testid: "nav-promotion" },
   { to: "/admin/intents", label: "Intents", icon: Lightning, testid: "nav-intents" },
+  { to: "/admin/hypothesis", label: "Hypothesis", icon: Sparkle, testid: "nav-hypothesis" },
   { to: "/admin/public-traffic", label: "Public Traffic", icon: Pulse, testid: "nav-public-traffic" },
 ];
 

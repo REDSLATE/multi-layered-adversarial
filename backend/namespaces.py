@@ -86,6 +86,17 @@ SHARED_GATE_RESULTS = "shared_gate_results"                # one row per gate ch
 SHARED_EXECUTOR_SEAT = "shared_executor_seat"              # single-row registry: who holds the executor seat
 SHARED_EXECUTOR_ROTATIONS = "shared_executor_rotations"    # append-only audit log of seat rotations
 
+# Auditor seat — mirrors the Executor seat. Rotates separately. The brain
+# holding this seat plays the contrary-case "what could go wrong" role
+# on every hypothesis analysis. Default empty; operator rotates.
+SHARED_AUDITOR_SEAT = "shared_auditor_seat"
+SHARED_AUDITOR_ROTATIONS = "shared_auditor_rotations"
+
+# Hypothesis analyses — operator-triggered dual-narrative reports (Strategist + Auditor)
+# for a ticker. Audit-logged so we can review what the brains said about
+# a symbol over time. Not exposed to the public API.
+HYPOTHESIS_ANALYSES = "hypothesis_analyses"
+
 # Alpaca paper broker — Fernet-encrypted key pair + audit log.
 # Singleton credential doc keyed "singleton". Doctrine: paper only;
 # `execution_enabled` defaults True (paper is safe), live broker is a

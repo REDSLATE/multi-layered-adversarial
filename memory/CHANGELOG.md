@@ -2,6 +2,34 @@
 
 Append-only. Newest at top.
 
+## 2026-02-14 — AI Investment Hypothesis Engine (Adversarial Two-AI)
+
+Standalone research tool at `/admin/hypothesis`. Operator types a ticker → MC runs **Strategist (Claude Sonnet 4.5)** + **Auditor (Gemini 3 Flash)** LLM calls IN PARALLEL, anchored to MC's live indicator snapshots / open positions / recent intents.
+
+**Backend additions:**
+- `/app/backend/shared/auditor_seat.py` — rotatable Auditor seat (mirrors Executor seat). `GET /api/auditor`, `POST /api/auditor/rotate`, `GET /api/auditor/audit`
+- `/app/backend/shared/hypothesis.py` — `POST /api/hypothesis/analyze {symbol}` and `GET /api/hypothesis/recent`. Strict-JSON LLM contract; parses tolerantly (handles markdown fences); per-brain persona injection
+- Brain holding the Executor seat plays Strategist. Brain holding the Auditor seat plays Auditor. Empty seat = neutral analyst voice. Persona blurbs encoded for ALPHA/CAMARO/CHEVELLE/REDEYE
+- New collections: `shared_auditor_seat`, `shared_auditor_rotations`, `hypothesis_analyses`
+
+**Frontend additions:**
+- `/app/frontend/src/pages/Hypothesis.jsx` (~430 lines): search bar (hamburger-style with magnifier icon), Analyze button, Clear button, dual cards — **Strategist (green-left-accent)** + **Auditor (red-left-accent)** — collapsible sections mirroring the risedual.ai War Room screenshots: Short-term target / Medium-term target / Investment Thesis / Strategist Catalysts; Auditor Risk Flags / What could go wrong / Kill-switch Triggers
+- Client-side 30-min `Map<symbol, {result, expiresAt}>` cache — survives route changes but not refreshes; cache count + TTL shown in header; "CACHED · expires in Xm" badge when serving from memory
+- `Hypothesis` nav item in admin sidebar with Sparkle icon
+
+**Verified end-to-end:**
+- NVDA fresh analyze: 16s wall time. Strategist returned BUY 72% with 6 catalysts; Auditor returned BORDERLINE with 3 risk flags + 4 explicit kill-switch triggers (e.g., "exit if last_close breaks below $882.82")
+- TSLA fresh: 14.1s. Cached repeat: 0.25s (~56× speedup). CACHED badge confirms
+- Both LLMs grounded — when TSLA has no indicator snapshot, Auditor correctly flags context-blindness as a risk
+- All 14/14 unit tests (alpaca + execution_gates) still pass
+
+**Initial seat assignment:**
+- Executor: CAMARO (held since 2026-02-13 from prior session)
+- Auditor: REDEYE (newly assigned 2026-02-14)
+- Both rotatable by operator via `POST /api/{executor,auditor}/rotate`
+
+
+
 ## 2026-02-14 — Alpaca Paper Broker + Real Execution Pipeline (Week 1, Day 1)
 
 MC now owns a broker. Intents that pass the full gate chain route to **Alpaca paper** as $10 notional market-day orders. No brain ever sees broker keys.
