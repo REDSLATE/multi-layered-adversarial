@@ -80,6 +80,10 @@ SHARED_POSITIONS = "shared_positions"
 SHARED_POSITION_STANCES = "shared_position_stances"
 SHARED_POSITION_AUDIT = "shared_position_audit"
 
+# Decision Machine — intent envelopes (brain-emitted), gate audit log
+SHARED_INTENTS = "shared_intents"                          # brain-emitted decision intents
+SHARED_GATE_RESULTS = "shared_gate_results"                # one row per gate check on an intent
+
 # Sovereign sidecar contributions — periodic snapshots of each brain's
 # internal deterministic state (weights, learning rate, recent outcomes).
 # `SOVEREIGN_STATE` is one doc per brain (latest snapshot).

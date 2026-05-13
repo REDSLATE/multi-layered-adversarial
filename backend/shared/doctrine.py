@@ -34,6 +34,7 @@ ALLOWED_SUFFIX = ".md"
 DOCTRINE_REGISTRY: dict[str, str] = {
     "vrl": "VRL_DOCTRINE.md",
     "discussion_layer": "DISCUSSION_LAYER_PATCH.md",
+    "decision_machine": "decision_machine/DECISION_MACHINE_PATCH.md",
 }
 
 
