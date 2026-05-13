@@ -46,6 +46,7 @@ from shared.diagnostics import router as diagnostics_router
 from shared.doctrine import router as doctrine_router
 from shared.flags import router as flags_router, get_flags_snapshot
 from shared.intents import router as intents_router
+from shared.patches import router as patches_router
 from shared.seed import seed_all
 from runtimes.alpha.routes import router as alpha_router
 from runtimes.camaro.routes import router as camaro_router
@@ -134,6 +135,7 @@ api_router.include_router(roster_router)
 api_router.include_router(promotion_router)
 api_router.include_router(doctrine_router)
 api_router.include_router(intents_router)
+api_router.include_router(patches_router)
 api_router.include_router(diagnostics_router)
 api_router.include_router(flags_router)
 api_router.include_router(alpha_router)

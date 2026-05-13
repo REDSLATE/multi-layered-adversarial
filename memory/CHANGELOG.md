@@ -2,6 +2,47 @@
 
 Append-only. Newest at top.
 
+## 2026-02-13 — Patch distribution channel + Decision Machine v1.0
+
+MC now serves drop-in code patches over HTTPS. Brains pull their own updates via `X-Runtime-Token` auth — no copy-paste required. First patch published: **Decision Machine** (intent envelopes).
+
+**New endpoints:**
+- `GET  /api/patches` — list available patches
+- `GET  /api/patches/{name}/manifest` — file list with sha256 + bytes
+- `GET  /api/patches/{name}/file/{filepath:path}` — raw file content + sha256
+- `GET  /api/patches/install.sh` — bash installer (curl-pipe-bash compatible)
+- `POST /api/intents` — brain emits an intent envelope (schema-pinned safety)
+- `GET  /api/intents` — read intents (any brain token or admin)
+- `POST /api/admin/intents` — operator proxy emission
+- `POST /api/execution/dry_run` — runs gate chain stub against an intent_id
+
+**One-liner install** from any brain:
+```bash
+curl -s "$MC/api/patches/install.sh" -H "X-Runtime-Token: $TOKEN" \
+  | bash -s -- decision_machine ./services
+```
+
+**Files added:**
+- `/app/backend/shared/intents.py` — intent ingest + dry-run gate chain stub
+- `/app/backend/shared/patches.py` — patch distribution + audit log
+- `/app/runtime_patch_kit/decision_machine/decision_machine.py` — brain-side module
+- `/app/runtime_patch_kit/decision_machine/DECISION_MACHINE_PATCH.md` — doctrine + how-to
+- `/app/runtime_patch_kit/install_patch.sh` — bash installer with sha256 verification
+
+**Doctrine:**
+- Brains emit INTENTS, not orders. `may_execute=true` rejected at schema layer (422).
+- `requires_gate_pass=true` schema-pinned. `seat_at_post_time` MC-stamped from live seat policy.
+- Token-stack mismatch (alpha posting as camaro) returns 401.
+- Patch distribution audit-logged in `shared_patch_pulls` (caller, patch, file, ts).
+- Feature flag `DECISION_MACHINE_ENABLED` controls brain-side activation; flip to false = instant rollback.
+
+**Verified end-to-end:** Camaro pulled the installer via curl-pipe-bash, both files written with sha256 match, `decision_machine.py` imports cleanly, audit log captured both pulls.
+
+**New collections:**
+- `shared_intents` — intent envelopes
+- `shared_gate_results` — placeholder for Day 2 gate audit
+- `shared_patch_pulls` — patch distribution audit
+
 ## 2026-02-13 — Route swap: public site to `/`, operator to `/admin`
 
 Flipped the mount points so the consumer-facing RiseDual site is the root experience and the MC operator dashboard moved under `/admin/*`. Forward-compatible with the future `risedual.ai` DNS flip — no further URL changes needed.

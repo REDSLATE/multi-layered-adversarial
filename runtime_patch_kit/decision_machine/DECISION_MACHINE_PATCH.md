@@ -22,7 +22,35 @@
 
 ---
 
-## Step 1 — Drop the file into your sidecar
+## Install (one command, from inside the brain's sidecar)
+
+```bash
+curl -s "$MONOREPO_BASE_URL/api/patches/install.sh" \
+  -H "X-Runtime-Token: $MONOREPO_INGEST_TOKEN" \
+  | bash -s -- decision_machine ./services
+```
+
+That fetches MC's installer, which fetches the patch manifest, then pulls
+every file with sha256 verification and writes them into `./services/`.
+Every fetch is audit-logged on MC side (`shared_patch_pulls`). Re-run
+the same command anytime MC updates the patch — sha256 mismatch fails
+loudly rather than silently corrupting.
+
+If you prefer to do it manually:
+
+```bash
+curl -s "$MONOREPO_BASE_URL/api/patches/decision_machine/manifest" \
+  -H "X-Runtime-Token: $MONOREPO_INGEST_TOKEN"
+
+curl -s "$MONOREPO_BASE_URL/api/patches/decision_machine/file/decision_machine.py" \
+  -H "X-Runtime-Token: $MONOREPO_INGEST_TOKEN" \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['content'])" \
+  > services/decision_machine.py
+```
+
+---
+
+## Step 1 (skip if you used the one-line install) — Drop the file into your sidecar
 
 Copy `decision_machine.py` to:
 
