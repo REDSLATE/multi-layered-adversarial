@@ -103,7 +103,12 @@ async function request(method, path, body, cfg = {}) {
       } else if (typeof data === "string" && data.trim()) {
         msg = data.length > 400 ? `${data.slice(0, 400)}…` : data;
       }
-    } catch (_e) { /* keep default msg */ }
+    } catch (e) {
+      // Defensive: if the detail-extraction logic itself throws, fall
+      // back to the default "HTTP <status>" message — but log so we
+      // notice the bug instead of silently swallowing it.
+      console.warn("[api] error-message extraction failed:", e?.message);
+    }
     const err = new Error(msg);
     err.response = { status: resp.status, data, rawText };
     throw err;
