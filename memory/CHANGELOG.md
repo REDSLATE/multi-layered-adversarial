@@ -2,6 +2,29 @@
 
 Append-only. Newest at top.
 
+## 2026-02-13 — VRL Doctrine Channel (read-only)
+
+Mission Command now serves doctrine packets to all four brains via a read-only HTTP endpoint. First packet published: **Verified Reinforcement Layer (VRL)** — design-only doctrine for future morale/stabilization layer. No implementation yet, awareness only.
+
+**New endpoint:**
+- `GET /api/doctrine` — list available packets
+- `GET /api/doctrine/{name}` — fetch full markdown for a packet
+- Auth: existing `X-Runtime-Token` (any of the four brains' ingest tokens)
+- Storage: `/app/runtime_patch_kit/*.md`, registry-gated so only whitelisted files are exposed
+
+**Currently published:**
+- `vrl` → `VRL_DOCTRINE.md` (6,125 bytes)
+- `discussion_layer` → `DISCUSSION_LAYER_PATCH.md` (9,317 bytes)
+
+**Verified live:** 401 on missing/bad token, 404 on unknown packet, 200 on valid runtime token for all four brains. Read-only — no `POST`/`PUT`/`DELETE`.
+
+**Files added:**
+- `/app/backend/shared/doctrine.py`
+- `/app/runtime_patch_kit/VRL_DOCTRINE.md`
+
+**Files changed:**
+- `/app/backend/server.py` — mounted `doctrine_router`
+
 ## 2026-02-13 — Visual polish + candlestick charts (`/r/markets`)
 
 User asked for: (1) softer palette, not so dark; (2) RISEDUAL all caps in logo; (3) candle charts for stocks and crypto. All shipped.
