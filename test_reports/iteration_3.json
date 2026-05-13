@@ -1,0 +1,52 @@
+{
+  "summary": "Full backend + frontend verification of Alpaca Paper Broker + Execution Pipeline. Backend: 10/10 new integration tests pass (status disconnected, bogus-key 400 rejection w/ correct detail, /api/execution/caps returns hardcoded 10/50/100 rails + today + open consumption, /api/execution/receipts returns items/count/caps, intent creation via /api/admin/intents, dry_run returns ALL 8 gates [schema_invariants, action_routable, executor_seat_check, live_trading_disabled, broker_connected, cap_per_order, cap_per_day, cap_open_notional] with verdict=would_block because broker_connected fails, cap_per_order gate fails at $11 with reason containing 'exceeds per-order cap', /execution/submit returns 400 on missing/bad confirm, 404 on unknown intent, 403 with detail.blocked_by + detail.reason + detail.gates on gate-block) + existing 14 unit tests (test_alpaca_broker.py + test_execution_gates.py) all pass. Frontend: AlpacaConnect tile renders on /admin/intents with all spec testids (alpaca-tile, alpaca-badge-disconnected showing 'NOT CONNECTED', alpaca-connect-trigger 'Connect Alpaca', alpaca-input-key, alpaca-input-secret, alpaca-submit). Modal title reads 'Connect Alpaca paper'. 8 intent rows render with intent-dryrun-<id> buttons (8) and intent-submit-<id> visible only on dry_run_passed/passed intents (1 visible, matches spec). One minor UI bug: alpaca-error surfaces generic 'HTTP 400' instead of backend's helpful 'Alpaca rejected the keys: ...' detail message — backend response is correct (pytest verified), but the fetch-wrapper or component is not forwarding response.data.detail. All caps + endpoint shapes match spec.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "AlpacaConnect modal",
+        "issue": "On bogus-key submission, alpaca-error shows 'HTTP 400' instead of backend's detail string 'Alpaca rejected the keys: ...'. Backend pytest confirms detail is returned correctly. Suspected cause: in /app/frontend/src/lib/api.js the fetch wrapper sets err.message='HTTP 400' but should still attach err.response.data.detail; component reads e?.response?.data?.detail || e.message. The chain is correct in code yet the UI shows e.message — investigate whether resp.json() is failing on the 400 response (e.g. content-type header missing or response already consumed).",
+        "selector": "[data-testid='alpaca-error']",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_alpaca_execution_pipeline.py",
+    "/app/backend/tests/test_alpaca_broker.py",
+    "/app/backend/tests/test_execution_gates.py",
+    "/app/test_reports/pytest/pytest_pipeline.xml",
+    "/app/test_reports/pytest/pytest_units.xml"
+  ],
+  "action_items": [
+    "FIX (medium): Surface response.data.detail in AlpacaConnect modal — currently shows 'HTTP 400'. Likely fix is in /app/frontend/src/lib/api.js request() — either ensure JSON parsing succeeds for non-2xx, or in component fall back to e?.response?.data?.detail before e.message. Test by submitting bogus keys and confirming the rendered alpaca-error contains 'Alpaca rejected the keys'."
+  ],
+  "critical_code_review_comments": [
+    "Backend gate chain in /app/backend/shared/execution.py is correctly ordered: schema_invariants → action_routable → executor_seat_check → live_trading_disabled → broker_connected → cap_per_order → cap_per_day → cap_open_notional (8 gates). Verdict logic uses all(passed) which is correct.",
+    "Confirmation guard in /execution/submit enforces exact string 'execute' (case-sensitive) — verified by sending 'yes' which returned 400.",
+    "Alpaca connect endpoint correctly probes BEFORE persisting (calls adapter.ping then writes) — bogus keys never reach Mongo. 400 detail includes 'Alpaca rejected the keys' helper text as spec'd.",
+    "Caps are hardcoded in /app/backend/shared/exposure_caps.py exactly as spec: CAP_PER_ORDER_USD=10, CAP_PER_DAY_USD=50, CAP_OPEN_NOTIONAL_USD=100. No operator-relaxable surface exists — matches doctrine.",
+    "Idempotency on /execution/submit: 409 path is guarded by intent.executed flag — we could not exercise the success path (no real Alpaca keys) so the 409 branch was not regression-tested at integration level, but unit tests (test_execution_gates.py) cover the gate-pass path with a mocked adapter.",
+    "MongoDB _id correctly excluded with projection {_id:0} in all reads (verified intents.py and execution.py).",
+    "Frontend AlpacaConnect.jsx correctly uses Card+Dialog+Input from shadcn and adds all required data-testids. Polling refresh every 20s is reasonable.",
+    "Minor: error surface in modal would benefit from showing the structured detail. See action_items."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_alpaca_execution_pipeline.py (new integration test suite, 10 tests, all pass)"
+  ],
+  "success_rate": {
+    "backend": "100% (10/10 new integration + 14/14 unit = 24/24)",
+    "frontend": "94% (15/16 spec testids and flows pass; alpaca-error message contents is the only deviation)"
+  },
+  "test_credentials": "admin@risedual.io / risedual-admin-2026 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created one intent (camaro/BUY/AAPL/conf 0.7/risk 0.1) via /api/admin/intents as part of pipeline test; intent persists in dev DB and is harmless.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run /app/backend/tests/test_alpaca_execution_pipeline.py from /app (pytest backend/tests/test_alpaca_execution_pipeline.py) for the integration coverage. Unit tests live under /app/backend/tests/test_alpaca_broker.py and test_execution_gates.py — they need MONGO_URL in env (run with `cd /app/backend && set -a && source .env && set +a && python -m pytest tests/...`). All pipeline endpoints require operator JWT (Bearer). Submit phrase MUST equal 'execute' exactly. Intents page testids: alpaca-tile, alpaca-badge-disconnected|connected, alpaca-connect-trigger, alpaca-input-key, alpaca-input-secret, alpaca-submit, alpaca-error, intent-dryrun-<id>, intent-submit-<id>, gate-<name>.",
+  "rca of the issue": "alpaca-error 'HTTP 400' display: the backend /api/admin/alpaca/connect returns proper JSON body {detail: 'Alpaca rejected the keys: ...'} on 400. The frontend wrapper in /app/frontend/src/lib/api.js does parse JSON before throwing and attaches it to err.response.data, and the component reads e?.response?.data?.detail first. The fallthrough to e.message ('HTTP 400') indicates response.data.detail is undefined at read time — most likely the response content-type is not application/json from this edge route OR response.json() throws silently and data is set to null. Fix: harden the fetch wrapper to attempt resp.text() parse as JSON when content-type is absent, or attach the raw text/status to err.response.data as a fallback so the component can show something meaningful."
+}

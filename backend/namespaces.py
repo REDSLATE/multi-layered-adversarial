@@ -86,6 +86,18 @@ SHARED_GATE_RESULTS = "shared_gate_results"                # one row per gate ch
 SHARED_EXECUTOR_SEAT = "shared_executor_seat"              # single-row registry: who holds the executor seat
 SHARED_EXECUTOR_ROTATIONS = "shared_executor_rotations"    # append-only audit log of seat rotations
 
+# Alpaca paper broker — Fernet-encrypted key pair + audit log.
+# Singleton credential doc keyed "singleton". Doctrine: paper only;
+# `execution_enabled` defaults True (paper is safe), live broker is a
+# separate adapter behind a dual-sign promotion gate.
+ALPACA_CREDENTIALS = "alpaca_credentials"
+ALPACA_AUDIT_LOG = "alpaca_audit_log"
+
+# Execution receipts — one row per intent that passed the gate chain and
+# was routed to a broker. Read by the exposure-caps daily-spend tally,
+# the operator receipts page, and the outcome broadcast (later).
+EXECUTION_RECEIPTS = "execution_receipts"
+
 # Sovereign sidecar contributions — periodic snapshots of each brain's
 # internal deterministic state (weights, learning rate, recent outcomes).
 # `SOVEREIGN_STATE` is one doc per brain (latest snapshot).

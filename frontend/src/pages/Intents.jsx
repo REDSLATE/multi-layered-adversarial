@@ -2,9 +2,11 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, RUNTIME_META, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 import ExecutorSeatTile from "@/components/ExecutorSeatTile";
+import AlpacaConnect from "@/components/AlpacaConnect";
+import { toast } from "sonner";
 import {
   Lightning, ArrowsClockwise, Funnel, Pulse,
-  CheckCircle, XCircle, Hourglass, Eye, CaretDown, CaretUp,
+  CheckCircle, XCircle, Hourglass, Eye, CaretDown, CaretUp, Rocket,
 } from "@phosphor-icons/react";
 
 const BRAIN_META = {
@@ -86,11 +88,13 @@ function StatTile({ label, value, color, testid }) {
   );
 }
 
-function IntentRow({ intent, expanded, onToggle, onDryRun, dryRunResult }) {
+function IntentRow({ intent, expanded, onToggle, onDryRun, onSubmit, dryRunResult, submitResult }) {
   const meta = BRAIN_META[intent.stack] || { label: intent.stack, color: "#A1A1AA" };
   const GateIcon = GATE_ICON[intent.gate_state] || Hourglass;
   const gateColor = GATE_COLOR[intent.gate_state] || "#A1A1AA";
   const actionColor = ACTION_COLOR[intent.action] || "#A1A1AA";
+  const isExecuted = intent.executed === true;
+  const submitEligible = !isExecuted && (intent.gate_state === "dry_run_passed" || intent.gate_state === "passed");
 
   return (
     <>
@@ -140,6 +144,26 @@ function IntentRow({ intent, expanded, onToggle, onDryRun, dryRunResult }) {
               <Lightning size={10} weight="bold" className="inline mr-1" />
               dry-run
             </button>
+            {isExecuted ? (
+              <span
+                className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border border-rd-success text-rd-success"
+                data-testid={`intent-executed-${intent.intent_id}`}
+                title="Already executed"
+              >
+                <CheckCircle size={10} weight="bold" className="inline mr-1" />
+                executed
+              </span>
+            ) : submitEligible ? (
+              <button
+                onClick={(e) => { e.stopPropagation(); onSubmit(); }}
+                data-testid={`intent-submit-${intent.intent_id}`}
+                className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border border-rd-accent text-rd-accent hover:bg-rd-accent hover:text-black"
+                title="Route this intent to the broker"
+              >
+                <Rocket size={10} weight="bold" className="inline mr-1" />
+                submit
+              </button>
+            ) : null}
             {expanded ? (
               <CaretUp size={12} weight="bold" className="text-rd-dim" />
             ) : (
@@ -192,6 +216,30 @@ function IntentRow({ intent, expanded, onToggle, onDryRun, dryRunResult }) {
                     </div>
                   </>
                 )}
+                {submitResult && (
+                  <>
+                    <div className="label-eyebrow mt-4 mb-2">
+                      Submit ·{" "}
+                      <span style={{ color: submitResult.error ? "#DC2626" : "#10B981" }}>
+                        {submitResult.error ? "BLOCKED / ERROR" : "EXECUTED"}
+                      </span>
+                    </div>
+                    {submitResult.error ? (
+                      <div className="border border-rd-danger text-rd-danger px-3 py-2 text-[11px] font-mono" data-testid={`submit-error-${intent.intent_id}`}>
+                        {typeof submitResult.error === "string"
+                          ? submitResult.error
+                          : (submitResult.error?.reason || JSON.stringify(submitResult.error))}
+                      </div>
+                    ) : (
+                      <div className="border border-rd-success bg-rd-bg2 p-3 text-[11px] font-mono space-y-1" data-testid={`submit-receipt-${intent.intent_id}`}>
+                        <div><span className="text-rd-dim">broker_order_id</span> <span className="text-rd-text">{submitResult.receipt?.broker_order_id}</span></div>
+                        <div><span className="text-rd-dim">side · notional</span> <span className="text-rd-text">{submitResult.receipt?.side} · ${Number(submitResult.receipt?.notional_usd).toFixed(2)}</span></div>
+                        <div><span className="text-rd-dim">status</span> <span className="text-rd-text">{submitResult.order?.status}</span></div>
+                        <div><span className="text-rd-dim">executed_at</span> <span className="text-rd-text">{submitResult.receipt?.executed_at}</span></div>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
               <div className="text-[11px] font-mono space-y-2">
                 <div className="label-eyebrow mb-2">Stamped by MC</div>
@@ -227,6 +275,7 @@ export default function Intents() {
   const [gateState, setGateState] = useState("all");
   const [expanded, setExpanded] = useState(null);
   const [dryRunByIntent, setDryRunByIntent] = useState({});
+  const [submitByIntent, setSubmitByIntent] = useState({});
   const [autoRefresh, setAutoRefresh] = useState(true);
 
   const load = useCallback(async () => {
@@ -292,6 +341,31 @@ export default function Intents() {
     }
   };
 
+  const runSubmit = async (intentId) => {
+    if (!window.confirm("Route this intent to the broker? A $10 notional market-day order will be placed.")) {
+      return;
+    }
+    setSubmitByIntent((m) => ({ ...m, [intentId]: { loading: true } }));
+    setExpanded(intentId);
+    try {
+      const res = await api.post("/execution/submit", {
+        intent_id: intentId,
+        order_notional_usd: 10.0,
+        confirm: "execute",
+      });
+      setSubmitByIntent((m) => ({ ...m, [intentId]: res.data }));
+      toast.success(`Order routed · ${res.data?.order?.status || "submitted"}`);
+      load();
+    } catch (e) {
+      const detail = e?.response?.data?.detail;
+      setSubmitByIntent((m) => ({
+        ...m,
+        [intentId]: { error: detail || e.message },
+      }));
+      toast.error(typeof detail === "string" ? detail : (detail?.reason || "submit blocked"));
+    }
+  };
+
   return (
     <div className="reveal" data-testid="intents-page">
       <PageHeader
@@ -328,6 +402,7 @@ export default function Intents() {
       />
 
       <ExecutorSeatTile />
+      <AlpacaConnect />
 
       {/* Stats */}
       {stats && (
@@ -399,7 +474,9 @@ export default function Intents() {
                     expanded={expanded === it.intent_id}
                     onToggle={() => setExpanded((e) => (e === it.intent_id ? null : it.intent_id))}
                     onDryRun={() => runDryRun(it.intent_id)}
+                    onSubmit={() => runSubmit(it.intent_id)}
                     dryRunResult={dryRunByIntent[it.intent_id]}
+                    submitResult={submitByIntent[it.intent_id]}
                   />
                 ))}
               </tbody>
