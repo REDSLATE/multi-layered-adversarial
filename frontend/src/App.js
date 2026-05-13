@@ -21,6 +21,11 @@ import Conflicts from "@/pages/Conflicts";
 import Positions from "@/pages/Positions";
 import PublicTraffic from "@/pages/PublicTraffic";
 import Ping from "@/pages/Ping";
+import RisedualLayout from "@/risedual/Layout";
+import RdLanding from "@/risedual/pages/Landing";
+import RdSignals from "@/risedual/pages/Signals";
+import RdDigest from "@/risedual/pages/Digest";
+import RdChat from "@/risedual/pages/Chat";
 import "@/App.css";
 
 function Protected({ children }) {
@@ -43,6 +48,12 @@ function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/ping/:brain" element={<Ping />} />
+          <Route path="/r" element={<RisedualLayout />}>
+            <Route index element={<RdLanding />} />
+            <Route path="signals" element={<RdSignals />} />
+            <Route path="digest" element={<RdDigest />} />
+            <Route path="chat" element={<RdChat />} />
+          </Route>
           <Route
             path="/"
             element={
