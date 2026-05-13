@@ -43,6 +43,7 @@ from shared.seat_performance import router as seat_performance_router
 from shared.roster import router as roster_router
 from shared.promotion import router as promotion_router
 from shared.diagnostics import router as diagnostics_router
+from shared.doctrine import router as doctrine_router
 from shared.flags import router as flags_router, get_flags_snapshot
 from shared.seed import seed_all
 from runtimes.alpha.routes import router as alpha_router
@@ -130,6 +131,7 @@ api_router.include_router(ibkr_router)
 api_router.include_router(public_router)
 api_router.include_router(roster_router)
 api_router.include_router(promotion_router)
+api_router.include_router(doctrine_router)
 api_router.include_router(diagnostics_router)
 api_router.include_router(flags_router)
 api_router.include_router(alpha_router)
