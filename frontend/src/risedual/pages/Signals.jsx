@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useTier } from "../context/TierContext";
 import { mc, fmtAgo } from "../lib/mc";
 import { ShieldAlert, ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
@@ -88,9 +89,10 @@ function ConsensusHero({ consensus, count }) {
 
 function SignalCard({ s }) {
   return (
-    <div
+    <Link
+      to={`/r/signals/${s.signal_id}`}
       data-testid={`rd-signal-card-${s.signal_id}`}
-      className="group rounded-lg border border-zinc-900 bg-zinc-950/60 p-5 transition-colors hover:border-zinc-800"
+      className="group block rounded-lg border border-zinc-900 bg-zinc-950/60 p-5 transition-colors hover:border-emerald-500/40"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -136,7 +138,7 @@ function SignalCard({ s }) {
           <span className="text-zinc-500">H {s.consensus_breakdown?.hold_pct || 0}</span>
         </div>
       </div>
-    </div>
+    </Link>
   );
 }
 

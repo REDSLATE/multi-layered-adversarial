@@ -64,6 +64,9 @@ function Header() {
         <nav className="hidden items-center gap-1 md:flex" data-testid="rd-main-nav">
           <NavItem to="/r" end testid="rd-nav-home">Home</NavItem>
           <NavItem to="/r/signals" testid="rd-nav-signals">Signals</NavItem>
+          <NavItem to="/r/scanner" testid="rd-nav-scanner">Scanner</NavItem>
+          <NavItem to="/r/heatmap" testid="rd-nav-heatmap">Heatmap</NavItem>
+          <NavItem to="/r/activity" testid="rd-nav-activity">Activity</NavItem>
           <NavItem to="/r/digest" testid="rd-nav-digest">Digest</NavItem>
           <NavItem to="/r/chat" testid="rd-nav-chat">RiseDualGPT</NavItem>
         </nav>
