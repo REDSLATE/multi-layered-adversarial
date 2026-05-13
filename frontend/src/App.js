@@ -30,6 +30,7 @@ import RdChat from "@/risedual/pages/Chat";
 import RdScanner from "@/risedual/pages/Scanner";
 import RdHeatmap from "@/risedual/pages/Heatmap";
 import RdAgentActivity from "@/risedual/pages/AgentActivity";
+import RdMarkets from "@/risedual/pages/Markets";
 import "@/App.css";
 
 function Protected({ children }) {
@@ -56,6 +57,7 @@ function App() {
             <Route index element={<RdLanding />} />
             <Route path="signals" element={<RdSignals />} />
             <Route path="signals/:id" element={<RdSignalDetail />} />
+            <Route path="markets" element={<RdMarkets />} />
             <Route path="digest" element={<RdDigest />} />
             <Route path="chat" element={<RdChat />} />
             <Route path="scanner" element={<RdScanner />} />

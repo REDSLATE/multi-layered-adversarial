@@ -6,7 +6,7 @@ import { Search, Zap, TrendingUp, TrendingDown } from "lucide-react";
 const SIGNAL_CLS = {
   bullish: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
   bearish: "border-rose-500/30 bg-rose-500/10 text-rose-300",
-  neutral: "border-zinc-700 bg-zinc-800/40 text-zinc-300",
+  neutral: "border-slate-500 bg-zinc-800/40 text-zinc-300",
 };
 
 const CATEGORY_LABEL = {
@@ -27,7 +27,7 @@ function PresetCard({ preset, active, onSelect }) {
         "group w-full rounded-lg border p-4 text-left transition-colors " +
         (active
           ? "border-emerald-500/50 bg-emerald-500/5"
-          : "border-zinc-900 bg-zinc-950/60 hover:border-zinc-800")
+          : "border-slate-700 bg-slate-800/40 hover:border-slate-600")
       }
     >
       <div className="flex items-start justify-between gap-2">
@@ -45,7 +45,7 @@ function PresetCard({ preset, active, onSelect }) {
 
 function StrengthBar({ value }) {
   return (
-    <div className="h-1 w-24 overflow-hidden rounded-full bg-zinc-900">
+    <div className="h-1 w-24 overflow-hidden rounded-full bg-slate-700/60">
       <div
         className="h-full bg-emerald-400"
         style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
@@ -109,7 +109,7 @@ export default function Scanner() {
         {/* PRESET LIST */}
         <div className="space-y-2" data-testid="rd-preset-list">
           {presets.loading ? (
-            <div className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-6 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-600">
+            <div className="rounded-lg border border-slate-700 bg-slate-800/40 p-6 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-600">
               Loading presets…
             </div>
           ) : (
@@ -129,7 +129,7 @@ export default function Scanner() {
           {scan.loading && (
             <div
               data-testid="rd-scan-loading"
-              className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-12 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-600"
+              className="rounded-lg border border-slate-700 bg-slate-800/40 p-12 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-600"
             >
               <Zap size={14} className="mx-auto mb-2 animate-pulse text-emerald-400" />
               Scanning the tape…
@@ -144,7 +144,7 @@ export default function Scanner() {
 
           {scan.data && (
             <>
-              <div className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-5" data-testid="rd-scan-summary">
+              <div className="rounded-lg border border-slate-700 bg-slate-800/40 p-5" data-testid="rd-scan-summary">
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="font-display text-lg text-white">{scan.data.name}</div>
@@ -166,24 +166,24 @@ export default function Scanner() {
               {(scan.data.matches || []).length === 0 ? (
                 <div
                   data-testid="rd-scan-empty"
-                  className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-10 text-center text-[13px] text-zinc-500"
+                  className="rounded-lg border border-slate-700 bg-slate-800/40 p-10 text-center text-[13px] text-zinc-500"
                 >
                   <Search size={16} className="mx-auto mb-3 text-zinc-600" />
                   No symbols match this pattern right now.
                 </div>
               ) : (
-                <div className="overflow-hidden rounded-lg border border-zinc-900" data-testid="rd-scan-matches">
+                <div className="overflow-hidden rounded-lg border border-slate-700" data-testid="rd-scan-matches">
                   <table className="w-full text-left text-[13px]">
-                    <thead className="bg-zinc-950">
+                    <thead className="bg-slate-800/60">
                       <tr className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
                         <th className="px-4 py-3">Symbol</th>
                         <th className="px-4 py-3">Strength</th>
                         <th className="px-4 py-3">Detail</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-900">
+                    <tbody className="divide-y divide-slate-700">
                       {scan.data.matches.map((m) => (
-                        <tr key={m.symbol} data-testid={`rd-scan-match-${m.symbol}`} className="hover:bg-zinc-950/70">
+                        <tr key={m.symbol} data-testid={`rd-scan-match-${m.symbol}`} className="hover:bg-slate-800/50">
                           <td className="px-4 py-3 font-display text-white">{m.symbol}</td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-3">

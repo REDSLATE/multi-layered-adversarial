@@ -4,7 +4,7 @@ import { mc, fmtAgo } from "../lib/mc";
 import { Activity, CheckCircle2, AlertTriangle, XCircle, Info } from "lucide-react";
 
 const SEVERITY_META = {
-  info: { cls: "border-zinc-800 bg-zinc-950 text-zinc-300", icon: Info, dot: "bg-zinc-500" },
+  info: { cls: "border-slate-600 bg-slate-800/60 text-zinc-300", icon: Info, dot: "bg-zinc-500" },
   success: { cls: "border-emerald-500/30 bg-emerald-500/5 text-emerald-200", icon: CheckCircle2, dot: "bg-emerald-400" },
   warn: { cls: "border-amber-500/30 bg-amber-500/5 text-amber-200", icon: AlertTriangle, dot: "bg-amber-400" },
   error: { cls: "border-rose-500/30 bg-rose-500/5 text-rose-200", icon: XCircle, dot: "bg-rose-400" },
@@ -26,7 +26,7 @@ function EventCard({ ev }) {
           <div className="flex items-center gap-2">
             <span className="truncate font-display text-[14px] text-white">{ev.title}</span>
             {ev.symbol && (
-              <span className="rounded-sm border border-zinc-700 bg-zinc-900 px-1.5 py-0.5 font-mono text-[10px] tracking-[0.12em] text-zinc-300">
+              <span className="rounded-sm border border-slate-500 bg-slate-700/60 px-1.5 py-0.5 font-mono text-[10px] tracking-[0.12em] text-zinc-300">
                 {ev.symbol}
               </span>
             )}
@@ -113,7 +113,7 @@ export default function AgentActivity() {
       </div>
 
       {loading && (
-        <div data-testid="rd-activity-loading" className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-12 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-600">
+        <div data-testid="rd-activity-loading" className="rounded-lg border border-slate-700 bg-slate-800/40 p-12 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-600">
           Tuning into the feed…
         </div>
       )}
@@ -125,7 +125,7 @@ export default function AgentActivity() {
       )}
 
       {!loading && !error && events.length === 0 && (
-        <div data-testid="rd-activity-empty" className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-12 text-center text-[13px] text-zinc-500">
+        <div data-testid="rd-activity-empty" className="rounded-lg border border-slate-700 bg-slate-800/40 p-12 text-center text-[13px] text-zinc-500">
           No activity in the last while. The council is quiet — for now.
         </div>
       )}

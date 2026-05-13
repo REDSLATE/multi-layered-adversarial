@@ -2,6 +2,25 @@
 
 Append-only. Newest at top.
 
+## 2026-02-13 — Visual polish + candlestick charts (`/r/markets`)
+
+User asked for: (1) softer palette, not so dark; (2) RISEDUAL all caps in logo; (3) candle charts for stocks and crypto. All shipped.
+
+**Palette shift:**
+- Bulk-replaced `bg-black` / `bg-zinc-9xx` / `border-zinc-9xx` → slate-based scale (`bg-slate-900` main, `bg-slate-800/40` cards, `border-slate-700`). Subtle navy tint, noticeably lighter and more "fintech" than pure black.
+
+**Logo:**
+- `RiseDual` → `RISEDUAL` (uppercase with `tracking-[0.18em]`, emerald `DUAL` accent preserved).
+
+**Candlestick charts (new):**
+- Backend: `GET /api/public/bars/{symbol:path}` returns OHLCV bars (newest-last, ascending). `GET /api/public/bars` lists all covered symbols grouped by tf/source.
+- Frontend: `lightweight-charts@5.2.0` installed. `CandleChart` component renders candles + volume histogram with emerald/rose up-down coloring, interactive TF selector (1m/5m/15m/1H/4H/1D), pinned `localization.locale="en-US"` to dodge headless-browser locale crash.
+- New page: `/r/markets` — symbol picker (Crypto / Stock / Other, ordered) + candle panel. Auto-selects first crypto pair on load.
+- Embedded in `/r/signals/:id` under the header as "Price action".
+- Nav updated: Home / Signals / **Markets** / Scanner / Heatmap / Activity / Digest / RiseDualGPT.
+
+**Verified live:** BTC/USD on Kraken Pro renders 300 1H bars with last-price tag + volume bars; ETH/USD also wired.
+
 ## 2026-02-13 — Public Site Phase 2 (`/r/scanner`, `/r/heatmap`, `/r/activity`, `/r/signals/:id`)
 
 Added the four remaining public surfaces on top of the MVP. Top nav now exposes Home / Signals / Scanner / Heatmap / Activity / Digest / RiseDualGPT.

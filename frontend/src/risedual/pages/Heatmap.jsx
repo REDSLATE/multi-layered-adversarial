@@ -6,7 +6,7 @@ import { TrendingUp, TrendingDown } from "lucide-react";
 const BAND_CLS = {
   strong_buy: "bg-emerald-500/30 border-emerald-400/40 text-emerald-200",
   mild_buy: "bg-emerald-500/15 border-emerald-500/30 text-emerald-300",
-  neutral: "bg-zinc-900 border-zinc-800 text-zinc-400",
+  neutral: "bg-slate-700/60 border-slate-600 text-zinc-400",
   mild_sell: "bg-rose-500/15 border-rose-500/30 text-rose-300",
   strong_sell: "bg-rose-500/30 border-rose-400/40 text-rose-200",
 };
@@ -90,21 +90,21 @@ export default function Heatmap() {
 
       {/* SUMMARY */}
       <section className="grid grid-cols-2 gap-4 md:grid-cols-3" data-testid="rd-heatmap-summary">
-        <div className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-5">
+        <div className="rounded-lg border border-slate-700 bg-slate-800/40 p-5">
           <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-400">
             <TrendingUp size={16} strokeWidth={1.8} />
           </div>
           <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-500">Gainers</div>
           <div className="mt-1 font-display text-2xl text-emerald-300">{gainers}</div>
         </div>
-        <div className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-5">
+        <div className="rounded-lg border border-slate-700 bg-slate-800/40 p-5">
           <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-md bg-rose-500/10 text-rose-400">
             <TrendingDown size={16} strokeWidth={1.8} />
           </div>
           <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-500">Decliners</div>
           <div className="mt-1 font-display text-2xl text-rose-300">{losers}</div>
         </div>
-        <div className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-5 md:col-span-1 col-span-2">
+        <div className="rounded-lg border border-slate-700 bg-slate-800/40 p-5 md:col-span-1 col-span-2">
           <div className="mb-3 h-8 w-8" />
           <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-500">Symbols covered</div>
           <div className="mt-1 font-display text-2xl text-white">{items.length}</div>
@@ -118,7 +118,7 @@ export default function Heatmap() {
           <h2 className="mt-1 font-display text-xl text-white">24-hour change</h2>
         </div>
         {heat.loading && (
-          <div className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-12 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-600">
+          <div className="rounded-lg border border-slate-700 bg-slate-800/40 p-12 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-600">
             Loading tape…
           </div>
         )}
@@ -128,7 +128,7 @@ export default function Heatmap() {
           </div>
         )}
         {heat.data && items.length === 0 && (
-          <div data-testid="rd-heatmap-empty" className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-10 text-center text-[13px] text-zinc-500">
+          <div data-testid="rd-heatmap-empty" className="rounded-lg border border-slate-700 bg-slate-800/40 p-10 text-center text-[13px] text-zinc-500">
             No 24h coverage yet. Once feeders have 24h of bars the grid populates.
           </div>
         )}
@@ -148,7 +148,7 @@ export default function Heatmap() {
           <h2 className="mt-1 font-display text-xl text-white">SPDR sectors · 24h</h2>
         </div>
         {sectors.loading && (
-          <div className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-8 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-600">
+          <div className="rounded-lg border border-slate-700 bg-slate-800/40 p-8 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-600">
             Loading sectors…
           </div>
         )}

@@ -7,7 +7,7 @@ function ProMaxGate() {
   return (
     <div
       data-testid="rd-chat-promax-gate"
-      className="rounded-xl border border-zinc-900 bg-gradient-to-br from-zinc-950 to-black p-10 text-center"
+      className="rounded-xl border border-slate-700 bg-gradient-to-br from-slate-800 to-slate-900 p-10 text-center"
     >
       <div className="mx-auto mb-4 inline-flex h-10 w-10 items-center justify-center rounded-md bg-amber-500/10 text-amber-400">
         <Lock size={18} strokeWidth={1.8} />
@@ -32,7 +32,7 @@ function Bubble({ role, text }) {
           "max-w-[78%] rounded-lg px-4 py-3 text-[14px] leading-relaxed " +
           (isUser
             ? "bg-emerald-500/15 text-emerald-50 border border-emerald-500/20"
-            : "bg-zinc-950 text-zinc-100 border border-zinc-900")
+            : "bg-slate-800/60 text-zinc-100 border border-slate-700")
         }
       >
         {!isUser && (
@@ -115,14 +115,14 @@ export default function Chat() {
           <button
             onClick={reset}
             data-testid="rd-chat-reset"
-            className="inline-flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-[12px] text-zinc-400 transition-colors hover:border-zinc-700 hover:text-white"
+            className="inline-flex items-center gap-2 rounded-md border border-slate-600 bg-slate-800/60 px-3 py-1.5 text-[12px] text-zinc-400 transition-colors hover:border-slate-500 hover:text-white"
           >
             <RotateCcw size={12} strokeWidth={2} /> New session
           </button>
         )}
       </div>
 
-      <div className="rounded-xl border border-zinc-900 bg-black">
+      <div className="rounded-xl border border-slate-700 bg-slate-900">
         <div
           ref={scrollRef}
           data-testid="rd-chat-transcript"
@@ -145,7 +145,7 @@ export default function Chat() {
           ))}
           {sending && (
             <div data-testid="rd-chat-typing" className="flex justify-start">
-              <div className="rounded-lg border border-zinc-900 bg-zinc-950 px-4 py-3">
+              <div className="rounded-lg border border-slate-700 bg-slate-800/60 px-4 py-3">
                 <div className="flex items-center gap-1">
                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400 [animation-delay:120ms]" />
@@ -165,7 +165,7 @@ export default function Chat() {
           </div>
         )}
 
-        <div className="flex items-center gap-2 border-t border-zinc-900 p-3">
+        <div className="flex items-center gap-2 border-t border-slate-700 p-3">
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}

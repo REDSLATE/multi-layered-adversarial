@@ -15,7 +15,7 @@ function FeatureCard({ icon: Icon, title, body, testid }) {
   return (
     <div
       data-testid={testid}
-      className="group relative overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/60 p-6 transition-colors hover:border-zinc-800"
+      className="group relative overflow-hidden rounded-lg border border-slate-700 bg-slate-800/40 p-6 transition-colors hover:border-slate-600"
     >
       <div className="mb-4 inline-flex h-9 w-9 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-400">
         <Icon size={18} strokeWidth={1.5} />
@@ -58,7 +58,7 @@ export default function Landing() {
             <Link
               to="/r/chat"
               data-testid="rd-cta-chat"
-              className="inline-flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950 px-5 py-2.5 text-[13px] text-zinc-300 transition-colors hover:border-zinc-700 hover:text-white"
+              className="inline-flex items-center gap-2 rounded-md border border-slate-600 bg-slate-800/60 px-5 py-2.5 text-[13px] text-zinc-300 transition-colors hover:border-slate-500 hover:text-white"
             >
               Ask RiseDualGPT <MessageSquare size={14} strokeWidth={1.8} />
             </Link>
@@ -89,7 +89,7 @@ export default function Landing() {
             <div
               key={b.name}
               data-testid={`rd-council-${b.name.toLowerCase()}`}
-              className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-5"
+              className="rounded-lg border border-slate-700 bg-slate-800/40 p-5"
             >
               <div className={`mb-3 h-1 w-8 rounded-full ${b.bar}`} />
               <div className="font-display text-base text-white">{b.name}</div>
@@ -132,7 +132,7 @@ export default function Landing() {
       </section>
 
       {/* CTA */}
-      <section className="relative overflow-hidden rounded-xl border border-zinc-900 bg-gradient-to-br from-zinc-950 to-black p-8 md:p-12">
+      <section className="relative overflow-hidden rounded-xl border border-slate-700 bg-gradient-to-br from-slate-800 to-slate-900 p-8 md:p-12">
         <div className="absolute -right-10 -top-10 h-48 w-48 rounded-full bg-emerald-500/10 blur-3xl" />
         <div className="relative flex flex-col items-start gap-4 md:flex-row md:items-end md:justify-between">
           <div className="max-w-xl">

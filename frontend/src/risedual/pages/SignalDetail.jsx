@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useTier } from "../context/TierContext";
 import { mc, fmtAgo } from "../lib/mc";
+import CandleChart from "../components/CandleChart";
 import {
   ArrowLeft, ArrowUpRight, ArrowDownRight, Minus,
   ShieldAlert, Shield, Crosshair, Sword,
@@ -10,7 +11,7 @@ import {
 const DIR_CLS = {
   LONG: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
   SHORT: "border-rose-500/30 bg-rose-500/10 text-rose-300",
-  HOLD: "border-zinc-700 bg-zinc-800/40 text-zinc-300",
+  HOLD: "border-slate-500 bg-zinc-800/40 text-zinc-300",
 };
 const DIR_ICON = { LONG: ArrowUpRight, SHORT: ArrowDownRight, HOLD: Minus };
 
@@ -74,7 +75,7 @@ function SideCard({ side, icon: Icon, accentCls, title, data, testid }) {
 
 function ConsensusBar({ buy, sell, hold }) {
   return (
-    <div className="flex h-2 w-full overflow-hidden rounded-full bg-zinc-900">
+    <div className="flex h-2 w-full overflow-hidden rounded-full bg-slate-700/60">
       <div className="bg-emerald-500" style={{ width: `${buy}%` }} />
       <div className="bg-rose-500" style={{ width: `${sell}%` }} />
       <div className="bg-zinc-700" style={{ width: `${hold}%` }} />
@@ -118,7 +119,7 @@ export default function SignalDetail() {
       </div>
 
       {state.loading && (
-        <div data-testid="rd-signal-loading" className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-12 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-600">
+        <div data-testid="rd-signal-loading" className="rounded-lg border border-slate-700 bg-slate-800/40 p-12 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-600">
           Pulling the council's vote…
         </div>
       )}
@@ -132,7 +133,7 @@ export default function SignalDetail() {
       {state.data && (
         <>
           {/* HEADER */}
-          <section className="rounded-xl border border-zinc-900 bg-gradient-to-br from-zinc-950 to-black p-6 md:p-8" data-testid="rd-signal-header">
+          <section className="rounded-xl border border-slate-700 bg-gradient-to-br from-slate-800 to-slate-900 p-6 md:p-8" data-testid="rd-signal-header">
             <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-end">
               <div>
                 <div className="flex items-center gap-3">
@@ -177,6 +178,15 @@ export default function SignalDetail() {
             </div>
           </section>
 
+          {/* CANDLE CHART */}
+          <section data-testid="rd-chart-section">
+            <div className="mb-4">
+              <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-slate-500">Price action</div>
+              <h2 className="mt-1 font-display text-xl text-white">Candles · live tape.</h2>
+            </div>
+            <CandleChart symbol={d.symbol} />
+          </section>
+
           {/* ADVERSARIAL — Bull / Bear / Commander */}
           <section data-testid="rd-adversarial-section">
             <div className="mb-4">
@@ -204,7 +214,7 @@ export default function SignalDetail() {
                 side="commander"
                 icon={Crosshair}
                 title="Commander"
-                accentCls="border-zinc-800 bg-zinc-950 text-zinc-100"
+                accentCls="border-slate-600 bg-slate-800/60 text-zinc-100"
                 data={adv.commander}
                 testid="rd-adv-commander"
               />
@@ -218,7 +228,7 @@ export default function SignalDetail() {
               <h2 className="mt-1 font-display text-xl text-white">Strategist → Auditor → Synthesized.</h2>
             </div>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-5" data-testid="rd-gov-strategist">
+              <div className="rounded-lg border border-slate-700 bg-slate-800/40 p-5" data-testid="rd-gov-strategist">
                 <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
                   {gov.strategist?.label || "STRATEGIST_AGENT"}
                 </div>
@@ -234,7 +244,7 @@ export default function SignalDetail() {
               </div>
 
               <div
-                className={`rounded-lg border p-5 ${auditorVeto ? "border-amber-500/40 bg-amber-500/5" : "border-zinc-900 bg-zinc-950/60"}`}
+                className={`rounded-lg border p-5 ${auditorVeto ? "border-amber-500/40 bg-amber-500/5" : "border-slate-700 bg-slate-800/40"}`}
                 data-testid="rd-gov-auditor"
               >
                 <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">

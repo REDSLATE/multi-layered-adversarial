@@ -7,7 +7,7 @@ function StatTile({ icon: Icon, label, value, hint, testid }) {
   return (
     <div
       data-testid={testid}
-      className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-5"
+      className="rounded-lg border border-slate-700 bg-slate-800/40 p-5"
     >
       <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-400">
         <Icon size={16} strokeWidth={1.8} />
@@ -66,7 +66,7 @@ export default function Digest() {
       {/* NARRATIVE */}
       <section
         data-testid="rd-narrative-section"
-        className="relative overflow-hidden rounded-xl border border-zinc-900 bg-gradient-to-br from-zinc-950 to-black p-8"
+        className="relative overflow-hidden rounded-xl border border-slate-700 bg-gradient-to-br from-slate-800 to-slate-900 p-8"
       >
         <div className="absolute -right-10 -top-10 h-48 w-48 rounded-full bg-emerald-500/10 blur-3xl" />
         <div className="relative">
@@ -144,17 +144,17 @@ export default function Digest() {
           </div>
         </div>
         {digest.loading ? (
-          <div className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-8 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-600">
+          <div className="rounded-lg border border-slate-700 bg-slate-800/40 p-8 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-600">
             Loading predictions…
           </div>
         ) : preds.length === 0 ? (
-          <div className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-8 text-center text-[13px] text-zinc-500">
+          <div className="rounded-lg border border-slate-700 bg-slate-800/40 p-8 text-center text-[13px] text-zinc-500">
             No predictions on the board right now.
           </div>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-zinc-900">
+          <div className="overflow-hidden rounded-lg border border-slate-700">
             <table className="w-full text-left text-[13px]">
-              <thead className="bg-zinc-950">
+              <thead className="bg-slate-800/60">
                 <tr className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
                   <th className="px-4 py-3">Symbol</th>
                   <th className="px-4 py-3">Direction</th>
@@ -162,7 +162,7 @@ export default function Digest() {
                   <th className="px-4 py-3 text-right">Updated</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-900">
+              <tbody className="divide-y divide-slate-700">
                 {preds.slice(0, 12).map((p, i) => {
                   const dir = (p.direction || p.stance || "HOLD").toUpperCase();
                   const toneCls =
@@ -179,7 +179,7 @@ export default function Digest() {
                     <tr
                       key={p.signal_id || p.symbol || i}
                       data-testid={`rd-prediction-row-${i}`}
-                      className="hover:bg-zinc-950/70"
+                      className="hover:bg-slate-800/50"
                     >
                       <td className="px-4 py-3 font-display text-white">
                         {p.symbol || "—"}

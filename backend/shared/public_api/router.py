@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from .agent_activity import router as agent_activity_router
+from .bars import router as bars_router
 from .chat import router as chat_router
 from .digest import router as digest_router
 from .heatmap import router as heatmap_router
@@ -22,3 +23,4 @@ router.include_router(agent_activity_router)
 router.include_router(models_mind_router)
 router.include_router(heatmap_router)
 router.include_router(chat_router)
+router.include_router(bars_router)

@@ -19,7 +19,7 @@ function DirectionTag({ direction }) {
     HOLD: {
       icon: Minus,
       label: "HOLD",
-      cls: "border-zinc-700 bg-zinc-800/40 text-zinc-300",
+      cls: "border-slate-500 bg-zinc-800/40 text-zinc-300",
     },
   };
   const m = map[direction] || map.HOLD;
@@ -36,7 +36,7 @@ function DirectionTag({ direction }) {
 
 function ConsensusBar({ buy, sell, hold }) {
   return (
-    <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-zinc-900">
+    <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-slate-700/60">
       <div className="bg-emerald-500" style={{ width: `${buy}%` }} />
       <div className="bg-rose-500" style={{ width: `${sell}%` }} />
       <div className="bg-zinc-700" style={{ width: `${hold}%` }} />
@@ -56,7 +56,7 @@ function ConsensusHero({ consensus, count }) {
   return (
     <div
       data-testid="rd-consensus-hero"
-      className="rounded-xl border border-zinc-900 bg-gradient-to-br from-zinc-950 to-black p-6 md:p-8"
+      className="rounded-xl border border-slate-700 bg-gradient-to-br from-slate-800 to-slate-900 p-6 md:p-8"
     >
       <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-end">
         <div>
@@ -92,7 +92,7 @@ function SignalCard({ s }) {
     <Link
       to={`/r/signals/${s.signal_id}`}
       data-testid={`rd-signal-card-${s.signal_id}`}
-      className="group block rounded-lg border border-zinc-900 bg-zinc-950/60 p-5 transition-colors hover:border-emerald-500/40"
+      className="group block rounded-lg border border-slate-700 bg-slate-800/40 p-5 transition-colors hover:border-emerald-500/40"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -177,7 +177,7 @@ export default function Signals() {
       {state.loading && (
         <div
           data-testid="rd-signals-loading"
-          className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-12 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-600"
+          className="rounded-lg border border-slate-700 bg-slate-800/40 p-12 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-600"
         >
           Pulling council vote…
         </div>
@@ -201,7 +201,7 @@ export default function Signals() {
           {(state.data.items || []).length === 0 ? (
             <div
               data-testid="rd-signals-empty"
-              className="rounded-lg border border-zinc-900 bg-zinc-950/60 p-12 text-center text-[13px] text-zinc-500"
+              className="rounded-lg border border-slate-700 bg-slate-800/40 p-12 text-center text-[13px] text-zinc-500"
             >
               No active signals right now. The council is watching.
             </div>
