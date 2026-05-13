@@ -19,28 +19,28 @@ import {
 } from "@phosphor-icons/react";
 
 const NAV = [
-  { to: "/", label: "Overview", icon: ChartBar, end: true, testid: "nav-overview" },
-  { to: "/receipts", label: "ADL Receipts", icon: Receipt, testid: "nav-receipts" },
-  { to: "/memory", label: "Memory Firewall", icon: Shield, testid: "nav-memory" },
-  { to: "/calibration", label: "Calibration", icon: Wrench, testid: "nav-calibration" },
-  { to: "/feature-builders", label: "Feature Builders", icon: Stack, testid: "nav-features" },
-  { to: "/artifacts", label: "Artifacts", icon: Cube, testid: "nav-artifacts" },
-  { to: "/diagnostics", label: "Diagnostics", icon: Pulse, testid: "nav-diagnostics" },
-  { to: "/recent", label: "Live Tail", icon: Pulse, testid: "nav-recent" },
-  { to: "/discussion", label: "Discussion", icon: ChatCircleDots, testid: "nav-discussion" },
-  { to: "/positions", label: "Positions", icon: Crosshair, testid: "nav-positions" },
-  { to: "/scorecards", label: "Scorecards", icon: Trophy, testid: "nav-scorecards" },
-  { to: "/conflicts", label: "Conflicts", icon: LightningSlash, testid: "nav-conflicts" },
-  { to: "/flags", label: "Runtime Flags", icon: Flag, testid: "nav-flags" },
-  { to: "/promotion", label: "Promotion", icon: TrendUp, testid: "nav-promotion" },
-  { to: "/public-traffic", label: "Public Traffic", icon: Pulse, testid: "nav-public-traffic" },
+  { to: "/admin", label: "Overview", icon: ChartBar, end: true, testid: "nav-overview" },
+  { to: "/admin/receipts", label: "ADL Receipts", icon: Receipt, testid: "nav-receipts" },
+  { to: "/admin/memory", label: "Memory Firewall", icon: Shield, testid: "nav-memory" },
+  { to: "/admin/calibration", label: "Calibration", icon: Wrench, testid: "nav-calibration" },
+  { to: "/admin/feature-builders", label: "Feature Builders", icon: Stack, testid: "nav-features" },
+  { to: "/admin/artifacts", label: "Artifacts", icon: Cube, testid: "nav-artifacts" },
+  { to: "/admin/diagnostics", label: "Diagnostics", icon: Pulse, testid: "nav-diagnostics" },
+  { to: "/admin/recent", label: "Live Tail", icon: Pulse, testid: "nav-recent" },
+  { to: "/admin/discussion", label: "Discussion", icon: ChatCircleDots, testid: "nav-discussion" },
+  { to: "/admin/positions", label: "Positions", icon: Crosshair, testid: "nav-positions" },
+  { to: "/admin/scorecards", label: "Scorecards", icon: Trophy, testid: "nav-scorecards" },
+  { to: "/admin/conflicts", label: "Conflicts", icon: LightningSlash, testid: "nav-conflicts" },
+  { to: "/admin/flags", label: "Runtime Flags", icon: Flag, testid: "nav-flags" },
+  { to: "/admin/promotion", label: "Promotion", icon: TrendUp, testid: "nav-promotion" },
+  { to: "/admin/public-traffic", label: "Public Traffic", icon: Pulse, testid: "nav-public-traffic" },
 ];
 
 const RUNTIMES = [
-  { to: "/brain/alpha", label: "Alpha", color: "#3B82F6", testid: "nav-runtime-alpha" },
-  { to: "/brain/camaro", label: "Camaro", color: "#F59E0B", testid: "nav-runtime-camaro" },
-  { to: "/brain/chevelle", label: "Chevelle", color: "#10B981", testid: "nav-runtime-chevelle" },
-  { to: "/brain/redeye", label: "REDEYE", color: "#DC2626", testid: "nav-runtime-redeye" },
+  { to: "/admin/brain/alpha", label: "Alpha", color: "#3B82F6", testid: "nav-runtime-alpha" },
+  { to: "/admin/brain/camaro", label: "Camaro", color: "#F59E0B", testid: "nav-runtime-camaro" },
+  { to: "/admin/brain/chevelle", label: "Chevelle", color: "#10B981", testid: "nav-runtime-chevelle" },
+  { to: "/admin/brain/redeye", label: "REDEYE", color: "#DC2626", testid: "nav-runtime-redeye" },
 ];
 
 // REDEYE was promoted from advisor sidecar to a full seat (2026-02-11).

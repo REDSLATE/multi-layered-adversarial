@@ -42,7 +42,7 @@ export default function RuntimeDetail() {
     return (
       <div className="p-10 text-center text-rd-danger" data-testid="runtime-unknown">
         Unknown runtime: {runtime}.{" "}
-        <Link to="/" className="underline">
+        <Link to="/admin" className="underline">
           Back to overview
         </Link>
       </div>

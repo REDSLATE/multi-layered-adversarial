@@ -218,7 +218,7 @@ export default function Redeye() {
           />
           <div className="pt-2 mt-2 border-t border-rd-border text-[10px] text-rd-dim uppercase tracking-widest">
             Consumer side (audit trail + Pulse card) lives in the <span className="text-rd-text">RISEDUALAI / Camaro</span> repo.
-            <Link to="/promotion" className="ml-2 underline text-rd-muted hover:text-rd-text">
+            <Link to="/admin/promotion" className="ml-2 underline text-rd-muted hover:text-rd-text">
               View Camaro authority state →
             </Link>
           </div>

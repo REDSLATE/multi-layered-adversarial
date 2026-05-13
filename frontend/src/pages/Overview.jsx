@@ -99,7 +99,7 @@ export default function Overview() {
                       </div>
                     </div>
                     <Link
-                      to={`/runtime/${rt.runtime}`}
+                      to={`/admin/brain/${rt.runtime}`}
                       className="opacity-60 group-hover:opacity-100 text-rd-muted hover:text-rd-text"
                       data-testid={`runtime-card-link-${rt.runtime}`}
                     >

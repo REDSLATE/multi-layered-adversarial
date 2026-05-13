@@ -2,6 +2,27 @@
 
 Append-only. Newest at top.
 
+## 2026-02-13 — Route swap: public site to `/`, operator to `/admin`
+
+Flipped the mount points so the consumer-facing RiseDual site is the root experience and the MC operator dashboard moved under `/admin/*`. Forward-compatible with the future `risedual.ai` DNS flip — no further URL changes needed.
+
+**Routes after swap:**
+- `/` → public RiseDual site (was `/r`)
+- `/signals`, `/markets`, `/scanner`, `/heatmap`, `/activity`, `/digest`, `/chat`, `/signals/:id`
+- `/r` and `/r/*` → 301 redirect to root (backward-compat for any bookmark)
+- `/admin` → operator Overview (was `/`)
+- `/admin/brain/:brain`, `/admin/promotion`, `/admin/discussion`, etc. — all operator paths re-prefixed
+- `/login` — unchanged. Redirect after login: `/` → `/admin`.
+
+**Files changed:**
+- `App.js` — route table flipped
+- `Layout.jsx` (operator) — `NAV` + `RUNTIMES` arrays re-pointed to `/admin/...`
+- `Login.jsx` — post-login nav target → `/admin`
+- `BrainConsole.jsx`, `RuntimeDetail.jsx`, `Redeye.jsx`, `Overview.jsx` — internal `<Link to>` and back-buttons updated
+- All `risedual/**` pages — internal `/r/*` links rewritten to `/*`
+
+**Verified live:** 7/7 swap tests pass — root renders public landing, `/r` redirects, `/admin` requires auth, login lands at `/admin`, `/admin/brain/camaro` renders console, `/signals` serves public page.
+
 ## 2026-02-13 — Brain Console pages (`/brain/:brain`)
 
 User requested per-brain operator pages modeled after REDEYE's screenshot. Built one unified `BrainConsole.jsx` parameterized by brain name — same layout, different data per route.

@@ -54,7 +54,9 @@ function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/ping/:brain" element={<Ping />} />
-          <Route path="/r" element={<RisedualLayout />}>
+
+          {/* Public site at root (was /r before the 2026-02-13 swap) */}
+          <Route path="/" element={<RisedualLayout />}>
             <Route index element={<RdLanding />} />
             <Route path="signals" element={<RdSignals />} />
             <Route path="signals/:id" element={<RdSignalDetail />} />
@@ -65,8 +67,14 @@ function App() {
             <Route path="heatmap" element={<RdHeatmap />} />
             <Route path="activity" element={<RdAgentActivity />} />
           </Route>
+
+          {/* Legacy /r/* — redirect to root for any bookmarked URL */}
+          <Route path="/r" element={<Navigate to="/" replace />} />
+          <Route path="/r/*" element={<Navigate to="/" replace />} />
+
+          {/* Operator dashboard moved to /admin/* */}
           <Route
-            path="/"
+            path="/admin"
             element={
               <Protected>
                 <Layout />
@@ -92,6 +100,7 @@ function App() {
             <Route path="positions" element={<Positions />} />
             <Route path="public-traffic" element={<PublicTraffic />} />
           </Route>
+
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

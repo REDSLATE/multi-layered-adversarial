@@ -90,7 +90,7 @@ function ConsensusHero({ consensus, count }) {
 function SignalCard({ s }) {
   return (
     <Link
-      to={`/r/signals/${s.signal_id}`}
+      to={`/signals/${s.signal_id}`}
       data-testid={`rd-signal-card-${s.signal_id}`}
       className="group block rounded-lg border border-slate-700 bg-slate-800/40 p-5 transition-colors hover:border-emerald-500/40"
     >

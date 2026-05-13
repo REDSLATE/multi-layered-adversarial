@@ -278,7 +278,7 @@ export default function BrainConsole() {
     return (
       <div className="p-10 text-center text-rd-danger" data-testid="brain-unknown">
         Unknown brain: {brain}.{" "}
-        <Link to="/" className="underline">Back to overview</Link>
+        <Link to="/admin" className="underline">Back to overview</Link>
       </div>
     );
   }

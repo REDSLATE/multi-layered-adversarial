@@ -52,7 +52,7 @@ function Header() {
   return (
     <header className="sticky top-0 z-30 border-b border-slate-700 bg-slate-900/80 backdrop-blur supports-[backdrop-filter]:bg-slate-900/60">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-        <Link to="/r" className="flex items-center gap-2.5" data-testid="rd-logo-home">
+        <Link to="/" className="flex items-center gap-2.5" data-testid="rd-logo-home">
           <img
             src="/risedual/mark_site.png"
             alt="RiseDual"
@@ -66,14 +66,14 @@ function Header() {
           </span>
         </Link>
         <nav className="hidden items-center gap-1 md:flex" data-testid="rd-main-nav">
-          <NavItem to="/r" end testid="rd-nav-home">Home</NavItem>
-          <NavItem to="/r/signals" testid="rd-nav-signals">Signals</NavItem>
-          <NavItem to="/r/markets" testid="rd-nav-markets">Markets</NavItem>
-          <NavItem to="/r/scanner" testid="rd-nav-scanner">Scanner</NavItem>
-          <NavItem to="/r/heatmap" testid="rd-nav-heatmap">Heatmap</NavItem>
-          <NavItem to="/r/activity" testid="rd-nav-activity">Activity</NavItem>
-          <NavItem to="/r/digest" testid="rd-nav-digest">Digest</NavItem>
-          <NavItem to="/r/chat" testid="rd-nav-chat">RiseDualGPT</NavItem>
+          <NavItem to="/" end testid="rd-nav-home">Home</NavItem>
+          <NavItem to="/signals" testid="rd-nav-signals">Signals</NavItem>
+          <NavItem to="/markets" testid="rd-nav-markets">Markets</NavItem>
+          <NavItem to="/scanner" testid="rd-nav-scanner">Scanner</NavItem>
+          <NavItem to="/heatmap" testid="rd-nav-heatmap">Heatmap</NavItem>
+          <NavItem to="/activity" testid="rd-nav-activity">Activity</NavItem>
+          <NavItem to="/digest" testid="rd-nav-digest">Digest</NavItem>
+          <NavItem to="/chat" testid="rd-nav-chat">RiseDualGPT</NavItem>
         </nav>
         <TierBadge />
       </div>

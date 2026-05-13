@@ -12,7 +12,7 @@ export default function Login() {
   const [submitting, setSubmitting] = useState(false);
 
   if (status === "loading") return null;
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to="/admin" replace />;
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -21,7 +21,7 @@ export default function Login() {
     const res = await login(email.trim(), password);
     setSubmitting(false);
     if (!res.ok) setError(res.error);
-    else nav("/", { replace: true });
+    else nav("/admin", { replace: true });
   };
 
   return (

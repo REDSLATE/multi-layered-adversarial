@@ -49,14 +49,14 @@ export default function Landing() {
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Link
-              to="/r/signals"
+              to="/signals"
               data-testid="rd-cta-signals"
               className="inline-flex items-center gap-2 rounded-md bg-emerald-500 px-5 py-2.5 text-[13px] font-medium text-black transition-colors hover:bg-emerald-400"
             >
               See live signals <ArrowUpRight size={14} strokeWidth={2.2} />
             </Link>
             <Link
-              to="/r/chat"
+              to="/chat"
               data-testid="rd-cta-chat"
               className="inline-flex items-center gap-2 rounded-md border border-slate-600 bg-slate-800/60 px-5 py-2.5 text-[13px] text-zinc-300 transition-colors hover:border-slate-500 hover:text-white"
             >
@@ -146,7 +146,7 @@ export default function Landing() {
           </div>
           <div className="flex flex-wrap gap-3">
             <Link
-              to="/r/digest"
+              to="/digest"
               data-testid="rd-cta-digest"
               className="inline-flex items-center gap-2 rounded-md bg-white px-5 py-2.5 text-[13px] font-medium text-black transition-colors hover:bg-zinc-200"
             >

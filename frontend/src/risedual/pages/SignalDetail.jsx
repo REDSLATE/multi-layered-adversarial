@@ -110,7 +110,7 @@ export default function SignalDetail() {
     <div className="space-y-10" data-testid="rd-signal-detail-page">
       <div>
         <Link
-          to="/r/signals"
+          to="/signals"
           data-testid="rd-signal-back"
           className="inline-flex items-center gap-1 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-500 transition-colors hover:text-zinc-200"
         >
