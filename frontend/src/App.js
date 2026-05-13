@@ -14,6 +14,7 @@ import Flags from "@/pages/Flags";
 import Promotion from "@/pages/Promotion";
 import RecentIngests from "@/pages/RecentIngests";
 import RuntimeDetail from "@/pages/RuntimeDetail";
+import BrainConsole from "@/pages/BrainConsole";
 import Redeye from "@/pages/Redeye";
 import Discussion from "@/pages/Discussion";
 import Scorecards from "@/pages/Scorecards";
@@ -83,6 +84,7 @@ function App() {
             <Route path="promotion" element={<Promotion />} />
             <Route path="recent" element={<RecentIngests />} />
             <Route path="runtime/:runtime" element={<RuntimeDetail />} />
+            <Route path="brain/:brain" element={<BrainConsole />} />
             <Route path="redeye" element={<Redeye />} />
             <Route path="discussion" element={<Discussion />} />
             <Route path="scorecards" element={<Scorecards />} />

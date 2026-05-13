@@ -232,6 +232,87 @@ async def post_opinion(
     }
 
 
+# ──────────────────────── admin proxy (operator speaks-as) ────────────────────────
+
+@router.post("/admin/runtime-discussion/opinion")
+async def admin_post_opinion(
+    body: OpinionIn,
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Admin proxy — an authenticated operator can post an opinion as any brain.
+
+    Identical write path and conflict detection as `/ingest/opinion`, but the
+    operator's admin JWT substitutes for the brain's X-Runtime-Token. Every
+    admin-posted opinion is stamped with `posted_by_admin_email` so the audit
+    trail records who spoke on behalf of whom.
+
+    Use cases:
+      * Operator forcing a missing brain to register a stance during dry runs.
+      * Manual moderation / corrections when a brain's sidecar is offline.
+      * UI "Speak as <brain>" debug controls.
+    """
+    # Same reply-target validation as the runtime path.
+    if body.in_reply_to:
+        parent = await db[SHARED_OPINIONS].find_one(
+            {"opinion_id": body.in_reply_to}, {"_id": 0, "thread_root": 1, "depth": 1}
+        )
+        if not parent:
+            raise HTTPException(status_code=404, detail="in_reply_to opinion not found")
+        depth = (parent.get("depth") or 0) + 1
+        if depth > MAX_THREAD_DEPTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"thread depth would exceed MAX_THREAD_DEPTH={MAX_THREAD_DEPTH}",
+            )
+        thread_root = parent.get("thread_root") or body.in_reply_to
+    else:
+        depth = 0
+        thread_root = None
+
+    opinion_id = str(uuid.uuid4())
+
+    posted_as: Optional[str] = None
+    try:
+        from shared.roster import get_role_of  # noqa: WPS433
+        posted_as = await get_role_of(body.runtime)
+    except Exception:  # noqa: BLE001
+        posted_as = None
+
+    doc = {
+        "opinion_id": opinion_id,
+        "runtime": body.runtime,
+        "topic": body.topic,
+        "stance": body.stance,
+        "confidence": float(body.confidence),
+        "body": body.body,
+        "evidence": body.evidence,
+        "in_reply_to": body.in_reply_to,
+        "thread_root": thread_root or opinion_id,
+        "depth": depth,
+        "regime": body.regime,
+        "posted_as": posted_as,
+        "may_execute": False,
+        "posted_at": _now_iso(),
+        # Audit trail — admin proxy stamps who spoke as this brain.
+        "posted_by_admin_email": user.get("email"),
+        "posted_via": "admin_proxy",
+    }
+    await db[SHARED_OPINIONS].insert_one(doc)
+
+    from shared.conflicts import detect_conflicts_for_opinion  # noqa: WPS433
+    new_conflicts = await detect_conflicts_for_opinion(doc)
+
+    return {
+        "ok": True,
+        "opinion_id": opinion_id,
+        "thread_root": doc["thread_root"],
+        "depth": depth,
+        "conflicts_detected": [c["conflict_id"] for c in new_conflicts],
+        "posted_via": "admin_proxy",
+        "speaker_runtime": body.runtime,
+    }
+
+
 # ──────────────────────── shared (read) ────────────────────────
 
 @router.get("/shared/opinions")

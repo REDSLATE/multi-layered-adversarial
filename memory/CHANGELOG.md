@@ -2,6 +2,37 @@
 
 Append-only. Newest at top.
 
+## 2026-02-13 — Brain Console pages (`/brain/:brain`)
+
+User requested per-brain operator pages modeled after REDEYE's screenshot. Built one unified `BrainConsole.jsx` parameterized by brain name — same layout, different data per route.
+
+**Routes shipped:**
+- `/brain/alpha` · `/brain/camaro` · `/brain/chevelle` · `/brain/redeye`
+- Sidebar `RUNTIMES` nav re-pointed from `/runtime/:r` + `/redeye` → `/brain/:b` uniformly
+- Old routes (`/runtime/:runtime`, `/redeye`) kept for backward compatibility
+
+**Sections per page:**
+- Header (label, role, live pulse badge, reload)
+- Mission Control Pulse — heartbeat age + sovereign contribution age + last seen + connection state
+- Authority — promotion state + pending count + live-exec invariant
+- Scorecard — total / wins / losses / win-rate from `/api/shared/scorecard`
+- Conflicts — disagreements involving this brain from `/api/shared/conflicts`
+- Discussion bus — last 10 opinions from this brain via `/api/shared/opinions`
+- Speak as <brain> — admin proxy form (topic / stance / confidence / body)
+- Pending approvals — promotion proposals filtered to this brain
+
+**Backend addition:** `POST /api/admin/runtime-discussion/opinion` — admin-authed proxy that posts opinions as any brain without requiring the brain's runtime ingest token client-side. Stamps `posted_via=admin_proxy` + `posted_by_admin_email` in the audit trail.
+
+**Files added:**
+- `/app/frontend/src/pages/BrainConsole.jsx`
+
+**Files changed:**
+- `/app/backend/shared/opinions.py` — admin proxy endpoint
+- `/app/frontend/src/App.js` — `/brain/:brain` route
+- `/app/frontend/src/components/Layout.jsx` — sidebar nav re-pointed
+
+**Verified live:** REDEYE shows 39 resolved trades, 51.3% win rate, 5 open AAPL conflicts, live discussion bus with ENDORSE/HYPOTHESIS opinions. Camaro shows active HOLD observation stream every 4-5s, speak-as form, pending challenger→advisor promotion.
+
 ## 2026-02-13 — VRL Doctrine Channel (read-only)
 
 Mission Command now serves doctrine packets to all four brains via a read-only HTTP endpoint. First packet published: **Verified Reinforcement Layer (VRL)** — design-only doctrine for future morale/stabilization layer. No implementation yet, awareness only.

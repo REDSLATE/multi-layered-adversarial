@@ -37,10 +37,10 @@ const NAV = [
 ];
 
 const RUNTIMES = [
-  { to: "/runtime/alpha", label: "Alpha", color: "#3B82F6", testid: "nav-runtime-alpha" },
-  { to: "/runtime/camaro", label: "Camaro", color: "#F59E0B", testid: "nav-runtime-camaro" },
-  { to: "/runtime/chevelle", label: "Chevelle", color: "#10B981", testid: "nav-runtime-chevelle" },
-  { to: "/redeye", label: "REDEYE", color: "#DC2626", testid: "nav-runtime-redeye" },
+  { to: "/brain/alpha", label: "Alpha", color: "#3B82F6", testid: "nav-runtime-alpha" },
+  { to: "/brain/camaro", label: "Camaro", color: "#F59E0B", testid: "nav-runtime-camaro" },
+  { to: "/brain/chevelle", label: "Chevelle", color: "#10B981", testid: "nav-runtime-chevelle" },
+  { to: "/brain/redeye", label: "REDEYE", color: "#DC2626", testid: "nav-runtime-redeye" },
 ];
 
 // REDEYE was promoted from advisor sidecar to a full seat (2026-02-11).
