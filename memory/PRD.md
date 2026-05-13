@@ -1,14 +1,12 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
-## 🚀 Latest (2026-02-14): AI Investment Hypothesis Engine
-- New `/admin/hypothesis` page — operator types a ticker, gets dual-LLM analysis
-- **Strategist (Claude Sonnet 4.5)** = brain in Executor seat. Catalysts + targets + thesis.
-- **Auditor (Gemini 3 Flash)** = brain in NEW rotatable Auditor seat. Risks + what-could-go-wrong + explicit kill-switch triggers.
-- LLMs run in PARALLEL, anchored on MC's live indicator snapshots
-- Client-side 30-min cache (Map → 56× speedup on repeat ticker queries within session)
-- Auditor seat starts assigned to REDEYE; rotatable via `/api/auditor/rotate`
-- UI mirrors the user's risedual.ai "Hypothesis" War Room screenshots (green/red collapsible cards)
+## 🚀 Latest (2026-02-14): AI Investment Hypothesis Engine — Brain Recall
+- `/admin/hypothesis` page: operator types ticker → dual brain-content card
+- **Strategist** = brain in Executor seat. **Auditor** = brain in new rotatable Auditor seat.
+- **NO external LLMs**. Pure recall over `shared_intents` + `shared_brain_opinions` + Shelly's `shared_labeled_memories` + `shared_brain_outcomes` (track record) + similar past setups via regime fingerprint
+- 174ms typical query time. Client-side 30-min cache.
+- Auditor seat seeded with REDEYE.
 
 ## Previously (2026-02-14): Alpaca Paper Broker Pipeline Live
 

@@ -1,38 +1,42 @@
-"""Hypothesis engine — on-demand dual-narrative analysis for a ticker.
+"""Hypothesis engine — pure brain-content recall (no external LLMs).
 
-Operator clicks 'Analyze NVDA' → MC runs TWO LLM calls in parallel:
+DOCTRINE (per operator, 2026-02-14):
+  * No outside AIs. Strategist + Auditor narratives come ONLY from the
+    four brains' own pushes into MC (intents, opinions, outcomes) and
+    each brain's own Shelly memory store.
+  * Strategist = brain currently holding the EXECUTOR seat.
+  * Auditor   = brain currently holding the AUDITOR seat.
+  * Both brains "explain based on the memories of similar situations":
+    we surface that brain's Shelly memories that mention the symbol
+    alongside their latest intent + discussion stance.
+  * NO LLM calls. Operator search is a fast aggregate query (<200ms).
 
-  * STRATEGIST — the brain holding the Executor seat plays this role.
-    Generates: catalysts (bull case), short-term price target (1-2w),
-    medium-term target (1-3mo), and a tight investment thesis.
+What each role's narrative is composed of:
+  - latest_intent     — most recent shared_intents row by that brain on
+                        this symbol (action, confidence, rationale,
+                        evidence, gate_state)
+  - latest_opinion    — most recent shared_brain_opinions row by that
+                        brain on topic="symbol:<S>" (stance + body)
+  - shelly_memories   — that brain's labeled-memory entries
+                        (shared_labeled_memories) that reference the
+                        symbol; labels: safe / review / quarantine
+  - track_record      — that brain's resolved outcomes
+                        (shared_brain_outcomes) attached to opinions
+                        they posted on this symbol (W/L count + last 5)
+  - similar_setups    — historical intents by that brain on OTHER
+                        symbols that match this symbol's CURRENT
+                        indicator regime (RSI band, MACD sign, BB
+                        position) — naive bucketing, not embeddings
 
-  * AUDITOR — the brain holding the Auditor seat plays this role.
-    Generates: risk flags, what-could-go-wrong scenarios, and explicit
-    kill-switch triggers (price/indicator levels that invalidate the
-    thesis).
-
-Doctrine:
-  * Analysis is ANCHORED in MC's live market context (latest indicator
-    snapshots, any open positions, recent intents on the symbol). LLMs
-    are told not to invent prices or news.
-  * If a seat is empty, the corresponding role falls back to a generic
-    skeptic/strategist voice (no brain persona).
-  * Two different LLM providers by default (Claude for Strategist, GPT
-    for Auditor) — model diversity = different blind spots. Mirrors the
-    user's existing risedual.ai "Hypothesis" three-model consensus.
-  * Every analysis is audit-logged to `hypothesis_analyses`. The 30-min
-    cache lives in the BROWSER (client-side, per user instruction); the
-    server doesn't memoize.
+If a brain has zero data on the symbol, the card surfaces "no recent
+stance" and points at /admin/discussion.
 """
 from __future__ import annotations
 
-import asyncio
-import json
-import os
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -43,217 +47,206 @@ from namespaces import (
     HYPOTHESIS_ANALYSES,
     SHARED_INDICATOR_SNAPSHOTS,
     SHARED_INTENTS,
+    SHARED_MEMORY,
+    SHARED_OPINIONS,
+    SHARED_OUTCOMES,
     SHARED_POSITIONS,
 )
 from shared.auditor_seat import get_auditor_holder
 from shared.executor_seat import get_executor_holder
 
-try:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-except ImportError:  # noqa: F401
-    LlmChat = None
-    UserMessage = None
-
 
 router = APIRouter(prefix="/hypothesis", tags=["hypothesis"])
 
 
-STRATEGIST_PROVIDER = "anthropic"
-STRATEGIST_MODEL = "claude-sonnet-4-5-20250929"
-
-# Gemini 3 Flash for the Auditor — fast (~3-5s typical) + different
-# blind spots vs Claude, which is the whole point of dual-model analysis.
-# Avoids GPT-5's reasoning-mode latency (~50s on a fresh call) that blew
-# past the ingress 60s timeout in initial testing.
-AUDITOR_PROVIDER = "gemini"
-AUDITOR_MODEL = "gemini-3-flash-preview"
-
-
-# Per-brain persona blurbs — injected into the role system prompt so the
-# voice carries the doctrine.
-BRAIN_PERSONA: dict[str, str] = {
-    "alpha":    "ALPHA — disciplined, evidence-first. Trader's eye. Prefers crisp catalysts over big-picture stories.",
-    "camaro":   "CAMARO — aggressive challenger. Likes high-conviction asymmetric setups but always defines invalidation.",
-    "chevelle": "CHEVELLE — governor's voice. Cautious, structural, thinks in regimes and macro context.",
-    "redeye":   "REDEYE — the opponent. Pessimistic by design. Looks for the failure mode others miss.",
-}
+_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
+MAX_INTENTS_PER_BRAIN = 6           # last N intents by brain on this symbol
+MAX_OPINIONS_PER_BRAIN = 4          # last N opinions
+MAX_SHELLY_PER_BRAIN = 8            # labeled memories that mention symbol
+MAX_SIMILAR_SETUPS = 5              # past intents on OTHER symbols in same regime
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# ───────────────────────────── context builder ─────────────────────────────
+# ───────────────────────────── regime fingerprinting ─────────────────────────────
 
-async def _build_symbol_context(symbol: str) -> dict:
-    """Pull live MC data anchoring the analysis. LLMs are instructed to
-    only reference values present in this block — no fabrication."""
-    sym = symbol.upper()
-    snap = await db[SHARED_INDICATOR_SNAPSHOTS].find_one(
-        {"symbol": sym}, {"_id": 0},
-        sort=[("captured_at", -1)],
-    )
-    intents = await db[SHARED_INTENTS].find(
-        {"symbol": sym}, {"_id": 0, "intent_id": 1, "stack": 1, "action": 1,
-                          "confidence": 1, "rationale": 1, "posted_at": 1}
-    ).sort("posted_at", -1).to_list(8)
-    positions = await db[SHARED_POSITIONS].find(
-        {"symbol": sym, "state": {"$in": ["open", "managing"]}},
-        {"_id": 0, "position_id": 1, "direction": 1, "state": 1, "updated_at": 1},
-    ).sort("updated_at", -1).to_list(5)
-    return {
-        "symbol": sym,
-        "now": _now_iso(),
-        "indicator_snapshot": snap,
-        "recent_intents": intents,
-        "open_positions": positions,
-        "has_market_context": snap is not None,
-    }
-
-
-# ───────────────────────────── prompts ─────────────────────────────
-
-STRATEGIST_SYSTEM_BASE = (
-    "You are the STRATEGIST in RiseDual's adversarial two-AI hypothesis "
-    "engine. You build the bull/bear case FOR the proposed direction. "
-    "Your sibling — the AUDITOR — will independently attack the same "
-    "ticker. You don't read their work; you state your case cleanly.\n\n"
-    "RULES:\n"
-    "1. Anchor every claim in the SYMBOL_CONTEXT JSON. Do NOT invent "
-    "prices, indicators, news headlines, or fundamentals.\n"
-    "2. If a piece of data isn't in the context, say so explicitly "
-    "(\"no recent indicator data\") — DO NOT fabricate.\n"
-    "3. Output STRICT JSON ONLY — no prose preamble, no markdown fences. "
-    "The schema is enforced.\n"
-    "4. Targets are stated as percentage ranges from current levels with "
-    "an explicit base case (e.g., '+3% to +7%, base +5%').\n"
-    "5. The Investment Thesis is 2-4 sentences max. Plain English.\n"
-    "6. Catalysts are concrete, specific events / data / structural "
-    "factors — not vague platitudes. 3-6 bullet items.\n\n"
-    "REQUIRED JSON SHAPE:\n"
-    "{\n"
-    '  "direction": "BUY" | "SELL" | "HOLD",\n'
-    '  "confidence_pct": 0..100,\n'
-    '  "short_term_target": "1-2w: +X% to +Y% (base +Z%)" or similar,\n'
-    '  "medium_term_target": "1-3mo: ...",\n'
-    '  "investment_thesis": "2-4 sentences",\n'
-    '  "catalysts": ["…", "…", "…"]\n'
-    "}\n"
-)
-
-AUDITOR_SYSTEM_BASE = (
-    "You are the AUDITOR in RiseDual's adversarial two-AI hypothesis "
-    "engine. Your job is to attack the trade. You don't read the "
-    "Strategist's work; you find the failure modes independently.\n\n"
-    "RULES:\n"
-    "1. Anchor every risk in the SYMBOL_CONTEXT JSON. If a risk isn't "
-    "supported by anything in the context, mark it as a 'background "
-    "risk' rather than asserting it as imminent.\n"
-    "2. NO fabrication. If the context shows no recent indicator data, "
-    "say so — don't invent RSI or MACD values.\n"
-    "3. Output STRICT JSON ONLY — no prose preamble, no markdown fences.\n"
-    "4. Risk flags are concrete: rates / valuation / regulatory / "
-    "execution / macro / sector-rotation — 3-6 items.\n"
-    "5. Kill-switch triggers are EXPLICIT and TESTABLE — price levels, "
-    "indicator thresholds, time-based stops — not vague feelings.\n\n"
-    "REQUIRED JSON SHAPE:\n"
-    "{\n"
-    '  "verdict": "ACCEPTABLE" | "BORDERLINE" | "UNACCEPTABLE",\n'
-    '  "risk_flags": ["…", "…", "…"],\n'
-    '  "what_could_go_wrong": ["scenario 1", "scenario 2"],\n'
-    '  "kill_switch_triggers": ["exit if SPY breaks below 4200",\n'
-    '                          "exit if VIX > 28 for 2 sessions"]\n'
-    "}\n"
-)
-
-
-def _persona_block(brain: Optional[str], role: str) -> str:
-    if not brain:
-        return (
-            f"\nROLE PERSONA: No brain currently holds the {role} seat. "
-            "Use a neutral, professional analyst voice.\n"
-        )
-    blurb = BRAIN_PERSONA.get(brain, brain.upper())
-    return (
-        f"\nROLE PERSONA: You are speaking AS the brain currently "
-        f"occupying the {role} seat — {blurb} Stay in character but "
-        "stay grounded in the data.\n"
-    )
-
-
-def _build_user_prompt(symbol: str, context: dict) -> str:
-    return (
-        f"SYMBOL: {symbol}\n\n"
-        f"SYMBOL_CONTEXT (live MC data — anchor to this only):\n"
-        f"{json.dumps(context, default=str, indent=2)}\n\n"
-        "Produce your JSON response now. JSON ONLY — no preamble, no "
-        "markdown fences."
-    )
-
-
-# ───────────────────────────── LLM execution ─────────────────────────────
-
-def _parse_json_lenient(raw: str) -> dict:
-    """Models occasionally wrap JSON in ```json ... ``` fences. Strip them."""
-    if not raw:
+def _regime_fingerprint(indicators: dict | None) -> dict:
+    """Coarse buckets used to find 'similar past setups' across the
+    brain's history. Naive on purpose — we want a 5-row recall, not a
+    research-grade similarity search."""
+    if not indicators:
         return {}
-    text = raw.strip()
-    # Strip markdown fences if present.
-    fence = re.match(r"^```(?:json)?\s*(.*?)```\s*$", text, re.DOTALL | re.IGNORECASE)
-    if fence:
-        text = fence.group(1).strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        # Try to locate the first { ... } block.
-        m = re.search(r"\{.*\}", text, re.DOTALL)
-        if m:
-            try:
-                return json.loads(m.group(0))
-            except json.JSONDecodeError:
-                pass
-    return {"_raw": text[:1500], "_parse_error": True}
+    fp: dict = {}
+    rsi = indicators.get("rsi14")
+    if isinstance(rsi, (int, float)):
+        if rsi < 30:
+            fp["rsi_band"] = "oversold"
+        elif rsi < 45:
+            fp["rsi_band"] = "weak"
+        elif rsi <= 55:
+            fp["rsi_band"] = "neutral"
+        elif rsi <= 70:
+            fp["rsi_band"] = "strong"
+        else:
+            fp["rsi_band"] = "overbought"
+    macd = indicators.get("macd") or {}
+    hist = macd.get("hist")
+    if isinstance(hist, (int, float)):
+        fp["macd_hist_sign"] = "positive" if hist > 0 else ("negative" if hist < 0 else "flat")
+    bb = indicators.get("bb") or {}
+    pos = bb.get("position")
+    if isinstance(pos, (int, float)):
+        if pos < 0.25:
+            fp["bb_band"] = "lower"
+        elif pos < 0.55:
+            fp["bb_band"] = "mid_low"
+        elif pos < 0.75:
+            fp["bb_band"] = "mid_high"
+        else:
+            fp["bb_band"] = "upper"
+    return fp
 
 
-async def _llm_role_call(
-    *,
-    api_key: str,
-    role: str,                       # "strategist" or "auditor"
-    provider: str,
-    model: str,
-    brain: Optional[str],
-    symbol: str,
-    context: dict,
-) -> dict:
-    base = STRATEGIST_SYSTEM_BASE if role == "strategist" else AUDITOR_SYSTEM_BASE
-    system = base + _persona_block(brain, role)
-    user_prompt = _build_user_prompt(symbol, context)
-    chat = LlmChat(
-        api_key=api_key,
-        session_id=f"hyp-{role}-{uuid.uuid4().hex[:12]}",
-        system_message=system,
-    ).with_model(provider, model)
-    try:
-        text = await chat.send_message(UserMessage(text=user_prompt))
-    except Exception as e:  # noqa: BLE001
+# ───────────────────────────── per-role aggregation ─────────────────────────────
+
+async def _build_role(brain: Optional[str], symbol: str, regime_fp: dict) -> dict:
+    """Aggregate everything we have for one brain on one symbol.
+
+    Returns a dict ready for the UI to render. If `brain` is None, the
+    seat is empty and we return a stub card."""
+    if not brain:
         return {
-            "_error": f"{role} LLM call failed: {e}",
-            "model": f"{provider}:{model}",
-            "brain": brain,
+            "brain": None,
+            "seat_empty": True,
+            "latest_intent": None,
+            "latest_opinion": None,
+            "shelly_memories": [],
+            "track_record": {"wins": 0, "losses": 0, "open": 0, "items": []},
+            "similar_setups": [],
+            "summary": "Seat is empty. Rotate a brain into this seat to surface its stance.",
         }
-    parsed = _parse_json_lenient(text or "")
-    parsed["_meta"] = {
-        "model": f"{provider}:{model}",
+
+    # ─── latest intent on this symbol ────────────────────────────────
+    intents = await db[SHARED_INTENTS].find(
+        {"stack": brain, "symbol": symbol},
+        {"_id": 0, "intent_id": 1, "action": 1, "confidence": 1, "rationale": 1,
+         "evidence": 1, "regime": 1, "gate_state": 1, "executed": 1,
+         "executed_at": 1, "ingest_ts": 1, "risk_multiplier": 1},
+    ).sort("ingest_ts", -1).to_list(MAX_INTENTS_PER_BRAIN)
+    latest_intent = intents[0] if intents else None
+
+    # ─── latest opinion on this symbol topic ─────────────────────────
+    opinions = await db[SHARED_OPINIONS].find(
+        {"runtime": brain, "topic": f"symbol:{symbol}"},
+        {"_id": 0, "opinion_id": 1, "stance": 1, "confidence": 1, "body": 1,
+         "evidence": 1, "posted_at": 1, "thread_root": 1},
+    ).sort("posted_at", -1).to_list(MAX_OPINIONS_PER_BRAIN)
+    latest_opinion = opinions[0] if opinions else None
+
+    # ─── Shelly memories referencing this symbol ─────────────────────
+    # Each brain's gated/labeled memory store. We surface a brain's own
+    # memories that mention the symbol — these "back the play."
+    shelly = await db[SHARED_MEMORY].find(
+        {
+            "runtime": brain,
+            "$or": [
+                {"payload_summary": {"$regex": rf"\b{re.escape(symbol)}\b", "$options": "i"}},
+                {"reason": {"$regex": rf"\b{re.escape(symbol)}\b", "$options": "i"}},
+            ],
+        },
+        {"_id": 0, "id": 1, "label": 1, "reason": 1, "payload_summary": 1, "timestamp": 1},
+    ).sort("timestamp", -1).to_list(MAX_SHELLY_PER_BRAIN)
+
+    # ─── track record (resolved outcomes attached to this brain's opinions on this symbol) ─
+    opinion_ids = [o["opinion_id"] for o in opinions]
+    track_items: list[dict] = []
+    wins = losses = open_ = 0
+    if opinion_ids:
+        outcomes = await db[SHARED_OUTCOMES].find(
+            {"opinion_id": {"$in": opinion_ids}},
+            {"_id": 0, "opinion_id": 1, "outcome": 1, "resolved_at": 1,
+             "resolved_by": 1, "rationale": 1},
+        ).sort("resolved_at", -1).to_list(20)
+        for o in outcomes:
+            v = (o.get("outcome") or "").lower()
+            if v in ("win", "correct", "good"):
+                wins += 1
+            elif v in ("loss", "wrong", "bad"):
+                losses += 1
+            else:
+                open_ += 1
+        track_items = outcomes[:5]
+    track_record = {"wins": wins, "losses": losses, "open": open_,
+                    "items": track_items}
+
+    # ─── similar setups (this brain's past intents on OTHER symbols matching current regime) ─
+    similar: list[dict] = []
+    if regime_fp:
+        # naive: bucket-match against intent.evidence.regime_fp OR
+        # intent.regime if the brain reports it. We use evidence first.
+        and_clauses: list[dict] = []
+        for k, v in regime_fp.items():
+            and_clauses.append({
+                "$or": [
+                    {f"evidence.regime_fp.{k}": v},
+                    {f"evidence.{k}": v},
+                ]
+            })
+        q = {
+            "stack": brain,
+            "symbol": {"$ne": symbol},
+            "executed": True,    # only completed plays — they're memorable
+        }
+        if and_clauses:
+            q["$and"] = and_clauses
+        rows = await db[SHARED_INTENTS].find(
+            q,
+            {"_id": 0, "intent_id": 1, "symbol": 1, "action": 1,
+             "confidence": 1, "rationale": 1, "executed_at": 1},
+        ).sort("executed_at", -1).to_list(MAX_SIMILAR_SETUPS)
+        similar = rows
+
+    return {
         "brain": brain,
-        "generated_at": _now_iso(),
+        "seat_empty": False,
+        "latest_intent": latest_intent,
+        "intents_history": intents,
+        "latest_opinion": latest_opinion,
+        "opinions_history": opinions,
+        "shelly_memories": shelly,
+        "track_record": track_record,
+        "similar_setups": similar,
+        "summary": _build_role_summary(brain, latest_intent, latest_opinion,
+                                       len(shelly), track_record),
     }
-    return parsed
+
+
+def _build_role_summary(brain: str, intent: dict | None, opinion: dict | None,
+                        shelly_count: int, track: dict) -> str:
+    """A one-liner header rendered above the card body. Pure string
+    composition — no LLM. Lets the operator scan 4-6 brains/symbols
+    quickly without expanding sections."""
+    bits: list[str] = []
+    if intent:
+        action = intent.get("action", "—")
+        conf = intent.get("confidence")
+        confs = f"{round(conf * 100)}%" if isinstance(conf, (int, float)) else "—"
+        bits.append(f"latest intent: {action} @ {confs}")
+    elif opinion:
+        bits.append(f"latest opinion: {opinion.get('stance', '—')}")
+    else:
+        return f"{brain.upper()} has no recent stance on this symbol."
+    if shelly_count:
+        bits.append(f"{shelly_count} memory hit{'s' if shelly_count != 1 else ''}")
+    wl = track["wins"] + track["losses"]
+    if wl:
+        bits.append(f"track: {track['wins']}W / {track['losses']}L")
+    return " · ".join(bits)
 
 
 # ───────────────────────────── routes ─────────────────────────────
-
-_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
-
 
 class AnalyzeBody(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=10)
@@ -269,98 +262,71 @@ class AnalyzeBody(BaseModel):
         return v
 
 
-class AnalyzeResponse(BaseModel):
-    analysis_id: str
-    symbol: str
-    generated_at: str
-    strategist: dict
-    auditor: dict
-    context: dict
-    seats: dict
-
-
-@router.post("/analyze", response_model=AnalyzeResponse)
+@router.post("/analyze")
 async def analyze(
     body: AnalyzeBody,
     user: dict = Depends(get_current_user),  # noqa: B008
 ):
-    """Operator-triggered. Runs Strategist + Auditor analysis in parallel.
+    """Operator-triggered. Pure aggregation — no external LLM calls.
 
-    The 30-min cache lives in the operator's browser (per spec). This
-    endpoint ALWAYS generates a fresh analysis — no server-side memo.
+    Strategist card = brain holding the Executor seat.
+    Auditor card   = brain holding the Auditor seat.
+    Both surface that brain's own intent/opinion/Shelly-memory data on
+    the symbol, plus similar past setups by regime match.
     """
-    if LlmChat is None:
-        raise HTTPException(
-            status_code=503,
-            detail="LLM integration not installed (emergentintegrations missing)",
-        )
-    api_key = os.environ.get("EMERGENT_LLM_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="LLM not configured (EMERGENT_LLM_KEY unset)",
-        )
-
     symbol = body.symbol
-    context = await _build_symbol_context(symbol)
+
+    # context: latest indicator snapshot for the symbol (used for regime fp)
+    snap = await db[SHARED_INDICATOR_SNAPSHOTS].find_one(
+        {"symbol": symbol}, {"_id": 0},
+        sort=[("captured_at", -1)],
+    )
+    indicators = (snap or {}).get("indicators") or {}
+    regime_fp = _regime_fingerprint(indicators)
+
+    open_positions = await db[SHARED_POSITIONS].find(
+        {"symbol": symbol, "state": {"$in": ["open", "managing"]}},
+        {"_id": 0, "position_id": 1, "direction": 1, "state": 1, "updated_at": 1},
+    ).sort("updated_at", -1).to_list(5)
 
     strategist_brain = await get_executor_holder()
     auditor_brain = await get_auditor_holder()
 
-    # Run both LLM calls concurrently — typical wall time ~3-6s instead of ~10.
-    strategist_task = _llm_role_call(
-        api_key=api_key,
-        role="strategist",
-        provider=STRATEGIST_PROVIDER,
-        model=STRATEGIST_MODEL,
-        brain=strategist_brain,
-        symbol=symbol,
-        context=context,
-    )
-    auditor_task = _llm_role_call(
-        api_key=api_key,
-        role="auditor",
-        provider=AUDITOR_PROVIDER,
-        model=AUDITOR_MODEL,
-        brain=auditor_brain,
-        symbol=symbol,
-        context=context,
-    )
-    strategist, auditor = await asyncio.gather(strategist_task, auditor_task)
+    strategist = await _build_role(strategist_brain, symbol, regime_fp)
+    auditor = await _build_role(auditor_brain, symbol, regime_fp)
 
     analysis_id = str(uuid.uuid4())
     now = _now_iso()
-    row: dict[str, Any] = {
+    row = {
         "analysis_id": analysis_id,
         "symbol": symbol,
         "generated_at": now,
         "requested_by": user.get("email"),
-        "strategist": strategist,
-        "auditor": auditor,
-        "context_summary": {
-            "has_market_context": context.get("has_market_context"),
-            "open_positions": len(context.get("open_positions") or []),
-            "recent_intents": len(context.get("recent_intents") or []),
-        },
         "seats": {
             "strategist_brain": strategist_brain,
             "auditor_brain": auditor_brain,
         },
+        "regime_fp": regime_fp,
     }
     await db[HYPOTHESIS_ANALYSES].insert_one(row)
 
-    return AnalyzeResponse(
-        analysis_id=analysis_id,
-        symbol=symbol,
-        generated_at=now,
-        strategist=strategist,
-        auditor=auditor,
-        context=context,
-        seats={
+    return {
+        "analysis_id": analysis_id,
+        "symbol": symbol,
+        "generated_at": now,
+        "seats": {
             "strategist_brain": strategist_brain,
             "auditor_brain": auditor_brain,
         },
-    )
+        "strategist": strategist,
+        "auditor": auditor,
+        "context": {
+            "indicator_snapshot": snap,
+            "regime_fp": regime_fp,
+            "open_positions": open_positions,
+            "has_market_context": snap is not None,
+        },
+    }
 
 
 @router.get("/recent")

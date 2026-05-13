@@ -2,31 +2,41 @@
 
 Append-only. Newest at top.
 
-## 2026-02-14 — AI Investment Hypothesis Engine (Adversarial Two-AI)
+## 2026-02-14 — AI Investment Hypothesis Engine (Brain Recall, no external LLMs)
 
-Standalone research tool at `/admin/hypothesis`. Operator types a ticker → MC runs **Strategist (Claude Sonnet 4.5)** + **Auditor (Gemini 3 Flash)** LLM calls IN PARALLEL, anchored to MC's live indicator snapshots / open positions / recent intents.
+Standalone research tool at `/admin/hypothesis`. Operator types a ticker → MC aggregates that brain's own pushed content. **No external AIs involved** (operator constraint).
 
 **Backend additions:**
 - `/app/backend/shared/auditor_seat.py` — rotatable Auditor seat (mirrors Executor seat). `GET /api/auditor`, `POST /api/auditor/rotate`, `GET /api/auditor/audit`
-- `/app/backend/shared/hypothesis.py` — `POST /api/hypothesis/analyze {symbol}` and `GET /api/hypothesis/recent`. Strict-JSON LLM contract; parses tolerantly (handles markdown fences); per-brain persona injection
-- Brain holding the Executor seat plays Strategist. Brain holding the Auditor seat plays Auditor. Empty seat = neutral analyst voice. Persona blurbs encoded for ALPHA/CAMARO/CHEVELLE/REDEYE
-- New collections: `shared_auditor_seat`, `shared_auditor_rotations`, `hypothesis_analyses`
+- `/app/backend/shared/hypothesis.py` — `POST /api/hypothesis/analyze {symbol}` is now PURE RECALL over MongoDB. Aggregates per role (Strategist = Executor seat brain, Auditor = Auditor seat brain):
+  - `latest_intent` from `shared_intents` (action/confidence/rationale/evidence/gate_state)
+  - `latest_opinion` from `shared_brain_opinions` (topic = `symbol:<S>`)
+  - `shelly_memories` from `shared_labeled_memories` — that brain's gated/labeled memory entries referencing the symbol
+  - `track_record` from `shared_brain_outcomes` (wins/losses + last 5)
+  - `similar_setups` — brain's past executed intents on OTHER symbols matching current regime fingerprint (RSI band, MACD hist sign, BB position)
+  - Plain-string `summary` headline composed deterministically — no LLM
+- New collection: `hypothesis_analyses` (audit log only — no LLM content)
+
+**Performance:** 174ms typical (was 16s with Claude+Gemini). 5 brain-content sections per card.
 
 **Frontend additions:**
-- `/app/frontend/src/pages/Hypothesis.jsx` (~430 lines): search bar (hamburger-style with magnifier icon), Analyze button, Clear button, dual cards — **Strategist (green-left-accent)** + **Auditor (red-left-accent)** — collapsible sections mirroring the risedual.ai War Room screenshots: Short-term target / Medium-term target / Investment Thesis / Strategist Catalysts; Auditor Risk Flags / What could go wrong / Kill-switch Triggers
-- Client-side 30-min `Map<symbol, {result, expiresAt}>` cache — survives route changes but not refreshes; cache count + TTL shown in header; "CACHED · expires in Xm" badge when serving from memory
+- `/app/frontend/src/pages/Hypothesis.jsx`: ticker search + Analyze/Clear buttons, dual cards:
+  - **Strategist (green, Sparkle icon)** — Latest Intent · Discussion Stance · Shelly Memories · Track Record · Similar Past Setups
+  - **Auditor (red, ShieldWarning icon)** — same five sections, brain-content-only
+  - Brain badge + 1-line plain summary per card
+  - Each section uses brain's PROPER colour for the eyebrow + count
+- Client-side 30-min `Map<symbol, {result, expiresAt}>` cache; "CACHED · expires in Xm" indicator
 - `Hypothesis` nav item in admin sidebar with Sparkle icon
 
-**Verified end-to-end:**
-- NVDA fresh analyze: 16s wall time. Strategist returned BUY 72% with 6 catalysts; Auditor returned BORDERLINE with 3 risk flags + 4 explicit kill-switch triggers (e.g., "exit if last_close breaks below $882.82")
-- TSLA fresh: 14.1s. Cached repeat: 0.25s (~56× speedup). CACHED badge confirms
-- Both LLMs grounded — when TSLA has no indicator snapshot, Auditor correctly flags context-blindness as a risk
-- All 14/14 unit tests (alpaca + execution_gates) still pass
-
 **Initial seat assignment:**
-- Executor: CAMARO (held since 2026-02-13 from prior session)
+- Executor: CAMARO
 - Auditor: REDEYE (newly assigned 2026-02-14)
-- Both rotatable by operator via `POST /api/{executor,auditor}/rotate`
+
+**Doctrine preserved:**
+- No outside AIs (no Claude / Gemini / GPT). Only brain content surfaced.
+- Each brain "explains based on memories of similar situations" via `similar_setups` regime-fp recall.
+- Seats are rotatable; rotating a brain into a seat instantly changes the Hypothesis voice.
+
 
 
 
