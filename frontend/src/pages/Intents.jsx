@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, RUNTIME_META, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
+import ExecutorSeatTile from "@/components/ExecutorSeatTile";
 import {
   Lightning, ArrowsClockwise, Funnel, Pulse,
   CheckCircle, XCircle, Hourglass, Eye, CaretDown, CaretUp,
@@ -325,6 +326,8 @@ export default function Intents() {
         }
         testid="intents-header"
       />
+
+      <ExecutorSeatTile />
 
       {/* Stats */}
       {stats && (

@@ -137,6 +137,15 @@ async def post_intent(
     verify_runtime_token(body.stack, x_runtime_token)
 
     seat = await _seat_at_post_time(body.stack)
+
+    # Snapshot whether this brain held the (rotating) Executor seat at the
+    # exact moment its intent was ingested. Audit-critical: an intent
+    # posted by Camaro when Chevelle holds the seat cannot ever execute,
+    # regardless of how the seat rotates later.
+    from shared.executor_seat import get_executor_holder  # noqa: WPS433
+    executor_at_post = await get_executor_holder()
+    holds_executor = executor_at_post == body.stack
+
     intent_id = str(uuid.uuid4())
 
     doc = {
@@ -155,6 +164,8 @@ async def post_intent(
         "requires_gate_pass": True,
         # AUTHORITY (MC-stamped, not brain-controlled)
         "seat_at_post_time": seat,
+        "executor_holder_at_post": executor_at_post,
+        "holds_executor_seat": holds_executor,
         # AUDIT (MC-stamped)
         "ingest_ts": _now_iso(),
         "ingest_method": "runtime_token",
@@ -227,6 +238,11 @@ async def admin_post_intent(
     decisions, or filling a missing intent during sidecar downtime.
     """
     seat = await _seat_at_post_time(body.stack)
+
+    from shared.executor_seat import get_executor_holder  # noqa: WPS433
+    executor_at_post = await get_executor_holder()
+    holds_executor = executor_at_post == body.stack
+
     intent_id = str(uuid.uuid4())
 
     doc = {
@@ -243,6 +259,8 @@ async def admin_post_intent(
         "may_execute": False,
         "requires_gate_pass": True,
         "seat_at_post_time": seat,
+        "executor_holder_at_post": executor_at_post,
+        "holds_executor_seat": holds_executor,
         "ingest_ts": _now_iso(),
         "ingest_method": "admin_proxy",
         "ingest_admin_email": user.get("email"),
@@ -285,7 +303,34 @@ async def execution_dry_run(
     if not intent:
         raise HTTPException(status_code=404, detail=f"intent {intent_id} not found")
 
-    # Stub gate chain — Day 2 replaces this with real Gate objects.
+    # Real gate: did this intent come from the brain that held the
+    # Executor seat at ingest time? If the seat was empty or held by a
+    # different brain, no order can route.
+    from shared.executor_seat import get_executor_holder  # noqa: WPS433
+    current_holder = await get_executor_holder()
+    held_at_post = intent.get("executor_holder_at_post")
+    holds_now = current_holder == intent["stack"]
+    held_at_intent = bool(intent.get("holds_executor_seat"))
+
+    if held_at_intent and holds_now:
+        seat_pass = True
+        seat_reason = f"{intent['stack']} held the Executor seat both at ingest and now ({current_holder})"
+    elif held_at_intent and not holds_now:
+        seat_pass = False
+        seat_reason = (
+            f"{intent['stack']} held Executor at ingest, but seat has since rotated to "
+            f"{current_holder or 'empty'} — stale intent cannot execute"
+        )
+    elif not held_at_intent and held_at_post is None:
+        seat_pass = False
+        seat_reason = "Executor seat was EMPTY when intent was posted — no authority"
+    else:
+        seat_pass = False
+        seat_reason = (
+            f"Executor seat was held by {held_at_post} at post time, not {intent['stack']}"
+        )
+
+    # Stub gate: real $10/order cap + RoadGuard land Day 2.
     gates = [
         {
             "name": "schema_invariants",
@@ -295,17 +340,17 @@ async def execution_dry_run(
         {
             "name": "live_trading_disabled",
             "passed": True,
-            "reason": "LIVE_TRADING_ENABLED is False on this deploy",
+            "reason": "LIVE_TRADING_ENABLED is False on this deploy (paper mode only)",
+        },
+        {
+            "name": "executor_seat_check",
+            "passed": seat_pass,
+            "reason": seat_reason,
         },
         {
             "name": "notional_cap_placeholder",
             "passed": True,
             "reason": "$10/order cap will be enforced once the broker adapter lands (Day 3)",
-        },
-        {
-            "name": "executor_seat_placeholder",
-            "passed": True,
-            "reason": "executor seat registry lands Day 1; this gate currently a no-op",
         },
     ]
     verdict = "would_pass" if all(g["passed"] for g in gates) else "would_block"
