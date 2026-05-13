@@ -52,8 +52,12 @@ function Header() {
   return (
     <header className="sticky top-0 z-30 border-b border-slate-700 bg-slate-900/80 backdrop-blur supports-[backdrop-filter]:bg-slate-900/60">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-        <Link to="/r" className="flex items-center gap-2" data-testid="rd-logo-home">
-          <div className="h-6 w-6 rounded-sm bg-gradient-to-br from-emerald-400 to-emerald-600 shadow-[0_0_24px_-4px_rgba(16,185,129,0.6)]" />
+        <Link to="/r" className="flex items-center gap-2.5" data-testid="rd-logo-home">
+          <img
+            src="/risedual/mark_site.png"
+            alt="RiseDual"
+            className="h-8 w-auto shrink-0 drop-shadow-[0_0_12px_rgba(16,185,129,0.25)]"
+          />
           <span className="font-display text-base tracking-[0.18em] text-white">
             RISE<span className="text-emerald-400">DUAL</span>
           </span>

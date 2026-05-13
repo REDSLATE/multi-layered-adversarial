@@ -36,8 +36,9 @@ function Bubble({ role, text }) {
         }
       >
         {!isUser && (
-          <div className="mb-1 flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-[0.18em] text-emerald-300">
-            <Sparkles size={10} strokeWidth={2} /> RiseDualGPT
+          <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-[0.18em] text-emerald-300">
+            <img src="/risedual/mark_chat.png" alt="" className="h-3.5 w-auto" />
+            RiseDualGPT
           </div>
         )}
         <div className="whitespace-pre-wrap">{text}</div>
@@ -130,9 +131,11 @@ export default function Chat() {
         >
           {messages.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center text-center">
-              <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-400">
-                <Sparkles size={18} strokeWidth={1.6} />
-              </div>
+              <img
+                src="/risedual/logo_chat.png"
+                alt="RiseDualGPT"
+                className="mb-6 h-44 w-auto drop-shadow-[0_0_32px_rgba(16,185,129,0.18)]"
+              />
               <div className="font-display text-base text-white">Grounded in MC's live data.</div>
               <p className="mt-2 max-w-md text-[13px] text-zinc-400">
                 Ask about a ticker, today's signals, the consensus on a position,
