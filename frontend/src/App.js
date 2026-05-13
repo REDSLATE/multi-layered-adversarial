@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { computeHostRedirect } from "@/lib/hostPolicy";
 import Login from "@/pages/Login";
 import Layout from "@/components/Layout";
 import Overview from "@/pages/Overview";
@@ -47,10 +48,37 @@ function Protected({ children }) {
   return children;
 }
 
+function HostGuard({ children }) {
+  // Decide once on mount. If the hostname says we're on the wrong surface,
+  // window.location.replace ourselves — never render the misplaced bundle.
+  const [redirecting, setRedirecting] = useState(() => !!computeHostRedirect());
+
+  useEffect(() => {
+    const target = computeHostRedirect();
+    if (target) {
+      setRedirecting(true);
+      window.location.replace(target);
+    }
+  }, []);
+
+  if (redirecting) {
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center bg-[#0F172A] text-zinc-400 font-mono text-xs uppercase tracking-[0.3em]"
+        data-testid="host-redirect"
+      >
+        Redirecting…
+      </div>
+    );
+  }
+  return children;
+}
+
 function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
+    <HostGuard>
+      <AuthProvider>
+        <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/ping/:brain" element={<Ping />} />
@@ -105,6 +133,7 @@ function App() {
         </Routes>
       </BrowserRouter>
     </AuthProvider>
+    </HostGuard>
   );
 }
 
