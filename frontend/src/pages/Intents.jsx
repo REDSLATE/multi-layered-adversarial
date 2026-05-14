@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, RUNTIME_META, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
-import ExecutorSeatTile from "@/components/ExecutorSeatTile";
+import ExecutorSeatTile, { AuditorSeatTile } from "@/components/ExecutorSeatTile";
 import AlpacaConnect from "@/components/AlpacaConnect";
 import { toast } from "sonner";
 import {
@@ -402,6 +402,7 @@ export default function Intents() {
       />
 
       <ExecutorSeatTile />
+      <AuditorSeatTile />
       <AlpacaConnect />
 
       {/* Stats */}

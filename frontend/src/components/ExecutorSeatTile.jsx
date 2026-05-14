@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Card, Badge, EmptyState } from "@/components/ui-bits";
-import { Crosshair, ArrowsClockwise, Warning, Check } from "@phosphor-icons/react";
+import { Crosshair, ArrowsClockwise, Warning, Check, ShieldWarning } from "@phosphor-icons/react";
 
 const BRAINS = ["alpha", "camaro", "chevelle", "redeye"];
 const BRAIN_COLOR = {
@@ -22,19 +22,42 @@ function relTime(iso) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-export default function ExecutorSeatTile() {
+/**
+ * Generic seat-rotation tile. Used for both the Executor seat (who may
+ * route orders) and the Auditor seat (who plays the contrary case on
+ * the Hypothesis page).
+ *
+ * Props:
+ *   seatKey         "executor" | "auditor"  — used for testids
+ *   title           "Executor Seat" / "Auditor Seat"
+ *   description     One-line sub-copy under the title
+ *   stateEndpoint   GET endpoint that returns { holder, since, assigned_by, reason }
+ *   auditEndpoint   GET endpoint returning { items: [{rotation_id, previous_holder, new_holder, reason, ts, by_admin_email}] }
+ *   rotateEndpoint  POST endpoint that accepts { new_holder, reason }
+ *   icon            Phosphor icon component (Crosshair / ShieldWarning / etc.)
+ *   accentColor     CSS color string for the active highlight (Tailwind class fragment NOT supported here)
+ */
+function SeatTile({
+  seatKey,
+  title,
+  description,
+  stateEndpoint,
+  auditEndpoint,
+  rotateEndpoint,
+  icon: IconComponent,
+}) {
   const [state, setState] = useState(null);
   const [audit, setAudit] = useState([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [confirmTarget, setConfirmTarget] = useState(null);  // 'alpha' | null | 'CLEAR'
+  const [confirmTarget, setConfirmTarget] = useState(null);
   const [reason, setReason] = useState("");
 
   const load = useCallback(async () => {
     try {
       const [s, a] = await Promise.all([
-        api.get("/executor"),
-        api.get("/executor/audit", { params: { limit: 5 } }),
+        api.get(stateEndpoint),
+        api.get(auditEndpoint, { params: { limit: 5 } }),
       ]);
       setState(s.data);
       setAudit(a.data?.items || []);
@@ -42,7 +65,7 @@ export default function ExecutorSeatTile() {
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
     }
-  }, []);
+  }, [stateEndpoint, auditEndpoint]);
 
   useEffect(() => {
     load();
@@ -58,7 +81,7 @@ export default function ExecutorSeatTile() {
     setBusy(true);
     setErr("");
     try {
-      await api.post("/executor/rotate", {
+      await api.post(rotateEndpoint, {
         new_holder: confirmTarget === "CLEAR" ? null : confirmTarget,
         reason: reason.trim(),
       });
@@ -74,20 +97,21 @@ export default function ExecutorSeatTile() {
 
   const holder = state?.holder;
   const empty = !holder;
+  const tid = (s) => `${seatKey}-${s}`;
 
   return (
-    <Card className="mb-6" testid="executor-seat-tile">
+    <Card className="mb-6" testid={`${seatKey}-seat-tile`}>
       <div className="flex items-start justify-between gap-3 mb-4">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 text-rd-dim">
-            <Crosshair size={16} weight="duotone" />
+            <IconComponent size={16} weight="duotone" />
           </div>
           <div>
             <div className="font-display text-base font-bold text-rd-text leading-none">
-              Executor Seat
+              {title}
             </div>
             <div className="text-[11px] text-rd-muted mt-1 font-mono leading-relaxed">
-              Single, rotatable. Empty by default. Only the holder may route orders.
+              {description}
             </div>
           </div>
         </div>
@@ -95,7 +119,7 @@ export default function ExecutorSeatTile() {
           onClick={load}
           className="p-1.5 border border-rd-border text-rd-dim hover:text-rd-text hover:border-rd-text"
           title="Reload"
-          data-testid="exec-reload"
+          data-testid={tid("reload")}
         >
           <ArrowsClockwise size={12} weight="bold" />
         </button>
@@ -105,11 +129,9 @@ export default function ExecutorSeatTile() {
       <div
         className={
           "border p-4 mb-4 " +
-          (empty
-            ? "border-rd-warn bg-rd-warn/5"
-            : "border-rd-success bg-rd-success/5")
+          (empty ? "border-rd-warn bg-rd-warn/5" : "border-rd-success bg-rd-success/5")
         }
-        data-testid="exec-current"
+        data-testid={tid("current")}
       >
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -119,11 +141,9 @@ export default function ExecutorSeatTile() {
             {empty ? (
               <div className="flex items-center gap-2">
                 <Warning size={14} weight="bold" className="text-rd-warn" />
-                <span className="font-display text-lg font-bold text-rd-warn">
-                  EMPTY
-                </span>
+                <span className="font-display text-lg font-bold text-rd-warn">EMPTY</span>
                 <span className="text-[11px] text-rd-muted font-mono">
-                  no brain may execute
+                  no brain holds this seat
                 </span>
               </div>
             ) : (
@@ -157,7 +177,7 @@ export default function ExecutorSeatTile() {
 
       {/* Rotation controls */}
       {!confirmTarget ? (
-        <div className="flex flex-wrap items-center gap-2 mb-4" data-testid="exec-rotate-controls">
+        <div className="flex flex-wrap items-center gap-2 mb-4" data-testid={tid("rotate-controls")}>
           <span className="text-[10px] uppercase tracking-widest text-rd-dim mr-1">
             Rotate to
           </span>
@@ -166,7 +186,7 @@ export default function ExecutorSeatTile() {
               key={b}
               disabled={b === holder}
               onClick={() => setConfirmTarget(b)}
-              data-testid={`exec-rotate-${b}`}
+              data-testid={tid(`rotate-${b}`)}
               className={
                 "px-3 py-1 text-[11px] font-mono uppercase tracking-wider border transition-colors " +
                 (b === holder
@@ -181,7 +201,7 @@ export default function ExecutorSeatTile() {
           {!empty && (
             <button
               onClick={() => setConfirmTarget("CLEAR")}
-              data-testid="exec-rotate-clear"
+              data-testid={tid("rotate-clear")}
               className="ml-auto px-3 py-1 text-[11px] font-mono uppercase tracking-wider border border-rd-warn text-rd-warn hover:bg-rd-warn/10"
             >
               Clear seat
@@ -189,7 +209,7 @@ export default function ExecutorSeatTile() {
           )}
         </div>
       ) : (
-        <div className="border border-rd-accent bg-rd-bg p-3 mb-4" data-testid="exec-confirm-panel">
+        <div className="border border-rd-accent bg-rd-bg p-3 mb-4" data-testid={tid("confirm-panel")}>
           <div className="text-[10px] uppercase tracking-widest text-rd-dim mb-2">
             Confirm rotation
           </div>
@@ -208,14 +228,14 @@ export default function ExecutorSeatTile() {
             onChange={(e) => setReason(e.target.value)}
             placeholder="reason for rotation (required, ≥3 chars)"
             maxLength={1000}
-            data-testid="exec-reason-input"
+            data-testid={tid("reason-input")}
             className="w-full bg-rd-bg border border-rd-border px-3 py-2 font-mono text-[12px] text-rd-text focus:border-rd-accent focus:outline-none mb-2"
           />
           <div className="flex items-center justify-end gap-2">
             <button
               onClick={() => { setConfirmTarget(null); setReason(""); setErr(""); }}
               disabled={busy}
-              data-testid="exec-cancel"
+              data-testid={tid("cancel")}
               className="px-3 py-1 text-[11px] font-mono uppercase tracking-wider border border-rd-border text-rd-dim hover:text-rd-text"
             >
               Cancel
@@ -223,7 +243,7 @@ export default function ExecutorSeatTile() {
             <button
               onClick={rotate}
               disabled={busy || !reason.trim()}
-              data-testid="exec-confirm"
+              data-testid={tid("confirm")}
               className="px-3 py-1 text-[11px] font-mono uppercase tracking-wider bg-rd-accent text-black hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {busy ? "Rotating…" : "Confirm rotation"}
@@ -233,13 +253,13 @@ export default function ExecutorSeatTile() {
       )}
 
       {err && (
-        <div className="border border-rd-danger text-rd-danger px-3 py-2 mb-4 text-xs font-mono" data-testid="exec-error">
+        <div className="border border-rd-danger text-rd-danger px-3 py-2 mb-4 text-xs font-mono" data-testid={tid("error")}>
           {err}
         </div>
       )}
 
       {/* Recent rotations */}
-      <div data-testid="exec-audit">
+      <div data-testid={tid("audit")}>
         <div className="text-[10px] uppercase tracking-widest text-rd-dim mb-2">
           Recent rotations
         </div>
@@ -248,7 +268,7 @@ export default function ExecutorSeatTile() {
         ) : (
           <div className="divide-y divide-rd-border">
             {audit.map((r) => (
-              <div key={r.rotation_id} className="py-2 flex items-start justify-between gap-3" data-testid={`audit-${r.rotation_id}`}>
+              <div key={r.rotation_id} className="py-2 flex items-start justify-between gap-3" data-testid={`${seatKey}-audit-${r.rotation_id}`}>
                 <div className="flex-1 min-w-0">
                   <div className="font-mono text-[11px] text-rd-text">
                     <span style={{ color: BRAIN_COLOR[r.previous_holder] || "#A1A1AA" }}>
@@ -273,5 +293,33 @@ export default function ExecutorSeatTile() {
         )}
       </div>
     </Card>
+  );
+}
+
+export default function ExecutorSeatTile() {
+  return (
+    <SeatTile
+      seatKey="exec"
+      title="Executor Seat"
+      description="Single, rotatable. Empty by default. Only the holder may route orders."
+      stateEndpoint="/executor"
+      auditEndpoint="/executor/audit"
+      rotateEndpoint="/executor/rotate"
+      icon={Crosshair}
+    />
+  );
+}
+
+export function AuditorSeatTile() {
+  return (
+    <SeatTile
+      seatKey="auditor"
+      title="Auditor Seat"
+      description="Single, rotatable. Empty by default. The holder plays the contrary case on the Hypothesis page."
+      stateEndpoint="/auditor"
+      auditEndpoint="/auditor/audit"
+      rotateEndpoint="/auditor/rotate"
+      icon={ShieldWarning}
+    />
   );
 }
