@@ -57,6 +57,16 @@ from shared.auto_router import (
 from shared.hypothesis import router as hypothesis_router
 from shared.mc_shelly import router as mc_shelly_router
 from shared.patches import router as patches_router
+from shared.public_api.news import (
+    router as public_news_router,
+    start_news_refresher,
+    stop_news_refresher,
+)
+from shared.public_api.dark_pool import (
+    router as public_darkpool_router,
+    start_darkpool_refresher,
+    stop_darkpool_refresher,
+)
 from shared.seed import seed_all
 from runtimes.alpha.routes import router as alpha_router
 from runtimes.camaro.routes import router as camaro_router
@@ -99,11 +109,18 @@ async def lifespan(app: FastAPI):
         logger.info("Auto-router started")
     # Public-API rate-limit collection — TTL index for buckets.
     await _rate_limit_ensure_ttl()
+    # Public news + dark-pool refreshers — fail-soft proxies to base44.
+    start_news_refresher()
+    logger.info("Public news refresher started")
+    start_darkpool_refresher()
+    logger.info("Public dark-pool refresher started")
     yield
     await stop_poller()
     await stop_tickler()
     await stop_public_refresher()
     await stop_auto_router()
+    await stop_news_refresher()
+    await stop_darkpool_refresher()
     client.close()
 
 
@@ -160,6 +177,8 @@ api_router.include_router(execution_router)
 api_router.include_router(hypothesis_router)
 api_router.include_router(mc_shelly_router)
 api_router.include_router(patches_router)
+api_router.include_router(public_news_router)
+api_router.include_router(public_darkpool_router)
 api_router.include_router(diagnostics_router)
 api_router.include_router(flags_router)
 api_router.include_router(alpha_router)
