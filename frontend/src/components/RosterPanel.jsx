@@ -223,9 +223,9 @@ function RoleSlot({ role, occupant, assignments, eligibility, tenure, onAssign, 
             onClick={() => setPicking(true)}
             disabled={busy}
             className="text-[10px] uppercase tracking-widest text-rd-dim hover:text-rd-text flex items-center gap-1 font-mono"
-            data-testid={`roster-swap-btn-${role}`}
+            data-testid={`roster-save-btn-${role}`}
           >
-            <ArrowsLeftRight size={10} weight="bold" /> change
+            <ArrowsLeftRight size={10} weight="bold" /> save
           </button>
           {occupant && (
             <button
@@ -233,6 +233,7 @@ function RoleSlot({ role, occupant, assignments, eligibility, tenure, onAssign, 
               onClick={onVacate}
               disabled={busy}
               className="text-[10px] uppercase tracking-widest text-rd-dim hover:text-rd-danger font-mono"
+              data-testid={`roster-vacate-btn-${role}`}
             >
               vacate
             </button>
@@ -263,7 +264,7 @@ function RoleSlot({ role, occupant, assignments, eligibility, tenure, onAssign, 
                       : "border-rd-border text-rd-dim opacity-50 cursor-not-allowed"
                 }`}
                 data-testid={`roster-pick-${role}-${brain}`}
-                title={isEligible ? "" : `${brain} is not eligible for ${role} — toggle in the switches matrix`}
+                title={isEligible ? "click to save this brain into this position" : `${brain} is not eligible for ${role} — toggle in the switches matrix`}
               >
                 <Badge color={BRAIN_META[brain].color}>{BRAIN_META[brain].label}</Badge>
                 {!isEligible && (
