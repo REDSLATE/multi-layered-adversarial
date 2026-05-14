@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import { useTier } from "../context/TierContext";
 import { Search } from "lucide-react";
 import CandleChart from "../components/CandleChart";
+import NewsTicker from "../components/NewsTicker";
+import DarkPoolWidget from "../components/DarkPoolWidget";
 
 function _kind(symbol) {
   // Naive classifier: anything with '/' is a crypto pair.
@@ -145,7 +147,7 @@ export default function Markets() {
         </div>
 
         {/* CANDLE PANEL */}
-        <div data-testid="rd-markets-chart-wrap">
+        <div data-testid="rd-markets-chart-wrap" className="space-y-6">
           {active ? (
             <CandleChart symbol={active} />
           ) : (
@@ -153,6 +155,13 @@ export default function Markets() {
               Pick a symbol from the list to load candles.
             </div>
           )}
+
+          {/* Compact news + smart-money strip. Compact mode shows
+              ~10 rows; auto-refreshes every 5 minutes. */}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <NewsTicker />
+            <DarkPoolWidget ticker={active} />
+          </div>
         </div>
       </div>
     </div>

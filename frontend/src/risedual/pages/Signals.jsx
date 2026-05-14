@@ -212,6 +212,15 @@ export default function Signals() {
               ))}
             </div>
           )}
+
+          {/* Smart-money expanded context — congressional, insider,
+              institutional filings. Brains read from the same cache. */}
+          <div className="mt-8">
+            <div className="mb-3 text-[10px] font-mono uppercase tracking-[0.22em] text-slate-500">
+              Smart Money — Background Context
+            </div>
+            <DarkPoolWidget expanded={true} />
+          </div>
         </>
       )}
     </div>
