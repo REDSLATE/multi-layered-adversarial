@@ -34,6 +34,13 @@ CAP_PER_ORDER_USD: float = 100_000.0
 CAP_PER_DAY_USD: float = 1_000_000.0
 CAP_OPEN_NOTIONAL_USD: float = 1_000_000.0
 
+# Per-lane override. Crypto goes LIVE on day-1 with a $10/order ceiling.
+# Set to None for "use the global cap". These overrides apply to the
+# per-order cap only — day/open caps still use the globals above.
+CAP_PER_ORDER_BY_LANE: dict[str, float] = {
+    "crypto": 10.0,
+}
+
 
 class CapExceeded(Exception):
     """Raised when a planned order would breach a hard cap."""
@@ -82,18 +89,20 @@ async def open_notional_usd() -> float:
     return sum(abs(float(p.get("market_value") or 0.0)) for p in positions)
 
 
-def evaluate_per_order(order_notional_usd: float) -> CapEvaluation:
-    passed = order_notional_usd <= CAP_PER_ORDER_USD
+def evaluate_per_order(order_notional_usd: float, lane: Optional[str] = None) -> CapEvaluation:
+    cap = CAP_PER_ORDER_BY_LANE.get(lane or "", CAP_PER_ORDER_USD)
+    passed = order_notional_usd <= cap
+    label = f"cap_per_order_{lane}" if lane in CAP_PER_ORDER_BY_LANE else "cap_per_order"
     return CapEvaluation(
-        name="cap_per_order",
-        cap_usd=CAP_PER_ORDER_USD,
+        name=label,
+        cap_usd=cap,
         current_usd=0.0,
         projected_usd=order_notional_usd,
         passed=passed,
         reason=(
-            f"order notional ${order_notional_usd:.2f} ≤ cap ${CAP_PER_ORDER_USD:.2f}"
+            f"order notional ${order_notional_usd:.2f} ≤ {label} cap ${cap:.2f}"
             if passed else
-            f"order notional ${order_notional_usd:.2f} exceeds per-order cap ${CAP_PER_ORDER_USD:.2f}"
+            f"order notional ${order_notional_usd:.2f} exceeds {label} cap ${cap:.2f}"
         ),
     )
 
@@ -143,10 +152,10 @@ async def evaluate_open_notional(order_notional_usd: float, side: str) -> CapEva
     )
 
 
-async def evaluate_all(order_notional_usd: float, side: str) -> list[CapEvaluation]:
+async def evaluate_all(order_notional_usd: float, side: str, lane: Optional[str] = None) -> list[CapEvaluation]:
     """Run every cap check. Returns ordered list of CapEvaluation."""
     return [
-        evaluate_per_order(order_notional_usd),
+        evaluate_per_order(order_notional_usd, lane=lane),
         await evaluate_daily(order_notional_usd),
         await evaluate_open_notional(order_notional_usd, side),
     ]

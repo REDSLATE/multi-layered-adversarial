@@ -31,6 +31,11 @@ from typing import Optional
 from db import db
 from namespaces import EXECUTION_RECEIPTS, SHARED_GATE_RESULTS, SHARED_INTENTS
 from shared.broker.alpaca_routes import get_alpaca_adapter
+from shared.broker_router import (
+    BrokerRouteBlocked,
+    adapter_for_lane,
+    route_order,
+)
 from shared.execution import _evaluate_gates
 from shared.mc_shelly import record_async
 
@@ -82,20 +87,39 @@ async def _route_one(intent: dict) -> dict:
             "reason": first_block["reason"] if first_block else "gate chain blocked",
         }
 
-    adapter = await get_alpaca_adapter()
-    if adapter is None:
-        return {"intent_id": intent_id, "verdict": "skipped", "reason": "broker disconnected"}
-
     side = "BUY" if intent["action"] in ("BUY", "COVER") else "SELL"
     client_order_id = f"ar-{intent_id[:8]}-{uuid.uuid4().hex[:6]}"
 
     try:
-        order = await adapter.submit_market_order(
-            symbol=intent["symbol"],
-            notional=notional,
-            side=side,
-            client_order_id=client_order_id,
+        order = await route_order(intent, notional_usd=notional, client_order_id=client_order_id)
+    except BrokerRouteBlocked as e:
+        # NO_TRADE: fail-closed at the resolver/router boundary.
+        await db[SHARED_GATE_RESULTS].insert_one({
+            "intent_id": intent_id,
+            "kind": "auto_router_no_trade",
+            "ts": _now_iso(),
+            "by": AUTO_ROUTER_EMAIL,
+            "reason": str(e),
+        })
+        record_async(
+            event_type="order_rejected",
+            brain=intent.get("stack"),
+            symbol=intent.get("symbol"),
+            action=intent.get("action"),
+            outcome="no_trade",
+            error_reason=str(e),
+            ref_id=intent_id,
         )
+        await db[SHARED_INTENTS].update_one(
+            {"intent_id": intent_id},
+            {"$set": {
+                "gate_state": "no_trade",
+                "last_submit_ts": _now_iso(),
+                "last_submit_by": AUTO_ROUTER_EMAIL,
+                "no_trade_reason": str(e),
+            }},
+        )
+        return {"intent_id": intent_id, "verdict": "no_trade", "reason": str(e)}
     except Exception as e:  # noqa: BLE001
         await db[SHARED_GATE_RESULTS].insert_one({
             "intent_id": intent_id,
@@ -121,10 +145,13 @@ async def _route_one(intent: dict) -> dict:
         "intent_id": intent_id,
         "stack": intent.get("stack"),
         "symbol": intent.get("symbol"),
+        "canonical": order.get("canonical"),
+        "lane": order.get("lane"),
+        "broker_symbol": order.get("broker_symbol"),
         "action": intent.get("action"),
         "side": side,
         "notional_usd": notional,
-        "broker": "alpaca_paper",
+        "broker": order.get("broker", "unknown"),
         "broker_order_id": order["order_id"],
         "client_order_id": order.get("client_order_id"),
         "status": order.get("status"),

@@ -103,22 +103,40 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
         "reason": "LIVE_TRADING_ENABLED stays False — paper broker only",
     })
 
-    # 5. Broker connected.
-    adapter = await get_alpaca_adapter()
-    broker_connected = adapter is not None
+    # 5. Broker connected — lane-aware. Equity intents need Alpaca;
+    #    crypto intents need Kraken. If lane is unknown the resolver
+    #    fails closed when routing — surfaced as a separate gate failure.
+    intent_lane = intent.get("lane")
+    if intent_lane:
+        from shared.broker_router import adapter_for_lane as _adapter_for_lane  # noqa: WPS433
+        broker_for_intent = await _adapter_for_lane(intent_lane)
+        broker_connected = broker_for_intent is not None
+        broker_reason = (
+            f"broker for lane={intent_lane!r} present ({broker_for_intent.name})"
+            if broker_connected else
+            f"no broker configured / connected for lane={intent_lane!r}"
+        )
+    else:
+        # Legacy intents without lane fall back to the Alpaca check —
+        # this keeps the equities flow alive for any pre-canonical
+        # intents already queued in the DB.
+        adapter = await get_alpaca_adapter()
+        broker_connected = adapter is not None
+        broker_reason = (
+            "Alpaca paper adapter present (legacy / lane-untagged intent)"
+            if broker_connected else
+            "lane missing AND Alpaca not connected — NO_TRADE"
+        )
     gates.append({
         "name": "broker_connected",
         "passed": broker_connected,
-        "reason": (
-            "Alpaca paper adapter present"
-            if broker_connected else
-            "No Alpaca credentials stored — connect broker on the admin page first"
-        ),
+        "reason": broker_reason,
     })
 
-    # 6. Hard exposure caps.
+    # 6. Hard exposure caps. Lane-aware: crypto gets the $10/order cap;
+    #    equities get the lifted global cap.
     side = action or ""
-    cap_evals = await evaluate_all(order_notional_usd, side)
+    cap_evals = await evaluate_all(order_notional_usd, side, lane=intent.get("lane"))
     for c in cap_evals:
         gates.append({"name": c.name, "passed": c.passed, "reason": c.reason})
 
@@ -262,21 +280,39 @@ async def execution_submit(
             },
         )
 
-    # All gates passed — route the order.
-    adapter = await get_alpaca_adapter()
-    if adapter is None:  # belt-and-suspenders; gate already checked
-        raise HTTPException(status_code=503, detail="broker disconnected mid-flight")
-
+    # All gates passed — route the order via the broker router (lane-aware).
     side = "BUY" if intent["action"] in ("BUY", "COVER") else "SELL"
     client_order_id = f"mc-{body.intent_id[:8]}-{uuid.uuid4().hex[:6]}"
 
     try:
-        order = await adapter.submit_market_order(
-            symbol=intent["symbol"],
-            notional=body.order_notional_usd,
-            side=side,
+        from shared.broker_router import BrokerRouteBlocked as _Blocked  # noqa: WPS433
+        from shared.broker_router import route_order as _route_order  # noqa: WPS433
+        order = await _route_order(
+            intent,
+            notional_usd=body.order_notional_usd,
             client_order_id=client_order_id,
         )
+    except _Blocked as e:
+        await db[SHARED_GATE_RESULTS].insert_one({
+            "intent_id": body.intent_id,
+            "kind": "submit_no_trade",
+            "ts": _now_iso(),
+            "by": user.get("email"),
+            "reason": str(e),
+        })
+        record_async(
+            event_type="order_rejected",
+            brain=intent.get("stack"),
+            symbol=intent.get("symbol"),
+            action=intent.get("action"),
+            outcome="no_trade",
+            error_reason=str(e),
+            ref_id=body.intent_id,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={"blocked_by": "broker_router", "reason": str(e)},
+        ) from e
     except Exception as e:  # noqa: BLE001
         await db[SHARED_GATE_RESULTS].insert_one({
             "intent_id": body.intent_id,
@@ -302,10 +338,13 @@ async def execution_submit(
         "intent_id": body.intent_id,
         "stack": intent.get("stack"),
         "symbol": intent.get("symbol"),
+        "canonical": order.get("canonical"),
+        "lane": order.get("lane"),
+        "broker_symbol": order.get("broker_symbol"),
         "action": intent.get("action"),
         "side": side,
         "notional_usd": float(body.order_notional_usd),
-        "broker": "alpaca_paper",
+        "broker": order.get("broker", "unknown"),
         "broker_order_id": order["order_id"],
         "client_order_id": order.get("client_order_id"),
         "status": order.get("status"),

@@ -59,6 +59,10 @@ class IntentIn(BaseModel):
     stack: Literal["alpha", "camaro", "chevelle", "redeye"]
     action: Literal["BUY", "SELL", "SHORT", "COVER", "HOLD"]
     symbol: str = Field(min_length=1, max_length=24)
+    # Lane is the brain's declared asset class for this intent. MC uses
+    # it to compose the canonical asset key and pick the broker. Missing
+    # lane = NO_TRADE (fail-closed at the resolver).
+    lane: Optional[Literal["equity", "crypto"]] = Field(default=None)
     confidence: float = Field(ge=0.0, le=1.0)
     risk_multiplier: float = Field(ge=0.0, le=1.0, default=0.0)
     rationale: str = Field(min_length=1, max_length=4000)
@@ -119,6 +123,31 @@ async def _seat_at_post_time(brain: str) -> Optional[str]:
         return None
 
 
+def _compose_canonical(symbol: str, lane: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Compose `(effective_lane, canonical)` for an intent.
+
+    Backward-compat for equity: if `lane` is None and `symbol` is plain
+    alphanumeric, default to equity (so today's Camaro AAPL/MSFT/NVDA/
+    GOOGL/AMZN flow keeps working without a runtime patch).
+
+    Crypto and anything with punctuation MUST be lane-tagged explicitly.
+    If composition fails for any reason, returns `(lane_or_none, None)`
+    so the broker router fails closed downstream — never silently
+    routes the wrong asset.
+    """
+    effective_lane = lane
+    if effective_lane is None and symbol.isalnum():
+        effective_lane = "equity"
+    canonical: Optional[str] = None
+    if effective_lane:
+        try:
+            from shared.broker_symbol_resolver import compose as _compose  # noqa: WPS433
+            canonical = _compose(symbol, effective_lane).canonical
+        except Exception:  # noqa: BLE001
+            canonical = None
+    return effective_lane, canonical
+
+
 # ─────────────────────────────── routes ───────────────────────────────
 
 @router.post("/intents")
@@ -147,12 +176,15 @@ async def post_intent(
     holds_executor = executor_at_post == body.stack
 
     intent_id = str(uuid.uuid4())
+    effective_lane, canonical = _compose_canonical(body.symbol, body.lane)
 
     doc = {
         "intent_id": intent_id,
         "stack": body.stack,
         "action": body.action,
         "symbol": body.symbol,
+        "lane": effective_lane,
+        "canonical": canonical,
         "confidence": float(body.confidence),
         "risk_multiplier": float(body.risk_multiplier),
         "rationale": body.rationale,
@@ -260,12 +292,15 @@ async def admin_post_intent(
     holds_executor = executor_at_post == body.stack
 
     intent_id = str(uuid.uuid4())
+    effective_lane, canonical = _compose_canonical(body.symbol, body.lane)
 
     doc = {
         "intent_id": intent_id,
         "stack": body.stack,
         "action": body.action,
         "symbol": body.symbol,
+        "lane": effective_lane,
+        "canonical": canonical,
         "confidence": float(body.confidence),
         "risk_multiplier": float(body.risk_multiplier),
         "rationale": body.rationale,
