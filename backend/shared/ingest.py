@@ -69,23 +69,16 @@ async def ingest_receipt(
 ):
     verify_runtime_token(body.runtime, x_runtime_token or "")
 
-    # ─── Authority enforcement (Patent J in code) ───
-    # Execution authority comes from the runtime's CURRENT authority state,
-    # which only changes via governed promotion (PromotionArtifact + Patent J
-    # readiness + operator countersign). It is NOT a static property of the
-    # runtime. A runtime cannot promote itself.
+    # ─── Doctrine update (2026-05-14) ───
+    # Authority lives on SEATS, not brains. A brain's identity does NOT
+    # grant or restrict what it may do — the seat it currently holds
+    # does. We still record the brain's current authority_state in the
+    # receipt for audit context, but it no longer gates `executed`.
+    # The actual execution gate runs in `/api/execution/submit` (and the
+    # auto-router), where seat policy is the source of truth.
     authority_state = await _current_authority(body.runtime)
-    role_violation = False
-    if body.executed and not runtime_can_execute_state(authority_state):
-        role_violation = True
-        executed = False
-    else:
-        # Even with execution authority, observation invariant still applies.
-        executed = (
-            bool(body.executed)
-            and runtime_can_execute_state(authority_state)
-            and _broker_live_enabled()
-        )
+    executed = bool(body.executed) and _broker_live_enabled()
+    role_violation = False  # legacy field, retained for schema stability
 
     doc = {
         "id": str(uuid.uuid4()),
