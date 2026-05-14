@@ -21,7 +21,8 @@ import {
 } from "@phosphor-icons/react";
 
 const NAV = [
-  { to: "/admin", label: "Overview", icon: ChartBar, end: true, testid: "nav-overview" },
+  { to: "/admin/hypothesis", label: "Hypothesis", icon: Sparkle, testid: "nav-hypothesis" },
+  { to: "/admin/overview", label: "Overview", icon: ChartBar, testid: "nav-overview" },
   { to: "/admin/receipts", label: "ADL Receipts", icon: Receipt, testid: "nav-receipts" },
   { to: "/admin/memory", label: "Memory Firewall", icon: Shield, testid: "nav-memory" },
   { to: "/admin/calibration", label: "Calibration", icon: Wrench, testid: "nav-calibration" },
@@ -36,7 +37,6 @@ const NAV = [
   { to: "/admin/flags", label: "Runtime Flags", icon: Flag, testid: "nav-flags" },
   { to: "/admin/promotion", label: "Promotion", icon: TrendUp, testid: "nav-promotion" },
   { to: "/admin/intents", label: "Intents", icon: Lightning, testid: "nav-intents" },
-  { to: "/admin/hypothesis", label: "Hypothesis", icon: Sparkle, testid: "nav-hypothesis" },
   { to: "/admin/public-traffic", label: "Public Traffic", icon: Pulse, testid: "nav-public-traffic" },
 ];
 

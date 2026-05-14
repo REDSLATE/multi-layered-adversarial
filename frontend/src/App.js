@@ -111,7 +111,8 @@ function App() {
               </Protected>
             }
           >
-            <Route index element={<Overview />} />
+            <Route index element={<Navigate to="/admin/hypothesis" replace />} />
+            <Route path="overview" element={<Overview />} />
             <Route path="receipts" element={<Receipts />} />
             <Route path="memory" element={<MemoryFirewall />} />
             <Route path="calibration" element={<Calibration />} />
