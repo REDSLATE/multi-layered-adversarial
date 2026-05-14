@@ -109,6 +109,13 @@ ALPACA_AUDIT_LOG = "alpaca_audit_log"
 # the operator receipts page, and the outcome broadcast (later).
 EXECUTION_RECEIPTS = "execution_receipts"
 
+# MC Shelly — Mission Control's own labeled memory. Every meaningful
+# event MC observes (intent ingested, gate pass/fail, order routed,
+# position open/close) is recorded here with the brain's full position
+# snapshot at the time of the event. This is the training-data substrate
+# for future brain training pipelines. Append-only.
+MC_SHELLY = "mc_shelly"
+
 # Sovereign sidecar contributions — periodic snapshots of each brain's
 # internal deterministic state (weights, learning rate, recent outcomes).
 # `SOVEREIGN_STATE` is one doc per brain (latest snapshot).

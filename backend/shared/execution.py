@@ -28,6 +28,7 @@ from namespaces import (
 from shared.broker.alpaca_routes import get_alpaca_adapter
 from shared.exposure_caps import caps_snapshot, evaluate_all
 from shared.executor_seat import get_executor_holder
+from shared.mc_shelly import record_async
 
 
 router = APIRouter(tags=["execution"])
@@ -122,6 +123,22 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
         gates.append({"name": c.name, "passed": c.passed, "reason": c.reason})
 
     verdict = "would_pass" if all(g["passed"] for g in gates) else "would_block"
+
+    # MC Shelly — one row per gate, tagged with intent context. Lets
+    # the operator slice training data by "which gate fails most when
+    # the OPP is in seat" type questions.
+    for g in gates:
+        record_async(
+            event_type="gate_pass" if g["passed"] else "gate_fail",
+            brain=intent.get("stack"),
+            symbol=intent.get("symbol"),
+            action=intent.get("action"),
+            outcome="pass" if g["passed"] else "fail",
+            rationale=g.get("reason"),
+            ref_id=intent.get("intent_id"),
+            gate_name=g.get("name"),
+        )
+
     return {
         "verdict": verdict,
         "gates": gates,
@@ -268,6 +285,15 @@ async def execution_submit(
             "by": user.get("email"),
             "error": str(e),
         })
+        record_async(
+            event_type="order_rejected",
+            brain=intent.get("stack"),
+            symbol=intent.get("symbol"),
+            action=intent.get("action"),
+            outcome="rejected",
+            error_reason=str(e),
+            ref_id=body.intent_id,
+        )
         raise HTTPException(status_code=502, detail=f"broker rejected order: {e}") from e
 
     now = _now_iso()
@@ -313,6 +339,22 @@ async def execution_submit(
         "broker_order_id": order["order_id"],
         "gates": result["gates"],
     })
+
+    # MC Shelly — record the order routing. Position = EXE by definition
+    # (only the executor-seat brain reaches this code path).
+    record_async(
+        event_type="order_routed",
+        brain=intent.get("stack"),
+        symbol=intent.get("symbol"),
+        action=intent.get("action"),
+        outcome="executed",
+        ref_id=receipt["receipt_id"],
+        extra={
+            "broker_order_id": order["order_id"],
+            "notional_usd": float(body.order_notional_usd),
+            "status": order.get("status"),
+        },
+    )
 
     return {
         "ok": True,

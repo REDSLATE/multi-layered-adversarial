@@ -51,6 +51,7 @@ from shared.auditor_seat import router as auditor_router
 from shared.broker.alpaca_routes import router as alpaca_router
 from shared.execution import router as execution_router
 from shared.hypothesis import router as hypothesis_router
+from shared.mc_shelly import router as mc_shelly_router
 from shared.patches import router as patches_router
 from shared.seed import seed_all
 from runtimes.alpha.routes import router as alpha_router
@@ -145,6 +146,7 @@ api_router.include_router(auditor_router)
 api_router.include_router(alpaca_router)
 api_router.include_router(execution_router)
 api_router.include_router(hypothesis_router)
+api_router.include_router(mc_shelly_router)
 api_router.include_router(patches_router)
 api_router.include_router(diagnostics_router)
 api_router.include_router(flags_router)

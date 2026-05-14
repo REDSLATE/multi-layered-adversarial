@@ -79,3 +79,13 @@ async def ensure_indexes() -> None:
     # Executor/Auditor rotation audit logs queried by ts desc
     await db.shared_executor_rotations.create_index([("ts", -1)])
     await db.shared_auditor_rotations.create_index([("ts", -1)])
+
+    # ── MC Shelly — Mission Control's labeled memory store ──────────────
+    # Operator queries: slice by event_type, position_at_event, brain,
+    # symbol, outcome, ts window. These indexes cover those.
+    await db.mc_shelly.create_index([("ts", -1)])
+    await db.mc_shelly.create_index([("event_type", 1), ("ts", -1)])
+    await db.mc_shelly.create_index([("position_at_event", 1), ("ts", -1)])
+    await db.mc_shelly.create_index([("brain", 1), ("ts", -1)])
+    await db.mc_shelly.create_index([("symbol", 1), ("ts", -1)])
+    await db.mc_shelly.create_index([("ref_id", 1)])

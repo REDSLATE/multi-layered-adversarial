@@ -17,11 +17,13 @@ import {
   ChatCircleDots,
   Crosshair,
   Sparkle,
+  Brain,
   SignOut,
 } from "@phosphor-icons/react";
 
 const NAV = [
   { to: "/admin/hypothesis", label: "Hypothesis", icon: Sparkle, testid: "nav-hypothesis" },
+  { to: "/admin/mc-shelly", label: "MC Memory", icon: Brain, testid: "nav-mc-shelly" },
   { to: "/admin/overview", label: "Overview", icon: ChartBar, testid: "nav-overview" },
   { to: "/admin/receipts", label: "ADL Receipts", icon: Receipt, testid: "nav-receipts" },
   { to: "/admin/memory", label: "Memory Firewall", icon: Shield, testid: "nav-memory" },

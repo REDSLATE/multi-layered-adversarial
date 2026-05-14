@@ -177,6 +177,22 @@ async def post_intent(
     }
     await db[SHARED_INTENTS].insert_one(doc)
 
+    # MC Shelly — record this ingest in MC's memory, tagged with the
+    # full position snapshot at the moment of ingest. Fire-and-forget
+    # so the brain never waits on bookkeeping.
+    from shared.mc_shelly import record_async  # noqa: WPS433
+    record_async(
+        event_type="intent_ingested",
+        brain=body.stack,
+        symbol=body.symbol,
+        action=body.action,
+        confidence=float(body.confidence),
+        outcome="pending",
+        regime_fp=(body.evidence or {}).get("regime_fp"),
+        rationale=body.rationale,
+        ref_id=intent_id,
+    )
+
     return {
         "ok": True,
         "intent_id": intent_id,
@@ -270,6 +286,24 @@ async def admin_post_intent(
         "execution_receipt_id": None,
     }
     await db[SHARED_INTENTS].insert_one(doc)
+
+    # MC Shelly — record this admin-proxied ingest too. Tagged with the
+    # operator email under extra so we can distinguish brain pushes from
+    # operator-injected ones during training.
+    from shared.mc_shelly import record_async  # noqa: WPS433
+    record_async(
+        event_type="intent_ingested",
+        brain=body.stack,
+        symbol=body.symbol,
+        action=body.action,
+        confidence=float(body.confidence),
+        outcome="pending",
+        regime_fp=(body.evidence or {}).get("regime_fp"),
+        rationale=body.rationale,
+        ref_id=intent_id,
+        extra={"ingest_method": "admin_proxy", "by": user.get("email")},
+    )
+
     return {
         "ok": True,
         "intent_id": intent_id,
