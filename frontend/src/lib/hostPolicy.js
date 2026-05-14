@@ -1,12 +1,14 @@
 /**
  * Hostname routing policy.
  *
- * Once DNS is flipped after deploy:
  *   mc.risedual.ai          → operator dashboard ONLY (/admin/*)
- *   mission.risedual.ai     → legacy alias, 301 to mc.risedual.ai
+ *   mission.risedual.ai     → operator dashboard ONLY (/admin/*) — production
  *   risedual.ai / www.*     → public site ONLY (/, /signals, /markets, etc)
  *   <preview>.emergentagent → dev mode, both surfaces open
  *   localhost / 127.0.0.1   → dev mode, both surfaces open
+ *
+ * Both mc.* and mission.* are accepted operator hostnames. Neither
+ * redirects to the other — whichever DNS resolves first wins.
  *
  * We enforce on the client because both surfaces ship from the same React
  * bundle. The guard renders a redirect (window.location.replace) the moment
@@ -15,7 +17,7 @@
 
 const OPERATOR_HOSTS = new Set([
   "mc.risedual.ai",
-  "mission.risedual.ai",   // legacy — will 301
+  "mission.risedual.ai",
 ]);
 
 const PUBLIC_HOSTS = new Set([
@@ -30,7 +32,6 @@ const DEV_HOST_PATTERNS = [
   /^0\.0\.0\.0$/,
 ];
 
-const CANONICAL_OPERATOR_HOST = "mc.risedual.ai";
 const CANONICAL_PUBLIC_HOST = "risedual.ai";
 
 export function getHostnameMode(hostname = window.location.hostname) {
@@ -47,14 +48,13 @@ export function getHostnameMode(hostname = window.location.hostname) {
  * Returns null when the URL is already on the correct surface.
  *
  * Rules:
- *   - mission.risedual.ai → always rewrite to mc.risedual.ai (legacy alias).
- *   - On mc.risedual.ai:
- *       /                → /admin
+ *   - On any operator host (mc.* OR mission.*):
+ *       /                → /admin (same host)
  *       /admin/*         → keep
  *       any public path  → bounce to risedual.ai + same path
  *   - On risedual.ai / www.risedual.ai:
- *       /admin/*         → bounce to mc.risedual.ai/admin/*
- *       /login           → bounce to mc.risedual.ai/login
+ *       /admin/*         → bounce to the FIRST operator host (mc.* by default)
+ *       /login           → bounce to operator host
  *       everything else  → keep
  *   - On dev hosts: never redirect (both surfaces fully accessible).
  */
@@ -63,32 +63,27 @@ export function computeHostRedirect(loc = window.location) {
   const path = loc.pathname || "/";
   const search = loc.search || "";
 
-  // Legacy alias — collapse mission.* → mc.*
-  if (host === "mission.risedual.ai") {
-    return `https://${CANONICAL_OPERATOR_HOST}${path}${search}`;
-  }
-
   const mode = getHostnameMode(host);
 
   if (mode === "dev") return null;
 
   if (mode === "operator") {
     if (path === "/" || path === "") {
-      return `https://${CANONICAL_OPERATOR_HOST}/admin${search}`;
+      // Stay on whichever operator host we arrived on; just go to /admin.
+      return `https://${host}/admin${search}`;
     }
     if (path.startsWith("/admin") || path.startsWith("/login") || path.startsWith("/ping")) {
       return null;  // correct surface
     }
-    // Anything else on mc.* is a public-site URL — bounce.
+    // Anything else on an operator host is a public-site URL — bounce.
     return `https://${CANONICAL_PUBLIC_HOST}${path}${search}`;
   }
 
   // mode === "public"
-  if (path.startsWith("/admin") || path.startsWith("/ping")) {
-    return `https://${CANONICAL_OPERATOR_HOST}${path}${search}`;
-  }
-  if (path.startsWith("/login")) {
-    return `https://${CANONICAL_OPERATOR_HOST}${path}${search}`;
+  if (path.startsWith("/admin") || path.startsWith("/ping") || path.startsWith("/login")) {
+    // Bounce to the first operator host configured (mc.risedual.ai).
+    const operatorHost = "mc.risedual.ai";
+    return `https://${operatorHost}${path}${search}`;
   }
   return null;
 }
