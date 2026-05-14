@@ -36,6 +36,13 @@ const FEEDER_META = {
     market: "Stocks / Options · NO PDT",
     docsUrl: null,
   },
+  alpaca_paper: {
+    label: "ALPACA PAPER",
+    short: "ALPCA",
+    color: "#FFD60A",
+    market: "Stocks · Paper Trading",
+    docsUrl: null,
+  },
   manual: {
     label: "MANUAL",
     short: "MAN",
@@ -79,9 +86,10 @@ export default function FeedersStrip() {
 
   const refresh = useCallback(async () => {
     try {
-      const [feeders, publicSt] = await Promise.all([
+      const [feeders, publicSt, alpacaSt] = await Promise.all([
         api.get("/shared/technical/feeders"),
         api.get("/admin/public/status").catch(() => ({ data: null })),
+        api.get("/admin/alpaca/status").catch(() => ({ data: null })),
       ]);
       const baseItems = feeders.data.items || [];
       // Public.com — broker slot (no PDT restrictions).
@@ -100,10 +108,28 @@ export default function FeedersStrip() {
         tfs: [],
         is_broker: true,
       };
+      // Alpaca Paper — broker slot. Singleton credentials live under
+      // /api/admin/alpaca/* (Fernet-encrypted). Status returns
+      // {connected, account_number, last_equity_snapshot, last_ping_*}.
+      const alpacaData = alpacaSt?.data;
+      const alpacaItem = {
+        key: "alpaca_paper",
+        env_key: "—",
+        configured: Boolean(alpacaData?.connected),
+        status: alpacaData?.connected
+          ? (alpacaData.last_ping_ok ? "live" : "stale")
+          : "unconfigured",
+        last_bar_ts: alpacaData?.last_ping_at || null,
+        symbols: alpacaData?.account_number ? [alpacaData.account_number] : [],
+        symbols_count: alpacaData?.account_number ? 1 : 0,
+        bars_count: 0,
+        tfs: [],
+        is_broker: true,
+      };
       const broker_items = SHOW_IBKR_SLOT
         ? [/* re-enable when Gateway sidecar ships */]
         : [];
-      setItems([...baseItems, ...broker_items, publicItem]);
+      setItems([...baseItems, ...broker_items, publicItem, alpacaItem]);
       setEndpoint(feeders.data.endpoint);
       setErr("");
     } catch (e) {
@@ -117,8 +143,8 @@ export default function FeedersStrip() {
     return () => clearInterval(id);
   }, [refresh]);
 
-  // Sort: kraken_pro first, then thinkorswim, then ibkr, then public, then manual.
-  const order = { kraken_pro: 0, thinkorswim: 1, ibkr: 2, public: 3, manual: 4 };
+  // Sort: kraken_pro, thinkorswim, ibkr, public, alpaca_paper, manual.
+  const order = { kraken_pro: 0, thinkorswim: 1, ibkr: 2, public: 3, alpaca_paper: 4, manual: 5 };
   const sorted = [...items].sort((a, b) =>
     (order[a.key] ?? 99) - (order[b.key] ?? 99),
   );
