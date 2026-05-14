@@ -56,3 +56,26 @@ async def ensure_indexes() -> None:
 
     # IBKR connection — singleton credential + append-only audit log
     await db.ibkr_audit_log.create_index([("ts", -1)])
+
+    # ── Hypothesis engine / Brain Recall — heavy read path on /admin/hypothesis ──
+    # These indexes turn the per-role queries from collection scans into
+    # bounded lookups. Profile-driven (see /api/hypothesis/_perf for p50/p95/p99).
+    await db.shared_intents.create_index([("stack", 1), ("symbol", 1), ("ingest_ts", -1)])
+    await db.shared_intents.create_index([("stack", 1), ("executed", 1), ("executed_at", -1)])
+    await db.shared_brain_opinions.create_index([("runtime", 1), ("topic", 1), ("posted_at", -1)])
+    await db.shared_brain_outcomes.create_index([("opinion_id", 1), ("resolved_at", -1)])
+    # Shelly memory regex search was the worst offender (~25-40ms scan);
+    # a TEXT index pivots it to indexed token lookup.
+    try:
+        await db.shared_labeled_memories.create_index(
+            [("payload_summary", "text"), ("reason", "text")],
+            name="shelly_payload_text_idx",
+        )
+    except Exception:  # noqa: BLE001 - text index may already exist with different fields
+        pass
+    # Hypothesis audit-log queries by recency
+    await db.hypothesis_analyses.create_index([("generated_at", -1)])
+    await db.hypothesis_analyses.create_index([("symbol", 1), ("generated_at", -1)])
+    # Executor/Auditor rotation audit logs queried by ts desc
+    await db.shared_executor_rotations.create_index([("ts", -1)])
+    await db.shared_auditor_rotations.create_index([("ts", -1)])
