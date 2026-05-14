@@ -50,6 +50,10 @@ from shared.executor_seat import router as executor_router
 from shared.auditor_seat import router as auditor_router
 from shared.broker.alpaca_routes import router as alpaca_router
 from shared.execution import router as execution_router
+from shared.auto_router import (
+    start_auto_router_if_enabled,
+    stop_auto_router,
+)
 from shared.hypothesis import router as hypothesis_router
 from shared.mc_shelly import router as mc_shelly_router
 from shared.patches import router as patches_router
@@ -86,12 +90,20 @@ async def lifespan(app: FastAPI):
     if public_doc:
         start_public_refresher()
         logger.info("Public.com token refresher started")
+    # Auto-router — picks up council-approved intents and submits them to
+    # the broker without operator clicks. Paper trading only; gated by
+    # the same gate chain as /execution/submit.
+    alpaca_doc = await db["alpaca_credentials"].find_one({"_id": "singleton"}, {"_id": 1})
+    if alpaca_doc:
+        start_auto_router_if_enabled()
+        logger.info("Auto-router started")
     # Public-API rate-limit collection — TTL index for buckets.
     await _rate_limit_ensure_ttl()
     yield
     await stop_poller()
     await stop_tickler()
     await stop_public_refresher()
+    await stop_auto_router()
     client.close()
 
 

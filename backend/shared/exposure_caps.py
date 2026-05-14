@@ -24,10 +24,15 @@ from namespaces import EXECUTION_RECEIPTS
 from shared.broker.alpaca_routes import get_alpaca_adapter
 
 
-# Hard-coded paper-trading rails. Change here = redeploy.
-CAP_PER_ORDER_USD: float = 10.0
-CAP_PER_DAY_USD: float = 50.0
-CAP_OPEN_NOTIONAL_USD: float = 100.0
+# Paper-trading rails. Change here = redeploy.
+#
+# 2026-05-14: Caps lifted for paper-trading rollout. Operator confirmed
+# the brains should trade freely on paper. The cap STRUCTURE stays in
+# place so it can be tightened the day we move toward live trading —
+# we just set the ceilings high enough that they don't block in paper.
+CAP_PER_ORDER_USD: float = 100_000.0
+CAP_PER_DAY_USD: float = 1_000_000.0
+CAP_OPEN_NOTIONAL_USD: float = 1_000_000.0
 
 
 class CapExceeded(Exception):
