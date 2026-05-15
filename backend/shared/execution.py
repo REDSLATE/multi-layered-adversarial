@@ -73,26 +73,61 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
     })
 
     # 3. Executor seat — held at ingest AND still held now.
-    current_holder = await get_executor_holder()
+    #    The seat policy is also lane-scoped: a brain holding the equity
+    #    `executor` seat cannot fire a crypto intent (and vice versa).
+    #    Both checks must pass.
+    from shared.seat_policy import seat_may_execute_lane  # noqa: WPS433
+    from shared.executor_seat import (  # noqa: WPS433
+        get_seat_holder,
+        seats_with_execute,
+    )
+    intent_lane_for_seat = intent.get("lane")
+    intent_stack = intent.get("stack")
+
+    # Find any execute-capable seat that's lane-eligible AND currently
+    # held by this intent's brain.
+    eligible_seats = seats_with_execute(intent_lane_for_seat)
+    current_holder = None
+    matched_seat = None
+    for seat_name in eligible_seats:
+        holder = await get_seat_holder(seat_name)
+        if holder == intent_stack:
+            matched_seat = seat_name
+            current_holder = holder
+            break
+    if current_holder is None:
+        # Fall back to the legacy executor lookup so empty-seat / wrong-
+        # lane scenarios produce useful messages.
+        current_holder = await get_executor_holder()
+
     held_at_intent = bool(intent.get("holds_executor_seat"))
     held_at_post = intent.get("executor_holder_at_post")
-    holds_now = current_holder == intent.get("stack")
-    if held_at_intent and holds_now:
+    holds_now = matched_seat is not None
+    # Lane-scope check: the matched seat's policy must allow this lane.
+    lane_allowed = seat_may_execute_lane(matched_seat, intent_lane_for_seat)
+
+    if holds_now and lane_allowed and held_at_intent:
         seat_pass, seat_reason = True, (
-            f"{intent['stack']} held Executor at ingest and still holds it ({current_holder})"
+            f"{intent_stack} holds the {matched_seat!r} seat "
+            f"(lane={intent_lane_for_seat or 'any'}); held at ingest"
+        )
+    elif holds_now and not lane_allowed:
+        seat_pass, seat_reason = False, (
+            f"{intent_stack} holds {matched_seat!r}, but seat does not authorize "
+            f"lane={intent_lane_for_seat!r} — wrong-lane seat blocked"
         )
     elif held_at_intent and not holds_now:
         seat_pass, seat_reason = False, (
-            f"{intent['stack']} held Executor at ingest, but seat has rotated to "
-            f"{current_holder or 'empty'} — stale intent cannot execute"
+            f"{intent_stack} held an execute-seat at ingest but no longer "
+            f"holds one matching lane={intent_lane_for_seat!r}"
         )
     elif not held_at_intent and held_at_post is None:
         seat_pass, seat_reason = False, (
-            "Executor seat was EMPTY when intent was posted — no authority"
+            "Execute-seat was EMPTY when intent was posted — no authority"
         )
     else:
         seat_pass, seat_reason = False, (
-            f"Executor seat was held by {held_at_post} at post time, not {intent.get('stack')}"
+            f"Execute-seat was held by {held_at_post} at post time, not {intent_stack}"
         )
     gates.append({"name": "executor_seat_check", "passed": seat_pass, "reason": seat_reason})
 

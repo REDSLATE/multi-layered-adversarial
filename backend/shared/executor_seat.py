@@ -70,6 +70,45 @@ async def get_executor_holder() -> Optional[str]:
     return h if h in RUNTIMES else None
 
 
+async def get_seat_holder(seat: str) -> Optional[str]:
+    """Return the brain currently holding `seat` (e.g. 'executor',
+    'crypto'), or None if the seat is empty. Reads from the multi-seat
+    roster. Falls back to the legacy executor_seat doc for back-compat
+    with the original single-seat 'executor' registry."""
+    if not seat:
+        return None
+    seat_l = seat.lower()
+    # Legacy single-seat executor doc takes precedence if it has a
+    # rotation entry — preserves the audited rotation history.
+    if seat_l == "executor":
+        h = await get_executor_holder()
+        if h:
+            return h
+    # Multi-seat roster (decider, governor, advisor, opponent, crypto…).
+    from shared.roster import get_roster  # noqa: WPS433
+    r = await get_roster()
+    assigned = (r.get("assignments") or {}).get(seat_l)
+    return assigned if assigned in RUNTIMES else None
+
+
+def seats_with_execute(lane: Optional[str]) -> list[str]:
+    """Return seat names that have `may_execute=True` AND whose lane_scope
+    permits `lane`. Used by the execution gate to find which seats can
+    legitimately route a given intent."""
+    from shared.seat_policy import SEAT_POLICY  # noqa: WPS433
+    eligible: list[str] = []
+    for seat_name, policy in SEAT_POLICY.items():
+        if not policy.get("may_execute"):
+            continue
+        scope = policy.get("lane_scope")
+        if scope is None:
+            eligible.append(seat_name)
+            continue
+        if lane and lane in scope:
+            eligible.append(seat_name)
+    return eligible
+
+
 async def is_executor(brain: str) -> bool:
     holder = await get_executor_holder()
     return holder is not None and holder == brain

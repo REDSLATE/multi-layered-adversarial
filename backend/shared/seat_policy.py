@@ -30,6 +30,12 @@ class SeatPolicy(TypedDict):
     may_veto: bool         # may halt promotion / freeze a runtime (governor)
     seat_required: bool    # quorum: if True and seat unstamped, position is degraded
     speaks_as: str         # human-readable label printed on stances
+    # Lane scope. `["equity"]`, `["crypto"]`, or `["equity","crypto"]` /
+    # `None` for any. Execution rights apply ONLY to lanes in this list.
+    # Doctrine: identity does not grant authority — neither does the lane.
+    # If your seat doesn't list 'crypto', you cannot execute crypto, even
+    # if you may_execute=True for equity. Same for the reverse.
+    lane_scope: list[str] | None
 
 
 SEAT_POLICY: dict[str, SeatPolicy] = {
@@ -42,6 +48,7 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         # A position without a decider stance is "incomplete", not "blind".
         "seat_required": False,
         "speaks_as": "decider",
+        "lane_scope": None,  # decides across lanes
     },
     "executor": {
         "may_decide": True,
@@ -55,6 +62,9 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         # required for quorum on every position regardless of call_mode.
         "seat_required": True,
         "speaks_as": "executor",
+        # Equity-only by doctrine. Crypto routes through the dedicated
+        # crypto seat so the two lanes are physically separated.
+        "lane_scope": ["equity"],
     },
     "governor": {
         "may_decide": False,
@@ -66,6 +76,7 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         # gets caught before a bad call gets locked in.
         "seat_required": True,
         "speaks_as": "governor",
+        "lane_scope": None,  # vetoes across lanes
     },
     "advisor": {
         "may_decide": False,
@@ -74,6 +85,7 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         "may_veto": False,
         "seat_required": False,
         "speaks_as": "advisor",
+        "lane_scope": None,
     },
     "opponent": {
         # The adversarial seat — argues the contrary case. Distinguished
@@ -87,6 +99,23 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         # the contrary case and silently dial up risk." Required.
         "seat_required": True,
         "speaks_as": "opponent",
+        "lane_scope": None,
+    },
+    "crypto": {
+        # Dedicated crypto seat — observe, buy, sell crypto. No equity
+        # rights. No deciding. No governing. No vetoing. Doctrine: a
+        # crypto-specialized voice with execution rights scoped to the
+        # crypto lane only. If MC's broker router gets a crypto intent
+        # and this seat is empty, no crypto trade fires.
+        "may_decide": False,
+        "may_execute": True,
+        "may_override": False,
+        "may_veto": False,
+        # Crypto silence is its own loud flag — a frozen crypto seat
+        # means MC is half-blind to the live crypto book.
+        "seat_required": True,
+        "speaks_as": "crypto",
+        "lane_scope": ["crypto"],
     },
 }
 
@@ -128,9 +157,32 @@ def snapshot(seat: str | None) -> dict:
         "may_execute": p["may_execute"],
         "may_override": p["may_override"],
         "may_veto": p["may_veto"],
+        "lane_scope": p.get("lane_scope"),
     }
 
 
 def required_seats() -> tuple[str, ...]:
     """Seats whose silence triggers a degraded-quorum flag on positions."""
     return tuple(s for s, p in SEAT_POLICY.items() if p["seat_required"])
+
+
+def seat_may_execute_lane(seat: str | None, lane: str | None) -> bool:
+    """May the brain currently holding `seat` execute an intent in `lane`?
+
+    Fail-closed:
+    - No seat → False
+    - Seat policy says may_execute=False → False
+    - Seat has a lane_scope and `lane` not in it → False
+    - `lane` is None → False  (we never trade lane-untagged intents through scoped seats)
+    """
+    if not seat:
+        return False
+    p = SEAT_POLICY.get(seat.lower())
+    if not p or not p.get("may_execute"):
+        return False
+    scope = p.get("lane_scope")
+    if scope is None:
+        return True  # cross-lane execution rights
+    if not lane:
+        return False
+    return lane in scope

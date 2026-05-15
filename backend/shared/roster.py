@@ -36,31 +36,37 @@ from namespaces import BRAIN_ELIGIBILITY, BRAIN_ROSTER, DISCUSSION_PARTICIPANTS,
 
 
 ROLES: tuple[str, ...] = (
-    "decider", "executor", "governor", "advisor", "opponent",
+    "decider", "executor", "governor", "advisor", "opponent", "crypto",
 )
 BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("alpha", "camaro", "chevelle", "redeye")
 
 # Default assignment — matches the doctrine. REDEYE defaults to opponent
 # (its training intent is adversarial / argue-the-contrary). `advisor`
 # starts vacated — there's no doctrinal pick for a neutral-counsel seat,
-# and we'd rather leave it empty than miscast a brain.
+# and we'd rather leave it empty than miscast a brain. `crypto` also
+# starts vacated — operator chooses which brain takes the crypto-only
+# execution chair (it's a dedicated specialist seat, not a default).
 DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
     "decider":  "camaro",
     "executor": "alpha",
     "governor": "chevelle",
     "advisor":  None,        # operator-assigned
     "opponent": "redeye",
+    "crypto":   None,        # operator-assigned: dedicated crypto specialist
 }
 
 # Default eligibility — REDEYE is opponent-only by training. Alpha and
 # Camaro can take advisor (and the other active seats). Chevelle remains
 # governor-only. No brain defaults eligible for both advisor and opponent
 # at the same time; operator may override via the eligibility switch.
+# The `crypto` seat defaults to all brains eligible — operator decides
+# which brain specializes (or assigns it to the crypto-only specialist
+# runtime when one is added).
 DEFAULT_ELIGIBILITY: dict[str, dict[str, bool]] = {
-    "alpha":    {"decider": True,  "executor": True,  "governor": False, "advisor": True,  "opponent": False},
-    "camaro":   {"decider": True,  "executor": True,  "governor": False, "advisor": True,  "opponent": False},
-    "chevelle": {"decider": False, "executor": False, "governor": True,  "advisor": False, "opponent": False},
-    "redeye":   {"decider": False, "executor": False, "governor": False, "advisor": False, "opponent": True},
+    "alpha":    {"decider": True,  "executor": True,  "governor": False, "advisor": True,  "opponent": False, "crypto": True},
+    "camaro":   {"decider": True,  "executor": True,  "governor": False, "advisor": True,  "opponent": False, "crypto": True},
+    "chevelle": {"decider": False, "executor": False, "governor": True,  "advisor": False, "opponent": False, "crypto": False},
+    "redeye":   {"decider": False, "executor": False, "governor": False, "advisor": False, "opponent": True,  "crypto": True},
 }
 
 
