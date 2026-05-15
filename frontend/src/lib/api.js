@@ -191,8 +191,8 @@ export const RUNTIME_META = {
     accentClass: "text-rd-redeye",
     borderClass: "border-rd-redeye",
     bgClass: "bg-rd-redeye",
-    enforceFlag: null,            // no per-runtime enforce flag yet
-    enforceLabel: null,
+    enforceFlag: "redeye_opponent_enforce_enabled",            // wired 2026-02-15
+    enforceLabel: "REDEYE_OPPONENT_ENFORCE_ENABLED",
     role: "opponent",
     roleTitle: "Opponent",
     roleTagline: "argues the contrary case",

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api, RUNTIME_META, fmtTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 
-const RT_FILTERS = ["all", "alpha", "camaro", "chevelle"];
+const RT_FILTERS = ["all", "alpha", "camaro", "chevelle", "redeye"];
 
 export default function Receipts() {
   const [filter, setFilter] = useState("all");
