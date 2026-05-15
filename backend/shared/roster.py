@@ -55,18 +55,17 @@ DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
     "crypto":   None,        # operator-assigned: dedicated crypto specialist
 }
 
-# Default eligibility — REDEYE is opponent-only by training. Alpha and
-# Camaro can take advisor (and the other active seats). Chevelle remains
-# governor-only. No brain defaults eligible for both advisor and opponent
-# at the same time; operator may override via the eligibility switch.
-# The `crypto` seat defaults to all brains eligible — operator decides
-# which brain specializes (or assigns it to the crypto-only specialist
-# runtime when one is added).
+# Default eligibility — every brain is eligible for every seat by
+# default. Doctrine: identity is NOT restriction. The seat itself
+# carries the function and the restrictions; pulling a brain into a
+# seat applies that seat's policy. The operator chooses who fits where.
+# Eligibility can be tightened per-brain per-seat later via the operator
+# console if a brain's training intent makes a specific seat a bad fit.
 DEFAULT_ELIGIBILITY: dict[str, dict[str, bool]] = {
-    "alpha":    {"decider": True,  "executor": True,  "governor": False, "advisor": True,  "opponent": False, "crypto": True},
-    "camaro":   {"decider": True,  "executor": True,  "governor": False, "advisor": True,  "opponent": False, "crypto": True},
-    "chevelle": {"decider": False, "executor": False, "governor": True,  "advisor": False, "opponent": False, "crypto": False},
-    "redeye":   {"decider": False, "executor": False, "governor": False, "advisor": False, "opponent": True,  "crypto": True},
+    "alpha":    {"decider": True, "executor": True, "governor": True, "advisor": True, "opponent": True, "crypto": True},
+    "camaro":   {"decider": True, "executor": True, "governor": True, "advisor": True, "opponent": True, "crypto": True},
+    "chevelle": {"decider": True, "executor": True, "governor": True, "advisor": True, "opponent": True, "crypto": True},
+    "redeye":   {"decider": True, "executor": True, "governor": True, "advisor": True, "opponent": True, "crypto": True},
 }
 
 

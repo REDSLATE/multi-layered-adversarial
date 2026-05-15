@@ -17,33 +17,35 @@ import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui
 const BRAIN_PROFILE = {
   alpha: {
     label: "ALPHA",
-    sub: "Decider seat. Strategist voice — bullish/long-direction lead.",
+    sub: "Strategist voice. Eligible for every seat.",
     color: "#3B82F6",
-    expected_seats: ["decider", "executor", "crypto"],
+    expected_seats: ["decider", "executor", "governor", "advisor", "opponent", "crypto"],
     test_intent: { action: "BUY", symbol: "SPY", lane: "equity", confidence: 0.55,
                    rationale: "operator wiring test — alpha" },
   },
   camaro: {
     label: "CAMARO",
-    sub: "Decider / Executor. Posts intents that route through the gate chain.",
+    sub: "Eligible for every seat. Posts intents through the gate chain.",
     color: "#F59E0B",
-    expected_seats: ["decider", "executor", "crypto"],
+    expected_seats: ["decider", "executor", "governor", "advisor", "opponent", "crypto"],
     test_intent: { action: "BUY", symbol: "AAPL", lane: "equity", confidence: 0.55,
                    rationale: "operator test ping" },
   },
   chevelle: {
     label: "CHEVELLE",
-    sub: "Governor. Veto-only. No trades originated — observes & validates.",
+    sub: "Eligible for every seat. Default governor; can specialize elsewhere.",
     color: "#3B82F6",
-    expected_seats: ["governor"],
-    test_intent: null,  // governor doesn't trade
+    expected_seats: ["decider", "executor", "governor", "advisor", "opponent", "crypto"],
+    test_intent: { action: "BUY", symbol: "SPY", lane: "equity", confidence: 0.55,
+                   rationale: "operator wiring test — chevelle" },
   },
   redeye: {
     label: "REDEYE",
-    sub: "Advisor / Opponent. Bearish scout. Cannot execute.",
+    sub: "Adversarial voice. Eligible for every seat.",
     color: "#DC2626",
-    expected_seats: ["advisor", "opponent", "crypto"],
-    test_intent: null,
+    expected_seats: ["decider", "executor", "governor", "advisor", "opponent", "crypto"],
+    test_intent: { action: "SELL", symbol: "SPY", lane: "equity", confidence: 0.55,
+                   rationale: "operator wiring test — redeye (bearish)" },
   },
 };
 
