@@ -1,7 +1,43 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
-## 🚨 Latest (2026-02-15): Council Wiring Fix — Chevelle/REDEYE Now Audible to Executor
+## 🚨 Latest (2026-02-15): Seat-Bound Graduated Council Doctrine (rev3)
+
+**Doctrine rewrite**: governance is now **graduated** and **seat-bound**, not binary and identity-bound. Trades fire when conviction outweighs dissent; only hard vetoes hard-block; every dissent is logged so outcomes can score who was right.
+
+**Verdict matrix** (`backend/shared/execution.py:_governance_verdict`):
+
+| Condition | Code | Allowed? | Risk × |
+|---|---|---|---|
+| `veto=True` AND governor conf ≥ 0.85 | `GOVERNOR_HARD_VETO` | ❌ | 0.0 |
+| Dissent AND executor conf ≥ 0.72 | `EXECUTOR_OVERRIDES_SOFT_DISSENT` | ✅ | **0.50** |
+| Dissent AND executor conf < 0.72 | `SOFT_DISSENT_LOW_EXECUTOR_CONF` | ❌ | 0.0 |
+| No dissent, governor heard | `NO_GOVERNOR_DISSENT` | ✅ | 1.0 |
+| Governor heard nothing on symbol | `GOVERNOR_NO_STANCE_ON_SYMBOL` | ❌ | 0.0 |
+| Governor seat silent ≥ 30m | `GOVERNOR_OFFLINE` | ❌ | 0.0 |
+| Governor seat vacant | `GOVERNOR_SEAT_VACANT` | ❌ | 0.0 |
+
+**Seat-binding**: `_evaluate_council` resolves Governor and Opponent at evaluation time via `_seat_holder(role)` against the roster. Swap whoever holds Governor → the policy follows. No hardcoded brain names.
+
+**Tunable thresholds** (top of `execution.py`):
+- `GOVERNOR_HARD_VETO_THRESHOLD = 0.85`
+- `GOVERNOR_SOFT_DISSENT_THRESHOLD = 0.55`
+- `MIN_EXECUTOR_CONF_TO_OVERRIDE_SOFT_DISSENT = 0.72`
+- `SOFT_DISSENT_RISK_MULTIPLIER = 0.50`
+
+**Risk-multiplier propagation**: `_evaluate_gates` returns `risk_multiplier`; `auto_router._route_one` applies it to notional BEFORE submission. Caps re-evaluate against the reduced notional. A 0.50 override on a $100 intent fires a $50 order, persisted on both the execution receipt and the gate-result row.
+
+**Learning ledger**: every council eval writes a row to **`shared_governance_decisions`** with `executor_seat_holder`, `governor_seat_holder`, `opponent_seat_holder`, both stances+confidences, the verdict code, `risk_multiplier`, and the thresholds in effect. Shelly/outcomes can join on `intent_id` to score who was right post-resolution.
+
+**Diagnostic**: `GET /api/admin/council/lookup-debug?symbol=TSLA&executor_confidence=0.80&action=BUY` returns seat occupants, governor's normalized stance, opponent's stance, and the simulated verdict.
+
+**Verified end-to-end**:
+- ✅ Camaro BUY TSLA conf 0.65 → blocked `SOFT_DISSENT_LOW_EXECUTOR_CONF`
+- ✅ Camaro BUY TSLA conf 0.80 → allowed `EXECUTOR_OVERRIDES_SOFT_DISSENT` risk×0.50
+- ✅ Unknown symbol → blocked `GOVERNOR_OFFLINE` (preview stale data; in prod this becomes `NO_STANCE_ON_SYMBOL`)
+- ✅ Governance ledger writes per evaluation
+
+## 🚨 Previously (2026-02-15, superseded): Council Wiring Fix — Chevelle/REDEYE Now Audible to Executor
 
 **Root cause found**: Executor's `_evaluate_council` was querying `db["shared_receipts"]` (literal string), but ingest persists Chevelle authority_calls to `db[SHARED_RECEIPTS]` which resolves to **`shared_adl_receipts`** (per `namespaces.py:5`). The governor and opponent gates were running but reading from an empty collection — silently passing every intent through.
 

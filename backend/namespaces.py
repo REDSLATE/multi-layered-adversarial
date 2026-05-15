@@ -83,6 +83,7 @@ SHARED_POSITION_AUDIT = "shared_position_audit"
 # Decision Machine — intent envelopes (brain-emitted), gate audit log
 SHARED_INTENTS = "shared_intents"                          # brain-emitted decision intents
 SHARED_GATE_RESULTS = "shared_gate_results"                # one row per gate check on an intent
+SHARED_GOVERNANCE_DECISIONS = "shared_governance_decisions"  # per-intent governance verdict + dissent log
 SHARED_EXECUTOR_SEAT = "shared_executor_seat"              # single-row registry: who holds the executor seat
 SHARED_EXECUTOR_ROTATIONS = "shared_executor_rotations"    # append-only audit log of seat rotations
 

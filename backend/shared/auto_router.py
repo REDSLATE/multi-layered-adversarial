@@ -71,6 +71,7 @@ async def _route_one(intent: dict) -> dict:
             "order_notional_usd": notional,
             "verdict": result["verdict"],
             "gates": result["gates"],
+            "risk_multiplier": result.get("risk_multiplier"),
         })
         await db[SHARED_INTENTS].update_one(
             {"intent_id": intent_id},
@@ -87,11 +88,17 @@ async def _route_one(intent: dict) -> dict:
             "reason": first_block["reason"] if first_block else "gate chain blocked",
         }
 
+    # Council-driven risk multiplier (1.0 if no dissent, 0.5 on
+    # EXECUTOR_OVERRIDES_SOFT_DISSENT). The broker sees the reduced
+    # notional; gate caps were already evaluated against this value.
+    risk_multiplier = float(result.get("risk_multiplier") or 1.0)
+    effective_notional = notional * risk_multiplier if risk_multiplier > 0 else notional
+
     side = "BUY" if intent["action"] in ("BUY", "COVER") else "SELL"
     client_order_id = f"ar-{intent_id[:8]}-{uuid.uuid4().hex[:6]}"
 
     try:
-        order = await route_order(intent, notional_usd=notional, client_order_id=client_order_id)
+        order = await route_order(intent, notional_usd=effective_notional, client_order_id=client_order_id)
     except BrokerRouteBlocked as e:
         # NO_TRADE: fail-closed at the resolver/router boundary.
         await db[SHARED_GATE_RESULTS].insert_one({
@@ -150,7 +157,9 @@ async def _route_one(intent: dict) -> dict:
         "broker_symbol": order.get("broker_symbol"),
         "action": intent.get("action"),
         "side": side,
-        "notional_usd": notional,
+        "notional_usd": effective_notional,
+        "requested_notional_usd": notional,
+        "risk_multiplier": risk_multiplier,
         "broker": order.get("broker", "unknown"),
         "broker_order_id": order["order_id"],
         "client_order_id": order.get("client_order_id"),
@@ -182,7 +191,9 @@ async def _route_one(intent: dict) -> dict:
         "kind": "auto_router_passed",
         "ts": now,
         "by": AUTO_ROUTER_EMAIL,
-        "order_notional_usd": notional,
+        "order_notional_usd": effective_notional,
+        "requested_notional_usd": notional,
+        "risk_multiplier": risk_multiplier,
         "broker_order_id": order["order_id"],
         "gates": result["gates"],
     })
@@ -195,7 +206,9 @@ async def _route_one(intent: dict) -> dict:
         ref_id=receipt["receipt_id"],
         extra={
             "broker_order_id": order["order_id"],
-            "notional_usd": notional,
+            "notional_usd": effective_notional,
+            "requested_notional_usd": notional,
+            "risk_multiplier": risk_multiplier,
             "status": order.get("status"),
             "auto_routed": True,
         },
@@ -206,7 +219,8 @@ async def _route_one(intent: dict) -> dict:
         "broker_order_id": order["order_id"],
         "symbol": intent.get("symbol"),
         "side": side,
-        "notional_usd": notional,
+        "notional_usd": effective_notional,
+        "risk_multiplier": risk_multiplier,
     }
 
 
