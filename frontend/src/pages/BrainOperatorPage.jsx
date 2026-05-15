@@ -63,23 +63,26 @@ export default function BrainOperatorPage() {
   const [diag, setDiag] = useState(null);
   const [intents, setIntents] = useState(null);
   const [honesty, setHonesty] = useState(null);
+  const [sovereign, setSovereign] = useState(null);
+  const [roster, setRoster] = useState(null);
   const [testResult, setTestResult] = useState(null);
   const [testSubmitting, setTestSubmitting] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!profile) return;
-    const [d, h] = await Promise.all([
+    const [d, h, s, r] = await Promise.all([
       api.get("/admin/diagnostics"),
       api.get(`/admin/intents/honesty?stack=${brain}&hours=24`),
+      api.get(`/admin/sovereign/state/${brain}`).catch(() => ({ data: null })),
+      api.get("/admin/roster").catch(() => ({ data: null })),
     ]);
     setDiag(d.data);
     setHonesty(h.data);
-    // Intents read needs a runtime token; the admin proxy doesn't list,
-    // so we surface what /admin/intents/honesty returns plus a peek
-    // through the runtime-detail status endpoint.
+    setSovereign(s.data);
+    setRoster(r.data);
     try {
-      const r = await api.get(`/runtime/${brain}/status`);
-      setIntents(r.data);
+      const rt = await api.get(`/runtime/${brain}/status`);
+      setIntents(rt.data);
     } catch {
       setIntents({});
     }
@@ -134,7 +137,7 @@ export default function BrainOperatorPage() {
       {!diag && <LoadingRow />}
 
       {diag && (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-4">
           {/* Heartbeat / freeze detector */}
           <Card title="Liveness" data-testid={`brain-card-liveness-${brain}`}>
             <dl className="space-y-2 text-sm">
@@ -150,6 +153,41 @@ export default function BrainOperatorPage() {
                 </p>
               )}
             </dl>
+          </Card>
+
+          {/* Seat & Authority — MC's current view of where this brain sits */}
+          <Card title="Seat & Authority" data-testid={`brain-card-seat-${brain}`}>
+            {(() => {
+              const seatHere = roster?.assignments
+                ? Object.entries(roster.assignments).find(([, holder]) => holder === brain)?.[0]
+                : null;
+              const expected = profile.expected_seats;
+              const seatOk = seatHere && expected.includes(seatHere);
+              return (
+                <dl className="space-y-2 text-sm">
+                  <Row k="Current seat" v={seatHere || "—"} warn={!seatOk} />
+                  <Row k="Expected seats" v={expected.join(" or ")} />
+                  <Row k="Authority" v={sovereign?.authority_state || sovereign?.posted_as || "—"} />
+                  <Row k="may_decide" v={String(sovereign?.may_decide ?? "—")} />
+                  <Row k="may_execute" v={String(sovereign?.may_execute ?? "—")} />
+                  <Row k="may_veto" v={String(sovereign?.may_veto ?? "—")} />
+                  <Row k="Seat epoch" v={roster?.seat_epoch ?? "—"} />
+                  {seatHere && !seatOk && (
+                    <p className="mt-3 rounded border border-amber-700/50 bg-amber-950/30 p-2 text-xs text-amber-300"
+                       data-testid={`brain-seat-mismatch-${brain}`}>
+                      ⚠️ Seat mismatch — currently <code>{seatHere}</code>, expected one of{" "}
+                      <code>{expected.join(", ")}</code>. Rotate via Roster page.
+                    </p>
+                  )}
+                  {!seatHere && (
+                    <p className="mt-3 rounded border border-rose-700/50 bg-rose-950/30 p-2 text-xs text-rose-300"
+                       data-testid={`brain-no-seat-${brain}`}>
+                      ⚠️ No seat assigned. This brain holds no chair on the council.
+                    </p>
+                  )}
+                </dl>
+              );
+            })()}
           </Card>
 
           {/* Honesty audit */}
