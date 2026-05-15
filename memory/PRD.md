@@ -1,6 +1,23 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🚨 Latest (2026-02-15): Council Wiring Fix — Chevelle/REDEYE Now Audible to Executor
+
+**Root cause found**: Executor's `_evaluate_council` was querying `db["shared_receipts"]` (literal string), but ingest persists Chevelle authority_calls to `db[SHARED_RECEIPTS]` which resolves to **`shared_adl_receipts`** (per `namespaces.py:5`). The governor and opponent gates were running but reading from an empty collection — silently passing every intent through.
+
+**Fix shipped** (`backend/shared/execution.py`):
+1. Switched lookup to use the `SHARED_RECEIPTS` / `SOVEREIGN_AUDIT_LOG` constants from `namespaces.py` — executor now reads the same collection ingest writes to.
+2. Schema-tolerant brain-id & symbol-path matching (`runtime`/`brain`/`stack`/`source` × `intent.symbol`/`symbol`/`payload.symbol`/...) so future ingest shape changes don't silently break the gates again.
+3. Silence-as-veto: if Chevelle has emitted ANY authority_call in the last 30 min but nothing on this symbol → `governor_uncertain` BLOCK. If no Chevelle activity in 30 min → `governor_offline` BLOCK. Only explicit `executable=True` clears the gate.
+4. REDEYE conviction-floor gate: opposition_margin block fires when REDEYE's opposing confidence ≥ intent's own confidence (in addition to the absolute 0.65 threshold).
+5. New diagnostic: `GET /api/admin/council/lookup-debug?symbol=XXX` shows exactly what the executor sees.
+
+**Verified in preview**: 1,578 reachable Chevelle calls (was 0). TSLA BUY simulation now blocks with `Chevelle (governor) blocked TSLA: 'operator_lock_default'`.
+
+⚠️ **Operational consequence for prod**: Chevelle has emitted `executable=True` in **0 of 1,578 calls** in the snapshot. Once this deploys, the auto-router will block ~100% of Camaro intents on `governor_authority` until Chevelle starts emitting approvals (or the engine team adjusts the `operator_lock_default` rule). This IS the doctrine — but expect a sharp drop in fills after deploy.
+
+
+
 ## 🚀 Latest (2026-02-14): AI Investment Hypothesis Engine — Brain Recall
 - `/admin/hypothesis` page: operator types ticker → dual brain-content card
 - **Strategist** = brain in Executor seat. **Auditor** = brain in new rotatable Auditor seat.

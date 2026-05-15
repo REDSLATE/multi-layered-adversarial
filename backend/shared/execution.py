@@ -24,6 +24,8 @@ from namespaces import (
     EXECUTION_RECEIPTS,
     SHARED_GATE_RESULTS,
     SHARED_INTENTS,
+    SHARED_RECEIPTS,
+    SOVEREIGN_AUDIT_LOG,
 )
 from shared.broker.alpaca_routes import get_alpaca_adapter
 from shared.exposure_caps import caps_snapshot, evaluate_all
@@ -39,30 +41,138 @@ def _now_iso() -> str:
 
 
 # ───────────────────────────── council ─────────────────────────────
-# Doctrine (2026-05-15): Governor and Opponent are STRUCTURAL signals,
-# not advisory. The auto-router and /execution/submit both consult the
-# most recent governance call and adversarial contribution for the
-# intent's symbol before clearing. Block reasons surface in the gate
-# audit log.
+# Doctrine (2026-05-15, hardened 2026-02-15): Governor and Opponent are
+# STRUCTURAL signals, not advisory. The auto-router and /execution/submit
+# both consult the most recent governance call and adversarial contribution
+# for the intent's symbol before clearing. Block reasons surface in the
+# gate audit log.
+#
+# Hardening (2026-02-15):
+#   1. Lookup is SCHEMA-TOLERANT — operator confirmed Chevelle is producing
+#      executable=False on every authority_call, but the prior strict query
+#      (runtime=chevelle, intent.symbol=X) was returning None against the
+#      actual prod receipt shape. Now we try multiple brain-id fields and
+#      symbol paths.
+#   2. Silence is NO LONGER a free pass when the governor is alive — if
+#      Chevelle has emitted ANY authority_call in the last 30 min but
+#      nothing for THIS symbol, that's anomalous and treated as
+#      `governor_uncertain` → BLOCK. If Chevelle is fully silent (>30m
+#      with zero receipts of any kind) we treat it as `governor_offline`
+#      → BLOCK. The only PASS path is an explicit executable=True.
+#   3. REDEYE opponent gate adds a `conviction_floor` check: even below
+#      the 0.65 absolute threshold, if REDEYE's opposing confidence
+#      exceeds the intent's own confidence we block. This is the
+#      down-weight-by-opposition rule.
 
-# How fresh a governance/opposition signal must be to count. Older than
-# this and the gate falls back to "no signal" (does NOT block — silence
-# is not a veto, only a missed opportunity).
+# How fresh a council signal must be to count. Older than this the
+# council gate treats the signal as missing.
 _COUNCIL_FRESHNESS_SECONDS = 600  # 10 minutes
+# How long the governor can be silent before we consider it offline.
+_GOVERNOR_OFFLINE_THRESHOLD_SECONDS = 1800  # 30 minutes
+
+
+# Candidate brain-identity fields on Chevelle receipts. Engines have used
+# several naming conventions over time (runtime, brain, stack, source).
+# The lookup matches the first row where any of these equals "chevelle"
+# (case-insensitive) — we materialize that with an `$or` query below.
+_CHEVELLE_BRAIN_FIELDS = ("runtime", "brain", "stack", "source", "from")
+_CHEVELLE_BRAIN_VALUES = ("chevelle", "Chevelle", "CHEVELLE")
+
+# Candidate symbol paths inside an authority_call doc.
+_SYMBOL_PATHS = (
+    "intent.symbol",
+    "symbol",
+    "payload.symbol",
+    "data.symbol",
+    "call.symbol",
+)
+
+# Candidate action/kind fields (and the value we accept).
+_ACTION_FIELDS = ("action", "kind", "type", "event")
+_AUTHORITY_CALL_VALUES = ("authority_call", "AUTHORITY_CALL", "authoritycall")
+
+
+def _brain_match_clause() -> dict:
+    """Build a Mongo `$or` clause that matches Chevelle regardless of which
+    identity field the engine used."""
+    return {"$or": [
+        {field: {"$in": list(_CHEVELLE_BRAIN_VALUES)}}
+        for field in _CHEVELLE_BRAIN_FIELDS
+    ]}
+
+
+def _authority_call_clause() -> dict:
+    return {"$or": [
+        {field: {"$in": list(_AUTHORITY_CALL_VALUES)}}
+        for field in _ACTION_FIELDS
+    ]}
+
+
+def _symbol_clause(symbol: str) -> dict:
+    return {"$or": [{path: symbol} for path in _SYMBOL_PATHS]}
+
+
+def _extract(doc: dict, path: str):
+    """Walk a dotted path through nested dicts. Returns None if absent."""
+    cur = doc
+    for key in path.split("."):
+        if not isinstance(cur, dict) or key not in cur:
+            return None
+        cur = cur[key]
+    return cur
+
+
+def _normalize_chevelle_call(doc: Optional[dict]) -> Optional[dict]:
+    """Pull `executable`, `execution_gate_reason`, `timestamp` from
+    whichever shape the receipt uses. Returns None for missing fields."""
+    if not doc:
+        return None
+    # Try common containers in priority order.
+    for container_path in ("intent", "payload", "call", "data", ""):
+        node = _extract(doc, container_path) if container_path else doc
+        if isinstance(node, dict) and "executable" in node:
+            return {
+                "executable": node.get("executable"),
+                "reason": (
+                    node.get("execution_gate_reason")
+                    or node.get("reason")
+                    or node.get("gate_reason")
+                    or "unspecified"
+                ),
+                "ts": doc.get("timestamp") or doc.get("ts") or doc.get("created_at"),
+                "shape_container": container_path or "root",
+            }
+    # Last-ditch: top-level field on the doc itself.
+    if "executable" in doc:
+        return {
+            "executable": doc.get("executable"),
+            "reason": doc.get("execution_gate_reason") or doc.get("reason") or "unspecified",
+            "ts": doc.get("timestamp") or doc.get("ts") or doc.get("created_at"),
+            "shape_container": "root",
+        }
+    return None
 
 
 async def _latest_chevelle_call(symbol: Optional[str]) -> Optional[dict]:
-    """Most recent Chevelle authority_call for this symbol, regardless of age."""
+    """Most recent Chevelle authority_call for this symbol. Schema-tolerant."""
     if not symbol:
         return None
-    return await db["shared_receipts"].find_one(
-        {
-            "runtime": "chevelle",
-            "action": "authority_call",
-            "intent.symbol": symbol,
-        },
-        {"_id": 0},
-        sort=[("timestamp", -1)],
+    query = {"$and": [
+        _brain_match_clause(),
+        _authority_call_clause(),
+        _symbol_clause(symbol),
+    ]}
+    return await db[SHARED_RECEIPTS].find_one(
+        query, {"_id": 0}, sort=[("timestamp", -1)],
+    )
+
+
+async def _latest_chevelle_any_call() -> Optional[dict]:
+    """Most recent Chevelle authority_call for ANY symbol. Used to
+    distinguish 'governor offline' from 'governor uncertain on this name'."""
+    query = {"$and": [_brain_match_clause(), _authority_call_clause()]}
+    return await db[SHARED_RECEIPTS].find_one(
+        query, {"_id": 0}, sort=[("timestamp", -1)],
     )
 
 
@@ -71,11 +181,25 @@ async def _latest_redeye_contribution(symbol: Optional[str]) -> Optional[dict]:
     on every council cycle so the freshest one is what we care about —
     we don't filter by symbol because REDEYE's contributions are mostly
     macro-stance, not per-symbol (until the brain ships per-symbol data)."""
-    return await db["sovereign_audit_log"].find_one(
-        {"brain": "redeye", "action": "contribution"},
+    redeye_match = {"$or": [
+        {field: {"$in": ["redeye", "REDEYE", "Redeye"]}}
+        for field in ("brain", "runtime", "stack", "source")
+    ]}
+    contribution_match = {"$or": [
+        {field: {"$in": ["contribution", "Contribution"]}}
+        for field in ("action", "kind", "type", "event")
+    ]}
+    return await db[SOVEREIGN_AUDIT_LOG].find_one(
+        {"$and": [redeye_match, contribution_match]},
         {"_id": 0},
         sort=[("ts", -1)],
     )
+
+
+def _doc_ts(doc: Optional[dict]) -> Optional[str]:
+    if not doc:
+        return None
+    return doc.get("timestamp") or doc.get("ts") or doc.get("created_at")
 
 
 def _is_fresh(ts: Optional[str], max_age_seconds: int = _COUNCIL_FRESHNESS_SECONDS) -> bool:
@@ -83,7 +207,7 @@ def _is_fresh(ts: Optional[str], max_age_seconds: int = _COUNCIL_FRESHNESS_SECON
         return False
     try:
         # Parse ISO; tolerate "Z" suffix.
-        cleaned = ts.replace("Z", "+00:00")
+        cleaned = str(ts).replace("Z", "+00:00")
         emitted = datetime.fromisoformat(cleaned)
         if emitted.tzinfo is None:
             emitted = emitted.replace(tzinfo=timezone.utc)
@@ -96,70 +220,96 @@ def _is_fresh(ts: Optional[str], max_age_seconds: int = _COUNCIL_FRESHNESS_SECON
 async def _evaluate_council(intent: dict) -> list[dict]:
     """Two gates: governor_authority + opponent_objection.
 
-    governor_authority:
-        Look up Chevelle's most recent authority_call for this symbol.
-        If `executable=False`, BLOCK with the governor's reason.
-        If `executable=True` and fresh, PASS with explicit approval.
-        If no recent call, PASS with "no governor signal" — silence is
-        not a veto (governor must affirmatively block).
+    governor_authority (hardened 2026-02-15):
+        * If Chevelle has emitted an authority_call for this symbol AND
+          `executable=False` → BLOCK (governor veto).
+        * If `executable=True` → PASS (explicit approval).
+        * If no call for this symbol but Chevelle is alive (any call
+          within 30 min) → BLOCK (governor_uncertain — operator told us
+          Chevelle calls every cycle; absence on this name is anomalous).
+        * If Chevelle has emitted NO call anywhere in 30 min → BLOCK
+          (governor_offline). The governor must be live for trades to fire.
 
-    opponent_objection:
-        Look up REDEYE's most recent contribution. If REDEYE's confidence
-        on the OPPOSITE side of this intent is above 0.65 within the
-        freshness window, BLOCK. (REDEYE bearish + this is a BUY ⇒ block.)
-        Silence again does not block. Bounded — not a hair-trigger.
+    opponent_objection (hardened 2026-02-15):
+        * Absolute threshold: REDEYE opposing at conf ≥ 0.65 → BLOCK.
+        * Conviction floor: REDEYE opposing at conf ≥ intent.confidence
+          → BLOCK (opposition stronger than conviction).
+        * Otherwise PASS.
     """
     sym = intent.get("symbol")
     action = (intent.get("action") or "").upper()
     intent_id = intent.get("intent_id", "?")
+    intent_conf = float(intent.get("confidence") or intent.get("calibrated_confidence") or 0.0)
 
     # ── Gate: governor_authority ───────────────────────────────────────
     chev = await _latest_chevelle_call(sym)
-    if not chev:
+    norm = _normalize_chevelle_call(chev)
+
+    if norm and norm["executable"] is False:
+        gov_gate = {
+            "name": "governor_authority",
+            "passed": False,
+            "reason": f"Chevelle (governor) blocked {sym}: '{norm['reason']}' @ {norm['ts']}",
+        }
+    elif norm and norm["executable"] is True:
         gov_gate = {
             "name": "governor_authority",
             "passed": True,
-            "reason": f"no recent Chevelle authority_call for {sym} — governor silent (not a veto)",
+            "reason": f"Chevelle approved {sym} (executable=True) @ {norm['ts']}",
         }
     else:
-        c_intent = chev.get("intent", {}) or {}
-        executable = c_intent.get("executable")
-        reason_chev = c_intent.get("execution_gate_reason") or "unspecified"
-        chev_ts = chev.get("timestamp")
-        if executable is False:
+        # No usable per-symbol call. Check if governor is alive at all.
+        any_call = await _latest_chevelle_any_call()
+        any_ts = _doc_ts(any_call)
+        if _is_fresh(any_ts, _GOVERNOR_OFFLINE_THRESHOLD_SECONDS):
             gov_gate = {
                 "name": "governor_authority",
                 "passed": False,
-                "reason": f"Chevelle (governor) blocked {sym}: '{reason_chev}' @ {chev_ts}",
-            }
-        elif executable is True:
-            gov_gate = {
-                "name": "governor_authority",
-                "passed": True,
-                "reason": f"Chevelle approved {sym} (executable=True) @ {chev_ts}",
+                "reason": (
+                    f"governor_uncertain: Chevelle is live (last call @ {any_ts}) "
+                    f"but emitted no authority_call for {sym}. Governor must speak "
+                    f"to authorize execution."
+                ),
             }
         else:
             gov_gate = {
                 "name": "governor_authority",
-                "passed": True,
-                "reason": f"Chevelle call on {sym} did not set executable flag — silence treated as non-veto",
+                "passed": False,
+                "reason": (
+                    f"governor_offline: no Chevelle authority_call in the last "
+                    f"{_GOVERNOR_OFFLINE_THRESHOLD_SECONDS // 60} minutes. "
+                    f"Last seen: {any_ts or 'never'}. Trades cannot fire without a live governor."
+                ),
             }
 
     # ── Gate: opponent_objection ────────────────────────────────────────
     redeye_doc = await _latest_redeye_contribution(sym)
-    if not redeye_doc or not _is_fresh(redeye_doc.get("ts")):
+    redeye_ts = _doc_ts(redeye_doc)
+    if not redeye_doc or not _is_fresh(redeye_ts):
         opp_gate = {
             "name": "opponent_objection",
             "passed": True,
             "reason": "no fresh REDEYE objection — opponent silent (not a veto)",
         }
     else:
-        # REDEYE's payload shape: `payload.confidence` + `payload.side`
-        # (bullish | bearish | neutral). When REDEYE is high-confidence
-        # bearish and this intent is BUY/COVER, block. Mirrored on SELL.
-        payload = redeye_doc.get("payload", {}) or {}
-        r_conf = float(payload.get("confidence") or 0.0)
-        r_side = (payload.get("side") or "").lower()
+        # Pull REDEYE's side+confidence from common payload shapes.
+        payload = redeye_doc.get("payload") or redeye_doc.get("data") or redeye_doc.get("contribution") or {}
+        if not isinstance(payload, dict):
+            payload = {}
+        r_conf = float(
+            payload.get("confidence")
+            or payload.get("conviction")
+            or redeye_doc.get("confidence")
+            or 0.0
+        )
+        r_side_raw = (
+            payload.get("side")
+            or payload.get("stance")
+            or payload.get("bias")
+            or redeye_doc.get("side")
+            or ""
+        )
+        r_side = str(r_side_raw).lower()
         # Map intent action to direction.
         direction = (
             "bullish" if action in ("BUY", "COVER")
@@ -168,9 +318,13 @@ async def _evaluate_council(intent: dict) -> list[dict]:
         )
         OPPOSITION_THRESHOLD = 0.65
         opposes = (
-            (direction == "bullish" and r_side == "bearish")
-            or (direction == "bearish" and r_side == "bullish")
+            (direction == "bullish" and r_side in ("bearish", "short", "sell", "down"))
+            or (direction == "bearish" and r_side in ("bullish", "long", "buy", "up"))
         )
+        # Two block conditions:
+        #   (1) Absolute threshold — REDEYE strongly opposes regardless of conviction.
+        #   (2) Conviction floor — REDEYE's opposing confidence exceeds the
+        #       intent's own confidence (opposition outweighs conviction).
         if opposes and r_conf >= OPPOSITION_THRESHOLD:
             opp_gate = {
                 "name": "opponent_objection",
@@ -180,13 +334,23 @@ async def _evaluate_council(intent: dict) -> list[dict]:
                     f"REDEYE {r_side} @ conf {r_conf:.2f} ≥ {OPPOSITION_THRESHOLD}"
                 ),
             }
+        elif opposes and intent_conf > 0 and r_conf >= intent_conf:
+            opp_gate = {
+                "name": "opponent_objection",
+                "passed": False,
+                "reason": (
+                    f"REDEYE outweighs conviction on {action} {sym}: "
+                    f"REDEYE {r_side} @ conf {r_conf:.2f} ≥ intent conviction {intent_conf:.2f}"
+                ),
+            }
         else:
             opp_gate = {
                 "name": "opponent_objection",
                 "passed": True,
                 "reason": (
                     f"REDEYE {r_side or 'neutral'} @ conf {r_conf:.2f} "
-                    f"— below objection threshold {OPPOSITION_THRESHOLD} or not opposing"
+                    f"— below objection threshold {OPPOSITION_THRESHOLD} "
+                    f"and below intent conviction {intent_conf:.2f}"
                 ),
             }
 
@@ -652,5 +816,68 @@ async def caps_status(_user: dict = Depends(get_current_user)):  # noqa: B008
         "open": {
             "open_notional_usd": open_,
             "remaining_usd": max(0.0, caps["open_notional_usd"] - open_),
+        },
+    }
+
+
+
+# ──────────────────── council lookup diagnostic ────────────────────
+# Operator-facing debug endpoint: shows EXACTLY what the executor's
+# council gates see when they query the database. If this returns
+# `governor_call_found=False` for a symbol you know Chevelle just
+# called on, the brain identity field or symbol path is mismatched
+# and the schema-tolerance clauses above need to expand to cover it.
+
+@router.get("/admin/council/lookup-debug")
+async def council_lookup_debug(
+    symbol: str = Query(..., min_length=1, max_length=32),
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Returns the raw documents the council gates would consider for
+    `symbol`, plus the normalized executable flag. Use this to verify
+    that ingest is persisting Chevelle/REDEYE signals where the
+    executor reads from."""
+    chev_for_symbol = await _latest_chevelle_call(symbol)
+    chev_any = await _latest_chevelle_any_call()
+    redeye_doc = await _latest_redeye_contribution(symbol)
+    norm = _normalize_chevelle_call(chev_for_symbol)
+
+    chev_any_ts = _doc_ts(chev_any)
+    chev_alive = _is_fresh(chev_any_ts, _GOVERNOR_OFFLINE_THRESHOLD_SECONDS)
+
+    # Quick existence counts so the operator sees the collection's
+    # health at a glance.
+    chev_total = await db[SHARED_RECEIPTS].count_documents(
+        {"$and": [_brain_match_clause(), _authority_call_clause()]}
+    )
+    redeye_total = await db[SOVEREIGN_AUDIT_LOG].count_documents(
+        {"$or": [
+            {field: {"$in": ["redeye", "REDEYE", "Redeye"]}}
+            for field in ("brain", "runtime", "stack", "source")
+        ]}
+    )
+
+    return {
+        "symbol": symbol,
+        "collection_health": {
+            "shared_receipts_collection": SHARED_RECEIPTS,
+            "chevelle_authority_call_total": chev_total,
+            "sovereign_audit_collection": SOVEREIGN_AUDIT_LOG,
+            "redeye_entries_total": redeye_total,
+        },
+        "governor": {
+            "call_found_for_symbol": chev_for_symbol is not None,
+            "normalized": norm,
+            "raw_doc": chev_for_symbol,
+            "any_recent_call_ts": chev_any_ts,
+            "governor_alive": chev_alive,
+            "governor_offline_threshold_seconds": _GOVERNOR_OFFLINE_THRESHOLD_SECONDS,
+        },
+        "opponent": {
+            "redeye_doc_found": redeye_doc is not None,
+            "redeye_doc_ts": _doc_ts(redeye_doc),
+            "redeye_fresh": _is_fresh(_doc_ts(redeye_doc)),
+            "raw_doc": redeye_doc,
+            "freshness_window_seconds": _COUNCIL_FRESHNESS_SECONDS,
         },
     }
