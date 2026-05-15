@@ -67,6 +67,44 @@ class IntentIn(BaseModel):
     risk_multiplier: float = Field(ge=0.0, le=1.0, default=0.0)
     rationale: str = Field(min_length=1, max_length=4000)
 
+    # ─── Honesty telemetry (2026-05-14 doctrine) ───
+    # Brains MUST tell MC the truth about their own thinking. Specifically:
+    # separate MARKET JUDGMENT from EXECUTION JUDGMENT so a blocked trade
+    # is never silently recorded as "HOLD". Every field below is optional
+    # for backward-compat; brains that don't send them keep working, but
+    # they forfeit honesty and disable the auditor's blocked-trade view.
+
+    # Raw model output BEFORE any council/gate/penalty interference.
+    raw_action: Optional[Literal["BUY", "SELL", "SHORT", "COVER", "HOLD"]] = None
+    raw_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+    # What the brain WOULD have done if execution gates didn't intervene.
+    market_decision: Optional[Literal["BUY", "SELL", "SHORT", "COVER", "HOLD"]] = None
+    # The execution-side verdict (separate from market judgment).
+    execution_decision: Optional[Literal["ALLOW", "BLOCK", "SIZE_DOWN", "OBSERVE_ONLY"]] = None
+    # The action the brain chose to DISPLAY (what shows in the UI). Often
+    # equals `action` above, but separating it lets us audit the case
+    # where display_action diverges from market_decision.
+    display_action: Optional[Literal["BUY", "SELL", "SHORT", "COVER", "HOLD"]] = None
+    # If display_action == HOLD but market_decision was directional, this
+    # explains WHY the brain held: COUNCIL_DISAGREEMENT_CONFIDENCE_CLAMP,
+    # MIN_CONFIDENCE_TO_TRADE, FEATURE_HEALTH_CLAMP, PDT_BLOCK, etc.
+    hold_reason: Optional[str] = Field(default=None, max_length=200)
+    blocked_by: Optional[list[str]] = None  # array of gate names that fired
+    would_have_traded_without_gates: Optional[bool] = None
+
+    # Per-decision weighting telemetry — lets the operator see exactly
+    # how the confidence got from `raw_confidence` to the final
+    # `confidence` value above. Shape mirrors the brain's WeightState.
+    pre_weight_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    post_weight_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    council_penalty: Optional[float] = None  # negative number, e.g. -0.08
+    strategist_weight: Optional[float] = None
+    auditor_weight: Optional[float] = None
+    commander_weight: Optional[float] = None
+    regime_weight: Optional[float] = None
+    memory_weight: Optional[float] = None
+
     # Brain-supplied context. Bounded.
     evidence: dict = Field(default_factory=dict)
     decision_id: Optional[str] = Field(default=None, max_length=64)
@@ -191,6 +229,31 @@ async def post_intent(
         "evidence": body.evidence,
         "decision_id": body.decision_id,
         "regime": body.regime,
+        # ─── Honesty telemetry — brain-side ground truth ───
+        # Captures the SEPARATION between market judgment and execution
+        # judgment so a blocked trade never silently becomes "HOLD".
+        # All optional — missing fields stay None.
+        "raw_action": body.raw_action,
+        "raw_confidence": body.raw_confidence,
+        "market_decision": body.market_decision,
+        "execution_decision": body.execution_decision,
+        "display_action": body.display_action,
+        "hold_reason": body.hold_reason,
+        "blocked_by": body.blocked_by or [],
+        "would_have_traded_without_gates": body.would_have_traded_without_gates,
+        "pre_weight_confidence": body.pre_weight_confidence,
+        "post_weight_confidence": body.post_weight_confidence,
+        "council_penalty": body.council_penalty,
+        "weights": {
+            "strategist": body.strategist_weight,
+            "auditor": body.auditor_weight,
+            "commander": body.commander_weight,
+            "regime": body.regime_weight,
+            "memory": body.memory_weight,
+        } if any(w is not None for w in (
+            body.strategist_weight, body.auditor_weight, body.commander_weight,
+            body.regime_weight, body.memory_weight,
+        )) else None,
         # SAFETY (MC-stamped, schema-pinned)
         "may_execute": False,
         "requires_gate_pass": True,
@@ -271,6 +334,66 @@ async def list_intents(
 
     rows = await db[SHARED_INTENTS].find(q, {"_id": 0}).sort("ingest_ts", -1).to_list(limit)
     return {"items": rows, "count": len(rows)}
+
+
+# ──────────────────── operator: honesty audit ────────────────────
+
+@router.get("/admin/intents/honesty")
+async def honesty_audit(
+    stack: Optional[str] = Query(default=None),
+    hours: int = Query(default=24, ge=1, le=168),
+    limit: int = Query(default=100, ge=1, le=500),
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Surface every intent where the brain's market_decision was
+    directional (BUY/SELL/SHORT/COVER) but display_action ended up
+    HOLD — the silent-block failure mode.
+
+    Returns the count of "would_have_traded_without_gates=True" intents,
+    grouped by stack and by reason, so the operator can see at a glance
+    whether the brains are being mathematically flattened by gates.
+    """
+    from datetime import timedelta  # noqa: WPS433
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+    q: dict = {
+        "ingest_ts": {"$gte": since},
+        "would_have_traded_without_gates": True,
+    }
+    if stack:
+        q["stack"] = stack
+
+    rows = await db[SHARED_INTENTS].find(q, {"_id": 0}).sort("ingest_ts", -1).to_list(limit)
+
+    # Reason tallies.
+    by_stack: dict = {}
+    by_reason: dict = {}
+    for r in rows:
+        s = r.get("stack", "?")
+        by_stack[s] = by_stack.get(s, 0) + 1
+        reason = r.get("hold_reason") or "unspecified"
+        by_reason[reason] = by_reason.get(reason, 0) + 1
+
+    # How many intents the brains submitted at all in this window — for
+    # the "X out of Y would have traded but didn't" framing.
+    total_q: dict = {"ingest_ts": {"$gte": since}}
+    if stack:
+        total_q["stack"] = stack
+    total = await db[SHARED_INTENTS].count_documents(total_q)
+
+    return {
+        "since": since,
+        "hours": hours,
+        "stack_filter": stack,
+        "total_intents_in_window": total,
+        "blocked_directional": len(rows),
+        "blocked_pct_of_total": round((len(rows) / total) * 100, 2) if total else 0,
+        "by_stack": by_stack,
+        "by_reason": by_reason,
+        "items": rows,
+        "as_of": _now_iso(),
+        "by": user.get("email"),
+    }
 
 
 # ──────────────────── admin proxy + dry-run gate chain ────────────────────
