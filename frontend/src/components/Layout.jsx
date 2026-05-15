@@ -49,6 +49,15 @@ const RUNTIMES = [
   { to: "/admin/brain/redeye", label: "REDEYE", color: "#DC2626", testid: "nav-runtime-redeye" },
 ];
 
+// Per-brain operator/verification dashboards. One per non-Alpha brain —
+// Alpha's verification surface is the public site itself (Alpha's stack
+// serves risedual.ai marketing pages).
+const BRAIN_OPERATORS = [
+  { to: "/admin/brain-op/camaro",   label: "Camaro Ops",   color: "#F59E0B", testid: "nav-brain-op-camaro" },
+  { to: "/admin/brain-op/chevelle", label: "Chevelle Ops", color: "#10B981", testid: "nav-brain-op-chevelle" },
+  { to: "/admin/brain-op/redeye",   label: "REDEYE Ops",   color: "#DC2626", testid: "nav-brain-op-redeye" },
+];
+
 // REDEYE was promoted from advisor sidecar to a full seat (2026-02-11).
 // Empty for now; if you re-introduce true advisor sidecars later, they
 // go here.
@@ -131,6 +140,36 @@ export default function Layout() {
                       style={{ background: r.color }}
                     />
                     {r.label}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+
+            <div className="label-eyebrow px-2 mt-6 mb-2">Brain Operators</div>
+            <ul className="space-y-px">
+              {BRAIN_OPERATORS.map((b) => (
+                <li key={b.to}>
+                  <NavLink
+                    to={b.to}
+                    data-testid={b.testid}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-widest font-bold transition-colors ${
+                        isActive
+                          ? "bg-rd-bg3 text-rd-text"
+                          : "text-rd-muted hover:text-rd-text hover:bg-rd-bg3"
+                      }`
+                    }
+                    style={{
+                      borderLeft: `2px solid ${
+                        loc.pathname === b.to ? b.color : "transparent"
+                      }`,
+                    }}
+                  >
+                    <span
+                      className="inline-block w-2 h-2 rounded-full"
+                      style={{ background: b.color }}
+                    />
+                    {b.label}
                   </NavLink>
                 </li>
               ))}

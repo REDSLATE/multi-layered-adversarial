@@ -20,6 +20,7 @@ import Intents from "@/pages/Intents";
 import Hypothesis from "@/pages/Hypothesis";
 import McShelly from "@/pages/McShelly";
 import Redeye from "@/pages/Redeye";
+import BrainOperatorPage from "@/pages/BrainOperatorPage";
 import Discussion from "@/pages/Discussion";
 import Scorecards from "@/pages/Scorecards";
 import Conflicts from "@/pages/Conflicts";
@@ -129,6 +130,7 @@ function App() {
             <Route path="hypothesis" element={<Hypothesis />} />
             <Route path="mc-shelly" element={<McShelly />} />
             <Route path="redeye" element={<Redeye />} />
+            <Route path="brain-op/:brain" element={<BrainOperatorPage />} />
             <Route path="discussion" element={<Discussion />} />
             <Route path="scorecards" element={<Scorecards />} />
             <Route path="conflicts" element={<Conflicts />} />
