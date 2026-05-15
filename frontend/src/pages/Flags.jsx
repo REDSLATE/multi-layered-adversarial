@@ -69,6 +69,15 @@ export default function Flags() {
             note="ROLE: GOVERNOR · has the keys. Memory firewall, readiness, calibration, audit, promotion control. Cannot place trades — server-enforced."
             testid="flag-chevelle"
           />
+          <FlagCard
+            color="#DC2626"
+            label="REDEYE"
+            project="REDEYE-OPS"
+            flag="REDEYE_OPPONENT_ENFORCE_ENABLED"
+            on={data.enforce_flags.redeye_opponent_enforce_enabled}
+            note="ROLE: OPPONENT · argues the contrary case. Off-ladder adversarial scout. Posts contrary stances on every position. Cannot place trades — server-enforced."
+            testid="flag-redeye"
+          />
 
           <Card className="md:col-span-2" testid="flags-doctrine">
             <div className="label-eyebrow mb-2">Doctrine</div>

@@ -21,11 +21,13 @@ def get_flags_snapshot() -> dict:
             "alpha_phase6_enforce_enabled": _b("PHASE6_ENFORCE_ENABLED"),
             "camaro_executor_enforce_enabled": _b("CAMARO_EXECUTOR_ENFORCE_ENABLED"),
             "chevelle_authority_enabled": _b("CHEVELLE_AUTHORITY_ENABLED"),
+            "redeye_opponent_enforce_enabled": _b("REDEYE_OPPONENT_ENFORCE_ENABLED"),
         },
         "roles": {rt: ROLES[rt] for rt in RUNTIMES},
         "doctrine": (
             "observation-only — execution authority disabled across all runtimes. "
-            "Only Alpha has hands. Camaro has teeth. Chevelle has the keys."
+            "Only Alpha has hands. Camaro has teeth. Chevelle has the keys. "
+            "REDEYE argues the contrary case."
         ),
     }
 
