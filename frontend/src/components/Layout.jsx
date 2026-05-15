@@ -49,10 +49,10 @@ const RUNTIMES = [
   { to: "/admin/brain/redeye", label: "REDEYE", color: "#DC2626", testid: "nav-runtime-redeye" },
 ];
 
-// Per-brain operator/verification dashboards. One per non-Alpha brain —
-// Alpha's verification surface is the public site itself (Alpha's stack
-// serves risedual.ai marketing pages).
+// Per-brain operator/verification dashboards. One per brain so each
+// runtime team has a verification page after pushing updates.
 const BRAIN_OPERATORS = [
+  { to: "/admin/brain-op/alpha",    label: "Alpha Ops",    color: "#3B82F6", testid: "nav-brain-op-alpha" },
   { to: "/admin/brain-op/camaro",   label: "Camaro Ops",   color: "#F59E0B", testid: "nav-brain-op-camaro" },
   { to: "/admin/brain-op/chevelle", label: "Chevelle Ops", color: "#10B981", testid: "nav-brain-op-chevelle" },
   { to: "/admin/brain-op/redeye",   label: "REDEYE Ops",   color: "#DC2626", testid: "nav-brain-op-redeye" },

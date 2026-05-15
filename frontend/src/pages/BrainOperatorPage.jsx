@@ -15,6 +15,14 @@ import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui
  */
 
 const BRAIN_PROFILE = {
+  alpha: {
+    label: "ALPHA",
+    sub: "Decider seat. Strategist voice — bullish/long-direction lead.",
+    color: "#3B82F6",
+    expected_seats: ["decider", "executor"],
+    test_intent: { action: "BUY", symbol: "SPY", lane: "equity", confidence: 0.55,
+                   rationale: "operator wiring test — alpha" },
+  },
   camaro: {
     label: "CAMARO",
     sub: "Decider / Executor. Posts intents that route through the gate chain.",
