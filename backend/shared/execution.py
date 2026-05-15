@@ -38,6 +38,174 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# ───────────────────────────── council ─────────────────────────────
+# Doctrine (2026-05-15): Governor and Opponent are STRUCTURAL signals,
+# not advisory. The auto-router and /execution/submit both consult the
+# most recent governance call and adversarial contribution for the
+# intent's symbol before clearing. Block reasons surface in the gate
+# audit log.
+
+# How fresh a governance/opposition signal must be to count. Older than
+# this and the gate falls back to "no signal" (does NOT block — silence
+# is not a veto, only a missed opportunity).
+_COUNCIL_FRESHNESS_SECONDS = 600  # 10 minutes
+
+
+async def _latest_chevelle_call(symbol: Optional[str]) -> Optional[dict]:
+    """Most recent Chevelle authority_call for this symbol, regardless of age."""
+    if not symbol:
+        return None
+    return await db["shared_receipts"].find_one(
+        {
+            "runtime": "chevelle",
+            "action": "authority_call",
+            "intent.symbol": symbol,
+        },
+        {"_id": 0},
+        sort=[("timestamp", -1)],
+    )
+
+
+async def _latest_redeye_contribution(symbol: Optional[str]) -> Optional[dict]:
+    """Most recent REDEYE sovereign contribution. REDEYE contributes
+    on every council cycle so the freshest one is what we care about —
+    we don't filter by symbol because REDEYE's contributions are mostly
+    macro-stance, not per-symbol (until the brain ships per-symbol data)."""
+    return await db["sovereign_audit_log"].find_one(
+        {"brain": "redeye", "action": "contribution"},
+        {"_id": 0},
+        sort=[("ts", -1)],
+    )
+
+
+def _is_fresh(ts: Optional[str], max_age_seconds: int = _COUNCIL_FRESHNESS_SECONDS) -> bool:
+    if not ts:
+        return False
+    try:
+        # Parse ISO; tolerate "Z" suffix.
+        cleaned = ts.replace("Z", "+00:00")
+        emitted = datetime.fromisoformat(cleaned)
+        if emitted.tzinfo is None:
+            emitted = emitted.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - emitted).total_seconds()
+        return age <= max_age_seconds
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def _evaluate_council(intent: dict) -> list[dict]:
+    """Two gates: governor_authority + opponent_objection.
+
+    governor_authority:
+        Look up Chevelle's most recent authority_call for this symbol.
+        If `executable=False`, BLOCK with the governor's reason.
+        If `executable=True` and fresh, PASS with explicit approval.
+        If no recent call, PASS with "no governor signal" — silence is
+        not a veto (governor must affirmatively block).
+
+    opponent_objection:
+        Look up REDEYE's most recent contribution. If REDEYE's confidence
+        on the OPPOSITE side of this intent is above 0.65 within the
+        freshness window, BLOCK. (REDEYE bearish + this is a BUY ⇒ block.)
+        Silence again does not block. Bounded — not a hair-trigger.
+    """
+    sym = intent.get("symbol")
+    action = (intent.get("action") or "").upper()
+    intent_id = intent.get("intent_id", "?")
+
+    # ── Gate: governor_authority ───────────────────────────────────────
+    chev = await _latest_chevelle_call(sym)
+    if not chev:
+        gov_gate = {
+            "name": "governor_authority",
+            "passed": True,
+            "reason": f"no recent Chevelle authority_call for {sym} — governor silent (not a veto)",
+        }
+    else:
+        c_intent = chev.get("intent", {}) or {}
+        executable = c_intent.get("executable")
+        reason_chev = c_intent.get("execution_gate_reason") or "unspecified"
+        chev_ts = chev.get("timestamp")
+        if executable is False:
+            gov_gate = {
+                "name": "governor_authority",
+                "passed": False,
+                "reason": f"Chevelle (governor) blocked {sym}: '{reason_chev}' @ {chev_ts}",
+            }
+        elif executable is True:
+            gov_gate = {
+                "name": "governor_authority",
+                "passed": True,
+                "reason": f"Chevelle approved {sym} (executable=True) @ {chev_ts}",
+            }
+        else:
+            gov_gate = {
+                "name": "governor_authority",
+                "passed": True,
+                "reason": f"Chevelle call on {sym} did not set executable flag — silence treated as non-veto",
+            }
+
+    # ── Gate: opponent_objection ────────────────────────────────────────
+    redeye_doc = await _latest_redeye_contribution(sym)
+    if not redeye_doc or not _is_fresh(redeye_doc.get("ts")):
+        opp_gate = {
+            "name": "opponent_objection",
+            "passed": True,
+            "reason": "no fresh REDEYE objection — opponent silent (not a veto)",
+        }
+    else:
+        # REDEYE's payload shape: `payload.confidence` + `payload.side`
+        # (bullish | bearish | neutral). When REDEYE is high-confidence
+        # bearish and this intent is BUY/COVER, block. Mirrored on SELL.
+        payload = redeye_doc.get("payload", {}) or {}
+        r_conf = float(payload.get("confidence") or 0.0)
+        r_side = (payload.get("side") or "").lower()
+        # Map intent action to direction.
+        direction = (
+            "bullish" if action in ("BUY", "COVER")
+            else "bearish" if action in ("SELL", "SHORT")
+            else None
+        )
+        OPPOSITION_THRESHOLD = 0.65
+        opposes = (
+            (direction == "bullish" and r_side == "bearish")
+            or (direction == "bearish" and r_side == "bullish")
+        )
+        if opposes and r_conf >= OPPOSITION_THRESHOLD:
+            opp_gate = {
+                "name": "opponent_objection",
+                "passed": False,
+                "reason": (
+                    f"REDEYE (opponent) objects to {action} {sym}: "
+                    f"REDEYE {r_side} @ conf {r_conf:.2f} ≥ {OPPOSITION_THRESHOLD}"
+                ),
+            }
+        else:
+            opp_gate = {
+                "name": "opponent_objection",
+                "passed": True,
+                "reason": (
+                    f"REDEYE {r_side or 'neutral'} @ conf {r_conf:.2f} "
+                    f"— below objection threshold {OPPOSITION_THRESHOLD} or not opposing"
+                ),
+            }
+
+    # Audit: write both council decisions to mc_shelly for training.
+    for g in (gov_gate, opp_gate):
+        record_async(
+            event_type="council_pass" if g["passed"] else "council_block",
+            brain=intent.get("stack"),
+            symbol=sym,
+            action=action,
+            outcome="pass" if g["passed"] else "block",
+            rationale=g["reason"],
+            ref_id=intent_id,
+            gate_name=g["name"],
+        )
+
+    return [gov_gate, opp_gate]
+
+
 # ───────────────────────────── gate chain ─────────────────────────────
 
 async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
@@ -168,7 +336,16 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
         "reason": broker_reason,
     })
 
-    # 6. Hard exposure caps. Lane-aware: crypto gets the $10/order cap;
+    # ─── 6a. Council enforcement ──────────────────────────────────────
+    # Doctrine (2026-05-15): Chevelle (governor) and REDEYE (opponent)
+    # were producing real pushback but the auto-router wasn't listening.
+    # These two gates make the council's voice STRUCTURAL — not just
+    # advisory. They run AFTER broker_connected so the operator sees
+    # broker errors first if both are wrong.
+    council_gates = await _evaluate_council(intent)
+    gates.extend(council_gates)
+
+    # 6b. Hard exposure caps. Lane-aware: crypto gets the $10/order cap;
     #    equities get the lifted global cap.
     side = action or ""
     cap_evals = await evaluate_all(order_notional_usd, side, lane=intent.get("lane"))
