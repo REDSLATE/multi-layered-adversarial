@@ -42,35 +42,100 @@ def _now_iso() -> str:
 
 
 # ───────────────────────────── council ─────────────────────────────
-# Doctrine (rev3, 2026-02-15): the council is bound to SEATS, not brain
-# identities. The Governor seat (whoever holds it) must record a stance
-# on every Executor seat order. Dissent is not a binary block — it's a
-# graduated verdict:
+# Doctrine (rev4, 2026-02-15): LANE-AWARE GRADUATED COUNCIL.
 #
-#   * HARD_VETO          → block (explicit veto bit set + governor conf
-#                                  ≥ GOVERNOR_HARD_VETO_THRESHOLD)
-#   * SOFT_DISSENT       → executor may override if its own conf ≥
-#                          MIN_EXECUTOR_CONF_TO_OVERRIDE_SOFT_DISSENT.
-#                          Override fires the trade at a reduced
-#                          risk_multiplier (default 0.50).
-#   * NO_DISSENT         → trade fires at full size.
-#   * NO_STANCE / OFFLINE→ block. Governor must be HEARD before any
-#                          intent fires (the missing-pushback bug).
+# The council is bound to SEATS, not brain identities. The Governor seat
+# holder must record a stance, but its DISSENT is now a smooth multiplier
+# — not a binary kill switch. Hard veto stays available for true safety
+# stops. Crypto runs a more permissive variant: it punishes hesitation
+# more than equities, so governance damping is reduced and momentum
+# weighting is lifted.
 #
-# Every evaluation writes one row to `shared_governance_decisions` so
-# Shelly / the stacks can later score who was right when the outcome
-# resolves.
-
-# Per-doctrine constants. Raise/lower these to retune the policy.
-GOVERNOR_HARD_VETO_THRESHOLD = 0.85
-GOVERNOR_SOFT_DISSENT_THRESHOLD = 0.55  # advisory; informs scoring
-MIN_EXECUTOR_CONF_TO_OVERRIDE_SOFT_DISSENT = 0.72
-SOFT_DISSENT_RISK_MULTIPLIER = 0.50
+# Verdict outputs:
+#   * HARD_VETO          → block (veto bit + governor conf ≥ hard_veto)
+#   * NO_STANCE          → SOFT downweight (governor uncertain on symbol
+#                          but alive) — NO LONGER a hard block
+#   * GOVERNOR_OFFLINE   → block (no calls anywhere in 30m)
+#   * SOFT_DISSENT       → executor fires at conf × dissent_conf_mult,
+#                          size × dissent_size_mult. Below MIN_EXECUTOR_
+#                          CONF_FLOOR after suppression → block.
+#   * NO_DISSENT         → full size, lane base multiplier.
+#
+# Clamps prevent any single agent from collapsing or amplifying the
+# action space beyond MAX_DOWNWEIGHT / MAX_UPWEIGHT.
 
 # How fresh a council signal must be to count.
 _COUNCIL_FRESHNESS_SECONDS = 600  # 10 minutes
 # How long the governor seat can be silent before we consider it offline.
 _GOVERNOR_OFFLINE_THRESHOLD_SECONDS = 1800  # 30 minutes
+
+# Lane-aware policy. Equity = consensus-first / governance-heavy.
+# Crypto = momentum-biased / governance-light (faster adaptation).
+# Tune any value below to retune the system; no other code change needed.
+COUNCIL_POLICY: dict[str, dict] = {
+    "equity": {
+        "GOVERNOR_HARD_VETO_THRESHOLD": 0.85,
+        "GOVERNOR_DISSENT_CONF_MULT":   0.82,    # executor conf × this on dissent
+        "GOVERNOR_DISSENT_SIZE_MULT":   0.75,    # order size × this on dissent
+        "GOVERNOR_NO_STANCE_SIZE_MULT": 0.65,    # size when governor alive but silent on symbol
+        "GOVERNOR_NO_STANCE_CONF_MULT": 0.85,    # eff-conf reduction when no stance
+        "OPPONENT_INFLUENCE":           0.70,    # max % the opponent can pull the size down
+        "MIN_EXECUTOR_CONF_FLOOR":      0.50,    # below this after multipliers ⇒ block
+        "MAX_UPWEIGHT":                 1.25,
+        "MAX_DOWNWEIGHT":               0.60,
+        "MAX_SINGLE_AGENT_INFLUENCE":   0.40,    # any one agent can move size at most ±40%
+        "MOMENTUM_WEIGHTING":           1.00,    # no momentum bias on equities
+        # Seat-bound stack weights — apply to whoever holds the seat,
+        # NOT to a brain identity. Used in governance ledger for scoring.
+        "STACK_WEIGHTS": {
+            "executor": 1.00, "decider": 0.90,
+            "governor": 0.65, "opponent": 0.80,
+            "advisor":  0.50, "crypto":   1.00,
+        },
+    },
+    "crypto": {
+        "GOVERNOR_HARD_VETO_THRESHOLD": 0.85,
+        # Crypto: governance damping reduced. Soft dissent only shaves
+        # 10% off conf and 17% off size — a "risk shaper", not a brake.
+        "GOVERNOR_DISSENT_CONF_MULT":   0.90,
+        "GOVERNOR_DISSENT_SIZE_MULT":   0.83,
+        "GOVERNOR_NO_STANCE_SIZE_MULT": 0.80,
+        "GOVERNOR_NO_STANCE_CONF_MULT": 0.92,
+        "OPPONENT_INFLUENCE":           0.85,    # crypto crashes are real; listen more to REDEYE
+        "MIN_EXECUTOR_CONF_FLOOR":      0.45,    # slightly lower floor (crypto = noisier)
+        "MAX_UPWEIGHT":                 1.25,
+        "MAX_DOWNWEIGHT":               0.60,
+        "MAX_SINGLE_AGENT_INFLUENCE":   0.40,
+        "MOMENTUM_WEIGHTING":           1.20,    # crypto punishes hesitation — lift momentum
+        "STACK_WEIGHTS": {
+            "executor": 1.00, "decider": 0.90,
+            "governor": 0.65, "opponent": 0.80,
+            "advisor":  0.50, "crypto":   1.00,
+        },
+    },
+}
+
+
+def _policy_for_lane(lane: Optional[str]) -> dict:
+    """Pick the council policy for an intent's lane. Equity is the safe
+    default for legacy / lane-untagged intents."""
+    if (lane or "").lower() == "crypto":
+        return COUNCIL_POLICY["crypto"]
+    return COUNCIL_POLICY["equity"]
+
+
+def _clamp_size(size: float, policy: dict) -> float:
+    """Bound size adjustments by lane-policy floor/ceiling."""
+    return max(policy["MAX_DOWNWEIGHT"], min(policy["MAX_UPWEIGHT"], size))
+
+
+def _clamp_agent_delta(base: float, adjusted: float, policy: dict) -> float:
+    """No single agent may move size by more than ±MAX_SINGLE_AGENT_INFLUENCE
+    from the base. Prevents Chevelle freeze spirals AND Camaro dominance spirals."""
+    cap = policy["MAX_SINGLE_AGENT_INFLUENCE"]
+    delta = adjusted - base
+    delta = max(-cap, min(cap, delta))
+    return base + delta
 
 
 # Brain-identity fields a receipt might use. Engines vary; we accept all.
@@ -247,50 +312,63 @@ def _governance_verdict(
     gov_norm: Optional[dict],
     governor_alive: bool,
     governor_holder: Optional[str],
+    policy: Optional[dict] = None,
 ) -> dict:
-    """Pure function: given the intent and the normalized governor call,
-    return the verdict dict {allowed, reason, disagreement,
-    record_pushback, risk_multiplier}.
+    """Pure function: given the intent, the normalized governor call,
+    and a lane policy, return the verdict dict.
 
-    Doctrine: governor must be HEARD on every intent. Dissent must be
-    LOGGED. Only hard veto BLOCKS. Soft dissent down-sizes a strong
-    executor; blocks a weak one.
+    Output:
+      {
+        allowed: bool,
+        reason: code,
+        disagreement: bool,
+        record_pushback: bool,
+        risk_multiplier: float (continuous, clamped),
+        effective_conf: float (executor conf after governor multipliers),
+      }
+
+    Doctrine: governor must be HEARD. Hard veto blocks. Soft dissent
+    SHAPES (conf × dissent_conf_mult, size × dissent_size_mult) rather
+    than killing — unless the effective conf falls below the floor, in
+    which case we block to protect against weak-conviction-into-headwind
+    trades.
     """
+    p = policy or COUNCIL_POLICY["equity"]
     executor_conf = float(
         intent.get("confidence")
         or intent.get("calibrated_confidence")
         or 0.0
     )
 
-    # Governor seat vacant — there is no one to be heard. Block.
-    if not governor_holder:
+    def _result(allowed, reason, disagreement, size_mult, conf_mult, pushback=False):
+        eff_conf = executor_conf * conf_mult
+        # Clamp size by global bounds. Single-agent influence is clamped
+        # by the caller against the lane baseline (1.0).
         return {
-            "allowed": False,
-            "reason": "GOVERNOR_SEAT_VACANT",
-            "disagreement": False,
-            "record_pushback": False,
-            "risk_multiplier": 0.0,
+            "allowed": allowed,
+            "reason": reason,
+            "disagreement": disagreement,
+            "record_pushback": pushback,
+            "risk_multiplier": _clamp_size(size_mult, p) if allowed else 0.0,
+            "effective_conf": eff_conf,
         }
 
-    # Governor seat occupied but has not spoken (within freshness window)
-    # on this symbol. The doctrine: every intent must have a recorded
-    # stance from the Governor seat. Absence = degraded governance = block.
+    # Governor seat vacant — no one to be heard. Block.
+    if not governor_holder:
+        return _result(False, "GOVERNOR_SEAT_VACANT", False, 0.0, 0.0)
+
+    # Governor alive but no stance on this symbol → SOFT downweight, do
+    # NOT hard-block. Better to trade smaller than to freeze the action
+    # space waiting for a stance that may never come.
     if gov_norm is None:
         if not governor_alive:
-            return {
-                "allowed": False,
-                "reason": "GOVERNOR_OFFLINE",
-                "disagreement": False,
-                "record_pushback": False,
-                "risk_multiplier": 0.0,
-            }
-        return {
-            "allowed": False,
-            "reason": "GOVERNOR_NO_STANCE_ON_SYMBOL",
-            "disagreement": False,
-            "record_pushback": False,
-            "risk_multiplier": 0.0,
-        }
+            return _result(False, "GOVERNOR_OFFLINE", False, 0.0, 0.0)
+        size_mult = p["GOVERNOR_NO_STANCE_SIZE_MULT"]
+        conf_mult = p["GOVERNOR_NO_STANCE_CONF_MULT"]
+        eff_conf = executor_conf * conf_mult
+        if eff_conf < p["MIN_EXECUTOR_CONF_FLOOR"]:
+            return _result(False, "NO_STANCE_LOW_EFFECTIVE_CONF", True, 0.0, conf_mult, pushback=True)
+        return _result(True, "GOVERNOR_NO_STANCE_SOFT_DOWNWEIGHT", True, size_mult, conf_mult, pushback=True)
 
     governor_veto = bool(gov_norm.get("veto", False))
     governor_conf = float(gov_norm.get("confidence") or 0.0)
@@ -305,41 +383,23 @@ def _governance_verdict(
     )
 
     # Hard veto: explicit veto bit AND high conviction. True safety stop.
-    if governor_veto and governor_conf >= GOVERNOR_HARD_VETO_THRESHOLD:
-        return {
-            "allowed": False,
-            "reason": "GOVERNOR_HARD_VETO",
-            "disagreement": True,
-            "record_pushback": True,
-            "risk_multiplier": 0.0,
-        }
+    if governor_veto and governor_conf >= p["GOVERNOR_HARD_VETO_THRESHOLD"]:
+        return _result(False, "GOVERNOR_HARD_VETO", True, 0.0, 0.0, pushback=True)
 
-    # Soft dissent: executor may override if its own conviction is high.
+    # Soft dissent: shape, don't kill. conf × dissent_conf_mult; size ×
+    # dissent_size_mult. Block only if effective conf falls below floor.
     if disagreement:
-        if executor_conf >= MIN_EXECUTOR_CONF_TO_OVERRIDE_SOFT_DISSENT:
-            return {
-                "allowed": True,
-                "reason": "EXECUTOR_OVERRIDES_SOFT_DISSENT",
-                "disagreement": True,
-                "record_pushback": True,
-                "risk_multiplier": SOFT_DISSENT_RISK_MULTIPLIER,
-            }
-        return {
-            "allowed": False,
-            "reason": "SOFT_DISSENT_LOW_EXECUTOR_CONF",
-            "disagreement": True,
-            "record_pushback": True,
-            "risk_multiplier": 0.0,
-        }
+        size_mult = p["GOVERNOR_DISSENT_SIZE_MULT"]
+        conf_mult = p["GOVERNOR_DISSENT_CONF_MULT"]
+        eff_conf = executor_conf * conf_mult
+        if eff_conf < p["MIN_EXECUTOR_CONF_FLOOR"]:
+            return _result(False, "SOFT_DISSENT_BELOW_FLOOR", True, 0.0, conf_mult, pushback=True)
+        return _result(True, "SOFT_DISSENT_DOWNWEIGHTED", True, size_mult, conf_mult, pushback=True)
 
-    # No dissent — full size.
-    return {
-        "allowed": True,
-        "reason": "NO_GOVERNOR_DISSENT",
-        "disagreement": False,
-        "record_pushback": False,
-        "risk_multiplier": 1.0,
-    }
+    # No dissent — lane baseline. Momentum weighting allows crypto to
+    # punch slightly above the equity baseline (≤ MAX_UPWEIGHT).
+    size_mult = 1.0 * p["MOMENTUM_WEIGHTING"]
+    return _result(True, "NO_GOVERNOR_DISSENT", False, size_mult, 1.0)
 
 
 async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
@@ -353,6 +413,8 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
     sym = intent.get("symbol")
     action = (intent.get("action") or "").upper()
     intent_id = intent.get("intent_id", "?")
+    lane = intent.get("lane")
+    policy = _policy_for_lane(lane)
     executor_holder = await _seat_holder("executor")
     governor_holder, gov_doc = await _latest_governor_call(sym)
     gov_norm = _normalize_governor_call(gov_doc)
@@ -366,34 +428,43 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
         governor_alive = True
         gov_any_ts = gov_norm.get("ts")
 
-    verdict = _governance_verdict(intent, gov_norm, governor_alive, governor_holder)
+    verdict = _governance_verdict(intent, gov_norm, governor_alive, governor_holder, policy)
 
     # Build the gate row for the governor.
     gov_reason_text = {
         "GOVERNOR_HARD_VETO": (
-            f"GOVERNOR ({governor_holder}) hard veto on {sym}: "
+            f"GOVERNOR ({governor_holder}) HARD VETO on {sym} ({lane or 'equity'}): "
             f"conf={gov_norm.get('confidence') if gov_norm else 'n/a'} "
-            f"≥ {GOVERNOR_HARD_VETO_THRESHOLD}"
+            f"≥ {policy['GOVERNOR_HARD_VETO_THRESHOLD']}"
         ),
-        "SOFT_DISSENT_LOW_EXECUTOR_CONF": (
+        "SOFT_DISSENT_DOWNWEIGHTED": (
             f"GOVERNOR ({governor_holder}) dissented on {sym}; "
             f"executor ({executor_holder}) conf "
-            f"{float(intent.get('confidence') or 0.0):.2f} "
-            f"< override threshold {MIN_EXECUTOR_CONF_TO_OVERRIDE_SOFT_DISSENT}"
+            f"{float(intent.get('confidence') or 0.0):.2f} × "
+            f"{policy['GOVERNOR_DISSENT_CONF_MULT']:.2f} = "
+            f"{verdict.get('effective_conf', 0):.2f} (≥ floor "
+            f"{policy['MIN_EXECUTOR_CONF_FLOOR']:.2f}) — fires at "
+            f"size×{verdict['risk_multiplier']:.2f}"
         ),
-        "EXECUTOR_OVERRIDES_SOFT_DISSENT": (
-            f"GOVERNOR ({governor_holder}) dissented but executor "
-            f"({executor_holder}) overrode at conf "
-            f"{float(intent.get('confidence') or 0.0):.2f} — "
-            f"trade fires at risk×{SOFT_DISSENT_RISK_MULTIPLIER:.2f}"
+        "SOFT_DISSENT_BELOW_FLOOR": (
+            f"GOVERNOR ({governor_holder}) dissented on {sym}; "
+            f"effective conf {verdict.get('effective_conf', 0):.2f} "
+            f"< floor {policy['MIN_EXECUTOR_CONF_FLOOR']:.2f} — "
+            f"conviction too weak after governor suppression"
+        ),
+        "GOVERNOR_NO_STANCE_SOFT_DOWNWEIGHT": (
+            f"GOVERNOR ({governor_holder}) live but no stance on {sym} — "
+            f"soft downweight: size×{verdict['risk_multiplier']:.2f}"
+        ),
+        "NO_STANCE_LOW_EFFECTIVE_CONF": (
+            f"GOVERNOR ({governor_holder}) silent on {sym} AND executor "
+            f"conf too low after suppression "
+            f"({verdict.get('effective_conf', 0):.2f} < "
+            f"{policy['MIN_EXECUTOR_CONF_FLOOR']:.2f})"
         ),
         "NO_GOVERNOR_DISSENT": (
             f"GOVERNOR ({governor_holder}) recorded stance with no "
-            f"dissent on {sym} — full size"
-        ),
-        "GOVERNOR_NO_STANCE_ON_SYMBOL": (
-            f"GOVERNOR ({governor_holder}) is live but recorded no "
-            f"stance on {sym} — governance must be heard"
+            f"dissent on {sym} — size×{verdict['risk_multiplier']:.2f}"
         ),
         "GOVERNOR_OFFLINE": (
             f"GOVERNOR ({governor_holder}) silent for "
@@ -411,6 +482,9 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
         "verdict_code": verdict["reason"],
         "disagreement": verdict["disagreement"],
         "risk_multiplier": verdict["risk_multiplier"],
+        "effective_conf": verdict.get("effective_conf"),
+        "lane": lane,
+        "policy_used": "crypto" if (lane or "").lower() == "crypto" else "equity",
     }
 
     # ── opponent_objection ─────────────────────────────────────────────
@@ -474,7 +548,7 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
         )
         opp_gate = {
             "name": "opponent_objection",
-            "passed": True,  # advisory; never blocks
+            "passed": True,  # advisory; never blocks on its own
             "reason": (
                 f"OPPONENT ({opponent_holder}) {r_side or 'neutral'} "
                 f"@ conf {r_conf:.2f} — "
@@ -486,6 +560,36 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
             "opponent_side": r_side,
             "opponent_opposes": opposes,
         }
+
+    # ── Compose final size: governor verdict × opponent influence × clamps ─
+    # Doctrine: each agent shapes risk, none collapse it (except hard veto).
+    base_size = verdict["risk_multiplier"]  # already 0 if blocked
+    final_size = base_size
+    opp_influence_applied = 0.0
+
+    if verdict["allowed"] and opp_gate.get("opponent_opposes"):
+        # Opponent pulls size DOWN proportional to their confidence and
+        # the lane's OPPONENT_INFLUENCE. Maximum pull bounded by
+        # MAX_SINGLE_AGENT_INFLUENCE so REDEYE can't single-handedly
+        # freeze a strong Camaro setup.
+        opp_conf = float(opp_gate["opponent_conf"])
+        raw_pull = opp_conf * policy["OPPONENT_INFLUENCE"]
+        opp_influence_applied = min(raw_pull, policy["MAX_SINGLE_AGENT_INFLUENCE"])
+        final_size = _clamp_agent_delta(base_size, base_size * (1.0 - opp_influence_applied), policy)
+        # Update opponent gate reason to reflect the actual influence applied.
+        opp_gate["reason"] = (
+            f"OPPONENT ({opp_gate['opponent_holder']}) opposes "
+            f"{action} {sym} @ conf {opp_gate['opponent_conf']:.2f} — "
+            f"size pulled by {opp_influence_applied:.0%} "
+            f"(base {base_size:.2f} → {final_size:.2f})"
+        )
+        opp_gate["opp_influence_applied"] = opp_influence_applied
+
+    # Final clamp against lane bounds (defense in depth).
+    final_size = _clamp_size(final_size, policy) if verdict["allowed"] else 0.0
+    # Reflect the composed size back on the governor row so downstream
+    # readers (auto_router) see the post-composition number.
+    gov_gate["risk_multiplier"] = final_size
 
     # Audit: write both council decisions to mc_shelly for training.
     for g in (gov_gate, opp_gate):
@@ -508,10 +612,12 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
         "ts": _now_iso(),
         "intent_id": intent_id,
         "symbol": sym,
-        "lane": intent.get("lane"),
+        "lane": lane,
+        "policy_used": "crypto" if (lane or "").lower() == "crypto" else "equity",
         "executor_seat_holder": executor_holder,
         "executor_action": action,
         "executor_confidence": float(intent.get("confidence") or 0.0),
+        "executor_effective_conf": verdict.get("effective_conf"),
         "governor_seat_holder": governor_holder,
         "governor_stance": (gov_norm or {}).get("stance"),
         "governor_executable": (gov_norm or {}).get("executable"),
@@ -522,14 +628,23 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
         "opponent_confidence": opp_gate.get("opponent_conf"),
         "opponent_side": opp_gate.get("opponent_side"),
         "opponent_opposes": opp_gate.get("opponent_opposes"),
+        "opp_influence_applied": opp_influence_applied,
         "disagreement": verdict["disagreement"],
         "verdict_code": verdict["reason"],
         "final_allowed": verdict["allowed"],
-        "risk_multiplier": verdict["risk_multiplier"],
+        "base_risk_multiplier": base_size,
+        "risk_multiplier": final_size,
+        "stack_weights": policy["STACK_WEIGHTS"],
         "thresholds": {
-            "hard_veto": GOVERNOR_HARD_VETO_THRESHOLD,
-            "soft_dissent": GOVERNOR_SOFT_DISSENT_THRESHOLD,
-            "executor_override": MIN_EXECUTOR_CONF_TO_OVERRIDE_SOFT_DISSENT,
+            "hard_veto":          policy["GOVERNOR_HARD_VETO_THRESHOLD"],
+            "dissent_conf_mult":  policy["GOVERNOR_DISSENT_CONF_MULT"],
+            "dissent_size_mult":  policy["GOVERNOR_DISSENT_SIZE_MULT"],
+            "min_executor_conf_floor": policy["MIN_EXECUTOR_CONF_FLOOR"],
+            "opponent_influence": policy["OPPONENT_INFLUENCE"],
+            "max_upweight":       policy["MAX_UPWEIGHT"],
+            "max_downweight":     policy["MAX_DOWNWEIGHT"],
+            "max_agent_influence": policy["MAX_SINGLE_AGENT_INFLUENCE"],
+            "momentum_weighting": policy["MOMENTUM_WEIGHTING"],
         },
     }
     try:
@@ -539,7 +654,7 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
         # failure kill the gate evaluation.
         pass
 
-    return [gov_gate, opp_gate], verdict["risk_multiplier"]
+    return [gov_gate, opp_gate], final_size
 
 
 # ───────────────────────────── gate chain ─────────────────────────────
@@ -1015,13 +1130,15 @@ async def council_lookup_debug(
         description="simulated executor conviction to test the verdict against",
     ),
     action: str = Query(default="BUY", description="simulated intent action"),
+    lane: str = Query(default="equity", description="equity or crypto"),
     _user: dict = Depends(get_current_user),  # noqa: B008
 ):
     """Returns who holds each seat, what they last said, and the
     graduated verdict that would fire for a hypothetical intent at
-    `executor_confidence`. This makes seat-binding visible: switch the
-    Governor seat to a different brain and re-hit this endpoint to see
-    the verdict flip."""
+    `executor_confidence` on the requested `lane`. This makes seat-
+    binding and lane-policy visible: switch the Governor seat or the
+    lane and re-hit this endpoint to see the verdict flip."""
+    policy = _policy_for_lane(lane)
     governor_holder, gov_doc = await _latest_governor_call(symbol)
     _, gov_any = await _latest_governor_any_call()
     opponent_holder, opp_doc = await _latest_opponent_contribution()
@@ -1037,8 +1154,9 @@ async def council_lookup_debug(
         "action": action.upper(),
         "confidence": executor_confidence,
         "stack": executor_holder,
+        "lane": lane,
     }
-    verdict = _governance_verdict(sim_intent, gov_norm, governor_alive, governor_holder)
+    verdict = _governance_verdict(sim_intent, gov_norm, governor_alive, governor_holder, policy)
 
     # Collection health: counts under the CURRENT seat occupants.
     gov_total = 0
@@ -1054,6 +1172,8 @@ async def council_lookup_debug(
 
     return {
         "symbol": symbol,
+        "lane": lane,
+        "policy_used": "crypto" if lane.lower() == "crypto" else "equity",
         "seats": {
             "executor": executor_holder,
             "governor": governor_holder,
@@ -1085,12 +1205,9 @@ async def council_lookup_debug(
         "simulated_verdict": {
             "input_executor_confidence": executor_confidence,
             "input_action": action.upper(),
+            "input_lane": lane,
             **verdict,
         },
-        "policy_thresholds": {
-            "GOVERNOR_HARD_VETO_THRESHOLD": GOVERNOR_HARD_VETO_THRESHOLD,
-            "GOVERNOR_SOFT_DISSENT_THRESHOLD": GOVERNOR_SOFT_DISSENT_THRESHOLD,
-            "MIN_EXECUTOR_CONF_TO_OVERRIDE_SOFT_DISSENT": MIN_EXECUTOR_CONF_TO_OVERRIDE_SOFT_DISSENT,
-            "SOFT_DISSENT_RISK_MULTIPLIER": SOFT_DISSENT_RISK_MULTIPLIER,
-        },
+        "active_policy": policy,
+        "all_policies": COUNCIL_POLICY,
     }
