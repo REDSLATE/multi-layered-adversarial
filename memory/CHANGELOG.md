@@ -1,3 +1,38 @@
+## 2026-02-16 — RosterPanel dual-lane (EQUITY | CRYPTO)
+
+Updated `frontend/src/components/RosterPanel.jsx` to render the cross-lane
+multi-seating model added 2026-02-15. Two lanes are now visible side-by-side:
+
+- EQUITY LANE (5 seats): decider, executor, governor, advisor, opponent
+- CRYPTO LANE (4 seats): crypto (executor), crypto_governor, crypto_advisor, crypto_opponent
+
+The picker now surfaces cross-lane state clearly: when a candidate brain already
+holds a seat in the *same* lane, the chip warns "will vacate <role>" (backend
+auto-vacates intra-lane). When they hold a seat in the *other* lane, the chip
+shows "also holds <role> (<lane>)" — no vacation needed, cross-lane is allowed.
+The eligibility matrix gained a two-row header grouping EQUITY vs CRYPTO so all
+36 cells (4 brains × 9 roles) are scannable.
+
+**Files changed:**
+- `frontend/src/components/RosterPanel.jsx` — full rewrite (~395 lines)
+
+**Verified:**
+- GET /api/admin/roster returns all 9 roles
+- All 9 roster-slot-* testids resolve on /admin/overview
+- Cross-lane assignments persisted (chevelle: governor + crypto_governor)
+
+## 2026-02-16 — execution.py post-extraction cleanup
+
+Removed 6 residual unused imports from `shared/execution.py` left over after
+the council/quantum extraction (council moved to `shared/council.py` on
+2026-02-15). Hoisted the council re-export block to the top-of-file import
+section to clear the E402 module-level-import-not-at-top warning. File is now
+639 lines (down from 1355 pre-extraction) and `ruff check` returns clean.
+
+**Files changed:**
+- `backend/shared/execution.py` — import cleanup only, no behavior change
+
+
 # CHANGELOG — RiseDual Mission Control
 
 Append-only. Newest at top.

@@ -1,6 +1,33 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🚨 Latest (2026-02-16): Council extraction finalized + RosterPanel dual-lane UI
+
+**P0 — `execution.py` post-extraction cleanup.** The council/quantum extraction
+itself completed 2026-02-15 (council now lives in `shared/council.py`, 769 lines;
+quantum in `shared/quantum_state.py`, 210 lines; execution.py shrunk from 1355
+→ 639 lines). This pass removed the 6 residual unused imports left behind and
+hoisted the council re-exports to the top-of-file import section — `execution.py`
+is now ruff-clean.
+
+**P1 — RosterPanel dual-lane UI.** `frontend/src/components/RosterPanel.jsx`
+rewritten to render the cross-lane multi-seating model the backend has supported
+since 2026-02-15. Two lanes side-by-side:
+- **EQUITY** (5 seats): decider, executor, governor, advisor, opponent
+- **CRYPTO** (4 seats): crypto (executor), crypto_governor, crypto_advisor, crypto_opponent
+
+The picker UX explicitly distinguishes the two flavors of multi-seating:
+- **Intra-lane** (forbidden by backend): chip warns "will vacate <role>" because
+  the backend auto-vacates the same-lane previous seat on assign.
+- **Cross-lane** (allowed by doctrine): chip shows "also holds <role> (<lane>)"
+  — both seats are kept. Chevelle holding equity governor AND crypto_governor
+  is the canonical example.
+
+The eligibility matrix now has a two-row header grouping EQUITY vs CRYPTO so all
+36 cells (4 brains × 9 roles) remain scannable.
+
+
+
 ## 🚨 Latest (2026-02-15): Seat-Bound Graduated Council Doctrine (rev3)
 
 **Doctrine rewrite**: governance is now **graduated** and **seat-bound**, not binary and identity-bound. Trades fire when conviction outweighs dissent; only hard vetoes hard-block; every dissent is logged so outcomes can score who was right.

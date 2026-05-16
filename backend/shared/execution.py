@@ -23,43 +23,21 @@ from db import db
 from namespaces import (
     EXECUTION_RECEIPTS,
     SHARED_GATE_RESULTS,
-    SHARED_GOVERNANCE_DECISIONS,
     SHARED_INTENTS,
     SHARED_RECEIPTS,
     SOVEREIGN_AUDIT_LOG,
 )
 from shared.broker.alpaca_routes import get_alpaca_adapter
-from shared.exposure_caps import caps_snapshot, evaluate_all
-from shared.executor_seat import get_executor_holder
-from shared.mc_shelly import record_async
-from shared.quantum_state import (
-    BrainOpinion as _QSBrainOpinion,
-    build_quantum_inspired_state as _build_quantum_state,
-)
-from shared.stack_personalities import (
-    enrich_response as _stamp_personality,
-    personality_of as _personality_of,
-)
-
-
-router = APIRouter(tags=["execution"])
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-# ───────────────────────────── council ─────────────────────────────
-# Extracted 2026-02-15 to shared/council.py to keep this module under
-# control (was 1355 lines). Council doctrine and all helpers live
-# there now. We re-export the helpers used elsewhere in this file.
+# Council doctrine and helpers were extracted 2026-02-15 to
+# `shared/council.py` to keep this module under control (was 1355
+# lines). We import the helpers used by the gate chain and the
+# diagnostic endpoint here.
 from shared.council import (
     COUNCIL_POLICY,
     _COUNCIL_FRESHNESS_SECONDS,
     _GOVERNOR_OFFLINE_THRESHOLD_SECONDS,
     _authority_call_clause,
     _brain_match_clause,
-    _clamp_size,
     _contribution_clause,
     _doc_ts,
     _evaluate_council,
@@ -72,6 +50,16 @@ from shared.council import (
     _policy_for_lane,
     _seat_holder,
 )
+from shared.exposure_caps import caps_snapshot, evaluate_all
+from shared.executor_seat import get_executor_holder
+from shared.mc_shelly import record_async
+
+
+router = APIRouter(tags=["execution"])
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 # ───────────────────────────── gate chain ─────────────────────────────

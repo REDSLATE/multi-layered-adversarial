@@ -6,13 +6,22 @@ import {
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
+// ─── Role metadata. Equity lane = legacy 5 seats; crypto lane = isolated
+// council added 2026-02-15 for cross-lane multi-seating. The labels are
+// shortened in the crypto column ("EXECUTOR", "GOVERNOR", ...) because the
+// lane header already says "CRYPTO" — keeps the cards readable.
 const ROLE_META = {
-  decider:   { label: "DECIDER",   desc: "Forms the trust / reduce / veto / observation call",          color: "#F59E0B" },
-  executor:  { label: "EXECUTOR",  desc: "Calls the long/short direction. Phase 2 will route orders here", color: "#3B82F6" },
-  governor:  { label: "GOVERNOR",  desc: "Audits, gates, freezes — never decides, never executes",      color: "#10B981" },
-  advisor:   { label: "ADVISOR",   desc: "Gives neutral counsel. Off-ladder. Never decides, never executes", color: "#22C55E" },
-  opponent:  { label: "OPPONENT",  desc: "Argues the contrary case. Off-ladder. Never decides, never executes", color: "#DC2626" },
-  crypto:    { label: "CRYPTO",    desc: "Crypto-only execution lane. Routes Kraken orders. $30/order cap.", color: "#A855F7" },
+  // ── EQUITY LANE ──
+  decider:          { label: "DECIDER",   desc: "Forms the trust / reduce / veto / observation call",                        color: "#F59E0B" },
+  executor:         { label: "EXECUTOR",  desc: "Calls the long/short direction. Routes Alpaca orders.",                     color: "#3B82F6" },
+  governor:         { label: "GOVERNOR",  desc: "Audits, gates, freezes — never decides, never executes",                    color: "#10B981" },
+  advisor:          { label: "ADVISOR",   desc: "Neutral counsel. Off-ladder. Never decides, never executes",                color: "#22C55E" },
+  opponent:         { label: "OPPONENT",  desc: "Argues the contrary case. Off-ladder.",                                     color: "#DC2626" },
+  // ── CRYPTO LANE ──
+  crypto:           { label: "EXECUTOR",  desc: "Crypto execution chair. Routes Kraken orders. $30/order cap.",              color: "#A855F7" },
+  crypto_governor:  { label: "GOVERNOR",  desc: "Crypto-only governor. Audits, gates, freezes crypto intents.",              color: "#10B981" },
+  crypto_advisor:   { label: "ADVISOR",   desc: "Crypto-only neutral counsel. Off-ladder.",                                  color: "#22C55E" },
+  crypto_opponent:  { label: "OPPONENT",  desc: "Crypto-only contrary voice. Off-ladder.",                                   color: "#DC2626" },
 };
 
 const BRAIN_META = {
@@ -22,17 +31,32 @@ const BRAIN_META = {
   redeye:   { label: "REDEYE",   color: "#DC2626" },
 };
 
-const ROLES = ["decider", "executor", "governor", "advisor", "opponent", "crypto"];
+const EQUITY_ROLES = ["decider", "executor", "governor", "advisor", "opponent"];
+const CRYPTO_ROLES = ["crypto", "crypto_governor", "crypto_advisor", "crypto_opponent"];
+const ALL_ROLES = [...EQUITY_ROLES, ...CRYPTO_ROLES];
 const BRAINS = ["alpha", "camaro", "chevelle", "redeye"];
+
+const LANE_META = {
+  equity: { label: "EQUITY LANE",  desc: "Alpaca · consensus-first governance",      color: "#3B82F6" },
+  crypto: { label: "CRYPTO LANE",  desc: "Kraken · momentum-biased, lane-isolated",  color: "#A855F7" },
+};
 
 const CHURN_COLOR = { LOW: "#22C55E", MEDIUM: "#F59E0B", HIGH: "#DC2626" };
 
+// Roles that belong to the crypto lane — used for cross-lane multi-seating
+// logic in the picker (one brain can hold one equity seat AND one crypto
+// seat simultaneously; only within-lane double-seating is auto-vacated).
+const _CRYPTO_LANE_SET = new Set(CRYPTO_ROLES);
+const _laneOf = (role) => (_CRYPTO_LANE_SET.has(role) ? "crypto" : "equity");
+
 /**
  * Brain Roster panel — operator swaps which brain occupies which role,
- * gated by an eligibility switch matrix.
+ * gated by an eligibility switch matrix. Renders two lanes side-by-side
+ * (EQUITY | CRYPTO). Crypto seats are isolated: a brain can hold one
+ * seat per lane simultaneously (Camaro: equity decider + crypto opponent,
+ * Chevelle: equity governor + crypto governor, etc.).
  *
  * Doctrine: descriptive metadata only. Does not grant execution.
- * Tenure is observability — informs trust/stability, not authority.
  */
 export default function RosterPanel() {
   const [data, setData] = useState(null);
@@ -77,6 +101,30 @@ export default function RosterPanel() {
   const eligibility = data.eligibility || {};
   const tenureByRole = Object.fromEntries((tenure?.per_role || []).map(r => [r.role, r]));
 
+  const renderSlot = (role) => (
+    <RoleSlot
+      key={role}
+      role={role}
+      occupant={assignments[role]}
+      assignments={assignments}
+      eligibility={eligibility}
+      tenure={tenureByRole[role]}
+      onAssign={(brain) =>
+        action(
+          `${BRAIN_META[brain]?.label || brain.toUpperCase()} → ${ROLE_META[role].label} (${_laneOf(role).toUpperCase()})`,
+          () => api.post("/admin/roster/assign", { role, brain }),
+        )
+      }
+      onVacate={() =>
+        action(
+          `${ROLE_META[role].label} (${_laneOf(role).toUpperCase()}) vacated`,
+          () => api.post("/admin/roster/assign", { role, brain: null }),
+        )
+      }
+      busy={busy}
+    />
+  );
+
   return (
     <Card className="p-0 overflow-hidden mb-6" testid="roster-panel">
       <div className="px-4 py-3 border-b border-rd-border flex items-baseline justify-between gap-3 flex-wrap">
@@ -112,30 +160,17 @@ export default function RosterPanel() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 divide-y md:divide-y-0 md:divide-x divide-rd-border">
-        {ROLES.map((role) => (
-          <RoleSlot
-            key={role}
-            role={role}
-            occupant={assignments[role]}
-            assignments={assignments}
-            eligibility={eligibility}
-            tenure={tenureByRole[role]}
-            onAssign={(brain) =>
-              action(
-                `${BRAIN_META[brain]?.label || brain.toUpperCase()} → ${ROLE_META[role].label}`,
-                () => api.post("/admin/roster/assign", { role, brain }),
-              )
-            }
-            onVacate={() =>
-              action(
-                `${ROLE_META[role].label} vacated`,
-                () => api.post("/admin/roster/assign", { role, brain: null }),
-              )
-            }
-            busy={busy}
-          />
-        ))}
+      {/* Two-lane layout: equity lane (5 seats) on the left, crypto lane
+          (4 seats) on the right. On narrow screens they stack. */}
+      <div className="grid grid-cols-1 lg:grid-cols-9 divide-y lg:divide-y-0 lg:divide-x divide-rd-border">
+        <LaneHeader lane="equity" />
+        <div className="lg:col-span-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 divide-y sm:divide-y-0 sm:divide-x divide-rd-border" data-testid="roster-lane-equity">
+          {EQUITY_ROLES.map(renderSlot)}
+        </div>
+        <LaneHeader lane="crypto" />
+        <div className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-rd-border" data-testid="roster-lane-crypto">
+          {CRYPTO_ROLES.map(renderSlot)}
+        </div>
       </div>
 
       {showEligibility && (
@@ -144,7 +179,7 @@ export default function RosterPanel() {
           assignments={assignments}
           onToggle={(brain, role, allowed) =>
             action(
-              `${BRAIN_META[brain]?.label} · ${ROLE_META[role].label} ${allowed ? "ALLOWED" : "BLOCKED"}`,
+              `${BRAIN_META[brain]?.label} · ${ROLE_META[role].label} (${_laneOf(role).toUpperCase()}) ${allowed ? "ALLOWED" : "BLOCKED"}`,
               () => api.post("/admin/roster/eligibility", { brain, role, allowed }),
             )
           }
@@ -177,13 +212,34 @@ export default function RosterPanel() {
   );
 }
 
+function LaneHeader({ lane }) {
+  const meta = LANE_META[lane];
+  return (
+    <div
+      className="lg:col-span-1 px-3 py-3 bg-rd-bg2 flex lg:flex-col items-baseline lg:items-start justify-between lg:justify-start gap-2 lg:gap-3 border-b lg:border-b-0 border-rd-border"
+      data-testid={`roster-lane-header-${lane}`}
+    >
+      <Badge color={meta.color}>{meta.label}</Badge>
+      <div className="text-[10px] text-rd-dim font-mono leading-relaxed lg:writing-mode-horizontal">
+        {meta.desc}
+      </div>
+    </div>
+  );
+}
+
 function RoleSlot({ role, occupant, assignments, eligibility, tenure, onAssign, onVacate, busy }) {
   const [picking, setPicking] = useState(false);
   const meta = ROLE_META[role];
+  const myLane = _laneOf(role);
 
-  const roleOfBrain = {};
+  // Reverse lookup: which roles does each brain currently hold? A brain
+  // may hold one equity seat AND one crypto seat simultaneously, so we
+  // need to know per-lane whether they're already booked.
+  const lanesOfBrain = {};
   for (const [r, b] of Object.entries(assignments)) {
-    if (b) roleOfBrain[b] = r;
+    if (!b) continue;
+    if (!lanesOfBrain[b]) lanesOfBrain[b] = {};
+    lanesOfBrain[b][_laneOf(r)] = r;
   }
 
   return (
@@ -243,9 +299,12 @@ function RoleSlot({ role, occupant, assignments, eligibility, tenure, onAssign, 
       ) : (
         <div className="space-y-1" data-testid={`roster-picker-${role}`}>
           {BRAINS.map((brain) => {
-            const elsewhere = roleOfBrain[brain] && roleOfBrain[brain] !== role
-              ? roleOfBrain[brain]
-              : null;
+            // Within-lane multi-seating is auto-vacated by the backend.
+            // Cross-lane multi-seating is allowed and labeled, not blocked.
+            const sameLaneRole = lanesOfBrain[brain]?.[myLane];
+            const elsewhereSameLane = sameLaneRole && sameLaneRole !== role ? sameLaneRole : null;
+            const otherLane = myLane === "equity" ? "crypto" : "equity";
+            const otherLaneRole = lanesOfBrain[brain]?.[otherLane];
             const isCurrent = occupant === brain;
             const isEligible = !!eligibility?.[brain]?.[role];
             return (
@@ -271,9 +330,14 @@ function RoleSlot({ role, occupant, assignments, eligibility, tenure, onAssign, 
                 {!isEligible && (
                   <span className="text-[10px] text-rd-danger ml-auto">BLOCKED</span>
                 )}
-                {isEligible && elsewhere && (
+                {isEligible && elsewhereSameLane && (
                   <span className="text-[10px] text-rd-warning ml-auto">
-                    currently {ROLE_META[elsewhere].label.toLowerCase()}
+                    will vacate {ROLE_META[elsewhereSameLane].label.toLowerCase()}
+                  </span>
+                )}
+                {isEligible && !elsewhereSameLane && otherLaneRole && (
+                  <span className="text-[10px] text-rd-dim ml-auto">
+                    also holds {ROLE_META[otherLaneRole].label.toLowerCase()} ({otherLane})
                   </span>
                 )}
                 {isCurrent && (
@@ -305,8 +369,16 @@ function EligibilityMatrix({ eligibility, assignments, onToggle, busy }) {
         <table className="text-[11px] font-mono w-full">
           <thead>
             <tr className="text-rd-dim uppercase tracking-widest text-[10px]">
-              <th className="text-left py-1.5 pr-3">brain \ role</th>
-              {ROLES.map((r) => (
+              <th className="text-left py-1.5 pr-3 align-bottom" rowSpan={2}>brain \ role</th>
+              <th className="text-center py-1 px-2 border-b border-rd-border" colSpan={EQUITY_ROLES.length}>
+                <Badge color={LANE_META.equity.color}>EQUITY</Badge>
+              </th>
+              <th className="text-center py-1 px-2 border-b border-rd-border" colSpan={CRYPTO_ROLES.length}>
+                <Badge color={LANE_META.crypto.color}>CRYPTO</Badge>
+              </th>
+            </tr>
+            <tr className="text-rd-dim uppercase tracking-widest text-[10px]">
+              {ALL_ROLES.map((r) => (
                 <th key={r} className="text-center py-1.5 px-2">
                   {ROLE_META[r].label}
                 </th>
@@ -319,7 +391,7 @@ function EligibilityMatrix({ eligibility, assignments, onToggle, busy }) {
                 <td className="py-1.5 pr-3">
                   <Badge color={BRAIN_META[b].color}>{BRAIN_META[b].label}</Badge>
                 </td>
-                {ROLES.map((r) => {
+                {ALL_ROLES.map((r) => {
                   const allowed = !!eligibility?.[b]?.[r];
                   const isCurrent = assignments?.[r] === b;
                   return (
