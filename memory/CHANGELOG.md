@@ -1,3 +1,79 @@
+## 2026-02-16 (very late) — Lane bleed scrubbed from ingest + gate chain messaging
+
+Operator's question: "Why is [the crypto intent path] going past the equity
+executor seat? If they're separate why would the executor seat for crypto
+need permission from the equity seat?"
+
+Correct read — there was residual equity-side leakage in two places, surviving
+this morning's earlier seat-snapshot fix:
+
+### Issue 1 — Ingest stamped equity executor as `executor_holder_at_post`
+
+Both intent-post paths (`POST /api/intents` and `POST /api/admin/intents`)
+called `get_executor_holder()` unconditionally to populate
+`executor_holder_at_post`. That helper only reads the equity executor seat
+doc, so a REDEYE crypto intent ended up stamped:
+
+```
+executor_holder_at_post: "alpha"   # equity holder — meaningless for crypto
+```
+
+Audit fields lied about authority on every crypto intent.
+
+### Issue 2 — Gate chain fallback message also referenced the equity seat
+
+`execution.py:_evaluate_gates` had a legacy fallback:
+```python
+if current_holder is None:
+    current_holder = await get_executor_holder()
+```
+And the final error branch read:
+```
+f"Execute-seat was held by {held_at_post} at post time, not {intent_stack}"
+```
+For a crypto intent with no crypto seat held, this message would surface the
+**equity** holder — telling the operator REDEYE crypto was blocked by an
+Alpha-shaped problem. Not true; the lanes are independent.
+
+### Fix
+
+`shared/intents.py` (both paths):
+- Compute `executor_at_post` by walking `seats_with_execute(intent_lane)` and
+  recording the holder of the lane-appropriate execute seat. For crypto,
+  that's the `crypto` seat holder. For equity, that's the `executor` seat
+  holder. The legacy `get_executor_holder()` is no longer called at ingest.
+- Drop the loop's `break` so we record the lane-appropriate holder even
+  when it's not the emitting brain — still gives the gate chain a sensible
+  value for the fallback message.
+
+`shared/execution.py:_evaluate_gates`:
+- Removed the equity-lookup fallback.
+- Rewrote the vacant-seat message to be lane-aware:
+  `"No execute-seat was held for lane='crypto' when intent was posted — seat vacant, no authority"`.
+- Rewrote the wrong-brain message to be lane-aware:
+  `"Execute-seat for lane='crypto' was held by <X> at post time, not <Y>"`.
+
+### Verified (preview)
+
+Fresh REDEYE BUY BTC/USD crypto intent — persisted doc inspection:
+```
+stack:                     redeye
+lane:                      crypto
+seat_at_post_time:         opponent       (REDEYE's permanent equity-roster role)
+executor_holder_at_post:   redeye         ← was 'alpha' before fix; now lane-aware
+holds_executor_seat:       true
+matched_seat_at_post:      crypto
+```
+
+Dry-run gate chain:
+```
+PASS  executor_seat_check  redeye holds the 'crypto' seat (lane=crypto); held at ingest
+```
+
+Zero equity-side references in any crypto intent's audit trail or gate
+output from this point forward.
+
+
 ## 2026-02-16 (very late) — `redeye_crypto_intent_bridge` installed
 
 Operator pasted a snippet and said "install it." The snippet was diagnosing

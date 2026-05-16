@@ -51,7 +51,6 @@ from shared.council import (
     _seat_holder,
 )
 from shared.exposure_caps import caps_snapshot, evaluate_all
-from shared.executor_seat import get_executor_holder
 from shared.mc_shelly import record_async
 
 
@@ -120,12 +119,14 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
             current_holder = holder
             break
     if current_holder is None:
-        # Fall back to the legacy executor lookup so empty-seat / wrong-
-        # lane scenarios produce useful messages.
-        current_holder = await get_executor_holder()
+        # No execute-capable seat for this lane is held by anyone.
+        # Do NOT fall back to the equity executor lookup — that would
+        # leak equity authority into crypto messaging. Surface the
+        # vacancy honestly (2026-02-16 fix).
+        current_holder = None
 
     held_at_intent = bool(intent.get("holds_executor_seat"))
-    held_at_post = intent.get("executor_holder_at_post")
+    held_at_post = intent.get("executor_holder_at_post")  # lane-aware as of 2026-02-16
     holds_now = matched_seat is not None
     # Lane-scope check: the matched seat's policy must allow this lane.
     lane_allowed = seat_may_execute_lane(matched_seat, intent_lane_for_seat)
@@ -147,11 +148,13 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
         )
     elif not held_at_intent and held_at_post is None:
         seat_pass, seat_reason = False, (
-            "Execute-seat was EMPTY when intent was posted — no authority"
+            f"No execute-seat was held for lane={intent_lane_for_seat!r} when intent was posted "
+            f"— seat vacant, no authority"
         )
     else:
         seat_pass, seat_reason = False, (
-            f"Execute-seat was held by {held_at_post} at post time, not {intent_stack}"
+            f"Execute-seat for lane={intent_lane_for_seat!r} was held by {held_at_post} "
+            f"at post time, not {intent_stack}"
         )
     gates.append({"name": "executor_seat_check", "passed": seat_pass, "reason": seat_reason})
 
