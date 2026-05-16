@@ -49,6 +49,7 @@ from shared.intents import router as intents_router
 from shared.executor_seat import router as executor_router
 from shared.auditor_seat import router as auditor_router
 from shared.broker.alpaca_routes import router as alpaca_router
+from shared.decisions_feed import router as decisions_router
 from shared.execution import router as execution_router
 from shared.auto_router import (
     start_auto_router_if_enabled,
@@ -180,6 +181,7 @@ api_router.include_router(patches_router)
 api_router.include_router(public_news_router)
 api_router.include_router(public_darkpool_router)
 api_router.include_router(diagnostics_router)
+api_router.include_router(decisions_router)
 api_router.include_router(flags_router)
 api_router.include_router(alpha_router)
 api_router.include_router(camaro_router)

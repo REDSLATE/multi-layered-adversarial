@@ -1,6 +1,181 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, RUNTIME_META, fmtTime, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
+
+const BRAINS_FOR_FILTER = ["all", "alpha", "camaro", "chevelle", "redeye"];
+const KIND_LABEL = {
+  receipt: "RECEIPT",
+  sovereign_audit: "SOV-AUDIT",
+  intent: "INTENT",
+  training_signal: "TRAINING",
+};
+const KIND_COLOR = {
+  receipt: "#10B981",
+  sovereign_audit: "#DC2626",
+  intent: "#3B82F6",
+  training_signal: "#F59E0B",
+};
+
+function DecisionsFeed() {
+  const [items, setItems] = useState(null);
+  const [counts, setCounts] = useState({});
+  const [brain, setBrain] = useState("all");
+  const [err, setErr] = useState("");
+  const [expanded, setExpanded] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const params = { limit: 60 };
+      if (brain !== "all") params.brain = brain;
+      const { data } = await api.get("/admin/decisions", { params });
+      setItems(data?.items || []);
+      setCounts(data?.counts_per_source || {});
+      setErr("");
+    } catch (e) {
+      setErr(e?.response?.data?.detail || e.message);
+    }
+  }, [brain]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const t = setInterval(load, 12000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const emptyPayloadCount = useMemo(
+    () => (items || []).filter((r) => (r.summary || "").includes("empty payload")).length,
+    [items],
+  );
+
+  return (
+    <Card className="p-0 overflow-hidden" testid="decisions-feed">
+      <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-rd-border bg-rd-bg3">
+        <div className="label-eyebrow text-rd-dim">Decisions feed</div>
+        <span className="text-[10px] font-mono text-rd-dim">
+          unified across receipts · sovereign-audit · intents · training rows
+        </span>
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          {BRAINS_FOR_FILTER.map((b) => {
+            const active = b === brain;
+            const meta = b === "all" ? null : RUNTIME_META[b];
+            return (
+              <button
+                key={b}
+                onClick={() => setBrain(b)}
+                data-testid={`decisions-filter-${b}`}
+                className={
+                  "px-2 py-1 text-[10px] font-mono uppercase tracking-wider border " +
+                  (active
+                    ? "border-rd-text text-rd-text bg-rd-bg"
+                    : "border-rd-border text-rd-dim hover:text-rd-text")
+                }
+                style={active && meta ? { borderColor: meta.color, color: meta.color } : undefined}
+              >
+                {b}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {err && (
+        <div className="px-4 py-2 text-xs font-mono text-rd-danger border-b border-rd-border">
+          {err}
+        </div>
+      )}
+
+      {/* Per-collection counts strip — surfaces which stores the brain
+          actually writes to. Critical for diagnosing REDEYE-style
+          "decisions exist but in a different collection" issues. */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 px-4 py-2 bg-rd-bg text-[10px] font-mono text-rd-dim border-b border-rd-border">
+        {Object.entries(counts).map(([coll, n]) => (
+          <span key={coll}>
+            <span className="text-rd-text">{coll}</span>: {n}
+          </span>
+        ))}
+        {emptyPayloadCount > 0 && (
+          <span className="ml-auto text-rd-danger">
+            ⚠ {emptyPayloadCount} skeleton row{emptyPayloadCount === 1 ? "" : "s"} (empty payload — engine not emitting substance)
+          </span>
+        )}
+      </div>
+
+      {!items && <LoadingRow />}
+      {items && items.length === 0 && (
+        <div className="px-4 py-6 text-center text-rd-dim font-mono text-xs">
+          no decisions captured for this filter
+        </div>
+      )}
+
+      {items && items.length > 0 && (
+        <div className="max-h-[500px] overflow-y-auto">
+          <table className="w-full text-xs font-mono">
+            <thead className="sticky top-0 bg-rd-bg3 text-rd-dim uppercase tracking-widest z-10">
+              <tr>
+                <th className="text-left px-3 py-2 border-b border-rd-border">When</th>
+                <th className="text-left px-3 py-2 border-b border-rd-border">Brain</th>
+                <th className="text-left px-3 py-2 border-b border-rd-border">Kind</th>
+                <th className="text-left px-3 py-2 border-b border-rd-border">Summary</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((r, i) => {
+                const meta = r.brain && RUNTIME_META[r.brain];
+                const isOpen = expanded === i;
+                const isSkeleton = (r.summary || "").includes("empty payload");
+                return (
+                  <React.Fragment key={i}>
+                    <tr
+                      className="border-b border-rd-border hover:bg-rd-bg cursor-pointer"
+                      onClick={() => setExpanded(isOpen ? null : i)}
+                      data-testid={`decisions-row-${i}`}
+                    >
+                      <td className="px-3 py-1.5 text-rd-dim whitespace-nowrap">
+                        {r.ts ? relTime(r.ts) : "—"}
+                      </td>
+                      <td className="px-3 py-1.5 whitespace-nowrap">
+                        {meta ? (
+                          <span style={{ color: meta.color }} className="font-bold">
+                            {meta.label}
+                          </span>
+                        ) : (
+                          <span className="text-rd-dim">{r.brain || "—"}</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <Badge color={KIND_COLOR[r.kind] || "#A1A1AA"}>
+                          {KIND_LABEL[r.kind] || r.kind}
+                        </Badge>
+                      </td>
+                      <td
+                        className="px-3 py-1.5 text-rd-text"
+                        style={isSkeleton ? { color: "#F59E0B" } : undefined}
+                      >
+                        {r.summary || "—"}
+                      </td>
+                    </tr>
+                    {isOpen && (
+                      <tr className="bg-rd-bg">
+                        <td colSpan={4} className="px-3 py-3">
+                          <div className="text-[10px] text-rd-dim mb-1.5">
+                            source: <span className="text-rd-text">{r.source_collection}</span>
+                          </div>
+                          <pre className="text-[10px] text-rd-text bg-rd-bg2 border border-rd-border p-2 overflow-x-auto leading-snug">
+                            {JSON.stringify(r.raw, null, 2)}
+                          </pre>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
 
 export default function Diagnostics() {
   const [data, setData] = useState(null);
@@ -102,6 +277,14 @@ export default function Diagnostics() {
               </tbody>
             </table>
           </Card>
+
+          {/* Unified decisions feed — surfaces every brain's output
+              regardless of which collection the engine wrote it to.
+              REDEYE's contributions, Chevelle's authority_calls, Camaro
+              intents, and MC training rows all appear here. */}
+          <div className="mt-6">
+            <DecisionsFeed />
+          </div>
         </>
       )}
     </div>
