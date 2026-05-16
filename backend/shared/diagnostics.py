@@ -10,7 +10,25 @@ from namespaces import (
     ALPHA_DECISION_LOG, CAMARO_SHADOW_ROWS, CHEVELLE_MEMORY_LABELS, RUNTIMES,
     SHARED_OPINIONS,
     HEARTBEAT_STALE_AFTER_SECONDS,
+    HEARTBEAT_OK_BELOW_SECONDS,
+    HEARTBEAT_PREVIEW_DRIFT_SECONDS,
 )
+
+
+def _heartbeat_tier(age: float | None) -> str:
+    """Three-tier operator doctrine:
+        ok            < HEARTBEAT_OK_BELOW_SECONDS         (healthy)
+        drift         < HEARTBEAT_PREVIEW_DRIFT_SECONDS    (cycle blip / slow ping)
+        preview_drift ≥ HEARTBEAT_PREVIEW_DRIFT_SECONDS    (likely on preview URL)
+        unknown       no heartbeat ever recorded
+    """
+    if age is None:
+        return "unknown"
+    if age < HEARTBEAT_OK_BELOW_SECONDS:
+        return "ok"
+    if age < HEARTBEAT_PREVIEW_DRIFT_SECONDS:
+        return "drift"
+    return "preview_drift"
 
 
 router = APIRouter(prefix="/admin/diagnostics", tags=["diagnostics"])
@@ -70,12 +88,15 @@ async def diagnostics(_user: dict = Depends(get_current_user)):
             "heartbeat": hb,
             "heartbeat_age_seconds": hb_age,
             "heartbeat_stale": hb_stale,
+            "heartbeat_tier": _heartbeat_tier(hb_age),
         })
 
     return {
         "now": datetime.now(timezone.utc).isoformat(),
         "deploy_mode": os.environ.get("DEPLOY_MODE", "observation"),
         "heartbeat_stale_after_seconds": HEARTBEAT_STALE_AFTER_SECONDS,
+        "heartbeat_ok_below_seconds": HEARTBEAT_OK_BELOW_SECONDS,
+        "heartbeat_preview_drift_seconds": HEARTBEAT_PREVIEW_DRIFT_SECONDS,
         "mongo": {"ok": mongo_ok, "error": mongo_err},
         "runtimes": per_runtime,
     }

@@ -181,16 +181,22 @@ export default function Diagnostics() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await api.get("/admin/diagnostics");
-        setData(data);
-      } catch (e) {
-        setErr(e?.response?.data?.detail || e.message);
-      }
-    })();
+  const loadDiag = useCallback(async () => {
+    try {
+      const { data } = await api.get("/admin/diagnostics");
+      setData(data);
+      setErr("");
+    } catch (e) {
+      setErr(e?.response?.data?.detail || e.message);
+    }
   }, []);
+
+  useEffect(() => { loadDiag(); }, [loadDiag]);
+  // Refresh every 10s so the operator sees tier changes in near-real-time.
+  useEffect(() => {
+    const t = setInterval(loadDiag, 10000);
+    return () => clearInterval(t);
+  }, [loadDiag]);
 
   return (
     <div className="reveal" data-testid="diagnostics-page">
@@ -235,6 +241,23 @@ export default function Diagnostics() {
           </div>
 
           <Card className="p-0 overflow-hidden" testid="diag-runtimes">
+            {/* Top-of-table banner — fires the moment any brain crosses
+                the 110s preview-drift threshold. Operator rule:
+                ≥110s = brain is likely pointed at the PREVIEW URL,
+                not prod. Catches Camaro-style config drift fast. */}
+            {data.runtimes.some((r) => r.heartbeat_tier === "preview_drift") && (
+              <div
+                className="bg-rd-danger/15 border-b border-rd-danger px-4 py-2 text-[11px] font-mono text-rd-danger"
+                data-testid="preview-drift-banner"
+              >
+                ⚠ PREVIEW DRIFT — {data.runtimes
+                  .filter((r) => r.heartbeat_tier === "preview_drift")
+                  .map((r) => r.runtime.toUpperCase())
+                  .join(", ")}{" "}
+                heartbeating ≥{data.heartbeat_preview_drift_seconds || 110}s ago. Likely pointed at the preview URL, not{" "}
+                <span className="text-rd-text font-bold">mission.risedual.ai</span>. Check the sidecar's <code>MC_BASE_URL</code>.
+              </div>
+            )}
             <table className="w-full text-xs font-mono">
               <thead>
                 <tr className="bg-rd-bg3 text-rd-dim uppercase tracking-widest">
@@ -248,8 +271,22 @@ export default function Diagnostics() {
               <tbody>
                 {data.runtimes.map((r) => {
                   const meta = RUNTIME_META[r.runtime];
+                  // Three-tier operator doctrine. Tier comes from backend
+                  // so frontend & backend can never disagree on what counts
+                  // as drift vs preview-drift.
+                  const tier = r.heartbeat_tier || (r.heartbeat_stale ? "preview_drift" : "ok");
+                  const tierMeta = {
+                    ok:            { color: "#10B981", label: "LIVE" },
+                    drift:         { color: "#F59E0B", label: "DRIFT" },
+                    preview_drift: { color: "#DC2626", label: "PREVIEW URL" },
+                    unknown:       { color: "#A1A1AA", label: "NO HEARTBEAT" },
+                  }[tier];
                   return (
-                    <tr key={r.runtime} className="border-b border-rd-border last:border-b-0">
+                    <tr
+                      key={r.runtime}
+                      className="border-b border-rd-border last:border-b-0"
+                      data-testid={`diag-row-${r.runtime}`}
+                    >
                       <td className="px-4 py-2.5">
                         <span style={{ color: meta.color }} className="font-bold">
                           {meta.label}
@@ -262,12 +299,22 @@ export default function Diagnostics() {
                         {r.last_receipt_ts ? `${fmtTime(r.last_receipt_ts)} (${relTime(r.last_receipt_ts)})` : "—"}
                       </td>
                       <td className="px-4 py-2.5">
-                        <Badge color={r.heartbeat_stale ? "#EF4444" : "#FBBF24"}>
-                          {r.heartbeat_stale ? "STALE" : "OBSERVING"}
-                        </Badge>
+                        <Badge color={tierMeta.color}>{tierMeta.label}</Badge>
                         {r.heartbeat_age_seconds != null && (
-                          <span className="ml-2 text-rd-dim">
+                          <span
+                            className="ml-2"
+                            style={{ color: tierMeta.color }}
+                            data-testid={`diag-hb-age-${r.runtime}`}
+                          >
                             {Math.floor(r.heartbeat_age_seconds)}s
+                          </span>
+                        )}
+                        {tier === "preview_drift" && (
+                          <span
+                            className="ml-2 text-[10px] text-rd-danger"
+                            title="≥110s — operator rule says brain is on preview URL"
+                          >
+                            · likely on preview URL
                           </span>
                         )}
                       </td>

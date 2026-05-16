@@ -270,6 +270,17 @@ PROMOTION_THRESHOLDS = {
 # Visibility-only — does NOT change authority, broker behavior, or receipt enforcement.
 HEARTBEAT_STALE_AFTER_SECONDS = 90
 
+# Operator three-tier heartbeat doctrine (2026-02-15). Visibility only.
+#   < HEARTBEAT_OK_BELOW_SECONDS         → 🟢 healthy
+#   ≥ HEARTBEAT_OK_BELOW_SECONDS and
+#     < HEARTBEAT_PREVIEW_DRIFT_SECONDS  → 🟡 drift (could be cycle blip)
+#   ≥ HEARTBEAT_PREVIEW_DRIFT_SECONDS    → 🔴 preview-drift — brain almost
+#                                          certainly hitting the preview URL
+#                                          instead of prod (operator rule).
+# The dashboard surfaces these so an operator can spot URL drift fast.
+HEARTBEAT_OK_BELOW_SECONDS = 60
+HEARTBEAT_PREVIEW_DRIFT_SECONDS = 110
+
 
 def runtime_can_execute_state(authority_state: str) -> bool:
     """Single source of truth: only authority states on the trading ladder
