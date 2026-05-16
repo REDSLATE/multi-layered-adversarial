@@ -1,3 +1,31 @@
+## 2026-02-16 (post-batch) — Pro Max chat endpoint retired
+
+Per operator direction: the main risedual.ai site hosts its own chat
+surface; MC is admin-only and does not need to be a chat backend. The
+P3 refactor of `chat.py` from earlier today became moot.
+
+**Removed:**
+- `backend/shared/public_api/chat.py` — deleted entirely.
+- `backend/shared/public_api/router.py` — dropped the `chat_router`
+  import + include.
+- `backend/namespaces.py` — dropped the `PUBLIC_CHAT_MESSAGES`
+  constant (replaced with a doc-only note explaining the retirement).
+- `backend/requirements.txt` — dropped the `anthropic==0.102.0` line I
+  added earlier today. SDK uninstalled from the venv (`pip uninstall
+  anthropic docstring-parser`).
+
+**Left intact:**
+- The MongoDB collection `public_chat_messages` was NOT dropped — that's
+  operator territory. The collection is no longer written to. Drop with
+  `db.public_chat_messages.drop()` from mongosh when convenient.
+- `emergentintegrations` is still in `requirements.txt` because
+  `narrative.py` still depends on it for the digest summary cache.
+
+**Verified:**
+- Backend restarts clean. `/api/health` returns 200.
+- `POST /api/public/chat` now returns 404 (route gone, as expected).
+
+
 ## 2026-02-16 — P1 + P3 batch: Live Positions UI, VRL Scorecards UI, nightly scheduler, vendor SDK chat
 
 Four follow-on tasks from the Saturday Sprint. All verified.

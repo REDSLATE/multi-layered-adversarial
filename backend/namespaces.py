@@ -148,11 +148,12 @@ SOVEREIGN_STATE_HISTORY = "sovereign_state_history"
 SOVEREIGN_AUDIT_LOG = "sovereign_audit_log"
 
 # Public-API LLM features (Phase 2 — Direction C).
-# Chat messages are stored per (tier, session_id) so risedual.ai's
-# multi-turn conversations survive MC backend restarts. Narrative cache
-# memoizes the digest LLM summary for a short window so we don't burn
-# tokens on every dashboard refresh.
-PUBLIC_CHAT_MESSAGES = "public_chat_messages"
+# Narrative cache memoizes the digest LLM summary for a short window so
+# we don't burn tokens on every dashboard refresh. The Pro Max chat
+# endpoint was retired 2026-02-16 — the main risedual.ai site hosts the
+# chat surface directly; MC is admin-only and no longer needs to be a
+# chat backend. The `public_chat_messages` collection is left in place
+# but is no longer written to; the operator can drop it manually.
 PUBLIC_NARRATIVE_CACHE = "public_narrative_cache"
 
 # Per-request log for the operator-only traffic verification page
