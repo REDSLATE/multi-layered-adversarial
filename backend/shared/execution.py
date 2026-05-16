@@ -32,6 +32,10 @@ from shared.broker.alpaca_routes import get_alpaca_adapter
 from shared.exposure_caps import caps_snapshot, evaluate_all
 from shared.executor_seat import get_executor_holder
 from shared.mc_shelly import record_async
+from shared.stack_personalities import (
+    enrich_response as _stamp_personality,
+    personality_of as _personality_of,
+)
 
 
 router = APIRouter(tags=["execution"])
@@ -604,10 +608,22 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
             gate_name=g["name"],
         )
 
+    # ── Stamp gate rows with personality envelope (advisory metadata).
+    #    Permissions DO NOT come from personality — they come from
+    #    seat_policy. This envelope just tells the operator and any
+    #    consumer "this brain made this call from this bias/voice".
+    if governor_holder:
+        _stamp_personality(governor_holder, gov_gate)
+    if opp_gate.get("opponent_holder"):
+        _stamp_personality(opp_gate["opponent_holder"], opp_gate)
+
     # ── Governance decision row (per-intent learning ledger) ──────────
     # Captures both seats' stances, the verdict, and the resulting
     # risk_multiplier. Shelly/outcomes can join on intent_id to score
     # who was right after the trade resolves.
+    exec_personality = _personality_of(executor_holder) or {}
+    gov_personality = _personality_of(governor_holder) or {}
+    opp_personality = _personality_of(opp_gate.get("opponent_holder")) or {}
     governance_row = {
         "ts": _now_iso(),
         "intent_id": intent_id,
@@ -615,16 +631,19 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
         "lane": lane,
         "policy_used": "crypto" if (lane or "").lower() == "crypto" else "equity",
         "executor_seat_holder": executor_holder,
+        "executor_personality_bias": exec_personality.get("bias"),
         "executor_action": action,
         "executor_confidence": float(intent.get("confidence") or 0.0),
         "executor_effective_conf": verdict.get("effective_conf"),
         "governor_seat_holder": governor_holder,
+        "governor_personality_bias": gov_personality.get("bias"),
         "governor_stance": (gov_norm or {}).get("stance"),
         "governor_executable": (gov_norm or {}).get("executable"),
         "governor_veto": (gov_norm or {}).get("veto"),
         "governor_confidence": (gov_norm or {}).get("confidence"),
         "governor_call_ts": (gov_norm or {}).get("ts"),
         "opponent_seat_holder": opp_gate.get("opponent_holder"),
+        "opponent_personality_bias": opp_personality.get("bias"),
         "opponent_confidence": opp_gate.get("opponent_conf"),
         "opponent_side": opp_gate.get("opponent_side"),
         "opponent_opposes": opp_gate.get("opponent_opposes"),
@@ -634,6 +653,12 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
         "final_allowed": verdict["allowed"],
         "base_risk_multiplier": base_size,
         "risk_multiplier": final_size,
+        # Hard limits (from personality "never" clauses) are advisory.
+        # Authority is still seat-bound — this flag just records whether
+        # the decision aligned with the doctrinal limits of the seat
+        # holder's personality, for downstream training.
+        "hard_limits_respected": gov_gate.get("hard_limits_respected", True)
+        and opp_gate.get("hard_limits_respected", True),
         "stack_weights": policy["STACK_WEIGHTS"],
         "thresholds": {
             "hard_veto":          policy["GOVERNOR_HARD_VETO_THRESHOLD"],
