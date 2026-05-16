@@ -1,3 +1,52 @@
+## 2026-02-16 (very late) — `redeye_crypto_intent_bridge` installed
+
+Operator pasted a snippet and said "install it." The snippet was diagnosing
+a bug in REDEYE-side code (hardcoded `requires_final_authority: "camaro"`),
+which does NOT exist in MC. But the snippet's intent — *seat-based final
+authority, no Camaro hardcoding* — was correct and worth installing as an
+MC-side bridge.
+
+**New module:** `backend/shared/redeye_crypto_intent_bridge.py`
+
+Adapts the snippet's design to MC's real schema and API:
+- Snippet called `get_executor_holder(lane="crypto")` (signature doesn't
+  exist in MC). Bridge uses MC's real helpers: `seats_with_execute("crypto")`
+  + `get_seat_holder(seat)`.
+- Snippet's intent shape used REDEYE-only fields (`requires_final_authority`,
+  `requires_roadguard`, etc.). Bridge stamps BOTH the snippet's
+  doctrine fields AND MC's canonical fields (`stack`, `rationale`,
+  `lane`, etc.) so the intent reads correctly to both auditors.
+
+**Doctrine guards (preserved verbatim from snippet):**
+- `crypto_only` — non-crypto symbols rejected (400)
+- `intent_only` — `may_execute=False`, `requires_gate_pass=True` pinned
+- `hold_not_promotable` — HOLD action rejected (action Literal excludes it)
+- `seat_based_final_authority` — recipient resolved dynamically from roster
+- `crypto_roadguard_required` — stamped on every emitted intent
+
+**REST surface mounted under `/api/admin/redeye/bridge`:**
+- `GET  /authority` — returns the brain holding the crypto execute seat
+- `POST /emit` — REDEYE decision → MC intent
+
+**Verified live (preview):**
+- `GET /authority` → `{lane:"crypto", final_authority:"redeye", seat_vacant:false, authority_model:"seat_based"}`
+- `POST /emit BTC/USD SHORT conf=0.78` → intent persisted, `requires_final_authority="redeye"` (matched the crypto seat holder)
+- `POST /emit TSLA BUY` → HTTP 400 "does not look like crypto"
+- `POST /emit BTC/USD HOLD` → HTTP 422 (Literal rejects)
+
+**Authority is resolved at emit time** — rotate the crypto seat, the next
+emitted intent stamps the new holder. No code changes needed for rotation.
+
+**What this does NOT do (operator awareness):**
+- It does NOT auto-promote REDEYE opinions into intents. That would be a
+  scheduler, not yet built. Today the bridge is callable surface only — a
+  caller (REDEYE's sidecar OR an operator OR a future scheduler) has to
+  POST a decision to it.
+- It does NOT bypass the gate chain. Intents emitted through the bridge
+  still go through `executor_seat_check`, `broker_connected`, lane caps,
+  governance multipliers, etc. — same path as any other intent.
+
+
 ## 2026-02-16 (very late) — REDEYE crypto unblock: lane-aware seat snapshot at ingest
 
 Operator reported REDEYE crypto intents still being blocked despite holding
