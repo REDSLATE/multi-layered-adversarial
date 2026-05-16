@@ -52,7 +52,6 @@ from shared.broker.alpaca_routes import router as alpaca_router
 from shared.decisions_feed import router as decisions_router
 from shared.doctrine_routes import router as doctrine_router
 from shared.execution import router as execution_router
-from shared.quantum_routes import router as quantum_router
 from shared.personalities_routes import router as personalities_router
 from shared.auto_router import (
     start_auto_router_if_enabled,
@@ -186,7 +185,6 @@ api_router.include_router(public_darkpool_router)
 api_router.include_router(diagnostics_router)
 api_router.include_router(decisions_router)
 api_router.include_router(doctrine_router)
-api_router.include_router(quantum_router)
 api_router.include_router(personalities_router)
 api_router.include_router(flags_router)
 api_router.include_router(alpha_router)
