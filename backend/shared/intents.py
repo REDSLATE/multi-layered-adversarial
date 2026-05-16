@@ -161,21 +161,70 @@ async def _seat_at_post_time(brain: str) -> Optional[str]:
         return None
 
 
-def _compose_canonical(symbol: str, lane: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-    """Compose `(effective_lane, canonical)` for an intent.
+def _looks_like_crypto(symbol: str) -> bool:
+    """Heuristic: does `symbol` unambiguously look like a crypto pair?
 
-    Backward-compat for equity: if `lane` is None and `symbol` is plain
-    alphanumeric, default to equity (so today's Camaro AAPL/MSFT/NVDA/
-    GOOGL/AMZN flow keeps working without a runtime patch).
+    Matches the common shapes Kraken / Camaro emit:
+      - BTC/USD, ETH/USDT, SOL/USD, BNB-USD, BTC-USDT
+      - XBTUSD (Kraken's BTC alias), pairs with USD/USDT/USDC suffixes
+    We deliberately do NOT match bare 3-letter tickers like "BTC" or "ETH"
+    — too easy to collide with equity symbols, and a real ambiguity
+    case the operator should resolve.
+    """
+    if not symbol or not isinstance(symbol, str):
+        return False
+    s = symbol.upper().strip()
+    # Hard rule: must contain a separator OR be a known fused pair shape.
+    if "/" in s or "-" in s:
+        # Probably a pair like BTC/USD or BTC-USDT. Trust it as crypto if
+        # the quote side looks like a fiat / stablecoin.
+        sep = "/" if "/" in s else "-"
+        parts = s.split(sep)
+        if len(parts) != 2:
+            return False
+        _, quote = parts
+        return quote in {"USD", "USDT", "USDC", "EUR", "GBP", "JPY", "BTC", "ETH"}
+    # Kraken-style fused pairs (XBTUSD, BTCUSDT, ETHUSD). Require >=6 chars
+    # and a known suffix to avoid colliding with NYSE 4-5 letter tickers.
+    for suffix in ("USDT", "USDC", "USD"):
+        if len(s) >= len(suffix) + 3 and s.endswith(suffix):
+            base = s[: -len(suffix)]
+            # Common crypto base symbols. Anything else stays ambiguous.
+            if base in {
+                "BTC", "XBT", "ETH", "SOL", "BNB", "DOGE", "ADA", "AVAX",
+                "MATIC", "DOT", "LTC", "LINK", "UNI", "ATOM", "TRX", "XRP",
+                "XLM", "ETC", "FIL", "NEAR", "ARB", "OP", "INJ", "TIA",
+            }:
+                return True
+    return False
 
-    Crypto and anything with punctuation MUST be lane-tagged explicitly.
-    If composition fails for any reason, returns `(lane_or_none, None)`
-    so the broker router fails closed downstream — never silently
-    routes the wrong asset.
+
+def _compose_canonical(symbol: str, lane: Optional[str]) -> tuple[Optional[str], Optional[str], bool]:
+    """Compose `(effective_lane, canonical, inferred)`.
+
+    `inferred` is True when MC filled in the lane the brain failed to
+    send. Visible on the persisted intent as `inferred_lane=True` so
+    the audit trail shows MC's defensive fill-in (vs. an explicit
+    brain-side tag).
+
+    Inference precedence:
+      1. Explicit lane on the envelope — always wins.
+      2. Symbol looks unambiguously crypto (BTC/USD, ETH-USDT, …)
+         → infer `lane="crypto"`.
+      3. Plain alphanumeric symbol (AAPL, NVDA, GOOGL) → infer
+         `lane="equity"` for backward-compat with today's Camaro flow.
+      4. Otherwise → leave lane None and let the broker router fail
+         closed downstream (never silently routes the wrong asset).
     """
     effective_lane = lane
-    if effective_lane is None and symbol.isalnum():
-        effective_lane = "equity"
+    inferred = False
+    if effective_lane is None:
+        if _looks_like_crypto(symbol):
+            effective_lane = "crypto"
+            inferred = True
+        elif symbol.isalnum():
+            effective_lane = "equity"
+            inferred = True
     canonical: Optional[str] = None
     if effective_lane:
         try:
@@ -183,7 +232,7 @@ def _compose_canonical(symbol: str, lane: Optional[str]) -> tuple[Optional[str],
             canonical = _compose(symbol, effective_lane).canonical
         except Exception:  # noqa: BLE001
             canonical = None
-    return effective_lane, canonical
+    return effective_lane, canonical, inferred
 
 
 # ─────────────────────────────── routes ───────────────────────────────
@@ -214,7 +263,7 @@ async def post_intent(
     holds_executor = executor_at_post == body.stack
 
     intent_id = str(uuid.uuid4())
-    effective_lane, canonical = _compose_canonical(body.symbol, body.lane)
+    effective_lane, canonical, inferred_lane = _compose_canonical(body.symbol, body.lane)
 
     doc = {
         "intent_id": intent_id,
@@ -222,6 +271,8 @@ async def post_intent(
         "action": body.action,
         "symbol": body.symbol,
         "lane": effective_lane,
+        "lane_source": "brain" if (body.lane is not None) else ("inferred" if effective_lane else "unset"),
+        "inferred_lane": inferred_lane,
         "canonical": canonical,
         "confidence": float(body.confidence),
         "risk_multiplier": float(body.risk_multiplier),
@@ -415,7 +466,7 @@ async def admin_post_intent(
     holds_executor = executor_at_post == body.stack
 
     intent_id = str(uuid.uuid4())
-    effective_lane, canonical = _compose_canonical(body.symbol, body.lane)
+    effective_lane, canonical, inferred_lane = _compose_canonical(body.symbol, body.lane)
 
     doc = {
         "intent_id": intent_id,
@@ -423,6 +474,8 @@ async def admin_post_intent(
         "action": body.action,
         "symbol": body.symbol,
         "lane": effective_lane,
+        "lane_source": "brain" if (body.lane is not None) else ("inferred" if effective_lane else "unset"),
+        "inferred_lane": inferred_lane,
         "canonical": canonical,
         "confidence": float(body.confidence),
         "risk_multiplier": float(body.risk_multiplier),
