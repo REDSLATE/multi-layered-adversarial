@@ -1,3 +1,86 @@
+## 2026-02-16 (very late) — REDEYE crypto unblock: lane-aware seat snapshot at ingest
+
+Operator reported REDEYE crypto intents still being blocked despite holding
+the `crypto` seat in prod. Root-caused, fixed, verified.
+
+### The bug
+
+In `shared/intents.py`, the ingest-time seat snapshot called
+`get_executor_holder()`, which **only** reads the legacy single-seat equity
+executor doc. A REDEYE crypto intent — where REDEYE legitimately holds the
+`crypto` seat (which has `may_execute=True, lane_scope=["crypto"]`) — got
+stamped:
+
+```
+holds_executor_seat: false
+executor_holder_at_post: <whoever held equity executor>
+```
+
+The gate chain's `executor_seat_check` correctly walks `seats_with_execute(lane)`
+and finds REDEYE on `crypto`, so `holds_now=True`. But because
+`held_at_intent=False` was frozen into the intent at ingest, the conditional
+cascade fell through to the last branch:
+
+> *"Execute-seat was held by [equity_holder] at post time, not redeye"*
+
+Audit-correct (you can't rescue an intent posted without authority), but the
+authority check itself was lane-blind. So **every** lane-isolated brain's
+intents failed gate 3 by construction.
+
+### The fix
+
+`shared/intents.py` — both engine path (POST `/api/intents`) and admin proxy
+path (POST `/api/admin/intents`):
+
+```python
+from shared.executor_seat import seats_with_execute, get_seat_holder
+holds_executor = False
+matched_seat_at_post = None
+for _seat_name in seats_with_execute(effective_lane):
+    _h = await get_seat_holder(_seat_name)
+    if _h == body.stack:
+        holds_executor = True
+        matched_seat_at_post = _seat_name
+        break
+```
+
+Now: REDEYE→crypto checks both `executor` (no, that's Alpha's equity seat) AND
+`crypto` (yes, REDEYE holds it) → `holds_executor_seat=True`,
+`matched_seat_at_post="crypto"`.
+
+Also added `matched_seat_at_post` to the persisted intent doc so future audits
+show **which** execute-capable seat was held, not just a boolean.
+
+### Verified (preview)
+
+Fresh REDEYE BUY BTC/USD crypto intent → dry-run:
+```
+PASS   executor_seat_check    redeye holds the 'crypto' seat (lane=crypto); held at ingest
+```
+
+The previously-stuck "Execute-seat was held by camaro at post time, not redeye"
+is gone. Only remaining block is `broker_connected` — which is a preview-env
+artifact (no Kraken keys in preview DB). In prod (Kraken LIVE, REDEYE on crypto
+seat), the same intent would pass every gate.
+
+### What this means for prod
+
+Once you redeploy this fix:
+- REDEYE crypto intents posted via `POST /api/intents` will pass gate 3.
+- Auto-router (running every 30s) will pick them up and route to Kraken.
+- $30 → $22.50 effective notional (governance downsizing from Chevelle's
+  no-stance soft downweight × quantum entropy of 0.95).
+
+**Backfill question for the operator**: existing pending crypto intents from
+REDEYE in prod were stamped `holds_executor_seat=False` under the old code.
+They will continue to fail gate 3 even after the fix. Options:
+1. Let them die (clean slate; brain will emit new ones).
+2. Re-stamp them with a one-shot script that recomputes the seat snapshot
+   under the new logic. Trivial to write.
+
+Recommend (1) — old intents are stale market context anyway.
+
+
 ## 2026-02-16 (later) — Lane code separation: `shared/crypto/` + `shared/equity/`
 
 Operator pushed back on equity-and-crypto living in the same folder.

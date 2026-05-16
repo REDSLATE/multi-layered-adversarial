@@ -312,13 +312,31 @@ async def post_intent(
 
     seat = await _seat_at_post_time(body.stack)
 
-    # Snapshot whether this brain held the (rotating) Executor seat at the
-    # exact moment its intent was ingested. Audit-critical: an intent
-    # posted by Camaro when Chevelle holds the seat cannot ever execute,
-    # regardless of how the seat rotates later.
-    from shared.executor_seat import get_executor_holder  # noqa: WPS433
+    # Snapshot whether this brain held an execute-capable seat FOR THIS
+    # INTENT'S LANE at the moment of ingest. Audit-critical: if the
+    # answer is False, no future seat rotation can rescue this intent.
+    #
+    # 2026-02-16 fix: this used to read ONLY the equity executor seat
+    # (`get_executor_holder`), which meant a REDEYE *crypto* intent —
+    # where REDEYE legitimately held the `crypto` seat — was stamped
+    # `holds_executor_seat=False` because REDEYE didn't hold the
+    # equity executor. Gate 3 then blocked every one. Now we walk
+    # every execute-capable seat for the intent's lane (same logic the
+    # gate chain uses) and accept whichever one matches.
+    from shared.executor_seat import (  # noqa: WPS433
+        get_executor_holder,
+        get_seat_holder,
+        seats_with_execute,
+    )
     executor_at_post = await get_executor_holder()
-    holds_executor = executor_at_post == body.stack
+    holds_executor = False
+    matched_seat_at_post = None
+    for _seat_name in seats_with_execute(effective_lane):
+        _h = await get_seat_holder(_seat_name)
+        if _h == body.stack:
+            holds_executor = True
+            matched_seat_at_post = _seat_name
+            break
 
     intent_id = str(uuid.uuid4())
 
@@ -376,6 +394,7 @@ async def post_intent(
         "seat_at_post_time": seat,
         "executor_holder_at_post": executor_at_post,
         "holds_executor_seat": holds_executor,
+        "matched_seat_at_post": matched_seat_at_post,
         # AUDIT (MC-stamped)
         "ingest_ts": _now_iso(),
         "ingest_method": "runtime_token",
@@ -540,9 +559,23 @@ async def admin_post_intent(
 
     seat = await _seat_at_post_time(body.stack)
 
-    from shared.executor_seat import get_executor_holder  # noqa: WPS433
+    # Lane-aware execute-seat snapshot (2026-02-16 fix). Walks every
+    # execute-capable seat for the intent's lane — not just the legacy
+    # equity executor seat.
+    from shared.executor_seat import (  # noqa: WPS433
+        get_executor_holder,
+        get_seat_holder,
+        seats_with_execute,
+    )
     executor_at_post = await get_executor_holder()
-    holds_executor = executor_at_post == body.stack
+    holds_executor = False
+    matched_seat_at_post = None
+    for _seat_name in seats_with_execute(effective_lane):
+        _h = await get_seat_holder(_seat_name)
+        if _h == body.stack:
+            holds_executor = True
+            matched_seat_at_post = _seat_name
+            break
 
     intent_id = str(uuid.uuid4())
 
@@ -570,6 +603,7 @@ async def admin_post_intent(
         "seat_at_post_time": seat,
         "executor_holder_at_post": executor_at_post,
         "holds_executor_seat": holds_executor,
+        "matched_seat_at_post": matched_seat_at_post,
         "ingest_ts": _now_iso(),
         "ingest_method": "admin_proxy",
         "ingest_admin_email": user.get("email"),
