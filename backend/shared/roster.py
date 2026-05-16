@@ -257,6 +257,15 @@ async def get_current(_user: dict = Depends(get_current_user)):
     }
 
 
+CRYPTO_LANE_ROLES = ("crypto", "crypto_advisor", "crypto_governor", "crypto_opponent")
+
+
+def _lane_of_role(role: str) -> str:
+    """Two doctrinal lanes: equity (default) and crypto. Lane-isolated
+    multi-seating: one brain can hold one role per lane simultaneously."""
+    return "crypto" if role in CRYPTO_LANE_ROLES else "equity"
+
+
 @router.post("/assign")
 async def assign(body: AssignIn, user: dict = Depends(get_current_user)):
     # Eligibility gate — refuse to place a brain in a seat the operator
@@ -267,10 +276,18 @@ async def assign(body: AssignIn, user: dict = Depends(get_current_user)):
     prev = dict(r["assignments"])
     new_assignments = dict(prev)
 
-    # If the brain already holds a different role, vacate that role.
+    # Doctrine (2026-02-15): one seat per brain WITHIN a lane. Multiple
+    # seats per brain ACROSS lanes. Chevelle can hold equity governor AND
+    # crypto_governor simultaneously — they're isolated councils.
+    # Camaro can hold equity decider AND crypto_opponent — different
+    # reflective duties per lane. Cross-lane multi-seating preserves the
+    # check-and-balance doctrine without forcing the operator to choose
+    # between lanes.
     if body.brain:
+        target_lane = _lane_of_role(body.role)
         for role, occupant in list(new_assignments.items()):
-            if occupant == body.brain and role != body.role:
+            if occupant == body.brain and role != body.role and _lane_of_role(role) == target_lane:
+                # Same brain, same lane, different role — vacate.
                 new_assignments[role] = None
 
     new_assignments[body.role] = body.brain
