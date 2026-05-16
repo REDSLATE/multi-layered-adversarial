@@ -1,3 +1,43 @@
+## 2026-02-16 (late) — Lane-isolation regression test installed
+
+Operator: *"That caveat is exactly how this bug came back before: crypto path
+accidentally calls equity executor helper. Add the guard so future code
+cannot quietly re-couple the lanes."*
+
+**New file:** `backend/tests/test_lane_isolation.py` (3 guards)
+
+```
+test_crypto_lane_does_not_import_equity_authority
+test_equity_lane_does_not_import_crypto_authority
+test_crypto_modules_do_not_call_legacy_get_executor_holder
+```
+
+Walks `shared/crypto/` and `shared/equity/` recursively. Any module under
+those roots that:
+- imports from the OTHER lane's subpackage, OR
+- imports `get_executor_holder` (equity-only helper) into the crypto tree, OR
+- references `kraken` from the equity tree, OR
+- calls `get_executor_holder(` literally in the crypto tree
+
+… fails the test with a precise offender path + pattern.
+
+**Verified:**
+- All 3 guards PASS today (0.01s).
+- Negative test: injected `from shared.executor_seat import get_executor_holder`
+  into `shared/crypto/exposure_caps.py` → guard FAILED with
+  `AssertionError: /app/backend/shared/crypto/exposure_caps.py: forbidden
+  'from shared.executor_seat import get_executor_holder'`. Reverted; green again.
+
+**Wire into CI**: Run `pytest tests/test_lane_isolation.py -q` from
+`/app/backend` as part of any pre-deploy gate. With pytest already in
+dependencies, this is zero-config.
+
+Doctrine locked:
+- equity seat cannot execute crypto
+- crypto seat cannot depend on equity
+- lane authority stays lane-owned
+
+
 ## 2026-02-16 (very late) — Lane bleed scrubbed from ingest + gate chain messaging
 
 Operator's question: "Why is [the crypto intent path] going past the equity
