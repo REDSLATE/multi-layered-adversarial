@@ -32,6 +32,10 @@ from shared.broker.alpaca_routes import get_alpaca_adapter
 from shared.exposure_caps import caps_snapshot, evaluate_all
 from shared.executor_seat import get_executor_holder
 from shared.mc_shelly import record_async
+from shared.quantum_state import (
+    BrainOpinion as _QSBrainOpinion,
+    build_quantum_inspired_state as _build_quantum_state,
+)
 from shared.stack_personalities import (
     enrich_response as _stamp_personality,
     personality_of as _personality_of,
@@ -622,9 +626,69 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
 
     # Final clamp against lane bounds (defense in depth).
     final_size = _clamp_size(final_size, policy) if verdict["allowed"] else 0.0
+
+    # ── Quantum-inspired regime overlay (2026-02-15) ──────────────────
+    # The quantum state observes the council's stances + intent features
+    # and produces a BOUNDED risk multiplier + regime probability field
+    # + HOLD-lock signal. By doctrine it MAY modulate risk only — it
+    # cannot change direction or promote HOLD into a trade. We multiply
+    # the council-composed size by quantum_state.risk_multiplier and
+    # re-clamp against lane bounds (defense in depth).
+    qs_opinions: list = []
+    # Executor's call goes in as the actionable direction.
+    qs_opinions.append(_QSBrainOpinion(
+        brain=str(executor_holder or intent.get("stack") or "executor"),
+        direction=str(action),
+        confidence=float(intent.get("confidence") or 0.0),
+    ))
+    # Governor's call — derive a coarse direction from the stance and
+    # executable flag. If governor said executable=False or veto/dissent
+    # we map to HOLD (a "don't act" advisory); explicit executable=True
+    # mirrors the executor's direction; otherwise HOLD.
+    if gov_norm is not None:
+        if (gov_norm.get("veto") or gov_norm.get("executable") is False
+                or str(gov_norm.get("stance") or "").upper()
+                    in {"HOLD", "VETO", "DISSENT", "REJECT", "ABSTAIN", "RISK_DOWN"}):
+            gov_dir = "HOLD"
+        elif gov_norm.get("executable") is True:
+            gov_dir = action
+        else:
+            gov_dir = "HOLD"
+        qs_opinions.append(_QSBrainOpinion(
+            brain=str(governor_holder or "governor"),
+            direction=gov_dir,
+            confidence=float(gov_norm.get("confidence") or 0.5),
+        ))
+    # Opponent's call — map their side to a direction. Skip if no signal.
+    opp_side = (opp_gate.get("opponent_side") or "").lower() if opp_gate else ""
+    if opp_side:
+        opp_dir = (
+            "SHORT" if opp_side in ("bearish", "short", "sell", "down")
+            else "BUY" if opp_side in ("bullish", "long", "buy", "up")
+            else "HOLD"
+        )
+        qs_opinions.append(_QSBrainOpinion(
+            brain=str(opp_gate.get("opponent_holder") or "opponent"),
+            direction=opp_dir,
+            confidence=float(opp_gate.get("opponent_conf") or 0.0),
+        ))
+
+    market_features = intent.get("features") or intent.get("market_features") or {}
+    qs_verdict = _build_quantum_state(
+        opinions=qs_opinions,
+        market_features=market_features if isinstance(market_features, dict) else {},
+    )
+    quantum_dict = qs_verdict.to_dict()
+    if verdict["allowed"]:
+        # Apply the quantum multiplier and re-clamp against lane bounds.
+        pre_qs = final_size
+        final_size = _clamp_size(final_size * qs_verdict.risk_multiplier, policy)
+        quantum_dict["pre_quantum_size"] = pre_qs
+        quantum_dict["post_quantum_size"] = final_size
     # Reflect the composed size back on the governor row so downstream
     # readers (auto_router) see the post-composition number.
     gov_gate["risk_multiplier"] = final_size
+    gov_gate["quantum_state"] = quantum_dict
 
     # Audit: write both council decisions to mc_shelly for training.
     for g in (gov_gate, opp_gate):
@@ -684,6 +748,7 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
         "final_allowed": verdict["allowed"],
         "base_risk_multiplier": base_size,
         "risk_multiplier": final_size,
+        "quantum_state": quantum_dict,
         # Hard limits (from personality "never" clauses) are advisory.
         # Authority is still seat-bound — this flag just records whether
         # the decision aligned with the doctrinal limits of the seat
