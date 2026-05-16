@@ -65,7 +65,7 @@ from namespaces import (
     SHARED_POSITIONS,
 )
 from shared.auditor_seat import get_auditor_holder
-from shared.executor_seat import get_executor_holder
+# from shared.executor_seat import get_executor_holder  # superseded by lane-aware lookup 2026-02-16
 
 
 router = APIRouter(prefix="/hypothesis", tags=["hypothesis"])
@@ -407,7 +407,24 @@ async def analyze(
         {"symbol": symbol, "state": {"$in": ["open", "managing"]}},
         {"_id": 0, "position_id": 1, "direction": 1, "state": 1, "updated_at": 1},
     ).sort("updated_at", -1).to_list(5)
-    strategist_brain_task = get_executor_holder()
+
+    # Strategist = the lane-appropriate execute-seat holder. Equity
+    # symbols ask "who holds equity executor?", crypto symbols ask
+    # "who holds the crypto seat?". 2026-02-16: previously equity-only,
+    # which meant crypto hypotheses were built around Alpha's lens
+    # rather than REDEYE's.
+    from shared.intents import _looks_like_crypto as _is_crypto_symbol  # noqa: WPS433
+    from shared.executor_seat import get_seat_holder, seats_with_execute  # noqa: WPS433
+    inferred_lane = "crypto" if _is_crypto_symbol(symbol) else "equity"
+
+    async def _lane_strategist() -> str | None:
+        for seat in seats_with_execute(inferred_lane):
+            h = await get_seat_holder(seat)
+            if h:
+                return h
+        return None
+
+    strategist_brain_task = _lane_strategist()
     auditor_brain_task = get_auditor_holder()
 
     snap, open_positions, strategist_brain, auditor_brain = await asyncio.gather(
