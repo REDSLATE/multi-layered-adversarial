@@ -108,7 +108,11 @@ COUNCIL_POLICY: dict[str, dict] = {
         "OPPONENT_INFLUENCE":           0.85,    # crypto crashes are real; listen more to REDEYE
         "MIN_EXECUTOR_CONF_FLOOR":      0.45,    # slightly lower floor (crypto = noisier)
         "MAX_UPWEIGHT":                 1.25,
-        "MAX_DOWNWEIGHT":               0.60,
+        # CRYPTO_GOVERNOR_DOWNWEIGHT_FLOOR (2026-02-15): tune the
+        # governor lighter for crypto. Composed downweights cannot drop
+        # size below 0.75 in the crypto lane — vs equity's 0.60 — so
+        # crypto governance shapes risk without throttling the lane.
+        "MAX_DOWNWEIGHT":               0.75,
         "MAX_SINGLE_AGENT_INFLUENCE":   0.40,
         "MOMENTUM_WEIGHTING":           1.20,    # crypto punishes hesitation — lift momentum
         "STACK_WEIGHTS": {
@@ -246,17 +250,42 @@ def _normalize_governor_call(doc: Optional[dict]) -> Optional[dict]:
 
 
 # ── Roster-bound seat lookups ─────────────────────────────────────────
-async def _seat_holder(role: str) -> Optional[str]:
-    """Current occupant of `role` in the live roster, or None if vacant."""
+async def _seat_holder(role: str, lane: Optional[str] = None) -> Optional[str]:
+    """Current occupant of `role` in the live roster, or None if vacant.
+
+    Lane-aware (2026-02-15): when `lane="crypto"` we look up the
+    crypto-isolated council first (`crypto_executor` for the executor
+    role, `crypto_governor` for governor, etc.) and fall back to the
+    equity seat if the crypto seat is vacant. This is what gives the
+    crypto lane its isolated execution authority while keeping
+    backward-compat for any consumer that doesn't yet know about
+    lanes.
+
+    Mapping: the `crypto_executor` role is stored as `crypto` in the
+    roster (legacy name from when crypto was a single executor seat).
+    Everything else uses the `crypto_<role>` prefix.
+    """
     from shared.roster import get_roster  # noqa: WPS433
     r = await get_roster()
-    return (r.get("assignments") or {}).get(role)
+    assignments = r.get("assignments") or {}
+
+    if (lane or "").lower() == "crypto":
+        crypto_role = "crypto" if role == "executor" else f"crypto_{role}"
+        holder = assignments.get(crypto_role)
+        if holder:
+            return holder
+        # Fallback to the equity seat. This prevents the council from
+        # going dark on a crypto intent just because crypto_governor
+        # hasn't been slotted yet.
+
+    return assignments.get(role)
 
 
-async def _latest_governor_call(symbol: Optional[str]) -> tuple[Optional[str], Optional[dict]]:
+async def _latest_governor_call(symbol: Optional[str], lane: Optional[str] = None) -> tuple[Optional[str], Optional[dict]]:
     """(holder, doc) — most recent authority_call by the current Governor
-    seat holder for `symbol`. Returns (None, None) if the seat is vacant."""
-    holder = await _seat_holder("governor")
+    seat holder for `symbol`. Returns (None, None) if the seat is vacant.
+    Lane-aware: for crypto intents reads `crypto_governor` first."""
+    holder = await _seat_holder("governor", lane=lane)
     if not holder or not symbol:
         return holder, None
     query = {"$and": [
@@ -268,10 +297,11 @@ async def _latest_governor_call(symbol: Optional[str]) -> tuple[Optional[str], O
     return holder, doc
 
 
-async def _latest_governor_any_call() -> tuple[Optional[str], Optional[dict]]:
+async def _latest_governor_any_call(lane: Optional[str] = None) -> tuple[Optional[str], Optional[dict]]:
     """(holder, doc) — most recent authority_call by Governor for ANY symbol.
-    Used to distinguish 'governor offline' from 'governor uncertain on this name'."""
-    holder = await _seat_holder("governor")
+    Used to distinguish 'governor offline' from 'governor uncertain on this name'.
+    Lane-aware."""
+    holder = await _seat_holder("governor", lane=lane)
     if not holder:
         return holder, None
     query = {"$and": [_brain_match_clause(holder), _authority_call_clause()]}
@@ -279,9 +309,10 @@ async def _latest_governor_any_call() -> tuple[Optional[str], Optional[dict]]:
     return holder, doc
 
 
-async def _latest_opponent_contribution() -> tuple[Optional[str], Optional[dict]]:
-    """(holder, doc) — most recent sovereign contribution by Opponent seat."""
-    holder = await _seat_holder("opponent")
+async def _latest_opponent_contribution(lane: Optional[str] = None) -> tuple[Optional[str], Optional[dict]]:
+    """(holder, doc) — most recent sovereign contribution by Opponent seat.
+    Lane-aware: for crypto intents reads `crypto_opponent` first."""
+    holder = await _seat_holder("opponent", lane=lane)
     if not holder:
         return holder, None
     query = {"$and": [_brain_match_clause(holder), _contribution_clause()]}
@@ -419,13 +450,13 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
     intent_id = intent.get("intent_id", "?")
     lane = intent.get("lane")
     policy = _policy_for_lane(lane)
-    executor_holder = await _seat_holder("executor")
-    governor_holder, gov_doc = await _latest_governor_call(sym)
+    executor_holder = await _seat_holder("executor", lane=lane)
+    governor_holder, gov_doc = await _latest_governor_call(sym, lane=lane)
     gov_norm = _normalize_governor_call(gov_doc)
 
     if gov_norm is None:
         # No per-symbol call — is the governor alive at all?
-        _, gov_any = await _latest_governor_any_call()
+        _, gov_any = await _latest_governor_any_call(lane=lane)
         governor_alive = _is_fresh(_doc_ts(gov_any), _GOVERNOR_OFFLINE_THRESHOLD_SECONDS)
         gov_any_ts = _doc_ts(gov_any)
     else:
@@ -495,7 +526,7 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
     # Seat-bound: queries whoever holds the Opponent seat. Advisory only
     # now — never hard-blocks. The opponent's view is captured in the
     # governance row and feeds the outcome learner.
-    opponent_holder, opp_doc = await _latest_opponent_contribution()
+    opponent_holder, opp_doc = await _latest_opponent_contribution(lane=lane)
     opp_ts = _doc_ts(opp_doc)
 
     if not opponent_holder:
@@ -1185,10 +1216,10 @@ async def council_lookup_debug(
     binding and lane-policy visible: switch the Governor seat or the
     lane and re-hit this endpoint to see the verdict flip."""
     policy = _policy_for_lane(lane)
-    governor_holder, gov_doc = await _latest_governor_call(symbol)
-    _, gov_any = await _latest_governor_any_call()
-    opponent_holder, opp_doc = await _latest_opponent_contribution()
-    executor_holder = await _seat_holder("executor")
+    governor_holder, gov_doc = await _latest_governor_call(symbol, lane=lane)
+    _, gov_any = await _latest_governor_any_call(lane=lane)
+    opponent_holder, opp_doc = await _latest_opponent_contribution(lane=lane)
+    executor_holder = await _seat_holder("executor", lane=lane)
     gov_norm = _normalize_governor_call(gov_doc)
     gov_any_ts = _doc_ts(gov_any)
     governor_alive = _is_fresh(gov_any_ts, _GOVERNOR_OFFLINE_THRESHOLD_SECONDS)

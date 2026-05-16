@@ -37,6 +37,15 @@ from namespaces import BRAIN_ELIGIBILITY, BRAIN_ROSTER, DISCUSSION_PARTICIPANTS,
 
 ROLES: tuple[str, ...] = (
     "decider", "executor", "governor", "advisor", "opponent", "crypto",
+    # ─── Crypto lane (isolated execution authority, 2026-02-15) ───────
+    # The crypto lane runs its own council — governor, advisor, opponent —
+    # so equity policy never leaks into crypto routing. `crypto` (above)
+    # is the crypto EXECUTOR seat (legacy name retained for back-compat
+    # with the existing eligibility matrix). These three add the rest of
+    # the crypto council. The doctrine: equity reads default seats,
+    # crypto reads crypto_* seats; if a crypto_* seat is vacant it
+    # falls back to the default. See `_seat_holder(role, lane=...)`.
+    "crypto_advisor", "crypto_governor", "crypto_opponent",
 )
 BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("alpha", "camaro", "chevelle", "redeye")
 
@@ -52,7 +61,12 @@ DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
     "governor": "chevelle",
     "advisor":  None,        # operator-assigned
     "opponent": "redeye",
-    "crypto":   None,        # operator-assigned: dedicated crypto specialist
+    "crypto":   None,        # operator-assigned: dedicated crypto executor
+    # Crypto council seats — all vacant until operator slots them.
+    # When vacant, the council falls back to the equity seat for that role.
+    "crypto_advisor":  None,
+    "crypto_governor": None,
+    "crypto_opponent": None,
 }
 
 # Default eligibility — every brain is eligible for every seat by
@@ -61,11 +75,12 @@ DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
 # seat applies that seat's policy. The operator chooses who fits where.
 # Eligibility can be tightened per-brain per-seat later via the operator
 # console if a brain's training intent makes a specific seat a bad fit.
+_ALL_TRUE = {role: True for role in ROLES}
 DEFAULT_ELIGIBILITY: dict[str, dict[str, bool]] = {
-    "alpha":    {"decider": True, "executor": True, "governor": True, "advisor": True, "opponent": True, "crypto": True},
-    "camaro":   {"decider": True, "executor": True, "governor": True, "advisor": True, "opponent": True, "crypto": True},
-    "chevelle": {"decider": True, "executor": True, "governor": True, "advisor": True, "opponent": True, "crypto": True},
-    "redeye":   {"decider": True, "executor": True, "governor": True, "advisor": True, "opponent": True, "crypto": True},
+    "alpha":    dict(_ALL_TRUE),
+    "camaro":   dict(_ALL_TRUE),
+    "chevelle": dict(_ALL_TRUE),
+    "redeye":   dict(_ALL_TRUE),
 }
 
 
@@ -171,7 +186,10 @@ async def _audit(action: str, actor: str, payload: dict) -> None:
 
 # ──────────────────────── models ────────────────────────
 
-RoleT = Literal["decider", "executor", "governor", "advisor", "opponent"]
+RoleT = Literal[
+    "decider", "executor", "governor", "advisor", "opponent", "crypto",
+    "crypto_advisor", "crypto_governor", "crypto_opponent",
+]
 BrainT = Literal["alpha", "camaro", "chevelle", "redeye"]
 
 
