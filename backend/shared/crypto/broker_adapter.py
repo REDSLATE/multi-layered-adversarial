@@ -25,7 +25,7 @@ from typing import Optional
 
 import httpx
 
-from shared.kraken import (
+from shared.crypto.kraken import (
     KRAKEN_BASE,
     USER_AGENT,
     KrakenError,

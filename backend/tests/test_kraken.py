@@ -54,7 +54,7 @@ class TestSigningAndCrypto:
     def test_sign_known_vector(self):
         """Kraken's documented test vector — confirm we produce a base64,
         non-empty signature of the expected length."""
-        from shared.kraken import _sign
+        from shared.crypto.kraken import _sign
         priv = "FRs+gtq09rR7OFtKj9BGhyOGS3u5vtY/EdiIBO9kD8NFtRX7w7LeJDSrX6cq1D8zmQmGkWFjksuhBvKOAWJohQ=="
         nonce = "1540973848000"
         path = "/0/private/TradeBalance"
@@ -66,7 +66,7 @@ class TestSigningAndCrypto:
         assert len(decoded) == 64
 
     def test_sign_different_nonces_differ(self):
-        from shared.kraken import _sign
+        from shared.crypto.kraken import _sign
         priv = base64.b64encode(b"x" * 64).decode()
         sig1 = _sign("/0/private/Balance", "1000", "nonce=1000", priv)
         sig2 = _sign("/0/private/Balance", "2000", "nonce=2000", priv)
@@ -74,7 +74,7 @@ class TestSigningAndCrypto:
 
     def test_sign_matches_manual_hmac(self):
         """Re-implement signing manually and ensure we match."""
-        from shared.kraken import _sign
+        from shared.crypto.kraken import _sign
         priv = base64.b64encode(b"the answer is 42 the answer is 42").decode()
         nonce = "1700000000000"
         path = "/0/private/Balance"

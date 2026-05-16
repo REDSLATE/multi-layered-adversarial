@@ -23,7 +23,7 @@ import logging
 from typing import Optional
 
 from shared.broker.alpaca_routes import get_alpaca_adapter
-from shared.broker.kraken_adapter import get_kraken_adapter
+from shared.crypto.broker_adapter import get_kraken_adapter
 from shared.broker_symbol_resolver import (
     AssetKey,
     BrokerSymbolUnresolved,

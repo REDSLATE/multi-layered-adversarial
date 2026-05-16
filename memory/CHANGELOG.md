@@ -1,3 +1,56 @@
+## 2026-02-16 (later) — Lane code separation: `shared/crypto/` + `shared/equity/`
+
+Operator pushed back on equity-and-crypto living in the same folder.
+Reshuffled per option (a) — files moved, imports rewired, zero behavior
+change.
+
+**New subpackages:**
+
+```
+shared/crypto/
+├── __init__.py
+├── kraken.py            (was shared/kraken.py)
+├── routes.py            (was shared/kraken_routes.py)
+├── broker_adapter.py    (was shared/broker/kraken_adapter.py)
+├── council_policy.py    (extracted from shared/council.py)
+└── exposure_caps.py     (crypto $30/order cap extracted from shared/exposure_caps.py)
+
+shared/equity/
+├── __init__.py
+└── council_policy.py    (extracted from shared/council.py)
+```
+
+**Dispatcher invariant** — a lane-only change requires editing ONLY
+that lane's subpackage:
+- Crypto-only tuning: edit `shared/crypto/*` — never touches equity.
+- Equity-only tuning: edit `shared/equity/*` — never touches crypto.
+- `shared/council.py` is now a 12-line dispatcher importing both
+  policies; nothing else changes there.
+- `shared/exposure_caps.py` imports `CRYPTO_PER_ORDER_USD` from
+  `shared/crypto/exposure_caps.py` — same dispatch pattern.
+
+**Imports rewired (4 sites):**
+- `server.py` — kraken router import
+- `shared/broker_router.py` — kraken adapter import
+- `shared/exposure_caps.py` — crypto cap import (now from crypto subpkg)
+- `tests/test_kraken.py` — `_sign` import
+- `shared/council.py` — `EQUITY_POLICY` + `CRYPTO_POLICY` imports
+
+**Verified (preview):**
+- Backend boots clean. Logs confirm Kraken router + brain-lane policy
+  seed both still ran.
+- All 6 sanity endpoints respond 200 (health, kraken/status,
+  exposure-caps, brain-lane-policy, roster, council/lookup-debug for
+  BTC/USD on crypto lane).
+- REDEYE crypto dry-run re-run post-reorg: identical gate-chain
+  verdict, identical risk-multiplier (0.75), identical caps
+  (`caps.crypto: 30.0` now sourced from the new file).
+
+Net: same behavior, cleaner physical layout. A crypto governance tune
+no longer requires the operator (or the next agent) to scroll past
+equity logic to find the knob.
+
+
 ## 2026-02-16 (late) — Per-brain × lane intent-emission policy + Camaro→crypto muted
 
 Operator asked to "turn off Camaro's crypto trading". Built a per-brain × lane

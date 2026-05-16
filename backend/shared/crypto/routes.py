@@ -37,7 +37,7 @@ from namespaces import (
     KRAKEN_CREDENTIALS,
 )
 from shared.credentials import encrypt, redact
-from shared.kraken import (
+from shared.crypto.kraken import (
     KrakenError,
     INTERNAL_TO_KRAKEN_PAIR,
     call_private,

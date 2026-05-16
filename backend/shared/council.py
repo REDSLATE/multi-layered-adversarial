@@ -67,54 +67,19 @@ _COUNCIL_FRESHNESS_SECONDS = 600  # 10 minutes
 # How long the governor seat can be silent before we consider it offline.
 _GOVERNOR_OFFLINE_THRESHOLD_SECONDS = 1800  # 30 minutes
 
-# Lane-aware policy. Equity = consensus-first / governance-heavy.
-# Crypto = momentum-biased / governance-light (faster adaptation).
-# Tune any value below to retune the system; no other code change needed.
+# Lane-aware policy. Each lane's policy lives in its own subpackage:
+#   shared/equity/council_policy.py — consensus-first / governance-heavy
+#   shared/crypto/council_policy.py — momentum-biased / governance-light
+#
+# This file is the dispatcher. A lane-only change should require
+# editing ONLY the policy file in that lane's subpackage — never this
+# one. (2026-02-16 reorg.)
+from shared.crypto.council_policy import CRYPTO_POLICY
+from shared.equity.council_policy import EQUITY_POLICY
+
 COUNCIL_POLICY: dict[str, dict] = {
-    "equity": {
-        "GOVERNOR_HARD_VETO_THRESHOLD": 0.85,
-        "GOVERNOR_DISSENT_CONF_MULT":   0.82,    # executor conf × this on dissent
-        "GOVERNOR_DISSENT_SIZE_MULT":   0.75,    # order size × this on dissent
-        "GOVERNOR_NO_STANCE_SIZE_MULT": 0.65,    # size when governor alive but silent on symbol
-        "GOVERNOR_NO_STANCE_CONF_MULT": 0.85,    # eff-conf reduction when no stance
-        "OPPONENT_INFLUENCE":           0.70,    # max % the opponent can pull the size down
-        "MIN_EXECUTOR_CONF_FLOOR":      0.50,    # below this after multipliers ⇒ block
-        "MAX_UPWEIGHT":                 1.25,
-        "MAX_DOWNWEIGHT":               0.60,
-        "MAX_SINGLE_AGENT_INFLUENCE":   0.40,    # any one agent can move size at most ±40%
-        "MOMENTUM_WEIGHTING":           1.00,    # no momentum bias on equities
-        # Seat-bound stack weights — apply to whoever holds the seat,
-        # NOT to a brain identity. Used in governance ledger for scoring.
-        "STACK_WEIGHTS": {
-            "executor": 1.00, "decider": 0.90,
-            "governor": 0.65, "opponent": 0.80,
-            "advisor":  0.50, "crypto":   1.00,
-        },
-    },
-    "crypto": {
-        "GOVERNOR_HARD_VETO_THRESHOLD": 0.85,
-        # Crypto: governance damping reduced. Soft dissent only shaves
-        # 10% off conf and 17% off size — a "risk shaper", not a brake.
-        "GOVERNOR_DISSENT_CONF_MULT":   0.90,
-        "GOVERNOR_DISSENT_SIZE_MULT":   0.83,
-        "GOVERNOR_NO_STANCE_SIZE_MULT": 0.80,
-        "GOVERNOR_NO_STANCE_CONF_MULT": 0.92,
-        "OPPONENT_INFLUENCE":           0.85,    # crypto crashes are real; listen more to REDEYE
-        "MIN_EXECUTOR_CONF_FLOOR":      0.45,    # slightly lower floor (crypto = noisier)
-        "MAX_UPWEIGHT":                 1.25,
-        # CRYPTO_GOVERNOR_DOWNWEIGHT_FLOOR (2026-02-15): tune the
-        # governor lighter for crypto. Composed downweights cannot drop
-        # size below 0.75 in the crypto lane — vs equity's 0.60 — so
-        # crypto governance shapes risk without throttling the lane.
-        "MAX_DOWNWEIGHT":               0.75,
-        "MAX_SINGLE_AGENT_INFLUENCE":   0.40,
-        "MOMENTUM_WEIGHTING":           1.20,    # crypto punishes hesitation — lift momentum
-        "STACK_WEIGHTS": {
-            "executor": 1.00, "decider": 0.90,
-            "governor": 0.65, "opponent": 0.80,
-            "advisor":  0.50, "crypto":   1.00,
-        },
-    },
+    "equity": EQUITY_POLICY,
+    "crypto": CRYPTO_POLICY,
 }
 
 

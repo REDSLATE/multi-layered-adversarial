@@ -22,6 +22,10 @@ from typing import Optional
 from db import db
 from namespaces import EXECUTION_RECEIPTS
 from shared.broker.alpaca_routes import get_alpaca_adapter
+# Per-lane caps — each lane's per-order ceiling lives in its own
+# subpackage so a crypto-only change doesn't touch the equity tree.
+# (2026-02-16 reorg.)
+from shared.crypto.exposure_caps import CRYPTO_PER_ORDER_USD as _CRYPTO_PER_ORDER_USD
 
 
 # Paper-trading rails. Change here = redeploy.
@@ -34,12 +38,11 @@ CAP_PER_ORDER_USD: float = 100_000.0
 CAP_PER_DAY_USD: float = 1_000_000.0
 CAP_OPEN_NOTIONAL_USD: float = 1_000_000.0
 
-# Per-lane override. Crypto goes LIVE with a $30/order ceiling
-# (raised from $10 on 2026-02-15). Set to None for "use the global cap".
-# These overrides apply to the per-order cap only — day/open caps still
-# use the globals above.
+# Per-lane override. Set entries to None for "use the global cap".
+# These overrides apply to the per-order cap only — day/open caps
+# still use the globals above.
 CAP_PER_ORDER_BY_LANE: dict[str, float] = {
-    "crypto": 30.0,
+    "crypto": _CRYPTO_PER_ORDER_USD,
 }
 
 

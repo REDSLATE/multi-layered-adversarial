@@ -24,7 +24,7 @@ from shared.opinions import router as opinions_router
 from shared.outcomes import router as outcomes_router
 from shared.conflicts import router as conflicts_router
 from shared.technicals import router as technicals_router
-from shared.kraken_routes import router as kraken_router, start_poller_if_needed, stop_poller
+from shared.crypto.routes import router as kraken_router, start_poller_if_needed, stop_poller
 from shared.ibkr import router as ibkr_router, start_tickler_if_needed, stop_tickler
 from shared.public import router as public_router, start_refresher_if_needed as start_public_refresher, stop_refresher as stop_public_refresher
 from shared.positions import router as positions_router
