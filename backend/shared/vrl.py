@@ -24,9 +24,9 @@ Doctrine (2026-02-16):
         SHARED_VRL_SCORECARDS. The aggregator pulls SHARED_GATE_RESULTS
         joined with SHARED_OUTCOMES on intent_id.
 
-    All writes are append-only. Gate scorecards are recomputed on demand
-    via POST /api/admin/vrl/scorecards/recompute or — once we wire it —
-    on a nightly cron.
+    All writes are append-only. Gate scorecards are recomputed nightly
+    by the background scheduler (`start_scorecard_scheduler`) AND on
+    operator demand via POST /api/admin/vrl/scorecards/recompute.
 
     What VRL is NOT:
       * Not a gate. It does not block trades.
@@ -36,6 +36,9 @@ Doctrine (2026-02-16):
 """
 from __future__ import annotations
 
+import asyncio
+import logging
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -368,3 +371,94 @@ async def recompute_endpoint(
         window_hours=body.window_hours,
         actor=user.get("email") or "operator",
     )
+
+
+# ──────────────────────── nightly scheduler ────────────────────────
+# Background loop that recomputes the rolling-30-day scorecards every
+# 24h. Mirrors the auto-router pattern in shared/auto_router.py.
+#
+# Env knobs (all optional):
+#   VRL_SCHEDULER_ENABLED          default "true"
+#   VRL_SCHEDULER_INTERVAL_HOURS   default 24
+#   VRL_SCHEDULER_WINDOW_HOURS     default 720  (30 days)
+#
+# Disable by setting VRL_SCHEDULER_ENABLED=false in backend/.env.
+
+logger = logging.getLogger("vrl")
+
+_SCHEDULER_TASK: Optional[asyncio.Task] = None
+
+VRL_SCHEDULER_ENABLED = os.environ.get("VRL_SCHEDULER_ENABLED", "true").lower() not in ("0", "false", "no", "off")
+VRL_SCHEDULER_INTERVAL_HOURS = float(os.environ.get("VRL_SCHEDULER_INTERVAL_HOURS", "24"))
+VRL_SCHEDULER_WINDOW_HOURS = int(os.environ.get("VRL_SCHEDULER_WINDOW_HOURS", "720"))
+
+
+async def _scheduler_loop() -> None:
+    interval_seconds = max(60.0, VRL_SCHEDULER_INTERVAL_HOURS * 3600.0)
+    logger.info(
+        "vrl scheduler started: interval=%.0fh window=%dh",
+        VRL_SCHEDULER_INTERVAL_HOURS, VRL_SCHEDULER_WINDOW_HOURS,
+    )
+    # First run delayed 5 minutes after boot so the rest of the system
+    # finishes warming up before we start a potentially heavy join.
+    await asyncio.sleep(300)
+    while True:
+        try:
+            result = await recompute_scorecards(
+                window_hours=VRL_SCHEDULER_WINDOW_HOURS,
+                actor="vrl_scheduler",
+            )
+            logger.info(
+                "vrl scheduler tick: gates=%d intents=%d",
+                len(result.get("scorecards") or []),
+                result.get("intents_scored") or 0,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.exception("vrl scheduler tick failed: %s", e)
+        await asyncio.sleep(interval_seconds)
+
+
+def start_scorecard_scheduler() -> None:
+    """Idempotent. Called from server.py lifespan on boot."""
+    global _SCHEDULER_TASK
+    if not VRL_SCHEDULER_ENABLED:
+        logger.info("vrl scheduler disabled (VRL_SCHEDULER_ENABLED=false)")
+        return
+    if _SCHEDULER_TASK and not _SCHEDULER_TASK.done():
+        return
+    try:
+        _SCHEDULER_TASK = asyncio.create_task(_scheduler_loop())
+    except RuntimeError:
+        # No running event loop — caller is wrong context; surface a log.
+        logger.warning("vrl scheduler could not start: no event loop")
+
+
+async def stop_scorecard_scheduler() -> None:
+    """Lifespan shutdown hook — cancel the loop and wait for graceful exit."""
+    global _SCHEDULER_TASK
+    if _SCHEDULER_TASK and not _SCHEDULER_TASK.done():
+        _SCHEDULER_TASK.cancel()
+        try:
+            await _SCHEDULER_TASK
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+    _SCHEDULER_TASK = None
+
+
+@router.get("/scheduler/status")
+async def scheduler_status(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Operator view: is the nightly scorecard recomputer running?"""
+    running = _SCHEDULER_TASK is not None and not _SCHEDULER_TASK.done()
+    last = await db[SHARED_VRL_SCORECARDS].find_one(
+        {"computed_by": "vrl_scheduler"}, {"_id": 0, "window_end": 1},
+        sort=[("window_end", -1)],
+    )
+    return {
+        "enabled": VRL_SCHEDULER_ENABLED,
+        "running": running,
+        "interval_hours": VRL_SCHEDULER_INTERVAL_HOURS,
+        "window_hours": VRL_SCHEDULER_WINDOW_HOURS,
+        "last_scheduled_run_at": (last or {}).get("window_end"),
+    }

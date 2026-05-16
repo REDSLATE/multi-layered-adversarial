@@ -53,7 +53,11 @@ from shared.decisions_feed import router as decisions_router
 from shared.doctrine_routes import router as doctrine_router
 from shared.execution import router as execution_router
 from shared.live_positions import router as live_positions_router
-from shared.vrl import router as vrl_router
+from shared.vrl import (
+    router as vrl_router,
+    start_scorecard_scheduler,
+    stop_scorecard_scheduler,
+)
 from shared.quantum_routes import router as quantum_router
 from shared.personalities_routes import router as personalities_router
 from shared.auto_router import (
@@ -120,6 +124,9 @@ async def lifespan(app: FastAPI):
     logger.info("Public news refresher started")
     start_darkpool_refresher()
     logger.info("Public dark-pool refresher started")
+    # VRL nightly scorecard recomputer — opt-out via VRL_SCHEDULER_ENABLED=false.
+    start_scorecard_scheduler()
+    logger.info("VRL scorecard scheduler started")
     yield
     await stop_poller()
     await stop_tickler()
@@ -127,6 +134,7 @@ async def lifespan(app: FastAPI):
     await stop_auto_router()
     await stop_news_refresher()
     await stop_darkpool_refresher()
+    await stop_scorecard_scheduler()
     client.close()
 
 

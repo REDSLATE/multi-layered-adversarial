@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, RUNTIME_META, fmtTime, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
+import VRLScorecardsPanel from "@/components/VRLScorecardsPanel";
 
 const BRAINS_FOR_FILTER = ["all", "alpha", "camaro", "chevelle", "redeye"];
 const KIND_LABEL = {
@@ -497,6 +498,13 @@ export default function Diagnostics() {
               quantum overlay verdict from the governance ledger. */}
           <div className="mt-6">
             <QuantumPanel />
+          </div>
+
+          {/* VRL gate scorecards — per-gate precision/recall over a
+              rolling window. Shows which gates are net helpful vs.
+              net friction so the operator can retune. */}
+          <div className="mt-6">
+            <VRLScorecardsPanel />
           </div>
         </>
       )}

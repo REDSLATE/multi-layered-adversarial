@@ -1,9 +1,9 @@
 """Public /chat — grounded RiseDualGPT for Pro Max.
 
-Multi-turn chat using Claude Sonnet 4.5 via the Emergent LLM key.
-Grounded in MC's open positions + recent indicator snapshots — the
-brain doesn't make up market data, it speaks about real positions and
-real indicators.
+Multi-turn chat using Claude Sonnet 4.5 via the official Anthropic
+Python SDK (`anthropic.AsyncAnthropic`). Grounded in MC's open
+positions + recent indicator snapshots — the brain doesn't make up
+market data, it speaks about real positions and real indicators.
 
 Doctrine:
   * Pro Max only. Free / starter / pro all get 403. risedual.ai
@@ -11,12 +11,23 @@ Doctrine:
     callers below pro_max.
   * Session memory is persisted to MongoDB (`public_chat_messages`)
     keyed by `session_id`. Multi-turn survives MC restarts because we
-    replay history into a fresh LlmChat each request.
-  * Hard cap of 50 turns per session. Beyond that the oldest turns
-    drop off (rolling window) — keeps token cost bounded.
-  * Refuses to talk about anything outside trading, markets,
-    technical analysis, or RiseDual's own outputs (system prompt
-    enforces).
+    replay history as a `messages=[…]` list on every request. The
+    Anthropic Messages API is stateless — we send the full window each
+    call.
+  * Hard cap of 25 turns per session (= 50 messages). Beyond that the
+    oldest turns drop off (rolling window) — keeps token cost bounded.
+  * Refuses to talk about anything outside trading, markets, technical
+    analysis, or RiseDual's own outputs (system prompt enforces).
+
+History (2026-02-16): refactored away from emergentintegrations to
+the vendor SDK per the latest integration_playbook_expert_v2 guidance.
+Key migration notes:
+  - LlmChat(...).with_model().send_message(...) → AsyncAnthropic().messages.create(model=..., system=..., messages=[...]).
+  - The legacy implementation pasted prior turns into a synthetic
+    "PRIOR CONVERSATION" preamble on the LATEST user message. The
+    vendor SDK accepts a proper alternating user/assistant messages
+    list, so we now build that natively — better fidelity, cheaper
+    tokens, and `stop_reason` visibility comes for free.
 """
 from __future__ import annotations
 
@@ -40,16 +51,25 @@ from shared.positions import OPEN_STATES
 from .auth import PublicCaller, public_trust_required
 
 try:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-except ImportError:  # noqa: F401
-    LlmChat = None
-    UserMessage = None
+    import anthropic
+    from anthropic import AsyncAnthropic
+except ImportError:  # pragma: no cover — defensive only
+    anthropic = None  # type: ignore[assignment]
+    AsyncAnthropic = None  # type: ignore[assignment]
 
 
 router = APIRouter(tags=["public"])
 
+# Model selection — date-stamped snapshot for stability. Operator can
+# override with CLAUDE_MODEL_ID in backend/.env if a newer version
+# ships and we want to opt in without a code change.
 LLM_PROVIDER = "anthropic"
-LLM_MODEL = "claude-sonnet-4-5-20250929"
+LLM_MODEL = os.environ.get("CLAUDE_MODEL_ID", "claude-sonnet-4-5-20250929")
+
+# Per-response output cap. Keeps cost predictable and surfaces
+# `stop_reason == "max_tokens"` clearly when the model would otherwise
+# run long.
+MAX_OUTPUT_TOKENS = int(os.environ.get("CLAUDE_MAX_OUTPUT_TOKENS", "1024"))
 
 # Max retained turns per session. One "turn" = one user + one assistant
 # message. We replay these on every call, so this directly bounds token
@@ -80,6 +100,33 @@ SYSTEM_PROMPT = (
     "answer with what the signals say, not with personal advice."
 )
 
+# Module-level client. Lazily instantiated on first call so the import
+# of this module doesn't fail when ANTHROPIC_API_KEY is missing (the
+# endpoint will return 503 instead, same as the legacy behavior).
+_CLIENT: Optional["AsyncAnthropic"] = None
+
+
+def _get_client() -> "AsyncAnthropic":
+    """Return a singleton AsyncAnthropic client. Raises 503 if the SDK
+    isn't installed or the API key is missing."""
+    global _CLIENT
+    if _CLIENT is not None:
+        return _CLIENT
+    if AsyncAnthropic is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LLM integration not installed (anthropic SDK missing)",
+        )
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        raise HTTPException(
+            status_code=503,
+            detail="LLM not configured (ANTHROPIC_API_KEY unset in backend/.env)",
+        )
+    # max_retries: SDK retries 429/5xx with exponential backoff internally.
+    _CLIENT = AsyncAnthropic(api_key=key, max_retries=2)
+    return _CLIENT
+
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000)
@@ -93,6 +140,9 @@ class ChatResponse(BaseModel):
     tier: str
     turn_count: int
     new_session: bool
+    stop_reason: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
 
 
 def _now_iso() -> str:
@@ -156,6 +206,29 @@ async def _load_session_history(session_id: str) -> list[dict]:
     return rows
 
 
+def _history_to_messages(history: list[dict]) -> list[dict]:
+    """Translate persisted history rows into the Anthropic Messages
+    API shape. Skips any row whose role isn't user/assistant (defensive
+    against schema drift). Trims content to MongoDB's stored value as-is
+    — we don't re-truncate here.
+    """
+    msgs: list[dict] = []
+    for row in history[-(MAX_TURNS_PER_SESSION * 2):]:
+        role = row.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        text = (row.get("text") or "").strip()
+        if not text:
+            continue
+        msgs.append({"role": role, "content": text})
+    # The Anthropic API requires that the FIRST message be a user
+    # message. If history starts with an assistant turn (shouldn't
+    # happen but defend), drop leading assistant rows.
+    while msgs and msgs[0]["role"] != "user":
+        msgs.pop(0)
+    return msgs
+
+
 async def _persist_message(session_id: str, role: str, text: str) -> None:
     await db[PUBLIC_CHAT_MESSAGES].insert_one({
         "message_id": str(uuid.uuid4()),
@@ -183,6 +256,17 @@ async def _prune_old_turns(session_id: str) -> None:
         await db[PUBLIC_CHAT_MESSAGES].delete_many({"_id": {"$in": ids}})
 
 
+def _extract_text(response) -> str:
+    """Concatenate every `text`-typed content block on the response.
+    Anthropic responses can contain multiple blocks (text, tool_use, …);
+    for our single-text-out endpoint we only care about text."""
+    chunks: list[str] = []
+    for block in getattr(response, "content", []) or []:
+        if getattr(block, "type", None) == "text":
+            chunks.append(getattr(block, "text", ""))
+    return "".join(chunks).strip()
+
+
 @router.post("/public/chat", response_model=ChatResponse)
 async def post_chat(
     body: ChatRequest,
@@ -203,62 +287,59 @@ async def post_chat(
                 "the correct X-RiseDual-User-Tier header."
             ),
         )
-    if LlmChat is None:
-        raise HTTPException(
-            status_code=503,
-            detail="LLM integration not installed (emergentintegrations missing)",
-        )
-    api_key = os.environ.get("EMERGENT_LLM_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="LLM not configured (EMERGENT_LLM_KEY unset)",
-        )
+
+    client = _get_client()
 
     session_id = body.session_id or f"sess-{uuid.uuid4().hex[:24]}"
     new_session = body.session_id is None
 
-    # Load prior turns (replayed into a fresh LlmChat below).
+    # Replay prior turns from MongoDB as a proper Anthropic messages
+    # list (alternating user/assistant). The legacy implementation
+    # stuffed history into the LATEST user message — the vendor SDK
+    # accepts native multi-turn shape, so we feed it directly.
     history = await _load_session_history(session_id) if not new_session else []
+    messages = _history_to_messages(history)
 
-    # Build market context fresh on every turn — markets move.
+    # Build market context fresh on every turn — markets move. The
+    # context is appended to the SYSTEM prompt, not pasted into the
+    # user message, so the model treats it as the operator-set frame
+    # rather than user-supplied data.
     context = await _build_market_context()
     full_system = f"{SYSTEM_PROMPT}\n\n{context}"
 
-    chat = LlmChat(
-        api_key=api_key,
-        session_id=session_id,
-        system_message=full_system,
-    ).with_model(LLM_PROVIDER, LLM_MODEL)
+    # Current user turn.
+    messages.append({"role": "user", "content": body.message})
 
-    # Replay history: re-send each prior user message so the LlmChat
-    # instance accumulates the same context Claude saw before. We don't
-    # re-call the LLM on prior turns — we just send the prior user
-    # message and discard the response (it's already in our DB). For
-    # cost-efficiency, we instead inject history via a synthetic
-    # "prior conversation" string into the LATEST user prompt.
-    history_summary = ""
-    if history:
-        snippets: list[str] = []
-        for msg in history[-MAX_TURNS_PER_SESSION * 2:]:
-            role = msg["role"].upper()
-            t = (msg["text"] or "").strip()[:800]
-            snippets.append(f"{role}: {t}")
-        history_summary = (
-            "\n\n=== PRIOR CONVERSATION (for context) ===\n"
-            + "\n".join(snippets)
-            + "\n=== END PRIOR ===\n"
-        )
-
-    user_text = (history_summary + "\nUSER: " + body.message).strip()
-
+    # Call Claude. SDK handles 429/5xx retries internally up to
+    # max_retries=2; remaining errors surface here.
     try:
-        reply = await chat.send_message(UserMessage(text=user_text))
+        response = await client.messages.create(
+            model=LLM_MODEL,
+            max_tokens=MAX_OUTPUT_TOKENS,
+            system=full_system,
+            messages=messages,
+        )
+    except anthropic.RateLimitError as e:  # type: ignore[union-attr]
+        raise HTTPException(
+            status_code=429,
+            detail="Anthropic rate limit exceeded; please retry shortly.",
+        ) from e
+    except anthropic.APIConnectionError as e:  # type: ignore[union-attr]
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to reach Anthropic API; try again shortly.",
+        ) from e
+    except anthropic.APIStatusError as e:  # type: ignore[union-attr]
+        raise HTTPException(
+            status_code=502,
+            detail=f"Anthropic API error ({getattr(e, 'status_code', '?')})",
+        ) from e
     except Exception as e:  # noqa: BLE001
         raise HTTPException(
             status_code=502, detail=f"LLM call failed: {e}",
         ) from e
-    reply = (reply or "").strip()
+
+    reply = _extract_text(response)
     if not reply:
         raise HTTPException(status_code=502, detail="LLM returned empty reply")
 
@@ -269,6 +350,8 @@ async def post_chat(
     turn_count = await db[PUBLIC_CHAT_MESSAGES].count_documents(
         {"session_id": session_id, "role": "user"},
     )
+
+    usage = getattr(response, "usage", None)
     return ChatResponse(
         session_id=session_id,
         reply=reply,
@@ -276,6 +359,9 @@ async def post_chat(
         tier=caller.tier,
         turn_count=turn_count,
         new_session=new_session,
+        stop_reason=getattr(response, "stop_reason", None),
+        input_tokens=getattr(usage, "input_tokens", None) if usage else None,
+        output_tokens=getattr(usage, "output_tokens", None) if usage else None,
     )
 
 

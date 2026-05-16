@@ -6,6 +6,7 @@ import { ArrowUpRight } from "@phosphor-icons/react";
 import TechnicalsPanel from "@/components/TechnicalsPanel";
 import FeedersStrip from "@/components/FeedersStrip";
 import RosterPanel from "@/components/RosterPanel";
+import LivePositionsPanel from "@/components/LivePositionsPanel";
 
 export default function Overview() {
   const [overview, setOverview] = useState(null);
@@ -176,6 +177,7 @@ export default function Overview() {
 
           {/* Shared Technical Feed — Mission-page panel */}
           <RosterPanel />
+          <LivePositionsPanel />
           <FeedersStrip />
           <div className="mb-6">
             <TechnicalsPanel />

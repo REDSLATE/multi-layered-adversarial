@@ -1,6 +1,45 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🚨 Latest (2026-02-16, end-of-day): P1 + P3 batch — UIs + scheduler + vendor SDK chat
+
+**P1 — `LivePositionsPanel`** mounted at `/admin/overview` (above
+FeedersStrip). State-filter chips (open / managing / closed / all),
+auto-refresh, totals header, Manage and Close modals that hit the 2
+write endpoints. Auto-derives outcome label preview from pnl.
+
+**P1 — `VRLScorecardsPanel`** mounted at `/admin/diagnostics` (after
+QuantumPanel). Sortable table — gate, sample, precision, recall,
+accuracy, TP/FP/TN/FN, verdict. Tier coloring: ≥70% EFFECTIVE (green),
+≥50% MIXED (amber), <50% FRICTION (red). Defaults to precision ascending
+so the operator sees the worst gates first. Shows scheduler status
+badge inline.
+
+**P3 — Nightly scorecard scheduler.** `shared/vrl.py` gained
+`start_scorecard_scheduler` / `stop_scorecard_scheduler` wired into
+`server.py` lifespan. Env knobs: `VRL_SCHEDULER_ENABLED`,
+`VRL_SCHEDULER_INTERVAL_HOURS` (24), `VRL_SCHEDULER_WINDOW_HOURS` (720).
+First run delayed 5 minutes post-boot. New endpoint
+`GET /api/admin/vrl/scheduler/status`. Logs confirm
+`"vrl scheduler started: interval=24h window=720h"`.
+
+**P3 — chat.py refactored to Anthropic vendor SDK.** Migrated away from
+`emergentintegrations` to `anthropic.AsyncAnthropic` (v0.102.0) per the
+integration_playbook_expert_v2 playbook. Native multi-turn replay
+(messages list, not synthetic preamble). Direction-aware error mapping
+(`RateLimitError → 429`, `APIConnectionError → 503`, `APIStatusError → 502`).
+Returns `stop_reason`, `input_tokens`, `output_tokens` on `ChatResponse`.
+
+⚠️ **REQUIRES**: operator must add `ANTHROPIC_API_KEY=sk-ant-...` to
+`backend/.env` for the chat endpoint to serve real LLM responses.
+Without it, the endpoint returns 503 — same operational posture as the
+legacy `EMERGENT_LLM_KEY unset` path. Model override:
+`CLAUDE_MODEL_ID` (default `claude-sonnet-4-5-20250929`). Output cap
+override: `CLAUDE_MAX_OUTPUT_TOKENS` (default 1024). The legacy
+`EMERGENT_LLM_KEY` env var is no longer read by chat.py.
+
+
+
 ## 🚨 Latest (2026-02-16, late): Saturday Sprint P0 + P2 batch shipped
 
 **P0 — Live Position Lifecycle** (open → managing → closed). New module

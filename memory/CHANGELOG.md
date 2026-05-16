@@ -1,3 +1,105 @@
+## 2026-02-16 — P1 + P3 batch: Live Positions UI, VRL Scorecards UI, nightly scheduler, vendor SDK chat
+
+Four follow-on tasks from the Saturday Sprint. All verified.
+
+### P1 — LivePositionsPanel UI
+
+New component `frontend/src/components/LivePositionsPanel.jsx` (~360
+lines) wired into `/admin/overview` (above FeedersStrip). Lists every
+live position with state-filter chips (open / managing / closed / all),
+auto-refresh every 15s, totals header, and the doctrine reminder
+"close broadcasts to shared_brain_outcomes". Two modals:
+
+- **Manage modal** — note (required) + delta notional (optional). Hits
+  `POST /api/admin/live-positions/{id}/manage`.
+- **Close modal** — pnl_usd / pnl_pct / outcome_label / note. The label
+  field auto-derives a preview from pnl (win/loss/scratch). Hits
+  `POST /api/admin/live-positions/{id}/close`.
+
+Verified: panel renders on `/admin/overview` with the empty-state
+"— no positions in this state —" and all `data-testid`s resolve.
+
+### P1 — VRLScorecardsPanel UI
+
+New component `frontend/src/components/VRLScorecardsPanel.jsx` (~240
+lines) wired into `/admin/diagnostics` (after the QuantumPanel).
+Sortable table with gate / sample / precision / recall / accuracy /
+TP·FP·TN·FN / verdict columns. Tier coloring uses three thresholds:
+
+- ≥70% precision → EFFECTIVE (green)
+- ≥50% precision → MIXED (amber)
+- <50% precision → FRICTION (red)
+
+Default sort is precision ascending (worst first) so the operator sees
+underperforming gates at the top. Shows a live scheduler status badge
+("RUNNING every 24h · rolling 720h") fed from
+`GET /api/admin/vrl/scheduler/status`. Recompute button triggers
+`POST /api/admin/vrl/scorecards/recompute` with the operator-set window.
+
+### P3 — Nightly scorecard scheduler
+
+`shared/vrl.py` gained `start_scorecard_scheduler` /
+`stop_scorecard_scheduler` (mirrors the auto_router pattern). Wired into
+`server.py` lifespan. Env knobs:
+
+- `VRL_SCHEDULER_ENABLED` (default `true`)
+- `VRL_SCHEDULER_INTERVAL_HOURS` (default `24`)
+- `VRL_SCHEDULER_WINDOW_HOURS` (default `720` / 30 days)
+
+First run delayed 5 minutes after boot so the rest of the system warms
+up first. New endpoint `GET /api/admin/vrl/scheduler/status` for the UI.
+Verified live: scheduler logs "vrl scheduler started: interval=24h
+window=720h" on boot; status endpoint returns `running=true`.
+
+### P3 — chat.py refactored to Anthropic vendor SDK
+
+`shared/public_api/chat.py` (~340 lines) rewritten away from
+`emergentintegrations.llm.chat.LlmChat` to the official
+`anthropic.AsyncAnthropic` SDK per the latest playbook from
+integration_playbook_expert_v2.
+
+Key changes:
+- `pip install anthropic==0.102.0`; added to `requirements.txt`.
+- Singleton `AsyncAnthropic` client, lazily instantiated on first request
+  so the import doesn't fail when the key is missing (endpoint returns
+  503 instead, matching legacy semantics).
+- History replay now uses a **native** alternating user/assistant
+  `messages=[…]` list — the legacy implementation stuffed all prior
+  turns into a synthetic preamble on the LATEST user message, which was
+  worse for token cost AND made `stop_reason` / `usage` invisible. The
+  new path returns `stop_reason`, `input_tokens`, `output_tokens` on
+  the `ChatResponse`.
+- System context (live MC positions + indicator snapshots) goes into
+  the `system=` field — not into the user message — so the model
+  treats it as the operator frame.
+- Direction-aware error handling: `RateLimitError` → 429,
+  `APIConnectionError` → 503, `APIStatusError` → 502.
+- Model is now env-overridable: `CLAUDE_MODEL_ID` (default
+  `claude-sonnet-4-5-20250929`). Output cap env-overridable too:
+  `CLAUDE_MAX_OUTPUT_TOKENS` (default 1024).
+
+**REQUIRES**: user must add `ANTHROPIC_API_KEY=sk-ant-...` to
+`backend/.env` before the chat endpoint will serve real LLM responses.
+Without it, the endpoint returns 503 with the message "LLM not
+configured (ANTHROPIC_API_KEY unset in backend/.env)" — same operational
+posture as the prior `EMERGENT_LLM_KEY unset` 503.
+
+The legacy `EMERGENT_LLM_KEY` is no longer read by chat.py and can be
+removed once the operator confirms the new vendor key is in place.
+
+**Files added:**
+- `frontend/src/components/LivePositionsPanel.jsx` (~360 lines)
+- `frontend/src/components/VRLScorecardsPanel.jsx` (~240 lines)
+
+**Files changed:**
+- `backend/shared/vrl.py` — scheduler + status endpoint
+- `backend/server.py` — start/stop scheduler in lifespan
+- `backend/shared/public_api/chat.py` — full vendor-SDK refactor
+- `backend/requirements.txt` — `anthropic==0.102.0`
+- `frontend/src/pages/Overview.jsx` — mount LivePositionsPanel
+- `frontend/src/pages/Diagnostics.jsx` — mount VRLScorecardsPanel
+
+
 ## 2026-02-16 — Saturday Sprint P0 + P2 batch shipped
 
 Five tasks landed in one pass. All verified via direct API + Python smoke
