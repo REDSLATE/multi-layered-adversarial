@@ -108,7 +108,6 @@ _PRESETS = {
     "fomc_event_guard_v1": build_fomc_overlay,
 }
 
-
 @router.post("/admin/doctrine/preset/{preset_id}")
 async def install_preset(preset_id: str, _user: dict = Depends(get_current_user)):  # noqa: B008
     builder = _PRESETS.get(preset_id)

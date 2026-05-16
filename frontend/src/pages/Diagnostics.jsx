@@ -177,6 +177,165 @@ function DecisionsFeed() {
   );
 }
 
+const REGIME_COLOR = {
+  trend_up:    "#10B981",
+  trend_down:  "#DC2626",
+  panic:       "#EF4444",
+  squeeze:     "#A855F7",
+  mean_revert: "#F59E0B",
+  neutral:     "#A1A1AA",
+};
+
+function QuantumPanel() {
+  const [items, setItems] = useState(null);
+  const [counters, setCounters] = useState({});
+  const [err, setErr] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const { data } = await api.get("/admin/quantum/recent", { params: { limit: 30 } });
+      setItems(data?.items || []);
+      setCounters(data?.counters || {});
+      setErr("");
+    } catch (e) {
+      setErr(e?.response?.data?.detail || e.message);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  return (
+    <Card className="p-0 overflow-hidden" testid="quantum-panel">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 border-b border-rd-border bg-rd-bg3">
+        <div className="label-eyebrow text-rd-dim">Quantum state · recent verdicts</div>
+        <span className="text-[10px] font-mono text-rd-dim">
+          regime field + HOLD-lock signal per intent
+        </span>
+        <div className="ml-auto flex items-center gap-3 text-[10px] font-mono">
+          <span className="text-rd-dim">
+            count <span className="text-rd-text">{counters.total_returned ?? 0}</span>
+          </span>
+          {(counters.hold_locks ?? 0) > 0 && (
+            <span className="text-rd-danger">
+              ⚠ {counters.hold_locks} HOLD-LOCK{counters.hold_locks === 1 ? "" : "S"}
+            </span>
+          )}
+          {(counters.with_notes ?? 0) > 0 && (
+            <span className="text-rd-warn">{counters.with_notes} flagged</span>
+          )}
+        </div>
+      </div>
+
+      {err && (
+        <div className="px-4 py-2 text-xs font-mono text-rd-danger border-b border-rd-border">
+          {err}
+        </div>
+      )}
+
+      {!items && <LoadingRow />}
+      {items && items.length === 0 && (
+        <div className="px-4 py-6 text-center text-rd-dim font-mono text-xs">
+          no quantum verdicts yet — they appear after the next council evaluation
+        </div>
+      )}
+
+      {items && items.length > 0 && (
+        <div className="max-h-[500px] overflow-y-auto">
+          <table className="w-full text-xs font-mono">
+            <thead className="sticky top-0 bg-rd-bg3 text-rd-dim uppercase tracking-widest z-10">
+              <tr>
+                <th className="text-left px-3 py-2 border-b border-rd-border">When</th>
+                <th className="text-left px-3 py-2 border-b border-rd-border">Symbol</th>
+                <th className="text-left px-3 py-2 border-b border-rd-border">Lane</th>
+                <th className="text-left px-3 py-2 border-b border-rd-border">Regime field</th>
+                <th className="text-right px-3 py-2 border-b border-rd-border">Entropy</th>
+                <th className="text-right px-3 py-2 border-b border-rd-border">Risk ×</th>
+                <th className="text-left px-3 py-2 border-b border-rd-border">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((r, i) => {
+                const probs = r.quantum.regime_probs || {};
+                const top = Object.entries(probs).sort((a, b) => b[1] - a[1]).slice(0, 3);
+                const isHoldLock = r.quantum.hold_lock_detected;
+                return (
+                  <tr
+                    key={i}
+                    className="border-b border-rd-border hover:bg-rd-bg"
+                    style={isHoldLock ? { background: "rgba(220,38,38,0.06)" } : undefined}
+                    data-testid={`quantum-row-${i}`}
+                  >
+                    <td className="px-3 py-1.5 text-rd-dim whitespace-nowrap">
+                      {r.ts ? relTime(r.ts) : "—"}
+                    </td>
+                    <td className="px-3 py-1.5 text-rd-text">{r.symbol || "—"}</td>
+                    <td className="px-3 py-1.5">
+                      <span className="text-[10px] uppercase text-rd-dim">{r.lane || "—"}</span>
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <div className="flex items-center gap-1">
+                        {top.map(([regime, p]) => (
+                          <span
+                            key={regime}
+                            className="inline-flex items-center gap-1 px-1.5 py-px text-[9px] uppercase"
+                            style={{
+                              color: REGIME_COLOR[regime] || "#A1A1AA",
+                              border: `1px solid ${REGIME_COLOR[regime] || "#A1A1AA"}33`,
+                            }}
+                            title={`${regime}: ${(p * 100).toFixed(0)}%`}
+                          >
+                            <span
+                              className="inline-block"
+                              style={{
+                                width: 4,
+                                height: 8,
+                                background: REGIME_COLOR[regime] || "#A1A1AA",
+                                opacity: Math.max(0.3, p),
+                              }}
+                            />
+                            {regime} {(p * 100).toFixed(0)}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-3 py-1.5 text-right text-rd-text">
+                      {r.quantum.entropy?.toFixed(2) ?? "—"}
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      <span
+                        style={{
+                          color: r.quantum.risk_multiplier > 1.0 ? "#10B981" :
+                                 r.quantum.risk_multiplier < 0.9 ? "#F59E0B" : "#E5E7EB",
+                        }}
+                      >
+                        {r.quantum.risk_multiplier?.toFixed(3) ?? "—"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <div className="flex flex-wrap gap-1">
+                        {isHoldLock && (
+                          <Badge color="#DC2626">HOLD-LOCK</Badge>
+                        )}
+                        {(r.quantum.notes || []).filter((n) => n !== "HOLD_LOCK_DETECTED").map((n) => (
+                          <Badge key={n} color="#F59E0B">{n.replace(/_/g, " ")}</Badge>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function Diagnostics() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
@@ -331,6 +490,13 @@ export default function Diagnostics() {
               intents, and MC training rows all appear here. */}
           <div className="mt-6">
             <DecisionsFeed />
+          </div>
+
+          {/* Quantum-inspired state — regime probability field +
+              HOLD-lock detection per recent intent. Surfaces the
+              quantum overlay verdict from the governance ledger. */}
+          <div className="mt-6">
+            <QuantumPanel />
           </div>
         </>
       )}
