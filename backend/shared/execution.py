@@ -801,7 +801,7 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
     # under reduced-size trades.
     effective_notional = order_notional_usd * risk_multiplier if risk_multiplier > 0 else order_notional_usd
 
-    # 6b. Hard exposure caps. Lane-aware: crypto gets the $10/order cap;
+    # 6b. Hard exposure caps. Lane-aware: crypto gets the $30/order cap;
     #    equities get the lifted global cap.
     side = action or ""
     cap_evals = await evaluate_all(effective_notional, side, lane=intent.get("lane"))

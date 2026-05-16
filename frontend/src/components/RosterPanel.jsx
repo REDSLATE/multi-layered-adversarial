@@ -12,7 +12,7 @@ const ROLE_META = {
   governor:  { label: "GOVERNOR",  desc: "Audits, gates, freezes — never decides, never executes",      color: "#10B981" },
   advisor:   { label: "ADVISOR",   desc: "Gives neutral counsel. Off-ladder. Never decides, never executes", color: "#22C55E" },
   opponent:  { label: "OPPONENT",  desc: "Argues the contrary case. Off-ladder. Never decides, never executes", color: "#DC2626" },
-  crypto:    { label: "CRYPTO",    desc: "Crypto-only execution lane. Routes Kraken orders. $10/order cap.", color: "#A855F7" },
+  crypto:    { label: "CRYPTO",    desc: "Crypto-only execution lane. Routes Kraken orders. $30/order cap.", color: "#A855F7" },
 };
 
 const BRAIN_META = {
