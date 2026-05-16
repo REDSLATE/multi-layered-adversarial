@@ -84,13 +84,46 @@ def _now_iso() -> str:
 
 # ───────────────────────────── regime fingerprinting ─────────────────────────────
 
+# Canonical regime-fingerprint key set. Brains and the server-side
+# enrichment hook (see shared/intents.py) target this set; IntentIn's
+# evidence validator rejects unknown keys to keep memory recall honest.
+REGIME_FP_KEYS: frozenset[str] = frozenset({
+    "rsi_band",
+    "macd_hist_sign",
+    "bb_band",
+    "trend_direction",
+    "volume_band",
+    "volatility_band",
+})
+
+
 def _regime_fingerprint(indicators: dict | None) -> dict:
-    """Coarse buckets used to find 'similar past setups' across the
+    """6-key coarse buckets used to find 'similar past setups' across the
     brain's history. Naive on purpose — we want a 5-row recall, not a
-    research-grade similarity search."""
+    research-grade similarity search.
+
+    Doctrine (2026-02-16 rev2): upgraded from 3 → 6 keys so each setup
+    points to a higher-resolution slice of memory. Misalignment on more
+    than 2 keys disqualifies a recall match (see hypothesis._build_role
+    `regime_fp.$or` query).
+
+    Keys:
+      rsi_band          oversold / weak / neutral / strong / overbought
+      macd_hist_sign    positive / negative / flat
+      bb_band           lower / mid_low / mid_high / upper
+      trend_direction   up / down / flat                 (NEW)
+      volume_band       quiet / normal / high / spike    (NEW)
+      volatility_band   calm / normal / elevated / violent (NEW)
+
+    All keys are optional — if the snapshot is missing the input metric,
+    we omit the corresponding key rather than guess. A fingerprint with
+    < 6 keys is acceptable and will simply match more loosely.
+    """
     if not indicators:
         return {}
     fp: dict = {}
+
+    # 1. RSI band — momentum oscillator zones.
     rsi = indicators.get("rsi14")
     if isinstance(rsi, (int, float)):
         if rsi < 30:
@@ -103,10 +136,14 @@ def _regime_fingerprint(indicators: dict | None) -> dict:
             fp["rsi_band"] = "strong"
         else:
             fp["rsi_band"] = "overbought"
+
+    # 2. MACD histogram sign — momentum direction.
     macd = indicators.get("macd") or {}
     hist = macd.get("hist")
     if isinstance(hist, (int, float)):
         fp["macd_hist_sign"] = "positive" if hist > 0 else ("negative" if hist < 0 else "flat")
+
+    # 3. Bollinger position — mean-reversion vs extension.
     bb = indicators.get("bb") or {}
     pos = bb.get("position")
     if isinstance(pos, (int, float)):
@@ -118,6 +155,51 @@ def _regime_fingerprint(indicators: dict | None) -> dict:
             fp["bb_band"] = "mid_high"
         else:
             fp["bb_band"] = "upper"
+
+    # 4. Trend direction — price vs SMA50 (preferred) or EMA20 fallback.
+    #    Threshold ±0.5% so noise doesn't whip the label.
+    price = indicators.get("price") or indicators.get("close")
+    sma50 = indicators.get("sma50")
+    ema20 = indicators.get("ema20")
+    anchor = sma50 if isinstance(sma50, (int, float)) else (
+        ema20 if isinstance(ema20, (int, float)) else None
+    )
+    if isinstance(price, (int, float)) and isinstance(anchor, (int, float)) and anchor > 0:
+        delta_pct = (price - anchor) / anchor
+        if delta_pct > 0.005:
+            fp["trend_direction"] = "up"
+        elif delta_pct < -0.005:
+            fp["trend_direction"] = "down"
+        else:
+            fp["trend_direction"] = "flat"
+
+    # 5. Volume band — current bar volume vs 20-day average.
+    vol = indicators.get("volume")
+    vol_avg = indicators.get("volume_avg20") or indicators.get("avg_volume")
+    if isinstance(vol, (int, float)) and isinstance(vol_avg, (int, float)) and vol_avg > 0:
+        ratio = vol / vol_avg
+        if ratio < 0.6:
+            fp["volume_band"] = "quiet"
+        elif ratio < 1.3:
+            fp["volume_band"] = "normal"
+        elif ratio < 2.5:
+            fp["volume_band"] = "high"
+        else:
+            fp["volume_band"] = "spike"
+
+    # 6. Volatility band — ATR% (ATR / price) or rolling stddev.
+    atr = indicators.get("atr14")
+    if isinstance(atr, (int, float)) and isinstance(price, (int, float)) and price > 0:
+        atr_pct = atr / price
+        if atr_pct < 0.008:
+            fp["volatility_band"] = "calm"
+        elif atr_pct < 0.020:
+            fp["volatility_band"] = "normal"
+        elif atr_pct < 0.040:
+            fp["volatility_band"] = "elevated"
+        else:
+            fp["volatility_band"] = "violent"
+
     return fp
 
 

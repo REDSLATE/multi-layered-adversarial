@@ -110,6 +110,26 @@ ALPACA_AUDIT_LOG = "alpaca_audit_log"
 # the operator receipts page, and the outcome broadcast (later).
 EXECUTION_RECEIPTS = "execution_receipts"
 
+# ─── Live position lifecycle (2026-02-16) ───────────────────────────────
+# One row per FILLED order. Lifecycle: open → managing → closed. State
+# transitions are recorded via mc_shelly (event_types: position_opened,
+# position_managing, position_closed) AND broadcast to SHARED_OUTCOMES
+# on close so the outcome scorers (calibration, brier, regime breakdown)
+# pick up every executed trade automatically.
+SHARED_LIVE_POSITIONS = "shared_live_positions"
+SHARED_LIVE_POSITION_AUDIT = "shared_live_position_audit"
+
+# ─── Verified Reinforcement Layer (2026-02-16) ──────────────────────────
+# VRL records two kinds of evidence:
+#   1. Per-receipt verifications: post-fill slippage / drift checks so the
+#      operator can audit how faithfully the broker honored the intent.
+#   2. Per-gate scorecards: rolling true-positive / false-positive tallies
+#      for every gate in the chain, so the operator can see which gates
+#      reliably block losers vs. block winners (i.e. which gates are
+#      learning vs. just adding friction).
+SHARED_VRL_VERIFICATIONS = "shared_vrl_verifications"
+SHARED_VRL_SCORECARDS = "shared_vrl_scorecards"
+
 # MC Shelly — Mission Control's own labeled memory. Every meaningful
 # event MC observes (intent ingested, gate pass/fail, order routed,
 # position open/close) is recorded here with the brain's full position

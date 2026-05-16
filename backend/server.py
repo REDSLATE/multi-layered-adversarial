@@ -52,6 +52,8 @@ from shared.broker.alpaca_routes import router as alpaca_router
 from shared.decisions_feed import router as decisions_router
 from shared.doctrine_routes import router as doctrine_router
 from shared.execution import router as execution_router
+from shared.live_positions import router as live_positions_router
+from shared.vrl import router as vrl_router
 from shared.quantum_routes import router as quantum_router
 from shared.personalities_routes import router as personalities_router
 from shared.auto_router import (
@@ -150,7 +152,36 @@ async def health():
         mongo_ok = True
     except Exception:  # noqa: BLE001
         mongo_ok = False
-    return {"ok": True, "mongo": mongo_ok, "deploy_mode": os.environ.get("DEPLOY_MODE", "observation")}
+    # Doctrine (2026-02-16): deploy_mode reports OBSERVABLE STATE, not a
+    # configuration label. If any connected broker has execution_enabled
+    # = True, the system is functionally in execution mode. The env var
+    # is now a *floor* — if DEPLOY_MODE=execution is set, we trust it;
+    # otherwise we derive. This fixes the long-running cosmetic bug
+    # where prod showed "observation" while live trading was active.
+    env_mode = os.environ.get("DEPLOY_MODE", "observation").lower()
+    derived_mode = "observation"
+    if mongo_ok:
+        try:
+            alpaca_exec = await db["alpaca_credentials"].find_one(
+                {"_id": "singleton"}, {"_id": 0, "execution_enabled": 1},
+            )
+            kraken_exec = await db["kraken_credentials"].find_one(
+                {"_id": "singleton"}, {"_id": 0, "execution_enabled": 1},
+            )
+            if (alpaca_exec and alpaca_exec.get("execution_enabled")) or \
+               (kraken_exec and kraken_exec.get("execution_enabled")):
+                derived_mode = "execution"
+        except Exception:  # noqa: BLE001
+            pass
+    # If either source says "execution", report execution.
+    deploy_mode = "execution" if env_mode == "execution" or derived_mode == "execution" else "observation"
+    return {
+        "ok": True,
+        "mongo": mongo_ok,
+        "deploy_mode": deploy_mode,
+        "deploy_mode_env": env_mode,
+        "deploy_mode_derived": derived_mode,
+    }
 
 
 # Mount sub-routers
@@ -178,6 +209,8 @@ api_router.include_router(executor_router)
 api_router.include_router(auditor_router)
 api_router.include_router(alpaca_router)
 api_router.include_router(execution_router)
+api_router.include_router(live_positions_router)
+api_router.include_router(vrl_router)
 api_router.include_router(hypothesis_router)
 api_router.include_router(mc_shelly_router)
 api_router.include_router(patches_router)

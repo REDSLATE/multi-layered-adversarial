@@ -140,6 +140,22 @@ class IntentIn(BaseModel):
         import json
         if len(json.dumps(v, default=str)) > 16 * 1024:
             raise ValueError("evidence must be ≤16 KB serialized")
+        # Regime fingerprint shape check (2026-02-16). If the brain
+        # supplied a `regime_fp`, every key must be one of the canonical
+        # 6 — unknown keys would silently poison memory recall. Missing
+        # keys are tolerated (the server back-fills from indicators at
+        # ingest time; see `_enrich_regime_fp` in intents.py).
+        rfp = v.get("regime_fp")
+        if rfp is not None:
+            if not isinstance(rfp, dict):
+                raise ValueError("evidence.regime_fp must be an object")
+            from shared.hypothesis import REGIME_FP_KEYS  # noqa: WPS433
+            extra = set(rfp.keys()) - set(REGIME_FP_KEYS)
+            if extra:
+                raise ValueError(
+                    f"evidence.regime_fp has unknown keys: {sorted(extra)}. "
+                    f"Allowed: {sorted(REGIME_FP_KEYS)}"
+                )
         return v
 
 
@@ -159,6 +175,34 @@ async def _seat_at_post_time(brain: str) -> Optional[str]:
         return await get_role_of(brain)
     except Exception:  # noqa: BLE001
         return None
+
+
+async def _enrich_regime_fp(symbol: str, supplied_fp: Optional[dict]) -> dict:
+    """Server-side regime_fp back-fill. If the brain supplied a fingerprint,
+    we accept it as-is (validator already screened the key set). If it
+    didn't, OR if it sent fewer than 6 keys, we top up from the latest
+    `shared_indicator_snapshots` row for `symbol`. Keys the brain set win
+    over server-derived keys — we trust the brain's view of its own
+    setup, only filling gaps. Returns the merged 0-6 key dict.
+    """
+    supplied = dict(supplied_fp or {})
+    # Skip the DB hit if the brain already sent the full set.
+    from shared.hypothesis import REGIME_FP_KEYS, _regime_fingerprint  # noqa: WPS433
+    if set(supplied.keys()) >= set(REGIME_FP_KEYS):
+        return supplied
+    try:
+        from namespaces import SHARED_INDICATOR_SNAPSHOTS  # noqa: WPS433
+        snap = await db[SHARED_INDICATOR_SNAPSHOTS].find_one(
+            {"symbol": symbol}, {"_id": 0, "indicators": 1},
+            sort=[("captured_at", -1)],
+        )
+    except Exception:  # noqa: BLE001
+        snap = None
+    derived = _regime_fingerprint((snap or {}).get("indicators") or {})
+    # Brain-supplied keys win over derived ones; fill missing only.
+    for k, v in derived.items():
+        supplied.setdefault(k, v)
+    return supplied
 
 
 def _looks_like_crypto(symbol: str) -> bool:
@@ -265,6 +309,13 @@ async def post_intent(
     intent_id = str(uuid.uuid4())
     effective_lane, canonical, inferred_lane = _compose_canonical(body.symbol, body.lane)
 
+    # Server-side regime_fp back-fill (2026-02-16). Brains may ship a
+    # partial fingerprint or none at all; MC tops up missing keys from
+    # the latest indicator snapshot so memory recall has a stable 6-key
+    # target. Brain-supplied keys are not overwritten.
+    evidence = dict(body.evidence or {})
+    evidence["regime_fp"] = await _enrich_regime_fp(body.symbol, evidence.get("regime_fp"))
+
     doc = {
         "intent_id": intent_id,
         "stack": body.stack,
@@ -277,7 +328,7 @@ async def post_intent(
         "confidence": float(body.confidence),
         "risk_multiplier": float(body.risk_multiplier),
         "rationale": body.rationale,
-        "evidence": body.evidence,
+        "evidence": evidence,
         "decision_id": body.decision_id,
         "regime": body.regime,
         # ─── Honesty telemetry — brain-side ground truth ───
@@ -334,7 +385,7 @@ async def post_intent(
         action=body.action,
         confidence=float(body.confidence),
         outcome="pending",
-        regime_fp=(body.evidence or {}).get("regime_fp"),
+        regime_fp=evidence.get("regime_fp"),
         rationale=body.rationale,
         ref_id=intent_id,
     )
@@ -468,6 +519,10 @@ async def admin_post_intent(
     intent_id = str(uuid.uuid4())
     effective_lane, canonical, inferred_lane = _compose_canonical(body.symbol, body.lane)
 
+    # Server-side regime_fp back-fill — same doctrine as POST /api/intents.
+    evidence = dict(body.evidence or {})
+    evidence["regime_fp"] = await _enrich_regime_fp(body.symbol, evidence.get("regime_fp"))
+
     doc = {
         "intent_id": intent_id,
         "stack": body.stack,
@@ -480,7 +535,7 @@ async def admin_post_intent(
         "confidence": float(body.confidence),
         "risk_multiplier": float(body.risk_multiplier),
         "rationale": body.rationale,
-        "evidence": body.evidence,
+        "evidence": evidence,
         "decision_id": body.decision_id,
         "regime": body.regime,
         "may_execute": False,
@@ -509,7 +564,7 @@ async def admin_post_intent(
         action=body.action,
         confidence=float(body.confidence),
         outcome="pending",
-        regime_fp=(body.evidence or {}).get("regime_fp"),
+        regime_fp=evidence.get("regime_fp"),
         rationale=body.rationale,
         ref_id=intent_id,
         extra={"ingest_method": "admin_proxy", "by": user.get("email")},

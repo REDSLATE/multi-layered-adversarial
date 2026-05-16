@@ -1,3 +1,102 @@
+## 2026-02-16 — Saturday Sprint P0 + P2 batch shipped
+
+Five tasks landed in one pass. All verified via direct API + Python smoke
+tests; backend restarted clean.
+
+### P0 — Live Position Lifecycle (open → managing → closed)
+
+New module `shared/live_positions.py` + new collections
+`shared_live_positions` and `shared_live_position_audit`. The doctrine
+follows the user direction: this is a **separate** collection from the
+discussion-thesis `shared_positions` (option B from clarification), with
+every transition recorded under MC Shelly guidelines (event types
+`position_opened`, `position_managing`, `position_closed`, each carrying
+the full roster snapshot + regime_fp).
+
+- `open_from_receipt(receipt, intent)` is idempotent on `receipt_id` —
+  re-runs are safe. Hooked into both the operator-confirmed path
+  (`shared/execution.py:execution_submit`) and the auto-router
+  (`shared/auto_router.py:_route_one`).
+- `record_management(...)` records scale-ins, scale-outs, stop moves.
+  Transitions `open → managing` on first call, stays in `managing`
+  thereafter.
+- `close(...)` is terminal. Auto-labels (win/loss/scratch) from pnl_usd
+  if the operator didn't supply one, then writes a `shared_brain_outcomes`
+  row so the existing scorecard pipeline (hit-rate, brier, regime
+  breakdown) picks up the trade automatically. Outcome broadcast is
+  one-shot per position.
+- REST surface: `/api/admin/live-positions` (list + per-id),
+  `/api/admin/live-positions/{id}/manage`, `/api/admin/live-positions/{id}/close`.
+
+End-to-end smoke test passed: open ($100 BUY AAPL) → manage (-$30 scale
+out) → close (+$12.50 pnl) → outcome broadcast confirmed with label='win'.
+
+### P0 — regime_fp 6-key fingerprint
+
+`shared/hypothesis.py:_regime_fingerprint` upgraded from 3 → 6 keys. Adds
+`trend_direction` (vs SMA50 / EMA20), `volume_band` (vs 20-day avg
+volume), `volatility_band` (ATR% bucket). New constant
+`hypothesis.REGIME_FP_KEYS` is the canonical key set.
+
+`IntentIn.evidence` now validates that any submitted `regime_fp` only
+uses canonical keys — unknown keys reject with HTTP 422. Missing keys
+are tolerated and back-filled by `shared/intents.py:_enrich_regime_fp`
+at ingest time using the latest indicator snapshot for the symbol.
+Brain-supplied keys win over server-derived (no silent overwrites).
+
+Wired into both `POST /api/intents` and `POST /api/admin/intents`.
+
+### P2 — `/api/health` deploy_mode now derived
+
+Cosmetic prod bug fixed: `/api/health` no longer hard-codes
+`deploy_mode` from the env var. It now reports the union — if **either**
+the `DEPLOY_MODE` env var or a broker's `execution_enabled=True` is
+set, returns `"execution"`. Otherwise `"observation"`. The endpoint
+also surfaces both inputs (`deploy_mode_env`, `deploy_mode_derived`) so
+the operator can see which signal won.
+
+### P2 — Verified Reinforcement Layer (VRL)
+
+New module `shared/vrl.py` + collections `shared_vrl_verifications`,
+`shared_vrl_scorecards`.
+
+1. **Per-receipt verifications**: `verify_receipt(receipt, intent)` runs
+   on every executed receipt (idempotent on `receipt_id`). Captures
+   direction-aware slippage, notional drift, fill quality. Wired into
+   both execution paths.
+2. **Per-gate scorecards**: `recompute_scorecards(window_hours)` joins
+   `shared_gate_results` × `shared_brain_outcomes` on `intent_id` and
+   tallies a TP/FP/TN/FN confusion matrix per gate name. Surfaces
+   precision (the "net protect rate"), recall, accuracy. Operator
+   triggers via `POST /api/admin/vrl/scorecards/recompute`.
+
+REST: `/api/admin/vrl/verifications`, `/api/admin/vrl/verify`,
+`/api/admin/vrl/scorecards`, `/api/admin/vrl/scorecards/recompute`.
+
+### P2 — Master Design System
+
+`/app/design_guidelines.md` (260 lines). Single source of truth for the
+RISEDUAL aesthetic: color tokens (`rd-*`), typography hierarchy, lane
+colors, three-tier heartbeat doctrine, motion guidelines, `data-testid`
+discipline, forbidden patterns. Now exists so the next agent doesn't
+re-derive conventions from scratch.
+
+**Files added:**
+- `backend/shared/live_positions.py` (~430 lines)
+- `backend/shared/vrl.py` (~310 lines)
+- `design_guidelines.md` (~260 lines)
+
+**Files changed:**
+- `backend/namespaces.py` — 4 new collection constants
+- `backend/server.py` — `/api/health` derivation, mount 2 new routers
+- `backend/shared/hypothesis.py` — `_regime_fingerprint` 6-key, exported `REGIME_FP_KEYS`
+- `backend/shared/intents.py` — validator + `_enrich_regime_fp`, wired in both intent posts
+- `backend/shared/execution.py` — hooked `open_from_receipt` + `verify_receipt`
+- `backend/shared/auto_router.py` — same hooks on auto-routed receipts
+
+**API endpoints added:** 7 (`/api/admin/live-positions` × 4, `/api/admin/vrl/*` × 4 minus one alias)
+
+
 ## 2026-02-16 — RosterPanel dual-lane (EQUITY | CRYPTO)
 
 Updated `frontend/src/components/RosterPanel.jsx` to render the cross-lane

@@ -1,6 +1,62 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🚨 Latest (2026-02-16, late): Saturday Sprint P0 + P2 batch shipped
+
+**P0 — Live Position Lifecycle** (open → managing → closed). New module
+`shared/live_positions.py` + new `shared_live_positions` collection
+(separate from the existing thesis-discussion `shared_positions` per user
+direction — option B). Every state transition is recorded under MC
+Shelly conventions (event types `position_opened`, `position_managing`,
+`position_closed`). On close, MC writes a `shared_brain_outcomes` row so
+the existing scorecard pipeline picks up the trade with zero extra
+wiring. Hooked into both `shared/execution.py:execution_submit` and
+`shared/auto_router.py:_route_one`.
+
+**P0 — regime_fp 6-key.** `_regime_fingerprint` upgraded from 3 → 6
+keys (added `trend_direction`, `volume_band`, `volatility_band`).
+`IntentIn.evidence` now validates the canonical key set; unknown keys
+reject with HTTP 422. Missing keys are back-filled server-side from the
+latest indicator snapshot via `shared/intents.py:_enrich_regime_fp` —
+brain keys win over derived. Canonical set exported as
+`shared.hypothesis.REGIME_FP_KEYS`.
+
+**P2 — `/api/health` deploy_mode** derives from broker
+`execution_enabled` flags (Alpaca + Kraken). Env var still works as a
+floor. Returns three fields now: `deploy_mode` (union), `deploy_mode_env`,
+`deploy_mode_derived` so the operator sees which signal won.
+
+**P2 — Verified Reinforcement Layer (VRL).** New module `shared/vrl.py`
++ collections `shared_vrl_verifications` and `shared_vrl_scorecards`.
+
+1. *Per-receipt verifications* — direction-aware slippage, notional
+   drift, fill quality. Wired into both execution paths (idempotent on
+   `receipt_id`).
+2. *Per-gate scorecards* — joins `shared_gate_results` × `shared_brain_outcomes`
+   on `intent_id` and tallies a TP/FP/TN/FN confusion matrix per gate.
+   Surfaces precision ("net protect rate"), recall, accuracy. Operator
+   triggers via `POST /api/admin/vrl/scorecards/recompute`.
+
+REST surface: 4 endpoints under `/api/admin/vrl/*`.
+
+**P2 — Master Design System** at `/app/design_guidelines.md`. Single
+source of truth for the RISEDUAL aesthetic: `rd-*` color tokens,
+typography hierarchy, lane colors, three-tier heartbeat doctrine,
+motion rules, testid discipline, forbidden patterns.
+
+**Verified:**
+- Backend restarts clean; all 6 sanity endpoints (`/api/health`,
+  `/api/admin/live-positions`, `/api/admin/vrl/{verifications,scorecards}`,
+  `/api/admin/roster`, `/api/admin/council/lookup-debug`) return 200.
+- End-to-end position lifecycle smoke test: open ($100 BUY AAPL) →
+  manage (-$30 scale) → close (+$12.50) → `shared_brain_outcomes` row
+  written with label='win', `position_id` linked. Idempotency
+  confirmed on `open_from_receipt` and `verify_receipt`.
+- `_regime_fingerprint` produces all 6 keys against a synthetic
+  indicators dict; validator rejects unknown keys correctly.
+
+
+
 ## 🚨 Latest (2026-02-16): Council extraction finalized + RosterPanel dual-lane UI
 
 **P0 — `execution.py` post-extraction cleanup.** The council/quantum extraction

@@ -213,6 +213,21 @@ async def _route_one(intent: dict) -> dict:
             "auto_routed": True,
         },
     )
+
+    # Live-position lifecycle (2026-02-16) — open a tracked position
+    # against this auto-routed receipt. Same idempotent contract as the
+    # operator-confirmed path in shared/execution.py.
+    try:
+        from shared.live_positions import open_from_receipt as _open_pos  # noqa: WPS433
+        await _open_pos(receipt, intent=intent)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("auto_router: live_positions.open_from_receipt failed: %s", e)
+    try:
+        from shared.vrl import verify_receipt as _verify  # noqa: WPS433
+        await _verify(receipt, intent=intent)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("auto_router: vrl.verify_receipt failed: %s", e)
+
     return {
         "intent_id": intent_id,
         "verdict": "executed",

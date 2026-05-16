@@ -454,6 +454,27 @@ async def execution_submit(
         "gates": result["gates"],
     })
 
+    # Live-position lifecycle (2026-02-16) — open a tracked position
+    # against this filled receipt. Idempotent on receipt_id; safe if
+    # called again. Fire-and-forget would lose the position_id we want
+    # to return to the operator, so we await but the call is cheap.
+    try:
+        from shared.live_positions import open_from_receipt as _open_pos  # noqa: WPS433
+        live_pos = await _open_pos(receipt, intent=intent)
+    except Exception as e:  # noqa: BLE001
+        # Never fail an executed trade on the bookkeeping write.
+        print(f"[execution] live_positions.open_from_receipt failed: {e}")
+        live_pos = None
+
+    # VRL verification (2026-02-16) — capture slippage/drift evidence
+    # immediately. Idempotent on receipt_id. Errors are absorbed; the
+    # operator can re-run /api/admin/vrl/verify later if this is skipped.
+    try:
+        from shared.vrl import verify_receipt as _verify  # noqa: WPS433
+        await _verify(receipt, intent=intent)
+    except Exception as e:  # noqa: BLE001
+        print(f"[execution] vrl.verify_receipt failed: {e}")
+
     # MC Shelly — record the order routing. Position = EXE by definition
     # (only the executor-seat brain reaches this code path).
     record_async(
@@ -476,6 +497,7 @@ async def execution_submit(
         "receipt": receipt,
         "order": order,
         "verdict": "executed",
+        "live_position": live_pos,
     }
 
 
