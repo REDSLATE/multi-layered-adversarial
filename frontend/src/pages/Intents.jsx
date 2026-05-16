@@ -277,6 +277,31 @@ export default function Intents() {
   const [dryRunByIntent, setDryRunByIntent] = useState({});
   const [submitByIntent, setSubmitByIntent] = useState({});
   const [autoRefresh, setAutoRefresh] = useState(true);
+  // Single source of truth for caps — fetched on mount, refreshed on
+  // submit so any cap tuning the operator just made is reflected.
+  // Shape: { per_order_usd, per_day_usd, open_notional_usd, per_order_by_lane_usd: { <lane>: cap } }
+  const [caps, setCaps] = useState(null);
+
+  const loadCaps = useCallback(async () => {
+    try {
+      const res = await api.get("/config/exposure-caps");
+      setCaps(res.data || null);
+    } catch (e) {
+      // Caps endpoint unavailable — submit will fall back to a safe
+      // hardcoded minimum and warn.
+      console.warn("exposure-caps fetch failed:", e?.message);
+    }
+  }, []);
+
+  useEffect(() => { loadCaps(); }, [loadCaps]);
+
+  // Resolve effective per-order cap for an intent's lane.
+  const capForLane = useCallback((lane) => {
+    if (!caps) return null;
+    const byLane = caps.per_order_by_lane_usd || {};
+    if (lane && byLane[lane] != null) return Number(byLane[lane]);
+    return Number(caps.per_order_usd);
+  }, [caps]);
 
   const load = useCallback(async () => {
     try {
@@ -341,8 +366,22 @@ export default function Intents() {
     }
   };
 
-  const runSubmit = async (intentId) => {
-    if (!window.confirm("Route this intent to the broker? A $10 notional market-day order will be placed.")) {
+  const runSubmit = async (intentId, lane) => {
+    // Always re-fetch caps right before the dialog so the operator
+    // sees the current truth (the cap may have been retuned since
+    // page-load). If the fetch fails we fall back to the cached value.
+    await loadCaps();
+    const cap = capForLane(lane);
+    if (cap == null) {
+      toast.error("Cap config unavailable — refresh the page and retry.");
+      return;
+    }
+    const laneLabel = lane ? lane.toUpperCase() : "GLOBAL";
+    if (!window.confirm(
+      `Route this ${laneLabel} intent to the broker?\n\n` +
+      `A $${cap.toFixed(2)} notional market-day order will be placed.\n` +
+      `(Live ${laneLabel} per-order cap from MC doctrine surface.)`
+    )) {
       return;
     }
     setSubmitByIntent((m) => ({ ...m, [intentId]: { loading: true } }));
@@ -350,11 +389,11 @@ export default function Intents() {
     try {
       const res = await api.post("/execution/submit", {
         intent_id: intentId,
-        order_notional_usd: 10.0,
+        order_notional_usd: cap,
         confirm: "execute",
       });
       setSubmitByIntent((m) => ({ ...m, [intentId]: res.data }));
-      toast.success(`Order routed · ${res.data?.order?.status || "submitted"}`);
+      toast.success(`Order routed · $${cap.toFixed(2)} · ${res.data?.order?.status || "submitted"}`);
       load();
     } catch (e) {
       const detail = e?.response?.data?.detail;
@@ -404,6 +443,30 @@ export default function Intents() {
       <ExecutorSeatTile />
       <AuditorSeatTile />
       <AlpacaConnect />
+
+      {/* Live exposure caps — fetched from /api/config/exposure-caps so
+          UI never drifts from the doctrine surface. */}
+      {caps && (
+        <div
+          className="mb-4 border border-rd-border bg-rd-bg px-3 py-2 flex flex-wrap items-center gap-x-4 gap-y-1"
+          data-testid="exposure-caps-strip"
+        >
+          <span className="text-[10px] uppercase tracking-widest text-rd-dim">Live caps</span>
+          <span className="font-mono text-[11px] text-rd-text">
+            EQUITY <span className="text-rd-dim">per-order</span>{" "}
+            <span className="text-rd-accent">${Number(caps.per_order_usd).toLocaleString()}</span>
+          </span>
+          {Object.entries(caps.per_order_by_lane_usd || {}).map(([lane, cap]) => (
+            <span key={lane} className="font-mono text-[11px] text-rd-text">
+              {lane.toUpperCase()} <span className="text-rd-dim">per-order</span>{" "}
+              <span className="text-rd-accent">${Number(cap).toLocaleString()}</span>
+            </span>
+          ))}
+          <span className="font-mono text-[10px] text-rd-dim ml-auto">
+            day ${Number(caps.per_day_usd).toLocaleString()} · open ${Number(caps.open_notional_usd).toLocaleString()}
+          </span>
+        </div>
+      )}
 
       {/* Stats */}
       {stats && (
@@ -475,7 +538,7 @@ export default function Intents() {
                     expanded={expanded === it.intent_id}
                     onToggle={() => setExpanded((e) => (e === it.intent_id ? null : it.intent_id))}
                     onDryRun={() => runDryRun(it.intent_id)}
-                    onSubmit={() => runSubmit(it.intent_id)}
+                    onSubmit={() => runSubmit(it.intent_id, it.lane)}
                     dryRunResult={dryRunByIntent[it.intent_id]}
                     submitResult={submitByIntent[it.intent_id]}
                   />

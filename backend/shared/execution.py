@@ -1114,6 +1114,27 @@ async def caps_status(_user: dict = Depends(get_current_user)):  # noqa: B008
     }
 
 
+@router.get("/config/exposure-caps")
+async def exposure_caps_config(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Doctrine surface — single source of truth for exposure caps.
+    Pure config, no DB usage. UI, Mission Control, RoadGuard, and future
+    clients should all read from this endpoint instead of hardcoding.
+
+    Shape:
+        {
+          "per_order_usd":        global default per-order cap
+          "per_day_usd":          rolling 24h day cap
+          "open_notional_usd":    aggregate open-position cap
+          "per_order_by_lane_usd": { "<lane>": <cap> }  per-lane overrides
+        }
+
+    Effective per-order cap for a given lane:
+      per_order_by_lane_usd[lane] if present, else per_order_usd
+    """
+    return caps_snapshot()
+
+
+
 
 # ──────────────────── council lookup diagnostic ────────────────────
 # Operator-facing debug endpoint: shows EXACTLY what the executor's

@@ -163,8 +163,21 @@ async def evaluate_all(order_notional_usd: float, side: str, lane: Optional[str]
 
 
 def caps_snapshot() -> dict:
+    """Single source of truth for exposure caps. Returns globals plus
+    per-lane overrides so UI / Mission Control / RoadGuard all read the
+    same numbers. Adding a new lane override propagates everywhere
+    without UI changes."""
     return {
         "per_order_usd": CAP_PER_ORDER_USD,
         "per_day_usd": CAP_PER_DAY_USD,
         "open_notional_usd": CAP_OPEN_NOTIONAL_USD,
+        "per_order_by_lane_usd": dict(CAP_PER_ORDER_BY_LANE),
     }
+
+
+def cap_for_lane(lane: Optional[str]) -> float:
+    """Resolve the effective per-order cap for `lane`. Falls back to
+    the global per-order cap when no lane override exists."""
+    if lane and lane in CAP_PER_ORDER_BY_LANE:
+        return CAP_PER_ORDER_BY_LANE[lane]
+    return CAP_PER_ORDER_USD
