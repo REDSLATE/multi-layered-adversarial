@@ -53,6 +53,7 @@ from shared.decisions_feed import router as decisions_router
 from shared.doctrine_routes import router as doctrine_router
 from shared.execution import router as execution_router
 from shared.live_positions import router as live_positions_router
+from shared.brain_lane_policy import router as brain_lane_policy_router, seed_default_policy
 from shared.vrl import (
     router as vrl_router,
     start_scorecard_scheduler,
@@ -127,6 +128,12 @@ async def lifespan(app: FastAPI):
     # VRL nightly scorecard recomputer — opt-out via VRL_SCHEDULER_ENABLED=false.
     start_scorecard_scheduler()
     logger.info("VRL scorecard scheduler started")
+    # Seed default brain × lane emission policy (idempotent).
+    try:
+        await seed_default_policy()
+        logger.info("Brain × lane emission policy seeded")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("brain_lane_policy seed failed: %s", e)
     yield
     await stop_poller()
     await stop_tickler()
@@ -218,6 +225,7 @@ api_router.include_router(auditor_router)
 api_router.include_router(alpaca_router)
 api_router.include_router(execution_router)
 api_router.include_router(live_positions_router)
+api_router.include_router(brain_lane_policy_router)
 api_router.include_router(vrl_router)
 api_router.include_router(hypothesis_router)
 api_router.include_router(mc_shelly_router)

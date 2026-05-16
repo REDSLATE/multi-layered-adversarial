@@ -119,6 +119,15 @@ EXECUTION_RECEIPTS = "execution_receipts"
 SHARED_LIVE_POSITIONS = "shared_live_positions"
 SHARED_LIVE_POSITION_AUDIT = "shared_live_position_audit"
 
+# ─── Per-brain × lane intent-emission policy (2026-02-16) ──────────────
+# Independent of the seat eligibility matrix. Eligibility governs WHICH
+# SEATS a brain may hold; this collection governs whether a brain may
+# even POST an intent into a given lane. Set `{brain, lane,
+# allowed:false}` to 403 every incoming intent from that (brain, lane)
+# pair at the ingest layer — useful when an engine is misbehaving and
+# the operator wants to mute it without touching the sidecar.
+BRAIN_LANE_POLICY = "brain_lane_policy"
+
 # ─── Verified Reinforcement Layer (2026-02-16) ──────────────────────────
 # VRL records two kinds of evidence:
 #   1. Per-receipt verifications: post-fill slippage / drift checks so the

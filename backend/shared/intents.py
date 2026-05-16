@@ -296,6 +296,20 @@ async def post_intent(
         raise HTTPException(status_code=401, detail="X-Runtime-Token required")
     verify_runtime_token(body.stack, x_runtime_token)
 
+    # Per-brain × lane emission policy (2026-02-16). Reject at ingest
+    # before we burn a uuid or write anything. Camaro→crypto is muted
+    # by default (see brain_lane_policy.seed_default_policy).
+    effective_lane, canonical, inferred_lane = _compose_canonical(body.symbol, body.lane)
+    from shared.brain_lane_policy import is_brain_lane_allowed  # noqa: WPS433
+    if not await is_brain_lane_allowed(body.stack, effective_lane):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"{body.stack} is not authorized to emit {effective_lane} intents "
+                f"(per /api/admin/brain-lane-policy)."
+            ),
+        )
+
     seat = await _seat_at_post_time(body.stack)
 
     # Snapshot whether this brain held the (rotating) Executor seat at the
@@ -307,7 +321,6 @@ async def post_intent(
     holds_executor = executor_at_post == body.stack
 
     intent_id = str(uuid.uuid4())
-    effective_lane, canonical, inferred_lane = _compose_canonical(body.symbol, body.lane)
 
     # Server-side regime_fp back-fill (2026-02-16). Brains may ship a
     # partial fingerprint or none at all; MC tops up missing keys from
@@ -510,6 +523,21 @@ async def admin_post_intent(
     Useful for: stress-testing the gate chain, replaying historical
     decisions, or filling a missing intent during sidecar downtime.
     """
+    effective_lane, canonical, inferred_lane = _compose_canonical(body.symbol, body.lane)
+
+    # Per-brain × lane policy applies to the admin proxy too — operators
+    # can override by toggling the policy first via
+    # /api/admin/brain-lane-policy. We do not silently bypass.
+    from shared.brain_lane_policy import is_brain_lane_allowed  # noqa: WPS433
+    if not await is_brain_lane_allowed(body.stack, effective_lane):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"{body.stack} is not authorized to emit {effective_lane} intents "
+                f"(per /api/admin/brain-lane-policy). Toggle the policy first."
+            ),
+        )
+
     seat = await _seat_at_post_time(body.stack)
 
     from shared.executor_seat import get_executor_holder  # noqa: WPS433
@@ -517,7 +545,6 @@ async def admin_post_intent(
     holds_executor = executor_at_post == body.stack
 
     intent_id = str(uuid.uuid4())
-    effective_lane, canonical, inferred_lane = _compose_canonical(body.symbol, body.lane)
 
     # Server-side regime_fp back-fill — same doctrine as POST /api/intents.
     evidence = dict(body.evidence or {})

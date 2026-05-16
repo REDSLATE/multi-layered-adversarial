@@ -1,3 +1,44 @@
+## 2026-02-16 (late) — Per-brain × lane intent-emission policy + Camaro→crypto muted
+
+Operator asked to "turn off Camaro's crypto trading". Built a per-brain × lane
+ingest policy that blocks intents at the boundary (rather than letting them pile
+up at `gate_state=pending`).
+
+**New module:** `shared/brain_lane_policy.py`
+- Collection: `brain_lane_policy` — one row per (brain, lane) override
+- Helper: `is_brain_lane_allowed(brain, lane) -> bool` (default allow)
+- REST: `GET/POST /api/admin/brain-lane-policy`, `DELETE /api/admin/brain-lane-policy/{brain}/{lane}`
+- Seed: Camaro→crypto = `allowed: false` (idempotent, runs in lifespan)
+
+**Wired into both intent POST paths:**
+- `POST /api/intents` — engine-side brain ingest. 403 before any DB write.
+- `POST /api/admin/intents` — operator-proxy ingest. Same guard.
+
+**Why a separate policy (not eligibility):**
+Eligibility governs WHICH SEATS a brain may hold. Lane policy governs whether
+a brain may even POST an intent for a given lane. Both have legitimate uses:
+- A brain might be `crypto_opponent`-eligible (voicing setups for the seat
+  holder to evaluate) but blocked from POSTing crypto intents directly.
+- That's the Camaro situation today.
+
+**Verified (preview):**
+- Backend reboot: "Brain × lane emission policy seeded"
+- `GET /api/admin/brain-lane-policy` returns the seed + effective matrix
+- Camaro→crypto POST → HTTP 403 with clean error message
+- Camaro→equity POST → HTTP 200, intent created normally
+- Policy persists across backend restarts (DB-backed, not env)
+
+**Operator levers:**
+- Re-enable Camaro→crypto: `DELETE /api/admin/brain-lane-policy/camaro/crypto`
+  (or POST with `allowed: true`)
+- Block any other (brain, lane) pair the same way
+- View the effective matrix at any time via `GET /api/admin/brain-lane-policy`
+
+**178 historical pending crypto intents from Camaro in preview DB** are left
+intact — they're audit history (every one of them was correctly blocked at
+`executor_seat_check`). The VRL gate scorecard will pick them up.
+
+
 ## 2026-02-16 — Two long-standing engine-side issues RESOLVED (operator confirmed)
 
 The operator confirmed end-of-day that the external brain engines are now healthy.
