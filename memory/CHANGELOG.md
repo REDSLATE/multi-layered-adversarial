@@ -1,3 +1,15 @@
+## 2026-02-16 — Two long-standing engine-side issues RESOLVED (operator confirmed)
+
+The operator confirmed end-of-day that the external brain engines are now healthy.
+Marking both items closed so the next agent doesn't chase ghosts:
+
+- ✅ **Camaro double-pinging / pointed at Preview URL** — engine sidecar's
+  `MC_BASE_URL` is now correctly set to production. The "Preview Drift" banner
+  on `/admin/diagnostics` was the right surface; the actual fix was external.
+- ✅ **`httpx` keep-alive sidecar freeze** — the hardening patch was applied
+  external to MC. Brain disconnects no longer recurring.
+
+
 ## 2026-02-16 (post-batch) — Pro Max chat endpoint retired
 
 Per operator direction: the main risedual.ai site hosts its own chat
