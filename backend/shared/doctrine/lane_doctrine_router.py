@@ -30,6 +30,19 @@ def build_lane_doctrine_packet(
     lane = str(snapshot.get("lane") or "").lower()
 
     if lane == "equity":
+        # Strategy split (2026-02-17, source-aligned): when the
+        # snapshot carries a known strategy hint, dispatch to that
+        # strategy's doctrine version. Unknown / missing → fall back
+        # to the generic small-account sidecar. Patent J can then
+        # graduate (lane, seat, doctrine_version) slices indepedently.
+        strategy = str(snapshot.get("strategy") or "").lower()
+        if strategy in ("gap_and_go", "micro_pullback"):
+            from shared.doctrine.strategy_doctrines import (  # noqa: WPS433
+                build_strategy_packet,
+            )
+            packet = build_strategy_packet(strategy, snapshot, seat_holders)
+            if packet is not None:
+                return packet
         from shared.doctrine.brain_sidecars import (  # noqa: WPS433
             build_all_brain_doctrine_packets,
         )

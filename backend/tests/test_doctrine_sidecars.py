@@ -74,6 +74,64 @@ def test_score_clamped_to_unit_interval():
     assert 0.0 <= doctrine.score <= 1.0
 
 
+# ─── tier upgrades from source material (Toolkit + Tech Analysis v3) ──
+
+def test_sweet_spot_price_tier_label():
+    """$5-$10 sweet-spot tier per 2025 Small Account Tool Kit p.3."""
+    doctrine = build_doctrine_labels(_good_snapshot(price=7.50))
+    assert "SMALL_ACCOUNT_PRICE_VALID" in doctrine.labels
+    assert "SWEET_SPOT_PRICE" in doctrine.labels
+    # $15 is valid but outside sweet spot
+    doctrine2 = build_doctrine_labels(_good_snapshot(price=15.0))
+    assert "SMALL_ACCOUNT_PRICE_VALID" in doctrine2.labels
+    assert "SWEET_SPOT_PRICE" not in doctrine2.labels
+
+
+def test_strong_gapper_tier_label():
+    """≥20% gap tier upgrade per Technical Analysis v3 Gap-and-Go."""
+    doctrine = build_doctrine_labels(_good_snapshot(gap_pct=22))
+    assert "GAPPER" in doctrine.labels
+    assert "STRONG_GAPPER" in doctrine.labels
+    doctrine2 = build_doctrine_labels(_good_snapshot(gap_pct=12))
+    assert "GAPPER" in doctrine2.labels
+    assert "STRONG_GAPPER" not in doctrine2.labels
+
+
+def test_ultra_low_float_tier_label():
+    """<10M float tier upgrade per Toolkit 'cold market' threshold."""
+    doctrine = build_doctrine_labels(_good_snapshot(float_millions=8))
+    assert "LOW_FLOAT_SUPPLY_IMBALANCE" in doctrine.labels
+    assert "ULTRA_LOW_FLOAT" in doctrine.labels
+    doctrine2 = build_doctrine_labels(_good_snapshot(float_millions=15))
+    assert "LOW_FLOAT_SUPPLY_IMBALANCE" in doctrine2.labels
+    assert "ULTRA_LOW_FLOAT" not in doctrine2.labels
+
+
+def test_bull_flag_and_flat_top_patterns_accepted():
+    """Specific named patterns from Tech Analysis v3 accepted as valid."""
+    for pat, named in (
+        ("bull_flag", "BULL_FLAG_PATTERN"),
+        ("flat_top_breakout", "FLAT_TOP_BREAKOUT_PATTERN"),
+        ("micro_pullback", "MICRO_PULLBACK_PATTERN"),
+    ):
+        d = build_doctrine_labels(_good_snapshot(pattern=pat))
+        assert "VALID_PULLBACK_PATTERN" in d.labels, pat
+        assert named in d.labels, (pat, named)
+
+
+def test_trading_window_label_when_hour_supplied():
+    """7-11am EST prime window per Toolkit. Absence = informational."""
+    d_in = build_doctrine_labels(_good_snapshot(hour_et=9))
+    assert "TRADING_WINDOW_PRIME" in d_in.labels
+    d_out = build_doctrine_labels(_good_snapshot(hour_et=14))
+    assert "TRADING_WINDOW_OFF_HOURS" in d_out.labels
+    # Missing hour_et → no window label at all
+    d_missing = build_doctrine_labels(_good_snapshot())
+    assert "TRADING_WINDOW_PRIME" not in d_missing.labels
+    assert "TRADING_WINDOW_OFF_HOURS" not in d_missing.labels
+
+
+
 # ─── packet shape: role-keyed with seat + holder ──────────────────────
 
 def test_packet_top_level_shape():
@@ -183,7 +241,14 @@ def test_governor_blocks_on_daily_max_loss():
 
 
 def test_governor_modulates_on_b_quality():
-    packet = build_all_brain_doctrine_packets(_good_snapshot(relative_volume=1))
+    # Deliberately drop two factors (RVOL miss + no news) to land cleanly
+    # in B_QUALITY territory regardless of tier-upgrade nudges. The
+    # previous one-override version floated on FP precision (0.7999…)
+    # which masked the doctrinal intent.
+    packet = build_all_brain_doctrine_packets(
+        _good_snapshot(relative_volume=1, has_news=False),
+    )
+    assert packet["base_labels"]["quality"] == "B_QUALITY"
     assert packet["seats"]["governor"]["risk_multiplier"] < 1.0
 
 

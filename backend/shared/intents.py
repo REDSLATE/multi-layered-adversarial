@@ -120,6 +120,12 @@ class IntentIn(BaseModel):
     # doctrine is equity-flavored). Missing field → empty snapshot (just
     # the symbol) and the packet will mostly produce REJECT/no-data
     # labels, which is itself informative for Shelly's learning loop.
+    #
+    # Optional `strategy` key inside the snapshot (2026-02-17, rev2):
+    # "gap_and_go" or "micro_pullback" — dispatches to a strategy-
+    # specific doctrine_version (`gap_and_go_v1` / `micro_pullback_v1`).
+    # Anything else (or absent) falls back to the generic
+    # `small_account_sidecar_v1`. Patent J grades each independently.
     doctrine_snapshot: Optional[dict] = Field(default=None)
 
     # SAFETY INVARIANTS — schema-pinned. Cannot be overridden by the brain.

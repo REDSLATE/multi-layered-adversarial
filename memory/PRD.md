@@ -1,7 +1,76 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
-## 🚨 Latest (2026-02-17, late+1): Seat-Doctrinal Canonicalization + Auto-Retire
+## 🚨 Latest (2026-02-17, late+2): Source-Aligned Doctrine + Strategy Split
+
+**Sources ingested**: 2025 Small Account Tool Kit, Technical Analysis v3
+(Gap-and-Go + Micro Pullback), and SAC2024 Small Account Challenge.
+Numeric thresholds in `base_labels.py` are now pinned to those documents
+verbatim; doctrine_version strings track the strategy they encode.
+
+**Phase A — `base_labels.py` source-aligned tier upgrades:**
+- New tier labels with small additive score bonuses:
+  - `SWEET_SPOT_PRICE` ($5–$10 per Toolkit p.3)
+  - `STRONG_GAPPER` (gap ≥ 20% per Tech-A v3)
+  - `ULTRA_LOW_FLOAT` (<10M shares per Toolkit cold-market threshold)
+  - `BULL_FLAG_PATTERN`, `FLAT_TOP_BREAKOUT_PATTERN`,
+    `MICRO_PULLBACK_PATTERN` (Tech-A v3 named patterns)
+  - `TRADING_WINDOW_PRIME` / `TRADING_WINDOW_OFF_HOURS` (7–11am EST,
+    informational only)
+- **SAC2024 refinement**: pullback patterns only score as VALID when
+  the stock is **leading** (GAPPER ≥10% OR HIGH_RELATIVE_VOLUME ≥5x).
+  Pullback on a non-leader gets `PULLBACK_PATTERN_ON_NON_LEADER` and
+  zero score — surfacing the SAC2024 trap explicitly.
+
+**Phase B — SAC2024 reconciliation:**
+- 20–30% target gain and 75% accuracy + 2:1 winner-size are
+  recorded as future scorecard targets in this PRD (not yet wired
+  into `_promotion_blockers` — Patent J ladder will use them when
+  the bounded promotion gate ships in P1).
+
+**Phase C — Strategy split (the architectural payoff):**
+- New module `shared/doctrine/strategy_doctrines.py` with two
+  source-derived doctrines, each emitting the same role-keyed seat
+  packet shape (so audit / scorecard / auto-retire / UI all reuse
+  unchanged):
+  - **`gap_and_go_v1`** — Tech-A v3 §Gap-and-Go.
+    Strategist favors STRONG_GAPPER + ULTRA_LOW_FLOAT + premarket
+    breakout + above-EMAs. Adversary attacks small gaps, missing
+    premarket setup, broken daily trend, spread risk. Governor
+    blocks on REJECT / spread / 3-loss / -$100. Execution judge
+    requires `premarket_high_crossed | premarket_bull_flag` AND
+    `price_above_emas` AND `STRONG_GAPPER` AND `SPREAD_ACCEPTABLE`.
+  - **`micro_pullback_v1`** — Tech-A v3 §Micro Pullback.
+    Strategist favors MICRO_PULLBACK_PATTERN near half/whole dollar
+    with active momentum and known pullback low. Adversary catches
+    "pullback on non-leader", off-round-dollar entries, faded
+    momentum, missing stop reference. Governor **blocks when
+    `pullback_low` is unknown** (no stop reference = no trade).
+    Execution judge requires valid pullback + round-dollar level +
+    momentum + known stop + spread ok.
+- **Dispatch**: `lane_doctrine_router.build_lane_doctrine_packet()`
+  inspects `snapshot.strategy` ("gap_and_go" | "micro_pullback" |
+  anything-else). Known strategies route to the strategy doctrine;
+  anything else falls back to the generic `small_account_sidecar_v1`.
+- **IntentIn schema** — `doctrine_snapshot.strategy` documented in
+  the field comment; dict shape is open so no breaking change.
+- **Patent J ladder**: now grades `small_account_sidecar_v1` vs.
+  `gap_and_go_v1` vs. `micro_pullback_v1` as distinct
+  `(lane, seat, doctrine_version)` slices. Auto-Retire emits
+  retirement suggestions per strategy doctrine independently.
+
+**Verified live**: NVDA gap_and_go intent posted via curl returns
+`doctrine_version=gap_and_go_v1`, A_QUALITY, strategist
+`conviction_delta=+0.35`, all four seats READY/no-objections.
+DoctrineStrip + AutoRetireStrip render the strategy doctrine without
+any UI changes — proves the seat-doctrinal architecture composes.
+
+**Tests**: 69/69 pass (45 prior + 6 auto-retire + 5 tier-upgrade +
+13 new strategy-split tests).
+
+
+
+## 🚨 Previous (2026-02-17, late+1): Seat-Doctrinal Canonicalization + Auto-Retire
 
 **DOCTRINE PIN — performance belongs to the SEAT, not the holder.**
 This rev removes "brain reputation contamination" from the audit + 
