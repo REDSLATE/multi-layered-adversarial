@@ -418,30 +418,82 @@ function ExecutionToggle({ currentlyEnabled, onDone }) {
     }
   };
 
+  const matched = phrase === expectedPhrase;
+
+  const copyPhrase = async () => {
+    try {
+      await navigator.clipboard.writeText(expectedPhrase);
+      toast.success("Phrase copied — paste into the input below");
+    } catch {
+      toast.error("Copy failed — please type it manually");
+    }
+  };
+
   return (
     <div className="mt-3 border-t border-rd-border pt-3 space-y-2">
       <div className="text-[11px] font-mono text-rd-dim">
-        Type the literal phrase below to confirm flipping execution {newState ? "ON" : "OFF"}:
+        Confirmation required. Copy or click <span className="text-rd-text">fill</span>, then submit:
       </div>
-      <code className="block text-[11px] font-mono text-rd-text bg-rd-bg3 px-2 py-1 border border-rd-border">
-        {expectedPhrase}
-      </code>
+      <div className="flex items-stretch gap-2">
+        <div
+          className="flex-1 text-[11px] font-mono text-rd-dim bg-transparent px-2 py-1.5 border border-dashed border-rd-border select-all"
+          data-testid="kraken-exec-required-phrase"
+          title="This is the required phrase — copy it or use Fill to populate the input"
+        >
+          <span className="text-[9px] uppercase tracking-widest mr-2 text-rd-muted">required phrase</span>
+          <span className="text-rd-text">{expectedPhrase}</span>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={copyPhrase}
+          data-testid="kraken-exec-copy-phrase"
+        >
+          copy
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => setPhrase(expectedPhrase)}
+          data-testid="kraken-exec-fill-phrase"
+        >
+          fill
+        </Button>
+      </div>
+      <div className="text-[10px] uppercase tracking-widest text-rd-dim">
+        Type or paste here ↓
+      </div>
       <Input
         value={phrase}
         onChange={(e) => setPhrase(e.target.value)}
         autoComplete="off"
         spellCheck={false}
+        placeholder={`Paste: "${expectedPhrase}"`}
         className="font-mono text-xs bg-rd-bg3 border-rd-border"
         data-testid="kraken-exec-confirm-input"
       />
+      {!matched && phrase.length > 0 && (
+        <div
+          className="text-[10px] font-mono text-rd-warning"
+          data-testid="kraken-exec-mismatch-hint"
+        >
+          Phrase doesn&apos;t match yet — must be exactly: {expectedPhrase}
+        </div>
+      )}
       <Button
         size="sm"
         onClick={submit}
-        disabled={submitting || phrase !== expectedPhrase}
+        disabled={submitting || !matched}
         data-testid="kraken-exec-confirm-btn"
         variant={newState ? "destructive" : "default"}
       >
-        {submitting ? "…" : (newState ? "ENABLE EXECUTION" : "DISABLE EXECUTION")}
+        {submitting
+          ? "…"
+          : matched
+          ? (newState ? "ENABLE EXECUTION" : "DISABLE EXECUTION")
+          : (newState ? "ENABLE (phrase required)" : "DISABLE (phrase required)")}
       </Button>
     </div>
   );

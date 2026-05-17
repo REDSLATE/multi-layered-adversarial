@@ -78,20 +78,11 @@ export default function KrakenBrokerTile() {
   };
 
   const toggleExecution = async () => {
-    const enable = !status?.execution_enabled;
-    const phrase = enable ? "I authorize execution on Kraken" : "Disable execution";
-    const confirm = window.prompt(
-      enable
-        ? `Type exactly:  ${phrase}\n\nThis flips Kraken from read-only to live order execution. The crypto executor seat will be able to route orders.`
-        : `Type exactly:  ${phrase}\n\nThis returns Kraken to read-only.`,
-    );
-    if (confirm !== phrase) {
-      if (confirm !== null) toast.error("Confirmation phrase mismatch — execution unchanged.");
-      return;
-    }
-    await action(
-      enable ? "Kraken execution ENABLED" : "Kraken execution DISABLED",
-      () => api.post("/admin/kraken/execution", { enabled: enable, confirm: phrase }),
+    // Open the existing manage dialog and ask the operator to flip exec
+    // there — that screen now has copy/fill/mismatch helpers.
+    toast.message(
+      `Open "Manage Kraken" to ${status?.execution_enabled ? "disable" : "enable"} execution`,
+      { description: "Click \"Manage Kraken\" above, then use Execution authority → Enable/Disable with the phrase helpers." },
     );
   };
 
