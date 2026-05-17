@@ -226,17 +226,6 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen bg-rd-bg text-rd-text app-shell" data-testid="app-shell">
-      {/* Observation banner — shortened on mobile so it doesn't wrap to 3 lines */}
-      <div
-        className="bg-rd-warn text-black font-mono text-[10px] uppercase font-bold text-center py-1.5 tracking-[0.25em] px-2"
-        data-testid="observation-banner"
-      >
-        <span className="md:hidden">OBSERVATION ONLY · execution disabled</span>
-        <span className="hidden md:inline">
-          OBSERVATION ONLY · BROKER_LIVE_ORDER_ENABLED=false · execution authority disabled across all runtimes
-        </span>
-      </div>
-
       {/* MOBILE top bar — only visible < md */}
       <div className="md:hidden sticky top-0 z-30 bg-rd-bg2 border-b border-rd-border flex items-center justify-between px-3 h-12">
         <button

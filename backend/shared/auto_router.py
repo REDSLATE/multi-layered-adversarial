@@ -61,6 +61,20 @@ async def _route_one(intent: dict) -> dict:
     intent_id = intent["intent_id"]
     notional = float(intent.get("requested_notional_usd") or AUTO_ROUTER_NOTIONAL_USD)
 
+    # Lane-aware notional clamp. The default AUTO_ROUTER_NOTIONAL_USD
+    # ($100) blows past the crypto $30/order cap, which caused 100% of
+    # auto-routed crypto intents to NO_TRADE on the per-order cap.
+    # Clamp to the lane's effective cap so crypto intents actually
+    # execute on Kraken instead of silently dying at the gate.
+    from shared.exposure_caps import cap_for_lane  # noqa: WPS433
+    lane_cap = cap_for_lane(intent.get("lane"))
+    if notional > lane_cap:
+        logger.info(
+            "auto_router clamping intent=%s lane=%s notional $%.2f → $%.2f (lane cap)",
+            intent_id, intent.get("lane"), notional, lane_cap,
+        )
+        notional = lane_cap
+
     result = await _evaluate_gates(intent, notional)
     if result["verdict"] != "would_pass":
         await db[SHARED_GATE_RESULTS].insert_one({

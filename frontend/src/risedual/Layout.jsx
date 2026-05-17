@@ -62,7 +62,7 @@ function Header() {
             RISE<span className="text-emerald-400">DUAL</span>
           </span>
           <span className="ml-2 hidden font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-600 sm:inline">
-            multi-AI · observation only
+            multi-AI · seat-governed
           </span>
         </Link>
         <nav className="hidden items-center gap-1 md:flex" data-testid="rd-main-nav">
@@ -87,7 +87,7 @@ function Footer() {
       <div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-4 px-6 py-8 text-[12px] text-zinc-500 md:flex-row md:items-center">
         <div className="flex items-center gap-2 font-mono">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
-          MC backbone · 4 brains · observation only
+          MC backbone · 4 brains · seat-governed
         </div>
         <div className="font-mono uppercase tracking-[0.18em]">
           risedual.ai · not financial advice

@@ -45,18 +45,19 @@ export default function Login() {
             <br />
             nervous system.
             <br />
-            <span className="text-rd-warn">Three separate brains.</span>
+            <span className="text-rd-warn">Four separate brains.</span>
           </h1>
           <p className="mt-6 text-sm text-rd-muted max-w-md leading-relaxed">
-            Operator console for the Alpha, Camaro, and Chevelle runtimes. Shared
+            Operator console for the Alpha, Camaro, Chevelle, and REDEYE runtimes. Shared
             infrastructure — isolated decision authority.
           </p>
         </div>
-        <div className="relative grid grid-cols-3 gap-px bg-rd-border">
+        <div className="relative grid grid-cols-4 gap-px bg-rd-border">
           {[
             { k: "ALPHA", proj: "RISEDUAL-AI-2", c: "#3B82F6" },
             { k: "CAMARO", proj: "RD4_0421", c: "#F59E0B" },
             { k: "CHEVELLE", proj: "2.1-APP", c: "#10B981" },
+            { k: "REDEYE", proj: "OPPONENT", c: "#06B6D4" },
           ].map((r) => (
             <div key={r.k} className="bg-rd-bg2 p-4">
               <div className="h-1 w-full mb-3" style={{ background: r.c }} />
@@ -126,11 +127,6 @@ export default function Login() {
             {submitting ? "Authenticating…" : "Enter mission control"}
             {!submitting && <ArrowRight size={14} weight="bold" />}
           </button>
-
-          <div className="mt-8 pt-6 border-t border-rd-border text-[10px] uppercase tracking-widest text-rd-dim leading-relaxed">
-            Observation-only deploy ·{" "}
-            <span className="text-rd-warn">execution disabled</span>
-          </div>
         </form>
       </main>
     </div>

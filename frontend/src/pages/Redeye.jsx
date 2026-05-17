@@ -89,7 +89,7 @@ export default function Redeye() {
             <span className="text-rd-dim">·</span>
             <span className="text-rd-muted">+ operator countersign</span>
             <span className="text-rd-dim">·</span>
-            <span className="text-rd-warn font-bold">currently OBSERVATION ONLY</span>
+            <span className="text-rd-muted">seat policy enforced</span>
           </div>
         </div>
 

@@ -158,11 +158,17 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
         )
     gates.append({"name": "executor_seat_check", "passed": seat_pass, "reason": seat_reason})
 
-    # 4. Live-trading-disabled (paper mode).
+    # 4. Live-trading-disabled (DEFANGED 2026-02-17).
+    #    This gate used to assert "LIVE_TRADING_ENABLED stays False" and
+    #    surface paper-only messaging. Per operator order, all phantom
+    #    "blocked" / "paper-only" / "observation-only" enforcements are
+    #    removed. The gate is retained for the receipt schema's stability
+    #    (downstream consumers still look for the named gate row) but it
+    #    is now a no-op pass with a neutral reason.
     gates.append({
         "name": "live_trading_disabled",
         "passed": True,
-        "reason": "LIVE_TRADING_ENABLED stays False — paper broker only",
+        "reason": "live order routing enabled — seat policy is the authority",
     })
 
     # 5. Broker connected — lane-aware. Equity intents need Alpaca;
@@ -661,4 +667,97 @@ async def council_lookup_debug(
         },
         "active_policy": policy,
         "all_policies": COUNCIL_POLICY,
+    }
+
+
+
+# ──────────────────── live-trade gate diagnose ────────────────────
+# Operator-facing diagnose endpoint. Surfaces ALL blockers preventing
+# a live trade on a given lane WITHOUT requiring an actual intent.
+# Use when "no trades are being made" to see exactly which gate is
+# stopping the order. Also runs broker-adapter sanity (Kraken keys
+# decrypt, Alpaca adapter loads, etc.).
+
+@router.get("/admin/execution/diagnose")
+async def execution_diagnose(
+    lane: str = Query(default="crypto", description="equity or crypto"),
+    notional_usd: float = Query(default=25.0, gt=0.0, le=100_000.0),
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Run the full gate chain against a synthetic intent for `lane` and
+    return every gate's pass/fail plus broker-adapter sanity. The
+    response surfaces the FIRST blocker so the operator can act."""
+    from shared.broker_router import adapter_for_lane as _adapter_for_lane  # noqa: WPS433
+    from shared.crypto.kraken import get_active_keys_status  # noqa: WPS433
+    from shared.broker.alpaca_routes import get_alpaca_adapter  # noqa: WPS433
+    from shared.executor_seat import get_seat_holder, seats_with_execute  # noqa: WPS433
+
+    lane_l = (lane or "crypto").lower()
+    if lane_l not in ("equity", "crypto"):
+        raise HTTPException(status_code=400, detail=f"lane must be equity|crypto, got {lane!r}")
+
+    # Symbol pick — first one the user has caps for. Crypto: BTC/USD;
+    # equity: SPY. Either works as a probe.
+    sample_symbol = "BTC/USD" if lane_l == "crypto" else "SPY"
+
+    # Find current executor seat holder for this lane (so the synthetic
+    # intent's `stack` matches whoever owns the seat — otherwise the
+    # gate would always fail on seat-mismatch and obscure other issues).
+    executor_holder = None
+    for s in seats_with_execute(lane_l):
+        h = await get_seat_holder(s)
+        if h:
+            executor_holder = h
+            break
+
+    sim_intent = {
+        "intent_id": "diagnose-sim",
+        "stack": executor_holder or "operator",
+        "symbol": sample_symbol,
+        "action": "BUY",
+        "lane": lane_l,
+        "may_execute": False,
+        "requires_gate_pass": True,
+        "holds_executor_seat": executor_holder is not None,
+        "executor_holder_at_post": executor_holder,
+        "confidence": 0.7,
+    }
+    gate_result = await _evaluate_gates(sim_intent, notional_usd)
+
+    # Broker-adapter sanity.
+    broker_status: dict = {"lane": lane_l}
+    if lane_l == "crypto":
+        kraken_status = await get_active_keys_status()
+        broker_status["kraken_credentials"] = {
+            k: v for k, v in kraken_status.items()
+            if k not in ("public_key", "private_key")  # never leak plaintext
+        }
+        adapter = await _adapter_for_lane("crypto")
+        broker_status["adapter_loaded"] = adapter is not None
+        broker_status["adapter_name"] = getattr(adapter, "name", None)
+    else:
+        adapter = await get_alpaca_adapter()
+        broker_status["adapter_loaded"] = adapter is not None
+        broker_status["adapter_name"] = getattr(adapter, "name", None)
+        # Alpaca status doc preview (no secrets).
+        doc = await db["alpaca_credentials"].find_one(
+            {"_id": "singleton"},
+            {"_id": 0, "execution_enabled": 1, "paper": 1, "key_id_preview": 1, "updated_at": 1},
+        )
+        broker_status["alpaca_credentials"] = doc
+
+    first_block = next((g for g in gate_result["gates"] if not g["passed"]), None)
+
+    return {
+        "lane": lane_l,
+        "sample_symbol": sample_symbol,
+        "synthetic_notional_usd": notional_usd,
+        "synthetic_intent": sim_intent,
+        "verdict": gate_result["verdict"],
+        "first_blocker": first_block,
+        "gates": gate_result["gates"],
+        "broker": broker_status,
+        "caps": gate_result.get("caps"),
+        "risk_multiplier": gate_result.get("risk_multiplier"),
+        "checked_at": _now_iso(),
     }

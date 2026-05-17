@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, RUNTIME_META, fmtTime, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
 import VRLScorecardsPanel from "@/components/VRLScorecardsPanel";
+import LiveTradeDiagnose from "@/components/LiveTradeDiagnose";
+import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 
 const BRAINS_FOR_FILTER = ["all", "alpha", "camaro", "chevelle", "redeye"];
 const KIND_LABEL = {
@@ -389,10 +391,12 @@ export default function Diagnostics() {
             </Card>
             <Card testid="diag-mode">
               <div className="label-eyebrow mb-2">Deploy mode</div>
-              <div className="font-display text-2xl font-bold tracking-tight text-rd-warn uppercase">
+              <div className="font-display text-2xl font-bold tracking-tight uppercase" style={{ color: data.deploy_mode === "execution" ? "#10B981" : "#FBBF24" }}>
                 {data.deploy_mode}
               </div>
-              <div className="text-xs text-rd-muted mt-2 font-mono">execution disabled</div>
+              <div className="text-xs text-rd-muted mt-2 font-mono">
+                {data.deploy_mode === "execution" ? "live order routing enabled" : "no broker has execution_enabled=true"}
+              </div>
             </Card>
             <Card testid="diag-now">
               <div className="label-eyebrow mb-2">Server time</div>
@@ -491,6 +495,16 @@ export default function Diagnostics() {
               intents, and MC training rows all appear here. */}
           <div className="mt-6">
             <DecisionsFeed />
+          </div>
+
+          {/* Live-trade diagnose — surfaces the EXACT gate blocking
+              live execution on each lane. Built after the operator
+              reported "no trades being made on crypto" — this panel
+              makes the first blocker visible in one click. */}
+          <div className="mt-6">
+            <PanelErrorBoundary panelName="LiveTradeDiagnose">
+              <LiveTradeDiagnose />
+            </PanelErrorBoundary>
           </div>
 
           {/* Quantum-inspired state — regime probability field +

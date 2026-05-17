@@ -332,18 +332,67 @@ def _summarise_balance(balance_result: dict) -> dict:
 
 async def get_active_keys() -> tuple[str, str] | None:
     """Decrypt and return (public_key, private_key) for the singleton
-    credential record, or None if none configured."""
+    credential record, or None if none configured.
+
+    Failure modes are LOGGED so PROD operators can tell "no key saved"
+    from "key saved but undecryptable" without running a diagnose
+    endpoint. Silent-None is the historical behavior that hid the
+    PROD encryption-key-drift issue for weeks.
+    """
+    status = await get_active_keys_status()
+    if status["state"] != "ok":
+        logger.warning("kraken get_active_keys → None (%s): %s", status["state"], status["detail"])
+        return None
+    return status["public_key"], status["private_key"]
+
+
+async def get_active_keys_status() -> dict:
+    """Same as `get_active_keys()` but returns a status dict for the
+    diagnose endpoint:
+
+        {state: "ok"|"no_credentials"|"decrypt_failed"|"missing_field",
+         detail: str,
+         public_key_preview: str|None,
+         public_key: str|None,    # only when state="ok"
+         private_key: str|None}   # only when state="ok"
+    """
     from db import db
     from namespaces import KRAKEN_CREDENTIALS
     from shared.credentials import decrypt
     doc = await db[KRAKEN_CREDENTIALS].find_one({"_id": "singleton"}, {"_id": 0})
-    if not doc or not doc.get("encrypted_private_key"):
-        return None
+    if not doc:
+        return {"state": "no_credentials", "detail": "no kraken_credentials singleton doc in DB"}
+    if not doc.get("encrypted_private_key"):
+        return {
+            "state": "missing_field",
+            "detail": "singleton exists but `encrypted_private_key` is empty",
+            "public_key_preview": doc.get("public_key_preview"),
+        }
+    if not doc.get("public_key"):
+        return {
+            "state": "missing_field",
+            "detail": "singleton exists but `public_key` is empty",
+        }
     try:
         priv = decrypt(doc["encrypted_private_key"])
-    except ValueError:
-        return None
-    return doc["public_key"], priv
+    except ValueError as e:
+        return {
+            "state": "decrypt_failed",
+            "detail": (
+                f"decrypt() raised {e!s} — most likely the "
+                "CREDENTIALS_ENCRYPTION_KEY env var on this deploy "
+                "does not match the one that encrypted the saved key. "
+                "Re-save credentials via /api/admin/kraken/connect."
+            ),
+            "public_key_preview": doc.get("public_key_preview"),
+        }
+    return {
+        "state": "ok",
+        "detail": "credentials decrypted successfully",
+        "public_key": doc["public_key"],
+        "private_key": priv,
+        "public_key_preview": doc.get("public_key_preview"),
+    }
 
 
 # ──────────────────────── symbol mapping ────────────────────────

@@ -93,7 +93,7 @@ export default function Promotion() {
         eyebrow="Admin · Promotion (Patent G + Patent J)"
         title="Governed authority elevation"
         sub="Roles can evolve — but only through measured evidence and operator countersign. A runtime cannot promote itself. Patent J readiness must pass; the operator must sign. The countersign cannot bypass a failed gate."
-        right={<Badge color="#FBBF24"><Lock size={11} weight="bold" className="inline mr-1 -mt-0.5" />OBSERVATION</Badge>}
+        right={<Badge color="#10B981"><Lock size={11} weight="bold" className="inline mr-1 -mt-0.5" />SEAT-GATED</Badge>}
         testid="promotion-header"
       />
 
