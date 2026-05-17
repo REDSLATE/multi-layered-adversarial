@@ -23,9 +23,13 @@ Doctrine (2026-02-17):
     never imports lane-specific math — only the dispatcher.
 
     Pricing: equity positions use the Alpaca paper account's
-    list_positions() current_price. Crypto pricing is TODO (see
-    `_crypto_price_for`); until then, crypto positions skip the
-    price-based guards and only MaxHoldTime fires.
+    list_positions() current_price. Crypto positions use Kraken's
+    unauthenticated public `/0/public/Ticker` endpoint via
+    `_crypto_prices()` — no API keys required for the price oracle,
+    so crypto guards fire even when the Kraken-credentials doc is
+    missing or scoped read-only. If Kraken returns no price for a
+    symbol on a given tick, that position skips price-based guards
+    on that tick only (MaxHoldTime still fires).
 
     Failure isolation: every position is evaluated in its own try/except
     so one bad row never blocks the rest of the loop.
