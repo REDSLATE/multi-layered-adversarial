@@ -2,12 +2,14 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, RUNTIME_META, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 import ExecutorSeatTile, { AuditorSeatTile } from "@/components/ExecutorSeatTile";
+import RosterSeatTile from "@/components/RosterSeatTile";
 import AlpacaConnect from "@/components/AlpacaConnect";
 import KrakenBrokerTile from "@/components/KrakenBrokerTile";
 import { toast } from "sonner";
 import {
   Lightning, ArrowsClockwise, Funnel, Pulse,
   CheckCircle, XCircle, Hourglass, Eye, CaretDown, CaretUp, Rocket,
+  Crosshair, ShieldWarning, CurrencyBtc, Buildings,
 } from "@phosphor-icons/react";
 
 const BRAIN_META = {
@@ -44,6 +46,29 @@ const ACTIONS = ["all", "BUY", "SELL", "SHORT", "COVER", "HOLD"];
 const LANES = ["all", "equity", "crypto"];
 const GATE_STATES = ["all", "pending", "passed", "blocked", "dry_run_passed", "dry_run_blocked", "rejected_at_ingest"];
 
+function SectionDivider({ title, sub, icon: IconComponent, testid }) {
+  return (
+    <div
+      className="mt-6 mb-3 flex items-baseline gap-3 border-t border-rd-border pt-4"
+      data-testid={testid}
+    >
+      {IconComponent && (
+        <IconComponent size={14} weight="bold" className="text-rd-text shrink-0" />
+      )}
+      <div className="min-w-0">
+        <div className="text-[11px] font-mono uppercase tracking-[0.25em] text-rd-text">
+          {title}
+        </div>
+        {sub && (
+          <div className="text-[10px] font-mono text-rd-dim mt-1 leading-relaxed">
+            {sub}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FilterPill({ label, value, options, onChange, testid }) {
   return (
     <div className="flex items-center gap-1.5" data-testid={testid}>
@@ -72,8 +97,7 @@ function FilterPill({ label, value, options, onChange, testid }) {
   );
 }
 
-function StatTile({ label, value, color, testid }) {
-  return (
+function StatTile({ label, value, color, testid }) {  return (
     <div
       className="border border-rd-border bg-rd-bg p-3"
       data-testid={testid}
@@ -453,9 +477,45 @@ export default function Intents() {
         testid="intents-header"
       />
 
+      {/* ─── Twin authority lanes ─── Doctrine: equity and crypto are
+          symmetric. Each lane has its own Executor seat, Auditor seat,
+          and Broker tile. A brain can hold seats in both lanes (cross-
+          lane multi-seating); within a single lane it can hold one
+          seat at a time. */}
+      <SectionDivider
+        title="Equity Lane"
+        icon={Buildings}
+        sub="Alpaca-routed equity execution. Default seats: ALPHA executor, REDEYE opponent. Decider/Auditor by operator assignment."
+        testid="intents-section-equity"
+      />
       <ExecutorSeatTile />
       <AuditorSeatTile />
       <AlpacaConnect />
+
+      <SectionDivider
+        title="Crypto Lane"
+        icon={CurrencyBtc}
+        sub="Kraken-routed crypto execution. All crypto seats empty by default — operator must assign before any crypto trade can fire."
+        testid="intents-section-crypto"
+      />
+      <RosterSeatTile
+        role="crypto"
+        title="Crypto Executor Seat"
+        description="Single, rotatable. Empty by default. Only this brain may route crypto orders through Kraken. Independent of the equity executor seat — a brain can hold both, one, or neither."
+        laneBadgeColor="#F97316"
+        laneBadgeText="CRYPTO LANE"
+        icon={Crosshair}
+        testid="crypto-executor-seat-tile"
+      />
+      <RosterSeatTile
+        role="crypto_auditor"
+        title="Crypto Auditor Seat"
+        description="Single, rotatable. Empty by default. Plays the contrary case on crypto theses — twin of the equity Auditor for the crypto lane."
+        laneBadgeColor="#F97316"
+        laneBadgeText="CRYPTO LANE"
+        icon={ShieldWarning}
+        testid="crypto-auditor-seat-tile"
+      />
       <KrakenBrokerTile />
 
       {/* Live exposure caps — fetched from /api/config/exposure-caps so

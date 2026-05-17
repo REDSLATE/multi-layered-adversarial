@@ -38,14 +38,20 @@ from namespaces import BRAIN_ELIGIBILITY, BRAIN_ROSTER, DISCUSSION_PARTICIPANTS,
 ROLES: tuple[str, ...] = (
     "decider", "executor", "governor", "advisor", "opponent", "crypto",
     # ─── Crypto lane (isolated execution authority, 2026-02-15) ───────
-    # The crypto lane runs its own council — governor, advisor, opponent —
-    # so equity policy never leaks into crypto routing. `crypto` (above)
-    # is the crypto EXECUTOR seat (legacy name retained for back-compat
-    # with the existing eligibility matrix). These three add the rest of
-    # the crypto council. The doctrine: equity reads default seats,
-    # crypto reads crypto_* seats; if a crypto_* seat is vacant it
+    # The crypto lane runs its own council — governor, advisor, opponent,
+    # decider, auditor — so equity policy never leaks into crypto routing.
+    # `crypto` (above) is the crypto EXECUTOR seat (legacy name retained
+    # for back-compat with the existing eligibility matrix). These add
+    # the rest of the crypto council. The doctrine: equity reads default
+    # seats, crypto reads crypto_* seats; if a crypto_* seat is vacant it
     # falls back to the default. See `_seat_holder(role, lane=...)`.
+    #
+    # 2026-02-17: Doctrinal twin completed — added `crypto_decider` and
+    # `crypto_auditor` so every equity seat has a crypto counterpart.
+    # Equity Auditor stays in its legacy `/auditor` single-row registry
+    # for back-compat; crypto Auditor lives here in the roster.
     "crypto_advisor", "crypto_governor", "crypto_opponent",
+    "crypto_decider", "crypto_auditor",
 )
 BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("alpha", "camaro", "chevelle", "redeye")
 
@@ -67,6 +73,8 @@ DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
     "crypto_advisor":  None,
     "crypto_governor": None,
     "crypto_opponent": None,
+    "crypto_decider":  None,
+    "crypto_auditor":  None,
 }
 
 # Default eligibility — every brain is eligible for every seat by
@@ -97,6 +105,18 @@ async def get_roster() -> dict:
         # Backfill seat_epoch on legacy docs (one if missing).
         if "seat_epoch" not in doc:
             doc["seat_epoch"] = 1
+        # Backfill new roles on legacy docs so adding ROLES later doesn't
+        # leave the assignments dict missing keys. Missing role → vacant.
+        assignments = doc.get("assignments") or {}
+        missing = [r for r in ROLES if r not in assignments]
+        if missing:
+            for r in missing:
+                assignments[r] = None
+            doc["assignments"] = assignments
+            await db[BRAIN_ROSTER].update_one(
+                {"_id": "current"},
+                {"$set": {"assignments": assignments}},
+            )
         return doc
     seed = {
         "_id": "current",
@@ -137,9 +157,12 @@ async def get_eligibility() -> dict[str, dict[str, bool]]:
     """Return the live eligibility matrix, seeding defaults on first read."""
     doc = await db[BRAIN_ELIGIBILITY].find_one({"_id": "current"}, {"_id": 0})
     if doc and isinstance(doc.get("matrix"), dict):
-        # Ensure every (brain, role) cell has a value (default False for
-        # missing cells — fail closed if the operator adds a new role).
-        matrix = {b: {r: False for r in ROLES} for b in BRAINS}
+        # When the operator adds a new role to ROLES, legacy eligibility
+        # docs won't have a cell for it. Doctrine (2026-02-17): default
+        # to ALLOWED for new roles — "identity is not restriction". The
+        # operator can flip a brain to disallowed via the eligibility UI
+        # if the new role doesn't suit. Fail-OPEN on schema growth.
+        matrix = {b: {r: True for r in ROLES} for b in BRAINS}
         for brain, roles in doc["matrix"].items():
             if brain not in matrix:
                 continue
@@ -189,6 +212,7 @@ async def _audit(action: str, actor: str, payload: dict) -> None:
 RoleT = Literal[
     "decider", "executor", "governor", "advisor", "opponent", "crypto",
     "crypto_advisor", "crypto_governor", "crypto_opponent",
+    "crypto_decider", "crypto_auditor",
 ]
 BrainT = Literal["alpha", "camaro", "chevelle", "redeye"]
 
@@ -257,7 +281,10 @@ async def get_current(_user: dict = Depends(get_current_user)):
     }
 
 
-CRYPTO_LANE_ROLES = ("crypto", "crypto_advisor", "crypto_governor", "crypto_opponent")
+CRYPTO_LANE_ROLES = (
+    "crypto", "crypto_advisor", "crypto_governor", "crypto_opponent",
+    "crypto_decider", "crypto_auditor",
+)
 
 
 def _lane_of_role(role: str) -> str:
