@@ -58,7 +58,7 @@ class BrokerTileErrorBoundary extends React.Component {
   }
   componentDidCatch(err, info) {
     // Surface the failure for debugging without crashing the page.
-    // eslint-disable-next-line no-console
+     
     console.error("KrakenBrokerTile crashed:", err, info);
   }
   render() {

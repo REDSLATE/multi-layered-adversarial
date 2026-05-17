@@ -95,7 +95,7 @@ export default function RosterPanel() {
       && (window.RD_DEBUG_ROSTER || window.localStorage?.RD_DEBUG_ROSTER);
     const trace = (phase, extra = {}) => {
       if (!dbg) return;
-      // eslint-disable-next-line no-console
+       
       console.debug("[roster.action]", phase, { label, ...traceCtx, ...extra });
     };
     trace("entry");
@@ -112,7 +112,7 @@ export default function RosterPanel() {
         detail: e?.response?.data?.detail,
         message: e?.message,
       });
-      // eslint-disable-next-line no-console
+       
       console.error("[roster.action] failed:", label, e);
       toast.error(e?.response?.data?.detail || e.message);
     } finally {
@@ -300,7 +300,7 @@ function RoleSlot({ role, occupant, assignments, eligibility, tenure, onAssign, 
               // how to enable: `localStorage.RD_DEBUG_ROSTER='1'`.
               if (typeof window !== "undefined"
                   && (window.RD_DEBUG_ROSTER || window.localStorage?.RD_DEBUG_ROSTER)) {
-                // eslint-disable-next-line no-console
+                 
                 console.debug("[roster.click]", "save-btn", { role, occupant, busy });
               }
               setPicking(true);
@@ -317,7 +317,7 @@ function RoleSlot({ role, occupant, assignments, eligibility, tenure, onAssign, 
               onClick={() => {
                 if (typeof window !== "undefined"
                     && (window.RD_DEBUG_ROSTER || window.localStorage?.RD_DEBUG_ROSTER)) {
-                  // eslint-disable-next-line no-console
+                   
                   console.debug("[roster.click]", "vacate-btn", { role, occupant, busy });
                 }
                 onVacate();
@@ -351,7 +351,7 @@ function RoleSlot({ role, occupant, assignments, eligibility, tenure, onAssign, 
                 onClick={() => {
                   if (typeof window !== "undefined"
                       && (window.RD_DEBUG_ROSTER || window.localStorage?.RD_DEBUG_ROSTER)) {
-                    // eslint-disable-next-line no-console
+                     
                     console.debug("[roster.click]", "picker-btn", {
                       role, brain, isCurrent,
                       willCall: !isCurrent,

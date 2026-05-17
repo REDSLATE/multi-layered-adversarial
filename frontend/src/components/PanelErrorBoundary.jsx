@@ -35,7 +35,7 @@ export default class PanelErrorBoundary extends React.Component {
   }
 
   componentDidCatch(err, info) {
-    // eslint-disable-next-line no-console
+     
     console.error(`[PanelErrorBoundary:${this.props.panelName}]`, err, info);
   }
 
