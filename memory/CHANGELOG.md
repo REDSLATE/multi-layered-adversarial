@@ -1,3 +1,80 @@
+## 2026-02-16 (latest) — Per-lane intent endpoints + visible crypto rejections
+
+Two doctrinal gaps closed in one pass.
+
+### Gap 1 — Crypto seat had no dedicated intent endpoint
+
+Operator: *"crypto has its own seat now and that should have its own intent
+just like its counterpart."*
+
+Added per-lane endpoints, mirroring the per-lane risk-guards pattern:
+
+```
+POST /api/intents/crypto              (engine, X-Runtime-Token)
+POST /api/intents/equity              (engine, X-Runtime-Token)
+POST /api/admin/intents/crypto        (operator JWT)
+POST /api/admin/intents/equity        (operator JWT)
+```
+
+Each is a thin lane-pinned wrapper around `post_intent` /
+`admin_post_intent` (DRY: same gate chain, same broker_router, same
+brain_lane_policy check). The path's lane is force-set on the body
+before delegation; mismatched lanes 400 with a precise pointer to the
+correct endpoint:
+
+```
+POST /api/admin/intents/crypto  body={lane:"equity", symbol:"AAPL"}
+→ 400 "This endpoint accepts 'crypto' intents only; got lane='equity'.
+        Use /api/intents/equity instead."
+```
+
+Generic `/api/intents` and `/api/admin/intents` preserved for
+back-compat — existing brain sidecars keep working. New emitters should
+target the per-lane endpoint matching their seat.
+
+### Gap 2 — Camaro→crypto 403s were invisible
+
+`brain_lane_policy` rejected Camaro crypto intents at ingest with HTTP
+403 — *before* any DB write. Correct doctrine, but the operator had
+zero record that Camaro tried. To the Intents UI, it looked like Camaro
+never even attempted crypto.
+
+Fix: every policy rejection now writes:
+
+1. An **audit row** into `shared_intents` with:
+   - `gate_state="rejected_at_ingest"`
+   - `rejected_policy="brain_lane_policy"`
+   - `may_execute=False`, `executed=False`, `audit_only=True`
+2. An **mc_shelly** event with `event_type="intent_rejected_at_ingest"`
+   so it shows up in the training-data substrate alongside successful
+   emissions.
+
+The 403 still fires — the rejection is unchanged. But it leaves a trace
+now.
+
+### Gap 3 — Intents UI had no lane filter
+
+Added a **Lane** filter pill (all / equity / crypto) to the Intents page
+and a **Lane** column to the table (blue=equity, purple=crypto badge).
+`GET /api/intents` now accepts a `lane=` query param. Default is "all"
+so the page works unchanged for existing operators; flipping to
+"crypto" surfaces all crypto activity (including the new rejection
+rows).
+
+Added `"rejected_at_ingest"` to the gate-state filter pill so the
+operator can isolate just-the-rejections in a single click.
+
+### Verified
+
+End-to-end smoke (preview):
+- `POST /admin/intents/crypto REDEYE BTC/USD` → 200, intent persisted with lane=crypto, gate=pending
+- `POST /admin/intents/crypto AAPL lane=equity` → 400, precise error pointing at /equity
+- `POST /admin/intents/equity AAPL` → 200, intent persisted with lane=equity
+- `POST /admin/intents/crypto Camaro ETH/USD` → 403, AND a `gate_state=rejected_at_ingest` audit row appears in `shared_intents`
+- `GET /intents?lane=crypto` returns the full mix: REDEYE pending + Camaro rejections + historic equity-side
+- `pytest tests/test_lane_isolation.py tests/test_take_profit_guard.py` → **7 passed in 0.02s**
+
+
 ## 2026-02-16 (latest) — Deterministic TakeProfitGuard installed (per-lane)
 
 Operator: *"Add a deterministic TakeProfitGuard. … Give it to the executor

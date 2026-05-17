@@ -40,7 +40,8 @@ const GATE_ICON = {
 
 const STACKS = ["all", "alpha", "camaro", "chevelle", "redeye"];
 const ACTIONS = ["all", "BUY", "SELL", "SHORT", "COVER", "HOLD"];
-const GATE_STATES = ["all", "pending", "passed", "blocked", "dry_run_passed", "dry_run_blocked"];
+const LANES = ["all", "equity", "crypto"];
+const GATE_STATES = ["all", "pending", "passed", "blocked", "dry_run_passed", "dry_run_blocked", "rejected_at_ingest"];
 
 function FilterPill({ label, value, options, onChange, testid }) {
   return (
@@ -111,6 +112,15 @@ function IntentRow({ intent, expanded, onToggle, onDryRun, onSubmit, dryRunResul
         </td>
         <td className="px-3 py-2 font-display text-sm text-rd-text">{intent.symbol}</td>
         <td className="px-3 py-2">
+          {intent.lane ? (
+            <Badge color={intent.lane === "crypto" ? "#A855F7" : "#3B82F6"}>
+              {intent.lane.toUpperCase()}
+            </Badge>
+          ) : (
+            <span className="font-mono text-[10px] text-rd-dim">—</span>
+          )}
+        </td>
+        <td className="px-3 py-2">
           <span
             className="font-mono text-[11px] font-bold tracking-wider"
             style={{ color: actionColor }}
@@ -174,7 +184,7 @@ function IntentRow({ intent, expanded, onToggle, onDryRun, onSubmit, dryRunResul
       </tr>
       {expanded && (
         <tr className="bg-rd-bg" data-testid={`intent-detail-${intent.intent_id}`}>
-          <td colSpan={8} className="px-3 py-4">
+          <td colSpan={9} className="px-3 py-4">
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
               <div>
                 <div className="label-eyebrow mb-2">Rationale</div>
@@ -273,6 +283,7 @@ export default function Intents() {
   const [stack, setStack] = useState("all");
   const [action, setAction] = useState("all");
   const [gateState, setGateState] = useState("all");
+  const [lane, setLane] = useState("all");
   const [expanded, setExpanded] = useState(null);
   const [dryRunByIntent, setDryRunByIntent] = useState({});
   const [submitByIntent, setSubmitByIntent] = useState({});
@@ -308,6 +319,7 @@ export default function Intents() {
       const params = { limit: 100 };
       if (stack !== "all") params.stack = stack;
       if (gateState !== "all") params.gate_state = gateState;
+      if (lane !== "all") params.lane = lane;
       // action filter happens client-side since the API doesn't expose it
       const res = await api.get("/intents", {
         params,
@@ -322,7 +334,7 @@ export default function Intents() {
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
     }
-  }, [stack, gateState]);
+  }, [stack, gateState, lane]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -497,6 +509,7 @@ export default function Intents() {
           <span className="label-eyebrow">Filters</span>
         </div>
         <div className="flex flex-wrap gap-4">
+          <FilterPill label="Lane" value={lane} options={LANES} onChange={setLane} testid="filter-lane" />
           <FilterPill label="Stack" value={stack} options={STACKS} onChange={setStack} testid="filter-stack" />
           <FilterPill label="Action" value={action} options={ACTIONS} onChange={setAction} testid="filter-action" />
           <FilterPill label="Gate" value={gateState} options={GATE_STATES} onChange={setGateState} testid="filter-gate" />
@@ -523,6 +536,7 @@ export default function Intents() {
                   <th className="px-3 py-2 font-normal">When</th>
                   <th className="px-3 py-2 font-normal">Stack</th>
                   <th className="px-3 py-2 font-normal">Symbol</th>
+                  <th className="px-3 py-2 font-normal">Lane</th>
                   <th className="px-3 py-2 font-normal">Action</th>
                   <th className="px-3 py-2 font-normal">Conf</th>
                   <th className="px-3 py-2 font-normal">R·Mult</th>

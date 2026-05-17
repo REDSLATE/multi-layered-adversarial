@@ -163,6 +163,83 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+async def _audit_lane_policy_rejection(
+    *,
+    stack: str,
+    lane: Optional[str],
+    symbol: str,
+    action: str,
+    confidence: float,
+    rationale: str,
+    ingest_method: str,
+    admin_email: Optional[str] = None,
+) -> None:
+    """Record a brain-lane-policy rejection so the operator can see
+    that a brain TRIED to emit and was muted at ingest.
+
+    Two writes:
+      1. mc_shelly — keeps the rejection in the training-data substrate
+         alongside successful emissions. Same `event_type` prefix as
+         normal intent ingest so feeds pick it up automatically.
+      2. shared_intents — write a 'rejected_at_ingest' row so the
+         existing Intents UI surfaces it without any new view. The row
+         carries `gate_state='rejected_ingest'`, `executed=False`,
+         `may_execute=False`. This is FAILS-CLOSED: the row exists for
+         audit only, the gate chain will refuse to execute it.
+    """
+    import uuid as _uuid  # noqa: WPS433
+    rejection_id = f"rejected-{_uuid.uuid4().hex}"
+    now = _now_iso()
+    doc = {
+        "intent_id": rejection_id,
+        "stack": stack,
+        "action": action,
+        "symbol": symbol,
+        "lane": lane,
+        "lane_source": "brain",
+        "confidence": float(confidence),
+        "rationale": rationale,
+        "evidence": {},
+        # ── gate-state: rejected before any gate ran ──
+        "gate_state": "rejected_at_ingest",
+        "rejected_reason": "brain_lane_policy",
+        "rejected_policy": "brain_lane_policy",
+        "may_execute": False,
+        "requires_gate_pass": False,
+        "executed": False,
+        "executed_at": None,
+        "execution_receipt_id": None,
+        # ── audit ──
+        "ingest_ts": now,
+        "ingest_method": ingest_method,
+        "ingest_admin_email": admin_email,
+        "audit_only": True,
+    }
+    try:
+        await db[SHARED_INTENTS].insert_one(doc.copy())
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from shared.mc_shelly import record_async  # noqa: WPS433
+        record_async(
+            event_type="intent_rejected_at_ingest",
+            brain=stack,
+            symbol=symbol,
+            action=action,
+            confidence=float(confidence),
+            outcome="rejected",
+            rationale=rationale,
+            ref_id=rejection_id,
+            extra={
+                "reason": "brain_lane_policy",
+                "lane": lane,
+                "ingest_method": ingest_method,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 async def _seat_at_post_time(brain: str) -> Optional[str]:
     """Stamp the brain's current role at the moment of ingest.
 
@@ -302,6 +379,15 @@ async def post_intent(
     effective_lane, canonical, inferred_lane = _compose_canonical(body.symbol, body.lane)
     from shared.brain_lane_policy import is_brain_lane_allowed  # noqa: WPS433
     if not await is_brain_lane_allowed(body.stack, effective_lane):
+        # Audit-write the rejection BEFORE the 403 so crypto rejections
+        # are visible in the decisions feed / mc_shelly. Otherwise the
+        # mute is invisible — operators can't tell whether a brain
+        # tried and was blocked vs. never emitted at all.
+        await _audit_lane_policy_rejection(
+            stack=body.stack, lane=effective_lane, symbol=body.symbol,
+            action=body.action, confidence=float(body.confidence),
+            rationale=body.rationale, ingest_method="runtime_token",
+        )
         raise HTTPException(
             status_code=403,
             detail=(
@@ -434,10 +520,69 @@ async def post_intent(
     }
 
 
+# ───── per-lane intent endpoints (2026-02-16) ─────
+#
+# Doctrine: equity and crypto each have their own execute seat. They
+# now each have their own intent emission endpoint too — parity with
+# the lane-isolated risk guards and seats.
+#
+# Generic `/api/intents` and `/api/admin/intents` are preserved for
+# back-compat (existing brain sidecars still work), but new emitters
+# should target the per-lane endpoint matching their seat. The per-lane
+# endpoint enforces that the intent's lane matches the path and rejects
+# 400 on mismatch — so `POST /api/intents/crypto` with `symbol=AAPL`
+# can never silently route through.
+
+
+def _lane_pin(body: IntentIn, expected_lane: Literal["equity", "crypto"]) -> None:
+    """Validate that an intent destined for a per-lane endpoint either
+    omits `lane` (we'll force-set it) or matches the path's lane."""
+    submitted = (body.lane or "").lower().strip() if body.lane else None
+    if submitted and submitted != expected_lane:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"This endpoint accepts {expected_lane!r} intents only; "
+                f"got lane={submitted!r}. Use /api/intents/{submitted} instead."
+            ),
+        )
+    # Force-pin lane so the inference layer / downstream gates can't
+    # silently rewrite it.
+    body.lane = expected_lane
+
+
+@router.post("/intents/crypto")
+async def post_intent_crypto(
+    body: IntentIn,
+    x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
+):
+    """Crypto-lane intent emission. Dedicated path for REDEYE's crypto
+    executor seat. Doctrine: parity with the per-lane risk guards.
+
+    Refuses non-crypto symbols (400) — no silent cross-lane routing.
+    Still subject to the `brain_lane_policy` ingest filter, gate chain,
+    and lane-isolation regression test.
+    """
+    _lane_pin(body, "crypto")
+    return await post_intent(body, x_runtime_token=x_runtime_token)
+
+
+@router.post("/intents/equity")
+async def post_intent_equity(
+    body: IntentIn,
+    x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
+):
+    """Equity-lane intent emission. Dedicated path for the equity
+    executor seat (today: Alpha). Mirror of `/intents/crypto`."""
+    _lane_pin(body, "equity")
+    return await post_intent(body, x_runtime_token=x_runtime_token)
+
+
 @router.get("/intents")
 async def list_intents(
     stack: Optional[str] = Query(default=None),
     symbol: Optional[str] = Query(default=None),
+    lane: Optional[Literal["equity", "crypto"]] = Query(default=None),
     gate_state: Optional[str] = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
     x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
@@ -465,6 +610,8 @@ async def list_intents(
         q["stack"] = stack
     if symbol:
         q["symbol"] = symbol.strip().upper()
+    if lane:
+        q["lane"] = lane
     if gate_state:
         q["gate_state"] = gate_state
 
@@ -551,6 +698,12 @@ async def admin_post_intent(
     # /api/admin/brain-lane-policy. We do not silently bypass.
     from shared.brain_lane_policy import is_brain_lane_allowed  # noqa: WPS433
     if not await is_brain_lane_allowed(body.stack, effective_lane):
+        await _audit_lane_policy_rejection(
+            stack=body.stack, lane=effective_lane, symbol=body.symbol,
+            action=body.action, confidence=float(body.confidence),
+            rationale=body.rationale, ingest_method="admin_proxy",
+            admin_email=user.get("email"),
+        )
         raise HTTPException(
             status_code=403,
             detail=(
@@ -644,6 +797,32 @@ async def admin_post_intent(
     }
 
 
+# ───── per-lane admin intent endpoints (2026-02-16) ─────
+
+
+@router.post("/admin/intents/crypto")
+async def admin_post_intent_crypto(
+    body: IntentIn,
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Operator-authed crypto-lane intent emission. Mirror of
+    `/admin/intents`, lane-pinned to `crypto`."""
+    _lane_pin(body, "crypto")
+    return await admin_post_intent(body, user=user)
+
+
+@router.post("/admin/intents/equity")
+async def admin_post_intent_equity(
+    body: IntentIn,
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Operator-authed equity-lane intent emission. Mirror of
+    `/admin/intents`, lane-pinned to `equity`."""
+    _lane_pin(body, "equity")
+    return await admin_post_intent(body, user=user)
+
+
 # NOTE: `/execution/dry_run` and `/execution/submit` live in
 # `shared/execution.py` — they consume the full gate chain including
 # real exposure caps and the live Alpaca paper adapter.
+
