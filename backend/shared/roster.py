@@ -36,7 +36,8 @@ from namespaces import BRAIN_ELIGIBILITY, BRAIN_ROSTER, DISCUSSION_PARTICIPANTS,
 
 
 ROLES: tuple[str, ...] = (
-    "decider", "executor", "governor", "advisor", "opponent", "crypto",
+    "decider", "executor", "governor", "advisor", "opponent", "auditor",
+    "crypto",
     # ─── Crypto lane (isolated execution authority, 2026-02-15) ───────
     # The crypto lane runs its own council — governor, advisor, opponent,
     # decider, auditor — so equity policy never leaks into crypto routing.
@@ -48,8 +49,11 @@ ROLES: tuple[str, ...] = (
     #
     # 2026-02-17: Doctrinal twin completed — added `crypto_decider` and
     # `crypto_auditor` so every equity seat has a crypto counterpart.
-    # Equity Auditor stays in its legacy `/auditor` single-row registry
-    # for back-compat; crypto Auditor lives here in the roster.
+    # 2026-02-17 (rev2): Added `auditor` (equity) to complete the
+    # original 6-seat-per-lane spec from the user's problem statement.
+    # The legacy `/auditor` single-row registry in `auditor_seat.py`
+    # continues to operate for back-compat with hypothesis analysis;
+    # this entry just makes the seat visible in the unified roster UI.
     "crypto_advisor", "crypto_governor", "crypto_opponent",
     "crypto_decider", "crypto_auditor",
 )
@@ -67,6 +71,7 @@ DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
     "governor": "chevelle",
     "advisor":  None,        # operator-assigned
     "opponent": "redeye",
+    "auditor":  None,        # operator-assigned: post-trade reviewer
     "crypto":   None,        # operator-assigned: dedicated crypto executor
     # Crypto council seats — all vacant until operator slots them.
     # When vacant, the council falls back to the equity seat for that role.
@@ -210,7 +215,8 @@ async def _audit(action: str, actor: str, payload: dict) -> None:
 # ──────────────────────── models ────────────────────────
 
 RoleT = Literal[
-    "decider", "executor", "governor", "advisor", "opponent", "crypto",
+    "decider", "executor", "governor", "advisor", "opponent", "auditor",
+    "crypto",
     "crypto_advisor", "crypto_governor", "crypto_opponent",
     "crypto_decider", "crypto_auditor",
 ]

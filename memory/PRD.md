@@ -1,7 +1,112 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
-## 🚨 Latest (2026-02-17, late+4): Page-blank Recurrence Hardening
+## 🚨 Latest (2026-02-17, late+6): Symmetric 6-Seat Roster (Spec Honored)
+
+User flagged two doctrinal gaps:
+1. **AUDITOR missing from EQUITY lane** while present in CRYPTO — asymmetric.
+2. **DECIDER**'s purpose unclear — original problem statement listed it
+   as one of six rotatable seats (Executor · Auditor · Decider · Governor
+   · Opponent · Crypto). User chose to honor the original 6-seat spec.
+
+**Fix — equity AUDITOR added end-to-end**:
+- `shared/roster.py`: `ROLES` tuple, `DEFAULT_ASSIGNMENTS`, and the
+  `RoleT` Literal type all include `"auditor"`. Default is vacant
+  (operator must explicitly assign — post-trade reviewer is not a
+  doctrine-defaulted seat).
+- `shared/seat_policy.py`: new `SEAT_POLICY["auditor"]` entry —
+  `may_decide=False`, `may_execute=False`, `may_override=False`,
+  `may_veto=False`, `seat_required=False`, `speaks_as=auditor`.
+  Lane-scope is `None` (audits both lanes by default).
+- `frontend/RosterPanel.jsx`: `ROLE_META.auditor` + added to
+  `EQUITY_ROLES` array. Layout rebalanced from `[1fr_5fr_1fr_6fr]`
+  to symmetric **`[1fr_6fr_1fr_6fr]`** with `xl:grid-cols-6` on
+  both lane sections. All 12 seats render at equal proportion.
+
+**DECIDER clarification (pinned)**:
+- Role definition pinned: *"Trust / reduce / veto / observation call
+  on each intent."* — distinct from EXECUTOR (which routes the
+  broker order) and GOVERNOR (which freezes/gates). DECIDER speaks
+  to the QUALIFICATION verdict before execution.
+- In the doctrine packet's role-keyed seats, DECIDER maps to the
+  `strategist` role.
+- Default holder: equity DECIDER = camaro; crypto_decider = vacant.
+
+**Backwards compat**: legacy `shared/auditor_seat.py` single-row
+registry (used by hypothesis analysis) remains operational and
+independent — the unified roster's `auditor` seat is purely the
+operator-assignment visibility layer. Both can coexist; a future
+cleanup ticket can fold the legacy registry into the unified roster
+if desired.
+
+**Verified**: API round-trip works (`POST /admin/roster/assign
+{role: "auditor", brain: "chevelle"}` returns 200 + assignment
+reflected). UI screenshot confirms symmetric 6+6 layout, all seats
+clickable, no boundary fires. Doctrine + auto-retire + promotion-gate
+test suite (42 tests across 5 modules) still green.
+
+**PRODUCTION ACTION REQUIRED**: redeploy preview → production
+(`mission.risedual.ai`) to land the seat-symmetry fix + the
+defensive `.label` hardening from rev5.
+
+
+
+## 🚨 Previous (2026-02-17, late+5): PROD Roster Render Crash — Root-Caused
+
+**User reported**: Production (`mission.risedual.ai`) Overview page
+showing the `PanelErrorBoundary` chip on Brain Roster with message
+**"Cannot read properties of undefined (reading 'label')"**. (Preview
+did not reproduce — different roster state.)
+
+**Root cause**: schema drift. The backend roster (`shared/roster.py`)
+has 11 seat keys, including `crypto_decider` and `crypto_auditor`
+added previously for lane symmetry. The frontend `RosterPanel.jsx`
+`ROLE_META` and `CRYPTO_ROLES` arrays still only knew about 9 seats.
+Every code path that did `ROLE_META[role].label` /
+`BRAIN_META[brain].label` / `LANE_META[lane].label` unguarded would
+throw a TypeError if a key from the backend response wasn't in the
+hard-coded frontend map. Plus, `crypto_decider` & `crypto_auditor`
+were never user-assignable from the UI because they didn't appear in
+the rendered seat grid.
+
+**Fix (defensive)**: ALL `ROLE_META[x]`, `BRAIN_META[x]`,
+`LANE_META[x]` lookups are now optional-chained with a fallback so an
+unknown key can never crash render. `RoleSlot` itself bails out
+gracefully to an "(no doctrine entry for this seat)" tile when a
+backend role key isn't in `ROLE_META`. Same hardening applied to the
+EligibilityMatrix headers, picker buttons, and action handlers.
+
+**Fix (architectural gap)**: `crypto_decider` and `crypto_auditor`
+added to `ROLE_META` + `CRYPTO_ROLES` arrays so they render as real
+operator-assignable seat tiles. Roster layout rebalanced from
+`lg:grid-cols-9` (1+4+1+3) to fractional tracks
+`lg:grid-cols-[1fr_5fr_1fr_6fr]` so all 11 seats fit comfortably.
+
+**Visual fix**: OPPONENT role color changed from `#DC2626` (red) to
+`#06B6D4` (aqua) per operator request — red was being mis-read as an
+error state when it was just the adversary-seat doctrinal color.
+
+**Verified preview**: 0 boundaries fire on initial render; all 11
+seats render with correct color theming. End-to-end advisor and
+crypto_advisor save flows tested earlier still pass.
+
+**PRODUCTION ACTION REQUIRED**: User must **redeploy** preview →
+production (`mission.risedual.ai`) for this fix to land. The error
+boundary chip will continue to display in PROD until the new bundle
+is deployed.
+
+**Lesson learned (pinned for future)**: backend role/brain/lane
+schema additions are a load-bearing dependency for the frontend
+metadata maps. Any future schema addition needs a paired frontend
+ROLE_META / BRAIN_META update — and the optional-chaining hardening
+now in place ensures the panel degrades gracefully rather than
+blanking during the gap. Consider extracting `ROLE_META` to a shared
+schema file backed by a `/api/admin/roster/schema` endpoint so
+backend additions auto-propagate.
+
+
+
+## 🚨 Previous (2026-02-17, late+4): Page-blank Recurrence Hardening
 
 **User report**: Overview page going blank again in PROD (recurrence
 of the earlier Kraken-render crash pattern). Preview env could not

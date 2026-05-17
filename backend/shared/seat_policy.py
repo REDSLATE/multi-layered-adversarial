@@ -101,6 +101,22 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         "speaks_as": "opponent",
         "lane_scope": None,
     },
+    "auditor": {
+        # Post-trade auditor — reviews outcomes after a position closes.
+        # Never decides, never executes, never vetoes a live trade.
+        # Its job is to score the result and feed the learning loop;
+        # it speaks as `auditor` so its evidence is attributable.
+        # Quorum is not required (a closed position doesn't wait on
+        # audit before settlement), so seat_required=False — but a
+        # vacant auditor surfaces visibly so the operator can fill it.
+        "may_decide": False,
+        "may_execute": False,
+        "may_override": False,
+        "may_veto": False,
+        "seat_required": False,
+        "speaks_as": "auditor",
+        "lane_scope": None,
+    },
     "crypto": {
         # Dedicated crypto seat — observe, buy, sell crypto. No equity
         # rights. No deciding. No governing. No vetoing. Doctrine: a
