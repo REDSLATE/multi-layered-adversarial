@@ -83,16 +83,39 @@ export default function RosterPanel() {
     return () => clearInterval(id);
   }, [refresh]);
 
-  const action = async (label, fn) => {
+  const action = async (label, fn, traceCtx = {}) => {
+    // Production telemetry — gated on `window.RD_DEBUG_ROSTER=true` (set
+    // in DevTools: `localStorage.RD_DEBUG_ROSTER = '1'; location.reload()`)
+    // so PROD console stays quiet by default. When the user reports a
+    // "Save doesn't work" bug, flip this flag, repro, and paste the
+    // trace lines.
+    const dbg = typeof window !== "undefined"
+      && (window.RD_DEBUG_ROSTER || window.localStorage?.RD_DEBUG_ROSTER);
+    const trace = (phase, extra = {}) => {
+      if (!dbg) return;
+      // eslint-disable-next-line no-console
+      console.debug("[roster.action]", phase, { label, ...traceCtx, ...extra });
+    };
+    trace("entry");
     setBusy(true);
     try {
-      await fn();
+      const ret = await fn();
+      trace("api-ok", { response: ret?.data || ret });
       toast.success(label);
       await refresh();
+      trace("refresh-ok");
     } catch (e) {
+      trace("error", {
+        status: e?.response?.status,
+        detail: e?.response?.data?.detail,
+        message: e?.message,
+      });
+      // eslint-disable-next-line no-console
+      console.error("[roster.action] failed:", label, e);
       toast.error(e?.response?.data?.detail || e.message);
     } finally {
       setBusy(false);
+      trace("exit");
     }
   };
 
@@ -113,12 +136,14 @@ export default function RosterPanel() {
         action(
           `${BRAIN_META[brain]?.label || brain.toUpperCase()} → ${ROLE_META[role].label} (${_laneOf(role).toUpperCase()})`,
           () => api.post("/admin/roster/assign", { role, brain }),
+          { handler: "onAssign", role, brain },
         )
       }
       onVacate={() =>
         action(
           `${ROLE_META[role].label} (${_laneOf(role).toUpperCase()}) vacated`,
           () => api.post("/admin/roster/assign", { role, brain: null }),
+          { handler: "onVacate", role },
         )
       }
       busy={busy}
@@ -279,7 +304,16 @@ function RoleSlot({ role, occupant, assignments, eligibility, tenure, onAssign, 
         <div className="flex items-baseline gap-2">
           <button
             type="button"
-            onClick={() => setPicking(true)}
+            onClick={() => {
+              // Production telemetry — see action() in RosterPanel for
+              // how to enable: `localStorage.RD_DEBUG_ROSTER='1'`.
+              if (typeof window !== "undefined"
+                  && (window.RD_DEBUG_ROSTER || window.localStorage?.RD_DEBUG_ROSTER)) {
+                // eslint-disable-next-line no-console
+                console.debug("[roster.click]", "save-btn", { role, occupant, busy });
+              }
+              setPicking(true);
+            }}
             disabled={busy}
             className="text-[10px] uppercase tracking-widest text-rd-dim hover:text-rd-text flex items-center gap-1 font-mono"
             data-testid={`roster-save-btn-${role}`}
@@ -289,7 +323,14 @@ function RoleSlot({ role, occupant, assignments, eligibility, tenure, onAssign, 
           {occupant && (
             <button
               type="button"
-              onClick={onVacate}
+              onClick={() => {
+                if (typeof window !== "undefined"
+                    && (window.RD_DEBUG_ROSTER || window.localStorage?.RD_DEBUG_ROSTER)) {
+                  // eslint-disable-next-line no-console
+                  console.debug("[roster.click]", "vacate-btn", { role, occupant, busy });
+                }
+                onVacate();
+              }}
               disabled={busy}
               className="text-[10px] uppercase tracking-widest text-rd-dim hover:text-rd-danger font-mono"
               data-testid={`roster-vacate-btn-${role}`}
@@ -314,6 +355,14 @@ function RoleSlot({ role, occupant, assignments, eligibility, tenure, onAssign, 
                 key={brain}
                 type="button"
                 onClick={() => {
+                  if (typeof window !== "undefined"
+                      && (window.RD_DEBUG_ROSTER || window.localStorage?.RD_DEBUG_ROSTER)) {
+                    // eslint-disable-next-line no-console
+                    console.debug("[roster.click]", "picker-btn", {
+                      role, brain, isCurrent, isEligible,
+                      willCall: !isCurrent && isEligible,
+                    });
+                  }
                   setPicking(false);
                   if (!isCurrent && isEligible) onAssign(brain);
                 }}
