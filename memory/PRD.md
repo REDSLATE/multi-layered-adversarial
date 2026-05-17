@@ -1,6 +1,67 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+
+## 🚨 Latest (2026-05-17): Full Block-Removal + Live-Trade Diagnose
+
+Operator reported "no trades being made on crypto" and ordered removal
+of ALL remaining live-trade blockers / phantom "observation only"
+chrome. Shipped:
+
+### Frontend (chrome scrub)
+- `components/Layout.jsx` — top yellow `observation-banner` removed
+  (was "OBSERVATION ONLY · BROKER_LIVE_ORDER_ENABLED=false · execution
+  authority disabled across all runtimes")
+- `pages/Login.jsx` — removed "Observation-only deploy · execution
+  disabled" footer; copy updated to "Four separate brains" + REDEYE
+  tile added (Alpha · Camaro · Chevelle · REDEYE)
+- `risedual/Layout.jsx` — header + footer "observation only" →
+  "seat-governed"
+- `pages/Diagnostics.jsx` — Deploy-mode card green when
+  `deploy_mode=execution`; "execution disabled" sub-line removed
+- `pages/Promotion.jsx` — yellow "OBSERVATION" badge → green
+  "SEAT-GATED"
+- `pages/Redeye.jsx` — removed "currently OBSERVATION ONLY" tag
+
+### Backend (gate fixes + visibility)
+- `shared/execution.py` Gate 4 (`live_trading_disabled`): fixed
+  misleading reason "LIVE_TRADING_ENABLED stays False — paper broker
+  only" → neutral "live order routing enabled — seat policy is the
+  authority". Gate retained for downstream receipt-schema stability.
+- `shared/auto_router.py` — **lane-aware notional clamp**: default
+  `AUTO_ROUTER_NOTIONAL_USD=$100` was auto-blocking 100% of crypto
+  intents on the `cap_per_order_crypto=$30` rail. Auto-router now
+  clamps notional to `cap_for_lane(intent.lane)` before evaluating
+  gates.
+- `shared/crypto/kraken.py` — `get_active_keys()` no longer silently
+  returns None; failure is **LOGGED** (PROD encryption-key drift was
+  invisible for weeks). New `get_active_keys_status()` returns a
+  status dict with one of: `ok`, `no_credentials`, `missing_field`,
+  `decrypt_failed`.
+- `backend/.env` — `BROKER_LIVE_ORDER_ENABLED` flipped `false → true`
+  (legacy telemetry surface; gate already defanged).
+
+### New diagnose endpoint + UI
+- `GET /api/admin/execution/diagnose?lane=crypto|equity&notional_usd=N`
+  — runs the full gate chain against a synthetic BUY intent and
+  returns every gate's pass/fail, plus broker-adapter sanity
+  (Kraken decrypt state, Alpaca singleton presence). Surfaces the
+  FIRST blocker explicitly.
+- `frontend/src/components/LiveTradeDiagnose.jsx` — side-by-side
+  Crypto vs Equity panel showing first blocker + every gate + broker
+  credential state. Wrapped in `PanelErrorBoundary`, mounted on the
+  Diagnostics page.
+
+### Operator path forward for PROD Kraken
+Hit `/api/admin/execution/diagnose?lane=crypto` (or open Diagnostics
+on prod). The `broker.kraken_credentials.state` field tells you
+exactly which failure mode is in play:
+- `no_credentials` → no DB doc; re-save via `/api/admin/kraken/connect`
+- `missing_field` → doc exists but `encrypted_private_key` empty
+- `decrypt_failed` → CREDENTIALS_ENCRYPTION_KEY drifted between
+  encrypt-time and now; re-save keys to re-encrypt with the current key
+
+
 ## 🚨 Latest (2026-02-17, late+7): Brain-Name Restriction Sweep
 
 User flagged that the "phantom bugs" chasing the council seats were
