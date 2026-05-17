@@ -1,5 +1,6 @@
 import os
 import pytest
+import pytest_asyncio  # noqa: F401 — ensures the plugin is loaded
 import requests
 
 # Seed DB connection env vars BEFORE any test module imports `db` /
@@ -17,6 +18,14 @@ if not os.environ.get("MONGO_URL"):
                     os.environ["DB_NAME"] = line.split("=", 1)[1].strip().strip('"').strip("'")
 os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
 os.environ.setdefault("DB_NAME", "test_database")
+
+# ───────── session-scoped event loop ─────────────────────────────────
+# Motor's AsyncIOMotorClient binds to the first event loop that uses
+# it. The plugin defaults to a fresh loop per test, which makes Motor
+# throw `RuntimeError: Event loop is closed` on the 2nd Mongo test.
+# Session scope (configured in pytest.ini via
+# asyncio_default_test_loop_scope = session) keeps one loop alive for
+# the whole suite so Motor stays happy.
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL")
 if not BASE_URL:

@@ -4,36 +4,22 @@ Drives the full lifecycle:
     intent ingest → doctrine packet stored → simulate close →
     outcome_join attached → scorecard aggregates → promotion gate
     correctly flags "not yet promotable" until samples ≥ 100.
+
+Uses pytest-asyncio in `asyncio_mode = auto` so every `async def
+test_…` is run directly on the session event loop. This keeps Motor's
+module-global client bound to one loop across the suite (the fix for
+the earlier "different event loop" skip noise).
 """
 from __future__ import annotations
 
-import asyncio
-import os
 import uuid
-
-import pytest
-
-os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
-os.environ.setdefault("DB_NAME", "test_database")
-
-
-def _run(coro, timeout: float = 15.0):
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(asyncio.wait_for(coro, timeout=timeout))
-    finally:
-        # Drain background tasks so Motor doesn't log on event-loop close.
-        pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
-        if pending:
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        loop.close()
+from datetime import datetime, timezone
 
 
 def _make_sidecar_row(*, intent_id, lane, quality, gov_action,
-                     redeye_challenge, judge_ready, outcome_label,
-                     pnl_usd):
+                      redeye_challenge, judge_ready, outcome_label,
+                      pnl_usd):
     """Build a synthetic doctrine_sidecars row with an outcome envelope."""
-    from datetime import datetime, timezone
     ts = datetime.now(timezone.utc).isoformat()
     return {
         "intent_id": intent_id,
@@ -64,28 +50,28 @@ def _make_sidecar_row(*, intent_id, lane, quality, gov_action,
 
 # ─── outcome-join one-shot guarantee ─────────────────────────────────
 
-def test_outcome_join_skips_when_no_intent_id():
+async def test_outcome_join_skips_when_no_intent_id():
     from shared.doctrine.outcome_join import join_outcome_to_doctrine
-    ok = _run(join_outcome_to_doctrine(
+    ok = await join_outcome_to_doctrine(
         intent_id=None, position_id="pos-1", lane="equity", symbol="NVDA",
         outcome_label="win", pnl_usd=10.0, pnl_pct=1.0,
         opened_at=None, closed_at=None, closing_actor="test",
-    ))
+    )
     assert ok is False
 
 
-def test_outcome_join_skips_when_intent_has_no_sidecar_row():
+async def test_outcome_join_skips_when_intent_has_no_sidecar_row():
     from shared.doctrine.outcome_join import join_outcome_to_doctrine
     fake_intent = f"no-doctrine-{uuid.uuid4()}"
-    ok = _run(join_outcome_to_doctrine(
+    ok = await join_outcome_to_doctrine(
         intent_id=fake_intent, position_id="pos-x", lane="equity",
         symbol="NVDA", outcome_label="win", pnl_usd=5.0, pnl_pct=0.5,
         opened_at=None, closed_at=None, closing_actor="test",
-    ))
+    )
     assert ok is False
 
 
-def test_outcome_join_writes_and_is_idempotent():
+async def test_outcome_join_writes_and_is_idempotent():
     """First close attaches the envelope; second close on the same
     intent_id MUST NOT overwrite it (a take-profit close racing with
     a manual operator close would otherwise double-write)."""
@@ -95,8 +81,7 @@ def test_outcome_join_writes_and_is_idempotent():
 
     intent_id = f"join-test-{uuid.uuid4()}"
 
-    async def _go():
-        # Seed a sidecar row
+    try:
         await db[DOCTRINE_SIDECARS].insert_one({
             "intent_id": intent_id, "stack": "alpha", "lane": "equity",
             "symbol": "NVDA", "quality": "A_QUALITY",
@@ -114,14 +99,9 @@ def test_outcome_join_writes_and_is_idempotent():
         row = await db[DOCTRINE_SIDECARS].find_one(
             {"intent_id": intent_id}, {"_id": 0},
         )
+    finally:
         await db[DOCTRINE_SIDECARS].delete_many({"intent_id": intent_id})
-        return first, second, row
 
-    try:
-        first, second, row = _run(_go(), timeout=10)
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"Mongo unavailable: {e}")
-        return
     assert first is True
     assert second is False, "second join must be a no-op (idempotent)"
     assert row["outcome_join"]["pnl_usd"] == 12.0, "must preserve first close"
@@ -130,7 +110,7 @@ def test_outcome_join_writes_and_is_idempotent():
 
 # ─── scorecard aggregation ───────────────────────────────────────────
 
-def test_scorecard_quality_bands_aggregate():
+async def test_scorecard_quality_bands_aggregate():
     """Insert a controlled set of rows for a synthetic lane and verify
     the scorecard returns the right win_rate / avg_pnl per band."""
     from db import db
@@ -152,25 +132,17 @@ def test_scorecard_quality_bands_aggregate():
         gov_action="modulate", redeye_challenge=False, judge_ready=True,
         outcome_label="loss", pnl_usd=-5.0,
     ))
-    # 1 REJECT loss (-20) → win_rate 0.0
     rows.append(_make_sidecar_row(
         intent_id=f"rej-{uuid.uuid4()}", lane=lane, quality="REJECT",
         gov_action="block", redeye_challenge=True, judge_ready=False,
         outcome_label="loss", pnl_usd=-20.0,
     ))
 
-    async def _go():
-        await db[DOCTRINE_SIDECARS].insert_many([r.copy() for r in rows])
-        # Run aggregation directly (no FastAPI auth dependency)
-        res = await doctrine_scorecard(lane=lane, stack=None, min_samples_per_band=1, _user={})
-        await db[DOCTRINE_SIDECARS].delete_many({"lane": lane})
-        return res
-
     try:
-        res = _run(_go(), timeout=10)
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"Mongo unavailable: {e}")
-        return
+        await db[DOCTRINE_SIDECARS].insert_many([r.copy() for r in rows])
+        res = await doctrine_scorecard(lane=lane, stack=None, min_samples_per_band=1, _user={})
+    finally:
+        await db[DOCTRINE_SIDECARS].delete_many({"lane": lane})
 
     a = res["by_quality"].get("A_QUALITY")
     assert a is not None, res
@@ -185,7 +157,7 @@ def test_scorecard_quality_bands_aggregate():
     assert rej["win_rate"] == 0.0
 
 
-def test_scorecard_promotion_blocked_below_min_samples():
+async def test_scorecard_promotion_blocked_below_min_samples():
     """With <100 samples, ready_for_promotion must be False and the
     blocker list must contain `min_samples<100`."""
     from db import db
@@ -198,24 +170,17 @@ def test_scorecard_promotion_blocked_below_min_samples():
         gov_action="modulate", redeye_challenge=False, judge_ready=True,
         outcome_label="win", pnl_usd=5.0,
     )
-
-    async def _go():
+    try:
         await db[DOCTRINE_SIDECARS].insert_one(row.copy())
         res = await doctrine_scorecard(lane=lane, stack=None, min_samples_per_band=1, _user={})
+    finally:
         await db[DOCTRINE_SIDECARS].delete_many({"lane": lane})
-        return res
-
-    try:
-        res = _run(_go(), timeout=10)
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"Mongo unavailable: {e}")
-        return
 
     assert res["ready_for_promotion"] is False
     assert any("min_samples<100" in b for b in res["promotion_blockers"])
 
 
-def test_scorecard_per_seat_loss_rates():
+async def test_scorecard_per_seat_loss_rates():
     """Per-seat bucket loss rates must aggregate correctly."""
     from db import db
     from namespaces import DOCTRINE_SIDECARS
@@ -244,17 +209,11 @@ def test_scorecard_per_seat_loss_rates():
             outcome_label="win", pnl_usd=8.0,
         ))
 
-    async def _go():
+    try:
         await db[DOCTRINE_SIDECARS].insert_many([r.copy() for r in rows])
         res = await doctrine_scorecard(lane=lane, stack=None, min_samples_per_band=1, _user={})
+    finally:
         await db[DOCTRINE_SIDECARS].delete_many({"lane": lane})
-        return res
-
-    try:
-        res = _run(_go(), timeout=10)
-    except Exception as e:  # noqa: BLE001
-        pytest.skip(f"Mongo unavailable: {e}")
-        return
 
     gov = res["by_seat"]["governor"]
     assert gov["block"]["samples_with_outcome"] == 2

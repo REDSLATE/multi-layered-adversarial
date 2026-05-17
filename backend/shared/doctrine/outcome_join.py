@@ -68,10 +68,13 @@ async def join_outcome_to_doctrine(
     except Exception as e:  # noqa: BLE001
         logger.warning("outcome_join lookup failed for intent %s: %s", intent_id, e)
         return False
-    if not existing:
+    if existing is None:
         # The intent never carried a doctrine packet (e.g. ingested
         # before the doctrine layer shipped, or a non-doctrinal path
         # like the legacy `paper-open` endpoint). Nothing to teach.
+        # NOTE: `existing` may be `{}` when the row exists but has no
+        # `outcome_join` field yet — that's the normal first-close path,
+        # so we explicitly check for `None` here, not falsy.
         return False
     if existing.get("outcome_join"):
         # Already joined — don't double-attach. Take-profit + manual
