@@ -1,7 +1,43 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
-## 🚨 Latest (2026-02-16, end-of-day): P1 + P3 batch — UIs + scheduler + vendor SDK chat
+## 🚨 Latest (2026-02-17): P0 risk guards + Position Monitor + P1 UI surfaces
+
+**P0 — Three new deterministic risk guards** (joining existing
+TakeProfit): `StopLossGuard`, `TrailingStopGuard`, `MaxHoldTimeGuard`.
+Pure-math lane-neutral cores in `shared/risk/`; lane-isolated wrappers
+in `shared/{equity,crypto}/`. 15 deterministic unit tests cover every
+side × hit/miss × edge-case combo.
+
+**P0 — Position Monitor scheduler loop** (`shared/risk/position_monitor.py`).
+Runs every 30s (env-tunable). Walks every open position and evaluates
+the four guards in **strict priority**: StopLoss → TakeProfit →
+TrailingStop → MaxHoldTime. First non-HOLD verdict closes/reduces and
+breaks out — lower priorities not consulted on that tick. Writes
+audit rows to `risk_monitor_evaluations`. Failure-isolated per
+position. REST surface at `/api/admin/risk/monitor/{status,run-once,recent-evaluations}`.
+
+**P0 — Per-lane risk-guard REST endpoints** under
+`/api/admin/risk/{equity|crypto}/{guard}/{check|enforce}/{position_id}`.
+No union endpoint that silently picks lane. Pure-math companions at
+`/api/admin/risk/{guard}/evaluate`.
+
+**P1 — Risk Guard Status column on LivePositionsPanel.** Rolls up the
+latest monitor evaluation per position. Shows colored badge when a
+guard fired (red/green/amber/purple per guard), or four pips + "ALL
+HOLD" when every guard was satisfied. Updates every 15s.
+
+**P1 — Brain × Lane policy toggle on Roster page.** New
+`BrainLanePolicyPanel` inside `RosterPanel.jsx`. 4×2 matrix of one-click
+toggles backed by `/api/admin/brain-lane-policy`. Operator can mute/
+unmute any brain × lane combination without curl. Camaro/crypto ships
+muted by seed.
+
+**Tests:** 35/35 passing (22 unit + 13 integration). Lane-isolation
+regression guard still green.
+
+
+## 2026-02-16 (previous): P1 + P3 batch — UIs + scheduler + vendor SDK chat
 
 **P1 — `LivePositionsPanel`** mounted at `/admin/overview` (above
 FeedersStrip). State-filter chips (open / managing / closed / all),

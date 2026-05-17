@@ -1,4 +1,122 @@
-## 2026-02-16 (latest) — Per-lane intent endpoints + visible crypto rejections
+## 2026-02-17 (latest) — Three new risk guards + Position Monitor scheduler + P1 UI surfaces
+
+Closed all P0 + P1 items from the fork plan in one pass.
+
+### P0 — Risk Guards (Doctrine: Executors enter, lifecycle guards exit)
+
+Added three deterministic guards joining the existing TakeProfit:
+
+* `shared/risk/stop_loss_guard.py` — pure math, lane-neutral, returns
+  CLOSE when pnl_pct ≤ -|stop_loss_pct|.
+* `shared/risk/trailing_stop_guard.py` — pure math, stateful via
+  `previous_peak`; inactive until `activate_after_pct` is reached;
+  closes on drawdown from peak (LONG) or run-up from trough (SHORT).
+* `shared/risk/max_hold_time_guard.py` — time-based discipline guard;
+  closes when `(now - opened_at) ≥ max_hold_minutes`. Time-injectable
+  (`now=` param) for deterministic tests.
+
+Each guard has lane-isolated wrappers in `shared/equity/{guard}.py` and
+`shared/crypto/{guard}.py` that look up the live position, call the
+pure math, and (for `enforce_*`) actually close / reduce via
+`shared.live_positions.close()` → broadcasts to `SHARED_OUTCOMES`.
+
+Trailing-stop persists the running peak on the position doc
+(`peak_price`, `peak_updated_at`) so the next tick sees today's
+high-water without recomputing.
+
+### P0 — Position Monitor scheduler (`shared/risk/position_monitor.py`)
+
+Async background loop registered in `server.py` lifespan. Every
+`POSITION_MONITOR_INTERVAL_SECONDS` (default 30s) it:
+
+1. Snapshots open / managing positions from `shared_live_positions`.
+2. Builds a per-tick equity price map via Alpaca's `list_positions()`.
+   Crypto price oracle is stubbed pending Kraken `/Ticker`.
+3. For each position, walks the four guards in **strict priority**:
+
+       StopLoss → TakeProfit → TrailingStop → MaxHoldTime
+
+   The **first non-HOLD verdict closes/reduces** and breaks out — lower
+   priorities are not consulted on that tick (a stop-loss never races
+   a take-profit on a whipsaw bar).
+4. Writes an append-only audit row to
+   `risk_monitor_evaluations` so the operator can see every decision.
+
+Failure-isolated per position; one bad row never blocks the rest of
+the loop. Env-tuneable (STOP_LOSS_PCT, TAKE_PROFIT_PCT, TRAIL_PCT,
+TRAIL_ACTIVATE_PCT, MAX_HOLD_MINUTES). Disable with
+`POSITION_MONITOR_ENABLED=false`.
+
+### REST surface (`/api/admin/risk/...`)
+
+Pure math (lane-agnostic):
+* `POST /admin/risk/take-profit/evaluate`
+* `POST /admin/risk/stop-loss/evaluate`
+* `POST /admin/risk/trailing-stop/evaluate`
+* `POST /admin/risk/max-hold-time/evaluate`
+
+Lane-scoped check + enforce per guard:
+* `POST /admin/risk/{equity|crypto}/{guard}/check/{position_id}`
+* `POST /admin/risk/{equity|crypto}/{guard}/enforce/{position_id}`
+
+Monitor control:
+* `GET /admin/risk/monitor/status` — running flag, tick counters,
+  config, priority array, doctrine string.
+* `POST /admin/risk/monitor/run-once` — manual one-shot tick. Response
+  shape: `{"summary": {open_positions, evaluated, actions_taken,
+  errors}, "results": [...]}`.
+* `GET /admin/risk/monitor/recent-evaluations` — append-only audit log
+  for the UI.
+
+### P1 — Risk Guard Status column on LivePositionsPanel
+
+`LivePositionsPanel.jsx` now fetches `/admin/risk/monitor/recent-evaluations`
+alongside the position list and renders a `GuardCell` per row:
+
+* If a guard fired → colored badge (`stop_loss=red`, `take_profit=green`,
+  `trailing_stop=amber`, `max_hold_time=purple`) + the reason tooltip.
+* If every guard held → four colored pips (one per guard) + "ALL HOLD".
+* If skipped (unknown lane, monitor hasn't ticked yet) → neutral "—".
+
+Updates every 15s in sync with the position list.
+
+### P1 — Brain × Lane policy toggle inside RosterPanel
+
+New `BrainLanePolicyPanel` component appended to `RosterPanel.jsx`.
+Renders a 4×2 matrix (alpha/camaro/chevelle/redeye × equity/crypto).
+Each cell is a button that:
+
+* Shows current state as `ALLOWED` (green) or `MUTED` (red).
+* On click, POSTs to `/api/admin/brain-lane-policy` and refreshes.
+* Cells with an explicit DB row are tagged `· explicit` (Camaro/crypto
+  ships muted by seed).
+
+Operator can now mute/unmute a brain per lane in one click — no curl.
+
+### Tests added
+
+* `/app/backend/tests/test_risk_guards.py` — 15 unit tests covering
+  every (side × hit/miss × edge-case) combination for the three new
+  guards. All deterministic, no DB.
+* `/app/backend/tests/test_risk_monitor_and_policy.py` — 13 integration
+  tests (Position Monitor REST + per-lane intents + brain-lane-policy
+  CRUD lifecycle).
+* All 22 unit tests + 13 integration = **35/35 passing**. Lane
+  isolation guards still green.
+
+### Doctrine pins
+
+* No union endpoint that picks lane silently — every guard/enforce
+  endpoint has the lane in the path.
+* Priority order is fixed in code and exposed at
+  `/admin/risk/monitor/status.priority` so the operator can verify.
+* Crypto positions safely skip price-based guards when the price
+  oracle is unavailable; MaxHoldTime still fires (time-only). This is
+  the **MVP boundary** until Kraken `/Ticker` is wired.
+
+---
+
+## 2026-02-16 — Per-lane intent endpoints + visible crypto rejections
 
 Two doctrinal gaps closed in one pass.
 
