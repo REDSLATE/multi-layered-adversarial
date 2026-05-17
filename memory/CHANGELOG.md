@@ -1,3 +1,79 @@
+## 2026-02-16 (latest) — Deterministic TakeProfitGuard installed (per-lane)
+
+Operator: *"Add a deterministic TakeProfitGuard. … Give it to the executor
+lane, yes — but not as 'executor opinion.' Use it as a mandatory post-entry
+lifecycle guard."*
+
+Doctrine pinned: **Executors enter. Lifecycle guards exit. Brains advise.
+RoadGuard enforces.** Brains cannot override take-profit exits.
+
+### Files added (4)
+
+```
+shared/risk/__init__.py
+shared/risk/take_profit_guard.py     # pure deterministic math (snippet, verbatim)
+shared/risk/routes.py                 # per-lane REST surface
+shared/equity/take_profit.py          # Camaro's executor lane wrapper
+shared/crypto/take_profit.py          # REDEYE's executor lane wrapper
+tests/test_take_profit_guard.py       # 4 unit tests (snippet, verbatim)
+```
+
+### Why three layers (not one)
+
+- **Lane-neutral math** in `shared/risk/take_profit_guard.py` — pure
+  functions, no DB, no async, no LLM. Lives outside `shared/equity/` and
+  `shared/crypto/` so the lane-isolation regression test allows both
+  lanes to import from it without coupling to each other.
+- **Per-lane wrappers** in `shared/equity/take_profit.py` and
+  `shared/crypto/take_profit.py` — each adds the lane's position
+  bookkeeping (filter `lane='equity'` vs `lane='crypto'`, read entry
+  price from open fill, call `live_positions.close` /
+  `record_management` with the verdict's fraction).
+- **Per-lane REST endpoints** under `/api/admin/risk/equity/...` and
+  `/api/admin/risk/crypto/...` — NO union endpoint that silently picks
+  the lane. The caller must address the right lane.
+
+### REST surface
+
+```
+POST  /api/admin/risk/take-profit/evaluate                        (pure math, lane-agnostic)
+POST  /api/admin/risk/equity/take-profit/check/{position_id}      (read-only preview, equity)
+POST  /api/admin/risk/equity/take-profit/enforce/{position_id}    (acts: REDUCE/CLOSE)
+POST  /api/admin/risk/crypto/take-profit/check/{position_id}      (read-only preview, crypto)
+POST  /api/admin/risk/crypto/take-profit/enforce/{position_id}    (acts: REDUCE/CLOSE)
+```
+
+`enforce` calls `live_positions.close` (terminal) or
+`live_positions.record_management` (REDUCE), depending on the deterministic
+verdict. Both broadcast to `shared_brain_outcomes` so the scorecard pipeline
+captures the exit. Brain advisory cannot override this path — caller is
+authoritative, guard is deterministic.
+
+### What's still pending
+
+This install gives you the **callable guard**. The natural next layer is the
+**Position Monitor loop** the operator's diagram references — a background
+task that polls open positions every N seconds, fetches current price, and
+calls `enforce_position` per lane. Today the guard is invoked by:
+- The operator (manually, via curl/Postman)
+- The executor sidecars (when REDEYE/Camaro sees a new bar and wants to
+  check its open positions)
+
+Building the monitor loop is a separate piece. Recommend wiring it next so
+the guard runs without human/sidecar intervention.
+
+### Verified
+
+- `pytest tests/test_take_profit_guard.py` → **4/4 PASS** (LONG hit, SHORT
+  hit, partial REDUCE, no-trigger HOLD)
+- `pytest tests/test_lane_isolation.py` → **3/3 PASS** (new files respect
+  the lane-isolation doctrine — neither lane imports the other)
+- `POST /api/admin/risk/take-profit/evaluate` LONG 100→103 @ 3% target
+  → returns `{action: "CLOSE", reason: "Take-profit target hit at 3.00%",
+  pnl_pct: 3.0, target_pct: 3.0, close_fraction: 1.0}` ✓
+- Backend boots clean
+
+
 ## 2026-02-16 (late) — Lane-isolation regression test installed
 
 Operator: *"That caveat is exactly how this bug came back before: crypto path
