@@ -119,14 +119,35 @@ async def _equity_prices() -> dict[str, float]:
         return {}
 
 
-async def _crypto_price_for(symbol: str) -> Optional[float]:
-    """Crypto spot price lookup. Currently a stub — Kraken's public
-    /Ticker endpoint can be wired here when the operator green-lights
-    automated crypto closes. Returning None makes the monitor skip the
-    price-based guards for crypto; MaxHoldTime still fires.
+async def _crypto_prices(symbols: list[str]) -> dict[str, float]:
+    """Snapshot of current prices for the supplied crypto symbols using
+    Kraken's unauthenticated public `/0/public/Ticker` endpoint.
+
+    Returns `{symbol_upper: last_trade_price}`. Symbols that Kraken
+    doesn't recognise (or that fail to parse) are silently dropped — the
+    monitor treats them as "no price" and skips price-based guards for
+    that position on this tick. Lane-neutral consumer: we don't touch
+    `kraken_credentials`, we don't need execution scope, we don't even
+    need the credentials doc to exist.
     """
-    _ = symbol  # placeholder
-    return None
+    if not symbols:
+        return {}
+    try:
+        from shared.crypto.kraken import fetch_tickers  # noqa: WPS433
+        return await fetch_tickers(symbols)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("position_monitor: crypto price snapshot failed: %s", e)
+        return {}
+
+
+async def _crypto_price_for(symbol: str) -> Optional[float]:
+    """Single-symbol convenience for one-off callers. The hot path
+    (the monitor loop) uses `_crypto_prices` to batch every open
+    position into a single Kraken request per tick — much kinder to
+    their rate limits than a request per position.
+    """
+    prices = await _crypto_prices([symbol])
+    return prices.get((symbol or "").upper().strip())
 
 
 # ─────────────────────────── evaluation log ───────────────────────────
@@ -310,8 +331,17 @@ async def run_once(actor: str = "position_monitor") -> dict:
         {"state": {"$in": ["open", "managing"]}}, {"_id": 0},
     ).to_list(500)
 
-    # Build the equity-price snapshot once per tick.
+    # Build the equity-price snapshot once per tick (one Alpaca call).
     equity_prices = await _equity_prices()
+    # Build the crypto-price snapshot once per tick (one Kraken Ticker
+    # call for every crypto symbol currently open). Far gentler on
+    # Kraken's rate limits than calling per-position.
+    crypto_symbols = sorted({
+        (p.get("symbol") or "").upper()
+        for p in open_positions
+        if (p.get("lane") or "").lower() == "crypto" and p.get("symbol")
+    })
+    crypto_prices = await _crypto_prices(crypto_symbols) if crypto_symbols else {}
 
     evaluated = 0
     actions = 0
@@ -323,7 +353,7 @@ async def run_once(actor: str = "position_monitor") -> dict:
         if lane == "equity":
             current_price = equity_prices.get(symbol)
         elif lane == "crypto":
-            current_price = await _crypto_price_for(symbol)
+            current_price = crypto_prices.get(symbol)
         else:
             current_price = None
 
@@ -354,6 +384,9 @@ async def run_once(actor: str = "position_monitor") -> dict:
         "evaluated": evaluated,
         "actions_taken": actions,
         "errors": errors,
+        "equity_prices_seen": len(equity_prices),
+        "crypto_prices_seen": len(crypto_prices),
+        "crypto_symbols_queried": crypto_symbols,
     }
 
     _state["last_tick_at"] = summary["finished_at"]

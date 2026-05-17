@@ -60,6 +60,113 @@ async def fetch_ohlc(pair: str, interval_minutes: int = 60, since: int | None = 
     return data.get("result", {})
 
 
+async def fetch_tickers(pairs: list[str]) -> dict[str, float]:
+    """Fetch last-trade prices for one or more pairs from Kraken's
+    public `/0/public/Ticker` endpoint.
+
+    `pairs` accepts internal symbols (`BTC/USD`) or Kraken altnames
+    (`XBTUSD`). Returns `{<internal_symbol_upper>: <last_price>}`. Pairs
+    that 404 or fail to parse are silently dropped — the caller treats
+    missing symbols as "no price available" and the Position Monitor
+    skips price-based guards for them on that tick.
+
+    Doctrine: unauthenticated, no keys touched, lane-neutral consumer.
+    Used by the Position Monitor's crypto price oracle.
+    """
+    if not pairs:
+        return {}
+
+    # Map internal → Kraken altname, keeping the reverse mapping so we
+    # can return the result keyed by the operator-facing symbol.
+    kraken_to_internal: dict[str, str] = {}
+    kraken_pairs: list[str] = []
+    for sym in pairs:
+        if not sym:
+            continue
+        upper = sym.upper().strip()
+        kpair = to_kraken_pair(upper)
+        kraken_pairs.append(kpair)
+        kraken_to_internal[kpair] = upper
+        # Kraken returns rows keyed by its canonical "XXBTZUSD" form
+        # (X-prefixed asset codes) — record that lookup too so we can
+        # match whichever shape comes back.
+        kraken_to_internal[kpair.upper()] = upper
+
+    out: dict[str, float] = {}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{KRAKEN_BASE}/0/public/Ticker",
+                params={"pair": ",".join(kraken_pairs)},
+                headers={"User-Agent": USER_AGENT},
+            )
+            r.raise_for_status()
+            data = r.json()
+    except (httpx.HTTPError, ValueError):
+        return {}
+
+    if data.get("error"):
+        # Partial errors come through here even with 200 — log nothing,
+        # just fall through to whatever result rows we did get.
+        pass
+
+    result = data.get("result") or {}
+    for kkey, row in result.items():
+        # The `c` field is [last_trade_price_str, last_trade_lot_volume].
+        c = (row or {}).get("c")
+        if not c or not isinstance(c, list):
+            continue
+        try:
+            price = float(c[0])
+        except (TypeError, ValueError):
+            continue
+        # Try the kraken_to_internal map first (exact altname match).
+        internal = kraken_to_internal.get(kkey) or kraken_to_internal.get(kkey.upper())
+        if not internal:
+            # Best-effort fuzzy: Kraken returns rows under canonical
+            # X-prefixed names (XXBTZUSD, XETHZUSD, XXRPZUSD) for the
+            # legacy asset codes, and shorter aliases for newer assets
+            # (XDG for DOGE, ADAUSD/SOLUSD direct). Normalise to altname
+            # by stripping at most ONE leading X from each side of the
+            # pair and undoing the Z-prefix on fiat.
+            stripped = _normalise_kraken_pair_key(kkey)
+            internal = kraken_to_internal.get(stripped) or kraken_to_internal.get(stripped.upper())
+        if internal and price > 0:
+            out[internal] = price
+    return out
+
+
+# Kraken's canonical-asset → altname translation. These are the only
+# legacy X/Z-prefixed assets that DON'T already match their altname
+# directly. Anything not in this table flows through `_strip_one_x`.
+_CANONICAL_ASSET_TRANSLATIONS = (
+    ("XXBT", "XBT"),   # BTC
+    ("XETH", "ETH"),
+    ("XXRP", "XRP"),
+    ("XLTC", "LTC"),
+    ("XETC", "ETC"),
+    ("XXLM", "XLM"),
+    ("XXMR", "XMR"),
+    ("XDG",  "DOGE"),  # Kraken's DOGE alias is XDG, internal is DOGE
+    ("ZUSD", "USD"),
+    ("ZEUR", "EUR"),
+    ("ZGBP", "GBP"),
+    ("ZJPY", "JPY"),
+    ("ZCAD", "CAD"),
+)
+
+
+def _normalise_kraken_pair_key(kkey: str) -> str:
+    """Convert a Kraken canonical pair key (XXBTZUSD, XDGUSD, XETHZUSD)
+    into the altname form `to_kraken_pair` produces (XBTUSD, DOGEUSD,
+    ETHUSD). Pure string-rewrite. Lane-neutral.
+    """
+    s = kkey.upper()
+    for canonical, altname in _CANONICAL_ASSET_TRANSLATIONS:
+        s = s.replace(canonical, altname)
+    return s
+
+
 # ──────────────────────── signing ────────────────────────
 
 def _sign(path: str, nonce: str, post_body: str, private_key_b64: str) -> str:
