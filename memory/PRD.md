@@ -1,6 +1,78 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 📚 Backlog: Doctrine Source Material
+
+- **`The_Essential_Options_Trading_Guide.mht`** (uploaded 2026-02-17,
+  user-flagged "necessary"). Currently DEFERRED — not yet ingested into
+  the doctrine layer. When picked up, treatment will follow the same
+  three-phase pattern used for the small-account/strategy ingestion:
+  - Phase A: extract concrete numeric rules (greek thresholds, IV
+    percentile bands, DTE windows, spread widths, capital risk per
+    contract, assignment risk windows)
+  - Phase B: reconcile against existing `base_labels` to spot
+    overlapping or contradictory signals
+  - Phase C: ship as a NEW `doctrine_version` (e.g.,
+    `options_swing_v1` / `options_income_v1`) producing the same
+    role-keyed seat shape so audit / scorecard / auto-retire / health
+    panel reuse unchanged.
+  - **New lane**: options will likely require an `options` lane
+    distinct from `equity`/`crypto` (different broker capability
+    surface, exposure caps, position-monitor semantics). Lane isolation
+    guard tests must extend to cover it.
+  - Source PDF stored at the upload URL; re-ingest via
+    `analyze_file_tool` when work picks up.
+
+  **Doctrine pin**: do NOT add this strategy until the existing three
+  doctrines (`small_account_sidecar_v1`, `gap_and_go_v1`,
+  `micro_pullback_v1`) have ≥100-sample-each calibrated scorecards.
+  Per the doctrine-isolation rule, low-sample doctrines just add noise
+  to Patent J's promotion math.
+
+## 🔴 Backlog: Production Kraken Live-Order Failure (under user investigation)
+
+- **Status**: deferred to user — handling in PROD.
+- **Symptom**: live Kraken keys present in PROD but live orders not
+  being placed. (`BROKER_LIVE_ORDER_ENABLED=false` is NOT the cause —
+  that env flag only gates the legacy `/ingest/receipts` endpoint.)
+- **Actual gate chain**: `/execution/submit` →
+  `broker_router.route_order(lane=crypto)` →
+  `ADAPTER_LOADERS["kraken"]()` → `get_kraken_adapter()` →
+  `get_active_keys()` → `decrypt(encrypted_private_key)`. Returns
+  `None` on ANY failure in that chain, which surfaces as
+  `BrokerRouteBlocked("broker 'kraken' adapter not configured
+  (no credentials?); NO_TRADE")`.
+- **Probable causes** (ordered by likelihood):
+  1. **Encryption-key drift** — `CREDENTIALS_KEY` env var in PROD
+     changed since keys were saved → `decrypt()` raises silently →
+     adapter shows None even though `kraken_credentials.singleton`
+     exists.
+  2. **Read-only API scope** — Kraken key has `query_funds` but lacks
+     `execute_orders`; adapter loads but Kraken rejects every submit.
+  3. **Canonical/symbol resolution** in `compose_asset()` or
+     `resolve_broker_symbol()` failing before the adapter is even
+     reached.
+- **Diagnostic next time**:
+  - `/api/admin/kraken/status` JSON → tells decrypt-pass vs decrypt-fail
+  - Most recent `shared_gate_results` doc with `kind=submit_no_trade`
+    → `reason` string pinpoints the gate
+  - PROD backend log lines starting with `route_order intent=` —
+    carry full failure context.
+- **Doctrine fix forward** (when picked up):
+  - Either fail loud (raise a typed exception with the decrypt error)
+    when decrypt fails instead of returning `None`, OR surface a
+    "decrypt_failed_check_env" status from `/admin/kraken/status` so
+    operators see the root cause without grepping logs.
+- **Note**: docstring in `shared/risk/position_monitor.py` previously
+  claimed crypto pricing was TODO. CORRECTED 2026-02-17 — crypto
+  price feed via `fetch_tickers()` against Kraken's public
+  `/0/public/Ticker` endpoint is fully wired and verified live
+  (`BTC/USD: $78,056` returned in <200ms from this environment).
+  Position-monitor crypto guards (StopLoss, TakeProfit, TrailingStop,
+  MaxHoldTime) all use this price source — they do NOT depend on the
+  Kraken keys at all.
+
+
 ## 🚨 Latest (2026-02-17, late+3): Bounded Promotion Gate + Doctrine Health Panel
 
 **P1 — Bounded Promotion Gate (expectancy-driven, read-only)**
