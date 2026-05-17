@@ -85,18 +85,25 @@ def _post_stance(pid: str, brain: str, stance: str, conf: float = 0.7) -> dict:
 
 class TestSeatPolicy:
     def test_policy_exposed_on_roster(self):
+        """Seats grew from 5 → 7 with the lane-isolated auditor + dedicated
+        crypto executor seats (added 2026-02-17). Tied to SEAT_POLICY in
+        shared/seat_policy.py — this test pins the live registry, not a
+        hard-coded set, so legitimate seat additions don't break it."""
+        from shared.seat_policy import SEAT_POLICY
         tok = _login()
         r = requests.get(f"{BASE_URL}/api/admin/roster", headers=_hdr(tok), timeout=10)
         assert r.status_code == 200
         d = r.json()
         assert "policy" in d
         assert "seat_epoch" in d
-        # All 5 seats present
-        assert set(d["policy"].keys()) == {"decider", "executor", "governor", "advisor", "opponent"}
-        # Executor seat carries may_execute=True; opponent does not
+        # Live registry must equal the operator-visible policy keys.
+        assert set(d["policy"].keys()) == set(SEAT_POLICY.keys())
+        # Core invariants — executor + crypto execute; opponent/auditor never do.
         assert d["policy"]["executor"]["may_execute"] is True
+        assert d["policy"]["crypto"]["may_execute"] is True
         assert d["policy"]["opponent"]["may_execute"] is False
-        # Governor has veto, executor does not
+        assert d["policy"]["auditor"]["may_execute"] is False
+        # Governor has veto, executor does not.
         assert d["policy"]["governor"]["may_veto"] is True
         assert d["policy"]["executor"]["may_veto"] is False
 

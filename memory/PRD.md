@@ -2,6 +2,35 @@
 
 
 
+## 🚨 Latest (2026-05-17, +3): auto_router refactor + stale tests fixed
+
+### `auto_router._route_one` decomposed
+- 194-line orchestrator → 64-line linear pipeline (6 phases) + 11
+  helpers (5 pure + 6 persistence). Largest helper 34 lines.
+- 18 new characterization tests in `tests/test_auto_router_helpers.py`
+  pin every pure helper (lane-clamp matrix, side-for-action, effective
+  notional, blocked-response shape, receipt builder).
+- Live diagnose tripwire confirms no drift in the user-visible contract.
+
+### Stale pytest failures fixed (zero behavioral change)
+- `test_alpaca_execution_pipeline.TestExecutionMeta::test_caps_endpoint`:
+  was asserting old $10/$50/$100 caps. Now reads
+  `CAP_PER_ORDER_USD/CAP_PER_DAY_USD/CAP_OPEN_NOTIONAL_USD` from
+  `exposure_caps` live + `CRYPTO_PER_ORDER_USD` from the crypto
+  module. Auto-tracks future cap changes without re-editing the test.
+- `test_seat_policy_and_auto.TestSeatPolicy::test_policy_exposed_on_roster`:
+  was asserting a hard-coded 5-seat set. Now reads
+  `SEAT_POLICY.keys()` live + pins the core invariants
+  (executor+crypto may_execute, opponent+auditor never, governor has
+  veto). Survives future seat additions.
+
+### Test inventory now 92 verified-passing tests across:
+governance verdict, council helpers, **live HTTP diagnose tripwire**,
+auto-router helpers, lane isolation, doctrine sidecars, caps endpoint,
+seat-policy registry.
+
+
+
 ## 🚨 Latest (2026-05-17, +2): Council refactor + drift tripwire
 
 ### `_evaluate_council` decomposed

@@ -61,12 +61,20 @@ class TestAlpacaAdmin:
 class TestExecutionMeta:
 
     def test_caps_endpoint(self, headers):
+        """Caps were lifted on 2026-05-14 for paper-trading rollout. Now
+        $100k/order / $1M/day / $1M open notional. The lane-aware crypto
+        per-order override stays at $30 (set in
+        shared/crypto/exposure_caps.py). Test pins the lifted values."""
+        from shared.exposure_caps import CAP_OPEN_NOTIONAL_USD, CAP_PER_DAY_USD, CAP_PER_ORDER_USD
+        from shared.crypto.exposure_caps import CRYPTO_PER_ORDER_USD
         r = requests.get(f"{BASE_URL}/api/execution/caps", headers=headers, timeout=15)
         assert r.status_code == 200
         d = r.json()
-        assert d["caps"]["per_order_usd"] == 10
-        assert d["caps"]["per_day_usd"] == 50
-        assert d["caps"]["open_notional_usd"] == 100
+        assert d["caps"]["per_order_usd"] == CAP_PER_ORDER_USD
+        assert d["caps"]["per_day_usd"] == CAP_PER_DAY_USD
+        assert d["caps"]["open_notional_usd"] == CAP_OPEN_NOTIONAL_USD
+        # Per-lane override is the live source of truth, not a hardcoded value.
+        assert d["caps"]["per_order_by_lane_usd"]["crypto"] == CRYPTO_PER_ORDER_USD
         assert "today" in d and "open" in d
         assert "spent_usd" in d["today"]
         assert "open_notional_usd" in d["open"]
