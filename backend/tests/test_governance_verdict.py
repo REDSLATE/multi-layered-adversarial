@@ -21,6 +21,10 @@ import pytest
 from shared.council import _governance_verdict, COUNCIL_POLICY
 
 
+# Tripwire suite: locked council-verdict semantics. See pytest.ini.
+pytestmark = pytest.mark.tripwire
+
+
 EQUITY = COUNCIL_POLICY["equity"]
 CRYPTO = COUNCIL_POLICY["crypto"]
 

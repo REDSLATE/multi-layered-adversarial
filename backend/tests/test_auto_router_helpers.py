@@ -20,6 +20,10 @@ from shared.auto_router import (
 )
 
 
+# Tripwire suite: locked auto-router helper behavior. See pytest.ini.
+pytestmark = pytest.mark.tripwire
+
+
 # ── lane clamp ──────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("lane,notional,expected_clamped", [

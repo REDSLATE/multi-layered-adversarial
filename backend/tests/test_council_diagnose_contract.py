@@ -23,6 +23,11 @@ import pytest
 import requests
 
 
+# Tripwire suite: live HTTP contract pin for /api/admin/execution/diagnose.
+# See pytest.ini for the marker definition.
+pytestmark = pytest.mark.tripwire
+
+
 BASE_URL = os.environ.get(
     "REACT_APP_BACKEND_URL",
     "https://b177ffdc-73ff-45fb-9ba4-f1e63e5e4274.preview.emergentagent.com",

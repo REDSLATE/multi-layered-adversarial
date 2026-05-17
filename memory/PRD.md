@@ -2,6 +2,24 @@
 
 
 
+## 🚨 Latest (2026-05-17, +4): Tripwire marker wired
+
+- `pytest.ini` registers a `tripwire` marker.
+- 4 test modules (`test_governance_verdict`, `test_council_helpers`,
+  `test_council_diagnose_contract`, `test_auto_router_helpers`)
+  marked with module-level `pytestmark = pytest.mark.tripwire`.
+- `tests/README.md` documents the workflow:
+  > Edit `shared/council.py`, `shared/auto_router.py`,
+  > `shared/execution.py`, or `shared/quantum_state.py` →
+  > run `python -m pytest -m tripwire` BEFORE commit.
+- Verified: `pytest -m tripwire` → **65 passed in 2.76 s**.
+
+If a tripwire fires, the next agent has a clear decision tree:
+- (a) Intentional → update fixture(s) + log in PRD.
+- (b) Unintentional → roll the edit back.
+
+
+
 ## 🚨 Latest (2026-05-17, +3): auto_router refactor + stale tests fixed
 
 ### `auto_router._route_one` decomposed

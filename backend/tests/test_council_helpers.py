@@ -20,6 +20,10 @@ from shared.council import (
 )
 
 
+# Tripwire suite: locked council-helper behavior. See pytest.ini.
+pytestmark = pytest.mark.tripwire
+
+
 EQUITY = COUNCIL_POLICY["equity"]
 
 
