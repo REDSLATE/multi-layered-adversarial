@@ -128,6 +128,13 @@ SHARED_LIVE_POSITION_AUDIT = "shared_live_position_audit"
 # the operator wants to mute it without touching the sidecar.
 BRAIN_LANE_POLICY = "brain_lane_policy"
 
+# ─── Position Monitor scheduler — risk-guard evaluation log (2026-02-17) ─
+# Append-only stream of every guard evaluation the Position Monitor
+# loop performs. Lets the operator audit which guard fired (or held)
+# on which position and why, without re-running the math. Rows are
+# created by `shared/risk/position_monitor.py:_log_evaluation`.
+RISK_MONITOR_EVALUATIONS = "risk_monitor_evaluations"
+
 # ─── Verified Reinforcement Layer (2026-02-16) ──────────────────────────
 # VRL records two kinds of evidence:
 #   1. Per-receipt verifications: post-fill slippage / drift checks so the

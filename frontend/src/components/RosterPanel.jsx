@@ -187,6 +187,8 @@ export default function RosterPanel() {
         />
       )}
 
+      <BrainLanePolicyPanel busy={busy} />
+
       {tenure && (
         <div className="px-4 py-2.5 bg-rd-bg2 border-t border-rd-border text-[10px] font-mono text-rd-dim flex items-baseline justify-between flex-wrap gap-2">
           <div className="flex items-baseline gap-3">
@@ -433,3 +435,133 @@ function formatAge(days) {
   if (days < 30) return `${Math.round(days)}d`;
   return `${Math.round(days / 30)}mo`;
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Brain × Lane intent-emission policy toggle (2026-02-17)
+//
+// Independent of seat eligibility. Eligibility governs WHICH SEATS a
+// brain may hold; this matrix governs whether a brain may even POST an
+// intent for a given lane. Default = allow; explicit `allowed=false`
+// rows are the only ones that mute a brain. Camaro/crypto is muted
+// by the boot seed (Camaro is crypto_opponent, not crypto_executor).
+// ─────────────────────────────────────────────────────────────────
+function BrainLanePolicyPanel({ busy }) {
+  const [data, setData] = useState(null);
+  const [muting, setMuting] = useState(null);  // `${brain}-${lane}` while a request is in flight
+
+  const load = useCallback(async () => {
+    try {
+      const { data } = await api.get("/admin/brain-lane-policy");
+      setData(data);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e.message);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (!data) return null;
+  const effective = data.effective || {};
+
+  const toggle = async (brain, lane, currentAllowed) => {
+    const key = `${brain}-${lane}`;
+    setMuting(key);
+    try {
+      const next = !currentAllowed;
+      await api.post("/admin/brain-lane-policy", {
+        brain, lane, allowed: next,
+        reason: next ? null : "Muted by operator via Roster UI",
+      });
+      toast.success(`${brain.toUpperCase()} · ${lane.toUpperCase()} ${next ? "ALLOWED" : "MUTED"}`);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e.message);
+    } finally {
+      setMuting(null);
+    }
+  };
+
+  const LANES = ["equity", "crypto"];
+  const POLICY_BRAINS = ["alpha", "camaro", "chevelle", "redeye"];
+  const explicitByKey = {};
+  for (const r of data.items || []) {
+    explicitByKey[`${r.brain}-${r.lane}`] = r;
+  }
+
+  return (
+    <div className="px-4 py-3 bg-rd-bg2 border-t border-rd-border" data-testid="brain-lane-policy-panel">
+      <div className="flex items-baseline justify-between gap-3 flex-wrap mb-3">
+        <div className="flex items-baseline gap-2">
+          <ArrowsLeftRight size={11} weight="bold" className="text-rd-text" />
+          <span className="label-eyebrow">Brain × Lane emission policy</span>
+          <Badge color="#A1A1AA">INTENT-INGEST MUTE</Badge>
+        </div>
+        <span className="text-[10px] uppercase tracking-widest text-rd-dim font-mono">
+          default · allow
+        </span>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11px] font-mono" data-testid="brain-lane-policy-matrix">
+          <thead>
+            <tr className="text-rd-dim uppercase tracking-widest text-[10px]">
+              <th className="text-left py-2 px-3">brain</th>
+              {LANES.map((l) => (
+                <th key={l} className="text-left py-2 px-3">{l}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {POLICY_BRAINS.map((brain) => (
+              <tr key={brain} className="border-t border-rd-border" data-testid={`policy-row-${brain}`}>
+                <td className="py-1.5 px-3">
+                  <Badge color={BRAIN_META[brain]?.color}>{BRAIN_META[brain]?.label}</Badge>
+                </td>
+                {LANES.map((lane) => {
+                  const allowed = effective?.[brain]?.[lane] !== false;
+                  const explicit = explicitByKey[`${brain}-${lane}`];
+                  const key = `${brain}-${lane}`;
+                  const isBusy = busy || muting === key;
+                  return (
+                    <td key={lane} className="py-1.5 px-3">
+                      <button
+                        type="button"
+                        onClick={() => toggle(brain, lane, allowed)}
+                        disabled={isBusy}
+                        className={`inline-flex items-center gap-1.5 px-2 py-1 border text-[10px] uppercase tracking-widest font-mono ${
+                          allowed
+                            ? "border-rd-success text-rd-success hover:bg-rd-bg3"
+                            : "border-rd-danger text-rd-danger hover:bg-rd-bg3"
+                        }`}
+                        title={explicit?.reason || (allowed ? "Allowed (default)" : "Muted")}
+                        data-testid={`policy-toggle-${brain}-${lane}`}
+                      >
+                        {allowed ? (
+                          <ToggleRight size={12} weight="bold" />
+                        ) : (
+                          <ToggleLeft size={12} weight="bold" />
+                        )}
+                        {allowed ? "allowed" : "muted"}
+                        {explicit && (
+                          <span className="text-rd-dim ml-1">·</span>
+                        )}
+                        {explicit && (
+                          <span className="text-rd-dim normal-case">explicit</span>
+                        )}
+                      </button>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-2 text-[10px] text-rd-dim leading-relaxed">
+        Muting a brain rejects every (brain · lane) intent at the ingest boundary with HTTP 403 and writes an audit row to <span className="text-rd-text font-mono">shared_intents</span> (gate_state = <span className="text-rd-text font-mono">rejected_at_ingest</span>). The brain never reaches the gate chain. Use this when an engine misbehaves and you can&apos;t touch its sidecar.
+      </div>
+    </div>
+  );
+}
+

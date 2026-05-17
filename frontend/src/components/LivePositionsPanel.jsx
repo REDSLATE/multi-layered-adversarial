@@ -39,6 +39,7 @@ export default function LivePositionsPanel() {
   const [busy, setBusy] = useState(false);
   const [manage, setManage] = useState(null);  // {position} or null
   const [closeFor, setCloseFor] = useState(null);
+  const [guardStatus, setGuardStatus] = useState(null);  // {position_id: {fired_guard, holds, ts, …}}
 
   const load = useCallback(async () => {
     try {
@@ -51,11 +52,32 @@ export default function LivePositionsPanel() {
     }
   }, [filter]);
 
-  useEffect(() => { load(); }, [load]);
+  // Roll up the most recent monitor evaluation per position so the
+  // operator sees which guard last fired (or that all guards held).
+  const loadGuardStatus = useCallback(async () => {
+    try {
+      const { data: ev } = await api.get("/admin/risk/monitor/recent-evaluations", {
+        params: { limit: 200 },
+      });
+      const byId = {};
+      for (const row of ev?.items || []) {
+        // items are newest-first; keep the FIRST one we see per position.
+        if (row.position_id && !byId[row.position_id]) {
+          byId[row.position_id] = row;
+        }
+      }
+      setGuardStatus(byId);
+    } catch (e) {
+      // Non-fatal — monitor may simply be disabled.
+      console.warn("monitor evals fetch failed:", e?.message);
+    }
+  }, []);
+
+  useEffect(() => { load(); loadGuardStatus(); }, [load, loadGuardStatus]);
   useEffect(() => {
-    const t = setInterval(load, 15000);
+    const t = setInterval(() => { load(); loadGuardStatus(); }, 15000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, loadGuardStatus]);
 
   const totals = data?.totals || { open: 0, managing: 0, closed: 0 };
 
@@ -130,6 +152,7 @@ export default function LivePositionsPanel() {
                 <th className="text-left py-2 px-3">side</th>
                 <th className="text-right py-2 px-3">notional</th>
                 <th className="text-right py-2 px-3">pnl</th>
+                <th className="text-left py-2 px-3">guards</th>
                 <th className="text-left py-2 px-3">opened</th>
                 <th className="text-right py-2 px-3">actions</th>
               </tr>
@@ -140,6 +163,7 @@ export default function LivePositionsPanel() {
                   key={p.position_id}
                   p={p}
                   busy={busy}
+                  guardRow={guardStatus?.[p.position_id]}
                   onManage={() => setManage(p)}
                   onClose={() => setCloseFor(p)}
                 />
@@ -173,7 +197,100 @@ export default function LivePositionsPanel() {
   );
 }
 
-function PositionRow({ p, busy, onManage, onClose }) {
+function GuardCell({ positionId, row, isTerminal }) {
+  // No monitor data yet — show a neutral "—".
+  if (!row) {
+    return (
+      <span
+        className="text-[10px] uppercase tracking-widest text-rd-dim font-mono"
+        data-testid={`guard-cell-${positionId}-empty`}
+      >
+        {isTerminal ? "—" : "pending"}
+      </span>
+    );
+  }
+  // Skipped (unknown lane / pre-monitor)
+  if (row.skipped) {
+    return (
+      <span
+        className="text-[10px] uppercase tracking-widest text-rd-dim font-mono"
+        title={row.skipped_reason || "skipped"}
+        data-testid={`guard-cell-${positionId}-skipped`}
+      >
+        skipped
+      </span>
+    );
+  }
+  // Fatal error path
+  if (row.fatal_error || row.enforce_error) {
+    return (
+      <span
+        className="text-[10px] uppercase tracking-widest text-rd-danger font-mono"
+        title={row.fatal_error || row.enforce_error}
+        data-testid={`guard-cell-${positionId}-error`}
+      >
+        error
+      </span>
+    );
+  }
+  // A guard fired
+  if (row.fired_guard) {
+    const palette = {
+      stop_loss: "#EF4444",
+      take_profit: "#22C55E",
+      trailing_stop: "#F59E0B",
+      max_hold_time: "#A855F7",
+    };
+    const color = palette[row.fired_guard] || "#A1A1AA";
+    return (
+      <div
+        className="flex flex-col gap-0.5"
+        title={row.fired_reason || ""}
+        data-testid={`guard-cell-${positionId}-fired`}
+      >
+        <span className="font-mono text-[10px] uppercase tracking-widest" style={{ color }}>
+          <CheckCircle size={9} weight="bold" className="inline mr-1" />
+          {row.fired_guard.replace(/_/g, " ")} · {row.fired_action || "—"}
+        </span>
+        <span className="font-mono text-[9px] text-rd-dim truncate max-w-[220px]" title={row.fired_reason || ""}>
+          {row.fired_reason || ""}
+        </span>
+      </div>
+    );
+  }
+  // Every guard held — show the four guard pips so the operator knows
+  // the monitor evaluated this position and chose to stay flat.
+  const holdsMap = {};
+  for (const h of row.holds || []) holdsMap[h.guard] = h;
+  const order = ["stop_loss", "take_profit", "trailing_stop", "max_hold_time"];
+  return (
+    <div className="flex items-center gap-1" data-testid={`guard-cell-${positionId}-holds`}>
+      {order.map((g) => {
+        const h = holdsMap[g];
+        const action = h?.action || "—";
+        const color =
+          action === "HOLD" ? "#10B981" :
+          action === "SKIP" ? "#71717A" :
+          action === "ERROR" ? "#EF4444" :
+          "#A1A1AA";
+        return (
+          <span
+            key={g}
+            className="inline-block w-1.5 h-1.5 rounded-full"
+            style={{ background: color }}
+            title={`${g.replace(/_/g, " ")} · ${action} · ${h?.reason || ""}`}
+            data-testid={`guard-pip-${positionId}-${g}`}
+          />
+        );
+      })}
+      <span className="font-mono text-[9px] uppercase tracking-widest text-rd-dim ml-1">
+        all hold
+      </span>
+    </div>
+  );
+}
+
+function PositionRow({ p, busy, guardRow, onManage, onClose }) {
   const stateMeta = STATE_META[p.state] || { label: p.state, color: "#A1A1AA" };
   const brainMeta = BRAIN_META[p.stack] || { label: (p.stack || "?").toUpperCase(), color: "#A1A1AA" };
   const pnl = p.closed_pnl_usd;
@@ -193,6 +310,9 @@ function PositionRow({ p, busy, onManage, onClose }) {
       </td>
       <td className="py-1.5 px-3 text-right" style={{ color: pnlColor }}>
         {pnl == null ? "—" : `${pnl > 0 ? "+" : ""}$${pnl.toFixed(2)}`}
+      </td>
+      <td className="py-1.5 px-3">
+        <GuardCell positionId={p.position_id} row={guardRow} isTerminal={isTerminal} />
       </td>
       <td className="py-1.5 px-3 text-rd-dim">{(p.opened_at || "").slice(0, 19).replace("T", " ")}</td>
       <td className="py-1.5 px-3 text-right">

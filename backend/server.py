@@ -56,6 +56,10 @@ from shared.live_positions import router as live_positions_router
 from shared.brain_lane_policy import router as brain_lane_policy_router, seed_default_policy
 from shared.redeye_crypto_intent_bridge import router as redeye_bridge_router
 from shared.risk.routes import router as risk_router
+from shared.risk.position_monitor import (
+    start_monitor_if_enabled as start_position_monitor,
+    stop_monitor as stop_position_monitor,
+)
 from shared.vrl import (
     router as vrl_router,
     start_scorecard_scheduler,
@@ -136,6 +140,13 @@ async def lifespan(app: FastAPI):
         logger.info("Brain × lane emission policy seeded")
     except Exception as e:  # noqa: BLE001
         logger.warning("brain_lane_policy seed failed: %s", e)
+    # Position Monitor loop — periodic risk-guard evaluation
+    # (StopLoss → TakeProfit → TrailingStop → MaxHoldTime).
+    try:
+        start_position_monitor()
+        logger.info("Position Monitor started")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("position_monitor start failed: %s", e)
     yield
     await stop_poller()
     await stop_tickler()
@@ -144,6 +155,7 @@ async def lifespan(app: FastAPI):
     await stop_news_refresher()
     await stop_darkpool_refresher()
     await stop_scorecard_scheduler()
+    await stop_position_monitor()
     client.close()
 
 
