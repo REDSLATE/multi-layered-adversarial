@@ -5,6 +5,7 @@ import ExecutorSeatTile, { AuditorSeatTile } from "@/components/ExecutorSeatTile
 import RosterSeatTile from "@/components/RosterSeatTile";
 import AlpacaConnect from "@/components/AlpacaConnect";
 import KrakenBrokerTile from "@/components/KrakenBrokerTile";
+import DoctrineStrip from "@/components/DoctrineStrip";
 import { toast } from "sonner";
 import {
   Lightning, ArrowsClockwise, Funnel, Pulse,
@@ -207,6 +208,19 @@ function IntentRow({ intent, expanded, onToggle, onDryRun, onSubmit, dryRunResul
           </div>
         </td>
       </tr>
+      {intent.doctrine_packet && (
+        <tr
+          className="border-b border-rd-border"
+          data-testid={`intent-doctrine-row-${intent.intent_id}`}
+        >
+          <td colSpan={9} className="p-0">
+            <DoctrineStrip
+              packet={intent.doctrine_packet}
+              intentId={intent.intent_id}
+            />
+          </td>
+        </tr>
+      )}
       {expanded && (
         <tr className="bg-rd-bg" data-testid={`intent-detail-${intent.intent_id}`}>
           <td colSpan={9} className="px-3 py-4">

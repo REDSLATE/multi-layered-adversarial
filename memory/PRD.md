@@ -1,7 +1,46 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
-## 🚨 Latest (2026-02-17): P0 risk guards + Position Monitor + P1 UI surfaces
+## 🚨 Latest (2026-02-17, late): P0 Doctrine UI Badges on Intents page
+
+**P0 — `DoctrineStrip.jsx` component** (`/app/frontend/src/components/`).
+Renders the read-only doctrine packet attached to every intent as a
+full-width row beneath the main IntentRow:
+
+- **Always visible** (collapsed by default):
+  - Quality band badge: `A_QUALITY` (green) / `B_QUALITY` (lime) /
+    `C_QUALITY` (amber) / `REJECT` (red)
+  - Score (0.00–1.00) + lane echo
+  - Four seat chips: `strategist · adversary · governor · execution_judge`
+    with role-specific headlines (conviction Δ / objection count + cs /
+    BLOCK or ×risk_multiplier / READY|not ready) + holder brain inline.
+  - Color-coded by severity so the operator scans the worst signals
+    first.
+- **Expandable** ("details" toggle per row):
+  - Per-seat detail cards: seat name, holder, headline value,
+    objections / block_reasons / failed_checks lists, role lesson.
+  - Base Reasons strip (every reason why the score lost points).
+  - Footer: `doctrine_version` + bold reminder
+    "ADVISORY ONLY · does not influence execution".
+- **Unknown lane** intents (UNKNOWN_LANE_REJECT packets) and missing
+  packets render a muted single-line strip — no crash, no fake data.
+
+Wired into `Intents.jsx` as a `colSpan={9}` row beneath every intent
+main row when `intent.doctrine_packet` is present. Independent of the
+existing intent-detail expand state — operator can drill into doctrine
+without expanding the full rationale panel.
+
+Testids: `intent-doctrine-row-{id}`, `doctrine-strip-{id}`,
+`doctrine-strip-toggle-{id}`, `doctrine-quality-{id}`,
+`doctrine-chip-{role}-{id}`, `doctrine-detail-{id}`,
+`doctrine-seat-detail-{role}`, `doctrine-reasons-{id}`.
+
+Backend tests still green (45/45 doctrine tests pass post-UI change).
+Doctrine remains strictly read-only — promotion gate (P1) still
+pending (`min_samples >= 100` + statistical validation).
+
+
+## 🚨 Previous (2026-02-17): P0 risk guards + Position Monitor + P1 UI surfaces
 
 **P0 — Three new deterministic risk guards** (joining existing
 TakeProfit): `StopLossGuard`, `TrailingStopGuard`, `MaxHoldTimeGuard`.
