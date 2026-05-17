@@ -41,6 +41,49 @@ function relTime(iso) {
  * disconnect / re-key flow so we don't fork the credential UX.
  */
 export default function KrakenBrokerTile() {
+  return (
+    <BrokerTileErrorBoundary>
+      <KrakenBrokerTileInner />
+    </BrokerTileErrorBoundary>
+  );
+}
+
+class BrokerTileErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { err: null };
+  }
+  static getDerivedStateFromError(err) {
+    return { err };
+  }
+  componentDidCatch(err, info) {
+    // Surface the failure for debugging without crashing the page.
+    // eslint-disable-next-line no-console
+    console.error("KrakenBrokerTile crashed:", err, info);
+  }
+  render() {
+    if (this.state.err) {
+      return (
+        <Card className="p-3 mb-4 border border-rd-danger" testid="kraken-broker-tile-crashed">
+          <div className="flex items-baseline gap-2">
+            <Warning size={12} weight="bold" className="text-rd-danger" />
+            <span className="label-eyebrow text-rd-danger">Broker · Kraken (tile error)</span>
+          </div>
+          <div className="mt-2 text-[10px] font-mono text-rd-dim leading-relaxed">
+            The Kraken broker tile failed to render. The rest of the page is unaffected.
+            Use the Kraken slot under Overview · Feeder slots to manage credentials.
+            <span className="block mt-1 text-rd-danger">
+              {String(this.state.err?.message || this.state.err || "render error")}
+            </span>
+          </div>
+        </Card>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function KrakenBrokerTileInner() {
   const [status, setStatus] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -118,9 +161,17 @@ export default function KrakenBrokerTile() {
   const lastTickBars = status.last_tick?.bars_pushed;
   const lastTickErr = status.last_tick?.error;
   const balancePrev = status.balance_preview;
-  const scopes = status.scopes || {};
+  // Defensive: handle scopes whose values are objects (some Kraken
+  // probe paths return {ok: true, detail: "..."} instead of a plain
+  // bool). Coerce to truthy-bool before counting.
+  const scopes = status.scopes && typeof status.scopes === "object" ? status.scopes : {};
   const scopeKeys = Object.keys(scopes);
-  const goodScopes = scopeKeys.filter((k) => scopes[k] === true);
+  const goodScopes = scopeKeys.filter((k) => {
+    const v = scopes[k];
+    if (v === true) return true;
+    if (v && typeof v === "object" && v.ok === true) return true;
+    return false;
+  });
 
   return (
     <Card className="p-0 mb-4 overflow-hidden" testid="kraken-broker-tile">
@@ -191,7 +242,18 @@ export default function KrakenBrokerTile() {
             <span className="text-rd-dim"> · {goodScopes.join(", ")}</span>
           )}
         </span>
-        {balancePrev && (
+        {balancePrev && typeof balancePrev === "object" && Object.keys(balancePrev).length > 0 && (
+          <span data-testid="kraken-broker-balance">
+            <span className="uppercase tracking-widest">balance</span>
+            {Object.entries(balancePrev).map(([asset, qty]) => (
+              <span key={asset} className="ml-2">
+                <span className="text-rd-dim">{asset}</span>{" "}
+                <span className="text-rd-text">{String(qty)}</span>
+              </span>
+            ))}
+          </span>
+        )}
+        {balancePrev && typeof balancePrev === "string" && (
           <span data-testid="kraken-broker-balance">
             <span className="uppercase tracking-widest">balance</span>
             {" · "}
@@ -201,7 +263,7 @@ export default function KrakenBrokerTile() {
         {lastTickErr && (
           <span className="text-rd-danger" data-testid="kraken-broker-poll-error">
             <Warning size={9} weight="bold" className="inline mr-1" />
-            last tick · {lastTickErr}
+            last tick · {String(lastTickErr)}
           </span>
         )}
       </div>
