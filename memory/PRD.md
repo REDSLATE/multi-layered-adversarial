@@ -2,6 +2,42 @@
 
 
 
+## 🚨 Latest (2026-05-17, +1): Lane-Isolated Seats + Preview Vacate
+
+Operator order: "remove every brain in the preview from their seat —
+all seats need to be vacant" AND "shared seats should be separate per
+market, crypto and equity."
+
+### Preview DB — all seats vacated
+- `brain_roster.assignments` set to `{role: None}` for all 12 seats
+  (executor, decider, governor, advisor, opponent, auditor, crypto,
+  crypto_advisor, crypto_governor, crypto_opponent, crypto_decider,
+  crypto_auditor). `seat_epoch` bumped to 136.
+- Legacy `shared_executor_seat` singleton cleared (`holder=None`).
+- Legacy `shared_auditor_seat` cleared.
+- Audit row written to `roster_audit_log` (`action: bulk_vacate`).
+
+### Lane isolation — cross-lane fallback removed
+- `shared/council._seat_holder(role, lane)` — DELETED the equity
+  fallback. Previously when `crypto_governor` was vacant the lookup
+  returned the equity `governor` occupant, letting equity-seat holders
+  silently govern crypto intents. Now: empty crypto seat → returns
+  None for crypto, regardless of equity. Hard lane isolation.
+- `shared/seat_policy.snapshot(seat)` — now resolves `crypto`,
+  `crypto_<role>` slot names to their equity-twin policy row so
+  stances posted while holding a crypto slot get the correct
+  may_veto/may_override bits. `posted_as` retains the slot name
+  (`"crypto_governor"` etc.) for audit slicing.
+- `shared/seat_policy.seat_may_execute_lane(seat, lane)` — explicitly
+  handles `crypto` slot (only authorizes crypto-lane execution); all
+  `crypto_*` advisory slots fail closed on order routing.
+
+### Verified via `/api/admin/execution/diagnose`
+Both lanes correctly report `executor_seat_check` as first blocker
+with `executor_holder_at_post: None`. No cross-lane leakage.
+
+
+
 ## 🚨 Latest (2026-05-17): Full Block-Removal + Live-Trade Diagnose
 
 Operator reported "no trades being made on crypto" and ordered removal
