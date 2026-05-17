@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 const TierContext = createContext(null);
 
@@ -12,17 +12,20 @@ export function TierProvider({ children }) {
       return "free";
     }
   });
-  const setTier = (t) => {
+  const setTier = useCallback((t) => {
     setTierState(t);
     try {
       localStorage.setItem(STORAGE_KEY, t);
-    } catch {}
-  };
+    } catch {
+      /* storage may be disabled (private mode); silently ignore. */
+    }
+  }, []);
   useEffect(() => {
     if (!tier) setTier("free");
-  }, [tier]);
+  }, [tier, setTier]);
+  const value = useMemo(() => ({ tier, setTier }), [tier, setTier]);
   return (
-    <TierContext.Provider value={{ tier, setTier }}>
+    <TierContext.Provider value={value}>
       {children}
     </TierContext.Provider>
   );

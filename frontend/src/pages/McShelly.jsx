@@ -35,6 +35,16 @@ const BRAIN_COLOR = {
   chevelle: "#10B981", redeye: "#DC2626",
 };
 
+// Static option lists for the McShelly filter pickers. Hoisted to
+// module scope so the same array reference is reused across renders,
+// preserving any downstream memoization in <FilterPicker>.
+const EVENT_FILTER_OPTIONS = ["", ...EVENT_TYPES];
+const POSITION_FILTER_OPTIONS = ["", ...POSITIONS];
+const BRAIN_FILTER_OPTIONS = ["", "alpha", "camaro", "chevelle", "redeye"];
+const OUTCOME_FILTER_OPTIONS = ["", "pending", "executed", "win", "loss", "pass", "fail", "blocked", "rejected"];
+const WINDOW_FILTER_OPTIONS = ["1", "6", "24", "72", "168", "720"];
+const WINDOW_FILTER_LABELS = { "1": "1h", "6": "6h", "24": "24h", "72": "3d", "168": "7d", "720": "30d" };
+
 function relTime(iso) {
   if (!iso) return "—";
   const t = new Date(iso).getTime();
@@ -235,19 +245,19 @@ export default function McShelly() {
           </button>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 text-xs font-mono">
-          <FilterPicker label="event" value={filters.event_type} options={["", ...EVENT_TYPES]} onChange={(v) => setF("event_type", v)} testid="f-event" />
-          <FilterPicker label="position" value={filters.position} options={["", ...POSITIONS]} onChange={(v) => setF("position", v)} testid="f-position" />
-          <FilterPicker label="brain" value={filters.brain} options={["", "alpha", "camaro", "chevelle", "redeye"]} onChange={(v) => setF("brain", v)} testid="f-brain" />
+          <FilterPicker label="event" value={filters.event_type} options={EVENT_FILTER_OPTIONS} onChange={(v) => setF("event_type", v)} testid="f-event" />
+          <FilterPicker label="position" value={filters.position} options={POSITION_FILTER_OPTIONS} onChange={(v) => setF("position", v)} testid="f-position" />
+          <FilterPicker label="brain" value={filters.brain} options={BRAIN_FILTER_OPTIONS} onChange={(v) => setF("brain", v)} testid="f-brain" />
           <div data-testid="f-symbol">
             <div className="text-[9px] uppercase tracking-widest text-rd-dim mb-1">symbol</div>
             <Input value={filters.symbol} onChange={(e) => setF("symbol", e.target.value.toUpperCase())} placeholder="any" className="bg-rd-bg border-rd-border h-8 text-xs font-mono uppercase" maxLength={10} />
           </div>
-          <FilterPicker label="outcome" value={filters.outcome} options={["", "pending", "executed", "win", "loss", "pass", "fail", "blocked", "rejected"]} onChange={(v) => setF("outcome", v)} testid="f-outcome" />
+          <FilterPicker label="outcome" value={filters.outcome} options={OUTCOME_FILTER_OPTIONS} onChange={(v) => setF("outcome", v)} testid="f-outcome" />
           <FilterPicker
             label="window"
             value={String(filters.since_hours)}
-            options={["1", "6", "24", "72", "168", "720"]}
-            optionLabels={{ "1": "1h", "6": "6h", "24": "24h", "72": "3d", "168": "7d", "720": "30d" }}
+            options={WINDOW_FILTER_OPTIONS}
+            optionLabels={WINDOW_FILTER_LABELS}
             onChange={(v) => setF("since_hours", Number(v))}
             testid="f-window"
           />

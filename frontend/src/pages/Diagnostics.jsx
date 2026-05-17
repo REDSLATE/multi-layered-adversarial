@@ -123,14 +123,15 @@ function DecisionsFeed() {
             </thead>
             <tbody>
               {items.map((r, i) => {
+                const rowKey = r.id || `${r.ts}-${r.source || r.brain || "x"}-${i}`;
                 const meta = r.brain && RUNTIME_META[r.brain];
-                const isOpen = expanded === i;
+                const isOpen = expanded === rowKey;
                 const isSkeleton = (r.summary || "").includes("empty payload");
                 return (
-                  <React.Fragment key={i}>
+                  <React.Fragment key={rowKey}>
                     <tr
                       className="border-b border-rd-border hover:bg-rd-bg cursor-pointer"
-                      onClick={() => setExpanded(isOpen ? null : i)}
+                      onClick={() => setExpanded(isOpen ? null : rowKey)}
                       data-testid={`decisions-row-${i}`}
                     >
                       <td className="px-3 py-1.5 text-rd-dim whitespace-nowrap">
@@ -262,12 +263,13 @@ function QuantumPanel() {
             </thead>
             <tbody>
               {items.map((r, i) => {
+                const rowKey = r.intent_id || r.id || `${r.ts || ""}-${r.symbol || ""}-${i}`;
                 const probs = r.quantum.regime_probs || {};
                 const top = Object.entries(probs).sort((a, b) => b[1] - a[1]).slice(0, 3);
                 const isHoldLock = r.quantum.hold_lock_detected;
                 return (
                   <tr
-                    key={i}
+                    key={rowKey}
                     className="border-b border-rd-border hover:bg-rd-bg"
                     style={isHoldLock ? { background: "rgba(220,38,38,0.06)" } : undefined}
                     data-testid={`quantum-row-${i}`}

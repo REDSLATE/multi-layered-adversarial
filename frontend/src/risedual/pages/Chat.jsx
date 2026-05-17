@@ -144,7 +144,7 @@ export default function Chat() {
             </div>
           )}
           {messages.map((m, i) => (
-            <Bubble key={i} role={m.role} text={m.text} />
+            <Bubble key={`${m.role}-${i}-${(m.text || "").slice(0, 24)}`} role={m.role} text={m.text} />
           ))}
           {sending && (
             <div data-testid="rd-chat-typing" className="flex justify-start">

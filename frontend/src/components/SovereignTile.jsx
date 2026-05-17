@@ -201,7 +201,7 @@ export default function SovereignTile({ runtime, accent = "#71717A" }) {
             >
               {outcomes.slice(-30).map((o, i) => (
                 <div
-                  key={i}
+                  key={o.id || `${o.symbol || ""}-${o.ts || i}`}
                   title={`${o.symbol} ${o.action} c=${o.confidence}`}
                   className="h-3 flex-1"
                   style={{
