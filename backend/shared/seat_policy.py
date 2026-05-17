@@ -48,7 +48,13 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         # A position without a decider stance is "incomplete", not "blind".
         "seat_required": False,
         "speaks_as": "decider",
-        "lane_scope": None,  # decides across lanes
+        # lane_scope is None here because the SAME policy is consulted
+        # for both `decider` (equity) and `crypto_decider` (crypto) —
+        # the role names share one policy row. Lane isolation is
+        # enforced at the SLOT level: `_seat_holder("decider", lane=...)`
+        # reads `decider` for equity OR `crypto_decider` for crypto,
+        # with NO cross-lane fallback. See shared/council._seat_holder.
+        "lane_scope": None,
     },
     "executor": {
         "may_decide": True,
@@ -143,11 +149,18 @@ def snapshot(seat: str | None) -> dict:
     """Snapshot the policy for the given seat. Returns an empty-permission
     record when the brain holds no seat — that's the safest default.
 
-    The seat string is normalized to lowercase. Unknown seats also fall
-    through to the empty-permission record (NOT raise) because the
-    operator may have invented a seat name in eligibility settings that
-    isn't in the policy yet — we'd rather log + ingest the stance with
-    `may_*=False` than reject it.
+    The seat string is normalized to lowercase. Crypto-lane seat slots
+    (`crypto`, `crypto_decider`, `crypto_governor`, …) inherit the
+    SAME role policy as their equity twin: `crypto_governor` → policy
+    of `governor`, `crypto` → policy of `executor`, etc. This keeps a
+    single source of truth for what each ROLE can do while the SLOT
+    (which roster row) enforces lane isolation at the lookup layer
+    (see `shared/council._seat_holder`).
+
+    Unknown seats fall through to the empty-permission record (NOT raise)
+    because the operator may have invented a seat name in eligibility
+    settings that isn't in the policy yet — we'd rather log + ingest
+    the stance with `may_*=False` than reject it.
     """
     if seat is None:
         return {
@@ -158,7 +171,15 @@ def snapshot(seat: str | None) -> dict:
             "may_veto": False,
         }
     s = seat.lower()
-    p = SEAT_POLICY.get(s)
+    # Crypto twin → resolve to its equity role for policy lookup. The
+    # raw slot name is still recorded as `posted_as` so receipts/stances
+    # can be sliced by lane.
+    role_for_policy = s
+    if s == "crypto":
+        role_for_policy = "executor"
+    elif s.startswith("crypto_"):
+        role_for_policy = s[len("crypto_"):]
+    p = SEAT_POLICY.get(role_for_policy)
     if not p:
         return {
             "posted_as": s,
@@ -185,6 +206,11 @@ def required_seats() -> tuple[str, ...]:
 def seat_may_execute_lane(seat: str | None, lane: str | None) -> bool:
     """May the brain currently holding `seat` execute an intent in `lane`?
 
+    Accepts BOTH the equity role name (`executor`) and the crypto slot
+    name (`crypto`, `crypto_<role>`). Crypto slot names are resolved
+    to their equity twin so the policy lookup finds the row; the
+    LANE check is the real authority gate.
+
     Fail-closed:
     - No seat → False
     - Seat policy says may_execute=False → False
@@ -193,7 +219,18 @@ def seat_may_execute_lane(seat: str | None, lane: str | None) -> bool:
     """
     if not seat:
         return False
-    p = SEAT_POLICY.get(seat.lower())
+    s = seat.lower()
+    role_for_policy = s
+    if s == "crypto":
+        role_for_policy = "executor"
+        # Force lane_scope=["crypto"] regardless of the equity executor's scope.
+        return (lane == "crypto") and bool(SEAT_POLICY.get("executor", {}).get("may_execute"))
+    if s.startswith("crypto_"):
+        # Non-execute crypto twins (crypto_decider, crypto_governor, …)
+        # never route orders. Fail-closed without consulting the equity
+        # row's may_execute (which doesn't apply to these advisory slots).
+        return False
+    p = SEAT_POLICY.get(role_for_policy)
     if not p or not p.get("may_execute"):
         return False
     scope = p.get("lane_scope")

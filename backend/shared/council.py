@@ -212,13 +212,14 @@ def _normalize_governor_call(doc: Optional[dict]) -> Optional[dict]:
 async def _seat_holder(role: str, lane: Optional[str] = None) -> Optional[str]:
     """Current occupant of `role` in the live roster, or None if vacant.
 
-    Lane-aware (2026-02-15): when `lane="crypto"` we look up the
-    crypto-isolated council first (`crypto_executor` for the executor
-    role, `crypto_governor` for governor, etc.) and fall back to the
-    equity seat if the crypto seat is vacant. This is what gives the
-    crypto lane its isolated execution authority while keeping
-    backward-compat for any consumer that doesn't yet know about
-    lanes.
+    Lane-isolated (2026-05-17, rev2): seats are STRICTLY separated by
+    lane. When `lane="crypto"` we look up ONLY the crypto seat
+    (`crypto_executor` → `crypto`, otherwise `crypto_<role>`). If the
+    crypto seat is vacant, the call returns None — there is NO fallback
+    to the equity seat. The earlier fallback let an equity-Governor
+    occupant silently govern crypto intents; that violated lane
+    isolation. To run crypto, the operator must explicitly assign each
+    crypto seat.
 
     Mapping: the `crypto_executor` role is stored as `crypto` in the
     roster (legacy name from when crypto was a single executor seat).
@@ -230,12 +231,7 @@ async def _seat_holder(role: str, lane: Optional[str] = None) -> Optional[str]:
 
     if (lane or "").lower() == "crypto":
         crypto_role = "crypto" if role == "executor" else f"crypto_{role}"
-        holder = assignments.get(crypto_role)
-        if holder:
-            return holder
-        # Fallback to the equity seat. This prevents the council from
-        # going dark on a crypto intent just because crypto_governor
-        # hasn't been slotted yet.
+        return assignments.get(crypto_role)
 
     return assignments.get(role)
 
