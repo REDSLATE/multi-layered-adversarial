@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import {
   ChartBar,
   Receipt,
@@ -302,12 +303,15 @@ export default function Layout() {
           </>
         )}
 
-        {/* Main content */}
+        {/* Main content. Top-level boundary so any unwrapped child route
+            that throws shows a typed error instead of a blank page. */}
         <main
           className="md:col-span-9 lg:col-span-10 p-4 md:p-6 overflow-x-hidden"
           data-testid="admin-main"
         >
-          <Outlet />
+          <PanelErrorBoundary panelName="Page" testid="panel-error-page">
+            <Outlet />
+          </PanelErrorBoundary>
         </main>
       </div>
     </div>

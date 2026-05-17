@@ -8,6 +8,7 @@ import KrakenBrokerTile from "@/components/KrakenBrokerTile";
 import DoctrineStrip from "@/components/DoctrineStrip";
 import AutoRetireStrip from "@/components/AutoRetireStrip";
 import DoctrineHealthPanel from "@/components/DoctrineHealthPanel";
+import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import { toast } from "sonner";
 import {
   Lightning, ArrowsClockwise, Funnel, Pulse,
@@ -216,10 +217,16 @@ function IntentRow({ intent, expanded, onToggle, onDryRun, onSubmit, dryRunResul
           data-testid={`intent-doctrine-row-${intent.intent_id}`}
         >
           <td colSpan={9} className="p-0">
-            <DoctrineStrip
-              packet={intent.doctrine_packet}
-              intentId={intent.intent_id}
-            />
+            <PanelErrorBoundary
+              panelName="Doctrine"
+              testid={`panel-error-doctrine-${intent.intent_id}`}
+              compact
+            >
+              <DoctrineStrip
+                packet={intent.doctrine_packet}
+                intentId={intent.intent_id}
+              />
+            </PanelErrorBoundary>
           </td>
         </tr>
       )}
@@ -596,12 +603,16 @@ export default function Intents() {
 
       {/* Seat-doctrinal auto-retire suggestions. Lane-scoped so the
           operator only sees suggestions for the lane they're filtering. */}
-      <AutoRetireStrip lane={lane} />
+      <PanelErrorBoundary panelName="Auto-Retire Strip" testid="panel-error-autoretire">
+        <AutoRetireStrip lane={lane} />
+      </PanelErrorBoundary>
 
       {/* Live doctrine-health summary. Compact mode keeps it scannable
           alongside the auto-retire strip; the full /admin/doctrine page
           has the deep view with ideal-snapshot + blockers + rejections. */}
-      <DoctrineHealthPanel mode="compact" lane={lane} />
+      <PanelErrorBoundary panelName="Doctrine Health" testid="panel-error-doctrine-health">
+        <DoctrineHealthPanel mode="compact" lane={lane} />
+      </PanelErrorBoundary>
 
       {err && (
         <div className="border border-rd-danger text-rd-danger px-3 py-2 mb-4 text-xs font-mono" data-testid="intents-error">

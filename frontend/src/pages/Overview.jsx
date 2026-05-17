@@ -7,6 +7,7 @@ import TechnicalsPanel from "@/components/TechnicalsPanel";
 import FeedersStrip from "@/components/FeedersStrip";
 import RosterPanel from "@/components/RosterPanel";
 import LivePositionsPanel from "@/components/LivePositionsPanel";
+import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 
 export default function Overview() {
   const [overview, setOverview] = useState(null);
@@ -175,12 +176,23 @@ export default function Overview() {
             })}
           </div>
 
-          {/* Shared Technical Feed — Mission-page panel */}
-          <RosterPanel />
-          <LivePositionsPanel />
-          <FeedersStrip />
+          {/* Shared Technical Feed — Mission-page panel.
+              Each panel is isolated by an ErrorBoundary so one bad
+              render (PROD blank-screen regression, 2026-02-17) can
+              only damage its own slot, not blank the whole page. */}
+          <PanelErrorBoundary panelName="Brain Roster" testid="panel-error-roster">
+            <RosterPanel />
+          </PanelErrorBoundary>
+          <PanelErrorBoundary panelName="Live Positions" testid="panel-error-live-positions">
+            <LivePositionsPanel />
+          </PanelErrorBoundary>
+          <PanelErrorBoundary panelName="Feeders" testid="panel-error-feeders">
+            <FeedersStrip />
+          </PanelErrorBoundary>
           <div className="mb-6">
-            <TechnicalsPanel />
+            <PanelErrorBoundary panelName="Shared Technical Feed" testid="panel-error-technicals">
+              <TechnicalsPanel />
+            </PanelErrorBoundary>
           </div>
 
           {/* Doctrine + Flags strip */}

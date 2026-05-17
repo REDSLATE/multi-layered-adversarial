@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { PageHeader } from "@/components/ui-bits";
 import DoctrineHealthPanel from "@/components/DoctrineHealthPanel";
+import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import { Shield } from "@phosphor-icons/react";
 
 const LANES = ["all", "equity", "crypto"];
@@ -48,7 +49,9 @@ export default function Doctrine() {
         ))}
       </div>
 
-      <DoctrineHealthPanel mode="full" lane={lane} />
+      <PanelErrorBoundary panelName="Doctrine Health" testid="panel-error-doctrine-health-full">
+        <DoctrineHealthPanel mode="full" lane={lane} />
+      </PanelErrorBoundary>
 
       <div
         className="mt-6 px-4 py-3 border border-rd-border bg-rd-bg2 text-[10px] font-mono text-rd-dim leading-relaxed"

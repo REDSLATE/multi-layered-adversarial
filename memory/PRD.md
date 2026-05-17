@@ -1,6 +1,64 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🚨 Latest (2026-02-17, late+4): Page-blank Recurrence Hardening
+
+**User report**: Overview page going blank again in PROD (recurrence
+of the earlier Kraken-render crash pattern). Preview env could not
+reproduce the specific failure, but the defensive fix is unconditional:
+**no single child component should be able to blank an entire page.**
+
+**Fix**: lifted the working `BrokerTileErrorBoundary` pattern from
+`KrakenBrokerTile.jsx` into a reusable `PanelErrorBoundary` component
+and applied two layers of containment:
+
+1. **Per-panel boundaries** (`compact={false}` cards with retry button)
+   wrapping every component that pulls live backend data and was a
+   candidate for the PROD blank-screen:
+   - `pages/Overview.jsx`: RosterPanel, LivePositionsPanel,
+     FeedersStrip, TechnicalsPanel each wrapped independently.
+   - `pages/Intents.jsx`: AutoRetireStrip, DoctrineHealthPanel (compact),
+     DoctrineStrip-per-row (with `compact` styling so a single bad
+     intent row doesn't break the table).
+   - `pages/Doctrine.jsx`: DoctrineHealthPanel (full).
+2. **Top-level boundary** wrapping `<Outlet />` in
+   `components/Layout.jsx` (`panel-error-page` testid) as the final
+   safety net for any page we haven't wrapped yet. A future
+   unwrapped route that throws will render a typed error chip with
+   the underlying message + a Retry button instead of the blank
+   screen the user just hit.
+
+**Behavior**:
+- When a panel throws, the boundary renders a red-bordered chip with
+  the panel name, the underlying error message, and a **Retry** button
+  that resets `err` state and re-mounts the child. The rest of the page
+  is unaffected.
+- When everything renders fine, the boundary is invisible — verified by
+  Playwright smoke shots on Overview (8 runtime cards · 0 boundaries
+  triggered) and Intents (100 intent rows · 0 boundaries triggered).
+- Console error is preserved via `componentDidCatch` so the underlying
+  bug is still loggable from PROD via browser devtools.
+
+**Test IDs**: `panel-error-{name}`, `panel-error-{name}-retry`,
+`panel-error-page`, `panel-error-roster`,
+`panel-error-live-positions`, `panel-error-feeders`,
+`panel-error-technicals`, `panel-error-autoretire`,
+`panel-error-doctrine-health`, `panel-error-doctrine-health-full`,
+`panel-error-doctrine-{intent_id}`.
+
+**Doctrine pin**: ANY new page or panel pulling backend data that
+might return a novel shape MUST be wrapped in `PanelErrorBoundary`.
+The two existing top-level safety nets (page-level + per-panel) plus
+the proven Kraken pattern give three layers of containment; nothing
+should be able to blank a page now.
+
+**Outstanding**: the actual root-cause render crash in PROD is still
+unknown (preview env couldn't reproduce). When it recurs, the
+operator will now see the underlying error message in the panel chip
+itself — that's the artifact to paste back here for a precise fix.
+
+
+
 ## 📚 Backlog: Doctrine Source Material
 
 - **`The_Essential_Options_Trading_Guide.mht`** (uploaded 2026-02-17,
