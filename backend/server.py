@@ -46,6 +46,7 @@ from shared.diagnostics import router as diagnostics_router
 from shared.doctrine import router as doctrine_router
 from shared.doctrine import scorecard_router as doctrine_scorecard_router
 from shared.doctrine import auto_retire_router as doctrine_auto_retire_router
+from shared.doctrine import promotion_router as doctrine_promotion_router
 from shared.flags import router as flags_router, get_flags_snapshot
 from shared.intents import router as intents_router
 from shared.executor_seat import router as executor_router
@@ -255,6 +256,7 @@ api_router.include_router(decisions_router)
 api_router.include_router(doctrine_router)
 api_router.include_router(doctrine_scorecard_router)
 api_router.include_router(doctrine_auto_retire_router)
+api_router.include_router(doctrine_promotion_router)
 api_router.include_router(quantum_router)
 api_router.include_router(personalities_router)
 api_router.include_router(flags_router)

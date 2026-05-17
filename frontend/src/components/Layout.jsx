@@ -39,6 +39,7 @@ const SECTIONS = [
       { to: "/admin/overview", label: "Overview", icon: ChartBar, testid: "nav-overview" },
       { to: "/admin/discussion", label: "Discussion", icon: ChatCircleDots, testid: "nav-discussion" },
       { to: "/admin/scorecards", label: "Scorecards", icon: Trophy, testid: "nav-scorecards" },
+      { to: "/admin/doctrine", label: "Doctrine", icon: Shield, testid: "nav-doctrine" },
       { to: "/admin/conflicts", label: "Conflicts", icon: LightningSlash, testid: "nav-conflicts" },
       { to: "/admin/promotion", label: "Promotion", icon: TrendUp, testid: "nav-promotion" },
     ],

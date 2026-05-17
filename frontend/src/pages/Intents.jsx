@@ -7,6 +7,7 @@ import AlpacaConnect from "@/components/AlpacaConnect";
 import KrakenBrokerTile from "@/components/KrakenBrokerTile";
 import DoctrineStrip from "@/components/DoctrineStrip";
 import AutoRetireStrip from "@/components/AutoRetireStrip";
+import DoctrineHealthPanel from "@/components/DoctrineHealthPanel";
 import { toast } from "sonner";
 import {
   Lightning, ArrowsClockwise, Funnel, Pulse,
@@ -596,6 +597,11 @@ export default function Intents() {
       {/* Seat-doctrinal auto-retire suggestions. Lane-scoped so the
           operator only sees suggestions for the lane they're filtering. */}
       <AutoRetireStrip lane={lane} />
+
+      {/* Live doctrine-health summary. Compact mode keeps it scannable
+          alongside the auto-retire strip; the full /admin/doctrine page
+          has the deep view with ideal-snapshot + blockers + rejections. */}
+      <DoctrineHealthPanel mode="compact" lane={lane} />
 
       {err && (
         <div className="border border-rd-danger text-rd-danger px-3 py-2 mb-4 text-xs font-mono" data-testid="intents-error">

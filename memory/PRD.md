@@ -1,7 +1,84 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
-## 🚨 Latest (2026-02-17, late+2): Source-Aligned Doctrine + Strategy Split
+## 🚨 Latest (2026-02-17, late+3): Bounded Promotion Gate + Doctrine Health Panel
+
+**P1 — Bounded Promotion Gate (expectancy-driven, read-only)**
+
+Doctrinal headline: **expectancy > accuracy**. A 45%/4.5R doctrine
+outperforms a 75%/0.8R doctrine; accuracy alone is a trap.
+
+- New module `shared/doctrine/promotion.py` computes per
+  `(lane, doctrine_version)` slice:
+  - `expectancy_R` — R-normalized via `risk_unit = |avg_loss|`
+  - `max_drawdown_R` — worst consecutive-loss run in R units
+  - `consistency` — `1 - clamp(stdev(rolling30_winrate) / 0.5)`
+  - `win_rate`, `avg_win_usd`, `avg_loss_usd`, `samples`,
+    `progress_to_min_samples`
+- Verdict bands:
+  - `LEARNING` — samples < 100
+  - `CANDIDATE_RETIREMENT` — samples ≥ 100 AND (expectancy < −0.10R
+    OR max_drawdown ≥ 8R)
+  - `CANDIDATE_PROMOTION` — samples ≥ 100, expectancy ≥ +0.30R,
+    max_drawdown ≤ 5R, consistency ≥ 0.55
+  - `WATCHING` — samples ≥ 100, neither retire nor promote
+- New endpoint `GET /api/admin/doctrine/promotion-status?lane=` returns
+  `{slices: [...], thresholds: {...}, doctrine_note: "...",
+   endpoint_version: "promotion_status_v1_expectancy_driven"}`
+- Zero-sample doctrines surface too so the UI renders "LEARNING · 0/100"
+  for known-but-unobserved doctrines.
+- `DOCTRINE_IDEALS` registry — single source of truth for each
+  doctrine's `title`, `summary`, `wants[]`, `common_rejections[]`.
+  Read by the frontend so onboarding stays in lockstep with the
+  sidecar code.
+- **READ-ONLY**: surfaces gate state only; operators promote / retire
+  doctrines explicitly. No live execution-flow influence.
+
+**P2 — `DoctrineHealthPanel.jsx` (compact + full modes)**
+
+The component renders the live operational state of every doctrine,
+not static documentation:
+
+- **Compact mode**: single-row strip on `/admin/intents` with
+  verdict chip, sample progress bar, win-rate, expectancy ±R,
+  drawdown, single-line blocker. Lane-scoped to follow the page filter.
+- **Full mode**: card per doctrine on the new `/admin/doctrine` route:
+  - Header: title + lane + doctrine_version + verdict chip
+  - Summary line from the ideals registry
+  - 8-metric grid: samples / expectancy / drawdown / win-rate /
+    consistency / avg-win / avg-loss / progress bar
+  - 3-column body:
+    - **What it wants** (✓ green) — ideal-snapshot from registry
+    - **Gate Blockers** (› verdict color) — current gate state
+    - **Common Rejections** (✗ red) — failure-mode reference
+- Pinned gate-thresholds footer + the expectancy-over-accuracy doctrine note.
+
+**New route**: `/admin/doctrine` with `Doctrine` page wrapping
+`<DoctrineHealthPanel mode="full" />` plus lane filter pills.
+Sidebar nav entry "Doctrine" added under the Governance section.
+
+**Verified live**: 420 demo rows seeded across 4 doctrines surfaced
+the exact verdicts expected:
+- `small_account_sidecar_v1` → CANDIDATE_RETIRE (−0.40R · 7R dd · 30% wr)
+- `gap_and_go_v1` → CANDIDATE_PROMOTE (+1.00R · 1R dd · 50% wr · gates cleared)
+- `micro_pullback_v1` → WATCHING (+0.20R · below promotion floor)
+- `crypto_sidecar_v1` → LEARNING (40/100 samples)
+
+**Tests**: 83/83 doctrine + promotion tests pass (69 prior + 14 new).
+- `tests/test_promotion_gate.py` (NEW): pure-math
+  (45%/4.5R > 75%/0.8R expectancy), drawdown counting, consistency
+  score, all four verdict bands, endpoint shape, auth gate, end-to-end
+  promotion-emit and retirement-emit via seeded rows, zero-sample
+  doctrine surfaces LEARNING with ideal-snapshot payload intact.
+
+**Test IDs**: `doctrine-page`, `doctrine-lane-{all|equity|crypto}`,
+`doctrine-health-compact`, `doctrine-health-full`,
+`doctrine-health-card-{dv}`, `verdict-{dv}`, `metric-{kind}-{dv}`,
+`progress-{dv}`, `doctrine-gate-thresholds`.
+
+
+
+## 🚨 Previous (2026-02-17, late+2): Source-Aligned Doctrine + Strategy Split
 
 **Sources ingested**: 2025 Small Account Tool Kit, Technical Analysis v3
 (Gap-and-Go + Micro Pullback), and SAC2024 Small Account Challenge.

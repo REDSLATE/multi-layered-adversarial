@@ -24,6 +24,7 @@ import BrainOperatorPage from "@/pages/BrainOperatorPage";
 import Discussion from "@/pages/Discussion";
 import Scorecards from "@/pages/Scorecards";
 import Conflicts from "@/pages/Conflicts";
+import Doctrine from "@/pages/Doctrine";
 import Positions from "@/pages/Positions";
 import PublicTraffic from "@/pages/PublicTraffic";
 import Ping from "@/pages/Ping";
@@ -133,6 +134,7 @@ function App() {
             <Route path="brain-op/:brain" element={<BrainOperatorPage />} />
             <Route path="discussion" element={<Discussion />} />
             <Route path="scorecards" element={<Scorecards />} />
+            <Route path="doctrine" element={<Doctrine />} />
             <Route path="conflicts" element={<Conflicts />} />
             <Route path="positions" element={<Positions />} />
             <Route path="public-traffic" element={<PublicTraffic />} />
