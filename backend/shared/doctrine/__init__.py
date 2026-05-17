@@ -12,3 +12,4 @@ Two surfaces:
 """
 from shared.doctrine.routes import router  # noqa: F401 — re-export
 from shared.doctrine.scorecard import router as scorecard_router  # noqa: F401
+from shared.doctrine.auto_retire import router as auto_retire_router  # noqa: F401

@@ -165,6 +165,14 @@ async def test_audit_row_written_to_doctrine_sidecars_collection():
     assert row["lane"] == "equity"
     assert row["symbol"] == "NVDA"
     assert row["quality"] == "A_QUALITY"
+    # ── seat-doctrinal canonical keys (2026-02-17 rev2) ─────────────
+    assert row["execution_judge_ready"] is True
+    assert row["adversary_challenge_required"] is False
+    assert row["governor_action"] == "modulate"
+    assert row["doctrine_version"] == "small_account_sidecar_v1"
+    # holder metadata (alpha is in equity executor seat by default seed)
+    assert row["execution_judge_holder"] in {"alpha", None}
+    # ── legacy brain-named aliases (back-compat; deprecated) ────────
     assert row["camaro_execution_ready"] is True
     assert row["redeye_challenge_required"] is False
     assert row["chevelle_governor_action"] == "modulate"

@@ -363,9 +363,17 @@ async def _build_and_persist_doctrine_packet(
 
     # Audit-row write — fire-and-forget shape, but await so we have a
     # row whether the rest of the ingest succeeds or not.
+    #
+    # Doctrine pin (2026-02-17, seat-doctrinal canonicalization):
+    #   Audit fields are keyed by SEAT, never by brain identity.
+    #   Holders are surfaced as METADATA only. Metrics computed off
+    #   this row must NEVER imply "brain X underperformed" — only that
+    #   "(lane, seat, doctrine_version) underperformed while X happened
+    #   to occupy the seat." `stack` is preserved as metadata for
+    #   per-brain context, NOT as a primary scoring axis.
     audit_row = {
         "intent_id": intent_id,
-        "stack": stack,
+        "stack": stack,                           # METADATA: ingest brain
         "lane": lane_norm or None,
         "symbol": symbol,
         "action": action,
@@ -374,9 +382,25 @@ async def _build_and_persist_doctrine_packet(
         "ingest_admin_email": admin_email,
         "snapshot": merged,
         "packet": packet,
-        # Hoisted top-level fields (lane-shape-aware) for fast indexing.
+        # ── seat-doctrinal canonical keys ────────────────────────────
         "quality": hoisted["quality"],
         "score": hoisted["score"],
+        "doctrine_version": hoisted["doctrine_version"] or packet.get("doctrine_version"),
+        "strategist_conviction_delta": hoisted["strategist_conviction_delta"],
+        "strategist_holder": hoisted["strategist_holder"],
+        "adversary_challenge_required": hoisted["adversary_challenge_required"],
+        "adversary_challenge_strength": hoisted["adversary_challenge_strength"],
+        "adversary_objection_count": hoisted["adversary_objection_count"],
+        "adversary_holder": hoisted["adversary_holder"],
+        "governor_action": hoisted["governor_action"],
+        "governor_risk_multiplier": hoisted["governor_risk_multiplier"],
+        "governor_block_reason_count": hoisted["governor_block_reason_count"],
+        "governor_holder": hoisted["governor_holder"],
+        "execution_judge_ready": hoisted["execution_judge_ready"],
+        "execution_judge_holder": hoisted["execution_judge_holder"],
+        # ── legacy brain-named aliases (DEPRECATED) ─────────────────
+        # Kept for one deprecation cycle. New consumers MUST use the
+        # seat-keyed names above. Will be removed in a future pass.
         "redeye_challenge_required": hoisted["redeye_challenge_required"],
         "chevelle_governor_action": hoisted["chevelle_governor_action"],
         "camaro_execution_ready": hoisted["camaro_execution_ready"],

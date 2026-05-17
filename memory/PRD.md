@@ -1,7 +1,97 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
-## 🚨 Latest (2026-02-17, late): P0 Doctrine UI Badges on Intents page
+## 🚨 Latest (2026-02-17, late+1): Seat-Doctrinal Canonicalization + Auto-Retire
+
+**DOCTRINE PIN — performance belongs to the SEAT, not the holder.**
+This rev removes "brain reputation contamination" from the audit + 
+scorecard schema. Every metric is now keyed on
+`(lane, seat, doctrine_version, quality_band)`; holders are surfaced
+as METADATA only. Brain rotations no longer affect scoring history;
+a seat's doctrine version is what graduates or retires.
+
+**Backend — Phase 1: schema canonicalization**
+- `shared/doctrine/lane_doctrine_router.py:hoist_packet_audit_fields()`
+  refactored to emit seat-keyed canonical names:
+  - `governor_action`, `governor_risk_multiplier`, `governor_block_reason_count`, `governor_holder`
+  - `adversary_challenge_required`, `adversary_challenge_strength`, `adversary_objection_count`, `adversary_holder`
+  - `execution_judge_ready`, `execution_judge_holder`
+  - `strategist_conviction_delta`, `strategist_holder`
+  - `lane`, `doctrine_version`, `quality`, `score`
+- Brain-named legacy keys (`chevelle_governor_action`,
+  `redeye_challenge_required`, `camaro_execution_ready`) kept as
+  DEPRECATED aliases for one cycle so existing DB rows still read.
+- `shared/intents.py` persists both canonical seat-keyed fields and
+  the deprecated aliases into `doctrine_sidecars`.
+
+**Backend — Phase 2: seat-doctrinal scorecard**
+- `shared/doctrine/scorecard.py` rewritten as `scorecard_v2_seat_doctrinal`:
+  - Primary aggregation: `by_lane_seat_doctrine` keyed on
+    `lane/seat/doctrine_version` with branch metrics and quality
+    breakdown per slice.
+  - Existing `by_quality` + `by_seat` retained for compatibility.
+  - `seat_occupancy` block — holders per (lane, seat) — strictly
+    informational. Reader sees who held the seat during the window
+    without it being a scoring axis.
+  - `stack` removed as a primary filter param (was brain-keyed).
+  - Promotion blockers reworded in seat-doctrine language:
+    "governor seat: block heuristic not catching losers" — never
+    "Chevelle blocked too much".
+- New endpoint `GET /api/admin/doctrine/seat-occupancy?lane=&seat=`
+  for the metadata view.
+
+**Backend — Phase 3: Auto-Retire suggestions**
+- New module `shared/doctrine/auto_retire.py`.
+- `GET /api/admin/doctrine/retirement-candidates?lane=&min_samples=50`
+  scans `(lane, seat, doctrine_version)` slices and emits candidates
+  when a SEAT BRANCH violates its doctrinal expectation:
+  - `governor.block` SHOULD have higher loss_rate than `.modulate`
+    (block catches losers).
+  - `adversary.challenge_required` SHOULD have higher loss_rate than `.quiet`.
+  - `execution_judge.ready` SHOULD have lower loss_rate than `.not_ready`.
+- Each candidate carries `severity` (FRICTION → WARM → HOT → BLAZING),
+  rationale, suggested_action ("Retire or recalibrate in next doctrine
+  version"), and `occupancy_during_window` as **metadata only**.
+- Sorted by severity DESC then samples DESC.
+
+**Frontend — `AutoRetireStrip.jsx`**
+- New component on `/admin/intents` above the table.
+- Banner: "SEAT-DOCTRINE AUTO-RETIRE SUGGESTIONS · N flagged" with the
+  doctrine note "Targets (lane, seat, doctrine_version) — never brain
+  identity."
+- Each candidate is a severity-colored row. Collapsed: seat icon +
+  severity chip + headline (`equity/governor v1: block heuristic is
+  severely underperforming`) + n + Δ.
+- Expanded: rationale, 4 metric tiles (lane / seat / doctrine /
+  branch vs comparator loss-rates), Suggested Action card, Holder
+  Occupancy card with explicit "metadata only · NOT a scoring axis"
+  label + footer "Performance belongs to the seat doctrine, not to
+  whoever held the seat."
+- Lane-scoped — follows the lane filter on the Intents page.
+- Hidden entirely when zero candidates; never noisy.
+
+**Testids**: `autoretire-strip`, `autoretire-count`,
+`autoretire-collapse`, `autoretire-reload`,
+`autoretire-candidate-{lane}-{seat}-{branch}`,
+`autoretire-toggle-{...}`, `autoretire-detail-{...}`.
+
+**Tests**: 51/51 pass (45 doctrine + 6 new auto-retire).
+- `tests/test_auto_retire.py` (NEW): endpoint shape, auth gate,
+  governor.block underperformance → candidate emitted, execution_judge
+  ready signal failure → candidate emitted, scorecard exposes
+  by_lane_seat_doctrine + seat_occupancy + scorecard_v2 marker,
+  seat-occupancy endpoint shape.
+- `tests/test_doctrine_intent_attachment.py` updated to assert both
+  canonical seat-keyed fields AND legacy aliases on persisted audit rows.
+
+**Doctrinal payoff**: Patent J's promotion ladder can now graduate
+seat doctrine versions independent of holders. When operators want to
+break through, they can target the specific seat doctrine version
+that's failing — not blame whichever brain was occupying the seat.
+
+
+
+## 🚨 Previous (2026-02-17): P0 Doctrine UI Badges on Intents page
 
 **P0 — `DoctrineStrip.jsx` component** (`/app/frontend/src/components/`).
 Renders the read-only doctrine packet attached to every intent as a

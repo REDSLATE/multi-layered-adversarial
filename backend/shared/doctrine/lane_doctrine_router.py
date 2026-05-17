@@ -59,26 +59,54 @@ def build_lane_doctrine_packet(
 def hoist_packet_audit_fields(packet: Dict[str, Any]) -> Dict[str, Any]:
     """Flatten the audit-relevant fields out of a role-keyed packet.
 
-    Both lanes now share the same role-keyed shape, so this is a
-    simple read. We still defensively handle the legacy equity shape
-    (top-level `alpha`/`redeye`/`chevelle`/`camaro` keys) just in case
-    an older audit row gets re-hoisted by some caller.
+    Doctrine pin (2026-02-17, seat-doctrinal canonicalization):
+        Audit fields are keyed by SEAT, never by brain identity.
+        Holders are surfaced as METADATA only. A new operator looking
+        at this row must see "the governor seat's doctrine did X",
+        NEVER "Chevelle did X". Holders rotate; doctrine is what's
+        being measured.
+
+    Returns canonical keys:
+        - quality, score, lane, doctrine_version
+        - strategist_conviction_delta, strategist_holder
+        - adversary_challenge_required, adversary_challenge_strength,
+          adversary_objection_count, adversary_holder
+        - governor_action, governor_risk_multiplier,
+          governor_block_reason_count, governor_holder
+        - execution_judge_ready, execution_judge_holder
+
+    Also emits LEGACY brain-named aliases (`redeye_challenge_required`,
+    `chevelle_governor_action`, `camaro_execution_ready`) for one
+    deprecation cycle so any external consumer doesn't immediately
+    break. New consumers MUST use the canonical seat-keyed names.
     """
+    empty = {
+        "quality": None, "score": None, "lane": None,
+        "doctrine_version": None,
+        "strategist_conviction_delta": None, "strategist_holder": None,
+        "adversary_challenge_required": None,
+        "adversary_challenge_strength": None,
+        "adversary_objection_count": None, "adversary_holder": None,
+        "governor_action": None, "governor_risk_multiplier": None,
+        "governor_block_reason_count": None, "governor_holder": None,
+        "execution_judge_ready": None, "execution_judge_holder": None,
+        # ── legacy brain-named aliases (deprecated, will be removed) ──
+        "redeye_challenge_required": None,
+        "chevelle_governor_action": None,
+        "camaro_execution_ready": None,
+    }
     if not packet:
-        return {
-            "quality": None, "score": None,
-            "redeye_challenge_required": None,
-            "chevelle_governor_action": None,
-            "camaro_execution_ready": None,
-        }
+        return empty
 
     # New role-keyed shape (equity + crypto both use this now)
     if "seats" in packet:
         base = packet.get("base_labels") or {}
         seats = packet.get("seats") or {}
+        strategist = seats.get("strategist") or {}
         adversary = seats.get("adversary") or {}
         governor = seats.get("governor") or {}
         execution_judge = seats.get("execution_judge") or {}
+
         challenge_required = bool(adversary.get("challenge_required"))
         if not challenge_required:
             # Crypto adversary uses challenge_strength + objections
@@ -87,9 +115,31 @@ def hoist_packet_audit_fields(packet: Dict[str, Any]) -> Dict[str, Any]:
             cs = adversary.get("challenge_strength")
             if isinstance(cs, (int, float)) and cs > 0.0 and adversary.get("objections"):
                 challenge_required = True
+
+        objections = adversary.get("objections") or []
+        block_reasons = governor.get("block_reasons") or []
         return {
             "quality": base.get("quality"),
             "score": base.get("score"),
+            "lane": packet.get("lane"),
+            "doctrine_version": packet.get("doctrine_version"),
+            # strategist seat
+            "strategist_conviction_delta": strategist.get("conviction_delta"),
+            "strategist_holder": strategist.get("holder"),
+            # adversary seat
+            "adversary_challenge_required": challenge_required,
+            "adversary_challenge_strength": adversary.get("challenge_strength"),
+            "adversary_objection_count": len(objections),
+            "adversary_holder": adversary.get("holder"),
+            # governor seat
+            "governor_action": governor.get("governor_action"),
+            "governor_risk_multiplier": governor.get("risk_multiplier"),
+            "governor_block_reason_count": len(block_reasons),
+            "governor_holder": governor.get("holder"),
+            # execution_judge seat
+            "execution_judge_ready": bool(execution_judge.get("execution_ready")),
+            "execution_judge_holder": execution_judge.get("holder"),
+            # legacy aliases (deprecated)
             "redeye_challenge_required": challenge_required,
             "chevelle_governor_action": governor.get("governor_action"),
             "camaro_execution_ready": bool(execution_judge.get("execution_ready")),
@@ -102,12 +152,27 @@ def hoist_packet_audit_fields(packet: Dict[str, Any]) -> Dict[str, Any]:
     redeye = packet.get("redeye") or {}
     chevelle = packet.get("chevelle") or {}
     camaro = packet.get("camaro") or {}
+    challenge_required = bool(redeye.get("challenge_required"))
+    governor_action = chevelle.get("governor_action")
+    execution_ready = bool(camaro.get("execution_ready"))
     return {
         "quality": doctrine.get("quality"),
         "score": doctrine.get("score"),
-        "redeye_challenge_required": bool(redeye.get("challenge_required")),
-        "chevelle_governor_action": chevelle.get("governor_action"),
-        "camaro_execution_ready": bool(camaro.get("execution_ready")),
+        "lane": packet.get("lane") or "equity",
+        "doctrine_version": packet.get("doctrine_version"),
+        "strategist_conviction_delta": None, "strategist_holder": None,
+        "adversary_challenge_required": challenge_required,
+        "adversary_challenge_strength": None,
+        "adversary_objection_count": None, "adversary_holder": None,
+        "governor_action": governor_action,
+        "governor_risk_multiplier": None,
+        "governor_block_reason_count": None, "governor_holder": None,
+        "execution_judge_ready": execution_ready,
+        "execution_judge_holder": None,
+        # legacy aliases (already the source names here)
+        "redeye_challenge_required": challenge_required,
+        "chevelle_governor_action": governor_action,
+        "camaro_execution_ready": execution_ready,
     }
 
 
