@@ -392,35 +392,53 @@ def _governance_verdict(
     return _result(True, "NO_GOVERNOR_DISSENT", False, size_mult, 1.0)
 
 
-async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
-    """Returns (gate_rows, risk_multiplier).
+# ── Refactored helpers (2026-05-17): _evaluate_council was a 334-line
+# function. Splitting into the named steps below preserves behavior
+# while making each phase independently testable. Sequence:
+#   1) resolve governor context  →  _resolve_governor_context()
+#   2) compute graduated verdict →  _governance_verdict()  (existing)
+#   3) build governor gate row   →  _build_governor_gate()
+#   4) resolve opponent gate     →  _evaluate_opponent_gate()
+#   5) compose size w/ opponent  →  _compose_size_with_opponent()
+#   6) overlay quantum state     →  _apply_quantum_overlay()
+#   7) audit + write ledger      →  _persist_council_decision()
+#
+# Doctrine is unchanged. Locked by tests/test_governance_verdict.py.
 
-    Two gates: governor_authority + opponent_objection. Verdicts come
-    from `_governance_verdict` (graduated). Every evaluation writes a
-    row to SHARED_GOVERNANCE_DECISIONS so outcomes can later score who
-    was right.
+
+async def _resolve_governor_context(
+    sym: Optional[str], lane: Optional[str],
+) -> tuple[Optional[str], Optional[dict], bool, Optional[str]]:
+    """Look up the governor seat holder, their normalized most-recent
+    call for `sym`, and whether the seat is alive overall.
+
+    Returns: (governor_holder, gov_norm, governor_alive, gov_any_ts).
     """
-    sym = intent.get("symbol")
-    action = (intent.get("action") or "").upper()
-    intent_id = intent.get("intent_id", "?")
-    lane = intent.get("lane")
-    policy = _policy_for_lane(lane)
-    executor_holder = await _seat_holder("executor", lane=lane)
     governor_holder, gov_doc = await _latest_governor_call(sym, lane=lane)
     gov_norm = _normalize_governor_call(gov_doc)
-
     if gov_norm is None:
-        # No per-symbol call — is the governor alive at all?
         _, gov_any = await _latest_governor_any_call(lane=lane)
         governor_alive = _is_fresh(_doc_ts(gov_any), _GOVERNOR_OFFLINE_THRESHOLD_SECONDS)
         gov_any_ts = _doc_ts(gov_any)
     else:
         governor_alive = True
         gov_any_ts = gov_norm.get("ts")
+    return governor_holder, gov_norm, governor_alive, gov_any_ts
 
-    verdict = _governance_verdict(intent, gov_norm, governor_alive, governor_holder, policy)
 
-    # Build the gate row for the governor.
+def _build_governor_gate(
+    verdict: dict,
+    governor_holder: Optional[str],
+    executor_holder: Optional[str],
+    gov_norm: Optional[dict],
+    intent: dict,
+    policy: dict,
+    lane: Optional[str],
+    sym: Optional[str],
+    gov_any_ts: Optional[str],
+) -> dict:
+    """Format the governor verdict into the governor_authority gate row
+    the gate chain consumes."""
     gov_reason_text = {
         "GOVERNOR_HARD_VETO": (
             f"GOVERNOR ({governor_holder}) HARD VETO on {sym} ({lane or 'equity'}): "
@@ -465,7 +483,7 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
             "GOVERNOR seat is vacant — no one to record a stance"
         ),
     }
-    gov_gate = {
+    return {
         "name": "governor_authority",
         "passed": verdict["allowed"],
         "reason": gov_reason_text.get(verdict["reason"], verdict["reason"]),
@@ -477,15 +495,56 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
         "policy_used": "crypto" if (lane or "").lower() == "crypto" else "equity",
     }
 
-    # ── opponent_objection ─────────────────────────────────────────────
-    # Seat-bound: queries whoever holds the Opponent seat. Advisory only
-    # now — never hard-blocks. The opponent's view is captured in the
-    # governance row and feeds the outcome learner.
+
+def _opponent_payload(opp_doc: dict) -> tuple[float, str]:
+    """Extract (confidence, side_lower) from an opponent contribution."""
+    payload = (
+        opp_doc.get("payload")
+        or opp_doc.get("data")
+        or opp_doc.get("contribution")
+        or {}
+    )
+    if not isinstance(payload, dict):
+        payload = {}
+    r_conf = float(
+        payload.get("confidence")
+        or payload.get("conviction")
+        or opp_doc.get("confidence")
+        or 0.0
+    )
+    r_side_raw = (
+        payload.get("side")
+        or payload.get("stance")
+        or payload.get("bias")
+        or opp_doc.get("side")
+        or ""
+    )
+    return r_conf, str(r_side_raw).lower()
+
+
+def _opposes_direction(action: str, r_side: str) -> bool:
+    """Does opponent's `r_side` oppose the action direction?"""
+    direction = (
+        "bullish" if action in ("BUY", "COVER")
+        else "bearish" if action in ("SELL", "SHORT")
+        else None
+    )
+    return bool(
+        (direction == "bullish" and r_side in ("bearish", "short", "sell", "down"))
+        or (direction == "bearish" and r_side in ("bullish", "long", "buy", "up"))
+    )
+
+
+async def _evaluate_opponent_gate(
+    action: str, sym: Optional[str], lane: Optional[str],
+) -> dict:
+    """Build the opponent_objection gate row (advisory; never blocks).
+    Seat-bound: reads whoever holds the Opponent seat for this lane."""
     opponent_holder, opp_doc = await _latest_opponent_contribution(lane=lane)
     opp_ts = _doc_ts(opp_doc)
 
     if not opponent_holder:
-        opp_gate = {
+        return {
             "name": "opponent_objection",
             "passed": True,
             "reason": "OPPONENT seat vacant — no opposition signal",
@@ -494,8 +553,8 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
             "opponent_side": None,
             "opponent_opposes": False,
         }
-    elif not opp_doc or not _is_fresh(opp_ts):
-        opp_gate = {
+    if not opp_doc or not _is_fresh(opp_ts):
+        return {
             "name": "opponent_objection",
             "passed": True,
             "reason": f"OPPONENT ({opponent_holder}) silent — no fresh contribution",
@@ -504,69 +563,45 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
             "opponent_side": None,
             "opponent_opposes": False,
         }
-    else:
-        payload = (
-            opp_doc.get("payload")
-            or opp_doc.get("data")
-            or opp_doc.get("contribution")
-            or {}
-        )
-        if not isinstance(payload, dict):
-            payload = {}
-        r_conf = float(
-            payload.get("confidence")
-            or payload.get("conviction")
-            or opp_doc.get("confidence")
-            or 0.0
-        )
-        r_side_raw = (
-            payload.get("side")
-            or payload.get("stance")
-            or payload.get("bias")
-            or opp_doc.get("side")
-            or ""
-        )
-        r_side = str(r_side_raw).lower()
-        direction = (
-            "bullish" if action in ("BUY", "COVER")
-            else "bearish" if action in ("SELL", "SHORT")
-            else None
-        )
-        opposes = (
-            (direction == "bullish" and r_side in ("bearish", "short", "sell", "down"))
-            or (direction == "bearish" and r_side in ("bullish", "long", "buy", "up"))
-        )
-        opp_gate = {
-            "name": "opponent_objection",
-            "passed": True,  # advisory; never blocks on its own
-            "reason": (
-                f"OPPONENT ({opponent_holder}) {r_side or 'neutral'} "
-                f"@ conf {r_conf:.2f} — "
-                + ("opposes " if opposes else "agrees with ")
-                + f"{action} {sym} (advisory, logged for outcome scoring)"
-            ),
-            "opponent_holder": opponent_holder,
-            "opponent_conf": r_conf,
-            "opponent_side": r_side,
-            "opponent_opposes": opposes,
-        }
+    r_conf, r_side = _opponent_payload(opp_doc)
+    opposes = _opposes_direction(action, r_side)
+    return {
+        "name": "opponent_objection",
+        "passed": True,  # advisory; never blocks on its own
+        "reason": (
+            f"OPPONENT ({opponent_holder}) {r_side or 'neutral'} "
+            f"@ conf {r_conf:.2f} — "
+            + ("opposes " if opposes else "agrees with ")
+            + f"{action} {sym} (advisory, logged for outcome scoring)"
+        ),
+        "opponent_holder": opponent_holder,
+        "opponent_conf": r_conf,
+        "opponent_side": r_side,
+        "opponent_opposes": opposes,
+    }
 
-    # ── Compose final size: governor verdict × opponent influence × clamps ─
-    # Doctrine: each agent shapes risk, none collapse it (except hard veto).
+
+def _compose_size_with_opponent(
+    verdict: dict,
+    opp_gate: dict,
+    action: str,
+    sym: Optional[str],
+    policy: dict,
+) -> tuple[float, float]:
+    """Apply opponent influence to the council-base size. Returns
+    (final_size, opp_influence_applied). Mutates `opp_gate`'s reason
+    when influence is applied so the UI surfaces the pull."""
     base_size = verdict["risk_multiplier"]  # already 0 if blocked
     final_size = base_size
     opp_influence_applied = 0.0
 
     if verdict["allowed"] and opp_gate.get("opponent_opposes"):
-        # Opponent pulls size DOWN proportional to their confidence and
-        # the lane's OPPONENT_INFLUENCE. Maximum pull bounded by
-        # MAX_SINGLE_AGENT_INFLUENCE so REDEYE can't single-handedly
-        # freeze a strong Camaro setup.
         opp_conf = float(opp_gate["opponent_conf"])
         raw_pull = opp_conf * policy["OPPONENT_INFLUENCE"]
         opp_influence_applied = min(raw_pull, policy["MAX_SINGLE_AGENT_INFLUENCE"])
-        final_size = _clamp_agent_delta(base_size, base_size * (1.0 - opp_influence_applied), policy)
-        # Update opponent gate reason to reflect the actual influence applied.
+        final_size = _clamp_agent_delta(
+            base_size, base_size * (1.0 - opp_influence_applied), policy,
+        )
         opp_gate["reason"] = (
             f"OPPONENT ({opp_gate['opponent_holder']}) opposes "
             f"{action} {sym} @ conf {opp_gate['opponent_conf']:.2f} — "
@@ -575,31 +610,30 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
         )
         opp_gate["opp_influence_applied"] = opp_influence_applied
 
-    # Final clamp against lane bounds (defense in depth).
     final_size = _clamp_size(final_size, policy) if verdict["allowed"] else 0.0
+    return final_size, opp_influence_applied
 
-    # ── Quantum-inspired regime overlay (2026-02-15) ──────────────────
-    # The quantum state observes the council's stances + intent features
-    # and produces a BOUNDED risk multiplier + regime probability field
-    # + HOLD-lock signal. By doctrine it MAY modulate risk only — it
-    # cannot change direction or promote HOLD into a trade. We multiply
-    # the council-composed size by quantum_state.risk_multiplier and
-    # re-clamp against lane bounds (defense in depth).
+
+def _quantum_opinions(
+    intent: dict,
+    action: str,
+    executor_holder: Optional[str],
+    gov_norm: Optional[dict],
+    governor_holder: Optional[str],
+    opp_gate: dict,
+) -> list:
+    """Build the brain-opinion list the quantum state consumes from the
+    council's stances. Lane-neutral, pure."""
+    HOLD_STANCES = {"HOLD", "VETO", "DISSENT", "REJECT", "ABSTAIN", "RISK_DOWN"}
     qs_opinions: list = []
-    # Executor's call goes in as the actionable direction.
     qs_opinions.append(_QSBrainOpinion(
         brain=str(executor_holder or intent.get("stack") or "executor"),
         direction=str(action),
         confidence=float(intent.get("confidence") or 0.0),
     ))
-    # Governor's call — derive a coarse direction from the stance and
-    # executable flag. If governor said executable=False or veto/dissent
-    # we map to HOLD (a "don't act" advisory); explicit executable=True
-    # mirrors the executor's direction; otherwise HOLD.
     if gov_norm is not None:
         if (gov_norm.get("veto") or gov_norm.get("executable") is False
-                or str(gov_norm.get("stance") or "").upper()
-                    in {"HOLD", "VETO", "DISSENT", "REJECT", "ABSTAIN", "RISK_DOWN"}):
+                or str(gov_norm.get("stance") or "").upper() in HOLD_STANCES):
             gov_dir = "HOLD"
         elif gov_norm.get("executable") is True:
             gov_dir = action
@@ -610,7 +644,6 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
             direction=gov_dir,
             confidence=float(gov_norm.get("confidence") or 0.5),
         ))
-    # Opponent's call — map their side to a direction. Skip if no signal.
     opp_side = (opp_gate.get("opponent_side") or "").lower() if opp_gate else ""
     if opp_side:
         opp_dir = (
@@ -623,7 +656,27 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
             direction=opp_dir,
             confidence=float(opp_gate.get("opponent_conf") or 0.0),
         ))
+    return qs_opinions
 
+
+def _apply_quantum_overlay(
+    verdict: dict,
+    final_size: float,
+    intent: dict,
+    action: str,
+    executor_holder: Optional[str],
+    gov_norm: Optional[dict],
+    governor_holder: Optional[str],
+    opp_gate: dict,
+    policy: dict,
+) -> tuple[float, dict]:
+    """Compose the quantum-inspired regime overlay on top of the
+    council-composed size. Quantum may modulate risk only — it cannot
+    change direction or promote HOLD into a trade. Returns
+    (post_overlay_size, quantum_dict)."""
+    qs_opinions = _quantum_opinions(
+        intent, action, executor_holder, gov_norm, governor_holder, opp_gate,
+    )
     market_features = intent.get("features") or intent.get("market_features") or {}
     qs_verdict = _build_quantum_state(
         opinions=qs_opinions,
@@ -631,46 +684,37 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
     )
     quantum_dict = qs_verdict.to_dict()
     if verdict["allowed"]:
-        # Apply the quantum multiplier and re-clamp against lane bounds.
         pre_qs = final_size
         final_size = _clamp_size(final_size * qs_verdict.risk_multiplier, policy)
         quantum_dict["pre_quantum_size"] = pre_qs
         quantum_dict["post_quantum_size"] = final_size
-    # Reflect the composed size back on the governor row so downstream
-    # readers (auto_router) see the post-composition number.
-    gov_gate["risk_multiplier"] = final_size
-    gov_gate["quantum_state"] = quantum_dict
+    return final_size, quantum_dict
 
-    # Audit: write both council decisions to mc_shelly for training.
-    for g in (gov_gate, opp_gate):
-        record_async(
-            event_type="council_pass" if g["passed"] else "council_block",
-            brain=intent.get("stack"),
-            symbol=sym,
-            action=action,
-            outcome="pass" if g["passed"] else "block",
-            rationale=g["reason"],
-            ref_id=intent_id,
-            gate_name=g["name"],
-        )
 
-    # ── Stamp gate rows with personality envelope (advisory metadata).
-    #    Permissions DO NOT come from personality — they come from
-    #    seat_policy. This envelope just tells the operator and any
-    #    consumer "this brain made this call from this bias/voice".
-    if governor_holder:
-        _stamp_personality(governor_holder, gov_gate)
-    if opp_gate.get("opponent_holder"):
-        _stamp_personality(opp_gate["opponent_holder"], opp_gate)
-
-    # ── Governance decision row (per-intent learning ledger) ──────────
-    # Captures both seats' stances, the verdict, and the resulting
-    # risk_multiplier. Shelly/outcomes can join on intent_id to score
-    # who was right after the trade resolves.
+def _build_governance_ledger_row(
+    intent: dict,
+    sym: Optional[str],
+    lane: Optional[str],
+    action: str,
+    intent_id: str,
+    executor_holder: Optional[str],
+    governor_holder: Optional[str],
+    gov_norm: Optional[dict],
+    verdict: dict,
+    opp_gate: dict,
+    opp_influence_applied: float,
+    base_size: float,
+    final_size: float,
+    quantum_dict: dict,
+    policy: dict,
+    gov_gate: dict,
+) -> dict:
+    """Compose the per-intent learning ledger row written to
+    SHARED_GOVERNANCE_DECISIONS. No DB IO; pure dict builder."""
     exec_personality = _personality_of(executor_holder) or {}
     gov_personality = _personality_of(governor_holder) or {}
     opp_personality = _personality_of(opp_gate.get("opponent_holder")) or {}
-    governance_row = {
+    return {
         "ts": _now_iso(),
         "intent_id": intent_id,
         "symbol": sym,
@@ -700,10 +744,6 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
         "base_risk_multiplier": base_size,
         "risk_multiplier": final_size,
         "quantum_state": quantum_dict,
-        # Hard limits (from personality "never" clauses) are advisory.
-        # Authority is still seat-bound — this flag just records whether
-        # the decision aligned with the doctrinal limits of the seat
-        # holder's personality, for downstream training.
         "hard_limits_respected": gov_gate.get("hard_limits_respected", True)
         and opp_gate.get("hard_limits_respected", True),
         "stack_weights": policy["STACK_WEIGHTS"],
@@ -719,6 +759,83 @@ async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
             "momentum_weighting": policy["MOMENTUM_WEIGHTING"],
         },
     }
+
+
+def _audit_council_to_shelly(
+    intent: dict, gov_gate: dict, opp_gate: dict,
+    intent_id: str, sym: Optional[str], action: str,
+) -> None:
+    """Write both gate decisions to mc_shelly for training."""
+    for g in (gov_gate, opp_gate):
+        record_async(
+            event_type="council_pass" if g["passed"] else "council_block",
+            brain=intent.get("stack"),
+            symbol=sym,
+            action=action,
+            outcome="pass" if g["passed"] else "block",
+            rationale=g["reason"],
+            ref_id=intent_id,
+            gate_name=g["name"],
+        )
+
+
+async def _evaluate_council(intent: dict) -> tuple[list[dict], float]:
+    """Returns (gate_rows, risk_multiplier).
+
+    Orchestrator: runs the council pipeline end-to-end. Each phase is a
+    small helper defined above; this function's only job is composition
+    + persistence. Doctrine is locked by tests/test_governance_verdict.py.
+    """
+    sym = intent.get("symbol")
+    action = (intent.get("action") or "").upper()
+    intent_id = intent.get("intent_id", "?")
+    lane = intent.get("lane")
+    policy = _policy_for_lane(lane)
+
+    executor_holder = await _seat_holder("executor", lane=lane)
+    (governor_holder, gov_norm, governor_alive, gov_any_ts) = await _resolve_governor_context(sym, lane)
+
+    # Phase 1: graduated verdict from the (pure) verdict function.
+    verdict = _governance_verdict(intent, gov_norm, governor_alive, governor_holder, policy)
+
+    # Phase 2: format the governor gate row.
+    gov_gate = _build_governor_gate(
+        verdict, governor_holder, executor_holder, gov_norm, intent,
+        policy, lane, sym, gov_any_ts,
+    )
+
+    # Phase 3: opponent gate (advisory).
+    opp_gate = await _evaluate_opponent_gate(action, sym, lane)
+
+    # Phase 4: compose size with opponent influence.
+    base_size = verdict["risk_multiplier"]
+    final_size, opp_influence_applied = _compose_size_with_opponent(
+        verdict, opp_gate, action, sym, policy,
+    )
+
+    # Phase 5: quantum-inspired regime overlay (risk modulation only).
+    final_size, quantum_dict = _apply_quantum_overlay(
+        verdict, final_size, intent, action, executor_holder, gov_norm,
+        governor_holder, opp_gate, policy,
+    )
+    gov_gate["risk_multiplier"] = final_size
+    gov_gate["quantum_state"] = quantum_dict
+
+    # Phase 6: audit to shelly.
+    _audit_council_to_shelly(intent, gov_gate, opp_gate, intent_id, sym, action)
+
+    # Phase 7: stamp advisory personality envelopes on gate rows.
+    if governor_holder:
+        _stamp_personality(governor_holder, gov_gate)
+    if opp_gate.get("opponent_holder"):
+        _stamp_personality(opp_gate["opponent_holder"], opp_gate)
+
+    # Phase 8: write the governance ledger row (best-effort).
+    governance_row = _build_governance_ledger_row(
+        intent, sym, lane, action, intent_id, executor_holder,
+        governor_holder, gov_norm, verdict, opp_gate, opp_influence_applied,
+        base_size, final_size, quantum_dict, policy, gov_gate,
+    )
     try:
         await db[SHARED_GOVERNANCE_DECISIONS].insert_one(governance_row)
     except Exception:  # noqa: BLE001
