@@ -135,6 +135,15 @@ BRAIN_LANE_POLICY = "brain_lane_policy"
 # created by `shared/risk/position_monitor.py:_log_evaluation`.
 RISK_MONITOR_EVALUATIONS = "risk_monitor_evaluations"
 
+# ─── Brain doctrine sidecar packet audit log (2026-02-17) ─
+# Append-only stream of `BRAIN_DOCTRINE_SIDECAR_PACKET` events emitted
+# by the equity intent ingest path. Each row is the complete shared
+# `DoctrineLabels` + four brain-flavored interpretations, joined to the
+# intent_id and ingest timestamp. Read-only training substrate for
+# Shelly — never consulted by the gate chain. See
+# `shared/intents.py:_build_and_persist_doctrine_packet`.
+DOCTRINE_SIDECARS = "doctrine_sidecars"
+
 # ─── Verified Reinforcement Layer (2026-02-16) ──────────────────────────
 # VRL records two kinds of evidence:
 #   1. Per-receipt verifications: post-fill slippage / drift checks so the

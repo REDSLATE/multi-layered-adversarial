@@ -110,6 +110,18 @@ class IntentIn(BaseModel):
     decision_id: Optional[str] = Field(default=None, max_length=64)
     regime: Optional[str] = Field(default=None, max_length=48)
 
+    # ─── Doctrine sidecar input (2026-02-17, equity-only) ───
+    # Optional snapshot of market facts that drives the small-account
+    # doctrine labeler (`shared.doctrine.base_labels`). When provided
+    # and the intent is EQUITY, MC will run all four brain interpreters
+    # and attach the resulting packet to the intent doc as a READ-ONLY
+    # ATTACHMENT — it never influences direction, confidence, or any
+    # gate decision. Crypto intents ignore this field (the small-account
+    # doctrine is equity-flavored). Missing field → empty snapshot (just
+    # the symbol) and the packet will mostly produce REJECT/no-data
+    # labels, which is itself informative for Shelly's learning loop.
+    doctrine_snapshot: Optional[dict] = Field(default=None)
+
     # SAFETY INVARIANTS — schema-pinned. Cannot be overridden by the brain.
     may_execute: bool = Field(default=False)
     requires_gate_pass: bool = Field(default=True)
@@ -132,6 +144,18 @@ class IntentIn(BaseModel):
     @classmethod
     def _symbol_clean(cls, v: str) -> str:
         return v.strip().upper()
+
+    @field_validator("doctrine_snapshot")
+    @classmethod
+    def _doctrine_snapshot_size_cap(cls, v):
+        if v is None:
+            return None
+        import json
+        if not isinstance(v, dict):
+            raise ValueError("doctrine_snapshot must be an object")
+        if len(json.dumps(v, default=str)) > 4 * 1024:
+            raise ValueError("doctrine_snapshot must be ≤4 KB serialized")
+        return v
 
     @field_validator("evidence")
     @classmethod
@@ -238,6 +262,156 @@ async def _audit_lane_policy_rejection(
         )
     except Exception:  # noqa: BLE001
         pass
+
+
+def _doctrine_failure_packet(symbol: str, lane: Optional[str], reason: str) -> dict:
+    """Minimal envelope when doctrine build fails for non-doctrinal
+    reasons (import error, runtime crash). Intent ingest still
+    proceeds — doctrine is advisory only."""
+    return {
+        "error": f"doctrine_packet_failed: {reason}"[:300],
+        "doctrine_version": "router_failure_v1",
+        "event_type": "BRAIN_DOCTRINE_SIDECAR_PACKET",
+        "lane": lane or None,
+        "symbol": symbol,
+        "seats": {},
+        "base_labels": {"score": 0.0, "quality": None, "labels": [], "reasons": []},
+    }
+
+
+async def _build_and_persist_doctrine_packet(
+    *,
+    intent_id: str,
+    stack: str,
+    lane: Optional[str],
+    symbol: str,
+    action: str,
+    confidence: float,
+    snapshot: Optional[dict],
+    ingest_method: str,
+    admin_email: Optional[str] = None,
+) -> Optional[dict]:
+    """Attach a `BRAIN_DOCTRINE_SIDECAR_PACKET` to the intent.
+
+    Doctrine (2026-02-17):
+        READ-ONLY ATTACHMENT — never modifies direction, confidence,
+        or any gate state.
+
+        Twin lanes get twin doctrine:
+          • equity → `shared.doctrine.brain_sidecars` (gap/RVOL/float)
+          • crypto → `shared.crypto.doctrine.crypto_brain_sidecars`
+                     (24h volume / spread / funding / OI / liquidations)
+          • else   → UNKNOWN_LANE_REJECT packet so absence isn't silent
+
+        Routed via `shared.doctrine.lane_doctrine_router` so this
+        function never imports the equity or crypto modules directly
+        — keeps lane isolation regression-clean.
+
+        Failure-isolated — if the labeler throws (bad snapshot field
+        types, etc.), we log an error packet and the intent ingest
+        still proceeds.
+
+    Side effects when the packet is built:
+        1. Returned for inclusion in the intent doc as `doctrine_packet`.
+        2. Append-only audit row in `doctrine_sidecars` joined to
+           `intent_id`. This is Shelly's training substrate.
+        3. Shelly event `BRAIN_DOCTRINE_SIDECAR_PACKET` so the
+           memory layer indexes it alongside the ingest row.
+    """
+    lane_norm = (lane or "").lower()
+
+    # Build the snapshot the labeler consumes. The brain may have
+    # supplied facts; we always inject lane + symbol + existing_intent
+    # so the lane router and crypto Camaro readiness check have what
+    # they need without forcing every brain to remember them.
+    merged = dict(snapshot or {})
+    merged.setdefault("symbol", symbol)
+    merged["lane"] = lane_norm or merged.get("lane")
+    # Camaro readiness depends on whether MC already has a directional
+    # intent. The intent we're ingesting RIGHT NOW counts iff its
+    # action is directional (BUY/SELL/SHORT/COVER) — HOLD does not.
+    merged.setdefault(
+        "existing_intent",
+        (action or "").upper() in {"BUY", "SELL", "SHORT", "COVER"},
+    )
+
+    try:
+        from shared.doctrine.lane_doctrine_router import (  # noqa: WPS433
+            build_lane_doctrine_packet,
+            fetch_seat_holders,
+            hoist_packet_audit_fields,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _doctrine_failure_packet(symbol, lane_norm, f"router_import: {e!r}")
+
+    # Resolve the four doctrine-relevant seat holders from the live
+    # roster so the packet records "who was sitting in this seat at
+    # packet build". Doctrine survives seat rotations untouched — only
+    # `holder` shifts. Non-fatal: if the roster read fails (e.g., DB
+    # offline during ingest), the packet still attaches with all four
+    # holders as None.
+    try:
+        seat_holders = await fetch_seat_holders(lane_norm)
+    except Exception:  # noqa: BLE001
+        seat_holders = {}
+
+    try:
+        packet = build_lane_doctrine_packet(merged, seat_holders)
+        hoisted = hoist_packet_audit_fields(packet)
+    except Exception as e:  # noqa: BLE001
+        return _doctrine_failure_packet(symbol, lane_norm, f"build: {e!r}")
+
+    # Audit-row write — fire-and-forget shape, but await so we have a
+    # row whether the rest of the ingest succeeds or not.
+    audit_row = {
+        "intent_id": intent_id,
+        "stack": stack,
+        "lane": lane_norm or None,
+        "symbol": symbol,
+        "action": action,
+        "ingest_confidence": float(confidence),
+        "ingest_method": ingest_method,
+        "ingest_admin_email": admin_email,
+        "snapshot": merged,
+        "packet": packet,
+        # Hoisted top-level fields (lane-shape-aware) for fast indexing.
+        "quality": hoisted["quality"],
+        "score": hoisted["score"],
+        "redeye_challenge_required": hoisted["redeye_challenge_required"],
+        "chevelle_governor_action": hoisted["chevelle_governor_action"],
+        "camaro_execution_ready": hoisted["camaro_execution_ready"],
+        "ts": _now_iso(),
+    }
+    try:
+        from namespaces import DOCTRINE_SIDECARS  # noqa: WPS433
+        await db[DOCTRINE_SIDECARS].insert_one(audit_row.copy())
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Shelly memory — index by intent so the memory layer can recall
+    # "what was the doctrine packet attached to this intent?" later.
+    try:
+        from shared.mc_shelly import record_async  # noqa: WPS433
+        record_async(
+            event_type="BRAIN_DOCTRINE_SIDECAR_PACKET",
+            brain=stack,
+            symbol=symbol,
+            action=action,
+            confidence=float(confidence),
+            outcome="advisory",
+            rationale=f"quality={hoisted['quality']}, score={hoisted['score']}",
+            ref_id=intent_id,
+            extra={
+                "lane": lane_norm or None,
+                "quality": hoisted["quality"],
+                "score": hoisted["score"],
+                "doctrine_version": packet.get("doctrine_version"),
+            },
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    return packet
 
 
 async def _seat_at_post_time(brain: str) -> Optional[str]:
@@ -435,6 +609,19 @@ async def post_intent(
     evidence = dict(body.evidence or {})
     evidence["regime_fp"] = await _enrich_regime_fp(body.symbol, evidence.get("regime_fp"))
 
+    # Brain doctrine sidecar packet — READ-ONLY ATTACHMENT (2026-02-17).
+    # Equity-only by doctrine. Never influences direction or any gate.
+    doctrine_packet = await _build_and_persist_doctrine_packet(
+        intent_id=intent_id,
+        stack=body.stack,
+        lane=effective_lane,
+        symbol=body.symbol,
+        action=body.action,
+        confidence=float(body.confidence),
+        snapshot=body.doctrine_snapshot,
+        ingest_method="runtime_token",
+    )
+
     doc = {
         "intent_id": intent_id,
         "stack": body.stack,
@@ -448,6 +635,7 @@ async def post_intent(
         "risk_multiplier": float(body.risk_multiplier),
         "rationale": body.rationale,
         "evidence": evidence,
+        "doctrine_packet": doctrine_packet,
         "decision_id": body.decision_id,
         "regime": body.regime,
         # ─── Honesty telemetry — brain-side ground truth ───
@@ -517,6 +705,10 @@ async def post_intent(
         "seat_at_post_time": seat,
         "gate_state": "pending",
         "ingest_ts": doc["ingest_ts"],
+        # Surface the attached doctrine packet so the brain (or the
+        # operator using the dry-run flow) can see the quality band
+        # MC assigned. Read-only — does not affect routing.
+        "doctrine_packet": doctrine_packet,
     }
 
 
@@ -739,6 +931,20 @@ async def admin_post_intent(
     evidence = dict(body.evidence or {})
     evidence["regime_fp"] = await _enrich_regime_fp(body.symbol, evidence.get("regime_fp"))
 
+    # Brain doctrine sidecar packet — READ-ONLY ATTACHMENT (2026-02-17).
+    # Equity-only by doctrine. Never influences direction or any gate.
+    doctrine_packet = await _build_and_persist_doctrine_packet(
+        intent_id=intent_id,
+        stack=body.stack,
+        lane=effective_lane,
+        symbol=body.symbol,
+        action=body.action,
+        confidence=float(body.confidence),
+        snapshot=body.doctrine_snapshot,
+        ingest_method="admin_proxy",
+        admin_email=user.get("email"),
+    )
+
     doc = {
         "intent_id": intent_id,
         "stack": body.stack,
@@ -752,6 +958,7 @@ async def admin_post_intent(
         "risk_multiplier": float(body.risk_multiplier),
         "rationale": body.rationale,
         "evidence": evidence,
+        "doctrine_packet": doctrine_packet,
         "decision_id": body.decision_id,
         "regime": body.regime,
         "may_execute": False,
@@ -794,6 +1001,7 @@ async def admin_post_intent(
         "seat_at_post_time": seat,
         "gate_state": "pending",
         "ingest_via": "admin_proxy",
+        "doctrine_packet": doctrine_packet,
     }
 
 
@@ -825,4 +1033,58 @@ async def admin_post_intent_equity(
 # NOTE: `/execution/dry_run` and `/execution/submit` live in
 # `shared/execution.py` — they consume the full gate chain including
 # real exposure caps and the live Alpaca paper adapter.
+
+
+# ───── doctrine sidecar audit log read (2026-02-17) ─────
+
+
+@router.get("/admin/intents/doctrine-sidecars")
+async def list_doctrine_sidecars(
+    stack: Optional[str] = Query(default=None),
+    symbol: Optional[str] = Query(default=None),
+    quality: Optional[Literal["A_QUALITY", "B_QUALITY", "C_QUALITY", "REJECT"]] = Query(default=None),
+    chevelle_governor_action: Optional[Literal["block", "modulate"]] = Query(default=None),
+    camaro_execution_ready: Optional[bool] = Query(default=None),
+    redeye_challenge_required: Optional[bool] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Read the append-only `doctrine_sidecars` audit log.
+
+    Read-only training substrate for Shelly + operator review. Filters
+    let the operator pull slices like "all A_QUALITY intents Camaro
+    flagged execution_ready", or "all REJECT intents Chevelle blocked".
+
+    Doctrine pin: this surface NEVER decides anything. It exists to
+    join brain doctrine output to eventual trade outcomes for later
+    verified-reinforcement learning.
+    """
+    from namespaces import DOCTRINE_SIDECARS  # noqa: WPS433
+    q: dict = {}
+    if stack:
+        q["stack"] = stack
+    if symbol:
+        q["symbol"] = symbol.strip().upper()
+    if quality:
+        q["quality"] = quality
+    if chevelle_governor_action:
+        q["chevelle_governor_action"] = chevelle_governor_action
+    if camaro_execution_ready is not None:
+        q["camaro_execution_ready"] = bool(camaro_execution_ready)
+    if redeye_challenge_required is not None:
+        q["redeye_challenge_required"] = bool(redeye_challenge_required)
+
+    rows = await db[DOCTRINE_SIDECARS].find(q, {"_id": 0}).sort("ts", -1).to_list(limit)
+    # Quality histogram so the operator can see the distribution
+    # without re-aggregating client-side.
+    histogram: dict = {"A_QUALITY": 0, "B_QUALITY": 0, "C_QUALITY": 0, "REJECT": 0, "unknown": 0}
+    for r in rows:
+        key = r.get("quality") or "unknown"
+        histogram[key] = histogram.get(key, 0) + 1
+    return {
+        "items": rows,
+        "count": len(rows),
+        "quality_histogram": histogram,
+        "as_of": _now_iso(),
+    }
 
