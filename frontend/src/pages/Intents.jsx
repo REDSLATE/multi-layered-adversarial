@@ -3,6 +3,7 @@ import { api, RUNTIME_META, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 import ExecutorSeatTile, { AuditorSeatTile } from "@/components/ExecutorSeatTile";
 import AlpacaConnect from "@/components/AlpacaConnect";
+import KrakenBrokerTile from "@/components/KrakenBrokerTile";
 import { toast } from "sonner";
 import {
   Lightning, ArrowsClockwise, Funnel, Pulse,
@@ -455,6 +456,7 @@ export default function Intents() {
       <ExecutorSeatTile />
       <AuditorSeatTile />
       <AlpacaConnect />
+      <KrakenBrokerTile />
 
       {/* Live exposure caps — fetched from /api/config/exposure-caps so
           UI never drifts from the doctrine surface. */}
