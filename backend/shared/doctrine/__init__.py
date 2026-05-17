@@ -11,3 +11,4 @@ Two surfaces:
        `shared.doctrine.brain_sidecars.build_all_brain_doctrine_packets`.
 """
 from shared.doctrine.routes import router  # noqa: F401 — re-export
+from shared.doctrine.scorecard import router as scorecard_router  # noqa: F401

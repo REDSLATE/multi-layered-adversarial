@@ -352,6 +352,33 @@ async def close(
         "outcome_broadcast_id": broadcast_id,
     })
 
+    # Doctrine outcome-join: append the close outcome onto the
+    # doctrine_sidecars row joined by intent_id so Shelly + the
+    # /admin/doctrine/scorecard endpoint can answer "did A_QUALITY win?"
+    # without re-aggregating. One-shot, append-only, fail-soft.
+    try:
+        from shared.doctrine.outcome_join import join_outcome_to_doctrine  # noqa: WPS433
+        await join_outcome_to_doctrine(
+            intent_id=pos.get("intent_id"),
+            position_id=position_id,
+            lane=pos.get("lane"),
+            symbol=pos.get("symbol"),
+            outcome_label=label,
+            pnl_usd=pnl_usd,
+            pnl_pct=pnl_pct,
+            opened_at=pos.get("opened_at"),
+            closed_at=now,
+            closing_actor=actor,
+            extra={
+                "stack": pos.get("stack"),
+                "direction": pos.get("direction"),
+                "outcome_broadcast_id": broadcast_id,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        # Outcome-join is advisory — never let it block the position close.
+        pass
+
     try:
         from shared.mc_shelly import record_async  # noqa: WPS433
         record_async(

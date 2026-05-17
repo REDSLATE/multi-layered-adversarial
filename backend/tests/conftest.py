@@ -2,6 +2,22 @@ import os
 import pytest
 import requests
 
+# Seed DB connection env vars BEFORE any test module imports `db` /
+# `namespaces` / `shared.*` (those read env at import time and KeyError
+# if MONGO_URL isn't set). The backend .env is the source of truth.
+if not os.environ.get("MONGO_URL"):
+    be_env = "/app/backend/.env"
+    if os.path.exists(be_env):
+        with open(be_env) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("MONGO_URL=") and "MONGO_URL" not in os.environ:
+                    os.environ["MONGO_URL"] = line.split("=", 1)[1].strip().strip('"').strip("'")
+                elif line.startswith("DB_NAME=") and "DB_NAME" not in os.environ:
+                    os.environ["DB_NAME"] = line.split("=", 1)[1].strip().strip('"').strip("'")
+os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
+os.environ.setdefault("DB_NAME", "test_database")
+
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL")
 if not BASE_URL:
     # Fallback: read from frontend/.env
