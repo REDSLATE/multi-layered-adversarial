@@ -16,12 +16,12 @@ const ROLE_META = {
   executor:         { label: "EXECUTOR",  desc: "Calls the long/short direction. Routes Alpaca orders.",                     color: "#3B82F6" },
   governor:         { label: "GOVERNOR",  desc: "Audits, gates, freezes — never decides, never executes",                    color: "#10B981" },
   advisor:          { label: "ADVISOR",   desc: "Neutral counsel. Off-ladder. Never decides, never executes",                color: "#22C55E" },
-  opponent:         { label: "OPPONENT",  desc: "Argues the contrary case. Off-ladder.",                                     color: "#DC2626" },
+  opponent:         { label: "OPPONENT",  desc: "Argues the contrary case. Off-ladder.",                                     color: "#06B6D4" },
   // ── CRYPTO LANE ──
   crypto:           { label: "EXECUTOR",  desc: "Crypto execution chair. Routes Kraken orders. $30/order cap.",              color: "#A855F7" },
   crypto_governor:  { label: "GOVERNOR",  desc: "Crypto-only governor. Audits, gates, freezes crypto intents.",              color: "#10B981" },
   crypto_advisor:   { label: "ADVISOR",   desc: "Crypto-only neutral counsel. Off-ladder.",                                  color: "#22C55E" },
-  crypto_opponent:  { label: "OPPONENT",  desc: "Crypto-only contrary voice. Off-ladder.",                                   color: "#DC2626" },
+  crypto_opponent:  { label: "OPPONENT",  desc: "Crypto-only contrary voice. Off-ladder.",                                   color: "#06B6D4" },
 };
 
 const BRAIN_META = {
