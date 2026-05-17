@@ -39,7 +39,7 @@ export default function Overview() {
       <PageHeader
         eyebrow="Mission Control · Overview"
         title="Four brains. One nervous system."
-        sub="Shared infrastructure connects Alpha (executor), Camaro (decider), Chevelle (governor), and REDEYE (short advisor). Decision authority remains isolated; every brain stamps stances on a shared position primitive but only the executor seat makes the call. All runtimes are in observation mode — no trades fire."
+        sub="Shared infrastructure connects Alpha, Camaro, Chevelle, and REDEYE. Authority lives on SEATS, not on brain identity — any brain can hold any seat; the seat carries the doctrine and grants the rights. The seat is what gets graded, promoted, retired. Every brain stamps stances on the shared position primitive; only the seat holder of the moment makes the call."
         right={
           <div className="hidden md:flex items-center gap-2" data-testid="overview-mode-pill">
             <Badge color="#FBBF24">{flags?.deploy_mode || "—"}</Badge>
@@ -115,7 +115,7 @@ export default function Overview() {
                     } />
                     <Row label="EXECUTION" value={
                       <Badge color={rt.execution_allowed ? "#10B981" : "#71717A"}>
-                        {rt.execution_allowed ? "AUTHORIZED" : "FORBIDDEN"}
+                        {rt.execution_allowed ? "AUTHORIZED" : "OBSERVATION"}
                       </Badge>
                     } />
                     {meta.enforceFlag && (
@@ -138,11 +138,6 @@ export default function Overview() {
                     <Row label="MEMORY LABELS" value={
                       <span className="font-mono text-sm">{rt.memory_labels_count}</span>
                     } />
-                    {rt.role_violation_count > 0 && (
-                      <Row label="ROLE VIOLATIONS" value={
-                        <Badge color="#EF4444">{rt.role_violation_count} BLOCKED</Badge>
-                      } />
-                    )}
                     {rt.heartbeat_stale && (
                       <>
                         <Row label="HEARTBEAT" value={
@@ -198,19 +193,22 @@ export default function Overview() {
           {/* Doctrine + Flags strip */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
           <Card className="lg:col-span-2" testid="doctrine-card">
-            <div className="label-eyebrow mb-3">Adversarial doctrine</div>
+            <div className="label-eyebrow mb-3">Seat doctrine</div>
             <div className="font-display text-xl font-bold tracking-tight leading-snug mb-4">
-              Only Alpha has hands.<br />
-              Camaro has teeth.<br />
-              <span className="text-rd-warn">Chevelle has the keys.</span>
+              Seats carry authority.<br />
+              Brains carry training.<br />
+              <span className="text-rd-warn">The seat is what gets graded.</span>
             </div>
             <ul className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-1 text-xs font-mono text-rd-muted">
-              <li><span className="text-rd-alpha">Alpha · Trader</span> — generates executable signals. Only stack eligible for live execution. Must still pass RoadGuard / Envelope / Patent J.</li>
-              <li><span className="text-rd-camaro">Camaro · Challenger</span> — shadows Alpha, attacks the thesis, logs counterfactuals. Can recommend veto / reduce / watch. <span className="text-rd-warn">Cannot place trades.</span></li>
-              <li><span className="text-rd-chevelle">Chevelle · Governor</span> — memory firewall, readiness gate, calibration gate, audit verification, promotion control. <span className="text-rd-warn">Cannot place trades.</span></li>
+              <li><span className="text-rd-text">EXECUTOR</span> — routes broker orders. Required for quorum. Any eligible brain.</li>
+              <li><span className="text-rd-text">DECIDER</span> — forms the trust / reduce / veto / observation call on each intent.</li>
+              <li><span className="text-rd-text">GOVERNOR</span> — memory firewall, readiness, calibration, promotion control.</li>
+              <li><span className="text-rd-text">ADVISOR</span> — neutral counsel. Off-ladder.</li>
+              <li><span className="text-rd-text">OPPONENT</span> — argues the contrary case. Off-ladder.</li>
+              <li><span className="text-rd-text">AUDITOR</span> — post-trade review. Scores doctrine, never decides.</li>
             </ul>
             <div className="text-[10px] text-rd-dim uppercase tracking-widest mt-4">
-              Server-enforced at /api/ingest/receipts. Any non-Trader receipt with executed=true is coerced and recorded as role_violation.
+              Performance attaches to (lane, seat, doctrine_version) — never to a brain. Promotions and retirements target the seat doctrine. Holders rotate.
             </div>
           </Card>
 
@@ -218,9 +216,6 @@ export default function Overview() {
               <div className="label-eyebrow mb-3">Runtime flags</div>
               <div className="space-y-2">
                 <FlagLine name="BROKER_LIVE_ORDER_ENABLED" on={flags.broker_live_order_enabled} />
-                <FlagLine name="PHASE6_ENFORCE_ENABLED" on={flags.enforce_flags.alpha_phase6_enforce_enabled} />
-                <FlagLine name="CAMARO_EXECUTOR_ENFORCE_ENABLED" on={flags.enforce_flags.camaro_executor_enforce_enabled} />
-                <FlagLine name="CHEVELLE_AUTHORITY_ENABLED" on={flags.enforce_flags.chevelle_authority_enabled} />
               </div>
               <div className="text-[10px] text-rd-dim uppercase tracking-widest mt-4">
                 Mongo · {diag.mongo.ok ? "online" : "offline"} · last sync {fmtTime(diag.now)}

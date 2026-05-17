@@ -86,12 +86,22 @@ async def runtime_profile(
     """Resolved runtime profile for `stack` under the current overlay
     set. Shows the operator exactly what shape the brain operates in
     for a given lane/regime/volatility/event combo."""
+    # Doctrine pin (2026-02-17, rev3): governor-policy overlay attaches
+    # based on the seat the brain currently holds, NOT brain identity.
+    # Look up the governor seat assignment from the roster.
+    from shared.roster import get_roster  # local import to avoid cycle
+    roster = await get_roster()
+    assignments = roster.get("assignments") or {}
+    governor_seat = "crypto_governor" if lane == "crypto" else "governor"
+    holds_governor_seat = assignments.get(governor_seat) == stack.lower()
+
     profile = get_engine().get_runtime_profile(
         stack_name=stack.lower(),
         lane=lane,
         regime=regime,
         volatility=volatility,
         event_type=event_type,
+        holds_governor_seat=holds_governor_seat,
     )
     return {
         "stack": stack.lower(),

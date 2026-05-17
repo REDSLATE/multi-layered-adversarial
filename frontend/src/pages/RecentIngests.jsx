@@ -81,9 +81,7 @@ export default function RecentIngests() {
             {items.map((e, i) => {
               const meta = RUNTIME_META[e.runtime];
               const color = meta?.color || "#A1A1AA";
-              const tone = e.role_violation
-                ? "#EF4444"
-                : e.kind === "promotion_artifact"
+              const tone = e.kind === "promotion_artifact"
                 ? "#FBBF24"
                 : e.executed
                 ? "#10B981"
@@ -114,11 +112,6 @@ export default function RecentIngests() {
                         <span className="text-rd-dim">
                           {JSON.stringify(e.intent || {})}
                         </span>
-                        {e.role_violation && (
-                          <span className="text-rd-danger ml-2">
-                            ROLE VIOLATION
-                          </span>
-                        )}
                         {e.executed && (
                           <span className="text-rd-chevelle ml-2">
                             EXECUTED

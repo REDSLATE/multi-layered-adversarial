@@ -1,17 +1,23 @@
-"""Per-brain × lane intent-emission policy.
+"""Per-brain × lane intent-emission policy — RETIRED.
 
-Doctrine (2026-02-16):
-    Independent of the seat eligibility matrix. Eligibility governs
-    WHICH SEATS a brain may hold; this module governs whether a brain
-    may even *post* an intent for a given lane.
+Doctrine pin (2026-02-17, rev3):
+    The brain-lane policy was the operator-controlled mute switch on
+    intent emission. It was a brain-IDENTITY restriction surface, which
+    the architecture now explicitly forbids: authority lives on SEATS,
+    not on brains. Mute / unmute decisions are now expressed by VACATING
+    a seat (no holder = no authority for that role), not by flagging a
+    brain.
 
-    Setting `{brain: "camaro", lane: "crypto", allowed: false}` causes
-    `POST /api/intents` and `POST /api/admin/intents` to reject Camaro's
-    crypto intents with HTTP 403 — the intent never enters
-    `shared_intents` at all. Useful when an engine is misbehaving and
-    the operator wants to mute it without touching the sidecar.
-
-    Default policy: allow. Only explicit `allowed=false` rows block.
+    This module is preserved as a no-op shim so any legacy import path
+    keeps working:
+      • `is_brain_lane_allowed()` always returns True.
+      • The persisted `brain_lane_policy` collection is no longer read
+        by the gate, only retained for audit-history reference.
+      • `seed_default_policy()` is a no-op.
+      • The router still mounts (so the deployed frontend bundle
+        doesn't 404 if it asks) but the POST endpoint refuses any
+        non-`allowed=true` write and returns a doctrine-pinned error
+        message.
 """
 from __future__ import annotations
 
@@ -35,55 +41,37 @@ def _now_iso() -> str:
 
 
 async def is_brain_lane_allowed(brain: str, lane: Optional[str]) -> bool:
-    """Returns False ONLY if there's an explicit `allowed=false` row
-    for this (brain, lane) pair. Missing lanes (None) always pass —
-    the lane-inference layer or downstream gates handle those."""
-    if not brain or not lane:
-        return True
-    row = await db[BRAIN_LANE_POLICY].find_one(
-        {"brain": brain.lower(), "lane": lane.lower()},
-        {"_id": 0, "allowed": 1},
-    )
-    if row is None:
-        return True
-    return bool(row.get("allowed", True))
+    """Doctrine pin (2026-02-17, rev3): authority is seat-bound, not
+    brain-bound. This check is permanently True — no brain can be
+    muted by identity. To stop a brain from emitting in a lane,
+    vacate the seat it would be holding.
+    """
+    return True
 
 
 async def get_policy_snapshot() -> list[dict]:
-    """All explicit policy rows. Sorted brain → lane for UI."""
+    """Retained for historical visibility. Returns whatever rows the
+    collection still contains; readers must understand these rows are
+    AUDIT-ONLY and do not gate anything anymore."""
     rows = await db[BRAIN_LANE_POLICY].find({}, {"_id": 0}).to_list(200)
     rows.sort(key=lambda r: (r.get("brain", ""), r.get("lane", "")))
     return rows
 
 
 async def seed_default_policy() -> None:
-    """Idempotent. Called from server.py lifespan on boot.
+    """No-op (was idempotent allow-seeding). Retained so server.py's
+    lifespan call doesn't need to change.
 
-    Doctrine (2026-02-16): Camaro is the equity decider and the
-    crypto OPPONENT. It voices crypto setups for REDEYE (crypto
-    executor) to evaluate — it does not emit crypto intents directly.
-    Until REDEYE's crypto pipeline is online, Camaro's crypto intents
-    were stacking up in `pending` because they fail the
-    executor_seat_check gate every time. Blocking them at ingest is
-    cleaner — they never enter `shared_intents` at all.
+    Doctrine pin (2026-02-17, rev3): we additionally PURGE any
+    legacy `allowed=false` rows on boot so the persisted DB state can
+    never re-introduce a brain-identity block. This is a one-time
+    cleanup; subsequent boots find zero rows to purge.
     """
-    await db[BRAIN_LANE_POLICY].update_one(
-        {"brain": "camaro", "lane": "crypto"},
-        {"$setOnInsert": {
-            "brain": "camaro",
-            "lane": "crypto",
-            "allowed": False,
-            "reason": (
-                "Camaro is crypto_opponent, not crypto_executor. Per doctrine"
-                " (2026-02-16), opponent brains voice setups but do not emit"
-                " execution intents. Re-enable once Camaro holds the crypto"
-                " seat OR the seat-endorsement doctrine is in place."
-            ),
-            "set_by": "system_seed",
-            "set_at": _now_iso(),
-        }},
-        upsert=True,
-    )
+    try:
+        await db[BRAIN_LANE_POLICY].delete_many({"allowed": False})
+    except Exception:
+        pass
+    return None
 
 
 # ─────────────────────────── REST surface ───────────────────────────
@@ -100,21 +88,22 @@ class PolicyIn(BaseModel):
 
 @router.get("")
 async def list_policy(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Returns the historical policy rows (audit-only) + an effective
+    matrix that is ALWAYS allowed=True per the seat-doctrine.
+    """
     rows = await get_policy_snapshot()
-    # Plus an "effective matrix" view: every (brain, lane) cell with its
-    # resolved allowed value — defaults to True if no explicit row.
     effective: dict = {}
     for b in KNOWN_BRAINS:
         effective[b] = {}
         for la in KNOWN_LANES:
-            effective[b][la] = await is_brain_lane_allowed(b, la)
+            effective[b][la] = True  # doctrine pin: always allowed
     return {
         "items": rows,
         "effective": effective,
         "doctrine": (
-            "Per-brain × lane intent-emission policy. Independent of seat"
-            " eligibility — controls whether a brain may even POST an"
-            " intent for a given lane. Default: allow."
+            "Brain × lane policy is RETIRED. Authority lives on seats, "
+            "not on brain identity. To stop a brain from acting, vacate "
+            "its seat — do not mute by name."
         ),
     }
 
@@ -124,13 +113,27 @@ async def set_policy(
     body: PolicyIn,
     user: dict = Depends(get_current_user),  # noqa: B008
 ):
+    """Doctrine pin (2026-02-17, rev3): this endpoint no longer accepts
+    `allowed=false`. A POST that tries to mute a brain returns 410
+    Gone with a doctrine-pinned explanation. Allow-toggles are silently
+    accepted and recorded so the audit trail stays continuous.
+    """
+    if not body.allowed:
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Brain × lane mute is retired. Authority lives on SEATS, "
+                "not on brain identity. To stop a brain from acting in a "
+                "lane, vacate its seat in /admin/roster instead."
+            ),
+        )
     await db[BRAIN_LANE_POLICY].update_one(
         {"brain": body.brain, "lane": body.lane},
         {"$set": {
             "brain": body.brain,
             "lane": body.lane,
-            "allowed": body.allowed,
-            "reason": body.reason,
+            "allowed": True,
+            "reason": "explicit allow (audit only)",
             "set_by": user.get("email") or "operator",
             "set_at": _now_iso(),
         }},
@@ -145,8 +148,7 @@ async def clear_policy(
     lane: Literal["equity", "crypto"],
     user: dict = Depends(get_current_user),  # noqa: B008
 ):
-    """Remove the policy row — falls back to the default (allow)."""
-    r = await db[BRAIN_LANE_POLICY].delete_one({"brain": brain, "lane": lane})
-    if r.deleted_count == 0:
-        raise HTTPException(status_code=404, detail=f"no policy for {brain}/{lane}")
+    """Remove the policy row. Always returns 200 (idempotent); a
+    missing row is fine because the effective state is always allow."""
+    await db[BRAIN_LANE_POLICY].delete_one({"brain": brain, "lane": lane})
     return await list_policy(_user=user)

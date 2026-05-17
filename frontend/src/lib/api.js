@@ -141,6 +141,14 @@ export function formatApiErrorDetail(detail) {
   return String(detail);
 }
 
+// ─── RUNTIME_META ───
+// Doctrine pin (2026-02-17, rev3): this is BRAND metadata only —
+// label / color / project / training-intent description. It does
+// NOT define authority. Authority lives on SEATS (see RosterPanel
+// + ROLE_META). The `role` / `roleTagline` / `enforceFlag` fields
+// are legacy and retained ONLY so any older bundle reading them
+// doesn't blank-render. Any code that grants or denies execution
+// based on these fields is a bug and must be removed.
 export const RUNTIME_META = {
   alpha: {
     label: "ALPHA",
@@ -149,12 +157,12 @@ export const RUNTIME_META = {
     accentClass: "text-rd-alpha",
     borderClass: "border-rd-alpha",
     bgClass: "bg-rd-alpha",
-    enforceFlag: "alpha_phase6_enforce_enabled",
-    enforceLabel: "PHASE6_ENFORCE_ENABLED",
-    role: "trader",
-    roleTitle: "Trader",
-    roleTagline: "has hands",
-    note: "Generates executable signals — only stack eligible for live execution",
+    enforceFlag: null,
+    enforceLabel: null,
+    role: null,
+    roleTitle: "Alpha",
+    roleTagline: "structured trader",
+    note: "Trader-trained · structured-signal-first.",
   },
   camaro: {
     label: "CAMARO",
@@ -163,12 +171,12 @@ export const RUNTIME_META = {
     accentClass: "text-rd-camaro",
     borderClass: "border-rd-camaro",
     bgClass: "bg-rd-camaro",
-    enforceFlag: "camaro_executor_enforce_enabled",
-    enforceLabel: "CAMARO_EXECUTOR_ENFORCE_ENABLED",
-    role: "challenger",
-    roleTitle: "Challenger",
-    roleTagline: "has teeth",
-    note: "Shadows Alpha · attacks the thesis · cannot place trades",
+    enforceFlag: null,
+    enforceLabel: null,
+    role: null,
+    roleTitle: "Camaro",
+    roleTagline: "challenger / counterfactual",
+    note: "Challenger-trained · attacks the thesis, surfaces counterfactuals.",
   },
   chevelle: {
     label: "CHEVELLE",
@@ -177,12 +185,12 @@ export const RUNTIME_META = {
     accentClass: "text-rd-chevelle",
     borderClass: "border-rd-chevelle",
     bgClass: "bg-rd-chevelle",
-    enforceFlag: "chevelle_authority_enabled",
-    enforceLabel: "CHEVELLE_AUTHORITY_ENABLED",
-    role: "governor",
-    roleTitle: "Governor",
-    roleTagline: "has the keys",
-    note: "Memory firewall · readiness · calibration · audit · promotion",
+    enforceFlag: null,
+    enforceLabel: null,
+    role: null,
+    roleTitle: "Chevelle",
+    roleTagline: "memory + calibration",
+    note: "Governor-trained · memory firewall, readiness, calibration, audit.",
   },
   redeye: {
     label: "REDEYE",
@@ -191,12 +199,12 @@ export const RUNTIME_META = {
     accentClass: "text-rd-redeye",
     borderClass: "border-rd-redeye",
     bgClass: "bg-rd-redeye",
-    enforceFlag: "redeye_opponent_enforce_enabled",            // wired 2026-02-15
-    enforceLabel: "REDEYE_OPPONENT_ENFORCE_ENABLED",
-    role: "opponent",
-    roleTitle: "Opponent",
-    roleTagline: "argues the contrary case",
-    note: "Adversarial scout · stamps the contrary case on every position · cannot execute",
+    enforceFlag: null,
+    enforceLabel: null,
+    role: null,
+    roleTitle: "REDEYE",
+    roleTagline: "adversarial scout",
+    note: "Adversarial-trained · stamps the contrary case on every position.",
   },
 };
 

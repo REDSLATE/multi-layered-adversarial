@@ -150,6 +150,7 @@ class DoctrineInjectionEngine:
         regime: Optional[str] = None,
         volatility: Optional[str] = None,
         event_type: Optional[str] = None,
+        holds_governor_seat: bool = False,
     ) -> dict:
         profile = copy.deepcopy(_default_profile(stack_name))
         applicable = self._matching_overlays(
@@ -173,12 +174,14 @@ class DoctrineInjectionEngine:
                 profile["temporary_bias"] = overlay.personality_bias[stack_name]
 
             # ── governor policy ───────────────────────────────
-            # Only Chevelle (or whoever holds a governor seat — we key
-            # on stack name here per the operator spec). The council's
-            # actual gate logic in execution.py is unchanged — this is
-            # advisory metadata the council CAN read to soften its
-            # damping if it wants. Authority remains seat-bound.
-            if stack_name == "chevelle" and overlay.governor_policy:
+            # Doctrine pin (2026-02-17, rev3): authority is seat-bound,
+            # not brain-bound. Governor-policy overlay attaches when the
+            # CALLER asks for it on behalf of a brain that currently
+            # holds the governor seat. `holds_governor_seat` is supplied
+            # by the caller (resolved from the roster); if not supplied,
+            # the overlay is silently skipped — brain identity alone
+            # never grants the governor-policy view.
+            if holds_governor_seat and overlay.governor_policy:
                 profile["governor_policy"] = dict(overlay.governor_policy)
 
             applied.append(overlay.overlay_id)

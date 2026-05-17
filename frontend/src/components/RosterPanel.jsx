@@ -64,7 +64,6 @@ const _laneOf = (role) => (_CRYPTO_LANE_SET.has(role) ? "crypto" : "equity");
 export default function RosterPanel() {
   const [data, setData] = useState(null);
   const [tenure, setTenure] = useState(null);
-  const [showEligibility, setShowEligibility] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -169,15 +168,6 @@ export default function RosterPanel() {
         <div className="flex items-baseline gap-3">
           <button
             type="button"
-            onClick={() => setShowEligibility(!showEligibility)}
-            className="text-[10px] uppercase tracking-widest text-rd-dim hover:text-rd-text flex items-center gap-1 font-mono"
-            data-testid="roster-eligibility-toggle"
-          >
-            {showEligibility ? <ToggleRight size={11} weight="bold" /> : <ToggleLeft size={11} weight="bold" />}
-            eligibility switches
-          </button>
-          <button
-            type="button"
             onClick={() => action("Reset to doctrine defaults", () => api.post("/admin/roster/reset"))}
             disabled={busy}
             className="text-[10px] uppercase tracking-widest text-rd-dim hover:text-rd-text flex items-center gap-1 font-mono"
@@ -201,21 +191,11 @@ export default function RosterPanel() {
         </div>
       </div>
 
-      {showEligibility && (
-        <EligibilityMatrix
-          eligibility={eligibility}
-          assignments={assignments}
-          onToggle={(brain, role, allowed) =>
-            action(
-              `${BRAIN_META[brain]?.label || brain.toUpperCase()} · ${ROLE_META[role]?.label || role} (${_laneOf(role).toUpperCase()}) ${allowed ? "ALLOWED" : "BLOCKED"}`,
-              () => api.post("/admin/roster/eligibility", { brain, role, allowed }),
-            )
-          }
-          busy={busy}
-        />
-      )}
-
-      <BrainLanePolicyPanel busy={busy} />
+      {/* Eligibility matrix + brain×lane mute panel REMOVED
+          (2026-02-17, rev3). Doctrine pin: authority lives on SEATS,
+          not on brain identity. To stop a brain from acting, vacate
+          its seat above. There is no per-brain×role or per-brain×lane
+          deny surface anymore. */}
 
       {tenure && (
         <div className="px-4 py-2.5 bg-rd-bg2 border-t border-rd-border text-[10px] font-mono text-rd-dim flex items-baseline justify-between flex-wrap gap-2">
@@ -360,7 +340,10 @@ function RoleSlot({ role, occupant, assignments, eligibility, tenure, onAssign, 
             const otherLane = myLane === "equity" ? "crypto" : "equity";
             const otherLaneRole = lanesOfBrain[brain]?.[otherLane];
             const isCurrent = occupant === brain;
-            const isEligible = !!eligibility?.[brain]?.[role];
+            // Doctrine pin (2026-02-17, rev3): any brain may hold any
+            // seat. There is no per-brain×role eligibility check. To
+            // stop a brain from acting, vacate the seat — never block
+            // by identity.
             return (
               <button
                 key={brain}
@@ -370,34 +353,29 @@ function RoleSlot({ role, occupant, assignments, eligibility, tenure, onAssign, 
                       && (window.RD_DEBUG_ROSTER || window.localStorage?.RD_DEBUG_ROSTER)) {
                     // eslint-disable-next-line no-console
                     console.debug("[roster.click]", "picker-btn", {
-                      role, brain, isCurrent, isEligible,
-                      willCall: !isCurrent && isEligible,
+                      role, brain, isCurrent,
+                      willCall: !isCurrent,
                     });
                   }
                   setPicking(false);
-                  if (!isCurrent && isEligible) onAssign(brain);
+                  if (!isCurrent) onAssign(brain);
                 }}
-                disabled={busy || isCurrent || !isEligible}
+                disabled={busy || isCurrent}
                 className={`w-full text-left text-[11px] font-mono flex items-baseline gap-2 px-2 py-1 border ${
                   isCurrent
                     ? "border-rd-text bg-rd-bg3 text-rd-text"
-                    : isEligible
-                      ? "border-rd-border hover:bg-rd-bg2 text-rd-text"
-                      : "border-rd-border text-rd-dim opacity-50 cursor-not-allowed"
+                    : "border-rd-border hover:bg-rd-bg2 text-rd-text"
                 }`}
                 data-testid={`roster-pick-${role}-${brain}`}
-                title={isEligible ? "click to save this brain into this position" : `${brain} is not eligible for ${role} — toggle in the switches matrix`}
+                title="click to save this brain into this position"
               >
                 <Badge color={BRAIN_META[brain]?.color}>{BRAIN_META[brain]?.label || brain.toUpperCase()}</Badge>
-                {!isEligible && (
-                  <span className="text-[10px] text-rd-danger ml-auto">BLOCKED</span>
-                )}
-                {isEligible && elsewhereSameLane && (
+                {elsewhereSameLane && (
                   <span className="text-[10px] text-rd-warning ml-auto">
                     will vacate {(ROLE_META[elsewhereSameLane]?.label || elsewhereSameLane).toLowerCase()}
                   </span>
                 )}
-                {isEligible && !elsewhereSameLane && otherLaneRole && (
+                {!elsewhereSameLane && otherLaneRole && (
                   <span className="text-[10px] text-rd-dim ml-auto">
                     also holds {(ROLE_META[otherLaneRole]?.label || otherLaneRole).toLowerCase()} ({otherLane})
                   </span>

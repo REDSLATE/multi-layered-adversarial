@@ -5,14 +5,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, Literal
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, Header
 from pydantic import BaseModel, Field
 
 from db import db
 from namespaces import (
     SHARED_RECEIPTS, SHARED_MEMORY, SHARED_CALIBRATORS, SHARED_ARTIFACTS,
     SHARED_HEARTBEATS, SHARED_PROMOTION_ARTIFACTS, SHARED_AUTHORITY_STATE,
-    RUNTIMES, runtime_can_execute_state, DEFAULT_AUTHORITY,
+    DEFAULT_AUTHORITY,
 )
 from runtime_auth import verify_runtime_token
 
@@ -25,6 +25,11 @@ def _now_iso() -> str:
 
 
 def _broker_live_enabled() -> bool:
+    # Retained for any legacy import path; doctrine pin (2026-02-17, rev3)
+    # — this no longer gates execution flow. Seat policy is the only
+    # authority gate. Returns the env flag verbatim so callers that
+    # still consult it (e.g., telemetry) see the same value, but it
+    # MUST NOT be used to block a brain from emitting a receipt.
     return os.environ.get("BROKER_LIVE_ORDER_ENABLED", "false").lower() == "true"
 
 
@@ -69,15 +74,14 @@ async def ingest_receipt(
 ):
     verify_runtime_token(body.runtime, x_runtime_token or "")
 
-    # ─── Doctrine update (2026-05-14) ───
-    # Authority lives on SEATS, not brains. A brain's identity does NOT
-    # grant or restrict what it may do — the seat it currently holds
-    # does. We still record the brain's current authority_state in the
-    # receipt for audit context, but it no longer gates `executed`.
-    # The actual execution gate runs in `/api/execution/submit` (and the
-    # auto-router), where seat policy is the source of truth.
+    # ─── Doctrine (2026-02-17, rev3) ───
+    # Authority lives on SEATS, not brains. This legacy receipt
+    # endpoint no longer coerces or blocks based on brain identity.
+    # The actual execution gate is `/api/execution/submit`, where
+    # seat policy is the source of truth. Receipts record what the
+    # brain DID — not what it was "allowed" to do.
     authority_state = await _current_authority(body.runtime)
-    executed = bool(body.executed) and _broker_live_enabled()
+    executed = bool(body.executed)
     role_violation = False  # legacy field, retained for schema stability
 
     doc = {

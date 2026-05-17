@@ -1,5 +1,12 @@
-"""Runtime flags read from env. Observation-only enforcement.
-Flags are read-only via API in observation mode."""
+"""Runtime flags read from env.
+
+Doctrine (2026-02-17, rev3): seat policy is the only authority gate.
+Brain-named enforce flags have been retired — authority does not
+depend on which brain holds which seat, so flags scoped to brain
+identity (PHASE6_ENFORCE_ENABLED, CAMARO_EXECUTOR_ENFORCE_ENABLED,
+CHEVELLE_AUTHORITY_ENABLED, REDEYE_OPPONENT_ENFORCE_ENABLED) are no
+longer read or surfaced. Only system-wide flags survive.
+"""
 import os
 from fastapi import APIRouter, Depends
 
@@ -17,17 +24,18 @@ def get_flags_snapshot() -> dict:
     return {
         "deploy_mode": os.environ.get("DEPLOY_MODE", "observation"),
         "broker_live_order_enabled": _b("BROKER_LIVE_ORDER_ENABLED"),
-        "enforce_flags": {
-            "alpha_phase6_enforce_enabled": _b("PHASE6_ENFORCE_ENABLED"),
-            "camaro_executor_enforce_enabled": _b("CAMARO_EXECUTOR_ENFORCE_ENABLED"),
-            "chevelle_authority_enabled": _b("CHEVELLE_AUTHORITY_ENABLED"),
-            "redeye_opponent_enforce_enabled": _b("REDEYE_OPPONENT_ENFORCE_ENABLED"),
-        },
+        # Legacy field kept as an empty dict for one deprecation cycle
+        # so any old frontend bundle reading `enforce_flags.*` doesn't
+        # blank-render on a missing key. New consumers MUST treat seat
+        # policy as the source of authority.
+        "enforce_flags": {},
         "roles": {rt: ROLES[rt] for rt in RUNTIMES},
         "doctrine": (
-            "observation-only — execution authority disabled across all runtimes. "
-            "Only Alpha has hands. Camaro has teeth. Chevelle has the keys. "
-            "REDEYE argues the contrary case."
+            "Authority lives on SEATS, not brains. Any eligible brain "
+            "may hold any seat. Performance attaches to "
+            "(lane, seat, doctrine_version) — never to brain identity. "
+            "Promotion / retirement targets the seat doctrine. "
+            "Holders rotate."
         ),
     }
 

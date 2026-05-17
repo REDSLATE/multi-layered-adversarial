@@ -3,12 +3,24 @@ import { api } from "@/lib/api";
 import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
 import { Lock } from "@phosphor-icons/react";
 
+/**
+ * Flags page — system-wide runtime flags only.
+ *
+ * Doctrine pin (2026-02-17, rev3):
+ *   Authority lives on SEATS, not brains. Brain-named enforce flags
+ *   (PHASE6_ENFORCE_ENABLED, CAMARO_EXECUTOR_ENFORCE_ENABLED,
+ *   CHEVELLE_AUTHORITY_ENABLED, REDEYE_OPPONENT_ENFORCE_ENABLED) have
+ *   been retired — they were the source of brain-name-locked
+ *   restrictions that caused authority-by-identity contamination.
+ *   This page now surfaces ONLY system-wide flags + the seat doctrine
+ *   restatement. Per-seat doctrine lives at /admin/doctrine.
+ */
 export default function Flags() {
   const [data, setData] = useState(null);
   useEffect(() => {
     (async () => {
-      const { data } = await api.get("/admin/flags");
-      setData(data);
+      const res = await api.get("/admin/flags");
+      setData(res.data);
     })();
   }, []);
 
@@ -16,97 +28,53 @@ export default function Flags() {
     <div className="reveal" data-testid="flags-page">
       <PageHeader
         eyebrow="Admin · Runtime flags"
-        title="Promotion gates & execution authority"
-        sub="Flags are read-only in observation mode. Each enforce flag is owned by exactly one runtime — they cannot be flipped collectively. Promotion is a per-stack decision."
+        title="System-wide execution flags"
+        sub="Flags scope to the SYSTEM, not to a brain. Per-seat doctrine and authority lives in the roster + the doctrine layer; this page is the master-switch view."
         testid="flags-header"
       />
 
       {!data && <LoadingRow />}
 
       {data && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-          <Card className="md:col-span-2" testid="flags-broker">
+        <div className="grid grid-cols-1 gap-4 md:gap-6">
+          <Card testid="flags-broker">
             <div className="flex items-start gap-3">
               <Lock size={20} weight="bold" className="text-rd-warn mt-1" />
               <div className="flex-1">
                 <div className="label-eyebrow mb-1">Broker control (global)</div>
                 <div className="font-mono text-sm mb-2">BROKER_LIVE_ORDER_ENABLED</div>
                 <div className="text-xs text-rd-muted leading-relaxed">
-                  Master switch. While false, no runtime can place a live order — even if its own
-                  enforce flag is true.
+                  Master switch on live order submission. When false,
+                  the execution gate refuses to submit live broker
+                  orders system-wide. Seat policy is unaffected — a
+                  seat holder remains the deciding authority for every
+                  intent regardless of this flag.
                 </div>
               </div>
-              <Badge color={data.broker_live_order_enabled ? "#EF4444" : "#71717A"}>
+              <Badge color={data.broker_live_order_enabled ? "#10B981" : "#71717A"}>
                 {data.broker_live_order_enabled ? "TRUE · LIVE" : "FALSE · DISABLED"}
               </Badge>
             </div>
           </Card>
 
-          <FlagCard
-            color="#3B82F6"
-            label="ALPHA"
-            project="RISEDUAL-AI-2"
-            flag="PHASE6_ENFORCE_ENABLED"
-            on={data.enforce_flags.alpha_phase6_enforce_enabled}
-            note="ROLE: TRADER · has hands. Only stack with execution authority. Promotes Alpha's Phase-6 proposals from advisory to enforced."
-            testid="flag-alpha"
-          />
-          <FlagCard
-            color="#F59E0B"
-            label="CAMARO"
-            project="RD4_0421"
-            flag="CAMARO_EXECUTOR_ENFORCE_ENABLED"
-            on={data.enforce_flags.camaro_executor_enforce_enabled}
-            note="ROLE: CHALLENGER · has teeth. Shadows Alpha and recommends veto/reduce/watch. Cannot place trades — server-enforced."
-            testid="flag-camaro"
-          />
-          <FlagCard
-            color="#10B981"
-            label="CHEVELLE"
-            project="2.1-APP"
-            flag="CHEVELLE_AUTHORITY_ENABLED"
-            on={data.enforce_flags.chevelle_authority_enabled}
-            note="ROLE: GOVERNOR · has the keys. Memory firewall, readiness, calibration, audit, promotion control. Cannot place trades — server-enforced."
-            testid="flag-chevelle"
-          />
-          <FlagCard
-            color="#DC2626"
-            label="REDEYE"
-            project="REDEYE-OPS"
-            flag="REDEYE_OPPONENT_ENFORCE_ENABLED"
-            on={data.enforce_flags.redeye_opponent_enforce_enabled}
-            note="ROLE: OPPONENT · argues the contrary case. Off-ladder adversarial scout. Posts contrary stances on every position. Cannot place trades — server-enforced."
-            testid="flag-redeye"
-          />
-
-          <Card className="md:col-span-2" testid="flags-doctrine">
+          <Card testid="flags-doctrine">
             <div className="label-eyebrow mb-2">Doctrine</div>
             <p className="text-xs font-mono text-rd-muted leading-relaxed">
-              {data.doctrine}. Promotion gates remain isolated per runtime — flipping one does not
-              flip another. A runtime cannot promote itself; promotion requires an out-of-band
-              operator action plus broker-level enablement.
+              {data.doctrine}
             </p>
+          </Card>
+
+          <Card testid="flags-deploy-mode">
+            <div className="flex items-baseline justify-between">
+              <div>
+                <div className="label-eyebrow mb-1">Deploy mode</div>
+                <div className="font-mono text-sm">DEPLOY_MODE</div>
+              </div>
+              <Badge color="#FBBF24">{data.deploy_mode}</Badge>
+            </div>
           </Card>
         </div>
       )}
     </div>
-  );
-}
-
-function FlagCard({ color, label, project, flag, on, note, testid }) {
-  return (
-    <Card accentColor={color} testid={testid}>
-      <div className="flex items-baseline justify-between mb-3">
-        <div>
-          <div className="font-display text-xl font-black tracking-tighter" style={{ color }}>
-            {label}
-          </div>
-          <div className="label-eyebrow mt-1">{project}</div>
-        </div>
-        <Badge color={on ? "#10B981" : "#71717A"}>{on ? "ENABLED" : "DISABLED"}</Badge>
-      </div>
-      <div className="font-mono text-xs text-rd-text mb-2">{flag}</div>
-      <div className="text-xs text-rd-muted leading-relaxed">{note}</div>
-    </Card>
   );
 }

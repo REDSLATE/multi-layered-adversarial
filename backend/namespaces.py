@@ -202,18 +202,27 @@ ADVISORS: tuple[str, ...] = ()
 DISCUSSION_PARTICIPANTS: tuple[str, ...] = RUNTIMES + ADVISORS
 
 # ───────────────────────────────────────────────────────────────────────
-# RUNTIME ROLES — the FUNCTIONAL kind of brain. Fixed.
-#   "Only Alpha has hands. Camaro has teeth. Chevelle has the keys."
+# RUNTIME ROLES — TRAINING-INTENT metadata only.
+#
+# Doctrine pin (2026-02-17, rev3):
+#   Authority lives on SEATS, not brains. The fields here describe
+#   WHAT EACH BRAIN WAS TRAINED FOR — not what it is allowed to do.
+#   Any code that reads these fields to GRANT or DENY execution is a
+#   bug. Use the roster's seat assignment instead. The `allowed_actions`
+#   field is retained for back-compat with diagnostic surfaces that
+#   enumerate "what kind of work this brain produces", but it does
+#   NOT enforce anything.
 # ───────────────────────────────────────────────────────────────────────
 ROLES: dict[str, dict] = {
     "alpha": {
         "role": "trader",
-        "title": "Trader",
-        "tagline": "has hands",
+        "title": "Alpha",
+        "tagline": "structured trader",
         "description": (
-            "Generates executable signals. The only stack whose authority can "
-            "ever climb to CO_TRADER or PRIMARY. Must still pass RoadGuard / "
-            "Envelope / Patent J gates."
+            "Trained on structured-signal day-trading. Stamps "
+            "executable proposals; whether a proposal lands as an "
+            "order depends on the SEAT holder of the moment, not on "
+            "Alpha's identity."
         ),
         "allowed_actions": [
             "enter_long", "enter_short", "exit", "scale_in", "hold",
@@ -222,11 +231,12 @@ ROLES: dict[str, dict] = {
     },
     "camaro": {
         "role": "challenger",
-        "title": "Challenger",
-        "tagline": "has teeth",
+        "title": "Camaro",
+        "tagline": "challenger / counterfactual",
         "description": (
-            "Shadows Alpha. Attacks Alpha's thesis. Logs counterfactuals. "
-            "Authority can climb the ladder via PromotionArtifact + Patent J + operator."
+            "Trained to attack the thesis and surface counterfactuals. "
+            "Whether the challenge becomes a veto / reduce / watch "
+            "depends on which seat Camaro currently holds."
         ),
         "allowed_actions": [
             "shadow_proposal", "counterfactual", "veto", "reduce", "watch",
@@ -235,12 +245,13 @@ ROLES: dict[str, dict] = {
     },
     "chevelle": {
         "role": "governor",
-        "title": "Governor",
-        "tagline": "has the keys",
+        "title": "Chevelle",
+        "tagline": "memory + calibration",
         "description": (
-            "Memory firewall, readiness gate, calibration gate, audit "
-            "verification, promotion control. Off-ladder — does not trade and "
-            "is not promotable to a trading authority."
+            "Trained on memory firewall, readiness gate, calibration "
+            "gate, audit verification, and promotion-control reasoning. "
+            "Authority to act on those signals depends on which seat "
+            "Chevelle currently holds."
         ),
         "allowed_actions": [
             "readiness_gate", "calibration_gate", "audit_verify",
@@ -249,16 +260,15 @@ ROLES: dict[str, dict] = {
     },
     "redeye": {
         "role": "opponent",
-        "title": "Opponent",
-        "tagline": "argues the contrary case",
+        "title": "REDEYE",
+        "tagline": "adversarial scout",
         "description": (
-            "Adversarial scout. Off-ladder. Argues the contrary case on "
-            "every position (today: typically the short side, but the "
-            "seat does not bind direction — the seat binds intent). "
-            "Whoever holds the executor seat makes the final call. "
+            "Trained to argue the contrary case on every position. "
             "REDEYE speaks via the shared discussion layer and the "
             "position primitive — peers may read, never modify, its "
-            "stances."
+            "stances. Authority to translate a contrary-case finding "
+            "into a veto / reduce / watch depends on the seat REDEYE "
+            "currently holds."
         ),
         "allowed_actions": [
             "post_opinion", "read_opinions", "read_roles_manifest",

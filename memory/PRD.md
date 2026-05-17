@@ -1,7 +1,100 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
-## 🚨 Latest (2026-02-17, late+6): Symmetric 6-Seat Roster (Spec Honored)
+## 🚨 Latest (2026-02-17, late+7): Brain-Name Restriction Sweep
+
+User flagged that the "phantom bugs" chasing the council seats were
+caused by lingering BRAIN-IDENTITY-BASED restrictions throughout the
+codebase — words, doctrine fragments, env flags, persisted DB rows,
+and one live gate function. Per user directive:
+
+> *"Please remove any mention of forbidden/blocked/restricted from
+> this side of MC. Anything that blocks any brain needs to go,
+> either by words or functions."*
+
+**Doctrine pin (rev3)**: Authority lives on **SEATS**, not on brain
+identity. To stop a brain from acting, **vacate the seat** — never
+mute by name. Every brain may hold every seat.
+
+### Backend surfaces stripped / defanged
+
+- `shared/flags.py` — RETIRED brain-named enforce flags
+  (`PHASE6_ENFORCE_ENABLED`, `CAMARO_EXECUTOR_ENFORCE_ENABLED`,
+  `CHEVELLE_AUTHORITY_ENABLED`, `REDEYE_OPPONENT_ENFORCE_ENABLED`).
+  `/admin/flags` now returns only `BROKER_LIVE_ORDER_ENABLED` plus
+  the seat-doctrine restatement. Legacy `enforce_flags={}` key kept
+  for one cycle so old bundles don't blank-render.
+- `shared/brain_lane_policy.py` — gate function
+  `is_brain_lane_allowed()` permanently returns True. POST endpoint
+  refuses `allowed=false` writes with HTTP 410 + doctrine-pinned
+  explanation. On boot, any leftover `allowed=false` rows in the
+  `brain_lane_policy` collection are purged. The `effective` matrix
+  hard-codes True for every `(brain, lane)` cell. The
+  Camaro-crypto-mute that was the silent "phantom" is gone.
+- `shared/ingest.py` — `/ingest/receipts` no longer multiplies
+  `executed` by `_broker_live_enabled()`. `_broker_live_enabled()`
+  retained as a legacy helper but does NOT gate execution flow.
+  Authority chain runs solely through `/execution/submit` + seat
+  policy.
+- `shared/doctrine_injection.py` + `shared/doctrine_routes.py` —
+  governor-policy overlay no longer keys on `stack_name == "chevelle"`;
+  caller resolves `holds_governor_seat` from the roster and passes
+  it explicitly. If no brain holds the governor seat for the lane,
+  no overlay attaches (correct: empty seat → no authority).
+- `namespaces.py` — `ROLES` registry rewritten. Field semantics
+  changed from "what this brain is authorized to do" to
+  "what this brain was trained for". Old language (`has hands`,
+  `has teeth`, `has the keys`) replaced with brand metadata
+  (`structured trader`, `challenger / counterfactual`,
+  `memory + calibration`, `adversarial scout`). Doctrine pin
+  comment explicitly forbids reading these fields as a gate.
+
+### Frontend surfaces cleaned
+
+- `pages/Overview.jsx` — page header now reads "Four brains. One
+  nervous system." with the seat-doctrine subhead. The
+  "Adversarial Doctrine" card renamed to "Seat doctrine" and lists
+  the 6 seats and what each one means; no brain names appear in
+  the doctrine. Runtime cards no longer surface `ROLE VIOLATIONS`,
+  no `FORBIDDEN` execution label, no enforce-flag chips.
+- `pages/Flags.jsx` — rewritten end-to-end. Only `BROKER_LIVE_ORDER_ENABLED`
+  master switch + the doctrine restatement remain. No per-brain
+  enforce sections.
+- `components/RosterPanel.jsx` — `EligibilityMatrix` removed from
+  render path (function definition left in place for now as dead
+  code; future cleanup). `BrainLanePolicyPanel` removed from render
+  path. Eligibility-switches toggle button removed. Picker no
+  longer renders "BLOCKED" branch; `isEligible` removed; every
+  brain is selectable for every seat. Picker title text reads
+  "click to save this brain into this position".
+- `pages/RecentIngests.jsx` — `ROLE VIOLATION` chip removed; the
+  red-toned `role_violation` tone branch deleted.
+- `lib/api.js` — `RUNTIME_META` notes / taglines rewritten to be
+  training-intent descriptions, not authority claims.
+  `enforceFlag` / `enforceLabel` / `role` fields kept as `null`
+  for one cycle so any older bundle that reads them doesn't blank.
+
+### Verified clean
+
+Playwright body-scrape of `/admin/overview` returns 0 occurrences of
+every banned string: `Camaro has teeth`, `Chevelle has the keys`,
+`Only Alpha has hands`, `Cannot place trades`, `ROLE VIOLATION`,
+`BLOCKED`, `FORBIDDEN`, `CAMARO_EXECUTOR_ENFORCE`,
+`CHEVELLE_AUTHORITY`, `PHASE6_ENFORCE`. Backend tests still green
+(83/83 doctrine + auto-retire + promotion + sidecars).
+
+API verified: `/admin/brain-lane-policy` effective matrix returns
+`{alpha:{equity:True,crypto:True}, camaro:{equity:True,crypto:True}, ...}`
+— every brain × every lane is allowed.
+
+**PRODUCTION ACTION REQUIRED**: redeploy preview → production
+(`mission.risedual.ai`). The PROD database also needs the
+`brain_lane_policy` `allowed=false` rows purged — `seed_default_policy()`
+auto-runs the purge on boot, so a clean redeploy + restart is enough.
+
+
+
+## 🚨 Previous (2026-02-17, late+6): Symmetric 6-Seat Roster (Spec Honored)
 
 User flagged two doctrinal gaps:
 1. **AUDITOR missing from EQUITY lane** while present in CRYPTO — asymmetric.
