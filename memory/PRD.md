@@ -2,6 +2,35 @@
 
 
 
+## 🚨 Latest (2026-05-17, +2): Council refactor + drift tripwire
+
+### `_evaluate_council` decomposed
+- 334-line monolith → 65-line linear orchestrator (8 phases) + 9
+  named helpers, each ≤93 lines, each independently testable.
+- Doctrine **unchanged**. Locked by 36 characterization tests in
+  `tests/test_governance_verdict.py` + `tests/test_council_helpers.py`
+  (10 + 26 = 36, all pass).
+- Largest remaining helper: `_governance_verdict` at 93 lines.
+  **WATCH-NOTE**: if this grows past ~120 lines, split into
+  `_resolve_governance_inputs()` + `_apply_governor_authority()` +
+  `_build_governance_verdict()`. Not urgent.
+
+### New drift tripwire — `tests/test_council_diagnose_contract.py`
+Pins the LIVE `/api/admin/execution/diagnose` contract via HTTP
+against the preview backend. 11 tests covering:
+- Top-level response shape (10 required keys)
+- Canonical gate-chain ordering (7 core + 3 lane-specific cap gates)
+- Required keys on governor + opponent gate rows
+- `quantum_state.regime_probs` sums to 1.0
+- `kraken_credentials.state` is one of 4 known values
+- `first_blocker` consistency with verdict
+
+**If this tripwire fails**, the council surface changed. Either:
+- (a) Intentional → update the test fixtures + log a PRD note
+- (b) Unintentional → roll the edit back
+
+
+
 ## 🚨 Latest (2026-05-17, +1): Lane-Isolated Seats + Preview Vacate
 
 Operator order: "remove every brain in the preview from their seat —
