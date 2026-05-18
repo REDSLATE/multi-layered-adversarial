@@ -3,6 +3,7 @@ import { api, RUNTIME_META, fmtTime, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
 import VRLScorecardsPanel from "@/components/VRLScorecardsPanel";
 import LiveTradeDiagnose from "@/components/LiveTradeDiagnose";
+import RuntimeTokensPanel from "@/components/RuntimeTokensPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 
 const BRAINS_FOR_FILTER = ["all", "alpha", "camaro", "chevelle", "redeye"];
@@ -506,6 +507,17 @@ export default function Diagnostics() {
           <div className="mt-6">
             <PanelErrorBoundary panelName="LiveTradeDiagnose">
               <LiveTradeDiagnose />
+            </PanelErrorBoundary>
+          </div>
+
+          {/* Brain ingest tokens — read-back of the per-runtime
+              X-Runtime-Token MC expects. One-click reveal + copy +
+              .env snippet download per brain. Built so the operator
+              can compare each brain's MONOREPO_INGEST_TOKEN against
+              MC's <BRAIN>_INGEST_TOKEN env var. */}
+          <div className="mt-6">
+            <PanelErrorBoundary panelName="RuntimeTokensPanel">
+              <RuntimeTokensPanel />
             </PanelErrorBoundary>
           </div>
 
