@@ -1,23 +1,14 @@
 """Crypto-lane exposure caps.
 
-Doctrine (2026-05-18, rev 3):
-    Crypto trades live on Kraken. Per-order cap lifted to $1M to match
-    the equity lane's lifted cap — the only authority on whether a
-    crypto order routes is the **seat policy** (whoever holds the
-    crypto Executor seat). The cap stays in the schema so the structure
-    is here to tighten later, but it is no longer the rail that blocks
-    live crypto trading.
+Doctrine (2026-05-18, rev 4):
+    Per-order cap is $500 — generous enough for normal sizing, tight
+    enough that a brain bug emitting a huge notional can't blow up
+    the account. Live order routing is gated by seat policy; the cap
+    is operational insurance, not a doctrinal restriction.
 
-    Day-1 caps:
-      * per-order:     $1,000,000  (matches the global equity cap)
-      * per-day:       inherits the global $1M cap
-      * open notional: inherits the global $1M cap
-
-    Bump the per-order ceiling here ONLY when ready to size up. The
-    rest of the system reads this constant — no other code changes
-    needed.
+    Bump this only by deliberate operator order.
 """
 from __future__ import annotations
 
 
-CRYPTO_PER_ORDER_USD: float = 1_000_000.0
+CRYPTO_PER_ORDER_USD: float = 500.0
