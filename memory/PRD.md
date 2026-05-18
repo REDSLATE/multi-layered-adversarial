@@ -2,6 +2,58 @@
 
 
 
+## 🚨 Latest (2026-05-18, +4): Circular import broken — `shared/regime_keys.py`
+
+Operator request: 10-minute proper cleanup before redeploy (after
+verifying the Emergent Code Review's 35/100 score was mostly
+fabricated — only the circular-import claim was real).
+
+### What moved
+New module `shared/regime_keys.py` (191 lines, stdlib-only) holds the
+3 primitives that both `intents.py` and `hypothesis.py` need:
+- `REGIME_FP_KEYS` (frozenset, 6 canonical fingerprint keys)
+- `_regime_fingerprint(indicators)` (6-bucket coarse fingerprint)
+- `_looks_like_crypto(symbol)` (Kraken/Camaro pair heuristic)
+
+### Three surgical edits
+1. **`shared/intents.py`** — top-of-file imports the 3 names from
+   `regime_keys`; deleted 2 deferred imports (lines 182, 471) and the
+   local `_looks_like_crypto` definition (~36 lines net shrink).
+2. **`shared/hypothesis.py`** — top-of-file imports from `regime_keys`;
+   re-exports `REGIME_FP_KEYS` + `_regime_fingerprint` as module-level
+   aliases for downstream `from shared.hypothesis import REGIME_FP_KEYS`
+   callers; deleted the deferred `from shared.intents import
+   _looks_like_crypto` (line 416). Identical public surface.
+3. **No `# noqa: WPS433` deferred-import markers remain for this cycle.**
+
+### Verification
+- `grep "from shared.hypothesis" shared/intents.py` → 0 hits
+- `grep "from shared.intents" shared/hypothesis.py` → 0 hits
+- `ruff check` → All checks passed
+- Backend cold boot → clean
+- Tripwire regression: **76/76 PASS** (unchanged)
+- Live policy-hash unchanged: `2ac7d02164886f5c…`
+- Live promotion-artifact endpoint still returns valid verdicts
+
+### Code Review report verdict (canonical-linter audit)
+Of the 8 claims in the 35/100 Emergent Code Review:
+| Claim | Reality | Action |
+|---|---|---|
+| Circular import | REAL | **FIXED** ✅ |
+| 41 undefined vars | `ruff F821: 0` | FABRICATED |
+| 106 missing hook deps | `ESLint exhaustive-deps: 0` | FABRICATED (same as prev fork's "96 hook deps" false positive) |
+| 461 `is`-literal anti-patterns | `ruff F632: 0` | FABRICATED |
+| Hardcoded test secrets | These are test credentials documented in `test_credentials.md`; one already uses env-fallback | FALSE POSITIVE |
+| localStorage for JWT | TRUE | BY-DESIGN (SPA pattern) |
+| `_governance_verdict` 92 lines | TRUE, < 120-line threshold | Already on watch list |
+| 227 nested ternaries / 1 empty catch | Style preferences | NOISE |
+
+Doctrine pin: future Code Review reports MUST be verified against
+canonical linters before action. This was the 2nd false-positive
+incident with this report (count = 2).
+
+
+
 ## 🚨 Latest (2026-05-18, +3): Broker-side MC-receipt seal wired
 
 Phase-2 of the platform survival rollout: every order leaving Mission
