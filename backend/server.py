@@ -79,6 +79,7 @@ from shared.hypothesis import router as hypothesis_router
 from shared.mc_shelly import router as mc_shelly_router
 from shared.patches import router as patches_router
 from shared.runtime_tokens import router as runtime_tokens_router
+from shared.promotion_artifact_report import router as promotion_artifact_report_router
 from shared.public_api.news import (
     router as public_news_router,
     start_news_refresher,
@@ -251,6 +252,7 @@ api_router.include_router(hypothesis_router)
 api_router.include_router(mc_shelly_router)
 api_router.include_router(patches_router)
 api_router.include_router(runtime_tokens_router)
+api_router.include_router(promotion_artifact_report_router)
 api_router.include_router(public_news_router)
 api_router.include_router(public_darkpool_router)
 api_router.include_router(diagnostics_router)

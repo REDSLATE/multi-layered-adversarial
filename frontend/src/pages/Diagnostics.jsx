@@ -4,6 +4,7 @@ import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
 import VRLScorecardsPanel from "@/components/VRLScorecardsPanel";
 import LiveTradeDiagnose from "@/components/LiveTradeDiagnose";
 import RuntimeTokensPanel from "@/components/RuntimeTokensPanel";
+import PromotionArtifactPanel from "@/components/PromotionArtifactPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 
 const BRAINS_FOR_FILTER = ["all", "alpha", "camaro", "chevelle", "redeye"];
@@ -507,6 +508,18 @@ export default function Diagnostics() {
           <div className="mt-6">
             <PanelErrorBoundary panelName="LiveTradeDiagnose">
               <LiveTradeDiagnose />
+            </PanelErrorBoundary>
+          </div>
+
+          {/* Promotion artifact — shadow-proposal vs alpha-fill evidence.
+              Operators read this to decide whether a challenger brain
+              has earned promotion to an executor seat. Verdicts here
+              are advisory; the Patent-J countersign at
+              /admin/promotion/proposals is still the only path to flip
+              authority. */}
+          <div className="mt-6">
+            <PanelErrorBoundary panelName="PromotionArtifactPanel">
+              <PromotionArtifactPanel />
             </PanelErrorBoundary>
           </div>
 

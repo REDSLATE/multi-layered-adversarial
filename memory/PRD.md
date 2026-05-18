@@ -2,6 +2,70 @@
 
 
 
+## 🚨 Latest (2026-05-18): Promotion Artifact Report — shadow vs fill
+
+Operator request: "Pull a `PromotionArtifact`-ready report from the data
+we already have." Camaro's intents are silently downgraded to
+`shadow_proposal` because Camaro holds a `challenger` seat. This new
+endpoint surfaces the EVIDENCE an operator needs to decide whether to
+flip Camaro (or any non-executing brain) to a `co_trader` seat via the
+Patent-J countersign flow.
+
+### Backend — new module `shared/promotion_artifact_report.py`
+- `GET /api/admin/promotion-artifact/{brain}?hours=24&benchmark_brain=alpha`
+  returns: `{brain, benchmark_brain, window, thresholds, metrics, verdict,
+  verdict_rationale, per_intent[], generated_at, report_version}`.
+- `GET /api/admin/promotion-artifact?hours=24` runs the scan across all
+  RUNTIMES (excluding the benchmark) and returns `{reports: [...]}`.
+- Metrics emitted per brain:
+  * `sample_size` — shadow proposals (intents where
+    `holds_executor_seat=False`) in the window
+  * `directional_agreement_rate` — % of shadow proposals where the
+    benchmark brain (default `alpha`) actually traded the same direction
+    on the same symbol within ±60min
+  * `hit_rate_mtm` — % of shadow proposals where the price moved
+    favorably over a 60min horizon (mark-to-market)
+  * `simulated_pnl_usd` — sum of unit-notional MTM PnL
+  * `realized_pnl_match_usd` — executor's actual fill PnL on agreement-
+    matched shadow proposals (operator requested BOTH PnL modes)
+- Verdict bands (operator-chosen 30% threshold):
+  * `insufficient_data` — < 20 samples or no resolvable price/fill data
+  * `recommend_promote` — hit_rate ≥ 30% AND agreement ≥ 30% AND
+    samples ≥ 20
+  * `keep_in_challenger` — fails either floor
+- Tests: `tests/test_promotion_artifact_report.py` — 18 PASS covering
+  pure helpers, empty-data / mixed / high-agreement scenarios, auth
+  gate, unknown-brain 404, brain==benchmark 400, and all-brains shape.
+
+### Frontend — `components/PromotionArtifactPanel.jsx`
+- Mounted on `/admin/diagnostics` (below LiveTradeDiagnose).
+- Renders one card per non-benchmark brain with verdict chip, 4 metric
+  tiles, rationale, and a "download JSON" button (per-intent detail
+  ships in the file).
+- Hour-window pills: 1H / 6H / 24H / 3D / 7D. Defaults to 24H.
+- Test IDs: `promo-artifact-panel`, `promo-artifact-card-{brain}`,
+  `promo-artifact-verdict-{brain}`, `promo-artifact-samples-{brain}`,
+  `promo-artifact-agreement-{brain}`, `promo-artifact-hitrate-{brain}`,
+  `promo-artifact-pnl-{brain}`, `promo-artifact-download-{brain}`,
+  `promo-artifact-hours-{1|6|24|72|168}`, `promo-artifact-reload`.
+
+### Doctrine pin
+This report is **ADVISORY EVIDENCE**. It does NOT mutate seats,
+authority, or roster — promotion still requires the operator
+countersign via `/admin/promotion/proposals` (Patent J flow in
+`shared/promotion.py`).
+
+### Verified live (preview)
+- Camaro: 1116 samples / 0% agreement / 0% hit-rate → KEEP IN CHALLENGER
+  (no Alpha fills in DB to compare against; MTM hit-rate stuck at 0%
+  because synthetic OHLCV at minute granularity rarely changes within
+  60min horizon).
+- Chevelle & REDEYE: 0 samples → INSUFFICIENT DATA.
+- All 63 backend tests pass (18 new + 45 regression on tripwire, council,
+  promotion-gate, auto-router).
+
+
+
 ## 🚨 Latest (2026-05-17, +4): Tripwire marker wired
 
 - `pytest.ini` registers a `tripwire` marker.
