@@ -27,11 +27,16 @@ pytestmark = pytest.mark.tripwire
 # ── lane clamp ──────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("lane,notional,expected_clamped", [
-    ("crypto", 100.0, 30.0),   # crypto cap is $30/order
-    ("crypto", 25.0,  25.0),   # below cap → unchanged
-    ("equity", 100.0, 100.0),  # equity cap is $100k → unchanged
-    ("equity", 50.0,  50.0),
-    (None,     100.0, 100.0),  # no lane → falls back to global per-order cap
+    # crypto cap lifted to $1M on 2026-05-18 so live crypto trading is
+    # not artificially throttled by the lane rail. Operator order:
+    # "the only restrictions should be in the position they hold"
+    # (seat policy is the authority, not lane caps).
+    ("crypto", 100.0,       100.0),    # below cap → unchanged
+    ("crypto", 25.0,        25.0),     # below cap → unchanged
+    ("crypto", 2_000_000.0, 1_000_000.0),  # over crypto cap → clamps to crypto cap
+    ("equity", 100.0,       100.0),    # equity cap is $100k → unchanged
+    ("equity", 50.0,        50.0),
+    (None,     100.0,       100.0),  # no lane → falls back to global per-order cap
 ])
 def test_clamp_notional_to_lane(lane, notional, expected_clamped):
     clamped, was_clamped = _clamp_notional_to_lane(notional, lane)

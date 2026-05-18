@@ -186,24 +186,23 @@ async def health():
         mongo_ok = True
     except Exception:  # noqa: BLE001
         mongo_ok = False
-    # Doctrine (2026-02-16): deploy_mode reports OBSERVABLE STATE, not a
-    # configuration label. If any connected broker has execution_enabled
-    # = True, the system is functionally in execution mode. The env var
-    # is now a *floor* — if DEPLOY_MODE=execution is set, we trust it;
-    # otherwise we derive. This fixes the long-running cosmetic bug
-    # where prod showed "observation" while live trading was active.
+    # Doctrine (2026-05-18 rev): deploy_mode reports OBSERVABLE STATE
+    # based on what the broker ADAPTERS can actually do, not on a
+    # DB-side `execution_enabled` flag (which is decorative — the
+    # adapters never read it). If a broker adapter can be constructed
+    # from current credentials, that's live trading capability.
     env_mode = os.environ.get("DEPLOY_MODE", "observation").lower()
     derived_mode = "observation"
     if mongo_ok:
         try:
-            alpaca_exec = await db["alpaca_credentials"].find_one(
-                {"_id": "singleton"}, {"_id": 0, "execution_enabled": 1},
-            )
-            kraken_exec = await db["kraken_credentials"].find_one(
-                {"_id": "singleton"}, {"_id": 0, "execution_enabled": 1},
-            )
-            if (alpaca_exec and alpaca_exec.get("execution_enabled")) or \
-               (kraken_exec and kraken_exec.get("execution_enabled")):
+            # Crypto: a Kraken adapter loads iff valid credentials are
+            # present + decrypt cleanly.
+            from shared.crypto.broker_adapter import get_kraken_adapter  # noqa: WPS433
+            kraken_adapter = await get_kraken_adapter()
+            # Equity: an Alpaca adapter loads iff credentials are saved.
+            from shared.broker.alpaca_routes import get_alpaca_adapter  # noqa: WPS433
+            alpaca_adapter = await get_alpaca_adapter()
+            if kraken_adapter is not None or alpaca_adapter is not None:
                 derived_mode = "execution"
         except Exception:  # noqa: BLE001
             pass

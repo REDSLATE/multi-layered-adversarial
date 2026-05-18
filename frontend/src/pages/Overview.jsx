@@ -42,7 +42,9 @@ export default function Overview() {
         sub="Shared infrastructure connects Alpha, Camaro, Chevelle, and REDEYE. Authority lives on SEATS, not on brain identity — any brain can hold any seat; the seat carries the doctrine and grants the rights. The seat is what gets graded, promoted, retired. Every brain stamps stances on the shared position primitive; only the seat holder of the moment makes the call."
         right={
           <div className="hidden md:flex items-center gap-2" data-testid="overview-mode-pill">
-            <Badge color="#FBBF24">{flags?.deploy_mode || "—"}</Badge>
+            <Badge color={flags?.deploy_mode === "execution" ? "#10B981" : "#A1A1AA"}>
+              {flags?.deploy_mode || "—"}
+            </Badge>
           </div>
         }
         testid="overview-header"
