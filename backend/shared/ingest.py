@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, Literal
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, Request
 from pydantic import BaseModel, Field
 
 from db import db
@@ -201,19 +201,42 @@ class HeartbeatIn(BaseModel):
 @router.post("/heartbeat")
 async def ingest_heartbeat(
     body: HeartbeatIn,
+    request: Request,
     x_runtime_token: str | None = Header(default=None, alias="X-Runtime-Token"),
 ):
+    """Brain heartbeat ingest. Accepts the body's `detail` dict
+    verbatim but always overlays the canonical `source` and `via`
+    fields so the dashboard can render the heartbeat source even when
+    the brain forgets to include it.
+
+    Also $inc's `heartbeat_count` and sets `first_seen_at` on first
+    contact so the dashboard can compute uptime as
+    (now - first_seen_at) — the value the LivePulse needs to stop
+    showing "down 12 hrs" alongside live heartbeat data.
+    """
     verify_runtime_token(body.runtime, x_runtime_token or "")
-    doc = {
-        "runtime": body.runtime,
-        "status": body.status,
-        "detail": body.detail,
-        "last_seen": _now_iso(),
-    }
+    now = _now_iso()
+    # Always-on canonical detail fields — overlay on top of whatever
+    # the brain shipped so missing keys don't poison the dashboard.
+    detail = dict(body.detail or {})
+    detail.setdefault("source", "ingest_heartbeat")
+    detail.setdefault("via", "POST /api/ingest/heartbeat")
+    detail["user_agent"] = (request.headers.get("user-agent") or "")[:200]
     await db[SHARED_HEARTBEATS].update_one(
-        {"runtime": body.runtime}, {"$set": doc}, upsert=True
+        {"runtime": body.runtime},
+        {
+            "$set": {
+                "runtime": body.runtime,
+                "status": body.status,
+                "detail": detail,
+                "last_seen": now,
+            },
+            "$inc": {"heartbeat_count": 1},
+            "$setOnInsert": {"first_seen_at": now},
+        },
+        upsert=True,
     )
-    return {"ok": True, "last_seen": doc["last_seen"]}
+    return {"ok": True, "last_seen": now}
 
 
 # ----------------------------- Promotion artifact -----------------------------

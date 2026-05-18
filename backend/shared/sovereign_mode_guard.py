@@ -246,16 +246,32 @@ async def _persist_snapshot(brain: str, c: SovereignContribution,
     }
 
     # Latest-snapshot collection (one doc per brain).
+    # Bug fix 2026-05-18: previously this used $set-only, so
+    # contribution_count never incremented — the dashboard read
+    # `contribution_count: 0` for every brain regardless of how
+    # many contributions had been received. Now $inc bumps the
+    # counter on every contribution AND `first_seen_at` is set on
+    # the very first contribution so uptime can be computed as
+    # (now - first_seen_at).
     await db[SOVEREIGN_STATE].update_one(
         {"brain": brain},
-        {"$set": doc, "$setOnInsert": {"first_seen_at": now}},
+        {
+            "$set": doc,
+            "$inc": {"contribution_count": 1},
+            "$setOnInsert": {"first_seen_at": now},
+        },
         upsert=True,
     )
 
     # Immutable history row — one per contribution. Includes the raw
     # delta + clamp flag so operator can audit clipping.
+    # Bug fix 2026-05-18: previously this row had no `ts` field, so
+    # the dashboard's `find().sort({ts: -1})` queries returned rows in
+    # insertion order with `ts: None`. Now `ts` is explicit and equals
+    # the contribution received_at.
     history_row = {
         **doc,
+        "ts": now,
         "raw_confidence_delta": guard["raw_confidence_delta"],
         "delta_was_clamped": guard["delta_was_clamped"],
         "received_at": now,

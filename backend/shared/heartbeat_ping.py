@@ -159,10 +159,14 @@ async def heartbeat_status(brain: str):
     hb = await db[SHARED_HEARTBEATS].find_one({"runtime": brain}, {"_id": 0})
     hb_iso = (hb or {}).get("last_seen")
     hb_age = _age(hb_iso)
+    hb_first_seen = (hb or {}).get("first_seen_at")
+    hb_count = (hb or {}).get("heartbeat_count")
 
     sv = await db[SOVEREIGN_STATE].find_one({"brain": brain}, {"_id": 0})
     sv_iso = (sv or {}).get("updated_at")
     sv_age = _age(sv_iso)
+    sv_first_seen = (sv or {}).get("first_seen_at")
+    sv_count = (sv or {}).get("contribution_count")
 
     hb_fresh = hb_age is not None and hb_age < 90
     sv_fresh = sv_age is not None and sv_age < 300       # ≤ 5 min
@@ -193,18 +197,33 @@ async def heartbeat_status(brain: str):
         last_seen_age = round(ages[0][0], 1)
         last_seen_iso = ages[0][1]
 
+    # Uptime: time since the brain first contacted MC, using whichever
+    # of the two signals saw it earliest (heartbeat or contribution).
+    first_seen_candidates = [
+        x for x in (hb_first_seen, sv_first_seen) if x
+    ]
+    uptime_seconds: float | None = None
+    first_seen_iso: str | None = None
+    if first_seen_candidates:
+        first_seen_iso = min(first_seen_candidates)
+        uptime_seconds = round(_age(first_seen_iso) or 0.0, 1)
+
     return {
         "runtime": brain,
         "connected": connected,
         "last_seen": last_seen_iso,
         "age_seconds": last_seen_age,
+        "first_seen_at": first_seen_iso,
+        "uptime_seconds": uptime_seconds,
         # Diagnostic detail so the operator can see WHY a brain is
         # marked partial / stale (e.g., "heartbeat 4s, contribution
         # never").
         "heartbeat_age_seconds": (
             round(hb_age, 1) if hb_age is not None else None
         ),
+        "heartbeat_count": hb_count,
         "contribution_age_seconds": (
             round(sv_age, 1) if sv_age is not None else None
         ),
+        "contribution_count": sv_count,
     }
