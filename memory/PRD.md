@@ -2,6 +2,59 @@
 
 
 
+## 🚨 Latest (2026-05-18, +2): Survival kit extraction — operator can pull it OUT of the preview
+
+Operator pushback: "But that's inside the preview." Correct — the
+survival layer is worthless if it can only be read inside the same
+preview pod whose drift we're trying to prevent. Three extraction
+paths shipped, all reading the same on-disk artifact at
+`/app/runtime_patch_kit/platform_survival/`:
+
+1. **Browser download (operator workflow)** — `GET /api/admin/runtime-bundles`
+   lists the registered bundles with sha256 + bytes;
+   `GET /api/admin/runtime-bundles/{filename}` streams the file with
+   `Content-Disposition: attachment` and an `X-Bundle-Sha256` header
+   for integrity. JWT-gated. New `RuntimeBundlesPanel.jsx` on the
+   Diagnostics page renders one row per bundle with a single-click
+   download button (uses blob → anchor so the auth header rides on
+   the fetch, not on a naked `<a href>`).
+2. **curl (CI / scripting)** —
+   `curl -L -H "Authorization: Bearer $TOKEN" "$MC/api/admin/runtime-bundles/platform_survival.tar.gz" -o platform_survival.tar.gz`,
+   verify with `sha256sum`.
+3. **Sidecar pull (programmatic)** — already-existing
+   `/api/patches/{name}/manifest` + `/api/patches/{name}/file/{path}`
+   endpoint, gated by `X-Runtime-Token`. The `platform_survival`
+   patch is now registered there with its 8 files. Every pull is
+   audit-logged into `shared_patch_pulls`.
+
+### Bundle artifact
+
+`/app/runtime_patch_kit/bundles/`:
+- `platform_survival.tar.gz` — 8121 bytes,
+  sha256 `43199b1a24129f6c581b8a75ef854a848e7587a85a0063fec3648a249bc51d93`
+- `platform_survival.zip` — 13539 bytes,
+  sha256 `c658fe88856cce740c6ca9280a4629d311245ff90f1cddfe6e427bf05220c584`
+- `PLATFORM_SURVIVAL_CHECKSUMS.txt` — sibling file the operator can
+  compare against post-transfer
+
+### Security pins
+- Bundle filenames are registry-whitelisted; the endpoint refuses any
+  filename not in `BUNDLE_REGISTRY` (path-traversal-proof, returns 404).
+- Unauthenticated requests return 401.
+- `RISEDUAL_MC_RECEIPT_SECRET` is NEVER bundled into the kit — it
+  stays on MC and the broker adapter only.
+
+### Verified live (preview)
+- Manifest endpoint returns both bundles with correct sha256 + sizes
+- Browser download saves the bytes; sha256 of downloaded file matches
+  the manifest exactly
+- Tampered filename → 404
+- Unauthenticated → 401
+- Diagnostics page renders 2 bundle rows, 2 download buttons, no
+  panel boundary fires
+
+
+
 ## 🚨 Latest (2026-05-18, +1): Platform Survival Layer — placement
 
 Operator directive: "Build a portable survival layer that Emergent can

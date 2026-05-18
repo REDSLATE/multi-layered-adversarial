@@ -56,6 +56,28 @@ PATCH_REGISTRY: dict[str, dict] = {
         ),
         "version": "1.0",
     },
+    "platform_survival": {
+        "root": PATCH_BASE / "platform_survival",
+        "files": [
+            "README.md",
+            "PASTE_INTO_ALPHA_AGENT.md",
+            "PASTE_INTO_CAMARO_AGENT.md",
+            "PASTE_INTO_CHEVELLE_AGENT.md",
+            "PASTE_INTO_REDEYE_AGENT.md",
+            "services/platform_survival/__init__.py",
+            "tests/test_platform_survival.py",
+            "tests/test_no_duplicate_execution_gates.py",
+        ],
+        "install_hint": (
+            "Copy services/platform_survival/__init__.py to "
+            "<STACK>/backend/services/platform_survival/__init__.py in your "
+            "sidecar. Copy the two test files to <STACK>/backend/tests/. "
+            "Read PASTE_INTO_<BRAIN>_AGENT.md for the per-stack env vars and "
+            "intent-emit replacement. Doctrine: sidecars communicate · MC "
+            "approves · broker executes only with MC receipt."
+        ),
+        "version": "1.0",
+    },
 }
 
 

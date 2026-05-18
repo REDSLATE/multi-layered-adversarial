@@ -4,6 +4,7 @@ import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
 import VRLScorecardsPanel from "@/components/VRLScorecardsPanel";
 import LiveTradeDiagnose from "@/components/LiveTradeDiagnose";
 import RuntimeTokensPanel from "@/components/RuntimeTokensPanel";
+import RuntimeBundlesPanel from "@/components/RuntimeBundlesPanel";
 import PromotionArtifactPanel from "@/components/PromotionArtifactPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 
@@ -520,6 +521,16 @@ export default function Diagnostics() {
           <div className="mt-6">
             <PanelErrorBoundary panelName="PromotionArtifactPanel">
               <PromotionArtifactPanel />
+            </PanelErrorBoundary>
+          </div>
+
+          {/* Portable patch kits — extract from preview, drop into
+              each brain stack's repo. The platform survival layer is
+              shipped here so the doctrine lives WITH the sidecars,
+              not rented from MC. JWT-gated browser download. */}
+          <div className="mt-6">
+            <PanelErrorBoundary panelName="RuntimeBundlesPanel">
+              <RuntimeBundlesPanel />
             </PanelErrorBoundary>
           </div>
 
