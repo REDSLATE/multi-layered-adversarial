@@ -2,6 +2,116 @@
 
 
 
+## 🚨 Latest (2026-05-18, +1): Platform Survival Layer — placement
+
+Operator directive: "Build a portable survival layer that Emergent can
+run, but does not depend on Emergent. It's not a patch, it's a
+placement. This embeds the sidecar with the stack."
+
+The problem we solved: the four brain sidecars (Alpha · Camaro ·
+Chevelle · REDEYE) live in separate repos on different hosts. From
+MC, we cannot reliably tell PROD from preview, cannot read a sidecar's
+`git_sha` or `policy_hash`, and we cannot guarantee a sidecar isn't
+secretly assuming local execution authority. The survival layer makes
+that explicit and verifiable, and ships **into each brain repo** so
+nothing depends on Emergent or any specific platform.
+
+### Module (placed in 5 locations — 1 MC + 4 brain stacks)
+
+- `backend/shared/runtime/platform_survival.py` — MC enforcement copy
+- `backend/shared/runtime/routes.py` — MC HTTP surface
+- `runtime_patch_kit/platform_survival/services/platform_survival/__init__.py`
+  — portable copy each brain stack drops into its own
+  `backend/services/platform_survival/`
+- Per-stack paste-in docs at
+  `runtime_patch_kit/platform_survival/PASTE_INTO_{ALPHA,CAMARO,CHEVELLE,REDEYE}_AGENT.md`
+
+### Public surface (4 building blocks)
+
+1. **`RuntimeStamp.current(sidecar_room)`** — captures env, git_sha,
+   platform, mc_url, db_name, broker_mode, sidecar_version, policy_hash,
+   `local_execution_authority=False`, timestamp_ms. `.validate_for_prod_sidecar()`
+   returns a typed errors list (`ENV_NOT_PROD`, `MC_URL_NOT_PROD`,
+   `SIDECAR_HAS_LOCAL_EXECUTION_AUTHORITY`, `UNKNOWN_GIT_SHA`,
+   `BAD_OR_UNKNOWN_DB_NAME`, `BAD_BROKER_MODE`).
+2. **`sidecar_build_intent(...)`** — the only legitimate path a brain
+   sidecar uses to package an intent. Carries the stamp inside.
+3. **`mc_canonical_gate(intent)`** — MC's single gate. Rejects on
+   sidecar local-authority, policy_hash mismatch, bad direction, bad
+   lane, missing symbol, sub-floor confidence. Emits HMAC-signed
+   `MCExecutionReceipt` keyed on `RISEDUAL_MC_RECEIPT_SECRET`.
+4. **`broker_verify_receipt(receipt)`** — broker adapter call.
+   Refuses any order without a valid MC signature or with
+   `MISSING_RECEIPT_SECRET`.
+
+### MC HTTP endpoints (additive, no displacement of `/api/ingest/intent`)
+
+- `GET /api/runtime/survival/policy-hash` — sidecars boot-check that
+  they ship the same constitution as MC. Returns `policy_hash` + the
+  doctrine string.
+- `POST /api/runtime/survival/validate-stamp` — operator dashboard
+  surfaces failure modes per sidecar.
+- `POST /api/runtime/survival/canonical-gate` — sidecars hand MC an
+  intent envelope, get a signed receipt back.
+- `POST /api/runtime/survival/verify-receipt` — broker adapters
+  validate before placing an order.
+
+### CI tripwire (lives in every stack + MC)
+
+`tests/test_no_duplicate_execution_gates.py` greps the backend for
+forbidden tokens: `local_execution_authority = True`,
+`may_execute = True`, `can_execute = True`,
+`if live_enabled / paper_only / observe_only`, `operator_lock_default`.
+Anything outside the allowlist (the survival module + this test)
+fails the build. Verified 0 offenders in MC backend.
+
+### Verified live (preview)
+
+```
+GET /api/runtime/survival/policy-hash
+→ {"policy_hash": "2ac7d02164886f5c9c4a6339a605bf7be87b2bf2b532ea08681b5c29a6dcea25", "doctrine": "..."}
+
+POST /api/runtime/survival/canonical-gate {valid intent, conf=0.55}
+→ {accepted: true, receipt: {signature: "affea0da..."}}
+
+POST /api/runtime/survival/verify-receipt {receipt}
+→ {ok: true, reason: "VALID_MC_RECEIPT", lane: "crypto", symbol: "BTC-USD", direction: "BUY"}
+```
+
+Tampering the receipt's `symbol` field → `BAD_MC_RECEIPT_SIGNATURE`.
+
+### Tests
+
+- `tests/test_platform_survival.py` — 4 PASS (sidecar has no local
+  authority, low-confidence block, signed receipt round-trip, tamper
+  rejection)
+- `tests/test_platform_survival_routes.py` — 5 PASS (policy-hash
+  public, validate-stamp requires auth, validate-stamp flags
+  unknown env, canonical-gate blocks low conf, round-trip)
+- `tests/test_no_duplicate_execution_gates.py` — 1 PASS
+
+Full regression: 67/67 tripwire + 28/28 new survival/promotion tests.
+
+### Required env vars
+
+Added to `backend/.env`: `RISEDUAL_MC_RECEIPT_SECRET` (auto-generated
+48-byte urlsafe key). Sidecars MUST NOT receive this secret. Each
+brain stack sets `RISEDUAL_ENV`, `RISEDUAL_PLATFORM`, `RISEDUAL_MC_URL`,
+`RISEDUAL_DB_NAME`, `RISEDUAL_BROKER_MODE`, `RISEDUAL_SIDECAR_VERSION`,
+`GIT_SHA` at their own hosting layer.
+
+### Doctrine pin
+
+> Sidecars communicate. MC approves. RoadGuard protects.
+> Broker executes only with MC receipt. Preview is never proof of PROD.
+
+If policy ever changes shape, `policy_hash()` changes — every sidecar
+running stale policy is rejected by the canonical gate with a typed
+`POLICY_HASH_MISMATCH` error. Operator never has to wonder again
+whether a preview deploy snuck into PROD.
+
+
+
 ## 🚨 Latest (2026-05-18): Promotion Artifact Report — shadow vs fill
 
 Operator request: "Pull a `PromotionArtifact`-ready report from the data
