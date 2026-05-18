@@ -376,9 +376,33 @@ async def roles_manifest(_user: dict = Depends(get_current_user)):
     """Read-only view of every participant's identity. Brains call this on
     boot + on a refresh interval so they know their peers.
 
-    Includes RUNTIMES + ADVISORS. Authority state is included for runtimes
-    only — advisors are off-ladder by definition.
+    Includes RUNTIMES + ADVISORS. The `may_execute` bit on each row is
+    derived from whichever **seat** the brain currently holds (via
+    seat_policy.snapshot). If the brain doesn't currently hold a seat,
+    or holds a non-executing seat, the bit is False. If it holds the
+    Executor seat for equity OR Crypto, the bit is True. This is the
+    only authority surface — brain identity has zero standing of its
+    own. (Defanged 2026-05-17: previously hardcoded `False` for all
+    brains, which was a phantom restriction overlaying seat policy.)
     """
+    from shared.seat_policy import seat_may_execute_lane  # noqa: WPS433
+    from shared.roster import get_roster  # noqa: WPS433
+
+    try:
+        roster = await get_roster()
+        assignments = roster.get("assignments") or {}
+    except Exception:  # noqa: BLE001
+        assignments = {}
+
+    def _may_execute_for(brain: str) -> bool:
+        # Find the seat (if any) this brain currently holds; ask the
+        # seat policy whether THAT SEAT may execute on EITHER lane.
+        for seat, holder in assignments.items():
+            if holder == brain:
+                if seat_may_execute_lane(seat, "equity") or seat_may_execute_lane(seat, "crypto"):
+                    return True
+        return False
+
     items: list[dict] = []
     # Runtimes — include current authority state and last_seen.
     for rt in RUNTIMES:
@@ -395,7 +419,9 @@ async def roles_manifest(_user: dict = Depends(get_current_user)):
             "allowed_actions": role.get("allowed_actions", []),
             "authority_state": (auth or {}).get("authority_state"),
             "last_seen": (hb or {}).get("last_seen"),
-            "may_execute": False,  # observation-only across all brains
+            # Seat-derived. True iff this brain holds an executor seat
+            # for at least one lane.
+            "may_execute": _may_execute_for(rt),
         })
     # Advisors — no authority state (off-ladder by design).
     for ad in ADVISORS:
@@ -411,14 +437,16 @@ async def roles_manifest(_user: dict = Depends(get_current_user)):
             "allowed_actions": role.get("allowed_actions", []),
             "authority_state": None,
             "last_seen": (hb or {}).get("last_seen"),
+            # Advisors never hold an executor seat by design.
             "may_execute": False,
         })
     return {
         "items": items,
         "count": len(items),
         "doctrine": (
-            "Brains share opinions, not internal model state. None can "
-            "execute trades, paper or live."
+            "Brains share opinions. Authority is seat-bound: a brain may "
+            "execute only when it holds an executor seat. MC is the "
+            "regulator at the execution gate, not at the opinion layer."
         ),
     }
 

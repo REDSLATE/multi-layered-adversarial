@@ -122,6 +122,14 @@ function LaneCard({ lane, notional }) {
                 )}
               </div>
             )}
+            {broker.remediation && (
+              <div
+                className="mt-2 text-[10px] font-mono text-rd-warn break-words border-l-2 border-rd-warn pl-2"
+                data-testid={`live-trade-remediation-${lane}`}
+              >
+                <span className="text-rd-dim">FIX:</span> {broker.remediation}
+              </div>
+            )}
             {alpaca !== undefined && (
               <div className="mt-2 text-[10px] font-mono">
                 <span className="text-rd-dim">alpaca singleton: </span>

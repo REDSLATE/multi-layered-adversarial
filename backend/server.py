@@ -1,7 +1,8 @@
 """
 RISEDUAL Monorepo Backend — Mission Control
-Shared infrastructure + isolated runtimes (Alpha, Camaro, Chevelle).
-Deploy posture: OBSERVATION ONLY — no live broker execution, no model authority merging.
+Shared infrastructure + isolated runtimes (Alpha, Camaro, Chevelle, REDEYE).
+Deploy posture: SEAT-GOVERNED — execution authority lives in the seat
+policy + execution gate. Brains propose; MC regulates at the gate.
 """
 from dotenv import load_dotenv
 from pathlib import Path

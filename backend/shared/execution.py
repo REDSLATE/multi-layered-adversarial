@@ -732,6 +732,16 @@ async def execution_diagnose(
             k: v for k, v in kraken_status.items()
             if k not in ("public_key", "private_key")  # never leak plaintext
         }
+        # Operator-facing remediation hint keyed by failure state.
+        REMEDIATION = {
+            "ok": "credentials decrypted — if orders still fail, check API key scopes (must include `execute_orders` and `query_funds`) on kraken.com",
+            "no_credentials": "POST {public_key, private_key} to /api/admin/kraken/connect to seed the encrypted singleton",
+            "missing_field": "singleton exists but a field is empty — re-POST both keys to /api/admin/kraken/connect to overwrite",
+            "decrypt_failed": "CREDENTIALS_ENCRYPTION_KEY drifted vs encrypt-time. Re-POST both keys to /api/admin/kraken/connect to re-encrypt under the current key.",
+        }
+        broker_status["remediation"] = REMEDIATION.get(
+            kraken_status.get("state"), "see kraken_credentials.detail",
+        )
         adapter = await _adapter_for_lane("crypto")
         broker_status["adapter_loaded"] = adapter is not None
         broker_status["adapter_name"] = getattr(adapter, "name", None)
@@ -745,6 +755,10 @@ async def execution_diagnose(
             {"_id": 0, "execution_enabled": 1, "paper": 1, "key_id_preview": 1, "updated_at": 1},
         )
         broker_status["alpaca_credentials"] = doc
+        broker_status["remediation"] = (
+            "POST {key_id, secret_key, paper} to /api/admin/alpaca/connect "
+            "if alpaca_credentials is None or execution_enabled=False."
+        ) if not doc or not doc.get("execution_enabled") else "alpaca connection live"
 
     first_block = next((g for g in gate_result["gates"] if not g["passed"]), None)
 

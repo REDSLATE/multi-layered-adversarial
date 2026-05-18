@@ -1,6 +1,6 @@
 """Sovereign sidecar mode guard + promotion bridge.
 
-Doctrine:
+Doctrine (2026-05-17 rev):
     Each of the four brains can run as a deterministic sovereign sidecar
     (`runtime_patch_kit/sovereign/`) — local-state, replayable, isolated.
     The brain talks to Mission Control via two endpoints:
@@ -16,25 +16,22 @@ Doctrine:
     Two modes the brain may declare:
 
       * `DTD` — Deterministic Training Data. The brain is reading
-        historical bars / labeled replay; weight updates are expected
-        and accepted by MC.
-      * `PRD` — Production. The brain is reading live market data; MC
-        REJECTS any field that would imply a training step
-        (`training_signal=true`, `weight_delta != 0`). Snapshots are
-        still accepted — operators can see the brain's posture — but
-        the brain may not learn from live data without a deliberate
-        DTD replay.
+        historical bars / labeled replay.
+      * `PRD` — Production. The brain is reading live market data.
 
-    Confidence deltas (the brain's request to nudge its own confidence
-    based on recent performance) are HARD-CAPPED at ±0.25. The seat
-    policy of whatever seat the brain currently holds is snapshotted on
-    every contribution so the audit trail records "Camaro as Executor
-    asked for a +0.18 confidence bump" not just "Camaro did something."
+    **MC does NOT restrict brains.** Brains may declare any mode, any
+    `training_signal`, and any `live_trading_enabled`. MC observes the
+    declaration, persists it, and uses the seat-policy gate at execution
+    time to decide what actually flows downstream. Restricting brain
+    contributions at the API boundary is doctrine-anathema: it prevents
+    brains from doing their job. MC is the regulator at the *execution*
+    layer, not at the *opinion* layer.
 
-    `live_trading_enabled` MUST be False in every payload. Schema
-    rejects True. This is the third defense; the brain core itself
-    defaults False, the sidecar runner re-asserts False, and the API
-    refuses True. Three locks for one door.
+    Confidence deltas are still hard-CLAMPED at ±0.25 (server-side, no
+    error). The seat policy of whatever seat the brain currently holds
+    is snapshotted on every contribution so the audit trail records
+    "Camaro as Executor asked for a +0.18 confidence bump" not just
+    "Camaro did something."
 """
 from __future__ import annotations
 
@@ -101,22 +98,28 @@ class SovereignContribution(BaseModel):
     """Periodic snapshot the brain sidecar POSTs to MC.
 
     Stored as the brain's current sovereign-state doc (latest wins) AND
-    appended to the history collection so we can replay drift later."""
+    appended to the history collection so we can replay drift later.
+
+    Schema accepts ANY brain declaration (mode, training_signal,
+    live_trading_enabled). MC observes; the execution gate decides.
+    """
 
     mode: Literal["DTD", "PRD"]
-    # Always False. Schema rejects True even if the brain mistakenly
-    # flipped its local flag. Triple-locked door.
-    live_trading_enabled: Literal[False] = False
+    # Brain self-declared live-trading posture. MC observes this for
+    # the audit log; it does NOT restrict the gate chain (the seat
+    # policy + execution gate is the authority on what actually fires).
+    live_trading_enabled: bool = False
     weights: dict[str, float] = Field(default_factory=dict)
     learning_rate: float = Field(default=0.0, ge=0.0, le=LEARNING_RATE_MAX)
     # Optional confidence-delta request — the brain saying "based on my
     # recent win/loss tape, I want to nudge my baseline confidence by X."
-    # Bounded at ±CONFIDENCE_DELTA_CAP server-side.
+    # Bounded at ±CONFIDENCE_DELTA_CAP server-side (silent clamp, never
+    # an error — see assert_contribution_safe()).
     confidence_delta: float = Field(default=0.0)
     delta_reason: str = Field(default="", max_length=256)
-    # `True` when the brain is shipping a contribution that would update
-    # weights at MC's snapshot (only legal in DTD mode). PRD-mode
-    # contributions MUST set this False.
+    # Whether this contribution includes a weight-update step. Accepted
+    # in any mode (DTD or PRD). MC records the brain's claim; downstream
+    # consumers can decide whether to honor it.
     training_signal: bool = False
     recent_outcomes: list[SovereignOutcome] = Field(
         default_factory=list, max_length=MAX_RECENT_OUTCOMES,
@@ -160,35 +163,22 @@ class SovereignContribution(BaseModel):
 def assert_contribution_safe(c: SovereignContribution) -> dict:
     """Apply the doctrinal mode guard and return a guard report.
 
-    Raises HTTPException on violations. Returns the bounded contribution
-    fields the caller should persist (clamped delta, etc.).
+    Defanged 2026-05-17: this function NO LONGER rejects brain
+    contributions for `live_trading_enabled=True` or
+    `training_signal=True` in PRD mode. MC is the regulator at the
+    *execution* layer; brains may declare any state. We only:
+
+      1. Validate `mode` is a known value (schema-level invariant).
+      2. CLAMP `confidence_delta` to ±CONFIDENCE_DELTA_CAP (silent —
+         clamping is the contract; raising would force brains to
+         track our cap in their own code).
+
+    Returns the bounded contribution fields the caller should persist.
     """
-    # Defense-in-depth: schema already pinned `live_trading_enabled=False`
-    # but check again so an upstream type-coercion bug can't sneak True
-    # through. Mode must also be a known one.
-    if c.live_trading_enabled is True:
-        raise HTTPException(
-            status_code=422,
-            detail="live_trading_enabled must be False (observation-only doctrine)",
-        )
     if c.mode not in VALID_MODES:
         raise HTTPException(
             status_code=422,
             detail=f"mode must be one of {sorted(VALID_MODES)}",
-        )
-
-    # PRD mode: the brain is reading live market data. Learning against
-    # live data is precisely how brains get poisoned (look-ahead bias,
-    # overfitting to one regime, etc.). MC refuses training signals
-    # from PRD-mode brains. The brain may still SNAPSHOT its state.
-    if c.mode == MODE_PRD and c.training_signal:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "PRD-mode brains may not ship training_signal=True. "
-                "Switch to DTD mode for replay training; PRD is "
-                "observation-only at the brain layer."
-            ),
         )
 
     # Clamp the delta. We do NOT raise — clamping is the contract;
@@ -229,7 +219,10 @@ async def _persist_snapshot(brain: str, c: SovereignContribution,
     doc = {
         "brain": brain,
         "mode": c.mode,
-        "live_trading_enabled": False,    # canonicalized
+        # Persist the brain's actual declaration. MC observes; the
+        # execution gate decides what flows downstream. We do NOT
+        # rewrite the brain's claim.
+        "live_trading_enabled": c.live_trading_enabled,
         "weights": dict(c.weights),
         "learning_rate": c.learning_rate,
         "training_signal": c.training_signal,
