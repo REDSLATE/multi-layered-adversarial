@@ -1,5 +1,4 @@
 """ALPHA runtime — base/stable. Reads alpha_decision_log only. Never reads other runtimes' logs."""
-import os
 from fastapi import APIRouter, Depends
 
 from auth import get_current_user
@@ -13,10 +12,13 @@ router = APIRouter(prefix="/runtime/alpha", tags=["alpha"])
 async def status(_user: dict = Depends(get_current_user)):
     return {
         "runtime": "alpha",
-        "mode": "observation",
-        "phase6_enforce_enabled": os.environ.get("PHASE6_ENFORCE_ENABLED", "false").lower() == "true",
+        "mode": "seat-governed",
         "decision_log_count": await db[ALPHA_DECISION_LOG].count_documents({}),
-        "doctrine": "alpha decisions stay in alpha_decision_log; never merged with camaro/chevelle",
+        "doctrine": (
+            "alpha decisions stay in alpha_decision_log; never merged "
+            "with camaro/chevelle/redeye. Execution authority is "
+            "seat-bound — see /api/admin/roster."
+        ),
     }
 
 

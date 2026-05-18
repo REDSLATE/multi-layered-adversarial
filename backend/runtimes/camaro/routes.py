@@ -1,5 +1,4 @@
 """CAMARO runtime. Reads camaro_shadow_rows only."""
-import os
 from fastapi import APIRouter, Depends
 
 from auth import get_current_user
@@ -13,10 +12,12 @@ router = APIRouter(prefix="/runtime/camaro", tags=["camaro"])
 async def status(_user: dict = Depends(get_current_user)):
     return {
         "runtime": "camaro",
-        "mode": "observation",
-        "executor_enforce_enabled": os.environ.get("CAMARO_EXECUTOR_ENFORCE_ENABLED", "false").lower() == "true",
+        "mode": "seat-governed",
         "shadow_rows_count": await db[CAMARO_SHADOW_ROWS].count_documents({}),
-        "doctrine": "camaro shadow rows stay in camaro_shadow_rows; executor disabled in observation mode",
+        "doctrine": (
+            "camaro shadow rows stay in camaro_shadow_rows. Execution "
+            "authority is seat-bound — see /api/admin/roster."
+        ),
     }
 
 

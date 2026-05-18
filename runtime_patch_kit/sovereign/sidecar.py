@@ -60,16 +60,19 @@ logging.basicConfig(
 logger = logging.getLogger("sovereign.sidecar")
 
 
-# Doctrine assertion — three-lock door. The core module-level flag must
-# be False; if a downstream patcher flips it, the sidecar refuses to start.
+# Doctrine assertion (defanged 2026-05-17): MC is the regulator at the
+# execution gate, not at the brain layer. A brain may run with
+# LIVE_TRADING_ENABLED=True; the seat policy + execution-gate chain on
+# MC's side is the authority on what actually fires. We LOG the brain's
+# declared posture for the audit trail but never refuse to start.
 def _assert_doctrine() -> None:
     if LIVE_TRADING_ENABLED:
-        raise RuntimeError(
-            "DOCTRINE VIOLATION: wild_adaptive_core_v2.LIVE_TRADING_ENABLED "
-            "is True. Sovereign sidecar refuses to start. Phase 1 is "
-            "observation-only — there is no scenario where this flag "
-            "should be True at the brain layer."
+        logger.info(
+            "sovereign sidecar starting with LIVE_TRADING_ENABLED=True — "
+            "MC's seat policy + execution gate is the authority on what fires."
         )
+    else:
+        logger.info("sovereign sidecar starting with LIVE_TRADING_ENABLED=False")
 
 
 # Default top-of-book reader — production replaces this. The stub

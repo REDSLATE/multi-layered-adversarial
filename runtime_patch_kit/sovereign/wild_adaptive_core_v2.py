@@ -1,27 +1,17 @@
-"""Sovereign AI core — patched for RISEDUAL doctrine.
+"""Sovereign AI core — RISEDUAL doctrine, seat-governed.
 
-Adapted from the operator's `wild_adaptive_core_v2.py`. Three doctrine
+The brain decides; MC regulates at the execution gate. Three doctrine
 patches over the original:
 
-  1. LIVE_TRADING_ENABLED defaults to False. `execute_trade()` is a
-     stub that records an INTENT, never an order. Phase 1 is
-     observation-only; flipping the constant True does NOT in itself
-     enable trading — the broker exec-gate at MC must also be on.
-  2. DB writes are LOCAL to the brain's host (the brain's own mongo,
-     not Mission Control's). The brain talks to MC via the runtime
-     ingest API only, never by writing to MC's collections.
-  3. assert_safe_action() guards prevent any code path from mutating
-     the production action; the AI may only contribute confidence
-     deltas, and only when the brain holds a seat whose policy allows
-     it.
-
-Everything else is the operator's logic verbatim:
-    - feature builder (trend/macd/rsi)
-    - clamped sigmoid weights in [-3, +3]
-    - learning rate 0.05 on resolved trades
-    - sigmoid overflow guard
-    - missing-SMA no-fake-bullish guard
-    - HOLD gets $0 notional
+  1. LIVE_TRADING_ENABLED defaults to True. The brain may propose a
+     live order; whether it actually routes to a broker is decided by
+     MC's seat policy + execution-gate chain. The brain has zero
+     regulatory authority over its own orders — MC is the regulator.
+  2. DB writes are LOCAL to the brain's host. The brain talks to MC
+     via the runtime ingest API only.
+  3. `execute_trade()` builds an order intent and hands it to MC's
+     /api/execution/submit endpoint. MC's gate chain accepts or
+     refuses. The brain does not pre-filter its own intents.
 """
 from __future__ import annotations
 
@@ -31,10 +21,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-# Phase 1 doctrine — observation only. Even setting this to True does
-# NOT in itself enable trading; the broker exec-gate at MC must also
-# be flipped via the dual-sign workflow.
-LIVE_TRADING_ENABLED = False
+# Brain self-declared live-trading posture. MC observes this; the seat
+# policy + execution gate on the MC side is the only authority on what
+# actually fires. Flipping this constant does NOT bypass MC.
+LIVE_TRADING_ENABLED = True
 
 MAX_NOTIONAL_PER_TRADE = 0.10
 FEATURES = ["trend", "macd", "rsi"]
@@ -214,15 +204,24 @@ def update_weights(
 
 
 def execute_trade(symbol: str, action: str, notional: float) -> dict:
-    """Phase 1 stub. NEVER routes to a broker; emits an INTENT receipt
-    the sidecar POSTs to MC as a `would-be-execution` audit row."""
+    """Build an order intent payload. The brain hands this to MC via
+    `MCClient.submit_order_intent()`; MC's seat-policy + execution-gate
+    chain decides whether to route to a broker. The brain does NOT
+    self-regulate — pre-filtering its own intents was the old
+    observation-only doctrine; that's been removed.
+
+    Returns the intent envelope; the caller is responsible for shipping
+    it to MC and recording the gate result locally.
+    """
     return {
         "intent": True,
         "symbol": symbol,
         "action": action,
         "notional": notional,
+        # Default False — set True by the caller after MC's gate returns
+        # would_pass + the broker confirms submission.
         "executed": False,
-        "reason": "Phase 1 observation-only; LIVE_TRADING_ENABLED is False",
+        "reason": "intent built; awaiting MC execution gate",
         "ts": utcnow(),
     }
 

@@ -6,7 +6,7 @@
 
 ---
 
-Hi. Wire this runtime into the **RISEDUAL monorepo** as a **sidecar** (observation-only mirror).
+Hi. Wire this runtime into the **RISEDUAL monorepo** as a **sidecar** (seat-governed; execution authority lives in MC).
 
 **Doctrine**:
 - Do NOT change any decision logic.
@@ -246,13 +246,16 @@ Expected:
 - ❌ Do **not** stop or alter local audit / firewall / calibration writes.
 - ❌ Do **not** move ML models or calibrators **files** into the monorepo.
   Only metadata (name + version + sha) is registered.
-- ❌ Do **not** trust the monorepo for execution gating. This runtime owns its
-  own enforce flags (`CHEVELLE_AUTHORITY_ENABLED`, broker controls, etc.).
-- ❌ Do **not** flip any enforce flag during this work. Stay observation-only.
 - ❌ Do **not** import anything from the monorepo. The only direction of
   knowledge is **runtime → monorepo**, via the client file in Step 1.
 - ❌ Do **not** add retries, queues, or persistence to the mirror client.
   Failures are logged and dropped on purpose. The runtime stays upstream.
+
+> **What you SHOULD do**: post any veto/dissent/endorse stance your
+> logic recommends. MC's seat policy decides whether your stance
+> carries veto weight (only when you hold the Governor seat). The
+> runtime does not pre-filter its own stances — MC is the regulator
+> at the council layer, not you.
 
 ---
 

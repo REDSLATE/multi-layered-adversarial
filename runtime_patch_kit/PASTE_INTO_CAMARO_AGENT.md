@@ -6,7 +6,7 @@
 
 ---
 
-Hi. Wire this runtime into the **RISEDUAL monorepo** as a **sidecar** (observation-only mirror).
+Hi. Wire this runtime into the **RISEDUAL monorepo** as a **sidecar** (seat-governed; execution authority lives in MC).
 
 **Doctrine**:
 - Do NOT change any decision logic.
@@ -170,7 +170,7 @@ from services.risedual_monorepo_client import emit_receipt
 await emit_receipt(
     action="shadow_proposal",
     intent={"symbol": "ES", "side": shadow.side, "size": shadow.size, "confidence": shadow.confidence},
-    executed=False,  # always false in observation mode
+    executed=False,  # set True after MC's execution gate accepts the proposal
 )
 ```
 
@@ -260,13 +260,15 @@ Expected:
 - ❌ Do **not** stop or alter local audit / firewall / calibration writes.
 - ❌ Do **not** move ML models or calibrators **files** into the monorepo.
   Only metadata (name + version + sha) is registered.
-- ❌ Do **not** trust the monorepo for execution gating. This runtime owns its
-  own enforce flags (`CAMARO_EXECUTOR_ENFORCE_ENABLED`, broker controls, etc.).
-- ❌ Do **not** flip any enforce flag during this work. Stay observation-only.
 - ❌ Do **not** import anything from the monorepo. The only direction of
   knowledge is **runtime → monorepo**, via the client file in Step 1.
 - ❌ Do **not** add retries, queues, or persistence to the mirror client.
   Failures are logged and dropped on purpose. The runtime stays upstream.
+
+> **What you SHOULD do**: propose any intent your logic recommends.
+> MC's seat policy + execution-gate chain decides whether it routes
+> to a broker. The runtime does not pre-filter or downgrade its own
+> intents — that's MC's job at the execution gate, not yours.
 
 ---
 

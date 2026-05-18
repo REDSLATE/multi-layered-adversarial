@@ -85,10 +85,11 @@ class LocalState:
                 f"sovereign local-state file at {self.path} is corrupt: {e}. "
                 "Move it aside and restart to reinitialize."
             ) from e
-        # Re-pin the doctrine bit even on load — the file is operator-
-        # editable for debugging, but local edits MUST NOT bypass the
-        # observation-only doctrine.
-        self._data["live_trading_enabled"] = False
+        # Defanged 2026-05-17: brain's local state is the source of
+        # truth for whatever posture the operator set. We no longer
+        # silently re-pin live_trading_enabled to False on every load —
+        # MC is the regulator at the execution gate, not at the state
+        # file. Preserve whatever the brain saved.
         self._data.setdefault("schema_version", SCHEMA_VERSION)
 
     def save(self) -> None:

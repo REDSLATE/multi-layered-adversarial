@@ -11,7 +11,9 @@ A **single Python process** (`sidecar.py`) that:
 - Loads or creates a JSON state file on the host (`~/.risedual/<brain>/state.json`).
 - Every 60 seconds, runs the deterministic core on whatever symbols you configured.
 - POSTs sovereign-state snapshots + heartbeat pings to MC.
-- Never trades, never writes to MC's DB directly. Three observation-only locks in place.
+- Builds intent envelopes via `execute_trade()`; the brain hands them
+  to MC where the seat-policy + execution-gate chain decides whether
+  to route to a broker. MC is the regulator.
 
 ## What it requires on the host
 
@@ -161,7 +163,10 @@ State file format is versioned (`schema_version` in `local_state.py`); the loade
 
 - **Broker secrets.** Wire those on the host, outside the kit.
 - **MC's mongo URL or any admin auth.** Brains talk to MC via the public-facing API only.
-- **Trade execution.** Phase 1 is observation-only. The kit will refuse to start if its local copy of the core has `LIVE_TRADING_ENABLED=True`.
+- **Broker routing.** The kit builds intent envelopes and posts them
+  to MC. MC's seat-policy + execution-gate chain is the regulator
+  that decides whether to route to a broker. The kit does not
+  self-regulate.
 
 ## Where to go after deploying one brain
 

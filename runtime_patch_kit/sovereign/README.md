@@ -16,16 +16,21 @@ initializations, four personalities.
 | `STATE_SCHEMA.md` | Wire-format spec for the local file and contribution snapshot. |
 | `smoke_test.py` | Doctrinal smoke tests — runnable on the brain host with no MC connection. |
 
-## Doctrine (three locks for one door)
+## Doctrine (seat-governed; MC regulates at the execution gate)
 
-1. **Brain core** sets `LIVE_TRADING_ENABLED = False` at module load.
-   `execute_trade()` is a stub that emits an intent receipt, never an
-   order.
-2. **Sidecar** reasserts the flag at startup. If a downstream patcher
-   flips the core to True, the sidecar refuses to start.
-3. **Mission Control API** schema-rejects any contribution payload
-   carrying `live_trading_enabled: true` (HTTP 422). Brain cannot
-   sneak through even if both local locks were tampered with.
+The brain proposes; **MC is the regulator**. There is no
+brain-side observation-only lock. Three things are still true:
+
+1. **Brain core** ships intents to MC. `execute_trade()` builds an
+   intent envelope; the brain hands it to MC via `MCClient` and lets
+   MC's seat-policy + execution-gate chain decide whether to route
+   to a broker.
+2. **Sidecar** logs the brain's declared `LIVE_TRADING_ENABLED`
+   posture on startup but does NOT refuse to start. Refusing to
+   start was the old observation-only doctrine; it's been removed.
+3. **Mission Control API** accepts any `live_trading_enabled` value
+   the brain declares. MC observes; the seat policy at the
+   execution gate is the only authority on what fires.
 
 The brain talks to MC via **three endpoints only**:
 - `POST /api/runtime-discussion/positions/{id}/stance` — vote on a position.
@@ -40,7 +45,7 @@ brain's own MongoDB / SQLite / JSON state is unrelated.
 | Mode | What it means | MC's behavior |
 |---|---|---|
 | **DTD** | Brain is reading historical / labeled / replay bars. Weight updates expected. | Accepts `training_signal=true`; accepts snapshots. |
-| **PRD** | Brain is reading live market data. Learning would overfit / poison. | Accepts snapshots only; **rejects `training_signal=true`** with 422. |
+| **PRD** | Brain is reading live market data. | Accepts snapshots AND `training_signal=true`. MC observes; downstream consumers decide what to do with the brain's claim. |
 
 Switch via `--mode DTD` or `--mode PRD` on the sidecar. The mode is
 stored locally and ships on every contribution.
@@ -122,6 +127,8 @@ Frontend tile lives on `/runtime/{brain}` and reads
 - It does **not** decide *which* position to vote on — that's the
   operator's job (or a future `active_position_resolver` plugged into
   the sidecar).
-- It does **not** trade. Phase 1 is observation-only. The execute_trade
-  stub emits an intent receipt; flipping `LIVE_TRADING_ENABLED` to True
-  causes the sidecar to refuse to start.
+- It does **not** route orders to a broker on its own. The
+  `execute_trade()` helper builds an intent envelope; the brain hands
+  it to MC. **MC's seat policy + execution-gate chain decides whether
+  the order routes to a broker** — that's the regulator. The brain
+  has no regulatory authority over its own intents.

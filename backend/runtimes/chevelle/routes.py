@@ -1,5 +1,4 @@
 """CHEVELLE runtime. Reads chevelle_memory_labels only."""
-import os
 from fastapi import APIRouter, Depends
 
 from auth import get_current_user
@@ -13,10 +12,13 @@ router = APIRouter(prefix="/runtime/chevelle", tags=["chevelle"])
 async def status(_user: dict = Depends(get_current_user)):
     return {
         "runtime": "chevelle",
-        "mode": "observation",
-        "authority_enabled": os.environ.get("CHEVELLE_AUTHORITY_ENABLED", "false").lower() == "true",
+        "mode": "seat-governed",
         "memory_labels_count": await db[CHEVELLE_MEMORY_LABELS].count_documents({}),
-        "doctrine": "chevelle authority disabled in observation mode; calls remain advisory only",
+        "doctrine": (
+            "chevelle memory labels stay in chevelle_memory_labels. "
+            "Execution + veto authority is seat-bound — see "
+            "/api/admin/roster."
+        ),
     }
 
 
