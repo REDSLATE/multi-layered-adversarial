@@ -43,6 +43,11 @@ from namespaces import (
     SHARED_INTENTS,
 )
 from runtime_auth import verify_runtime_token
+from shared.regime_keys import (  # canonical regime/crypto primitives
+    REGIME_FP_KEYS,
+    _looks_like_crypto,
+    _regime_fingerprint,
+)
 
 
 router = APIRouter(tags=["intents"])
@@ -179,7 +184,6 @@ class IntentIn(BaseModel):
         if rfp is not None:
             if not isinstance(rfp, dict):
                 raise ValueError("evidence.regime_fp must be an object")
-            from shared.hypothesis import REGIME_FP_KEYS  # noqa: WPS433
             extra = set(rfp.keys()) - set(REGIME_FP_KEYS)
             if extra:
                 raise ValueError(
@@ -468,7 +472,6 @@ async def _enrich_regime_fp(symbol: str, supplied_fp: Optional[dict]) -> dict:
     """
     supplied = dict(supplied_fp or {})
     # Skip the DB hit if the brain already sent the full set.
-    from shared.hypothesis import REGIME_FP_KEYS, _regime_fingerprint  # noqa: WPS433
     if set(supplied.keys()) >= set(REGIME_FP_KEYS):
         return supplied
     try:
@@ -484,44 +487,6 @@ async def _enrich_regime_fp(symbol: str, supplied_fp: Optional[dict]) -> dict:
     for k, v in derived.items():
         supplied.setdefault(k, v)
     return supplied
-
-
-def _looks_like_crypto(symbol: str) -> bool:
-    """Heuristic: does `symbol` unambiguously look like a crypto pair?
-
-    Matches the common shapes Kraken / Camaro emit:
-      - BTC/USD, ETH/USDT, SOL/USD, BNB-USD, BTC-USDT
-      - XBTUSD (Kraken's BTC alias), pairs with USD/USDT/USDC suffixes
-    We deliberately do NOT match bare 3-letter tickers like "BTC" or "ETH"
-    — too easy to collide with equity symbols, and a real ambiguity
-    case the operator should resolve.
-    """
-    if not symbol or not isinstance(symbol, str):
-        return False
-    s = symbol.upper().strip()
-    # Hard rule: must contain a separator OR be a known fused pair shape.
-    if "/" in s or "-" in s:
-        # Probably a pair like BTC/USD or BTC-USDT. Trust it as crypto if
-        # the quote side looks like a fiat / stablecoin.
-        sep = "/" if "/" in s else "-"
-        parts = s.split(sep)
-        if len(parts) != 2:
-            return False
-        _, quote = parts
-        return quote in {"USD", "USDT", "USDC", "EUR", "GBP", "JPY", "BTC", "ETH"}
-    # Kraken-style fused pairs (XBTUSD, BTCUSDT, ETHUSD). Require >=6 chars
-    # and a known suffix to avoid colliding with NYSE 4-5 letter tickers.
-    for suffix in ("USDT", "USDC", "USD"):
-        if len(s) >= len(suffix) + 3 and s.endswith(suffix):
-            base = s[: -len(suffix)]
-            # Common crypto base symbols. Anything else stays ambiguous.
-            if base in {
-                "BTC", "XBT", "ETH", "SOL", "BNB", "DOGE", "ADA", "AVAX",
-                "MATIC", "DOT", "LTC", "LINK", "UNI", "ATOM", "TRX", "XRP",
-                "XLM", "ETC", "FIL", "NEAR", "ARB", "OP", "INJ", "TIA",
-            }:
-                return True
-    return False
 
 
 def _compose_canonical(symbol: str, lane: Optional[str]) -> tuple[Optional[str], Optional[str], bool]:
