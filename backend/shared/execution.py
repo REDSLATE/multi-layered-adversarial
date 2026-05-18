@@ -439,6 +439,9 @@ async def execution_submit(
         "executed_at": now,
         "executed_by": user.get("email"),
         "gates_passed": result["gates"],
+        "mc_receipt": order.get("mc_receipt"),
+        "mc_receipt_status": order.get("mc_receipt_status"),
+        "mc_receipt_enforced": order.get("mc_receipt_enforced"),
     }
     await db[EXECUTION_RECEIPTS].insert_one(receipt)
     await db[SHARED_INTENTS].update_one(

@@ -6,6 +6,16 @@ Doctrine:
     * Resolver translates canonical → broker-native at the last mile.
     * Every fail mode is NO_TRADE: missing lane, missing mapping, missing
       adapter, lane mismatch.
+    * **MC receipt seal (2026-05-18)**: before ANY broker call, the
+      router mints an HMAC-signed `MCExecutionReceipt` via
+      `shared.runtime.platform_survival.mc_canonical_gate`. The broker
+      adapter receives it and (when `RISEDUAL_BROKER_REQUIRE_MC_RECEIPT`
+      is `true`) refuses to place the order if the signature is missing,
+      tampered, or carries `accepted=false`. While the flag is `false`
+      (the default during Alpha sidecar rollout), MC mints the receipt
+      and *logs* mismatches but doesn't block — so PROD Alpha keeps
+      trading until the sidecar kit lands. Flip to `true` once Alpha
+      adopts `services.platform_survival.sidecar_build_intent(...)`.
 
 Order-routing layers (execution.py manual submit, auto_router.py) call
 exactly one function here: `route_order(intent, notional_usd)`.
@@ -15,11 +25,13 @@ The router NEVER decides identity. It only:
     2. Looks up the broker for the lane
     3. Asks the resolver for the broker-native symbol
     4. Fetches the adapter for that broker
-    5. Calls `adapter.submit_market_order(...)`
+    5. Mints + attaches an MC receipt (and optionally enforces it)
+    6. Calls `adapter.submit_market_order(...)`
 """
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 from shared.broker.alpaca_routes import get_alpaca_adapter
@@ -32,6 +44,11 @@ from shared.broker_symbol_resolver import (
     broker_for_lane,
     compose,
     resolve_broker_symbol,
+)
+from shared.runtime.platform_survival import (
+    broker_verify_receipt,
+    mc_canonical_gate,
+    policy_hash,
 )
 
 
@@ -62,6 +79,94 @@ ADAPTER_LOADERS = {
 class BrokerRouteBlocked(Exception):
     """Raised when routing cannot complete. Surfaced as a gate failure
     by the calling layer. ALWAYS NO_TRADE — fail-closed."""
+
+
+# ─────────────────────── MC receipt seal ───────────────────────
+
+def _broker_require_mc_receipt() -> bool:
+    """Read at call-time so the operator can flip the flag in `.env`
+    without restarting the server (uvicorn auto-reload picks it up
+    instantly because the value is checked per route_order call)."""
+    return os.getenv("RISEDUAL_BROKER_REQUIRE_MC_RECEIPT", "false").strip().lower() in {
+        "true", "1", "yes", "on",
+    }
+
+
+def _mint_and_verify_mc_receipt(
+    *,
+    intent: dict,
+    asset: AssetKey,
+    side: str,
+    notional_usd: float,
+) -> dict:
+    """Build an envelope from the intent, run it through
+    `mc_canonical_gate(...)`, verify the signature with
+    `broker_verify_receipt(...)`, and return a status dict.
+
+    Returns:
+        {ok: bool, enforced: bool, reason: str, receipt: dict|None}
+
+    When `RISEDUAL_BROKER_REQUIRE_MC_RECEIPT=true`, callers MUST refuse
+    the order if `ok=False`. When the flag is unset/false (rollout
+    mode), this function still mints the receipt and surfaces the
+    status — the operator can observe pass/fail in PROD logs before
+    flipping enforcement on.
+    """
+    # Build a survival-layer envelope from the existing intent's MC-stamped
+    # fields. Sidecars that already shipped the kit may include a
+    # full `runtime` stamp on the intent; if absent, we synthesize a
+    # neutral one so the gate has something to inspect. The receipt is
+    # still cryptographically valid regardless — what changes is whether
+    # validate_for_prod_sidecar would have flagged the upstream stamp.
+    enforced = _broker_require_mc_receipt()
+    envelope = {
+        "brain_id": intent.get("stack") or "unknown",
+        "lane": asset.lane,
+        "symbol": asset.canonical,
+        "direction": side,
+        "confidence": float(intent.get("confidence") or 0.0),
+        "room_id": intent.get("room_id") or f"{intent.get('stack', 'unknown')}_room",
+        "runtime": intent.get("runtime") or {
+            # Neutral synthesized stamp — proves the sidecar did NOT
+            # claim local execution authority. Real PROD adoption
+            # replaces this with the sidecar's actual RuntimeStamp.
+            "app_name": "risedual",
+            "env_name": os.getenv("RISEDUAL_ENV", "unknown"),
+            "git_sha": os.getenv("GIT_SHA", "unknown"),
+            "platform": os.getenv("RISEDUAL_PLATFORM", "unknown"),
+            "mc_url": os.getenv("RISEDUAL_MC_URL", ""),
+            "db_name": os.getenv("RISEDUAL_DB_NAME", os.getenv("DB_NAME", "")),
+            "broker_mode": os.getenv("RISEDUAL_BROKER_MODE", "unknown"),
+            "sidecar_room": intent.get("stack", "unknown"),
+            "sidecar_version": "synthesized_by_mc",
+            "policy_hash": policy_hash(),
+            "local_execution_authority": False,
+            "timestamp_ms": 0,
+        },
+    }
+    # Pre-flight: notional is the broker-effective size; pass it
+    # transparently as the confidence input is independent.
+    _ = notional_usd
+
+    gate = mc_canonical_gate(envelope)
+    receipt = gate.get("receipt")
+    verify = broker_verify_receipt(receipt) if receipt else {"ok": False, "reason": "NO_RECEIPT"}
+
+    if not enforced and not verify["ok"]:
+        # Rollout mode: log the failure but allow the order through so
+        # PROD Alpha can keep trading until its sidecar adopts the kit.
+        logger.warning(
+            "mc receipt verification FAILED but enforcement is OFF "
+            "(RISEDUAL_BROKER_REQUIRE_MC_RECEIPT!=true) — reason=%s intent=%s",
+            verify["reason"], intent.get("intent_id"),
+        )
+
+    return {
+        "ok": verify["ok"],
+        "enforced": enforced,
+        "reason": verify["reason"],
+        "receipt": receipt,
+    }
 
 
 # ─────────────────────── canonical composition ───────────────────────
@@ -148,12 +253,24 @@ async def route_order(
             f"broker {broker_name!r} adapter not configured (no credentials?); NO_TRADE"
         )
 
-    # 5. Submit through the adapter.
+    # 5. Mint + verify the MC execution receipt — the doctrinal seal.
     side = "BUY" if intent.get("action") in ("BUY", "COVER") else "SELL"
+    receipt_check = _mint_and_verify_mc_receipt(
+        intent=intent,
+        asset=asset,
+        side=side,
+        notional_usd=notional_usd,
+    )
+    if receipt_check["enforced"] and not receipt_check["ok"]:
+        raise BrokerRouteBlocked(
+            f"MC receipt rejected: {receipt_check['reason']}; NO_TRADE"
+        )
+
+    # 6. Submit through the adapter.
     logger.info(
-        "route_order intent=%s canonical=%s lane=%s broker=%s broker_sym=%s side=%s $%.2f",
+        "route_order intent=%s canonical=%s lane=%s broker=%s broker_sym=%s side=%s $%.2f receipt=%s",
         intent_id, asset.canonical, asset.lane, broker_name, broker_symbol,
-        side, notional_usd,
+        side, notional_usd, receipt_check["reason"],
     )
     order = await adapter.submit_market_order(
         symbol=broker_symbol if isinstance(broker_symbol, str) else asset.base,
@@ -166,6 +283,11 @@ async def route_order(
     order["lane"] = asset.lane
     order["canonical"] = asset.canonical
     order["broker_symbol"] = broker_symbol if isinstance(broker_symbol, str) else str(broker_symbol)
+    # Surface MC receipt provenance so the auto-router/execution receipt
+    # rows can slice fills by signature presence.
+    order["mc_receipt"] = receipt_check.get("receipt")
+    order["mc_receipt_status"] = receipt_check["reason"]
+    order["mc_receipt_enforced"] = receipt_check["enforced"]
     return order
 
 

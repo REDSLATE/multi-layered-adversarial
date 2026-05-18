@@ -2,6 +2,81 @@
 
 
 
+## 🚨 Latest (2026-05-18, +3): Broker-side MC-receipt seal wired
+
+Phase-2 of the platform survival rollout: every order leaving Mission
+Control now carries an HMAC-signed `MCExecutionReceipt`. Broker
+adapters refuse unsigned/tampered orders **when enforcement is on**.
+Enforcement defaults `false` so PROD Alpha keeps trading while its
+sidecar adopts the kit.
+
+### Insertion point
+`shared/broker_router.route_order(...)` — the single chokepoint that
+every fill flows through (manual `/execution/submit` AND auto-router).
+After step 4 (adapter fetch) and before step 5 (broker submit), the
+router calls a new helper `_mint_and_verify_mc_receipt(...)`:
+
+1. Builds a survival-layer envelope from the existing intent
+   (synthesizes a neutral `runtime` stamp if the sidecar hasn't yet
+   adopted the kit).
+2. Runs the envelope through `mc_canonical_gate(...)` — returns the
+   HMAC-signed `MCExecutionReceipt`.
+3. Calls `broker_verify_receipt(...)` to validate the signature.
+4. Behavior depends on `RISEDUAL_BROKER_REQUIRE_MC_RECEIPT` env flag:
+   - `false` (default, rollout mode): logs warnings on failure, lets
+     the order through. Operator can see the failure rate before
+     flipping the switch.
+   - `true` (enforce mode): raises `BrokerRouteBlocked` with
+     `MC receipt rejected: <reason>` and the fake / real adapter is
+     never called.
+
+### Provenance on every fill
+Execution receipts (both `auto_router._build_receipt` and
+`execution.py:execution_submit`) now persist three new fields:
+- `mc_receipt` — the signed receipt object
+- `mc_receipt_status` — `VALID_MC_RECEIPT` / `BAD_MC_RECEIPT_SIGNATURE` /
+  `MISSING_RECEIPT_SECRET` / `SIDECAR_LOCAL_AUTHORITY_FORBIDDEN` / etc.
+- `mc_receipt_enforced` — boolean snapshot of the flag at execution time
+
+The operator can now slice `execution_receipts` by `mc_receipt_status`
+to see exactly which fills passed the cryptographic seal.
+
+### Env flags (new)
+- `RISEDUAL_BROKER_REQUIRE_MC_RECEIPT=false` — added to `backend/.env`.
+  Set to `true` to enforce. Read on every `route_order` call, so
+  flipping the flag is hot-reload (no restart needed).
+
+### Tests
+`tests/test_broker_router_mc_receipt.py` — 9 PASS (all marked tripwire):
+- enforcement flag default-off + truthy variants
+- mint helper: synthesizes neutral stamp / passes through sidecar
+  stamp / rejects sidecar that lies about local authority
+- route_order: attaches receipt metadata in rollout mode, enforces
+  block when flag on + no secret, lets valid receipt through under
+  enforcement, blocks lying sidecar under enforcement (real adapter
+  never called)
+
+Full regression: 76/76 tripwire (was 67) — the 9 new tests pin the
+broker-side seal contract.
+
+### Doctrine pin
+Sidecars communicate → MC approves → MC mints a receipt → broker
+verifies the signature → fill happens. **Without the receipt, no
+fill.** The flag flip from `false` → `true` is the one-line operation
+that promotes the survival doctrine from advisory to mandatory.
+
+### Operator switch-flip checklist
+1. Drop `platform_survival.tar.gz` into each brain repo (highest
+   priority: Alpha)
+2. Adopt `sidecar_build_intent(...)` and `RuntimeStamp.current(...)`
+   in each sidecar
+3. Watch `execution_receipts.mc_receipt_status` in the dashboard for
+   ≥24h — confirm `VALID_MC_RECEIPT` for every PROD Alpha fill
+4. Flip `RISEDUAL_BROKER_REQUIRE_MC_RECEIPT=true` in MC `.env`
+5. From this moment forward, no sidecar drift can fire a fill
+
+
+
 ## 🚨 Latest (2026-05-18, +2): Survival kit extraction — operator can pull it OUT of the preview
 
 Operator pushback: "But that's inside the preview." Correct — the

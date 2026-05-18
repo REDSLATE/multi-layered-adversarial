@@ -199,6 +199,10 @@ def _build_receipt(
         "executed_by": AUTO_ROUTER_EMAIL,
         "gates_passed": gates,
         "auto_routed": True,
+        # MC receipt provenance — `mc_canonical_gate` mint + `broker_verify_receipt`.
+        "mc_receipt": order.get("mc_receipt"),
+        "mc_receipt_status": order.get("mc_receipt_status"),
+        "mc_receipt_enforced": order.get("mc_receipt_enforced"),
     }
 
 
