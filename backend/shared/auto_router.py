@@ -37,6 +37,7 @@ from shared.broker_router import (
     route_order,
 )
 from shared.execution import _evaluate_gates
+from shared.intent_contract import classify_brain_intent
 from shared.mc_shelly import record_async
 
 
@@ -67,6 +68,34 @@ async def _route_one(intent: dict) -> dict:
     """
     intent_id = intent["intent_id"]
     notional_raw = float(intent.get("requested_notional_usd") or AUTO_ROUTER_NOTIONAL_USD)
+
+    # Phase 0: MC classifier — "is this even an executable candidate?"
+    # Sidecars speak in their own shape (BUY/SELL/HOLD, opinions,
+    # authority calls). MC owns the classification. HOLD, missing
+    # symbol, unknown direction, below-floor confidence, missing lane
+    # → advisory_only=True. Persist a typed ledger row and skip
+    # routing entirely. This stops HOLDs (and other non-directional
+    # noise) from spamming the gate chain.
+    #
+    # Lane-specific exec floor: crypto 0.30, equity 0.30 (operator
+    # spec). Adjust here if you want different floors per lane.
+    intent_lane = str(intent.get("lane") or "").lower()
+    min_exec_conf = 0.30
+    classification = classify_brain_intent(intent, min_exec_conf=min_exec_conf)
+    if classification.advisory_only:
+        logger.info(
+            "auto_router skip intent=%s brain=%s lane=%s symbol=%s "
+            "advisory_only reason=%s",
+            intent_id, classification.brain, intent_lane,
+            classification.symbol, classification.reason,
+        )
+        await _persist_advisory_classification(intent_id, intent, classification)
+        return {
+            "intent_id": intent_id,
+            "verdict": "advisory_only",
+            "reason": classification.reason,
+            "execution_ready": False,
+        }
 
     # Phase 1: clamp notional to the lane's per-order cap.
     notional, was_clamped = _clamp_notional_to_lane(notional_raw, intent.get("lane"))
@@ -226,6 +255,44 @@ async def _persist_blocked_intent(intent_id: str, notional: float, result: dict)
         {"$set": {
             "gate_state": "blocked",
             "last_submit_ts": _now_iso(),
+            "last_submit_by": AUTO_ROUTER_EMAIL,
+        }},
+    )
+
+
+async def _persist_advisory_classification(
+    intent_id: str,
+    intent: dict,
+    classification,
+) -> None:
+    """Phase-0 ledger row: a brain emission that's NOT an executable
+    candidate (HOLD, opinion, missing lane/symbol, below-floor conf).
+    Persisted so the operator can audit WHY it was skipped, without
+    polluting the gate-result ledger with a fake 'blocked' row."""
+    now = _now_iso()
+    await db[SHARED_GATE_RESULTS].insert_one({
+        "intent_id": intent_id,
+        "kind": "auto_router_advisory_only",
+        "ts": now,
+        "by": AUTO_ROUTER_EMAIL,
+        "classification": {
+            "executable_candidate": classification.executable_candidate,
+            "advisory_only": classification.advisory_only,
+            "reason": classification.reason,
+            "normalized_direction": classification.normalized_direction,
+            "confidence": classification.confidence,
+            "lane": classification.lane,
+            "symbol": classification.symbol,
+            "brain": classification.brain,
+        },
+    })
+    await db[SHARED_INTENTS].update_one(
+        {"intent_id": intent_id},
+        {"$set": {
+            "gate_state": "advisory_only",
+            "execution_ready": False,
+            "advisory_reason": classification.reason,
+            "last_submit_ts": now,
             "last_submit_by": AUTO_ROUTER_EMAIL,
         }},
     )

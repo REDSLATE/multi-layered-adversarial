@@ -31,22 +31,39 @@ async def _stamp_runtime():
 
 ## 3. Replace Camaro's intent emit
 
-Camaro's sidecar emits intents through `decision_machine.emit_intent`
-(or your equivalent). Change the body to:
+Camaro is the CRYPTO_EXECUTOR candidate. Use the canonical adapter so
+MC's classifier knows the role:
 
 ```python
 from services.platform_survival import sidecar_build_intent
+from services.platform_survival.role_adapters import camaro_emit_crypto_intent
 
-intent = sidecar_build_intent(
-    brain_id="camaro",
-    lane=lane,                # decision_machine already knows
+# Canonical executor-intent shape.
+exec_intent = camaro_emit_crypto_intent(
     symbol=symbol,
-    direction=direction,
+    direction=direction,        # BUY / SELL / HOLD
     confidence=conf,
-    room_id="camaro_room",
+    notional_usd=notional_usd,
 )
+# Wrap in the survival envelope (RuntimeStamp).
+intent = sidecar_build_intent(
+    brain_id="camaro", lane="crypto", symbol=symbol,
+    direction=direction, confidence=conf, room_id="camaro_room",
+)
+intent.update(exec_intent)
 await mc_post("/api/ingest/intent", json=intent)
 ```
+
+Doctrine:
+- BUY / SELL above 0.30 confidence → MC classifies as
+  `executable_candidate`
+- HOLD (or any non-directional) → MC classifies as
+  `NON_DIRECTIONAL_OPINION` and persists to the ledger WITHOUT
+  routing it through the gate chain (no more HOLD spam on Intents)
+
+This also kills the noisy "10 HOLDs in 27 minutes" pattern — those
+intents are now filtered at MC's classifier instead of clogging the
+council gates.
 
 ## 4. Env vars on Camaro
 

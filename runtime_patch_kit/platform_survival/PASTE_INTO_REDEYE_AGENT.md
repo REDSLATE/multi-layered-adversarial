@@ -28,36 +28,51 @@ async def _stamp_runtime():
 
 ## 3. Stamp every opinion + crypto intent
 
-For opinions posted via `/api/opinions`:
+REDEYE is the OPPONENT. Use the canonical adapter for oppositions:
 
 ```python
+from services.platform_survival import RuntimeStamp, sidecar_build_intent
+from services.platform_survival.role_adapters import redeye_emit_opposition
 from dataclasses import asdict
 
-payload = {
-    "runtime": "redeye",
-    "stance": stance,
-    "confidence": conf,
-    "evidence": evidence,
-    "runtime_stamp": asdict(app.state.runtime_stamp),  # NEW
-}
-await mc_post("/api/opinions", json=payload)
+# Opposition (advisory — DOES NOT kill trades alone per doctrine):
+opp = redeye_emit_opposition(
+    symbol=symbol,
+    lane="equity",                # or "crypto"
+    direction=primary_direction,
+    confidence=conf,
+    opposes=True,
+)
+opp["runtime_stamp"] = asdict(app.state.runtime_stamp)
+await mc_post("/api/opinions", json=opp)
 ```
 
-For crypto intents via the REDEYE→Camaro intent bridge:
+For crypto intents via the REDEYE→Camaro intent bridge, REDEYE uses
+the executor-shape adapter (it's emitting an executable candidate,
+not an opposition):
 
 ```python
-from services.platform_survival import sidecar_build_intent
+from services.platform_survival.role_adapters import camaro_emit_crypto_intent
 
-intent = sidecar_build_intent(
-    brain_id="redeye",
-    lane="crypto",
-    symbol=symbol,
-    direction=direction,        # BUY / SELL
-    confidence=conf,
-    room_id="redeye_room",
+# REDEYE-side bridge: emit a directional crypto candidate.
+intent = camaro_emit_crypto_intent(
+    symbol=symbol, direction=direction,
+    confidence=conf, notional_usd=notional,
 )
-await mc_post("/api/ingest/intent/crypto", json=intent)
+intent["brain"] = "redeye"      # override
+intent["role"] = "crypto_executor"
+envelope = sidecar_build_intent(
+    brain_id="redeye", lane="crypto", symbol=symbol,
+    direction=direction, confidence=conf, room_id="redeye_room",
+)
+envelope.update(intent)
+await mc_post("/api/ingest/intent/crypto", json=envelope)
 ```
+
+Doctrine: REDEYE oppositions count as adversary evidence weight in
+the council — they do NOT kill trades by themselves. Only the
+governor (Chevelle) hard veto or structural safety stops will block
+execution.
 
 ## 4. Env vars on REDEYE
 

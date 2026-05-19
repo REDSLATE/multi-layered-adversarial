@@ -2,6 +2,112 @@
 
 
 
+## 🚨 Latest (2026-05-18, +6): Unified classifier — Brains speak → MC classifies → MC governs → MC routes
+
+Operator architecture: one classifier on MC, one role adapter per
+brain. Sidecars never decide whether their own emission is
+executable — they package shape, MC owns policy.
+
+### MC backend — 2 new standalone modules
+
+**`shared/intent_contract.py`** — `classify_brain_intent(intent, *, min_exec_conf=0.30)` → `IntentClassification`. Returns one of 6 typed reasons:
+- `EXECUTABLE_CANDIDATE` (BUY/SELL above floor, lane valid, symbol present)
+- `NON_DIRECTIONAL_OPINION` (HOLD / WAIT / NONE / NEUTRAL / "")
+- `UNKNOWN_DIRECTION:<X>` (anything else)
+- `SYMBOL_MISSING`
+- `CONFIDENCE_BELOW_EXEC_FLOOR`
+- `LANE_MISSING_OR_INVALID`
+
+Reads from permissive field chain: `direction` | `side` | `action`
+for direction; `raw_confidence` | `confidence` | `effective_confidence`
+for conf; `symbol` | `canonical_id` for symbol; `brain` | `source`
+for brain.
+
+**`shared/governor_policy.py`** — `apply_governor_policy(governance, *, executable, size_mult)` → `(executable, size_mult, governance)`. Standalone export of the FATAL/SILENCE taxonomy with a 10% absolute floor:
+- non-BLOCK status → passes through, `display_status=ALLOW`
+- BLOCK + reason in FATAL → `HARD_BLOCK` (executable=False, size=0)
+- BLOCK + reason in SILENCE_OR_SOFT → `RISK_DOWN_ONLY` (size × 0.5, floor 0.1)
+- BLOCK + unknown reason → conservative `RISK_DOWN_ONLY` (NOT killed)
+
+Imports `FATAL_GOVERNOR_REASONS` and `SILENCE_GOVERNOR_REASONS` from
+`shared.council` — single source of truth.
+
+### Wired into `auto_router._route_one` Phase 0
+
+Before the gate chain runs, every intent flows through the
+classifier. Advisory-only intents (HOLD spam, missing fields, below
+floor) are persisted to `shared_gate_results` as kind
+`auto_router_advisory_only` with full classification metadata, and
+the intent is marked `gate_state="advisory_only"` —  it never
+touches `_evaluate_gates`. Kills HOLD-spam at the door.
+
+New persistence helper `_persist_advisory_classification()` writes
+the typed reason to the ledger so operators can audit WHY each
+intent was filtered.
+
+### Brain-side role adapters (in the patch kit)
+
+New file `services/platform_survival/role_adapters.py` ships 4
+canonical emit functions:
+
+```python
+camaro_emit_crypto_intent(symbol, direction, confidence, notional_usd)
+  → {brain:camaro, role:crypto_executor, intent_type:EXECUTION_INTENT, ...}
+
+alpha_emit_opinion(symbol, lane, direction, confidence)
+  → {brain:alpha, role:strategist, intent_type:OPINION, ...}
+
+chevelle_emit_authority(symbol, lane, status, reason, confidence)
+  → {brain:chevelle, role:governor, intent_type:GOVERNOR_AUTHORITY,
+     status:ALLOW|WARN|BLOCK, reason:..., ...}
+
+redeye_emit_opposition(symbol, lane, direction, confidence, opposes)
+  → {brain:redeye, role:opponent, intent_type:OPPOSITION, ...}
+```
+
+Each brain imports the matching adapter, wraps the output in
+`sidecar_build_intent(...)` to add the RuntimeStamp, and POSTs to
+MC. PASTE_INTO_*_AGENT.md docs updated with concrete examples and
+behavior contracts.
+
+### Tests
+
+- `tests/test_intent_contract.py` — 17 PASS (tripwire): happy path
+  Camaro crypto BUY + Alpha equity SELL, every advisory_only branch
+  (HOLD, empty, WAIT, NEUTRAL, NONE, unknown direction, missing
+  symbol, blank symbol, below floor, missing lane, invalid lane),
+  field fallback chains (raw_confidence > confidence >
+  effective_confidence > 0; brain → source; symbol → canonical_id),
+  frozen dataclass, non-numeric confidence coercion, doctrine-set
+  stability.
+- `tests/test_governor_policy.py` — 13 PASS (tripwire): every
+  non-BLOCK status passes through, all 9 FATAL reasons kill, all 4
+  SILENCE_OR_SOFT reasons risk-down, 0.0 input → 0.1 floor, unknown
+  reason → conservative risk-down (not kill), input dict not mutated,
+  case-insensitive, already-blocked stays blocked.
+
+Full tripwire: **110/110 PASS** (was 80, +30 new).
+
+### Bundle rebuilt with new role_adapters.py
+
+- `platform_survival.tar.gz` — 10,159 bytes,
+  sha256 `06814594f0718fcef06f5a8af20dcf5e762b7a189a1b85b347597ed56e07789a`
+- `platform_survival.zip` — 16,453 bytes,
+  sha256 `0409d41d3bda2d8a25c3c990d57af9a35a697c4d227275711ef2e490e72f26b0`
+
+Operator re-downloads from Diagnostics → Portable patch kits, drops
+into each brain repo, redeploys.
+
+### Doctrine rule summary
+- Camaro BUY/SELL + conf ≥ 0.30 → executable candidate
+- Camaro HOLD / weak → advisory only (never reaches gate chain)
+- Alpha opinion → advisory unless seat-checked as executor
+- Chevelle silent / offline → RISK_DOWN ×0.5 (not kill)
+- Chevelle hard veto / fatal reason → true block
+- REDEYE opposition → adversary weight; does NOT kill trades alone
+
+
+
 ## 🚨 Latest (2026-05-18, +5): Governor silence ≠ kill switch — FATAL/SILENCE taxonomy
 
 Operator patch: Chevelle's silence was acting as a global kill switch

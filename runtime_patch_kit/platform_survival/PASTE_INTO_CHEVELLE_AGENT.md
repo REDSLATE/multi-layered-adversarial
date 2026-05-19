@@ -29,27 +29,39 @@ async def _stamp_runtime():
 
 ## 3. Tag every authority call
 
-Chevelle posts authority calls to `/api/ingest/receipts` (or your
-custom endpoint). Wrap the payload:
+Chevelle is the GOVERNOR. Use the canonical adapter so MC's
+governor_policy module reads the status + reason directly:
 
 ```python
 from services.platform_survival import RuntimeStamp
+from services.platform_survival.role_adapters import chevelle_emit_authority
 from dataclasses import asdict
 
 stamp = app.state.runtime_stamp
-payload = {
-    "runtime": "chevelle",
-    "symbol": symbol,
-    "authority_call": "executable" if pass_ else "block",
-    "rationale": reason,
-    "evidence": evidence,
-    "runtime_stamp": asdict(stamp),   # NEW — carries env / git_sha / policy_hash
-}
-await mc_post("/api/ingest/receipts", json=payload)
+
+# Canonical authority-call shape — what MC's governor_policy reads.
+authority = chevelle_emit_authority(
+    symbol=symbol,
+    lane="equity",                                # or "crypto"
+    status="BLOCK" if veto else "ALLOW",          # ALLOW / WARN / BLOCK
+    reason="GOVERNOR_HARD_VETO" if veto else "NO_GOVERNOR_DISSENT",
+    confidence=conf,
+)
+authority["runtime_stamp"] = asdict(stamp)  # provenance
+await mc_post("/api/ingest/receipts", json=authority)
 ```
 
-MC's council layer can then read `runtime_stamp.env_name == "prod"` to
-exclude preview-drift authority calls from the gate chain.
+CRITICAL: only use `status="BLOCK", reason="GOVERNOR_HARD_VETO"`
+when Chevelle has genuine high-conviction evidence the trade must be
+killed. MC's governor_policy treats `GOVERNOR_HARD_VETO` as FATAL
+(stops execution). Lower-confidence dissent should use
+`status="WARN", reason="<your-specific-warning>"` so MC applies
+risk-down instead of killing the trade.
+
+Doctrine pin: Chevelle's silence ≠ kill switch. If Chevelle simply
+doesn't post an authority call for a symbol, MC's classifier emits
+`NO_STANCE_LOW_EFFECTIVE_CONF` / `GOVERNOR_OFFLINE` and routes the
+trade at half size, not zero.
 
 ## 4. Env vars on Chevelle
 

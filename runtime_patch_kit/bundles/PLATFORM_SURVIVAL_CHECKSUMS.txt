@@ -1,2 +1,2 @@
-platform_survival.tar.gz  43199b1a24129f6c581b8a75ef854a848e7587a85a0063fec3648a249bc51d93  (8121 bytes)
-platform_survival.zip     c658fe88856cce740c6ca9280a4629d311245ff90f1cddfe6e427bf05220c584  (13539 bytes)
+platform_survival.tar.gz  06814594f0718fcef06f5a8af20dcf5e762b7a189a1b85b347597ed56e07789a  (10159 bytes)
+platform_survival.zip     0409d41d3bda2d8a25c3c990d57af9a35a697c4d227275711ef2e490e72f26b0  (16453 bytes)

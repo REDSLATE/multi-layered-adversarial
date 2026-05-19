@@ -36,25 +36,38 @@ intent = {"brain_id": "alpha", "symbol": symbol, "direction": "BUY", ...}
 await post_to_mc(intent)
 ```
 
-Switch to:
+Switch to the canonical role adapter. Alpha is a STRATEGIST — its
+emissions are advisory opinions. MC classifies them and decides
+whether they become executable based on Alpha's seat:
 
 ```python
 from services.platform_survival import sidecar_build_intent
+from services.platform_survival.role_adapters import alpha_emit_opinion
 
-intent = sidecar_build_intent(
-    brain_id="alpha",
-    lane="equity",            # or "crypto"
-    symbol=symbol,
-    direction="BUY",
-    confidence=conf,
-    room_id="alpha_room",
+# Build the canonical opinion shape.
+opinion = alpha_emit_opinion(
+    symbol=symbol, lane="equity", direction="BUY", confidence=conf,
 )
+# Wrap it in the survival envelope so MC sees the runtime stamp.
+intent = sidecar_build_intent(
+    brain_id="alpha", lane="equity", symbol=symbol,
+    direction="BUY", confidence=conf, room_id="alpha_room",
+)
+intent.update(opinion)
 await post_to_mc(intent)
 ```
 
-The envelope now carries the runtime stamp inside. MC will reject the
-intent if `local_execution_authority` is anything other than `False` —
-that's the doctrine guard.
+MC's classifier (`shared/intent_contract.py`) reads this shape and
+returns:
+- `executable_candidate=True` if Alpha holds the executor seat AND
+  confidence ≥ 0.30
+- `advisory_only=True` with reason `NON_DIRECTIONAL_OPINION` if
+  Alpha emits HOLD/WAIT/NEUTRAL
+- `advisory_only=True` with reason `CONFIDENCE_BELOW_EXEC_FLOOR` if
+  conf < 0.30
+
+The envelope's `local_execution_authority=False` is the doctrine
+guard — MC rejects any intent claiming sidecar-side execution rights.
 
 ## 4. Env vars on the Alpha sidecar host
 
