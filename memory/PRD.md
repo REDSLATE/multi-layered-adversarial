@@ -1,6 +1,62 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🆕 2026-02-19 (this session): Calibration, contract, 4-seat merge, riseai-code-agent
+
+This session shipped multiple MC-side surfaces. Summary:
+
+### 1. Sidecar identity check-in surface
+- `GET/POST /api/admin/runtime/sidecar-checkin[/{brain}]` — admin JWT for GET (lists all brains' last verdict), per-brain ingest token for POST
+- New collection `sidecar_checkins`; unique index on `runtime`
+- Verdicts: `prod` / `preview` / `policy_drift` / `invalid` / `never`
+- Diagnostics panel `SidecarCheckinPanel.jsx` with 15s polling
+- Paste-in clients shipped for Alpha, Camaro, REDEYE (3 of 4 brains live; Chevelle pre-existing). All currently 404'ing PROD MC awaiting redeploy.
+
+### 2. Confidence-floor calibration sweep
+- `GET /api/admin/calibration/confidence-floor-sweep` (admin JWT, read-only)
+- Reports raw_pass / effective_pass / dampener_drop / win_rate per floor
+- HOLD invariant enforced: `DIRECTIONAL_ACTIONS = {BUY, SELL, SHORT, COVER}` never includes HOLD regardless of floor
+- Found that production confidence is 0.7-0.9; default 0-0.45 sweep doesn't bite. Bite point is 0.75-0.85.
+
+### 3. Snapshot-completeness diagnostic + canonical contract
+- `GET /api/admin/intents/snapshot-completeness` (admin JWT, tiered)
+- `GET /api/runtime/survival/snapshot-contract` (no auth, doctrine read — like `/policy-hash`)
+- Single source of truth: `shared/calibration/snapshot_contract.py`
+- Tiers: MINIMUM (Alpha's 7 fields, first-fill readiness) + FULL_CRYPTO (11) + FULL_EQUITY (11)
+- Contract hash drift tripwire: `tests/test_snapshot_contract.py::test_contract_hash_is_locked_in`
+- Current contract hash: `1214e673813f00a827fa1b9635511ea22bc787d0a1280a807f0b48eeea0d6184`
+- Diagnosis: 100% snapshot blackout across all 3 active brains; first fill blocked here
+
+### 4. 4-seat merge (decider/advisor deprecation, alias-and-deprecate)
+- `shared/seat_policy.py`: `SEAT_ALIASES` constant + `normalize_seat()` helper
+  - `decider → executor`, `crypto_decider → crypto`, `advisor → auditor`, `crypto_advisor → crypto_auditor`
+- `may_override` field DELETED from doctrine (was `SeatPolicy` TypedDict + 7 row entries + 2 stamp call sites)
+- `STACK_WEIGHTS` extended with `auditor: 0.50` row; deprecated keys retained for back-compat
+- Phase 1 only (compatibility merge); Phases 2-4 deferred (UI hiding, write-stopping, mongo backfill)
+- 14 new tests in `tests/test_seat_aliases.py`; existing test_seat_policy_and_auto updated
+
+### 5. RISEAI Code Agent (brain-side preflight, NOT MC enforcement)
+- Lives at `/app/runtime_patch_kit/riseai_code_agent/` — NOT wired into MC
+- Node CLI: `scan`, `doctrine-check` (gate, exit 2 on match), `report` (reviewer, exit 0 always), `patch-note`, `test`
+- v0.2 diff-scoping fix: `doctrine-check` parses unified diff and scans only `+` lines
+- v0.3 added `report` command: YAML/JSON structured output, LOW/MEDIUM/HIGH risk scoring, recommended tests per touched surface
+- Grep tripwires: `may_override` re-introduction, `decider`/`advisor` re-introduction, HOLD promotion, council direction override, operator-gate-default-ON, RoadGuard bypass
+- Doctrine pin: MC's `pytest -m tripwire` remains the runtime source of truth; this is upstream pre-PR review only
+
+### Test counts at session end
+- 116/116 tripwire tests pass
+- 69 new + adjacent integration tests pass across new surfaces
+- Zero regressions
+
+### Production blocker status (in order)
+1. ✅ Sidecar check-in: brains wired, MC redeploy pending
+2. ✅ Snapshot contract: hash 1214e... published, brains know shape
+3. 🔴 Snapshot enrichment on brain side: 100% blackout — brain-side fix in progress
+4. ⏸ First crypto paper fill: blocked on (3)
+5. ⏸ Strict-422 on ingest: deferred until brains report `minimum: ≥95%`
+
+
+
 
 ## 🚨 Latest (2026-05-19): Authority-call mirror — the doctrine bridge
 

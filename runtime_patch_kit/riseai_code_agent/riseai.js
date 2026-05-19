@@ -18,6 +18,7 @@ import { scanRepo } from "./agent/repoScanner.js";
 import { doctrineCheck } from "./agent/doctrineGuard.js";
 import { writePatch } from "./agent/patchWriter.js";
 import { runTests } from "./agent/testRunner.js";
+import { generateReport } from "./agent/reportWriter.js";
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -25,19 +26,26 @@ const cmd = args[0];
 async function main() {
   if (!cmd || cmd === "help") {
     console.log(`
-RISEAI Code Agent v0.2
+RISEAI Code Agent v0.3
 
 Commands:
   scan <path>                              Walk repo, list inspectable files
-  doctrine-check <file>                    Grep tripwire on a unified diff
+  doctrine-check <file>                    Grep tripwire on a unified diff (BLOCKS on match)
+  report <file> [--json]                   Structured patch review (NEVER blocks)
   patch-note <title> <body...>             Write a PROPOSED_ONLY patch note
   test <command...>                        Safe test runner (refuses dangerous shell)
 
 Examples:
   riseai-code scan backend/services
   riseai-code doctrine-check patches/fix.diff
+  riseai-code report patches/fix.diff
+  riseai-code report patches/fix.diff --json
   riseai-code patch-note "spread fix" "Add snapshot spread_bps fallback"
   riseai-code test pytest tests/test_roadguard.py
+
+doctrine-check vs report:
+  doctrine-check  exit 0 = clean   exit 2 = blocked   (gate)
+  report          exit 0 always                       (review material)
 
 Doctrine surfaces this tool watches:
   broker / order routing
@@ -62,6 +70,13 @@ the tool extracts the \`+\` lines and runs patterns over those only.
 
   if (cmd === "doctrine-check") {
     await doctrineCheck(args[1]);
+    return;
+  }
+
+  if (cmd === "report") {
+    const json = args.includes("--json");
+    const file = args.find((a, i) => i > 0 && !a.startsWith("--"));
+    await generateReport(file, { json });
     return;
   }
 

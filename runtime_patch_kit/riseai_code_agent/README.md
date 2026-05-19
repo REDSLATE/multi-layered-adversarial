@@ -1,4 +1,4 @@
-# RISEAI Code Agent v0.2
+# RISEAI Code Agent v0.3
 
 Brain-side guardrail for RISEDUAL sidecar repos. Pre-PR safety checks
 that catch obvious doctrine violations BEFORE a patch lands and BEFORE
@@ -43,14 +43,69 @@ riseai-code help
 
 ## Commands
 
-| Command | Use |
-|---|---|
-| `riseai-code scan <path>` | Walk repo, list inspectable files |
-| `riseai-code doctrine-check <file>` | Grep tripwire on a unified diff |
-| `riseai-code patch-note "title" "body"` | Write PROPOSED_ONLY operator note |
-| `riseai-code test <command>` | Safe test runner; refuses dangerous shell |
+| Command | Purpose | Exit behavior |
+|---|---|---|
+| `riseai-code scan <path>` | Walk repo, list inspectable files | 0 always |
+| `riseai-code doctrine-check <file>` | Grep tripwire on a unified diff | **2 on match (BLOCKS)** |
+| `riseai-code report <file> [--json]` | Structured patch review | **0 always (REVIEW MATERIAL)** |
+| `riseai-code patch-note "title" "body"` | Write PROPOSED_ONLY operator note | 0 always |
+| `riseai-code test <command>` | Safe test runner; refuses dangerous shell | inherits from test |
 
-## doctrine-check — the critical v0.2 upgrade
+`doctrine-check` is the **gate** — meant to be wired into pre-commit
+hooks or CI so a violating patch can't merge. `report` is the
+**reviewer** — meant for the brain agent to read before opening a PR
+and for the operator to read while reviewing one. They share the
+same grep machinery but have opposite contracts: one blocks, one
+informs.
+
+## report — structured patch review (v0.3)
+
+```bash
+riseai-code report /tmp/patch.diff
+```
+
+Output (YAML-ish, pipeable):
+
+```yaml
+risk_level: HIGH
+scan_mode: DIFF
+added_lines: 5
+touched_surfaces:
+  - broker_router
+doctrine_warnings:
+  - name: may_override re-introduction
+    message: Added code references `may_override`. This field was removed from
+             doctrine on 2026-02-19 (4-seat merge). Do not re-introduce.
+recommended_tests:
+  - pytest -k broker_router -v
+  - pytest -m tripwire
+operator_summary: 5 added lines; 1 doctrine warning and touches broker_router. Operator approval required before merge.
+```
+
+Pass `--json` for machine consumption:
+
+```bash
+riseai-code report /tmp/patch.diff --json | jq .risk_level
+```
+
+### Risk scoring
+
+| Level | Trigger |
+|---|---|
+| `LOW` | No sensitive surfaces touched, no patterns fired |
+| `MEDIUM` | Touches a sensitive but non-load-bearing surface (e.g. `live_position`, `exposure_cap`) with no forbidden patterns |
+| `HIGH` | Any forbidden pattern fires, OR any load-bearing surface touched (`broker_router`, `kill_switch`, `roadguard`, `executor_seat`, `auto_router`, `execution_authority`, `pdt`, `broker_adapter`) |
+
+### Recommended tests
+
+Each touched surface maps to a suggested `pytest -k <keyword>`
+invocation. HIGH-risk patches also recommend the full
+`pytest -m tripwire` suite as a backstop.
+
+These are **suggestions**, not authority. MC's tripwire suite remains
+the source of truth.
+
+## doctrine-check — the v0.2 diff-scoping
 
 v0.1 scanned the entire file content, which false-positived on
 operator documentation. **v0.2 parses unified diff format and runs
