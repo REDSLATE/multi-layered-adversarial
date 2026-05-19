@@ -11,7 +11,7 @@ This file verifies:
   - Auto-mode + executor abstain does NOT advance (only long/short trigger).
   - Manual-mode positions never auto-advance even when the executor posts.
   - Every stance carries the full seat-policy snapshot (may_execute,
-    may_decide, may_override, may_veto, posted_as, seat_epoch).
+    may_decide, may_veto, posted_as, seat_epoch).
   - seat-performance endpoint returns the per-(brain, seat) matrix.
 """
 import os
@@ -112,9 +112,16 @@ class TestSeatPolicy:
         p = _propose(tok)
         s = _post_stance(p["position_id"], "alpha", "long")
         alpha = s["stances_by_brain"]["alpha"]
+        # `may_override` removed from doctrine on 2026-02-19 — the
+        # 4-seat merge eliminated the only seat (decider) that carried
+        # override authority. Stance snapshots no longer stamp it.
         for k in ("posted_as", "seat_epoch", "may_decide", "may_execute",
-                  "may_override", "may_veto", "posted_via", "posted_at"):
+                  "may_veto", "posted_via", "posted_at"):
             assert k in alpha, f"missing {k} on stance snapshot"
+        assert "may_override" not in alpha, (
+            "may_override should be absent from stance snapshots "
+            "(removed in 2026-02-19 4-seat merge)"
+        )
 
     def test_seat_epoch_bumps_on_assign(self):
         tok = _login()

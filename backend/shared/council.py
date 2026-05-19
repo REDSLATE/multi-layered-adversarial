@@ -286,16 +286,28 @@ async def _seat_holder(role: str, lane: Optional[str] = None) -> Optional[str]:
     Mapping: the `crypto_executor` role is stored as `crypto` in the
     roster (legacy name from when crypto was a single executor seat).
     Everything else uses the `crypto_<role>` prefix.
+
+    Alias resolution (2026-02-19): old role names `decider`/`advisor`
+    are rewritten via `SEAT_ALIASES` to `executor`/`auditor` before the
+    roster lookup. Callers asking for the deprecated names continue to
+    function — they're routed to the canonical seat occupant.
     """
     from shared.roster import get_roster  # noqa: WPS433
+    from shared.seat_policy import normalize_seat  # noqa: WPS433
+
+    # Normalize at the boundary — anything asking for `decider` gets
+    # the `executor` occupant; anything asking for `advisor` gets the
+    # `auditor` occupant. Pre-existing canonical names pass through.
     r = await get_roster()
     assignments = r.get("assignments") or {}
 
     if (lane or "").lower() == "crypto":
-        crypto_role = "crypto" if role == "executor" else f"crypto_{role}"
+        crypto_role_raw = "crypto" if role == "executor" else f"crypto_{role}"
+        crypto_role = normalize_seat(crypto_role_raw) or crypto_role_raw
         return assignments.get(crypto_role)
 
-    return assignments.get(role)
+    canonical_role = normalize_seat(role) or role
+    return assignments.get(canonical_role)
 
 
 async def _latest_governor_call(symbol: Optional[str], lane: Optional[str] = None) -> tuple[Optional[str], Optional[dict]]:

@@ -26,7 +26,6 @@ class SeatPolicy(TypedDict):
     """Declarative permissions for one seat."""
     may_decide: bool       # may form the trust / reduce / veto call on a position
     may_execute: bool      # may route orders (gated again at the broker layer)
-    may_override: bool     # may overrule a peer's stance (decider primarily)
     may_veto: bool         # may halt promotion / freeze a runtime (governor)
     seat_required: bool    # quorum: if True and seat unstamped, position is degraded
     speaks_as: str         # human-readable label printed on stances
@@ -38,22 +37,64 @@ class SeatPolicy(TypedDict):
     lane_scope: list[str] | None
 
 
+# ─── Seat aliases (2026-02-19 deprecation) ─────────────────────────────
+#
+# The 4-seat doctrine merge: decider and advisor are vestigial seats
+# from earlier decomposition phases. Their responsibilities have
+# consolidated into the remaining four:
+#
+#     decider  → executor   (executor already has may_decide=True;
+#                            the separate decider seat was redundant)
+#     advisor  → auditor    (advisory context becomes auditor notes;
+#                            advisor never had decision authority
+#                            anyway, so this is a label change)
+#
+# Crypto twins follow the same rule. The aliases let old sidecars
+# that still send `seat="advisor"` keep working — MC normalizes
+# to the canonical 4-seat name at every boundary.
+#
+# This is a COMPATIBILITY MERGE, not a hard delete. Phased rollout:
+#   Phase 1 (this commit): aliases active; old names still accepted;
+#                          new code uses canonical names.
+#   Phase 2: UI hides the deprecated seats from dropdowns.
+#   Phase 3: ingest layer stops writing the old names.
+#   Phase 4: backfill script unsets old keys from `brain_roster` and
+#            `brain_eligibility.matrix`.
+
+SEAT_ALIASES: dict[str, str] = {
+    "decider": "executor",
+    "crypto_decider": "crypto",        # crypto executor slot is `crypto`
+    "advisor": "auditor",
+    "crypto_advisor": "crypto_auditor",
+}
+
+
+def normalize_seat(seat: str | None) -> str | None:
+    """Map a seat name through the alias table.
+
+    Returns the canonical name when an alias is given; returns the
+    input unchanged for canonical names and unknown values.
+    Case-preserving on the lookup itself — case-insensitivity is
+    handled by the lowercase normalization at every boundary that
+    consumes a seat string.
+    """
+    if seat is None:
+        return None
+    return SEAT_ALIASES.get(seat, seat)
+
+
 SEAT_POLICY: dict[str, SeatPolicy] = {
     "decider": {
+        # DEPRECATED — kept in this table only so legacy reads against
+        # the seat name resolve to a sensible policy. The alias machinery
+        # in `snapshot()` rewrites incoming `decider` lookups to
+        # `executor` before this row is even consulted. Do not add new
+        # callers that read this row directly.
         "may_decide": True,
         "may_execute": False,
-        "may_override": True,
         "may_veto": False,
-        # Decider is informational quorum — useful but not safety-critical.
-        # A position without a decider stance is "incomplete", not "blind".
         "seat_required": False,
         "speaks_as": "decider",
-        # lane_scope is None here because the SAME policy is consulted
-        # for both `decider` (equity) and `crypto_decider` (crypto) —
-        # the role names share one policy row. Lane isolation is
-        # enforced at the SLOT level: `_seat_holder("decider", lane=...)`
-        # reads `decider` for equity OR `crypto_decider` for crypto,
-        # with NO cross-lane fallback. See shared/council._seat_holder.
         "lane_scope": None,
     },
     "executor": {
@@ -62,7 +103,6 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         # so Phase 2's broker exec-gate can consult it; flipping a brain
         # into the executor seat does NOT in itself enable trading.
         "may_execute": True,
-        "may_override": False,
         "may_veto": False,
         # Executor stance is needed to advance auto-mode positions —
         # required for quorum on every position regardless of call_mode.
@@ -75,7 +115,6 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
     "governor": {
         "may_decide": False,
         "may_execute": False,
-        "may_override": False,
         "may_veto": True,
         # Governor silence on a position = governance blindness.
         # Operator must SEE this loudly — that's how Chevelle going dark
@@ -85,9 +124,9 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         "lane_scope": None,  # vetoes across lanes
     },
     "advisor": {
+        # DEPRECATED — alias rewrites to `auditor`. See SEAT_ALIASES.
         "may_decide": False,
         "may_execute": False,
-        "may_override": False,
         "may_veto": False,
         "seat_required": False,
         "speaks_as": "advisor",
@@ -98,7 +137,6 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         # from advisor only by training intent; both are non-deciding.
         "may_decide": False,
         "may_execute": False,
-        "may_override": False,
         "may_veto": False,
         # Opponent silence = adversarial blindness, the exact failure
         # mode the operator flagged: "if REDEYE dies, you stop hearing
@@ -115,9 +153,13 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         # Quorum is not required (a closed position doesn't wait on
         # audit before settlement), so seat_required=False — but a
         # vacant auditor surfaces visibly so the operator can fill it.
+        #
+        # As of 2026-02-19, this seat ALSO absorbs the former `advisor`
+        # role via SEAT_ALIASES. Pre-trade advisory context now lands
+        # as auditor notes; brains that still emit `seat="advisor"` are
+        # transparently rewritten to `seat="auditor"` at every boundary.
         "may_decide": False,
         "may_execute": False,
-        "may_override": False,
         "may_veto": False,
         "seat_required": False,
         "speaks_as": "auditor",
@@ -131,7 +173,6 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         # and this seat is empty, no crypto trade fires.
         "may_decide": False,
         "may_execute": True,
-        "may_override": False,
         "may_veto": False,
         # Crypto silence is its own loud flag — a frozen crypto seat
         # means MC is half-blind to the live crypto book.
@@ -149,13 +190,20 @@ def snapshot(seat: str | None) -> dict:
     """Snapshot the policy for the given seat. Returns an empty-permission
     record when the brain holds no seat — that's the safest default.
 
-    The seat string is normalized to lowercase. Crypto-lane seat slots
-    (`crypto`, `crypto_decider`, `crypto_governor`, …) inherit the
+    The seat string is normalized to lowercase and run through the
+    deprecation alias table (`SEAT_ALIASES`). Crypto-lane seat slots
+    (`crypto`, `crypto_governor`, `crypto_auditor`, …) inherit the
     SAME role policy as their equity twin: `crypto_governor` → policy
     of `governor`, `crypto` → policy of `executor`, etc. This keeps a
     single source of truth for what each ROLE can do while the SLOT
     (which roster row) enforces lane isolation at the lookup layer
     (see `shared/council._seat_holder`).
+
+    Aliases (2026-02-19): `decider`→`executor`, `advisor`→`auditor`,
+    and their `crypto_*` twins. Old sidecars sending the deprecated
+    seat names still resolve to a working policy without behavioral
+    change because the alias targets carry the responsibilities the
+    old names tried to express.
 
     Unknown seats fall through to the empty-permission record (NOT raise)
     because the operator may have invented a seat name in eligibility
@@ -167,10 +215,13 @@ def snapshot(seat: str | None) -> dict:
             "posted_as": None,
             "may_decide": False,
             "may_execute": False,
-            "may_override": False,
             "may_veto": False,
         }
     s = seat.lower()
+    # Apply alias normalization before any further resolution. Old
+    # `decider` / `advisor` reads transparently become `executor` /
+    # `auditor` reads.
+    s = normalize_seat(s) or s
     # Crypto twin → resolve to its equity role for policy lookup. The
     # raw slot name is still recorded as `posted_as` so receipts/stances
     # can be sliced by lane.
@@ -185,14 +236,12 @@ def snapshot(seat: str | None) -> dict:
             "posted_as": s,
             "may_decide": False,
             "may_execute": False,
-            "may_override": False,
             "may_veto": False,
         }
     return {
         "posted_as": s,
         "may_decide": p["may_decide"],
         "may_execute": p["may_execute"],
-        "may_override": p["may_override"],
         "may_veto": p["may_veto"],
         "lane_scope": p.get("lane_scope"),
     }
@@ -211,6 +260,10 @@ def seat_may_execute_lane(seat: str | None, lane: str | None) -> bool:
     to their equity twin so the policy lookup finds the row; the
     LANE check is the real authority gate.
 
+    Deprecated seat names (`decider`, `advisor`, `crypto_decider`,
+    `crypto_advisor`) are run through `SEAT_ALIASES` first so old
+    sidecars continue to function during the deprecation window.
+
     Fail-closed:
     - No seat → False
     - Seat policy says may_execute=False → False
@@ -219,16 +272,17 @@ def seat_may_execute_lane(seat: str | None, lane: str | None) -> bool:
     """
     if not seat:
         return False
-    s = seat.lower()
+    s = (normalize_seat(seat.lower()) or seat.lower())
     role_for_policy = s
     if s == "crypto":
         role_for_policy = "executor"
         # Force lane_scope=["crypto"] regardless of the equity executor's scope.
         return (lane == "crypto") and bool(SEAT_POLICY.get("executor", {}).get("may_execute"))
     if s.startswith("crypto_"):
-        # Non-execute crypto twins (crypto_decider, crypto_governor, …)
-        # never route orders. Fail-closed without consulting the equity
-        # row's may_execute (which doesn't apply to these advisory slots).
+        # Non-execute crypto twins (crypto_governor, crypto_opponent,
+        # crypto_auditor) never route orders. Fail-closed without
+        # consulting the equity row's may_execute (which doesn't apply
+        # to these advisory slots).
         return False
     p = SEAT_POLICY.get(role_for_policy)
     if not p or not p.get("may_execute"):

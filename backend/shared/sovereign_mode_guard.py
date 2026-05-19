@@ -240,7 +240,10 @@ async def _persist_snapshot(brain: str, c: SovereignContribution,
         "seat_epoch": seat_epoch,
         "may_decide": policy["may_decide"],
         "may_execute": policy["may_execute"],
-        "may_override": policy["may_override"],
+        # `may_override` was removed from doctrine on 2026-02-19 — the
+        # 4-seat merge eliminated the only seat (decider) that carried
+        # override authority. Peer-override authority is no longer a
+        # thing; conflicts now require operator resolution.
         "may_veto": policy["may_veto"],
         "updated_at": now,
     }

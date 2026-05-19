@@ -44,9 +44,22 @@ CRYPTO_POLICY: dict = {
     "MOMENTUM_WEIGHTING":           1.20,    # crypto punishes hesitation — lift momentum
     # Seat-bound stack weights — apply to whoever holds the seat,
     # NOT to a brain identity. Used in governance ledger for scoring.
+    #
+    # Canonical 4-seat doctrine (2026-02-19): executor + governor +
+    # opponent + auditor (crypto twin uses `crypto` for the executor
+    # slot). The deprecated `decider` / `advisor` keys are kept in
+    # this table so lookups against old stance records resolve to a
+    # sensible weight during the deprecation window — they will be
+    # rewritten via `SEAT_ALIASES` at the lookup boundary in a future
+    # phase. New stances should never write these names.
     "STACK_WEIGHTS": {
-        "executor": 1.00, "decider": 0.90,
-        "governor": 0.65, "opponent": 0.80,
-        "advisor":  0.50, "crypto":   1.00,
+        "executor": 1.00,
+        "governor": 0.65,
+        "opponent": 0.80,
+        "auditor":  0.50,          # post-trade lagging signal
+        "crypto":   1.00,
+        # ---- deprecated, alias-rewritten on read ----
+        "decider":  0.90,           # → executor; legacy stance records
+        "advisor":  0.50,           # → auditor; legacy stance records
     },
 }

@@ -33,9 +33,18 @@ EQUITY_POLICY: dict = {
     "MOMENTUM_WEIGHTING":           1.00,    # no momentum bias on equities
     # Seat-bound stack weights — apply to whoever holds the seat,
     # NOT to a brain identity. Used in governance ledger for scoring.
+    #
+    # Canonical 4-seat doctrine (2026-02-19) — see crypto/council_policy.py
+    # for the deprecation rationale. Same table shape; same alias
+    # backstop for legacy `decider` / `advisor` stance records.
     "STACK_WEIGHTS": {
-        "executor": 1.00, "decider": 0.90,
-        "governor": 0.65, "opponent": 0.80,
-        "advisor":  0.50, "crypto":   1.00,
+        "executor": 1.00,
+        "governor": 0.65,
+        "opponent": 0.80,
+        "auditor":  0.50,
+        "crypto":   1.00,
+        # ---- deprecated, alias-rewritten on read ----
+        "decider":  0.90,
+        "advisor":  0.50,
     },
 }

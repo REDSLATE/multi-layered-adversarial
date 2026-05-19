@@ -466,7 +466,8 @@ def _stance_doc(
         "seat_epoch": seat_epoch,
         "may_decide": policy["may_decide"],
         "may_execute": policy["may_execute"],
-        "may_override": policy["may_override"],
+        # `may_override` removed from doctrine on 2026-02-19 — see
+        # `shared/seat_policy.py` for the 4-seat merge rationale.
         "may_veto": policy["may_veto"],
         # Memory provenance — opt-in by the brain sidecar. Empty arrays
         # are perfectly valid and indicate the brain doesn't (yet)
