@@ -1,5 +1,29 @@
 # Brain — Enrich the `snapshot` block before POST `/api/ingest/intent`
 
+## TL;DR for brain agents
+
+MC now publishes the canonical snapshot field contract at a public
+endpoint. Hit it at boot, use the field names verbatim, and your
+brain stays in sync with MC's labeler:
+
+```bash
+curl -s https://mission.risedual.ai/api/runtime/survival/snapshot-contract
+```
+
+Returns the `contract_hash` (sha256 of the field list — drift tripwire),
+the 7 `minimum_keys` (the load-bearing fields), and the per-lane
+`full_crypto_keys` / `full_equity_keys` (score-optimization fields).
+
+Two tiers, two outcomes:
+
+| Tier | What it unlocks |
+|---|---|
+| `minimum` (7 fields) | First fill — sentinel-driven blocks clear |
+| `full_crypto` (11 fields) | Score optimization — bonus labels earned |
+| `full_equity` (11 fields) | Score optimization — gap-and-go signals |
+
+**Ship the minimum first.** Score bonuses come second.
+
 ## What MC is telling you
 
 Run this from MC to see your brain's current snapshot completeness:

@@ -25,6 +25,7 @@ from shared.runtime.platform_survival import (
     mc_canonical_gate,
     policy_hash,
 )
+from shared.calibration.snapshot_contract import contract_payload
 
 
 router = APIRouter(prefix="/runtime/survival", tags=["platform-survival"])
@@ -61,6 +62,19 @@ async def get_policy_hash():
             "broker executes only with MC receipt · preview is not PROD"
         ),
     }
+
+
+@router.get("/snapshot-contract")
+async def get_snapshot_contract():
+    """Sidecars hit this at boot to fetch MC's canonical snapshot
+    field contract (minimum + per-lane full sets). If the brain's
+    local copy of the contract diverges from `contract_hash`, the
+    brain is shipping snapshots MC will interpret with sentinel
+    defaults — operator must redeploy the brain with the synced
+    contract. No auth: doctrine-pinned read, same pattern as
+    `/policy-hash`.
+    """
+    return contract_payload()
 
 
 @router.post("/validate-stamp")
