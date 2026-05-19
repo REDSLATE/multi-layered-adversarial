@@ -13,13 +13,15 @@
  *   touched the broker router" before the patch even merges. MC is
  *   the expensive downstream check that catches everything the grep
  *   missed.
+ *
+ * Why lazy imports:
+ *   `self-check` is the deterministic install-health signal. If we
+ *   eagerly imported every agent module at the top of this file, a
+ *   missing/broken module would crash before `self-check` could
+ *   report which module is the problem. Lazy per-command imports
+ *   mean `riseai-code self-check` works even when other modules are
+ *   broken — exactly the failure mode the brain agent needs to see.
  */
-import { scanRepo } from "./agent/repoScanner.js";
-import { doctrineCheck } from "./agent/doctrineGuard.js";
-import { writePatch } from "./agent/patchWriter.js";
-import { runTests } from "./agent/testRunner.js";
-import { generateReport } from "./agent/reportWriter.js";
-import { generatePrBody } from "./agent/prBody.js";
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -27,7 +29,7 @@ const cmd = args[0];
 async function main() {
   if (!cmd || cmd === "help") {
     console.log(`
-RISEAI Code Agent v0.4
+RISEAI Code Agent v0.5
 
 Commands:
   scan <path>                              Walk repo, list inspectable files
@@ -36,8 +38,12 @@ Commands:
   pr-body <file> [--title <name>]          Generate ready-to-paste PR description
   patch-note <title> <body...>             Write a PROPOSED_ONLY patch note
   test <command...>                        Safe test runner (refuses dangerous shell)
+  self-check                               Run installation health checks (exit 0=healthy, 1=broken)
+  version                                  Print kit version + runtime context
 
 Examples:
+  riseai-code self-check
+  riseai-code version
   riseai-code scan backend/services
   riseai-code doctrine-check patches/fix.diff
   riseai-code report patches/fix.diff
@@ -66,17 +72,36 @@ the tool extracts the \`+\` lines and runs patterns over those only.
     return;
   }
 
+  // Lazy imports — each command imports only the module it needs so
+  // a broken/missing module in one path doesn't take down `version` or
+  // `self-check`.
+
+  if (cmd === "self-check") {
+    const { runSelfCheck } = await import("./agent/selfCheck.js");
+    const exitCode = await runSelfCheck();
+    process.exit(exitCode);
+  }
+
+  if (cmd === "version" || cmd === "--version" || cmd === "-v") {
+    const { printVersion } = await import("./agent/selfCheck.js");
+    await printVersion();
+    return;
+  }
+
   if (cmd === "scan") {
+    const { scanRepo } = await import("./agent/repoScanner.js");
     await scanRepo(args[1] || ".");
     return;
   }
 
   if (cmd === "doctrine-check") {
+    const { doctrineCheck } = await import("./agent/doctrineGuard.js");
     await doctrineCheck(args[1]);
     return;
   }
 
   if (cmd === "report") {
+    const { generateReport } = await import("./agent/reportWriter.js");
     const json = args.includes("--json");
     const file = args.find((a, i) => i > 0 && !a.startsWith("--"));
     await generateReport(file, { json });
@@ -84,7 +109,7 @@ the tool extracts the \`+\` lines and runs patterns over those only.
   }
 
   if (cmd === "pr-body") {
-    // Accept `--title <name>` for explicit override.
+    const { generatePrBody } = await import("./agent/prBody.js");
     const titleIdx = args.indexOf("--title");
     const title = titleIdx >= 0 ? args[titleIdx + 1] : null;
     const file = args.find((a, i) => i > 0 && !a.startsWith("--") && a !== title);
@@ -93,11 +118,13 @@ the tool extracts the \`+\` lines and runs patterns over those only.
   }
 
   if (cmd === "patch-note") {
+    const { writePatch } = await import("./agent/patchWriter.js");
     await writePatch(args[1] || "untitled", args.slice(2).join(" "));
     return;
   }
 
   if (cmd === "test") {
+    const { runTests } = await import("./agent/testRunner.js");
     await runTests(args.slice(1).join(" "));
     return;
   }

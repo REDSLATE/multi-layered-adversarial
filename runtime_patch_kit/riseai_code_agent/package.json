@@ -1,6 +1,6 @@
 {
   "name": "riseai-code-agent",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Repo-safe coding assistant for RISEDUAL brain sidecars. Doctrine grep + safe test runner + patch-note discipline. NOT a model integration — this is the guardrail layer that runs BEFORE a brain agent opens a PR.",
   "bin": {

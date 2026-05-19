@@ -1,4 +1,4 @@
-# RISEAI Code Agent v0.4
+# RISEAI Code Agent v0.5
 
 Brain-side guardrail for RISEDUAL sidecar repos. Pre-PR safety checks
 that catch obvious doctrine violations BEFORE a patch lands and BEFORE
@@ -38,13 +38,70 @@ cp -r runtime_patch_kit/riseai_code_agent ./riseai-code-agent
 cd riseai-code-agent
 npm install
 npm link
+riseai-code self-check    # ← verify install before relying on the tool
 riseai-code help
 ```
+
+## self-check — installation health diagnostic (v0.5)
+
+After `npm link`, run `riseai-code self-check`. The tool exercises
+every agent module against a synthetic input — no network, no
+filesystem writes beyond a temp diff string. Output:
+
+```
+RISEAI SELF-CHECK
+v0.5.0 · node=v20.20.2 · platform=linux
+
+[PASS] Node version compatible — node=v20.20.2, min=v16.0.0
+[PASS] ES module support — import/export resolved
+[PASS] doctrineGuard loads — exports: doctrineCheck, extractAddedLines, ...
+[PASS] reportWriter loads — exports: generateReport, scoreRisk
+[PASS] prBody loads — exports: generatePrBody, extractTouchedFiles, diffStat
+[PASS] patchWriter loads — exports: writePatch
+[PASS] repoScanner loads — exports: scanRepo
+[PASS] testRunner loads — exports: runTests
+[PASS] safe-runner blocks dangerous command — refused 'sudo rm -rf'
+[PASS] diff parser detects unified diff — 1 added line extracted
+[PASS] doctrine-check catches seeded violation — risk=HIGH, may_override warning fired
+
+SUMMARY: 11 passed, 0 failed
+HEALTHY: kit is ready for use.
+```
+
+Exit codes:
+- `0` — kit is healthy, safe to use
+- `1` — kit is broken, do NOT use until failures are resolved
+
+The CLI uses lazy imports so `self-check` and `version` work even
+when other modules are missing or broken — a hard prerequisite for
+diagnosing a broken install.
+
+## version — kit + runtime fingerprint
+
+```bash
+riseai-code version
+```
+
+Output:
+
+```
+v0.5.0
+node=v20.20.2
+platform=linux
+diff_scoping=enabled
+agent_modules=doctrineGuard,reportWriter,prBody,patchWriter,repoScanner,testRunner
+```
+
+Use this when comparing two brain agents' behavior on the same diff
+— if the version line differs, the answer is "you're on different
+kit versions" before you start debugging anything else.
 
 ## Commands
 
 | Command | Purpose | Exit behavior |
 |---|---|---|
+| `riseai-code self-check` | Installation health diagnostic | **1 if broken, 0 if healthy** |
+| `riseai-code version` | Kit version + runtime context | 0 always |
 | `riseai-code scan <path>` | Walk repo, list inspectable files | 0 always |
 | `riseai-code doctrine-check <file>` | Grep tripwire on a unified diff | **2 on match (BLOCKS)** |
 | `riseai-code report <file> [--json]` | Structured patch review | **0 always (REVIEW MATERIAL)** |
