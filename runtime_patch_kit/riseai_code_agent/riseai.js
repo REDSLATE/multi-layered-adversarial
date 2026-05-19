@@ -19,6 +19,7 @@ import { doctrineCheck } from "./agent/doctrineGuard.js";
 import { writePatch } from "./agent/patchWriter.js";
 import { runTests } from "./agent/testRunner.js";
 import { generateReport } from "./agent/reportWriter.js";
+import { generatePrBody } from "./agent/prBody.js";
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -26,12 +27,13 @@ const cmd = args[0];
 async function main() {
   if (!cmd || cmd === "help") {
     console.log(`
-RISEAI Code Agent v0.3
+RISEAI Code Agent v0.4
 
 Commands:
   scan <path>                              Walk repo, list inspectable files
   doctrine-check <file>                    Grep tripwire on a unified diff (BLOCKS on match)
   report <file> [--json]                   Structured patch review (NEVER blocks)
+  pr-body <file> [--title <name>]          Generate ready-to-paste PR description
   patch-note <title> <body...>             Write a PROPOSED_ONLY patch note
   test <command...>                        Safe test runner (refuses dangerous shell)
 
@@ -39,13 +41,14 @@ Examples:
   riseai-code scan backend/services
   riseai-code doctrine-check patches/fix.diff
   riseai-code report patches/fix.diff
-  riseai-code report patches/fix.diff --json
+  riseai-code pr-body patches/fix.diff --title "spread snapshot fallback"
   riseai-code patch-note "spread fix" "Add snapshot spread_bps fallback"
   riseai-code test pytest tests/test_roadguard.py
 
-doctrine-check vs report:
-  doctrine-check  exit 0 = clean   exit 2 = blocked   (gate)
-  report          exit 0 always                       (review material)
+doctrine-check vs report vs pr-body:
+  doctrine-check  exit 0/2     gate          enforces; CI uses this
+  report          exit 0       reviewer      iterates with this
+  pr-body         exit 0       composer      pastes into the PR description
 
 Doctrine surfaces this tool watches:
   broker / order routing
@@ -77,6 +80,15 @@ the tool extracts the \`+\` lines and runs patterns over those only.
     const json = args.includes("--json");
     const file = args.find((a, i) => i > 0 && !a.startsWith("--"));
     await generateReport(file, { json });
+    return;
+  }
+
+  if (cmd === "pr-body") {
+    // Accept `--title <name>` for explicit override.
+    const titleIdx = args.indexOf("--title");
+    const title = titleIdx >= 0 ? args[titleIdx + 1] : null;
+    const file = args.find((a, i) => i > 0 && !a.startsWith("--") && a !== title);
+    await generatePrBody(file, { title });
     return;
   }
 

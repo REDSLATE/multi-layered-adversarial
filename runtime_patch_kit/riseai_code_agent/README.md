@@ -1,4 +1,4 @@
-# RISEAI Code Agent v0.3
+# RISEAI Code Agent v0.4
 
 Brain-side guardrail for RISEDUAL sidecar repos. Pre-PR safety checks
 that catch obvious doctrine violations BEFORE a patch lands and BEFORE
@@ -48,15 +48,40 @@ riseai-code help
 | `riseai-code scan <path>` | Walk repo, list inspectable files | 0 always |
 | `riseai-code doctrine-check <file>` | Grep tripwire on a unified diff | **2 on match (BLOCKS)** |
 | `riseai-code report <file> [--json]` | Structured patch review | **0 always (REVIEW MATERIAL)** |
+| `riseai-code pr-body <file> [--title <name>]` | Ready-to-paste PR description | **0 always (COMPOSER)** |
 | `riseai-code patch-note "title" "body"` | Write PROPOSED_ONLY operator note | 0 always |
 | `riseai-code test <command>` | Safe test runner; refuses dangerous shell | inherits from test |
 
-`doctrine-check` is the **gate** — meant to be wired into pre-commit
-hooks or CI so a violating patch can't merge. `report` is the
-**reviewer** — meant for the brain agent to read before opening a PR
-and for the operator to read while reviewing one. They share the
-same grep machinery but have opposite contracts: one blocks, one
-informs.
+The three diff-aware commands share the same grep engine but have
+distinct contracts:
+
+| Command | Role | Pasted into |
+|---|---|---|
+| `doctrine-check` | Gate — enforces discipline | CI / pre-commit |
+| `report` | Reviewer — helps iteration | Terminal scratchpad |
+| `pr-body` | Composer — operator review surface | The PR description |
+
+## pr-body — bridge between brain-coding and operator-governance (v0.4)
+
+```bash
+riseai-code pr-body /tmp/patch.diff --title "spread snapshot fallback"
+```
+
+Generates a markdown body the brain agent pastes directly into the PR.
+The body contains:
+
+- Risk badge (LOW / MEDIUM / HIGH) + diffstat + one-line summary
+- Files touched
+- Doctrine review (surfaces + warnings)
+- Recommended tests
+- **Rollout checklist** — scales with risk; LOW gets 3 items, HIGH gets 7
+- **Rollback checklist** — scales with risk; LOW gets 2 items, HIGH gets up to 8 including broker-state-drift audit and execution-receipt cross-check
+- Intent placeholder (brain agent fills this in)
+- Footer reminding the reviewer that MC tripwires remain runtime truth
+
+The risk tier governs the ceremony: a tiny patch doesn't bury the
+reviewer in checklist items; a broker_router touch makes them
+acknowledge the full audit trail before merge.
 
 ## report — structured patch review (v0.3)
 
