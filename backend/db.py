@@ -30,6 +30,10 @@ async def ensure_indexes() -> None:
     # Heartbeats (one row per runtime, upserted)
     await db.shared_heartbeats.create_index("runtime", unique=True)
 
+    # Sidecar check-ins (Portable Survival Layer) — one row per runtime,
+    # upserted; carries the latest RuntimeStamp + validation verdict.
+    await db.sidecar_checkins.create_index("runtime", unique=True)
+
     # Authority + promotion
     await db.shared_authority_state.create_index("runtime", unique=True)
     await db.shared_promotion_artifacts.create_index([("runtime", 1), ("emitted_at", -1)])

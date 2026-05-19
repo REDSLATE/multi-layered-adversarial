@@ -80,6 +80,7 @@ from shared.mc_shelly import router as mc_shelly_router
 from shared.patches import router as patches_router
 from shared.runtime_tokens import router as runtime_tokens_router
 from shared.runtime.routes import router as platform_survival_router
+from shared.runtime.sidecar_checkin import router as sidecar_checkin_router
 from shared.runtime_bundles import router as runtime_bundles_router
 from shared.promotion_artifact_report import router as promotion_artifact_report_router
 from shared.public_api.news import (
@@ -255,6 +256,7 @@ api_router.include_router(mc_shelly_router)
 api_router.include_router(patches_router)
 api_router.include_router(runtime_tokens_router)
 api_router.include_router(platform_survival_router)
+api_router.include_router(sidecar_checkin_router)
 api_router.include_router(runtime_bundles_router)
 api_router.include_router(promotion_artifact_report_router)
 api_router.include_router(public_news_router)

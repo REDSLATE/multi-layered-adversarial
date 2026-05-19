@@ -16,6 +16,15 @@ CHEVELLE_MEMORY_LABELS = "chevelle_memory_labels"
 # Heartbeats from runtime sidecars (one upserted doc per runtime)
 SHARED_HEARTBEATS = "shared_heartbeats"
 
+# Sidecar check-ins (2026-02-XX) — Portable Survival Layer companion.
+# Each sidecar (alpha, camaro, chevelle, redeye) POSTs its boot-time
+# RuntimeStamp here. MC validates against the PROD doctrine, persists
+# the latest stamp + verdict per runtime, and exposes a live "who's
+# PROD vs preview" view on Diagnostics. One upserted doc per runtime.
+# Distinct from `shared_heartbeats`: heartbeats prove liveness;
+# check-ins prove identity (env_name, policy_hash, git_sha, etc.).
+SIDECAR_CHECKINS = "sidecar_checkins"
+
 # Authority + promotion (governed role evolution)
 SHARED_AUTHORITY_STATE = "shared_authority_state"           # one doc per runtime, history embedded
 SHARED_PROMOTION_ARTIFACTS = "shared_promotion_artifacts"   # Patent G evidence emitted by runtimes

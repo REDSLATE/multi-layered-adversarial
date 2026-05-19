@@ -1,3 +1,59 @@
+## 2026-02-19 — Sidecar identity check-in surface (Portable Survival Layer companion)
+
+P1 task closed: MC can now answer "who's PROD vs preview?" with one
+query instead of grepping pod logs. Each brain sidecar POSTs its
+boot-time `RuntimeStamp`; MC persists the latest stamp + verdict
+(prod / preview / policy_drift / invalid / never) and renders the
+roster on Diagnostics.
+
+### Backend
+* `shared/runtime/sidecar_checkin.py` — new module wiring three
+  endpoints under `/api/admin/runtime/sidecar-checkin`:
+    - `POST /sidecar-checkin/{brain}` (token-authed via
+      `<BRAIN>_INGEST_TOKEN`) — sidecars call on boot/periodically.
+      Validates against `RuntimeStamp.validate_for_prod_sidecar`,
+      flags `policy_hash` drift vs MC's current `policy_hash()`, and
+      upserts into the new `sidecar_checkins` collection.
+    - `GET /sidecar-checkin` (admin JWT) — one row per known brain,
+      verdicts: `prod` (clean), `preview` (env_name/mc_url drift),
+      `policy_drift` (stamp valid but stale policy_hash), `invalid`
+      (other validation failure), `never` (no check-in yet).
+    - `GET /sidecar-checkin/{brain}` (admin JWT) — single-brain detail.
+* `namespaces.py` — new collection constant `SIDECAR_CHECKINS`.
+* `db.py` — unique index on `runtime` so upserts stay one-row-per-brain.
+
+### Frontend
+* `components/SidecarCheckinPanel.jsx` — auto-refreshes every 15s.
+  Per-brain row: verdict chip, freshness band, hash-mismatch tag, all
+  stamp fields (env_name, mc_url, db_name, broker_mode, git_sha,
+  version, platform, exec_authority), plus a header summary
+  (`N prod · N preview · N drift · N never`). Wired into Diagnostics
+  above the existing patch-kit panel.
+
+### Tests
+* `tests/test_sidecar_checkin.py` — 11 tests covering token rejection,
+  unknown-brain 404s, all four verdict paths, GET auth gate, brain
+  coverage, freshness, and POST→GET roundtrip. All passing.
+* Tripwire suite (`pytest -m tripwire`) — 116 passing, no regression.
+
+### Doctrine pin
+This panel is OBSERVABILITY ONLY. It surfaces drift to the operator
+but does NOT gate execution — the broker still independently verifies
+MC receipts (`shared/broker_router.py`) before any Alpaca/Kraken call.
+Defense in depth: receipt seal blocks bad orders, check-in surface
+makes the operator question "is alpha actually in PROD right now?"
+a one-click answer instead of a Mongo grep.
+
+### Alpha-side coupling
+Once Alpha redeploys with the role adapter + RuntimeStamp from the
+runtime patch kit, its boot-time POST will land here and the panel
+will flip alpha from `never` → `prod` (or `preview` if the stack got
+the env wrong). This replaces the manual Mongo grep step in Alpha's
+verification checklist.
+
+---
+
+
 ## 2026-02-17 (latest) — Three new risk guards + Position Monitor scheduler + P1 UI surfaces
 
 Closed all P0 + P1 items from the fork plan in one pass.

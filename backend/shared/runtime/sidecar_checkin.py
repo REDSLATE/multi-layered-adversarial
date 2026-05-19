@@ -1,0 +1,309 @@
+"""Sidecar check-in surface — Portable Survival Layer companion.
+
+Doctrine:
+    Heartbeats prove a brain is ALIVE. Check-ins prove its IDENTITY.
+    Every sidecar (alpha, camaro, chevelle, redeye) must POST its
+    boot-time `RuntimeStamp` here so MC can answer the operator
+    question "who's PROD vs preview right now?" with one query
+    instead of a Mongo grep across pods.
+
+Endpoints:
+    POST /api/admin/runtime/sidecar-checkin/{brain}
+        Token-authed via the per-brain `<BRAIN>_INGEST_TOKEN`
+        (matches `/api/heartbeat-ping/{brain}` — same token, same
+        portability story). Body: `{"stamp": {...RuntimeStamp...}}`.
+        MC validates the stamp against `validate_for_prod_sidecar`,
+        flags policy_hash drift vs MC's current hash, persists to
+        `sidecar_checkins` (one upserted doc per runtime), and
+        returns the verdict so the sidecar can self-quarantine.
+
+    GET /api/admin/runtime/sidecar-checkin
+        JWT-authed (admin). Returns one row per known brain with
+        the latest stamp + verdict + freshness band. The Diagnostics
+        UI renders this so the operator can see at a glance which
+        sidecars are in PROD vs preview vs never-checked-in.
+
+    GET /api/admin/runtime/sidecar-checkin/{brain}
+        JWT-authed (admin). Single-brain detail (full stamp + errors).
+
+Non-goals:
+    This endpoint is OBSERVABILITY ONLY. It does NOT gate execution.
+    The broker still verifies MC receipts (`shared/broker_router.py`)
+    and the canonical gate still rejects bad intents
+    (`shared/runtime/platform_survival.py:mc_canonical_gate`). A
+    sidecar that fails its check-in here is visible to the operator
+    but its trades will be independently rejected by the receipt
+    seal — defense in depth.
+"""
+from __future__ import annotations
+
+import os
+from dataclasses import asdict
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Header, Path
+from pydantic import BaseModel, Field
+
+from auth import get_current_user
+from db import db
+from namespaces import DISCUSSION_PARTICIPANTS, SIDECAR_CHECKINS
+from shared.runtime.platform_survival import RuntimeStamp, policy_hash
+
+
+router = APIRouter(prefix="/admin/runtime", tags=["sidecar-checkin"])
+
+
+# ────────────────────── Helpers ───────────────────────────────────────
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _now_iso() -> str:
+    return _now().isoformat()
+
+
+def _expected_token(brain: str) -> str:
+    """Same shape as `shared/heartbeat_ping.py` — per-brain ingest
+    token from `.env`. Returns "" if unset so misconfiguration is loud."""
+    return os.environ.get(f"{brain.upper()}_INGEST_TOKEN", "") or ""
+
+
+def _verdict_from_validation(validation: Dict[str, Any], mc_policy_hash: str) -> str:
+    """Compress the validation errors + policy drift into one operator
+    label. Verdicts:
+        - "prod"           — validates clean AND policy_hash matches MC
+        - "policy_drift"   — stamp says prod but its policy_hash != MC's
+                             (sidecar shipped stale doctrine)
+        - "preview"        — env_name != "prod" or MC URL not prod
+        - "invalid"        — any other validation failure
+    """
+    if validation.get("ok"):
+        stamp = validation.get("stamp", {})
+        if stamp.get("policy_hash") != mc_policy_hash:
+            return "policy_drift"
+        return "prod"
+
+    errors = set(validation.get("errors") or [])
+    preview_signals = {"ENV_NOT_PROD", "MC_URL_NOT_PROD"}
+    if errors & preview_signals:
+        return "preview"
+    return "invalid"
+
+
+def _validate_stamp_dict(stamp_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Coerce an incoming dict into a `RuntimeStamp` and run the prod
+    doctrine validator. Returns the validator's `{ok, errors, stamp}`
+    contract on success, or a synthetic `{ok: False, errors:
+    ['STAMP_SHAPE_INVALID:...'], stamp: <raw>}` on shape failure."""
+    try:
+        stamp = RuntimeStamp(**stamp_dict)
+    except TypeError as e:
+        return {
+            "ok": False,
+            "errors": [f"STAMP_SHAPE_INVALID:{e}"],
+            "stamp": stamp_dict,
+        }
+    return stamp.validate_for_prod_sidecar()
+
+
+# ────────────────────── Schemas ───────────────────────────────────────
+
+
+class CheckinRequest(BaseModel):
+    stamp: Dict[str, Any] = Field(
+        ...,
+        description="Sidecar's RuntimeStamp (output of "
+        "`shared/runtime/platform_survival.py:RuntimeStamp.current(...)` "
+        "serialized via dataclasses.asdict).",
+    )
+
+
+class CheckinResponse(BaseModel):
+    ok: bool
+    runtime: str
+    verdict: str
+    errors: list[str]
+    policy_hash_match: bool
+    mc_policy_hash: str
+    note: str
+
+
+# ────────────────────── POST: sidecar check-in ─────────────────────────
+
+
+@router.post("/sidecar-checkin/{brain}", response_model=CheckinResponse)
+async def post_sidecar_checkin(
+    body: CheckinRequest,
+    brain: str = Path(..., description="brain id — alpha|camaro|chevelle|redeye"),
+    x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
+) -> CheckinResponse:
+    """Token-authed POST a sidecar makes on boot (and periodically) to
+    declare its identity. Persists the latest stamp + verdict and
+    returns the validation result so the sidecar can self-quarantine
+    if it drifted."""
+    brain = brain.lower()
+    if brain not in DISCUSSION_PARTICIPANTS:
+        raise HTTPException(status_code=404, detail=f"unknown brain {brain!r}")
+
+    expected = _expected_token(brain)
+    if not expected:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"no ingest token configured for {brain}; "
+                f"set {brain.upper()}_INGEST_TOKEN in backend/.env"
+            ),
+        )
+    if (x_runtime_token or "") != expected:
+        raise HTTPException(status_code=401, detail="invalid token")
+
+    validation = _validate_stamp_dict(body.stamp)
+    stamp = validation.get("stamp") or body.stamp
+    mc_hash = policy_hash()
+    incoming_hash = (stamp or {}).get("policy_hash")
+    policy_match = incoming_hash == mc_hash
+    verdict = _verdict_from_validation(validation, mc_hash)
+
+    now = _now()
+    now_iso = now.isoformat()
+
+    # Upsert. We keep `first_seen_at` and `checkin_count` ourselves
+    # (atomic $inc + $setOnInsert) so the panel can show uptime &
+    # how chatty each sidecar is.
+    await db[SIDECAR_CHECKINS].update_one(
+        {"runtime": brain},
+        {
+            "$set": {
+                "runtime": brain,
+                "stamp": stamp,
+                "validation": {
+                    "ok": validation.get("ok", False),
+                    "errors": validation.get("errors", []),
+                },
+                "verdict": verdict,
+                "policy_hash_match": policy_match,
+                "mc_policy_hash": mc_hash,
+                "last_checkin_at": now_iso,
+            },
+            "$setOnInsert": {"first_checkin_at": now_iso},
+            "$inc": {"checkin_count": 1},
+        },
+        upsert=True,
+    )
+
+    note = {
+        "prod": f"{brain} recorded as PROD sidecar; policy hash matches MC.",
+        "policy_drift": (
+            f"{brain} stamp validates but policy_hash differs from MC. "
+            f"Redeploy the sidecar with the latest platform_survival kit."
+        ),
+        "preview": (
+            f"{brain} appears to be a PREVIEW pod (env_name or MC URL "
+            f"not prod). PROD MC will still record the check-in but "
+            f"the operator dashboard will flag it amber."
+        ),
+        "invalid": (
+            f"{brain} sent an invalid RuntimeStamp; see `errors` for "
+            f"the specific doctrine failures."
+        ),
+    }[verdict]
+
+    return CheckinResponse(
+        ok=validation.get("ok", False) and policy_match,
+        runtime=brain,
+        verdict=verdict,
+        errors=list(validation.get("errors", [])),
+        policy_hash_match=policy_match,
+        mc_policy_hash=mc_hash,
+        note=note,
+    )
+
+
+# ────────────────────── GET: list all check-ins ────────────────────────
+
+
+def _freshness(last_iso: Optional[str], now: datetime) -> Dict[str, Any]:
+    """Operator-readable age band for the panel."""
+    if not last_iso:
+        return {"age_seconds": None, "freshness": "never"}
+    try:
+        t = datetime.fromisoformat(last_iso.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return {"age_seconds": None, "freshness": "never"}
+    age = (now - t).total_seconds()
+    if age < 300:
+        band = "fresh"
+    elif age < 1800:
+        band = "stale"
+    else:
+        band = "dead"
+    return {"age_seconds": round(age, 1), "freshness": band}
+
+
+def _row_for_response(doc: Optional[Dict[str, Any]], brain: str, now: datetime) -> Dict[str, Any]:
+    """Shape a single sidecar row for the GET response."""
+    if not doc:
+        return {
+            "runtime": brain,
+            "verdict": "never",
+            "freshness": "never",
+            "age_seconds": None,
+            "first_checkin_at": None,
+            "last_checkin_at": None,
+            "checkin_count": 0,
+            "policy_hash_match": False,
+            "mc_policy_hash": policy_hash(),
+            "stamp": None,
+            "errors": [],
+        }
+    fresh = _freshness(doc.get("last_checkin_at"), now)
+    return {
+        "runtime": doc.get("runtime", brain),
+        "verdict": doc.get("verdict", "invalid"),
+        "freshness": fresh["freshness"],
+        "age_seconds": fresh["age_seconds"],
+        "first_checkin_at": doc.get("first_checkin_at"),
+        "last_checkin_at": doc.get("last_checkin_at"),
+        "checkin_count": doc.get("checkin_count", 0),
+        "policy_hash_match": doc.get("policy_hash_match", False),
+        "mc_policy_hash": doc.get("mc_policy_hash", policy_hash()),
+        "stamp": doc.get("stamp"),
+        "errors": (doc.get("validation") or {}).get("errors", []),
+    }
+
+
+@router.get("/sidecar-checkin")
+async def list_sidecar_checkins(_user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+    """Admin-only roster of every known brain's latest check-in.
+    Always returns ONE row per `DISCUSSION_PARTICIPANTS` brain — if a
+    brain has never checked in, its row is `verdict="never"` so the
+    operator can spot silent sidecars immediately."""
+    now = _now()
+    docs_cursor = db[SIDECAR_CHECKINS].find({}, {"_id": 0})
+    by_runtime: Dict[str, Dict[str, Any]] = {}
+    async for d in docs_cursor:
+        by_runtime[d.get("runtime", "")] = d
+
+    rows = [_row_for_response(by_runtime.get(b), b, now) for b in DISCUSSION_PARTICIPANTS]
+
+    return {
+        "mc_policy_hash": policy_hash(),
+        "checked_at": now.isoformat(),
+        "rows": rows,
+    }
+
+
+@router.get("/sidecar-checkin/{brain}")
+async def get_sidecar_checkin(
+    brain: str,
+    _user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Admin-only single-brain detail."""
+    brain = brain.lower()
+    if brain not in DISCUSSION_PARTICIPANTS:
+        raise HTTPException(status_code=404, detail=f"unknown brain {brain!r}")
+    doc = await db[SIDECAR_CHECKINS].find_one({"runtime": brain}, {"_id": 0})
+    return _row_for_response(doc, brain, _now())

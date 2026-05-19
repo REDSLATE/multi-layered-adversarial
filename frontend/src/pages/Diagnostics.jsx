@@ -5,6 +5,7 @@ import VRLScorecardsPanel from "@/components/VRLScorecardsPanel";
 import LiveTradeDiagnose from "@/components/LiveTradeDiagnose";
 import RuntimeTokensPanel from "@/components/RuntimeTokensPanel";
 import RuntimeBundlesPanel from "@/components/RuntimeBundlesPanel";
+import SidecarCheckinPanel from "@/components/SidecarCheckinPanel";
 import PromotionArtifactPanel from "@/components/PromotionArtifactPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 
@@ -521,6 +522,18 @@ export default function Diagnostics() {
           <div className="mt-6">
             <PanelErrorBoundary panelName="PromotionArtifactPanel">
               <PromotionArtifactPanel />
+            </PanelErrorBoundary>
+          </div>
+
+          {/* Sidecar check-ins — Portable Survival Layer companion.
+              Each brain POSTs its boot-time RuntimeStamp; this panel
+              shows the latest stamp + verdict (PROD / preview /
+              policy_drift / never) at a glance. Defense in depth
+              alongside the broker MC-receipt seal: receipt verifies
+              every order, this verifies every sidecar's identity. */}
+          <div className="mt-6">
+            <PanelErrorBoundary panelName="SidecarCheckinPanel">
+              <SidecarCheckinPanel />
             </PanelErrorBoundary>
           </div>
 
