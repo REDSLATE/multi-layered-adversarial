@@ -83,6 +83,68 @@ COUNCIL_POLICY: dict[str, dict] = {
 }
 
 
+# ─────────────── Governor-block taxonomy (2026-05-18) ──────────────────
+#
+# Operator patch: Chevelle's SILENCE must not become a global kill
+# switch. Distinguish:
+#   * Silence / offline / no-stance      → diagnostic + risk-down
+#   * Explicit HARD veto                 → true block
+#   * Structural / safety reasons        → true block
+#
+# Only reasons in FATAL_GOVERNOR_REASONS may stop execution. Reasons in
+# SILENCE_GOVERNOR_REASONS (and soft-dissent-below-floor) are
+# downgraded to RISK_DOWN_ONLY: allowed=True with a conservative risk
+# multiplier so the operator can still see "Chevelle silent" on the
+# ledger AND the trade can still proceed at reduced size if every
+# other gate passes.
+
+FATAL_GOVERNOR_REASONS: frozenset[str] = frozenset({
+    "GOVERNOR_HARD_VETO",
+    # Structural / safety stops the operator demanded keep blocking.
+    "KILL_SWITCH_ACTIVE",
+    "BROKER_UNAVAILABLE",
+    "AUTH_MISSING",
+    "SYMBOL_UNRESOLVED",
+    "MAX_EXPOSURE_EXCEEDED",
+    "PDT_BLOCK",
+    "DUPLICATE_POSITION",
+    # Doctrinally-unconfigured governor seat is also fatal — it means
+    # nobody has been appointed to gate the lane at all. Operator may
+    # move this to SILENCE if they decide an unconfigured seat is the
+    # same as a silent one.
+    "GOVERNOR_SEAT_VACANT",
+})
+
+SILENCE_GOVERNOR_REASONS: frozenset[str] = frozenset({
+    "GOVERNOR_OFFLINE",
+    "NO_STANCE_LOW_EFFECTIVE_CONF",
+    "GOVERNOR_NO_STANCE",
+})
+
+# Risk-down multiplier applied when a non-fatal governor reason
+# previously would have hard-blocked.
+GOVERNOR_SILENCE_RISK_MULTIPLIER: float = 0.50
+
+
+def governor_blocks_execution(reason: str | None) -> bool:
+    """Only true fatal governor reasons may stop execution.
+    Silence / offline / no-stance / soft-dissent-below-floor should
+    be surfaced and risk-reduced, not treated as a global kill switch.
+    """
+    return str(reason or "").upper().strip() in FATAL_GOVERNOR_REASONS
+
+
+def governor_risk_multiplier(reason: str | None) -> float:
+    """Conservative size penalty for governor silence / non-fatal
+    dissent. Keeps governance visible without freezing the system."""
+    r = str(reason or "").upper().strip()
+    if r in SILENCE_GOVERNOR_REASONS:
+        return GOVERNOR_SILENCE_RISK_MULTIPLIER
+    if r == "SOFT_DISSENT_BELOW_FLOOR":
+        return GOVERNOR_SILENCE_RISK_MULTIPLIER
+    return 1.00
+
+
 def _policy_for_lane(lane: Optional[str]) -> dict:
     """Pick the council policy for an intent's lane. Equity is the safe
     default for legacy / lane-untagged intents."""
@@ -331,9 +393,34 @@ def _governance_verdict(
     )
 
     def _result(allowed, reason, disagreement, size_mult, conf_mult, pushback=False):
+        """Build the verdict dict, applying the FATAL/SILENCE taxonomy
+        (2026-05-18). A non-fatal "block" reason gets downgraded to
+        RISK_DOWN_ONLY: allowed=True with a conservative risk multiplier
+        instead of zeroing the trade. Only reasons in
+        FATAL_GOVERNOR_REASONS stay hard-blocked."""
         eff_conf = executor_conf * conf_mult
-        # Clamp size by global bounds. Single-agent influence is clamped
-        # by the caller against the lane baseline (1.0).
+
+        if not allowed and not governor_blocks_execution(reason):
+            # Non-fatal silence/dissent: downgrade to RISK_DOWN_ONLY.
+            # The trade can still proceed at half size if every other
+            # gate passes. Operator sees the cause on the ledger.
+            silence_mult = governor_risk_multiplier(reason)
+            # If the rule path set size_mult=0 (legacy hard-block
+            # semantics), use the silence multiplier as the absolute
+            # floor instead of multiplying zero.
+            effective_size = silence_mult if size_mult == 0.0 else size_mult * silence_mult
+            return {
+                "allowed": True,
+                "reason": reason,
+                "disagreement": disagreement,
+                "record_pushback": True,
+                "risk_multiplier": _clamp_size(effective_size, p),
+                "effective_conf": eff_conf,
+                "execution_effect": "RISK_DOWN_ONLY",
+                "display_status": "RISK_DOWN",
+            }
+
+        # Either fatal block, or rule said allow.
         return {
             "allowed": allowed,
             "reason": reason,
@@ -341,6 +428,8 @@ def _governance_verdict(
             "record_pushback": pushback,
             "risk_multiplier": _clamp_size(size_mult, p) if allowed else 0.0,
             "effective_conf": eff_conf,
+            "execution_effect": "ALLOW" if allowed else "HARD_BLOCK",
+            "display_status": "ALLOW" if allowed else "BLOCK",
         }
 
     # Governor seat vacant — no one to be heard. Block.

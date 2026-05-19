@@ -112,17 +112,38 @@ def _build_adversary(base, labels, holder):
 
 
 def _build_governor(base, labels, holder, snapshot):
+    """Crypto-side advisory governor packet.
+
+    2026-05-18 operator patch: distinguish FATAL stops (wide spread,
+    wrong lane, 3 losses, daily loss limit — true safety) from low
+    score (just C-quality, advisory). Low score now risk-downs to a
+    minimum floor instead of zeroing.
+    """
     risk_multiplier = _chevelle_risk_multiplier(base.score)
     block_reasons = _chevelle_blocks(labels, snapshot)
-    if block_reasons:
+    is_hard_block = bool(block_reasons)
+    if is_hard_block:
         risk_multiplier = 0.0
+    elif risk_multiplier == 0.0:
+        # Low score with no fatal stops → RISK_DOWN floor, not BLOCK.
+        risk_multiplier = 0.25
+    display_status = (
+        "BLOCK" if is_hard_block
+        else ("RISK_DOWN" if risk_multiplier < 1.0 else "ALLOW")
+    )
+    primary_reason = block_reasons[0] if block_reasons else (
+        "low_score" if risk_multiplier < 1.0 else None
+    )
     return {
         "role": "governor",
         "seat": CRYPTO_SEAT_MAP["governor"],
         "holder": holder,
         "risk_multiplier": risk_multiplier,
-        "governor_action": "block" if block_reasons else "modulate",
+        "governor_action": "block" if is_hard_block else "modulate",
         "block_reasons": block_reasons,
+        "display_status": display_status,    # NEW — UI reads this
+        "reason": primary_reason,            # NEW — UI reads this
+        "execution_effect": "HARD_BLOCK" if is_hard_block else ("RISK_DOWN_ONLY" if risk_multiplier < 1.0 else "ALLOW"),  # NEW
         "lesson": "Block on wide spread, wrong lane, consecutive losses, or daily loss limit; modulate otherwise.",
         "may_execute": False,
         "may_override_direction": False,

@@ -72,11 +72,33 @@ function seatHeadline(role, seat) {
   }
   if (role === "governor") {
     const rm = Number(seat.risk_multiplier ?? 1);
-    const blocked = (seat.block_reasons || []).length > 0 || rm === 0;
+    // 2026-05-18 operator patch — distinguish HARD_BLOCK (true safety
+    // veto) from RISK_DOWN (silence / soft dissent / low score). The
+    // backend now emits `display_status` + `reason`; fall back to the
+    // legacy block_reasons + risk_multiplier shape if missing.
+    const ds = String(seat.display_status || "").toUpperCase();
+    const reason = seat.reason || (seat.block_reasons || [])[0] || null;
+    if (ds === "RISK_DOWN" || (ds === "" && (seat.block_reasons || []).length > 0 && rm > 0)) {
+      const reasonShort = reason ? ` · ${reason}` : "";
+      return {
+        text: `RISK_DOWN ×${rm.toFixed(2)}${reasonShort}`,
+        color: "#F59E0B",
+        flagged: true,
+      };
+    }
+    const isHardBlock = ds === "BLOCK" || (ds === "" && ((seat.block_reasons || []).length > 0 || rm === 0));
+    if (isHardBlock) {
+      const reasonShort = reason ? ` · ${reason}` : "";
+      return {
+        text: `BLOCK${reasonShort}`,
+        color: "#DC2626",
+        flagged: true,
+      };
+    }
     return {
-      text: blocked ? "BLOCK" : `modulate ×${rm.toFixed(2)}`,
-      color: blocked ? "#DC2626" : rm < 0.8 ? "#F59E0B" : "#A1A1AA",
-      flagged: blocked || rm < 0.8,
+      text: `modulate ×${rm.toFixed(2)}`,
+      color: rm < 0.8 ? "#F59E0B" : "#A1A1AA",
+      flagged: rm < 0.8,
     };
   }
   if (role === "execution_judge") {

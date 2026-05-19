@@ -2,6 +2,109 @@
 
 
 
+## 🚨 Latest (2026-05-18, +5): Governor silence ≠ kill switch — FATAL/SILENCE taxonomy
+
+Operator patch: Chevelle's silence was acting as a global kill switch
+because the council's `_governance_verdict` treated `GOVERNOR_OFFLINE`,
+`NO_STANCE_LOW_EFFECTIVE_CONF`, and `SOFT_DISSENT_BELOW_FLOOR` as hard
+blocks. This patch separates **diagnostic + risk-down** (silence) from
+**true block** (explicit veto + structural safety).
+
+### Doctrine pin
+> Chevelle offline/silent  = diagnostic + risk down
+> Chevelle explicit hard veto  = true block
+> Broker/auth/symbol/PDT/exposure fatal issue  = true block
+
+Only `FATAL_GOVERNOR_REASONS` may stop execution. Everything else
+becomes `RISK_DOWN_ONLY` — `allowed=True` with a conservative risk
+multiplier (0.50 baseline, clamped by lane policy floor).
+
+### New module-level surface in `shared/council.py`
+
+```python
+FATAL_GOVERNOR_REASONS = frozenset({
+    "GOVERNOR_HARD_VETO", "GOVERNOR_SEAT_VACANT",
+    "KILL_SWITCH_ACTIVE", "BROKER_UNAVAILABLE",
+    "AUTH_MISSING", "SYMBOL_UNRESOLVED",
+    "MAX_EXPOSURE_EXCEEDED", "PDT_BLOCK", "DUPLICATE_POSITION",
+})
+SILENCE_GOVERNOR_REASONS = frozenset({
+    "GOVERNOR_OFFLINE", "NO_STANCE_LOW_EFFECTIVE_CONF",
+    "GOVERNOR_NO_STANCE",
+})
+GOVERNOR_SILENCE_RISK_MULTIPLIER = 0.50
+
+def governor_blocks_execution(reason): ...
+def governor_risk_multiplier(reason): ...
+```
+
+### Verdict dict now carries two new fields
+
+```python
+{
+    "allowed": True,              # True for both ALLOW + RISK_DOWN_ONLY
+    "reason": "GOVERNOR_OFFLINE",
+    "risk_multiplier": 0.50,      # clamped by lane policy
+    "execution_effect": "RISK_DOWN_ONLY",  # NEW
+    "display_status": "RISK_DOWN",         # NEW
+    ...
+}
+```
+
+### Advisory packet (`shared/doctrine/brain_sidecars.py` +
+`shared/crypto/doctrine/crypto_brain_sidecars.py`)
+Same taxonomy applied:
+- A_QUALITY → `display_status=ALLOW` (×1.00)
+- B/C/REJECT quality → `display_status=RISK_DOWN` (×0.75 / ×0.50 / ×0.25)
+- Three consecutive losses / daily loss limit / wide spread / wrong lane →
+  `display_status=BLOCK` (true safety, ×0.00)
+
+`block_reasons[]`, `governor_action`, and all other downstream fields
+stay shape-stable. Two new fields surfaced: `display_status` and
+`reason` (the most-informative single reason for UI chip).
+
+### UI fix — `DoctrineStrip.jsx::seatHeadline()`
+Governor chip now distinguishes:
+- `RISK_DOWN ×0.50 · NO_STANCE_LOW_EFFECTIVE_CONF` (orange, not red)
+- `BLOCK · GOVERNOR_HARD_VETO` (red, fatal stop)
+- `modulate ×0.85` (clean modulation)
+- `endorse` (silent — no chip change needed)
+
+Reads `seat.display_status` + `seat.reason` first; falls back to
+legacy `block_reasons[] + risk_multiplier === 0` for backward compat.
+
+### Tests
+- `tests/test_governance_verdict.py` — **rewritten** (14 PASS,
+  tripwire). Pins the new taxonomy: `GOVERNOR_OFFLINE` and
+  `NO_STANCE_LOW_EFFECTIVE_CONF` and `SOFT_DISSENT_BELOW_FLOOR` all
+  produce `allowed=True` + `execution_effect=RISK_DOWN_ONLY` +
+  `risk_multiplier > 0`. Only `GOVERNOR_HARD_VETO` and
+  `GOVERNOR_SEAT_VACANT` produce `HARD_BLOCK`. Plus 4 new tests for
+  `governor_blocks_execution()` and `governor_risk_multiplier()`.
+- Doctrine-sidecar tests: 54/54 PASS unchanged (`governor_action`
+  field kept as binary block/modulate to avoid downstream churn).
+- Full tripwire: **80/80 PASS** (was 76, +4 new taxonomy tests).
+
+### Effect in PROD (after redeploy)
+- Chevelle silent / offline → trades still go through at 50% size,
+  ledger row shows `RISK_DOWN · GOVERNOR_OFFLINE` (orange chip)
+- Chevelle actively votes `VETO` at high conviction → trade blocked
+  with `BLOCK · GOVERNOR_HARD_VETO` (red chip)
+- Broker offline, auth missing, max exposure exceeded, PDT, duplicate
+  position → blocked (red chip with reason)
+- Three losses / daily loss limit → blocked (red chip with reason)
+
+### What this fixes
+Operator's PROD screenshot showed every Camaro intent getting
+`GOVERNOR · BLOCK (chevelle)` — the chip didn't name the reason, and
+the reason was almost certainly silence (Chevelle's heartbeat stale +
+no authority calls). After this patch, the same scenario would show
+`GOVERNOR · RISK_DOWN ×0.50 · GOVERNOR_OFFLINE` and the trade would
+still flow through at half size. Chevelle's silence is diagnostic
+data, not a global stop.
+
+
+
 ## 🚨 Latest (2026-05-18, +4): Circular import broken — `shared/regime_keys.py`
 
 Operator request: 10-minute proper cleanup before redeploy (after

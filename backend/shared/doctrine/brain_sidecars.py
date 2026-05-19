@@ -144,6 +144,17 @@ def _build_adversary(base, labels, holder):
 
 
 def _build_governor(base, labels, holder, snapshot):
+    """Doctrine packet's advisory governor view (ADVISORY ONLY — does
+    not gate execution; the council's `_governance_verdict` is the
+    authoritative gate).
+
+    2026-05-18 operator patch: when the advisory reasons are non-fatal
+    (e.g. quality C/B with no hard safety stop), the packet emits
+    `display_status="RISK_DOWN"` and a single readable `reason` for
+    UI surfacing. When the reasons ARE fatal (three losses, daily max
+    loss), the packet still says BLOCK. The UI reads `display_status`
+    and `reason` to render the correct chip.
+    """
     risk_multiplier = 1.0
     block_reasons = []
     consecutive_losses = int(snapshot.get("consecutive_losses", 0) or 0)
@@ -155,26 +166,46 @@ def _build_governor(base, labels, holder, snapshot):
     elif base.quality == "C_QUALITY":
         risk_multiplier *= 0.50
     else:
-        risk_multiplier *= 0.00
+        # REJECT quality is advisory-only — not a fatal safety stop.
+        # Downweight aggressively but DON'T zero, so the chip shows
+        # RISK_DOWN with reason "doctrine_reject" instead of BLOCK.
+        risk_multiplier *= 0.25
         block_reasons.append("doctrine_reject")
     if "MARKET_WEAK_REDUCE_RISK" in labels:
         risk_multiplier *= 0.50
     if "SPREAD_TOO_WIDE" in labels:
         risk_multiplier *= 0.50
+
+    # ── FATAL stops — these stay as hard blocks (true safety) ──
+    fatal_stops: list[str] = []
     if consecutive_losses >= 3:
         risk_multiplier = 0.0
-        block_reasons.append("three_consecutive_losses")
+        fatal_stops.append("three_consecutive_losses")
     if daily_pnl <= -100:
         risk_multiplier = 0.0
-        block_reasons.append("daily_max_loss_reached")
+        fatal_stops.append("daily_max_loss_reached")
+    block_reasons.extend(fatal_stops)
+
     risk_multiplier = max(0.0, min(1.0, risk_multiplier))
+    is_hard_block = bool(fatal_stops)
+    display_status = (
+        "BLOCK" if is_hard_block
+        else ("RISK_DOWN" if (block_reasons or risk_multiplier < 1.0) else "ALLOW")
+    )
+    # Surface the most-informative single reason for the UI chip.
+    primary_reason = fatal_stops[0] if fatal_stops else (
+        block_reasons[0] if block_reasons else None
+    )
     return {
         "role": "governor",
         "seat": EQUITY_SEAT_MAP["governor"],
         "holder": holder,
         "risk_multiplier": round(risk_multiplier, 4),
-        "governor_action": "block" if risk_multiplier == 0.0 else "modulate",
+        "governor_action": "block" if is_hard_block else "modulate",
         "block_reasons": block_reasons,
+        "display_status": display_status,        # NEW — UI reads this
+        "reason": primary_reason,                # NEW — UI reads this
+        "execution_effect": "HARD_BLOCK" if is_hard_block else ("RISK_DOWN_ONLY" if block_reasons else "ALLOW"),  # NEW
         "lesson": "Reduce or block risk when setup quality, market regime, spread, or loss limits are unfavorable.",
         "may_execute": False,
         "may_override_direction": False,
