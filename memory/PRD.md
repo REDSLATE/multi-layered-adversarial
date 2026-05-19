@@ -2,6 +2,54 @@
 
 
 
+## 🚨 Latest (2026-05-19): Authority-call mirror — the doctrine bridge
+
+The platform survival kit landed in Chevelle, role adapter installed,
+`chevelle_emit_authority` wired into `build_opinion()`. End-to-end
+plumbing test revealed a doctrine GAP: opinions land in
+`shared_opinions`, but the council reads governor calls from
+`shared_adl_receipts`. Without a bridge, Chevelle's calls would be
+silent to the gate chain — the exact bug we set out to fix.
+
+### The bridge: `_mirror_authority_call_to_receipts()`
+
+Added to `shared/opinions.py`. Runs inside `/api/ingest/opinion` AFTER
+the opinion is persisted, best-effort (mirror failures must never
+block the opinion post). When `evidence.authority_call` is present and
+the inner `brain` matches the opinion's `runtime` (defensive — no
+impersonation), the mirror:
+
+1. Translates `status` (BLOCK/WARN/ALLOW) + `reason` into the council's
+   expected signal shape (`executable`, `veto`, `confidence`, `stance`,
+   `reason`)
+2. Writes it under `payload.*` (a container the normalizer recognizes)
+3. Sets `action="authority_call"` so `_AUTHORITY_CALL_VALUES` filter
+   hits
+4. Sets top-level `symbol` + `lane` so `_symbol_clause()` finds it
+5. Keeps the raw `authority_call` payload for forensic replay
+
+### End-to-end live verification (preview)
+
+| Path | Chevelle emits | Council verdict |
+|---|---|---|
+| **HARD veto** | `{status:BLOCK, reason:GOVERNOR_HARD_VETO}` | `allowed=False · HARD_BLOCK · BLOCK` |
+| **WARN** | `{status:WARN, reason:CHEVELLE_REDUCE_SIZE}` | `allowed=True · ×0.75 · SOFT_DISSENT_DOWNWEIGHTED` |
+| **ALLOW** | `{status:ALLOW, reason:NO_GOVERNOR_DISSENT}` | `allowed=True · NO_GOVERNOR_DISSENT` |
+
+### Defenses pinned
+- **Brain impersonation**: opinion `runtime=chevelle` with
+  `evidence.authority_call.brain=alpha` is REFUSED (no mirror).
+- **No authority_call**: opinion lacking the field is skipped silently.
+- **Mirror failure**: caught and swallowed, opinion post never blocks.
+
+### Tests
+- `tests/test_authority_call_mirror.py` — 6 PASS (tripwire):
+  receipts-shape contract, HARD veto round-trip, WARN round-trip,
+  ALLOW round-trip, impersonation defense, no-authority skip.
+- Full tripwire: **116/116 PASS** (was 110, +6 mirror tests).
+
+
+
 ## 🚨 Latest (2026-05-18, +6): Unified classifier — Brains speak → MC classifies → MC governs → MC routes
 
 Operator architecture: one classifier on MC, one role adapter per

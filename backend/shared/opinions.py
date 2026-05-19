@@ -32,8 +32,96 @@ from namespaces import (
     SHARED_AUTHORITY_STATE,
     SHARED_HEARTBEATS,
     SHARED_OPINIONS,
+    SHARED_RECEIPTS,
 )
 from runtime_auth import verify_runtime_token
+
+
+# ──────────────────────── governor authority-call mirror ──────────────────────
+
+
+async def _mirror_authority_call_to_receipts(opinion_doc: dict) -> None:
+    """Bridge from `/api/ingest/opinion` payloads to `shared_adl_receipts`
+    so the council's gate chain (which reads receipts, NOT opinions)
+    sees governor authority calls.
+
+    Doctrine (2026-05-19): brains post their governor decisions through
+    the opinion discussion layer (where Chevelle's role adapter lands),
+    but the council reads from receipts. Without this mirror, every
+    Chevelle authority call would be invisible to the gate chain and
+    every intent would block on `NO_STANCE_LOW_EFFECTIVE_CONF`.
+
+    Only mirrors when:
+      * `evidence.authority_call` is present and is a dict
+      * The authority_call's `brain` matches the opinion's runtime
+        (defensive — opinions cannot impersonate authority calls)
+    """
+    evidence = opinion_doc.get("evidence") or {}
+    if not isinstance(evidence, dict):
+        return
+    auth_call = evidence.get("authority_call")
+    if not isinstance(auth_call, dict):
+        return
+    runtime = opinion_doc.get("runtime")
+    if not runtime:
+        return
+    # Defensive: brain field on the inner authority_call must match the
+    # opinion's runtime — opinions can't impersonate other brains.
+    if str(auth_call.get("brain", "")).lower() != str(runtime).lower():
+        return
+
+    # Translate the survival-kit authority_call shape into the
+    # signal fields the council's `_normalize_governor_call` expects.
+    # status BLOCK/ALLOW/WARN → executable + stance; reason flows through
+    # untouched so the FATAL/SILENCE taxonomy classifies it correctly.
+    status = str(auth_call.get("status", "")).upper()
+    reason_code = str(auth_call.get("reason", "")).upper()
+    if status == "BLOCK":
+        stance = "VETO" if reason_code in ("GOVERNOR_HARD_VETO",) or reason_code.startswith("GOVERNOR_HARD_VETO_") else "DISSENT"
+        executable = False
+        veto = (reason_code in ("GOVERNOR_HARD_VETO",) or reason_code.startswith("GOVERNOR_HARD_VETO_"))
+    elif status == "WARN":
+        stance = "DISSENT"
+        executable = False
+        veto = False
+    else:  # ALLOW or anything else benign
+        stance = "ENDORSE"
+        executable = True
+        veto = False
+
+    payload_for_council = {
+        # Council's `_normalize_governor_call` looks for these inside
+        # the container at `payload` / `intent` / `call` / `data` / root.
+        "executable": executable,
+        "veto": veto,
+        "confidence": float(auth_call.get("confidence") or 0.0),
+        "stance": stance,
+        "reason": reason_code or "NO_GOVERNOR_DISSENT",
+    }
+
+    receipt = {
+        "receipt_id": str(uuid.uuid4()),
+        "runtime": runtime,
+        # Council filters with _ACTION_FIELDS=("action","kind","type","event")
+        # against _AUTHORITY_CALL_VALUES=("authority_call",...). Use the
+        # exact value the filter expects so `_latest_governor_call()` finds us.
+        "action": "authority_call",
+        "kind": "authority_call_mirror",   # debug breadcrumb only
+        "source_opinion_id": opinion_doc.get("opinion_id"),
+        "thread_root": opinion_doc.get("thread_root"),
+        "topic": opinion_doc.get("topic"),
+        # Council `_normalize_governor_call` walks containers in priority:
+        # intent → payload → call → data → root. Put the translated signals
+        # under `payload` (a recognised container) so the normalizer hits.
+        "payload": payload_for_council,
+        # Raw authority_call kept alongside for audit / forensic replay.
+        "authority_call": auth_call,
+        # Top-level mirrors so council's `_symbol_clause()` finds the symbol.
+        "symbol": auth_call.get("symbol"),
+        "lane": auth_call.get("lane"),
+        "timestamp": _now_iso(),
+    }
+    await db[SHARED_RECEIPTS].insert_one(receipt)
 
 
 # ──────────────────────── config (small, deliberate) ────────────────────────
@@ -218,6 +306,23 @@ async def post_opinion(
         "posted_at": _now_iso(),
     }
     await db[SHARED_OPINIONS].insert_one(doc)
+
+    # ── Governor authority-call mirror (2026-05-19) ──────────────────
+    # When the opinion carries `evidence.authority_call`, also persist
+    # it to SHARED_RECEIPTS so the council's `_latest_governor_call()`
+    # (which reads from receipts, NOT opinions) sees it.
+    #
+    # This is the doctrine bridge: Chevelle posts via the opinion
+    # discussion layer, but the council's gate chain reads from the
+    # receipts collection. Without this mirror, Chevelle's authority
+    # calls are silent to the gate chain — which is exactly the
+    # "Chevelle silent" bug we're fixing.
+    #
+    # Best-effort: mirror failures must never block the opinion post.
+    try:
+        await _mirror_authority_call_to_receipts(doc)
+    except Exception:  # noqa: BLE001
+        pass
 
     # Conflict auto-detection — never blocks the post.
     from shared.conflicts import detect_conflicts_for_opinion  # noqa: WPS433
