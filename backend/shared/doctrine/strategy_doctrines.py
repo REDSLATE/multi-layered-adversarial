@@ -105,27 +105,31 @@ def _build_gap_and_go_v1(snapshot, seat_holders):
     challenge_strength = min(1.0, 0.15 + 0.20 * len(objections))
 
     # Governor risk — strategy-specific.
+    # Doctrine (c, 2026-05-20): Governor = SIZE ONLY. No hard zeros from
+    # this packet. Quality, spread, losses become dampeners. RoadGuard
+    # kills if structure is unsafe; opponent owns directional veto.
     risk_mult = 1.0
-    block_reasons = []
+    block_reasons: list[str] = []  # retained for back-compat; doctrine (c) keeps it empty
     if base.quality == "REJECT":
-        risk_mult = 0.0
-        block_reasons.append("doctrine_reject")
+        risk_mult *= 0.20  # was 0.0 (doctrine_reject)
     elif base.quality == "C_QUALITY":
-        risk_mult = 0.30
+        risk_mult *= 0.30
     elif base.quality == "B_QUALITY":
-        risk_mult = 0.65
+        risk_mult *= 0.65
     if "SPREAD_TOO_WIDE" in labels:
-        risk_mult = 0.0
-        block_reasons.append("spread_too_wide_for_breakout")
+        risk_mult *= 0.50  # was 0.0 (RoadGuard owns the kill now)
     if not above_emas:
         risk_mult *= 0.50
     if int(snap.get("consecutive_losses", 0) or 0) >= 3:
-        risk_mult = 0.0
-        block_reasons.append("three_consecutive_losses")
+        risk_mult *= 0.40  # was 0.0
     if float(snap.get("daily_pnl", 0.0) or 0.0) <= -100:
-        risk_mult = 0.0
-        block_reasons.append("daily_max_loss_reached")
+        risk_mult *= 0.25  # was 0.0 (daily_max_loss_reached)
     risk_mult = max(0.0, min(1.0, risk_mult))
+    # Floor at 0.10 so the operator can still see the dampened proposal
+    # on the ledger AND the trade can proceed at minimum size if every
+    # other gate passes.
+    if risk_mult > 0 and risk_mult < 0.10:
+        risk_mult = 0.10
 
     # Execution-judge checks — strategy-specific.
     execution_checks = {
@@ -152,9 +156,9 @@ def _build_gap_and_go_v1(snapshot, seat_holders):
         },
         governor={
             "risk_multiplier": round(risk_mult, 4),
-            "governor_action": "block" if risk_mult == 0.0 else "modulate",
-            "block_reasons": block_reasons,
-            "lesson": "Block on spread, reject quality, or loss limits; modulate hard on missing trend support.",
+            "governor_action": "modulate",  # doctrine (c): never "block"
+            "block_reasons": block_reasons,  # always empty under (c)
+            "lesson": "Governor sizes risk. Doctrine quality, spread, losses become dampeners; RoadGuard owns hard kills.",
         },
         execution_judge={
             "execution_ready": all(execution_checks.values()),
@@ -211,27 +215,28 @@ def _build_micro_pullback_v1(snapshot, seat_holders):
         objections.append("spread_risk")
     challenge_strength = min(1.0, 0.10 + 0.18 * len(objections))
 
+    # Doctrine (c, 2026-05-20): Governor = SIZE ONLY. Quality and
+    # stop-reference issues become dampeners; RoadGuard owns hard
+    # kills on unsafe structure.
     risk_mult = 1.0
-    block_reasons = []
+    block_reasons: list[str] = []
     if base.quality == "REJECT":
-        risk_mult = 0.0
-        block_reasons.append("doctrine_reject")
+        risk_mult *= 0.20  # was 0.0 (doctrine_reject)
     elif base.quality == "C_QUALITY":
-        risk_mult = 0.40
+        risk_mult *= 0.40
     elif base.quality == "B_QUALITY":
-        risk_mult = 0.70
+        risk_mult *= 0.70
     if not pullback_low_known:
-        risk_mult = 0.0
-        block_reasons.append("no_pullback_low_so_no_stop")
+        risk_mult *= 0.30  # was 0.0 (no_pullback_low_so_no_stop)
     if "SPREAD_TOO_WIDE" in labels:
         risk_mult *= 0.50
     if int(snap.get("consecutive_losses", 0) or 0) >= 3:
-        risk_mult = 0.0
-        block_reasons.append("three_consecutive_losses")
+        risk_mult *= 0.40  # was 0.0
     if float(snap.get("daily_pnl", 0.0) or 0.0) <= -100:
-        risk_mult = 0.0
-        block_reasons.append("daily_max_loss_reached")
+        risk_mult *= 0.25  # was 0.0
     risk_mult = max(0.0, min(1.0, risk_mult))
+    if risk_mult > 0 and risk_mult < 0.10:
+        risk_mult = 0.10
 
     execution_checks = {
         "valid_pullback": "MICRO_PULLBACK_PATTERN" in labels or "BULL_FLAG_PATTERN" in labels,
@@ -257,9 +262,9 @@ def _build_micro_pullback_v1(snapshot, seat_holders):
         },
         governor={
             "risk_multiplier": round(risk_mult, 4),
-            "governor_action": "block" if risk_mult == 0.0 else "modulate",
-            "block_reasons": block_reasons,
-            "lesson": "Block when there's no known pullback low (no stop). Modulate hard on weaker quality.",
+            "governor_action": "modulate",  # doctrine (c): never "block"
+            "block_reasons": block_reasons,  # empty under (c)
+            "lesson": "Governor sizes risk. Missing stop reference dampens; RoadGuard owns hard kills.",
         },
         execution_judge={
             "execution_ready": all(execution_checks.values()),

@@ -201,6 +201,67 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
         "reason": broker_reason,
     })
 
+    # ─── 6.0 RoadGuard — deterministic market-structure caps ──────────
+    # Doctrine (c, 2026-05-20): RoadGuard owns "is this market safe to
+    # trade RIGHT NOW" as PURE MATH. No opinions, no calibrations, no
+    # brain involvement. Governor dampens within the safe zone;
+    # RoadGuard kills if the market structure itself is unsafe.
+    #
+    # Caps are per-lane and intentionally generous — the goal is to
+    # catch broken / illiquid / chaotic markets, not to second-guess
+    # the brain's edge. Sub-cap conditions are sized down by Governor
+    # (not killed) so the system can still learn from marginal fills.
+    snapshot = intent.get("snapshot") or {}
+    spread_bps_raw = snapshot.get("spread_bps")
+    LANE_SPREAD_CAP = {
+        "crypto": 200.0,   # 2.00% — only kill truly broken crypto markets
+        "equity": 50.0,    # 0.50% — equities should be much tighter
+    }
+    lane_for_roadguard = intent_lane or "equity"
+    spread_cap = LANE_SPREAD_CAP.get(lane_for_roadguard)
+
+    if spread_bps_raw is None:
+        # Missing snapshot → MC cannot verify safety → fail closed,
+        # but as RoadGuard (deterministic infra failure), not as
+        # Governor dissent.
+        gates.append({
+            "name": "roadguard_spread_floor",
+            "passed": False,
+            "reason": "ROADGUARD_MISSING_SPREAD_BPS — snapshot absent; cannot verify market structure",
+        })
+    else:
+        try:
+            spread_bps_val = float(spread_bps_raw)
+        except (TypeError, ValueError):
+            spread_bps_val = None  # type: ignore[assignment]
+
+        if spread_bps_val is None:
+            gates.append({
+                "name": "roadguard_spread_floor",
+                "passed": False,
+                "reason": f"ROADGUARD_BAD_SPREAD_BPS — non-numeric ({spread_bps_raw!r})",
+            })
+        elif spread_cap is None:
+            # Unknown lane → no cap to check; passive pass.
+            gates.append({
+                "name": "roadguard_spread_floor",
+                "passed": True,
+                "reason": f"roadguard inactive for lane={lane_for_roadguard!r}",
+            })
+        else:
+            passed = spread_bps_val <= spread_cap
+            gates.append({
+                "name": "roadguard_spread_floor",
+                "passed": passed,
+                "reason": (
+                    f"spread {spread_bps_val:.2f} bps ≤ {spread_cap:.0f} bps cap "
+                    f"(lane={lane_for_roadguard})"
+                    if passed else
+                    f"ROADGUARD_SPREAD_CAP — spread {spread_bps_val:.2f} bps > "
+                    f"{spread_cap:.0f} bps cap (lane={lane_for_roadguard})"
+                ),
+            })
+
     # ─── 6a. Council enforcement ──────────────────────────────────────
     # Doctrine (rev3, 2026-02-15): SEAT-BOUND graduated verdict. The
     # Governor seat holder's most-recent stance shapes the verdict;

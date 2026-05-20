@@ -13,7 +13,10 @@ def test_sidecar_has_no_local_execution_authority():
     assert stamp.local_execution_authority is False
 
 
-def test_mc_blocks_low_confidence():
+def test_mc_does_not_block_low_confidence_under_doctrine_c():
+    """Doctrine (c, 2026-05-20): MC no longer re-judges brain
+    confidence. Brain owns its own conviction floor. MC accepts the
+    intent and surfaces the brain's self-assessment as telemetry."""
     os.environ["RISEDUAL_CRYPTO_CONFIDENCE_FLOOR"] = "0.45"
 
     intent = sidecar_build_intent(
@@ -26,8 +29,12 @@ def test_mc_blocks_low_confidence():
     )
 
     result = mc_canonical_gate(intent)
-    assert result["accepted"] is False
-    assert result["reason"] == "CONFIDENCE_BELOW_FLOOR"
+    assert result["accepted"] is True
+    assert result["reason"] == "MC_CANONICAL_GATE_APPROVED"
+    # Telemetry: MC still records what the brain's floor said.
+    assert result["brain_confidence_below_floor"] is True
+    assert result["brain_confidence_floor"] == 0.45
+    assert "CONFIDENCE_BELOW_FLOOR" not in result["errors"]
 
 
 def test_mc_allows_valid_intent_with_receipt():

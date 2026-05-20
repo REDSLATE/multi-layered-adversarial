@@ -46,7 +46,9 @@ def test_validate_stamp_flags_unknown_env(auth_client, base_url):
     assert "MC_URL_NOT_PROD" in body["errors"]
 
 
-def test_canonical_gate_blocks_low_confidence(auth_client, base_url):
+def test_canonical_gate_accepts_low_confidence_under_doctrine_c(auth_client, base_url):
+    """Doctrine (c, 2026-05-20): MC no longer hard-blocks on brain
+    confidence. Surfaced as telemetry, never a veto."""
     os.environ["RISEDUAL_CRYPTO_CONFIDENCE_FLOOR"] = "0.45"
     intent = sidecar_build_intent(
         brain_id="camaro",
@@ -63,8 +65,12 @@ def test_canonical_gate_blocks_low_confidence(auth_client, base_url):
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["accepted"] is False
-    assert body["reason"] == "CONFIDENCE_BELOW_FLOOR"
+    assert body["accepted"] is True
+    assert body["reason"] == "MC_CANONICAL_GATE_APPROVED"
+    assert "CONFIDENCE_BELOW_FLOOR" not in body["errors"]
+    # Telemetry surface intact
+    assert body["brain_confidence_below_floor"] is True
+    assert body["brain_confidence_floor"] == 0.45
 
 
 def test_canonical_gate_and_verify_receipt_roundtrip(auth_client, base_url):

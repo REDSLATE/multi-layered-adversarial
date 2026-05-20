@@ -78,34 +78,50 @@ def test_crypto_brain_packet_has_no_execution_authority():
     assert packet["lane"] == "crypto"
 
 
-def test_chevelle_blocks_wide_spread():
+def test_chevelle_dampens_on_wide_spread():
+    """Doctrine (c, 2026-05-20): Chevelle dampens wide spread, never
+    hard-blocks. RoadGuard kills truly unsafe markets at the
+    `roadguard_spread_floor` gate in execution.py."""
     packet = build_crypto_brain_doctrine_packet({
         "lane": "crypto",
         "symbol": "DOGE/USD",
         "existing_intent": True,
         "spread_bps": 200,
     })
-    assert "BLOCK_WIDE_SPREAD" in packet["seats"]["governor"]["block_reasons"]
+    gov = packet["seats"]["governor"]
+    assert gov["block_reasons"] == []
+    assert gov["governor_action"] == "modulate"
+    dampener_names = [n for (n, _m) in gov["dampeners"]]
+    assert "WIDE_SPREAD" in dampener_names
+    assert gov["risk_multiplier"] < 1.0
 
 
-def test_chevelle_blocks_three_consecutive_losses():
+def test_chevelle_dampens_on_three_consecutive_losses():
     packet = build_crypto_brain_doctrine_packet({
         "lane": "crypto",
         "symbol": "ETH/USD",
         "existing_intent": True,
         "consecutive_losses": 3,
     })
-    assert "BLOCK_THREE_CONSECUTIVE_LOSSES" in packet["seats"]["governor"]["block_reasons"]
+    gov = packet["seats"]["governor"]
+    assert gov["block_reasons"] == []
+    assert gov["governor_action"] == "modulate"
+    dampener_names = [n for (n, _m) in gov["dampeners"]]
+    assert "THREE_CONSECUTIVE_LOSSES" in dampener_names
 
 
-def test_chevelle_blocks_daily_loss_limit():
+def test_chevelle_dampens_on_daily_loss_limit():
     packet = build_crypto_brain_doctrine_packet({
         "lane": "crypto",
         "symbol": "ETH/USD",
         "existing_intent": True,
         "daily_pnl_usd": -200,
     })
-    assert "BLOCK_DAILY_LOSS_LIMIT" in packet["seats"]["governor"]["block_reasons"]
+    gov = packet["seats"]["governor"]
+    assert gov["block_reasons"] == []
+    assert gov["governor_action"] == "modulate"
+    dampener_names = [n for (n, _m) in gov["dampeners"]]
+    assert "DAILY_LOSS_LIMIT" in dampener_names
 
 
 def test_camaro_not_ready_without_existing_intent():

@@ -127,14 +127,17 @@ def test_micro_pullback_clean_setup_ready():
     assert ej["execution_ready"] is True
 
 
-def test_micro_pullback_blocks_when_no_stop_reference():
+def test_micro_pullback_dampens_when_no_stop_reference():
+    """Doctrine (c, 2026-05-20): missing stop reference is a STRATEGY
+    dampener, not a block. Governor never zeroes. RoadGuard / executor
+    seat may still refuse to fire, but governor's role is sizing."""
     snap = _good_micro_pullback_snapshot(
         strategy="micro_pullback", pullback_low=None,
     )
     packet = build_strategy_packet("micro_pullback", snap)
     gov = packet["seats"]["governor"]
-    assert gov["governor_action"] == "block"
-    assert "no_pullback_low_so_no_stop" in gov["block_reasons"]
+    assert gov["governor_action"] == "modulate"
+    assert 0.0 < gov["risk_multiplier"] < 1.0
 
 
 def test_micro_pullback_adversary_attacks_far_from_round_dollar():

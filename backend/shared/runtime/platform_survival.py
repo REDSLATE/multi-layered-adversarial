@@ -207,10 +207,15 @@ def mc_canonical_gate(intent: Dict[str, Any]) -> Dict[str, Any]:
     if direction not in {"BUY", "SELL"}:
         errors.append("DIRECTION_NOT_EXECUTABLE")
 
+    # Doctrine (c, 2026-05-20): MC no longer re-judges brain confidence.
+    # The brain owns its own conviction floor and surfaces it via
+    # `execution_blocked_by` for telemetry. MC verifies authority,
+    # schema, broker, and caps — not the brain's directional agency.
+    # We still RECORD the floor and the observed confidence so the
+    # operator can see the brain's self-assessment on the ledger; we
+    # just don't append `CONFIDENCE_BELOW_FLOOR` to `errors`.
     floor = float(env(f"RISEDUAL_{lane.upper()}_CONFIDENCE_FLOOR", "0.45"))
-
-    if confidence < floor:
-        errors.append("CONFIDENCE_BELOW_FLOOR")
+    confidence_below_brain_floor = confidence < floor
 
     if not symbol:
         errors.append("MISSING_SYMBOL")
@@ -242,6 +247,10 @@ def mc_canonical_gate(intent: Dict[str, Any]) -> Dict[str, Any]:
         "reason": signed.reason,
         "errors": errors,
         "receipt": asdict(signed),
+        # Telemetry-only: MC observes the brain's own floor but does
+        # not gate on it (doctrine c, 2026-05-20).
+        "brain_confidence_floor": floor,
+        "brain_confidence_below_floor": confidence_below_brain_floor,
     }
 
 

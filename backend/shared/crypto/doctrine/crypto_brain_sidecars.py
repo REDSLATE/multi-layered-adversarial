@@ -114,24 +114,35 @@ def _build_adversary(base, labels, holder):
 def _build_governor(base, labels, holder, snapshot):
     """Crypto-side advisory governor packet.
 
-    2026-05-18 operator patch: distinguish FATAL stops (wide spread,
-    wrong lane, 3 losses, daily loss limit — true safety) from low
-    score (just C-quality, advisory). Low score now risk-downs to a
-    minimum floor instead of zeroing.
+    Doctrine (c, 2026-05-20): Chevelle/Governor = SIZE ONLY.
+    No hard blocks emitted from this sidecar. Wide spread, low
+    volume, consecutive losses, etc. all become risk dampeners.
+    The smallest (most cautious) dampener combines with the
+    score-based base multiplier. RoadGuard owns deterministic
+    safety; opponent seat owns directional veto.
     """
-    risk_multiplier = _chevelle_risk_multiplier(base.score)
-    block_reasons = _chevelle_blocks(labels, snapshot)
-    is_hard_block = bool(block_reasons)
-    if is_hard_block:
-        risk_multiplier = 0.0
-    elif risk_multiplier == 0.0:
-        # Low score with no fatal stops → RISK_DOWN floor, not BLOCK.
+    base_mult = _chevelle_risk_multiplier(base.score)
+    dampeners = _chevelle_dampeners(labels, snapshot)
+
+    # Combine: base score mult × strongest applicable dampener (lowest).
+    # Informational-only dampeners (e.g. WRONG_LANE → 0.0) are excluded
+    # from the multiplication so the sidecar never zeroes by itself.
+    applied = [d for (_name, d) in dampeners if d > 0.0]
+    dampener_mult = min(applied) if applied else 1.0
+    risk_multiplier = base_mult * dampener_mult
+
+    # Score-zero with no fatal blocks → never zero out the sidecar.
+    # Floor at 0.25 so the operator can see Chevelle's dissent in
+    # the ledger AND the trade can still proceed at minimum size if
+    # every other gate passes.
+    if risk_multiplier == 0.0 and not labels.intersection({"WRONG_LANE"}):
         risk_multiplier = 0.25
+
+    dampener_names = [n for (n, _d) in dampeners]
     display_status = (
-        "BLOCK" if is_hard_block
-        else ("RISK_DOWN" if risk_multiplier < 1.0 else "ALLOW")
+        "RISK_DOWN" if risk_multiplier < 1.0 else "ALLOW"
     )
-    primary_reason = block_reasons[0] if block_reasons else (
+    primary_reason = dampener_names[0] if dampener_names else (
         "low_score" if risk_multiplier < 1.0 else None
     )
     return {
@@ -139,12 +150,13 @@ def _build_governor(base, labels, holder, snapshot):
         "seat": CRYPTO_SEAT_MAP["governor"],
         "holder": holder,
         "risk_multiplier": risk_multiplier,
-        "governor_action": "block" if is_hard_block else "modulate",
-        "block_reasons": block_reasons,
-        "display_status": display_status,    # NEW — UI reads this
-        "reason": primary_reason,            # NEW — UI reads this
-        "execution_effect": "HARD_BLOCK" if is_hard_block else ("RISK_DOWN_ONLY" if risk_multiplier < 1.0 else "ALLOW"),  # NEW
-        "lesson": "Block on wide spread, wrong lane, consecutive losses, or daily loss limit; modulate otherwise.",
+        "governor_action": "modulate",  # never "block" under doctrine (c)
+        "block_reasons": [],            # retained for back-compat; empty under (c)
+        "dampeners": dampeners,         # NEW — (name, mult) pairs
+        "display_status": display_status,
+        "reason": primary_reason,
+        "execution_effect": "RISK_DOWN_ONLY" if risk_multiplier < 1.0 else "ALLOW",
+        "lesson": "Governor sizes risk. Hard veto lives at the opponent seat; safety lives at RoadGuard.",
         "may_execute": False,
         "may_override_direction": False,
     }
@@ -195,6 +207,21 @@ def _redeye_objections(labels) -> List[str]:
     return objections
 
 
+# Doctrine (c, 2026-05-20): GOVERNOR = SIZE ONLY.
+# Chevelle's role is graduated risk modulation, not directional veto.
+# Wide spread / low volume / quality dampeners drop size; they do not
+# kill. Truly unsafe market structure is the job of RoadGuard, and
+# directional contradiction is the job of the OPPONENT seat.
+GOVERNOR_DAMPENERS: dict[str, float] = {
+    "WIDE_SPREAD": 0.50,        # was BLOCK_WIDE_SPREAD
+    "LOW_VOLUME": 0.60,
+    "LOW_QUALITY": 0.70,
+    "UNCERTAIN": 0.75,
+    "THREE_CONSECUTIVE_LOSSES": 0.50,
+    "DAILY_LOSS_LIMIT": 0.25,   # severe damp but not zero — RoadGuard kills if truly unsafe
+}
+
+
 def _chevelle_risk_multiplier(score: float) -> float:
     if score >= 0.80:
         return 1.00
@@ -205,14 +232,37 @@ def _chevelle_risk_multiplier(score: float) -> float:
     return 0.00
 
 
-def _chevelle_blocks(labels, snapshot) -> List[str]:
-    blocks: List[str] = []
+def _chevelle_dampeners(labels, snapshot) -> List[tuple[str, float]]:
+    """Doctrine (c): governor returns SIZE MULTIPLIERS, not blocks.
+
+    Each non-fatal condition contributes its dampener. The strongest
+    (smallest) dampener wins. RoadGuard still kills on hard
+    unsafety; this function never returns a block.
+    """
+    out: List[tuple[str, float]] = []
     if "WIDE_SPREAD" in labels:
-        blocks.append("BLOCK_WIDE_SPREAD")
+        out.append(("WIDE_SPREAD", GOVERNOR_DAMPENERS["WIDE_SPREAD"]))
     if "WRONG_LANE" in labels:
-        blocks.append("BLOCK_WRONG_LANE")
+        # Wrong-lane is an AUTHORITY error owned by MC's executor_seat_check;
+        # governor sidecar surfaces it as a dampener so the operator sees
+        # the diagnostic but it never reaches gating.
+        out.append(("WRONG_LANE", 0.0))  # informational; gating ignores
     if int(snapshot.get("consecutive_losses", 0) or 0) >= 3:
-        blocks.append("BLOCK_THREE_CONSECUTIVE_LOSSES")
+        out.append(("THREE_CONSECUTIVE_LOSSES", GOVERNOR_DAMPENERS["THREE_CONSECUTIVE_LOSSES"]))
     if float(snapshot.get("daily_pnl_usd", 0.0) or 0.0) <= -100:
-        blocks.append("BLOCK_DAILY_LOSS_LIMIT")
-    return blocks
+        out.append(("DAILY_LOSS_LIMIT", GOVERNOR_DAMPENERS["DAILY_LOSS_LIMIT"]))
+    return out
+
+
+def _chevelle_blocks(labels, snapshot) -> List[str]:
+    """Doctrine (c, 2026-05-20): Chevelle no longer emits hard blocks.
+
+    Retained for backward-compatibility with any UI that still
+    reads `block_reasons`; always returns an empty list under the
+    new doctrine. See `_chevelle_dampeners` for the live behavior.
+
+    Hard-veto authority moved to the OPPONENT seat
+    (`HARD_VETO_OPPONENT`) and to RoadGuard (deterministic market-
+    structure caps).
+    """
+    return []

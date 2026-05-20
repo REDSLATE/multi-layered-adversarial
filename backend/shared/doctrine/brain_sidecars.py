@@ -176,37 +176,37 @@ def _build_governor(base, labels, holder, snapshot):
     if "SPREAD_TOO_WIDE" in labels:
         risk_multiplier *= 0.50
 
-    # ── FATAL stops — these stay as hard blocks (true safety) ──
-    fatal_stops: list[str] = []
+    # ── Doctrine (c, 2026-05-20): SIZE ONLY. No fatal stops here.
+    # consecutive_losses and daily_pnl losses dampen aggressively but
+    # never zero — RoadGuard kills truly unsafe market structure.
     if consecutive_losses >= 3:
-        risk_multiplier = 0.0
-        fatal_stops.append("three_consecutive_losses")
+        risk_multiplier *= 0.40  # was 0.0
     if daily_pnl <= -100:
-        risk_multiplier = 0.0
-        fatal_stops.append("daily_max_loss_reached")
-    block_reasons.extend(fatal_stops)
+        risk_multiplier *= 0.25  # was 0.0
+    fatal_stops: list[str] = []  # retained for back-compat; always empty under (c)
 
     risk_multiplier = max(0.0, min(1.0, risk_multiplier))
-    is_hard_block = bool(fatal_stops)
+    # Floor at 0.10 so a dampened-but-allowed trade can still proceed
+    # at minimum size when every other gate passes.
+    if risk_multiplier > 0 and risk_multiplier < 0.10:
+        risk_multiplier = 0.10
+    is_hard_block = False  # doctrine (c): governor never hard-blocks
     display_status = (
-        "BLOCK" if is_hard_block
-        else ("RISK_DOWN" if (block_reasons or risk_multiplier < 1.0) else "ALLOW")
+        "RISK_DOWN" if (block_reasons or risk_multiplier < 1.0) else "ALLOW"
     )
     # Surface the most-informative single reason for the UI chip.
-    primary_reason = fatal_stops[0] if fatal_stops else (
-        block_reasons[0] if block_reasons else None
-    )
+    primary_reason = block_reasons[0] if block_reasons else None
     return {
         "role": "governor",
         "seat": EQUITY_SEAT_MAP["governor"],
         "holder": holder,
         "risk_multiplier": round(risk_multiplier, 4),
-        "governor_action": "block" if is_hard_block else "modulate",
-        "block_reasons": block_reasons,
-        "display_status": display_status,        # NEW — UI reads this
-        "reason": primary_reason,                # NEW — UI reads this
-        "execution_effect": "HARD_BLOCK" if is_hard_block else ("RISK_DOWN_ONLY" if block_reasons else "ALLOW"),  # NEW
-        "lesson": "Reduce or block risk when setup quality, market regime, spread, or loss limits are unfavorable.",
+        "governor_action": "modulate",  # doctrine (c): never "block"
+        "block_reasons": block_reasons,  # informational only under (c)
+        "display_status": display_status,
+        "reason": primary_reason,
+        "execution_effect": "RISK_DOWN_ONLY" if (block_reasons or risk_multiplier < 1.0) else "ALLOW",
+        "lesson": "Governor sizes risk. Quality, regime, spread, losses become dampeners; RoadGuard owns hard kills.",
         "may_execute": False,
         "may_override_direction": False,
     }

@@ -221,23 +221,27 @@ def test_adversary_quiet_on_clean_setup():
     assert len(packet["seats"]["adversary"]["objections"]) <= 1
 
 
-def test_governor_blocks_after_three_losses():
+def test_governor_dampens_after_three_losses():
+    """Doctrine (c, 2026-05-20): consecutive losses dampen size; they
+    no longer hard-block. RoadGuard owns hard kills."""
     packet = build_all_brain_doctrine_packets(
         _good_snapshot(consecutive_losses=3, daily_pnl=-25),
     )
     gov = packet["seats"]["governor"]
-    assert gov["governor_action"] == "block"
-    assert gov["risk_multiplier"] == 0.0
-    assert "three_consecutive_losses" in gov["block_reasons"]
+    assert gov["governor_action"] == "modulate"
+    # Size is dampened but not zeroed
+    assert 0.0 < gov["risk_multiplier"] < 1.0
 
 
-def test_governor_blocks_on_daily_max_loss():
+def test_governor_dampens_on_daily_max_loss():
+    """Doctrine (c): daily loss limit dampens severely (0.25× floor)
+    but governor never emits a hard block."""
     packet = build_all_brain_doctrine_packets(
         _good_snapshot(consecutive_losses=0, daily_pnl=-150),
     )
     gov = packet["seats"]["governor"]
-    assert gov["governor_action"] == "block"
-    assert "daily_max_loss_reached" in gov["block_reasons"]
+    assert gov["governor_action"] == "modulate"
+    assert 0.0 < gov["risk_multiplier"] < 1.0
 
 
 def test_governor_modulates_on_b_quality():

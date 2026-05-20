@@ -44,6 +44,10 @@ EXPECTED_GATES_IN_ORDER = (
     "executor_seat_check",
     "live_trading_disabled",
     "broker_connected",
+    # Doctrine (c, 2026-05-20): RoadGuard owns deterministic market-
+    # structure safety and runs BEFORE council. Governor sizes within
+    # the safe zone; RoadGuard kills if structure itself is unsafe.
+    "roadguard_spread_floor",
     "governor_authority",
     "opponent_objection",
     # Cap rows vary by lane — equity gets `cap_per_order`; crypto gets
