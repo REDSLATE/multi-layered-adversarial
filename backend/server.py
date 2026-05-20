@@ -83,6 +83,7 @@ from shared.runtime.routes import router as platform_survival_router
 from shared.runtime.sidecar_checkin import router as sidecar_checkin_router
 from shared.calibration.confidence_floor_sweep import router as confidence_floor_sweep_router
 from shared.calibration.snapshot_completeness import router as snapshot_completeness_router
+from routes.memory_kernel_routes import router as memory_kernel_router
 from shared.runtime_bundles import router as runtime_bundles_router
 from shared.promotion_artifact_report import router as promotion_artifact_report_router
 from shared.public_api.news import (
@@ -261,6 +262,7 @@ api_router.include_router(platform_survival_router)
 api_router.include_router(sidecar_checkin_router)
 api_router.include_router(confidence_floor_sweep_router)
 api_router.include_router(snapshot_completeness_router)
+api_router.include_router(memory_kernel_router)
 api_router.include_router(runtime_bundles_router)
 api_router.include_router(promotion_artifact_report_router)
 api_router.include_router(public_news_router)

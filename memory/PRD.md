@@ -1,7 +1,59 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
-## 🆕 2026-02-19 (this session): Calibration, contract, 4-seat merge, riseai-code-agent
+## 🆕 2026-02-19 (this session): Memory Kernel P0 + Brain Translation Layer
+
+This session installed the load-bearing wall in front of all downstream
+cognition: brains may speak many dialects, MC stores exactly one language,
+and **only MC may classify Verified Execution**.
+
+### Brain Memory Translator — `services/brain_memory_translator.py`
+- Pure, stateless dialect-collapser sitting in front of the kernel.
+- Canonical surfaces locked by tripwires:
+  - Stacks: `{alpha, camaro, chevelle, redeye}`
+  - Memory types: `{execution, diagnostic, council_dissent, governance_review, replay, backtest, simulation}`
+  - Directions: `{BUY, SELL, HOLD}`
+  - Fields: `{symbol, broker_order_id, execution_receipt_id, filled_qty, direction, confidence}`
+- Translation breadcrumb (`_translated_from`) preserved on every payload for forensics.
+- Confidence is coerced to `[0,1]`; percentage form auto-divided; unparseable → `None`.
+- 33 tests in `tests/test_brain_memory_translator.py` (4 tripwires).
+
+### Memory Kernel P0 — `services/memory_kernel.py`
+- `Provenance` enum: `VE`/`SO`/`DI`/`UV` (locked by tripwire).
+- `SettlementOracle.verify()` — MC-only consensus across `broker_orders` + `execution_receipts` collections. Symbol + status + qty must all agree.
+- `MemoryKernelLedger.submit_memory()` — append-only insert, MC classifies provenance from `memory_type` and (for executions) the oracle proof. Stacks can *request* VE; only MC can *grant* it.
+- `MemoryKernelLedger.fetch_and_lock_trainable()` — atomic fetch + lock against double-training.
+- `MemoryKernelLedger.confirm_training_complete()` — carries the axiom:
+  ```
+  if memory_record["provenance"] != Provenance.VE.value:
+      raise RuntimeError("Refusing to train on non-verified memory")
+  ```
+- `KernelGate.route()` — capability router for cross-component memory hops. Blocks non-VE → training/execution; logs every decision to `memory_kernel_routes`; writes CRITICAL alerts to `memory_kernel_quarantine` on execution-engine attempts.
+- 16 tests in `tests/test_memory_kernel_p0.py` (2 tripwires — axiom + provenance-enum).
+
+### HTTP surface — `routes/memory_kernel_routes.py`
+- `POST /api/admin/memory-kernel/submit` (admin JWT) — runs translator → ledger
+- `POST /api/admin/memory-kernel/route` (admin JWT) — kernel gate
+- `POST /api/admin/memory-kernel/trainable/fetch-lock` (admin JWT)
+- `POST /api/admin/memory-kernel/trainable/confirm` (admin JWT, 422 on axiom break)
+- `GET  /api/admin/memory-kernel/health` (public)
+
+### Mongo collections introduced
+- `memory_kernel_ledger` — append-only memories, `payload_hash`, `provenance`, `trainable`, `used_in_training`, `training_lock`
+- `memory_kernel_quarantine` — UV submissions + blocked-route alerts with `alert_level`
+- `memory_kernel_routes` — every gate decision
+
+### Tripwire surface
+- 122 passing (was 120; +2 from kernel axiom + provenance-enum lock)
+- 49/49 kernel + translator tests green
+- End-to-end live-URL smoke validated: Camaro dialect → DI (governance_review); REDEYE dialect → UV (no consensus sources) → routed to training → BLOCKED.
+
+### Not built in this session (deferred by user instruction)
+- `RegimeEncoder` — explicitly held until P0 + P1 stable
+- Clearinghouse third consensus source — oracle is two-source for P0
+
+
+## 🆕 2026-02-19 (earlier this session): Calibration, contract, 4-seat merge, riseai-code-agent
 
 This session shipped multiple MC-side surfaces. Summary:
 
