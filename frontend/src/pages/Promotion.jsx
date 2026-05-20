@@ -22,6 +22,10 @@ export default function Promotion() {
   const [busy, setBusy] = useState(null);
   const [err, setErr] = useState("");
   const [info, setInfo] = useState("");
+  // Action modal — replaces window.prompt (which is silently blocked on
+  // Chrome Android / inside many embedded webviews). Holds the proposal,
+  // the action ("countersign" | "reject"), and the operator's typed note.
+  const [actionModal, setActionModal] = useState(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -67,7 +71,16 @@ export default function Promotion() {
   }
 
   async function decide(proposalId, action) {
-    const note = window.prompt(`Optional note for ${action}:`, "") ?? "";
+    // Open the in-page modal — never use window.prompt (silently blocked
+    // on Chrome Android and inside many embedded webviews).
+    const proposal = proposals?.items.find((p) => p.proposal_id === proposalId);
+    setErr(""); setInfo("");
+    setActionModal({ proposalId, action, note: "", proposal });
+  }
+
+  async function submitDecision() {
+    if (!actionModal) return;
+    const { proposalId, action, note } = actionModal;
     setBusy(`${action}-${proposalId}`);
     setErr(""); setInfo("");
     try {
@@ -81,6 +94,7 @@ export default function Promotion() {
       } else {
         setInfo("Proposal rejected");
       }
+      setActionModal(null);
       await refresh();
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
@@ -273,6 +287,16 @@ export default function Promotion() {
           </Card>
         </>
       )}
+
+      {actionModal && (
+        <ActionModal
+          modal={actionModal}
+          busy={busy}
+          onChange={(note) => setActionModal({ ...actionModal, note })}
+          onCancel={() => setActionModal(null)}
+          onSubmit={submitDecision}
+        />
+      )}
     </div>
   );
 }
@@ -390,6 +414,14 @@ function ProposalsTable({ items, onCountersign, onReject, busy, currentUserEmail
                           waiting on a second operator
                         </span>
                       )}
+                      {!p.readiness?.passed && (
+                        <span
+                          className="text-[10px] text-rd-danger font-mono uppercase tracking-widest"
+                          data-testid={`disabled-reason-${p.proposal_id}`}
+                        >
+                          ✕ Patent J gate FAIL — countersign blocked by doctrine. Fix readiness, then re-propose.
+                        </span>
+                      )}
                     </div>
                   )}
                 </td>
@@ -407,6 +439,57 @@ function Metric({ k, v }) {
     <div className="flex items-baseline justify-between border border-rd-border px-2 py-1.5">
       <span className="text-[9px] uppercase tracking-widest text-rd-dim">{k}</span>
       <span className="text-rd-text">{v ?? "—"}</span>
+    </div>
+  );
+}
+
+function ActionModal({ modal, busy, onChange, onCancel, onSubmit }) {
+  const { proposal, action, note } = modal;
+  const isCountersign = action === "countersign";
+  const proposalId = proposal?.proposal_id || "";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+      data-testid="action-modal"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-rd-bg border border-rd-border w-full max-w-lg font-mono"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-3 py-2 border-b border-rd-border text-xs text-rd-muted">
+          {action.toUpperCase()} · {proposal?.runtime || "?"} · {proposal?.from_state || "?"} → {proposal?.target_authority || "?"} · J={proposal?.readiness?.passed ? "PASS" : "FAIL"} · {proposalId.slice(0, 8)}
+        </div>
+        <div className="p-3">
+          <textarea
+            value={note}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={isCountersign ? "Operator statement (required)" : "Reason for rejection"}
+            rows={5}
+            autoFocus
+            className="w-full bg-black border border-rd-border focus:border-rd-text focus:outline-none p-2 text-sm text-rd-text placeholder:text-rd-dim resize-y"
+            data-testid="action-modal-note-input"
+          />
+        </div>
+        <div className="px-3 py-2 border-t border-rd-border flex justify-end gap-2 text-xs">
+          <button
+            onClick={onCancel}
+            className="px-3 py-1.5 border border-rd-border text-rd-muted hover:text-rd-text"
+            data-testid="action-modal-cancel"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onSubmit}
+            disabled={busy === `${action}-${proposalId}` || (isCountersign && !note.trim())}
+            className="px-3 py-1.5 border border-rd-text text-rd-text hover:bg-rd-text hover:text-black disabled:opacity-40 disabled:cursor-not-allowed"
+            data-testid="action-modal-submit"
+          >
+            {busy === `${action}-${proposalId}` ? "..." : (isCountersign ? "Sign" : "Reject")}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
