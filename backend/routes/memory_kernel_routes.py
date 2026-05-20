@@ -56,6 +56,17 @@ class ConfirmTrainingRequest(BaseModel):
     lock_id: str
 
 
+class ReclassifyRequest(BaseModel):
+    operator: str = Field(..., examples=["admin@risedual.io"])
+    reason: str = Field(..., min_length=4, examples=["Replay-only corpus for RoadGuard calibration"])
+
+
+class ReclassifyBatchRequest(BaseModel):
+    memory_ids: List[str]
+    operator: str
+    reason: str = Field(..., min_length=4)
+
+
 # ───── response sanitiser ────────────────────────────────────────────
 
 
@@ -150,3 +161,92 @@ async def health():
         "mc_classifies_provenance": True,
         "shelly_cannot_self_certify_ve": True,
     }
+
+
+# ─────────── UV → SO reclassification (append-only) ──────────────────
+
+
+@router.post("/quarantine/{memory_id}/promote-to-so")
+async def promote_uv_to_so(
+    memory_id: str,
+    req: ReclassifyRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Reclassify a single quarantined UV memory to SO (replay-only).
+
+    Doctrine: only UV → SO is allowed. The kernel axiom
+    `if memory.provenance != VE: refuse to train` still holds because
+    SO is not VE. Reclassified memories become eligible for the
+    replay engine, backtester, and adversarial critic.
+
+    The reclassification creates an append-only audit row in
+    `memory_kernel_reclassifications`.
+    """
+    operator = req.operator or user.get("email") or "unknown"
+    ledger = MemoryKernelLedger(db)
+    try:
+        return await ledger.reclassify_uv_to_so(
+            memory_id=memory_id,
+            operator=operator,
+            reason=req.reason,
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post("/quarantine/promote-batch-to-so")
+async def promote_uv_batch_to_so(
+    req: ReclassifyBatchRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Bulk UV → SO reclassification.
+
+    For each memory_id: applies the same single-item rules. Returns
+    per-item outcomes so partial failures are visible (we never
+    auto-rollback — append-only ledger means the successful items
+    keep their new SO status).
+    """
+    operator = req.operator or user.get("email") or "unknown"
+    ledger = MemoryKernelLedger(db)
+    results: List[Dict[str, Any]] = []
+    succeeded = 0
+    for mid in req.memory_ids:
+        try:
+            r = await ledger.reclassify_uv_to_so(
+                memory_id=mid,
+                operator=operator,
+                reason=req.reason,
+            )
+            results.append(r)
+            if r.get("ok"):
+                succeeded += 1
+        except (PermissionError, ValueError) as e:
+            results.append({"ok": False, "memory_id": mid, "error": str(e)})
+    return {
+        "ok": True,
+        "submitted": len(req.memory_ids),
+        "succeeded": succeeded,
+        "failed": len(req.memory_ids) - succeeded,
+        "items": results,
+    }
+
+
+@router.get("/reclassifications/recent")
+async def list_recent_reclassifications(
+    limit: int = 50,
+    _user: dict = Depends(get_current_user),
+):
+    """Forensic view of recent UV → SO promotions."""
+    cursor = (
+        db.memory_kernel_reclassifications
+        .find({})
+        .sort("created_at", -1)
+        .limit(min(max(limit, 1), 500))
+    )
+    items = []
+    async for d in cursor:
+        d.pop("_id", None)
+        items.append(d)
+    return {"ok": True, "count": len(items), "items": items}

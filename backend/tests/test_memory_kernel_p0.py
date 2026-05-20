@@ -83,12 +83,32 @@ class FakeCollection:
             count += 1
         return FakeResult(count)
 
+    async def update_one(self, query, update, upsert=False):
+        for d in self.docs:
+            if _match(d, query):
+                for k, val in update.get("$set", {}).items():
+                    d[k] = val
+                for k in update.get("$unset", {}).keys():
+                    d.pop(k, None)
+                return FakeResult(1)
+        if upsert:
+            new_doc = {}
+            for k, v in query.items():
+                if not isinstance(v, dict):
+                    new_doc[k] = v
+            for k, val in update.get("$set", {}).items():
+                new_doc[k] = val
+            self.docs.append(new_doc)
+            return FakeResult(1)
+        return FakeResult(0)
+
 
 class FakeDB:
     def __init__(self):
         self.memory_kernel_ledger = FakeCollection()
         self.memory_kernel_quarantine = FakeCollection()
         self.memory_kernel_routes = FakeCollection()
+        self.memory_kernel_reclassifications = FakeCollection()
         self.broker_orders = FakeCollection()
         self.execution_receipts = FakeCollection()
 

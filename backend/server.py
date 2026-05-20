@@ -85,6 +85,7 @@ from shared.calibration.confidence_floor_sweep import router as confidence_floor
 from shared.calibration.snapshot_completeness import router as snapshot_completeness_router
 from routes.memory_kernel_routes import router as memory_kernel_router
 from routes.orphan_inspection_routes import router as orphan_inspection_router
+from routes.orphan_replay_routes import router as orphan_replay_router
 from shared.runtime.orphan_watchdog import (
     start_watchdog_if_enabled as start_orphan_watchdog,
     stop_watchdog as stop_orphan_watchdog,
@@ -276,6 +277,7 @@ api_router.include_router(confidence_floor_sweep_router)
 api_router.include_router(snapshot_completeness_router)
 api_router.include_router(memory_kernel_router)
 api_router.include_router(orphan_inspection_router)
+api_router.include_router(orphan_replay_router)
 api_router.include_router(runtime_bundles_router)
 api_router.include_router(promotion_artifact_report_router)
 api_router.include_router(public_news_router)

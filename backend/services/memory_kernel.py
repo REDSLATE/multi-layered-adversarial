@@ -151,6 +151,91 @@ class MemoryKernelLedger:
         self.db = db
         self.oracle = SettlementOracle(db)
 
+    async def reclassify_uv_to_so(
+        self,
+        *,
+        memory_id: str,
+        operator: str,
+        reason: str,
+    ) -> Dict[str, Any]:
+        """Promote a single quarantined UV memory to SO (replay-only).
+
+        SO memories may feed the replay engine, backtester, and
+        adversarial critic — but they are still NOT trainable. The
+        load-bearing axiom in `confirm_training_complete` continues to
+        refuse anything that is not VE.
+
+        The original quarantine row is preserved (append-only).
+        Reclassification writes a new entry to
+        `memory_kernel_reclassifications` for permanent audit.
+        """
+        if not reason or not reason.strip():
+            raise ValueError("reclassification reason required")
+        if not operator:
+            raise ValueError("operator id required")
+
+        mem = await self.db.memory_kernel_ledger.find_one({"memory_id": memory_id})
+        if not mem:
+            raise ValueError(f"memory not found: {memory_id}")
+
+        current = mem.get("provenance")
+        if current == Provenance.SO.value:
+            # Idempotent: already SO. No-op but report the prior state.
+            return {
+                "ok": True,
+                "memory_id": memory_id,
+                "from": current,
+                "to": Provenance.SO.value,
+                "no_op": True,
+            }
+        if current != Provenance.UV.value:
+            # Doctrine: only UV → SO is allowed. UV → VE is forbidden.
+            # VE → anything is forbidden (already verified, append-only).
+            # DI / SO → anything is forbidden (each lane locks the data).
+            raise PermissionError(
+                f"reclassification refused: only UV→SO is allowed "
+                f"(memory currently {current})"
+            )
+
+        # Append-only audit record.
+        audit = {
+            "reclassification_id": str(uuid.uuid4()),
+            "memory_id": memory_id,
+            "from_provenance": Provenance.UV.value,
+            "to_provenance": Provenance.SO.value,
+            "operator": operator,
+            "reason": reason.strip(),
+            "created_at": utc_now(),
+            "memory_type": mem.get("memory_type"),
+            "source_stack": mem.get("source_stack"),
+            "payload_hash": mem.get("payload_hash"),
+        }
+        await self.db.memory_kernel_reclassifications.insert_one(audit)
+
+        # Update the ledger row. `trainable` stays False (SO is not VE).
+        # We deliberately do NOT touch `used_in_training`, payload, or
+        # `append_only` — the original facts are immutable.
+        await self.db.memory_kernel_ledger.update_one(
+            {"memory_id": memory_id},
+            {"$set": {
+                "provenance": Provenance.SO.value,
+                "trainable": False,
+                "reclassified_from": Provenance.UV.value,
+                "reclassified_to": Provenance.SO.value,
+                "reclassification_id": audit["reclassification_id"],
+                "reclassified_at": utc_now(),
+                "updated_at": utc_now(),
+            }},
+        )
+
+        return {
+            "ok": True,
+            "memory_id": memory_id,
+            "from": Provenance.UV.value,
+            "to": Provenance.SO.value,
+            "reclassification_id": audit["reclassification_id"],
+        }
+
     async def submit_memory(
         self,
         *,
