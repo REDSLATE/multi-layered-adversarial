@@ -84,6 +84,11 @@ from shared.runtime.sidecar_checkin import router as sidecar_checkin_router
 from shared.calibration.confidence_floor_sweep import router as confidence_floor_sweep_router
 from shared.calibration.snapshot_completeness import router as snapshot_completeness_router
 from routes.memory_kernel_routes import router as memory_kernel_router
+from routes.orphan_inspection_routes import router as orphan_inspection_router
+from shared.runtime.orphan_watchdog import (
+    start_watchdog_if_enabled as start_orphan_watchdog,
+    stop_watchdog as stop_orphan_watchdog,
+)
 from shared.runtime_bundles import router as runtime_bundles_router
 from shared.promotion_artifact_report import router as promotion_artifact_report_router
 from shared.public_api.news import (
@@ -159,6 +164,12 @@ async def lifespan(app: FastAPI):
         logger.info("Position Monitor started")
     except Exception as e:  # noqa: BLE001
         logger.warning("position_monitor start failed: %s", e)
+    # Orphan watchdog — polls Alpaca for fills that lack MC receipts
+    # and auto-quarantines them as UV in the memory kernel.
+    try:
+        await start_orphan_watchdog()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("orphan_watchdog start failed: %s", e)
     yield
     await stop_poller()
     await stop_tickler()
@@ -168,6 +179,7 @@ async def lifespan(app: FastAPI):
     await stop_darkpool_refresher()
     await stop_scorecard_scheduler()
     await stop_position_monitor()
+    await stop_orphan_watchdog()
     client.close()
 
 
@@ -263,6 +275,7 @@ api_router.include_router(sidecar_checkin_router)
 api_router.include_router(confidence_floor_sweep_router)
 api_router.include_router(snapshot_completeness_router)
 api_router.include_router(memory_kernel_router)
+api_router.include_router(orphan_inspection_router)
 api_router.include_router(runtime_bundles_router)
 api_router.include_router(promotion_artifact_report_router)
 api_router.include_router(public_news_router)

@@ -50,7 +50,13 @@ import asyncio
 import os
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List
+
+from dotenv import load_dotenv
+
+# Load .env BEFORE importing db (which reads MONGO_URL at import time).
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 import httpx
 
