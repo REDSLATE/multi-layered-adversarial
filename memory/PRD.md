@@ -1,7 +1,100 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
-## 🆕 2026-02-19 (this session): Memory Kernel P0 + Brain Translation Layer
+## 🆕 2026-02-19 (this session): Doctrine (c) + Orphan defense + Memory Kernel P0
+
+This session installed the architectural correction for the "governance
+deadlock" failure mode (1,578 authority calls / 0 fills), captured 500
+historical orphan broker fills into the kernel, and armed a continuous
+watchdog against future orphans.
+
+### Doctrine (c): Separation of Concerns — LIVE
+Re-scoping that broke the multiplicative-veto freeze:
+
+  * **Brains**: own directional agency + confidence floor
+  * **Chevelle/Governor**: SIZE ONLY — `governor_action` is always
+    `"modulate"`, never `"block"`. Wide spread / low volume / quality
+    issues become risk dampeners.
+  * **Opponent seat**: only directional hard veto (`HARD_VETO_OPPONENT`)
+  * **RoadGuard**: deterministic market-structure caps (new
+    `roadguard_spread_floor` gate; crypto 200 bps, equity 50 bps).
+    Fail-closed on missing snapshot.
+  * **MC**: authority / schema / broker / cap verifier only —
+    confidence-floor + doctrine-quality re-vetoes removed.
+  * **Patent J**: brain promotion readiness only; no longer suppresses
+    live intent flow.
+
+Locked `GOVERNOR_DAMPENERS` table (tripwire):
+```
+WIDE_SPREAD              0.50
+LOW_VOLUME               0.60
+LOW_QUALITY              0.70
+UNCERTAIN                0.75
+THREE_CONSECUTIVE_LOSSES 0.50
+DAILY_LOSS_LIMIT         0.25
+```
+
+Files touched:
+  * `shared/runtime/platform_survival.py` (MC no longer reblocks conf)
+  * `shared/crypto/doctrine/crypto_brain_sidecars.py` (dampeners)
+  * `shared/doctrine/brain_sidecars.py` (no fatal stops in governor)
+  * `shared/doctrine/strategy_doctrines.py` (gap_and_go + micro_pullback)
+  * `shared/execution.py` (new RoadGuard gate row)
+  * `tests/test_doctrine_c_separation.py` (12 tests, 8 tripwires)
+  * 5 stale tests inverted to assert (c) behavior
+
+### Memory Kernel P0 — LIVE
+  * `services/memory_kernel.py`: `Provenance{VE,SO,DI,UV}` +
+    `SettlementOracle` (broker × receipt consensus) + axiom +
+    `KernelGate` (capability routing, CRITICAL quarantine on
+    execution-engine attempts).
+  * `services/brain_memory_translator.py`: dialect collapser
+    (stacks/types/fields/directions/confidence), 33 tests, 4 tripwires.
+  * 5 endpoints at `/api/admin/memory-kernel/*` (submit, route,
+    trainable/fetch-lock, trainable/confirm, health).
+
+### Promotion countersign modal — LIVE
+  * `pages/Promotion.jsx`: replaced `window.prompt()` (silently blocked
+    on Chrome Android) with a functional in-page modal. Stripped
+    cosmetic chrome per user request.
+
+### Orphan defense — LIVE
+  * **500 historical orphan fills captured** (5/15 + 5/18). Mag-7
+    momentum bot (AMZN 134 / GOOGL 126 / NVDA 122 / MSFT 113 / META 5).
+    All `source=access_key`, fired in tight sub-second loops. Confirmed
+    to be Camaro with a stale Alpaca paper key (rotated by user
+    mid-session).
+  * `scripts/alpaca_orphan_ingester.py`: one-shot, idempotent.
+  * `shared/runtime/orphan_watchdog.py`: continuous, polls Alpaca every
+    120s, auto-quarantines any fill lacking an MC receipt. Armed via
+    `ALPACA_ORPHAN_WATCHDOG_ENABLED=true`.
+  * `routes/orphan_inspection_routes.py`:
+    `/api/admin/runtime/orphans/{summary,recent}` for operator
+    visibility.
+
+### Tripwire status: 131 passing (was 122 at session start; +9)
+
+### Manual steps required after deploy
+  1. Update MC's stored Alpaca creds at `/admin/alpaca` with the new
+     pair (`PK4V5RXCZUJXHTLKAZRYQ34XZ6` / secret).
+  2. Re-run the orphan ingester against prod Mongo with the same
+     5/15–5/19 window so prod's kernel has the historical orphans.
+  3. Confirm these env vars exist in prod:
+     `ALPACA_INGEST_KEY_ID`, `ALPACA_INGEST_SECRET_KEY`,
+     `ALPACA_ORPHAN_WATCHDOG_ENABLED=true`,
+     `ALPACA_ORPHAN_WATCHDOG_INTERVAL_S=120`.
+
+### Still pending — next session
+  * **Seat rotation** (still un-picked: a/b/c/d). Alpha holds crypto
+    executor; Camaro posts 99% of crypto intents. User suggested to
+    observe one cycle under doctrine (c) before rotating.
+  * UV→SO reclassification endpoint for the 500 orphans (so they can
+    feed the replay engine without violating the train-on-VE-only
+    axiom).
+  * RoadGuard threshold calibration via orphan-replay report.
+
+
+## 🆕 2026-02-19 (earlier this session): Memory Kernel P0 + Brain Translation Layer
 
 This session installed the load-bearing wall in front of all downstream
 cognition: brains may speak many dialects, MC stores exactly one language,
