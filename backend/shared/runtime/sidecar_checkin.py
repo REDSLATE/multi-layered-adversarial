@@ -97,16 +97,37 @@ def _validate_stamp_dict(stamp_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Coerce an incoming dict into a `RuntimeStamp` and run the prod
     doctrine validator. Returns the validator's `{ok, errors, stamp}`
     contract on success, or a synthetic `{ok: False, errors:
-    ['STAMP_SHAPE_INVALID:...'], stamp: <raw>}` on shape failure."""
+    ['STAMP_SHAPE_INVALID:...'], stamp: <raw>}` on shape failure.
+
+    Forward-compat (2026-02-18): brain sidecars may add new optional
+    fields to their RuntimeStamp before MC's dataclass learns about
+    them (e.g., Alpha's `pip_fingerprint`). MC MUST tolerate unknown
+    keys — otherwise every sidecar rollout that adds a stamp field
+    flips every brain to verdict=INVALID until MC redeploys. We
+    filter the input dict to the keys MC's dataclass knows about,
+    run validation on the typed object, and persist the FULL raw
+    dict (including the new fields) so the data is preserved for
+    later use without forcing a lockstep redeploy.
+    """
+    known_fields = set(RuntimeStamp.__dataclass_fields__.keys())
+    filtered = {k: v for k, v in (stamp_dict or {}).items() if k in known_fields}
+    unknown_keys = sorted(k for k in (stamp_dict or {}) if k not in known_fields)
     try:
-        stamp = RuntimeStamp(**stamp_dict)
+        stamp = RuntimeStamp(**filtered)
     except TypeError as e:
         return {
             "ok": False,
             "errors": [f"STAMP_SHAPE_INVALID:{e}"],
             "stamp": stamp_dict,
+            "unknown_keys": unknown_keys,
         }
-    return stamp.validate_for_prod_sidecar()
+    result = stamp.validate_for_prod_sidecar()
+    # Override the validator's typed-stamp echo with the full raw
+    # incoming dict so forward-compat fields survive the round trip.
+    result["stamp"] = dict(stamp_dict) if isinstance(stamp_dict, dict) else stamp_dict
+    if unknown_keys:
+        result["unknown_keys"] = unknown_keys
+    return result
 
 
 # ────────────────────── Schemas ───────────────────────────────────────
@@ -182,6 +203,7 @@ async def post_sidecar_checkin(
                 "validation": {
                     "ok": validation.get("ok", False),
                     "errors": validation.get("errors", []),
+                    "unknown_keys": validation.get("unknown_keys", []),
                 },
                 "verdict": verdict,
                 "policy_hash_match": policy_match,
