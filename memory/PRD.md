@@ -1,6 +1,55 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🆕 2026-05-21 (later): RISEAI Code Agent v0.6 — LLM `diagnose` (portable)
+
+Added the LLM patch-proposer to the brain-side CLI tool at
+`/app/runtime_patch_kit/riseai_code_agent/`. The kit is now at v0.6.0
+and remains zero-dependency — uses Node 18+ native `fetch` for direct
+HTTPS calls to provider APIs.
+
+### What's new
+- `diagnose <question>` command — reads the operator-curated repo
+  paths (`--paths` required), sends them with the question to the
+  chosen LLM, writes a structured proposal to disk for human review.
+  NEVER auto-applies a patch.
+- Provider abstraction (`agent/llmProvider.js`) with three providers:
+  `anthropic` (default, `claude-sonnet-4-5-20250929`), `openai`
+  (`gpt-5.1`), `gemini` (`gemini-2.5-pro`). Each uses its public
+  HTTPS endpoint + a direct API key from the environment.
+- 5-section locked output: `## Analysis / ## Proposed Patch /
+  ## Tests / ## Rollback / ## Risk`. System prompt pins doctrine
+  (MC is a notary; role anchors fixed; tripwires sacred).
+- `extractDiff()` helper pulls a clean unified diff out of the
+  proposal markdown (handles fenced ```diff``` blocks and unfenced).
+- 13/13 self-check tests pass. 13/13 diagnose unit tests pass
+  (extractDiff, llmProvider provider/key plumbing).
+
+### The "leave-the-platform" story
+The CLI is deliberately NOT wired to the Emergent Universal LLM Key
+(which is a Python-only broker). When the operator self-hosts, the
+only change is which API key env var is populated:
+- `--provider anthropic` → `ANTHROPIC_API_KEY`
+- `--provider openai` → `OPENAI_API_KEY`
+- `--provider gemini` → `GEMINI_API_KEY`
+
+No code change, no migration step. Drop into a self-hosted box, set
+one env var, and `diagnose` works identically.
+
+### Files
+- `agent/llmProvider.js` (new) — direct HTTPS callers.
+- `agent/diagnose.js` (new) — main flow + arg parsing + diff
+  extraction + proposal writer.
+- `agent/test_diagnose.js` (new) — smoke tests (`yarn test`).
+- `agent/selfCheck.js` — added module-load checks for the two new
+  modules; total now 13 PASS.
+- `riseai.js` — added `diagnose` route + help text.
+- `package.json` — bumped to 0.6.0 + `"test"` script.
+- `README.md` — documented the new command, the portability story,
+  and the recommended diagnose → doctrine-check → report flow.
+
+
+
 ## 🆕 2026-05-21 (latest): PARADOX Wake Orders (operator panic-button)
 
 Operator-issued "process this ticker NOW" directives. Pull-based to fit

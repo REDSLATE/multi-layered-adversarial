@@ -29,7 +29,7 @@ const cmd = args[0];
 async function main() {
   if (!cmd || cmd === "help") {
     console.log(`
-RISEAI Code Agent v0.5
+RISEAI Code Agent v0.6
 
 Commands:
   scan <path>                              Walk repo, list inspectable files
@@ -38,6 +38,7 @@ Commands:
   pr-body <file> [--title <name>]          Generate ready-to-paste PR description
   patch-note <title> <body...>             Write a PROPOSED_ONLY patch note
   test <command...>                        Safe test runner (refuses dangerous shell)
+  diagnose <question> [opts]               LLM patch proposer (writes review material to disk)
   self-check                               Run installation health checks (exit 0=healthy, 1=broken)
   version                                  Print kit version + runtime context
 
@@ -50,6 +51,20 @@ Examples:
   riseai-code pr-body patches/fix.diff --title "spread snapshot fallback"
   riseai-code patch-note "spread fix" "Add snapshot spread_bps fallback"
   riseai-code test pytest tests/test_roadguard.py
+  riseai-code diagnose "spread guard rejects when bps missing" \\
+      --paths backend/shared/execution.py,backend/shared/roadguard.py \\
+      --provider anthropic --model claude-sonnet-4-5-20250929
+
+diagnose flags:
+  --provider <anthropic|openai|gemini>  (default: anthropic)
+  --model <model-id>                    (default: provider's recommended)
+  --paths <p1,p2,...>                   (REQUIRED — files to include as context)
+  --out <dir>                           (default: ./riseai-proposals)
+  --max-bytes <n>                       (per-file size cap, default: 50000)
+  --max-tokens <n>                      (LLM output ceiling, default: 4096)
+
+API keys (required for diagnose):
+  ANTHROPIC_API_KEY  /  OPENAI_API_KEY  /  GEMINI_API_KEY
 
 doctrine-check vs report vs pr-body:
   doctrine-check  exit 0/2     gate          enforces; CI uses this
@@ -126,6 +141,12 @@ the tool extracts the \`+\` lines and runs patterns over those only.
   if (cmd === "test") {
     const { runTests } = await import("./agent/testRunner.js");
     await runTests(args.slice(1).join(" "));
+    return;
+  }
+
+  if (cmd === "diagnose") {
+    const { runDiagnose } = await import("./agent/diagnose.js");
+    await runDiagnose(args.slice(1));
     return;
   }
 

@@ -41,7 +41,7 @@ export async function printVersion() {
   console.log(`node=${process.version}`);
   console.log(`platform=${process.platform}`);
   console.log(`diff_scoping=enabled`);
-  console.log(`agent_modules=doctrineGuard,reportWriter,prBody,patchWriter,repoScanner,testRunner`);
+  console.log(`agent_modules=doctrineGuard,reportWriter,prBody,patchWriter,repoScanner,testRunner,llmProvider,diagnose`);
 }
 
 
@@ -231,6 +231,16 @@ export async function runSelfCheck() {
   await checkModuleLoads("patchWriter", "./patchWriter.js", ["writePatch"]);
   await checkModuleLoads("repoScanner", "./repoScanner.js", ["scanRepo"]);
   await checkModuleLoads("testRunner", "./testRunner.js", ["runTests"]);
+  await checkModuleLoads("llmProvider", "./llmProvider.js", [
+    "callLLM",
+    "defaultModel",
+    "resolveApiKey",
+    "PROVIDERS",
+  ]);
+  await checkModuleLoads("diagnose", "./diagnose.js", [
+    "runDiagnose",
+    "extractDiff",
+  ]);
   await checkSafeRunnerBlocks();
   await checkDiffParser();
   await checkSeededViolationCaught();

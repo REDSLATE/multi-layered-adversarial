@@ -1,6 +1,6 @@
 {
   "name": "riseai-code-agent",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "Repo-safe coding assistant for RISEDUAL brain sidecars. Doctrine grep + safe test runner + patch-note discipline. NOT a model integration — this is the guardrail layer that runs BEFORE a brain agent opens a PR.",
   "bin": {
@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node riseai.js",
     "link": "npm link",
-    "selftest": "node riseai.js help"
+    "selftest": "node riseai.js help",
+    "test": "node agent/test_diagnose.js"
   },
   "dependencies": {}
 }
