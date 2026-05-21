@@ -27,6 +27,12 @@ import {
 // Grouped navigation. Order within each section matters: most-used at top.
 const SECTIONS = [
   {
+    label: "RISE_AI",
+    items: [
+      { to: "/admin/rise-ai", label: "Console", icon: Brain, testid: "nav-rise-ai" },
+    ],
+  },
+  {
     label: "Trading",
     items: [
       { to: "/admin/hypothesis", label: "Hypothesis", icon: Sparkle, testid: "nav-hypothesis" },

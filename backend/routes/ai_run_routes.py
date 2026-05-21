@@ -50,7 +50,14 @@ log = logging.getLogger("risedual.ai_run")
 router = APIRouter(prefix="/ai", tags=["rise-ai-run"])
 
 
-VALID_MODES = ("chat", "reason", "code", "trade", "research")
+VALID_MODES = ("chat", "reason", "code", "trade", "research", "memory", "status")
+
+
+# Valid role overrides — operator can force a specific role for a
+# given mode (e.g. "chat" + role=opponent to get adversarial chat).
+VALID_ROLE_OVERRIDES = (
+    "strategist", "governor", "opponent", "memory", "auditor", "executor",
+)
 
 
 # ─── Safety check ─────────────────────────────────────────────────────
@@ -106,6 +113,7 @@ _MODE_ROUTING = {
     "reason":   {"role": "strategist", "task": "ai_run_reason"},
     "code":     {"role": "strategist", "task": "ai_run_code"},
     "research": {"role": "memory",     "task": "ai_run_research"},
+    "memory":   {"role": "memory",     "task": "ai_run_memory_recall"},
 }
 
 
@@ -130,7 +138,59 @@ _MODE_SYSTEM_PROMPTS = {
         "name your assumptions, and flag uncertainty explicitly. "
         "ADVISORY ONLY."
     ),
+    "memory": (
+        "You are RISE_AI in memory-recall mode. Answer from what the "
+        "system has seen and logged. If you don't have evidence in "
+        "the ledger, say so explicitly. ADVISORY ONLY."
+    ),
 }
+
+
+# ─── Status mode (read-only system snapshot) ──────────────────────────
+
+
+async def _status_observation() -> Dict[str, Any]:
+    """READ-ONLY system snapshot. No LLM call. No mutation. Returns
+    a quick overview of the kernel/coordinator/ledger state so the
+    operator can ask 'how is RISE_AI right now?' without leaving
+    the chat surface."""
+    from namespaces import (
+        LLM_CALLS,
+        LLM_DISTILLATION_QUEUE,
+        LLM_PROVIDER_STATE,
+    )
+    from shared.llm.routing_policy import DEFAULT_PROMOTION_STATE
+
+    candidate_counts = {}
+    for s in ("candidate", "pending_snapshot", "evaluated", "risk_blocked"):
+        candidate_counts[s] = await db[PARADOX_CANDIDATES].count_documents({"status": s})
+
+    paradox_record_count = await db[PARADOX_RECORDS].count_documents(
+        {"evaluation_kind": "paradox_v0_evaluation"},
+    )
+    llm_call_count = await db[LLM_CALLS].count_documents({})
+    distill_count = await db[LLM_DISTILLATION_QUEUE].count_documents({"consumed_at": None})
+
+    # Promotion states (defaults overlaid with operator settings)
+    promo = dict(DEFAULT_PROMOTION_STATE)
+    async for d in db[LLM_PROVIDER_STATE].find({}, {"_id": 0, "provider": 1, "state": 1}):
+        if d.get("provider") in promo and d.get("state"):
+            promo[d["provider"]] = d["state"]
+
+    return {
+        "summary": (
+            f"Paradox candidates: {candidate_counts['candidate']} ready, "
+            f"{candidate_counts['evaluated']} evaluated, "
+            f"{candidate_counts['risk_blocked']} risk-blocked. "
+            f"LLM ledger: {llm_call_count} calls. "
+            f"Distillation queue: {distill_count} winners pending."
+        ),
+        "candidates": candidate_counts,
+        "paradox_evaluations": paradox_record_count,
+        "llm_calls_total": llm_call_count,
+        "distillation_pending": distill_count,
+        "provider_promotion": promo,
+    }
 
 
 # ─── Trade mode (read-only observation) ───────────────────────────────
@@ -195,6 +255,7 @@ class AIRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=8000)
     mode: str = Field(default="chat")
     session_id: Optional[str] = Field(default=None, max_length=120)
+    role_override: Optional[str] = Field(default=None, max_length=40)
 
 
 class AIResponse(BaseModel):
@@ -271,14 +332,50 @@ async def ai_run(
                 "recent_candidates": obs["recent_candidates"],
                 "recent_evaluations": obs["recent_evaluations"],
                 "note": obs["note"],
+                "answer_source": "paradox_records",
+            },
+        )
+
+    # 2b. Status mode is read-only observation — no LLM call.
+    if body.mode == "status":
+        st = await _status_observation()
+        return AIResponse(
+            request_id=request_id,
+            mode="status",
+            answer=st["summary"],
+            safety_status="allowed",
+            call_id=None,
+            llm_authority="ADVISORY_ONLY",
+            created_at=now_iso,
+            extra={
+                "candidates": st["candidates"],
+                "paradox_evaluations": st["paradox_evaluations"],
+                "llm_calls_total": st["llm_calls_total"],
+                "distillation_pending": st["distillation_pending"],
+                "provider_promotion": st["provider_promotion"],
+                "answer_source": "static_system_data",
             },
         )
 
     # 3. Other modes route through the kernel.
     routing = _MODE_ROUTING[body.mode]
+    # Operator can override role within an allowed set; otherwise use
+    # the mode's default role.
+    if body.role_override:
+        if body.role_override not in VALID_ROLE_OVERRIDES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"role_override {body.role_override!r} not in "
+                    f"{list(VALID_ROLE_OVERRIDES)}"
+                ),
+            )
+        role = body.role_override
+    else:
+        role = routing["role"]
     system = _MODE_SYSTEM_PROMPTS[body.mode]
     result = await llm_kernel.call(
-        role=routing["role"],
+        role=role,
         task=routing["task"],
         prompt=body.prompt,
         system=system,
@@ -286,6 +383,8 @@ async def ai_run(
         metadata={
             "ai_run_request_id": request_id,
             "ai_run_user_id": body.user_id,
+            "ai_run_mode": body.mode,
+            "ai_run_role_override": body.role_override,
             "operator_email": user.get("email", "unknown"),
         },
     )
@@ -308,5 +407,5 @@ async def ai_run(
         latency_ms=result.get("latency_ms"),
         llm_authority="ADVISORY_ONLY",
         created_at=now_iso,
-        extra=None,
+        extra={"answer_source": "llm_kernel", "role": role},
     )

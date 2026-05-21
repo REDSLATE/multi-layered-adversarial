@@ -24,7 +24,51 @@ from routes.ai_run_routes import VALID_MODES, safety_check
 
 @pytest.mark.tripwire
 def test_valid_modes_pinned_exactly():
-    assert set(VALID_MODES) == {"chat", "reason", "code", "trade", "research"}
+    assert set(VALID_MODES) == {
+        "chat", "reason", "code", "trade", "research", "memory", "status",
+    }
+
+
+@pytest.mark.tripwire
+def test_status_mode_is_observation_only(base_url, auth_client):
+    """status mode MUST NOT trigger an LLM call. Read-only snapshot."""
+    r = auth_client.post(
+        f"{base_url}/api/ai/run",
+        json={"prompt": "tell me the system state", "mode": "status"},
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["call_id"] is None
+    assert body["llm_authority"] == "ADVISORY_ONLY"
+    assert body["extra"]["answer_source"] == "static_system_data"
+    # All four snapshot blocks present
+    assert "candidates" in body["extra"]
+    assert "provider_promotion" in body["extra"]
+    assert "llm_calls_total" in body["extra"]
+    assert "distillation_pending" in body["extra"]
+
+
+@pytest.mark.tripwire
+def test_trade_mode_answer_source_pinned(base_url, auth_client):
+    """trade mode's answer_source must say paradox_records — that's
+    the operator's signal that the answer didn't come from a model."""
+    r = auth_client.post(
+        f"{base_url}/api/ai/run",
+        json={"prompt": "what should I trade?", "mode": "trade"},
+        timeout=15,
+    )
+    body = r.json()
+    assert body["extra"]["answer_source"] == "paradox_records"
+
+
+def test_role_override_rejects_unknown(base_url, auth_client):
+    r = auth_client.post(
+        f"{base_url}/api/ai/run",
+        json={"prompt": "hi", "mode": "chat", "role_override": "tyrant"},
+        timeout=15,
+    )
+    assert r.status_code == 400
 
 
 @pytest.mark.tripwire

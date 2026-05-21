@@ -1,6 +1,71 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🆕 2026-05-21 (latest): `/admin/rise-ai` — Operator Console
+
+The operator-facing shell for RISE_AI's cognition layer. NOT "ChatGPT
+for trading." This is the front-door that turns every operator
+question into ledgered training data.
+
+### Backend additions (`/api/ai/run`)
+- **2 new modes**: `memory` (kernel call with role=memory) and
+  `status` (read-only system snapshot — no LLM call).
+- **`role_override` parameter**: operator can force a role within
+  `{strategist, governor, opponent, memory, auditor, executor}` —
+  e.g. `mode=chat, role_override=opponent` to get adversarial chat.
+- **`answer_source` field** in `extra`: `llm_kernel` /
+  `paradox_records` / `static_system_data` / `safety` — operator
+  can see at a glance whether the answer came from a model or
+  from a static surface.
+- Modes (final): chat, reason, code, trade, research, memory, status
+
+### Frontend (`/admin/rise-ai`)
+- Sidebar's **first nav group**: "RISE_AI · Console"
+- Mode selector (7 modes) + role override dropdown
+- Prompt textarea with ⌘+Enter to send, 8000-char cap
+- Auto-scrolling transcript; user messages above RISE_AI replies
+- Per-message metadata: provider · model · latency · ADVISORY_ONLY badge
+- **"Open in Ledger"** link per message → routes to `/admin/llm-ledger`
+- **Inline +1 / 0 / -1 grade buttons** — graded calls auto-enqueue
+  into the distillation queue (score ≥ +1) via the existing
+  `/api/admin/llm/ledger/{call_id}/grade` endpoint
+- Trade mode renders the recent candidates + evaluations inline
+- Status mode renders the candidate counts + provider promotion grids
+- Safety blocks render with the matched category badge (red)
+
+### Doctrine locks (enforced at API)
+- No broker routes, no execution endpoints reachable from `/api/ai/run`
+- Safety check blocks execution_intent / doctrine_tamper / auth_tamper
+  BEFORE any LLM call
+- `trade` and `status` modes are READ-ONLY (no kernel.call, no DB
+  mutation)
+- Every response carries `llm_authority="ADVISORY_ONLY"`
+- Role override restricted to a known set (400 on unknown)
+
+### Tripwires (+2 new — 183 total)
+- `VALID_MODES` pinned exactly to {chat, reason, code, trade, research, memory, status}
+- `status` mode is observation-only (no call_id, source=static_system_data)
+- `trade` mode answer_source pinned to "paradox_records"
+- Role override rejects unknowns at the API
+
+### Files
+- `routes/ai_run_routes.py` — added memory/status modes + role_override
+  + `_status_observation()` helper
+- `pages/RiseAI.jsx` — operator console (~400 lines)
+- `App.js` — `/admin/rise-ai` route wired in
+- `components/Layout.jsx` — sidebar's first nav group is now "RISE_AI · Console"
+- `tests/test_ai_run_routes.py` — 15 tests, 7 tripwires
+
+### Live verification
+- Status mode rendered the live system snapshot (4 LLM calls in
+  ledger, all providers at PRIMARY except local+self_trained
+  SHADOW, no candidates yet)
+- Chat mode triggered real Claude call (2.9s), full metadata
+  surfaced, +1/0/-1 grade buttons + "open in ledger" link
+  rendered correctly
+
+
+
 ## 🆕 2026-05-21 (latest): Unified `/api/ai/run` entry + portable architecture reference
 
 ### B) `POST /api/ai/run` — unified front door

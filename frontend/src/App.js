@@ -28,6 +28,7 @@ import Doctrine from "@/pages/Doctrine";
 import Positions from "@/pages/Positions";
 import PublicTraffic from "@/pages/PublicTraffic";
 import LlmLedger from "@/pages/LlmLedger";
+import RiseAI from "@/pages/RiseAI";
 import Ping from "@/pages/Ping";
 import RisedualLayout from "@/risedual/Layout";
 import RdLanding from "@/risedual/pages/Landing";
@@ -140,6 +141,7 @@ function App() {
             <Route path="positions" element={<Positions />} />
             <Route path="public-traffic" element={<PublicTraffic />} />
             <Route path="llm-ledger" element={<LlmLedger />} />
+            <Route path="rise-ai" element={<RiseAI />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
