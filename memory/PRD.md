@@ -1,6 +1,99 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🆕 2026-05-21 (latest): RISE_AI LLM Kernel — the missing 7th box
+
+The Model Adapter Kernel is now live under `/app/backend/shared/llm/`.
+This is the seam that lets RISE_AI swap providers without touching
+brain code, and the foundation for the local-first/self-trained-first
+priority chain.
+
+### Architecture
+```
+brain
+  ↓  await llm_kernel.call(role, task, prompt, ...)
+shared/llm/kernel.py    (BrainLLMKernel, ADVISORY_ONLY stamped)
+  ↓  choose_model(role, task, ready, promotion)
+shared/llm/routing_policy.py
+  • PROVIDER_PRIORITY = local → self_trained → anthropic → openai → gemini
+  • promotion states: SHADOW (default for local+self_trained) → ADVISOR → PRIMARY → OFFLINE
+  • ROLE_OVERRIDES preserves current "claude for governor / gpt for strategist" defaults
+  ↓
+adapters/{openai,anthropic,gemini,local,self_trained}_adapter.py
+  • each exposes `call_<provider>(*, model, prompt, system, session_id)`
+  • each exposes `is_ready()` (env-var probe, no network)
+  • openai/anthropic/gemini → emergentintegrations.llm.chat with universal key
+  • local + self_trained → stubs returning NOT_IMPLEMENTED / NOT_DEPLOYED
+  ↓
+shared/llm/ledger.py  →  llm_calls collection
+  every call ledgered with prompt/response/usage/latency/llm_authority
+```
+
+### Training substrate (`shared/llm/training/`)
+The closed-loop learning surface that drives local/self_trained promotion:
+* `preference_log.py` — brains post-hoc grade LLM answers
+  (`score ∈ [-2..2]`, outcome, note). Writes to `llm_preference_log`.
+  Plus `tally_preferences(window_hours, provider)` aggregator.
+* `distillation_queue.py` — successful (score ≥ +1) calls enqueued
+  for training. Idempotent, immutable rows, `consumed_at` stamp on
+  pull. Plus `auto_enqueue_recent_winners(window_hours)` sweep.
+* `eval_harness.py` — runs a prompt set through PRIMARY vs CANDIDATE
+  provider, scores agreement (token-Jaccard for now), persists full
+  per-prompt detail to `llm_eval_runs`. Drives promotion decisions.
+
+### New Mongo collections
+- `llm_calls` — every kernel call (the decision-trace ledger)
+- `llm_provider_state` — operator-set promotion states
+- `llm_preference_log` — post-hoc grades on LLM calls
+- `llm_distillation_queue` — training pairs for self-trained
+- `llm_eval_runs` — candidate-vs-primary head-to-head runs
+
+### Doctrine locks (tripwires — 18 new, total now 169 passing)
+- `llm_authority="ADVISORY_ONLY"` stamped on every response + every ledger row.
+- Kernel module's `import`/`from` lines must not reference
+  `shared.execution`, `shared.broker_router`, `shared.auto_router`,
+  `shared.executor_seat`, or `shared.broker.*`.
+- Kernel class has no method whose name contains
+  execute/submit/place_order/send_order/route_order/place_trade.
+- `PROVIDER_PRIORITY` pinned exactly: `(local, self_trained, anthropic, openai, gemini)`.
+- `PROMOTION_STATES` pinned exactly: `{SHADOW, ADVISOR, PRIMARY, OFFLINE}`.
+- Default promotion locks local + self_trained in SHADOW. Commercial = PRIMARY.
+- All five adapters share the exact `(model, prompt, system, session_id)` kw-only signature.
+- All five adapters expose `is_ready()` that never raises.
+- local + self_trained are NOT ready by default until env vars are set.
+
+### How a brain uses it (today)
+```python
+from shared.llm import llm_kernel
+
+result = await llm_kernel.call(
+    role="opponent",
+    task="argue_against_long_thesis",
+    prompt="Thesis: AAPL gap-fill long. Argue the bear case.",
+    metadata={"intent_id": intent_id},
+)
+# result["response"] — the model's argument
+# result["llm_authority"] — always "ADVISORY_ONLY"
+# result["call_id"] — FK into llm_calls collection
+```
+
+### Phase 1 → 2 → 3 path
+- **Phase 1 (NOW)**: provider-router AI. Commercial APIs serve traffic, local/self_trained logged in SHADOW. **DONE**.
+- **Phase 2 (NEXT)**: deploy local inference (Ollama / vLLM). Operator sets `RISE_AI_LOCAL_INFERENCE_URL`, runs `eval_harness` to compare answers, promotes `local` to ADVISOR / PRIMARY as agreement crosses threshold.
+- **Phase 3 (FUTURE)**: train RISE_AI's own weights from `llm_distillation_queue` corpus, deploy as `self_trained`, eventually promote it to PRIMARY. Commercial = teachers only.
+
+### Files
+- `shared/llm/__init__.py`, `kernel.py`, `routing_policy.py`,
+  `ledger.py`, `provider_state.py`
+- `shared/llm/adapters/{openai,anthropic,gemini,local,self_trained}_adapter.py`
+- `shared/llm/training/__init__.py`, `preference_log.py`,
+  `distillation_queue.py`, `eval_harness.py`
+- `tests/test_llm_kernel.py` (19 tests, 14 tripwires)
+- `tests/test_llm_training_substrate.py` (15 tests)
+- `namespaces.py` — 5 new collection constants
+
+
+
 ## 🆕 2026-05-21 (later): RISEAI Code Agent v0.6 — LLM `diagnose` (portable)
 
 Added the LLM patch-proposer to the brain-side CLI tool at

@@ -251,6 +251,57 @@ PARADOX_RECORDS = "paradox_records"
 #   ack_note      : str   — sidecar's optional ack note
 PARADOX_WAKE_ORDERS = "paradox_wake_orders"
 
+# ─── LLM_CALLS — RISE_AI Model Adapter Kernel decision-trace ledger ──
+# Doctrine pin (2026-02-XX): every call routed through `shared/llm/`
+# lands here. This collection IS the moat. Rows carry the full prompt,
+# response, role, task, provider, model, latency, and an explicit
+# `llm_authority: "ADVISORY_ONLY"` stamp. Never trim this field.
+#
+# Schema (best-effort writes; ledger failures must not break the
+# brain's LLM call):
+#   call_id              : str (uuid4)
+#   session_id           : str
+#   role                 : str
+#   task                 : str
+#   provider             : "openai"|"anthropic"|"gemini"|"local"
+#   model                : str
+#   ok                   : bool
+#   error                : str | None
+#   prompt               : str  (clipped to 200KB)
+#   response             : str  (clipped to 200KB)
+#   prompt_bytes, response_bytes, prompt_truncated, response_truncated
+#   usage                : dict (provider-shaped; may be empty)
+#   metadata             : dict
+#   latency_ms           : int
+#   llm_authority        : "ADVISORY_ONLY"   (stamped — never mutate)
+#   kernel_version       : str
+#   git_sha              : str
+#   created_at           : ISO datetime str
+LLM_CALLS = "llm_calls"
+
+# ─── RISE_AI training substrate (2026-02-XX) ──────────────────────────
+# `LLM_PROVIDER_STATE` — operator-set promotion state per provider.
+#   One doc per provider. Defaults live in
+#   `shared/llm/routing_policy.py:DEFAULT_PROMOTION_STATE`.
+#   Schema: {provider, state ∈ {SHADOW, ADVISOR, PRIMARY, OFFLINE}, note}
+LLM_PROVIDER_STATE = "llm_provider_state"
+
+# `LLM_PREFERENCE_LOG` — brain post-hoc grades on LLM answers.
+#   Append-only. Multiple grades per call_id are allowed.
+#   Schema: {call_id, score ∈ [-2..2], outcome, note, grader, created_at}
+LLM_PREFERENCE_LOG = "llm_preference_log"
+
+# `LLM_DISTILLATION_QUEUE` — successful (prompt, response, outcome)
+# triples queued for training the self-trained model. Idempotent on
+# call_id. `consumed_at` stamps when the trainer pulled the row;
+# rows are never deleted (audit trail of what was learned from).
+LLM_DISTILLATION_QUEUE = "llm_distillation_queue"
+
+# `LLM_EVAL_RUNS` — candidate-vs-primary head-to-head from
+# `shared/llm/training/eval_harness.py`. One doc per run; each
+# embeds the full per-prompt detail + a summary block.
+LLM_EVAL_RUNS = "llm_eval_runs"
+
 RUNTIMES = ("alpha", "camaro", "chevelle", "redeye")
 
 # ───────────────────────────────────────────────────────────────────────
