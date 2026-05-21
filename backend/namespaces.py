@@ -226,6 +226,31 @@ PUBLIC_RATE_LIMITS = "public_rate_limits"
 #   unaudited  → opponent was offline; operator must be aware
 PARADOX_RECORDS = "paradox_records"
 
+# ─── PARADOX wake orders (2026-02-XX) ─────────────────────────────────
+# Operator-issued "process this ticker now" commands targeted at one
+# brain (or all four). MC writes the order with a signed JWT envelope;
+# the sidecar polls `/api/admin/paradox/wake-orders/{brain}` on its
+# normal heartbeat cadence, verifies the signature, processes the
+# ticker, and POSTs back to `…/ack` to consume it. This is the
+# operator's "wake up and look at SYMBOL" panic-button: it does NOT
+# bypass any execution gate — the brain still has to produce a valid
+# intent that passes the gate chain.
+#
+# Schema (one doc per issued order, append-only):
+#   order_id      : str   — uuid4
+#   brain         : str   — one of LIVE_RUNTIMES
+#   ticker        : str   — uppercase symbol
+#   note          : str   — operator's optional note
+#   signed_token  : str   — HS256 JWT, claims {order_id, brain,
+#                            ticker, issued_at, exp, kind:"wake"}
+#   issued_by     : str   — operator email
+#   issued_at     : datetime
+#   expires_at    : datetime  (issued_at + WAKE_ORDER_TTL_SECONDS)
+#   status        : "pending" | "acked" | "expired"
+#   acked_at      : datetime | None
+#   ack_note      : str   — sidecar's optional ack note
+PARADOX_WAKE_ORDERS = "paradox_wake_orders"
+
 RUNTIMES = ("alpha", "camaro", "chevelle", "redeye")
 
 # ───────────────────────────────────────────────────────────────────────

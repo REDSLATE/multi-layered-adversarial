@@ -1,6 +1,53 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🆕 2026-05-21 (latest): PARADOX Wake Orders (operator panic-button)
+
+Operator-issued "process this ticker NOW" directives. Pull-based to fit
+the existing one-way sidecar→MC architecture — MC writes a signed wake
+order to its own DB and the sidecar polls on its heartbeat cadence.
+Wake orders do NOT bypass execution gates; they tell a brain "look at
+SYMBOL on your next loop" but the brain still has to produce a valid
+intent that survives the gate chain.
+
+### Endpoints (all under `/api/admin/paradox/`)
+  * `POST /wake/{brain}` — JWT admin. Body `{ticker, note?}`. Issues
+    one signed wake order targeted at {brain}.
+  * `POST /wake-all` — JWT admin. Body `{ticker, note?, brains?}`. Fans
+    out to every LIVE_RUNTIMES brain (or a subset).
+  * `GET /wake-orders/{brain}` — token-authed (per-brain ingest token).
+    Returns pending (not acked, not expired) orders. Sidecars poll
+    this on heartbeat cadence.
+  * `POST /wake-orders/{brain}/{order_id}/ack` — token-authed.
+    Idempotent ack — second ack is a no-op.
+  * `GET /wake-orders` — JWT admin. Recent orders (24h default) for
+    the Roster UI's "LAST WAKE" pill.
+
+### Doctrine
+  * Each wake order carries an HS256 JWT envelope (claims: order_id,
+    brain, ticker, issued_at, exp, kind="wake") signed with
+    `JWT_SECRET` so sidecars can verify authenticity.
+  * TTL = 15 minutes. Stale pending orders are auto-marked "expired"
+    on the next poll.
+  * Cross-brain ack is rejected (brain X cannot ack brain Y's order).
+  * Shelly is excluded — wake is only valid for LIVE_RUNTIMES
+    (alpha, camaro, chevelle, redeye).
+
+### Files
+  * `routes/paradox_wake_routes.py` — all five endpoints.
+  * `namespaces.py` — new `PARADOX_WAKE_ORDERS` collection name.
+  * `components/ParadoxRosterPanel.jsx` — added per-row WAKE button +
+    header WAKE ALL button + WakeModal + LAST WAKE pill per row.
+  * `tests/test_paradox_wake.py` — 13 HTTP tests covering issue,
+    fan-out, poll, idempotent ack, cross-brain rejection, admin list.
+
+### Live verification
+  * 13/13 wake tests pass.
+  * 151 tripwires green post-merge.
+  * UI: modal opens, ticker submits, "LAST WAKE" pill renders inline.
+
+
+
 ## 🆕 2026-05-21 (later): PARADOX in-process coordinator (LIVE in preview)
 
 Replaces the proposed Celery/Redis distributed scheduler with an
