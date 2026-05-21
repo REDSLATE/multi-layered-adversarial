@@ -200,7 +200,89 @@ PUBLIC_REQUEST_LOG = "public_request_log"
 # collection stays tiny regardless of traffic.
 PUBLIC_RATE_LIMITS = "public_rate_limits"
 
+# ───────────────────────────────────────────────────────────────────────
+# PARADOX_RECORDS — the audit artifact produced by every gated intent.
+# ───────────────────────────────────────────────────────────────────────
+#
+# Doctrine: AUDITOR is not a seat. The audit is the emergent record
+# of the executor's call AND the opponent's challenge (or shadow
+# observation). The kernel writes one paradox_record per gated intent,
+# preserving the tension between the two voices without picking a side.
+#
+# Schema (lightweight; produced by the kernel, append-only):
+#   intent_id              : str  — the gated intent's id
+#   executor_runtime       : str  — anchored runtime ("camaro")
+#   executor_call          : dict — direction, confidence, snapshot ref
+#   opponent_runtime       : str  — anchored runtime ("redeye")
+#   opponent_mode          : str  — live | shadow_observation | offline
+#   opponent_challenge     : dict | None — challenge payload (None if offline)
+#   kernel_verdict         : str  — APPROVED | REJECTED | DAMPENED
+#   audit_status           : str  — final | shadow | unaudited
+#   created_at             : datetime
+#
+# `audit_status` is the operator-facing accountability surface:
+#   final      → opponent was live and weighed in
+#   shadow     → opponent was in observation mode; trade fired anyway
+#   unaudited  → opponent was offline; operator must be aware
+PARADOX_RECORDS = "paradox_records"
+
 RUNTIMES = ("alpha", "camaro", "chevelle", "redeye")
+
+# ───────────────────────────────────────────────────────────────────────
+# PARADOX hierarchy (2026-05-20)
+# ───────────────────────────────────────────────────────────────────────
+#
+# Architectural pin: the kernel sits ABOVE the named brains, not as a
+# peer. Each ROLE is anchored to exactly one runtime — no Cartesian
+# eligibility matrix, no per-lane swap dance, no role/runtime
+# conflation.
+#
+#   RISEDUAL                    (platform)
+#     PARADOX (MC kernel)       (the system mind; verifies, routes, signs)
+#       Alpha     → strategist
+#       Camaro    → executor
+#       Chevelle  → governor
+#       REDEYE    → opponent
+#       Shelly    → memory
+#
+# AUDITOR is intentionally absent. The audit is an EMERGENT FUNCTION
+# of (executor, opponent) — the paradox_record artifact written on
+# every gated intent. The kernel preserves the tension between the
+# two voices and signs the result. There is no auditor seat.
+#
+# Tripwire (`test_paradox_role_anchors_locked` in
+# tests/test_paradox_namespace.py) refuses any drift of this table —
+# adding new entries or aliasing is a doctrine violation. The whole
+# point of fixing the anchors is that they DO NOT move.
+
+PARADOX_KERNEL = "PARADOX"  # the system mind; the kernel above the brains
+
+ROLE_ANCHORS: dict[str, str] = {
+    "strategist": "alpha",
+    "executor":   "camaro",
+    "governor":   "chevelle",
+    "opponent":   "redeye",
+    "memory":     "shelly",   # namespace-reserved; Shelly is conceptual today
+}
+
+# Reverse lookup: runtime → role. Generated, not hand-maintained.
+RUNTIME_ROLE: dict[str, str] = {v: k for k, v in ROLE_ANCHORS.items()}
+
+# Runtimes that are operationally live (have a sidecar that reports in).
+# Shelly is reserved namespace but not yet a running sidecar.
+LIVE_RUNTIMES: tuple[str, ...] = ("alpha", "camaro", "chevelle", "redeye")
+
+# Opponent mode — REDEYE is currently re-learning in shadow mode.
+# `live`               → opponent challenges gate trades
+# `shadow_observation` → opponent observes only; trades fire; paradox_record
+#                        stamps `audit_status=shadow` so the period is
+#                        replayable when opponent returns to `live`
+# `offline`            → opponent role is vacant; executor calls are
+#                        UN-AUDITED — operator must be aware
+OPPONENT_MODE_LIVE = "live"
+OPPONENT_MODE_SHADOW = "shadow_observation"
+OPPONENT_MODE_OFFLINE = "offline"
+
 
 # Historical: REDEYE used to be an "advisor sidecar". We've since promoted
 # it to a full seat (2026-02-11). Kept for back-compat with older patch

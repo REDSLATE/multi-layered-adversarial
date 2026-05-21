@@ -37,35 +37,36 @@ class SeatPolicy(TypedDict):
     lane_scope: list[str] | None
 
 
-# ─── Seat aliases (2026-02-19 deprecation) ─────────────────────────────
+# ─── Seat aliases (2026-02-19 deprecation; revised 2026-05-20) ──────
 #
-# The 4-seat doctrine merge: decider and advisor are vestigial seats
-# from earlier decomposition phases. Their responsibilities have
-# consolidated into the remaining four:
+# Doctrine (after the 2026-05-20 PARADOX naming clarification):
+#
+#   AUDITOR is NOT a seat. It is an emergent function of the
+#   (executor, opponent) interaction — the `paradox_record` artifact
+#   the kernel produces on every gated intent. The earlier alias
+#   `advisor → auditor` was structurally wrong; advisory work belongs
+#   to the OPPONENT seat, which already speaks the contrary case.
+#
+# Final alias map:
 #
 #     decider  → executor   (executor already has may_decide=True;
 #                            the separate decider seat was redundant)
-#     advisor  → auditor    (advisory context becomes auditor notes;
-#                            advisor never had decision authority
-#                            anyway, so this is a label change)
+#     advisor  → opponent   (advisory dissent is what the opponent
+#                            seat is for; auditor isn't a seat at all)
 #
 # Crypto twins follow the same rule. The aliases let old sidecars
-# that still send `seat="advisor"` keep working — MC normalizes
-# to the canonical 4-seat name at every boundary.
-#
-# This is a COMPATIBILITY MERGE, not a hard delete. Phased rollout:
-#   Phase 1 (this commit): aliases active; old names still accepted;
-#                          new code uses canonical names.
-#   Phase 2: UI hides the deprecated seats from dropdowns.
-#   Phase 3: ingest layer stops writing the old names.
-#   Phase 4: backfill script unsets old keys from `brain_roster` and
-#            `brain_eligibility.matrix`.
+# that still send legacy seat names keep working — MC normalizes to
+# the canonical name at every boundary.
 
 SEAT_ALIASES: dict[str, str] = {
     "decider": "executor",
     "crypto_decider": "crypto",        # crypto executor slot is `crypto`
-    "advisor": "auditor",
-    "crypto_advisor": "crypto_auditor",
+    "advisor": "opponent",
+    "crypto_advisor": "crypto_opponent",
+    # Old `auditor` references resolve to opponent — auditor is no
+    # longer a seat under the PARADOX hierarchy.
+    "auditor": "opponent",
+    "crypto_auditor": "crypto_opponent",
 }
 
 
@@ -146,18 +147,14 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         "lane_scope": None,
     },
     "auditor": {
-        # Post-trade auditor — reviews outcomes after a position closes.
-        # Never decides, never executes, never vetoes a live trade.
-        # Its job is to score the result and feed the learning loop;
-        # it speaks as `auditor` so its evidence is attributable.
-        # Quorum is not required (a closed position doesn't wait on
-        # audit before settlement), so seat_required=False — but a
-        # vacant auditor surfaces visibly so the operator can fill it.
-        #
-        # As of 2026-02-19, this seat ALSO absorbs the former `advisor`
-        # role via SEAT_ALIASES. Pre-trade advisory context now lands
-        # as auditor notes; brains that still emit `seat="advisor"` are
-        # transparently rewritten to `seat="auditor"` at every boundary.
+        # DEPRECATED (2026-05-20). Under the PARADOX hierarchy, auditor
+        # is NOT a seat — it is the emergent paradox_record artifact
+        # produced by the (executor, opponent) pair on every gated
+        # intent. SEAT_ALIASES now maps `auditor → opponent` so any
+        # legacy read transparently resolves to the contrary-case
+        # seat. This row is retained ONLY for forensic queries
+        # against historical receipts that recorded `seat=auditor`
+        # before the alias change. New code MUST NOT reference it.
         "may_decide": False,
         "may_execute": False,
         "may_veto": False,

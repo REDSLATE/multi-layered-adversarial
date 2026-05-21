@@ -1,7 +1,80 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
-## 🆕 2026-02-19 (this session): Doctrine (c) + Orphan defense + Memory Kernel P0
+## 🆕 2026-05-20 (later): PARADOX hierarchy, UV→SO reclassification, orphan watchdog
+
+### PARADOX hierarchy — anchored role/runtime model (LIVE)
+
+Architectural correction collapsing the role/runtime Cartesian product
+into a 1:1 anchored model. The kernel sits ABOVE the named brains, not
+as a peer; it is named **PARADOX** because its job is to hold the
+tension between competing brain voices without picking a side.
+
+```
+RISEDUAL                    (platform)
+  PARADOX (MC kernel)       (the system mind; verifies, routes, signs)
+    Alpha     → strategist
+    Camaro    → executor
+    Chevelle  → governor
+    REDEYE    → opponent (currently shadow_observation)
+    Shelly    → memory  (namespace-reserved; not yet a running sidecar)
+```
+
+**AUDITOR is NOT a seat.** It is the emergent function of (executor,
+opponent) — the `paradox_record` artifact the kernel stamps on every
+gated intent.
+
+- `namespaces.py` → new `ROLE_ANCHORS`, `RUNTIME_ROLE`, `LIVE_RUNTIMES`,
+  `OPPONENT_MODE_*`, `PARADOX_KERNEL`, `PARADOX_RECORDS`.
+- `shared/seat_policy.py` → `SEAT_ALIASES` corrected to map
+  `advisor → opponent` (was `advisor → auditor`, structurally wrong).
+  Legacy `auditor → opponent` for back-compat.
+- `shared/runtime/role_health.py` (new) — survival conditions per role.
+  Executor (Camaro) requires: fresh `mc_checkin` (≤90s), matching
+  `policy_hash`, zero orphan fills in 24h, watchdog armed.
+- `routes/paradox_routes.py` (new): `/api/admin/paradox/{health,roster,records}`.
+- `tests/test_paradox_namespace.py` (new) — 12 tripwire tests locking
+  the role anchors, opponent-mode constants, no-auditor rule.
+- `tests/test_seat_aliases.py` — updated for the auditor correction.
+
+### UV → SO reclassification (LIVE)
+
+  * `services/memory_kernel.py::reclassify_uv_to_so` — append-only,
+    operator-driven UV→SO promotion. Only UV→SO allowed; UV→VE,
+    SO→VE, VE→anything, DI→anything all refused.
+  * Endpoints: `POST /quarantine/{memory_id}/promote-to-so`,
+    `POST /quarantine/promote-batch-to-so`,
+    `GET /reclassifications/recent`.
+  * 9 tests (`tests/test_memory_kernel_reclassification.py`), 2 tripwires:
+    axiom holds for reclassified SO; UV→VE forbidden.
+
+### Orphan replay calibration report (LIVE)
+
+  * `routes/orphan_replay_routes.py::orphan_doctrine_c_report`.
+  * Replays every UV/SO orphan through doctrine (c) gates with
+    lane-typical synthesized snapshots; aggregates outcomes,
+    per-symbol breakdown, spread buckets, and a narrative
+    `calibration_signal`.
+  * **Verdict on the 5/18 corpus: 100% would have passed doctrine (c)
+    cleanly.** The orphans weren't dangerous because they were wrong —
+    they were dangerous because they bypassed the auth layer. RoadGuard
+    and Governor are correctly tuned for the Mag-7 universe.
+
+### Tripwire status: 144 passing (was 133 entering this segment; +11)
+
+### Operational note — Camaro's executor seat is currently VACANT
+Live `/api/admin/paradox/roster` reports executor unhealthy:
+  1. `checkin_stale` — Camaro sidecar isn't posting `mc_checkin` yet
+  2. `policy_hash_mismatch` — same root cause
+  3. `recent_orphans: 499` — the 24h orphan window still includes
+     the 5/18 fills
+
+(1) and (2) self-heal once Camaro's sidecar deploys with the new
+policy hash. (3) self-heals naturally in ~24h OR immediately by
+operator action (UV→SO batch reclassification — which is now wired).
+
+
+## 🆕 2026-02-19 (earlier this session): Doctrine (c) + Orphan defense + Memory Kernel P0
 
 This session installed the architectural correction for the "governance
 deadlock" failure mode (1,578 authority calls / 0 fills), captured 500

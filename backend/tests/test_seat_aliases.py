@@ -1,19 +1,19 @@
 """Seat-alias compatibility merge — Phase 1 tests.
 
-Doctrine (2026-02-19): the 4-seat merge eliminated `decider` and
-`advisor` as canonical seats. Their responsibilities consolidated:
+Doctrine (revised 2026-05-20 PARADOX hierarchy): the alias table now
+also handles the auditor→opponent correction. AUDITOR is no longer
+a seat — it is the emergent paradox_record artifact. Advisory work
+belongs to the opponent seat (which already speaks the contrary case).
 
     decider          → executor          (executor has may_decide)
     crypto_decider   → crypto            (crypto-lane executor slot)
-    advisor          → auditor           (advisory context = auditor notes)
-    crypto_advisor   → crypto_auditor    (lane twin)
+    advisor          → opponent          (contrary-case is opponent's job)
+    crypto_advisor   → crypto_opponent   (lane twin)
+    auditor          → opponent          (legacy reads; auditor not a seat)
+    crypto_auditor   → crypto_opponent
 
-Phase 1 is a COMPATIBILITY MERGE: aliases active at every boundary;
-old sidecars sending deprecated seat names keep working without
-behavioral change. New code uses canonical names.
-
-This test file is the contract for Phase 1. Phase 2/3/4 changes
-(UI hiding, write-stopping, backfill) must not break these tests.
+Aliases let old sidecars sending deprecated seat names keep working.
+New code uses canonical names.
 """
 from __future__ import annotations
 
@@ -30,27 +30,33 @@ from shared.seat_policy import (
 
 
 def test_normalize_seat_alias_table_minimum_shape():
-    """The alias table must contain exactly the four deprecation
-    mappings and nothing else. If new aliases land in a future phase,
-    THIS test should fail and the operator should explicitly bump it."""
+    """The alias table must contain exactly the six deprecation mappings
+    and nothing else. PARADOX hierarchy (2026-05-20): auditor and
+    crypto_auditor now alias to opponent / crypto_opponent. If new
+    aliases land in a future phase, THIS test should fail and the
+    operator should explicitly bump it."""
     assert SEAT_ALIASES == {
         "decider": "executor",
         "crypto_decider": "crypto",
-        "advisor": "auditor",
-        "crypto_advisor": "crypto_auditor",
+        "advisor": "opponent",
+        "crypto_advisor": "crypto_opponent",
+        "auditor": "opponent",
+        "crypto_auditor": "crypto_opponent",
     }
 
 
 def test_normalize_seat_rewrites_deprecated():
     assert normalize_seat("decider") == "executor"
     assert normalize_seat("crypto_decider") == "crypto"
-    assert normalize_seat("advisor") == "auditor"
-    assert normalize_seat("crypto_advisor") == "crypto_auditor"
+    assert normalize_seat("advisor") == "opponent"
+    assert normalize_seat("crypto_advisor") == "crypto_opponent"
+    assert normalize_seat("auditor") == "opponent"
+    assert normalize_seat("crypto_auditor") == "crypto_opponent"
 
 
 def test_normalize_seat_passes_canonical_unchanged():
-    for name in ["executor", "governor", "opponent", "auditor", "crypto",
-                 "crypto_governor", "crypto_opponent", "crypto_auditor"]:
+    for name in ["executor", "governor", "opponent", "crypto",
+                 "crypto_governor", "crypto_opponent"]:
         assert normalize_seat(name) == name
 
 
@@ -75,12 +81,24 @@ def test_snapshot_decider_resolves_to_executor_policy():
     assert s["may_veto"] == exec_s["may_veto"]
 
 
-def test_snapshot_advisor_resolves_to_auditor_policy():
+def test_snapshot_advisor_resolves_to_opponent_policy():
+    """PARADOX correction (2026-05-20): advisor now resolves to
+    opponent (not auditor)."""
     s = snapshot("advisor")
-    aud = snapshot("auditor")
-    assert s["may_decide"] == aud["may_decide"]
-    assert s["may_execute"] == aud["may_execute"]
-    assert s["may_veto"] == aud["may_veto"]
+    opp = snapshot("opponent")
+    assert s["may_decide"] == opp["may_decide"]
+    assert s["may_execute"] == opp["may_execute"]
+    assert s["may_veto"] == opp["may_veto"]
+
+
+def test_snapshot_legacy_auditor_resolves_to_opponent_policy():
+    """Legacy reads of `seat=auditor` resolve to the opponent's
+    permission set so historical receipts don't 500."""
+    s = snapshot("auditor")
+    opp = snapshot("opponent")
+    assert s["may_decide"] == opp["may_decide"]
+    assert s["may_execute"] == opp["may_execute"]
+    assert s["may_veto"] == opp["may_veto"]
 
 
 def test_snapshot_crypto_decider_resolves_to_crypto_executor_policy():
@@ -90,11 +108,11 @@ def test_snapshot_crypto_decider_resolves_to_crypto_executor_policy():
     assert s["may_execute"] == crypto["may_execute"]
 
 
-def test_snapshot_crypto_advisor_resolves_to_crypto_auditor_policy():
+def test_snapshot_crypto_advisor_resolves_to_crypto_opponent_policy():
     s = snapshot("crypto_advisor")
-    crypto_aud = snapshot("crypto_auditor")
-    assert s["may_decide"] == crypto_aud["may_decide"]
-    assert s["may_execute"] == crypto_aud["may_execute"]
+    crypto_opp = snapshot("crypto_opponent")
+    assert s["may_decide"] == crypto_opp["may_decide"]
+    assert s["may_execute"] == crypto_opp["may_execute"]
 
 
 # ───── may_override removed from doctrine ─────────────────────────────
@@ -144,12 +162,15 @@ def test_seat_may_execute_lane_crypto_decider_routes_to_crypto():
 
 
 def test_seat_may_execute_lane_advisor_fails_closed():
-    """Advisor aliases to auditor, which has may_execute=False.
-    Either name should refuse execution."""
+    """Advisor aliases to opponent (PARADOX correction, 2026-05-20),
+    which has may_execute=False. Either name should refuse execution.
+    Legacy `auditor` reads also resolve to opponent."""
     assert seat_may_execute_lane("advisor", "equity") is False
-    assert seat_may_execute_lane("auditor", "equity") is False
+    assert seat_may_execute_lane("opponent", "equity") is False
+    assert seat_may_execute_lane("auditor", "equity") is False  # legacy
     assert seat_may_execute_lane("crypto_advisor", "crypto") is False
-    assert seat_may_execute_lane("crypto_auditor", "crypto") is False
+    assert seat_may_execute_lane("crypto_opponent", "crypto") is False
+    assert seat_may_execute_lane("crypto_auditor", "crypto") is False  # legacy
 
 
 # ───── posted_as preserves the raw slot name ──────────────────────────
