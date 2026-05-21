@@ -5,7 +5,7 @@ import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
 import { ArrowUpRight } from "@phosphor-icons/react";
 import TechnicalsPanel from "@/components/TechnicalsPanel";
 import FeedersStrip from "@/components/FeedersStrip";
-import RosterPanel from "@/components/RosterPanel";
+import RosterPanel from "@/components/ParadoxRosterPanel";
 import LivePositionsPanel from "@/components/LivePositionsPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 

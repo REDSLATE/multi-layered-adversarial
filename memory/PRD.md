@@ -1,6 +1,37 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🆕 2026-05-21: Roster page rewrite + paradox-record writer (LIVE in preview)
+
+### Front-end PARADOX Roster panel
+  * `frontend/src/components/ParadoxRosterPanel.jsx` (new) — consumes
+    `/api/admin/paradox/roster`; 5-row anchored model (no eligibility
+    swaps possible); auto-refresh every 15s; failed-conditions inline.
+  * `pages/Overview.jsx` swapped its import from `RosterPanel` →
+    `ParadoxRosterPanel`. Old 606-line eligibility-matrix component
+    remains in the tree (`RosterPanel.jsx`) but is no longer referenced.
+  * Live screenshot confirms: kernel name, anchored mapping, vacant
+    executor condition (Camaro: stale checkin + hash mismatch + 499
+    orphans) all rendering correctly.
+
+### Paradox-record writer
+  * `shared/runtime/paradox_record.py` (new) — writes one record per
+    gate evaluation; best-effort (never crashes the live path).
+  * Hooked into `shared/execution.py` at three sites:
+      - `/api/execution/dry_run` (every dry-run produces a record)
+      - submit-blocked path (REJECTED verdict)
+      - submit-passed path (APPROVED or DAMPENED + broker receipt)
+  * Verdict labels locked: `APPROVED` / `DAMPENED` / `REJECTED`.
+  * Audit-status labels locked: `final` / `shadow` / `unaudited`,
+    determined by `OPPONENT_MODE` env var.
+  * 11 tests in `tests/test_paradox_record_writer.py`, 2 tripwires
+    locking the verdict + audit-status surface.
+  * Live verification: dry-run on TSLA produced a paradox_record with
+    `executor=camaro → opponent=redeye`, `verdict=REJECTED`,
+    `audit_status=shadow`, `risk_multiplier=0.677`.
+
+### Tripwire status: 146 passing (was 144; +2 from writer locks)
+
 ## 🆕 2026-05-20 (later): PARADOX hierarchy, UV→SO reclassification, orphan watchdog
 
 ### PARADOX hierarchy — anchored role/runtime model (LIVE)

@@ -52,6 +52,7 @@ from shared.council import (
 )
 from shared.exposure_caps import caps_snapshot, evaluate_all
 from shared.mc_shelly import record_async
+from shared.runtime.paradox_record import write_paradox_record
 
 
 router = APIRouter(tags=["execution"])
@@ -349,6 +350,16 @@ async def execution_dry_run(
         "gates": result["gates"],
     })
 
+    # PARADOX audit — append-only emergent-auditor artifact. Best-effort:
+    # never crashes the live path on a failure.
+    await write_paradox_record(
+        intent=intent,
+        gates=result["gates"],
+        risk_multiplier=result.get("risk_multiplier"),
+        evaluation_kind="dry_run",
+        evaluated_by=user.get("email"),
+    )
+
     return {
         "intent_id": intent_id,
         "evaluated_by": user.get("email"),
@@ -413,6 +424,15 @@ async def execution_submit(
                 "last_submit_ts": _now_iso(),
                 "last_submit_by": user.get("email"),
             }},
+        )
+        # PARADOX audit — record the blocked submit as a kernel REJECTED
+        # verdict against the executor's call.
+        await write_paradox_record(
+            intent=intent,
+            gates=result["gates"],
+            risk_multiplier=result.get("risk_multiplier"),
+            evaluation_kind="submit_blocked",
+            evaluated_by=user.get("email"),
         )
         # Pick the first failing gate as the surface reason.
         first_block = next((g for g in result["gates"] if not g["passed"]), None)
@@ -526,6 +546,17 @@ async def execution_submit(
         "broker_order_id": order["order_id"],
         "gates": result["gates"],
     })
+
+    # PARADOX audit — the executor's call passed every gate AND
+    # produced a broker receipt. Stamp the artifact with
+    # audit_status determined by OPPONENT_MODE.
+    await write_paradox_record(
+        intent=intent,
+        gates=result["gates"],
+        risk_multiplier=result.get("risk_multiplier"),
+        evaluation_kind="submit_passed",
+        evaluated_by=user.get("email"),
+    )
 
     # Live-position lifecycle (2026-02-16) — open a tracked position
     # against this filled receipt. Idempotent on receipt_id; safe if
