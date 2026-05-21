@@ -1,6 +1,88 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🆕 2026-05-21 (latest): RISE_AI Saved Threads — persistent reasoning memory
+
+Threads turn one-off chats into long-running reasoning artifacts.
+Same kernel, same ledger, same grading — now with continuity.
+
+### Doctrine pin
+Threads are REASONING MEMORY only:
+- ❌ NOT execution memory
+- ❌ NOT trade authority
+- ❌ NOT doctrine authority
+- ❌ NOT a path to /api/execution/submit
+- ❌ NOT a promotion surface
+
+Tripwire `test_threads_module_imports_no_execution_surface` scans
+the route file's import statements and fails the build if any
+forbidden execution/broker/promotion/seat-policy/doctrine surface
+gets imported.
+
+### Endpoints (`/api/admin/rise-ai/threads/`)
+- `GET /` — list (filters: `pinned_only`, `archived`, `search`, `limit`)
+- `POST /` — create (title + initial messages)
+- `GET /{thread_id}` — full thread + transcript
+- `PATCH /{thread_id}` — title / pinned / tags / archived / append_messages
+- `POST /{thread_id}/resume` — returns session_id + transcript
+
+### Collections
+- `rise_ai_threads` — metadata per thread (thread_id, title, session_id,
+  mode, role, pinned, tags, message_count, last_call_id,
+  created_at, updated_at, created_by, archived)
+- `rise_ai_thread_messages` — append-only transcript (thread_id, seq,
+  kind, text, mode, role, call_id, provider, model, latency_ms,
+  llm_authority, extra, created_at)
+
+### Frontend (`/admin/rise-ai`)
+- Left sidebar (~256px): New Thread / Search / Pinned-only toggle /
+  Pinned group / Saved group
+- Each thread item shows title, message count, mode, first 3 tags
+- Pin/unpin button + archive button per item (archive confirmed)
+- Click to load → fetches transcript via `/resume` → preserves
+  session_id so the kernel context continues
+- Save as Thread button on the current transcript (prompts for title)
+- When a thread is loaded, every new exchange automatically PATCHes
+  with append_messages — the transcript persists message-by-message
+- Header shows the active thread title (or "cognition layer" when no
+  thread is loaded)
+- All previous features intact: grade buttons, "open in ledger",
+  metadata badges, mode/role selectors, status/trade observation
+  extras
+
+### Tested
+- 11/11 backend tests pass (auth, doctrine import check, full CRUD
+  flow, pinned filter, search by title/tag, three 404 paths,
+  validation, kind-validated append)
+- Frontend smoke-tested live: created a "Status check — Premarket"
+  thread from a status snapshot, verified sidebar shows it,
+  clicked New Thread, verified blank state with saved thread
+  preserved in sidebar
+- 184 tripwires green (+1 new)
+
+### The compounding loop
+```
+chat → save → thread → resume (same session_id, kernel context preserved)
+  ↓                       ↓
+ledger ←─────────────── ledger
+  ↓                       ↓
+grade (+1/0/-1) ←─────── grade
+  ↓                       ↓
+distillation_queue ←──── distillation_queue
+```
+
+Each thread becomes a long-running, gradable reasoning artifact.
+Over time the distillation queue grows from one-off chats AND from
+multi-turn threads — both feeding the eventual self-trained model.
+
+### Files
+- `routes/rise_ai_threads_routes.py` — five endpoints, doctrine-locked
+- `pages/RiseAI.jsx` — sidebar + thread management + auto-append
+- `namespaces.py` — two new collections
+- `tests/test_rise_ai_threads.py` — 11 tests, 1 tripwire
+
+
+
 ## 🆕 2026-05-21 (latest): `/admin/rise-ai` — Operator Console
 
 The operator-facing shell for RISE_AI's cognition layer. NOT "ChatGPT

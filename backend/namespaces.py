@@ -328,6 +328,25 @@ PARADOX_CANDIDATES = "paradox_candidates"
 #    created_at, consumed_at|None, consumed_by|None}
 PARADOX_RETRAIN_RECOMMENDATIONS = "paradox_retrain_recommendations"
 
+# ─── RISE_AI saved threads (2026-02-XX) ───────────────────────────────
+# Doctrine pin: reasoning memory ONLY. NOT execution memory, NOT trade
+# authority, NOT doctrine authority. Threads persist transcripts so
+# the operator can resume long-running reasoning sessions; the LLM
+# kernel uses `session_id` to keep context.
+#
+# `RISE_AI_THREADS` — thread metadata, one doc per thread.
+#   {thread_id (uuid4), title, session_id, mode, role,
+#    pinned: bool, tags: list[str], message_count: int,
+#    last_call_id, created_at, updated_at, created_by, archived: bool}
+RISE_AI_THREADS = "rise_ai_threads"
+
+# `RISE_AI_THREAD_MESSAGES` — append-only transcript rows. One doc
+# per message. Indexed by (thread_id, seq).
+#   {thread_id, seq: int, kind ∈ {"user","rise"}, text, mode, role,
+#    call_id, provider, model, latency_ms, llm_authority, extra,
+#    created_at}
+RISE_AI_THREAD_MESSAGES = "rise_ai_thread_messages"
+
 RUNTIMES = ("alpha", "camaro", "chevelle", "redeye")
 
 # ───────────────────────────────────────────────────────────────────────
