@@ -6,6 +6,7 @@ import LiveTradeDiagnose from "@/components/LiveTradeDiagnose";
 import RuntimeTokensPanel from "@/components/RuntimeTokensPanel";
 import RuntimeBundlesPanel from "@/components/RuntimeBundlesPanel";
 import SidecarCheckinPanel from "@/components/SidecarCheckinPanel";
+import LaneExecutionTogglesPanel from "@/components/LaneExecutionTogglesPanel";
 import PromotionArtifactPanel from "@/components/PromotionArtifactPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 
@@ -397,11 +398,31 @@ export default function Diagnostics() {
             </Card>
             <Card testid="diag-mode">
               <div className="label-eyebrow mb-2">Deploy mode</div>
-              <div className="font-display text-2xl font-bold tracking-tight uppercase" style={{ color: data.deploy_mode === "execution" ? "#10B981" : "#FBBF24" }}>
+              <div className="font-display text-2xl font-bold tracking-tight uppercase" style={{ color: data.lane_execution?.any_enabled ? "#10B981" : "#FBBF24" }}>
                 {data.deploy_mode}
               </div>
               <div className="text-xs text-rd-muted mt-2 font-mono">
-                {data.deploy_mode === "execution" ? "live order routing enabled" : "no broker has execution_enabled=true"}
+                {data.lane_execution
+                  ? (
+                    <>
+                      equity{" "}
+                      <span
+                        data-testid="diag-lane-equity-state"
+                        style={{ color: data.lane_execution.equity ? "#10B981" : "#DC2626", fontWeight: 600 }}
+                      >
+                        {data.lane_execution.equity ? "ON" : "OFF"}
+                      </span>
+                      {" · "}crypto{" "}
+                      <span
+                        data-testid="diag-lane-crypto-state"
+                        style={{ color: data.lane_execution.crypto ? "#10B981" : "#DC2626", fontWeight: 600 }}
+                      >
+                        {data.lane_execution.crypto ? "ON" : "OFF"}
+                      </span>
+                    </>
+                  )
+                  : (data.deploy_mode === "execution" ? "live order routing enabled" : "no broker has execution_enabled=true")
+                }
               </div>
             </Card>
             <Card testid="diag-now">
@@ -507,6 +528,12 @@ export default function Diagnostics() {
               live execution on each lane. Built after the operator
               reported "no trades being made on crypto" — this panel
               makes the first blocker visible in one click. */}
+          <div className="mt-6">
+            <PanelErrorBoundary panelName="LaneExecutionTogglesPanel">
+              <LaneExecutionTogglesPanel />
+            </PanelErrorBoundary>
+          </div>
+
           <div className="mt-6">
             <PanelErrorBoundary panelName="LiveTradeDiagnose">
               <LiveTradeDiagnose />

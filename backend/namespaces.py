@@ -80,6 +80,15 @@ IBKR_AUDIT_LOG = "ibkr_audit_log"
 PUBLIC_CREDENTIALS = "public_credentials"
 PUBLIC_AUDIT_LOG = "public_audit_log"
 
+# Lane Execution Toggles (2026-02-18) — operator-controlled kill switch
+# per-lane (equity, crypto). Decoupled from broker credential state:
+# keys can stay connected while execution is paused, and vice versa.
+# Singleton doc keyed `"current"`. Defaults to ALL OFF — execution is
+# explicitly opted into. Every flip is audit-logged.
+LANE_EXECUTION_TOGGLES = "lane_execution_toggles"
+LANE_EXECUTION_AUDIT_LOG = "lane_execution_audit_log"
+
+
 # Position primitive (2026-02-11) — discrete thesis object the 4 brains
 # discuss. Every brain stamps a stance (long / short / abstain) with
 # confidence + notes; the brain in the executor seat (per Roster) makes

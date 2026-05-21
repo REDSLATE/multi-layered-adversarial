@@ -44,6 +44,13 @@ EXPECTED_GATES_IN_ORDER = (
     "executor_seat_check",
     "live_trading_disabled",
     "broker_connected",
+    # Lane Execution Toggle (2026-02-18): operator-owned kill switch
+    # per lane (equity, crypto). Decoupled from broker credential
+    # state; defaults OFF; flipped via POST /api/admin/execution/
+    # lane-toggles. The doctrine-honest "no broker has
+    # execution_enabled=true" banner the operator used to see is
+    # actually enforced here.
+    "lane_execution_enabled",
     # Doctrine (c, 2026-05-20): RoadGuard owns deterministic market-
     # structure safety and runs BEFORE council. Governor sizes within
     # the safe zone; RoadGuard kills if structure itself is unsafe.

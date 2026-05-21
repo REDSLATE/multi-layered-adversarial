@@ -202,6 +202,25 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
         "reason": broker_reason,
     })
 
+    # ─── 5b. Lane execution toggle (2026-02-18) ──────────────────────
+    # Operator-owned kill switch. Decoupled from broker credential
+    # state. Default OFF — execution must be explicitly enabled per
+    # lane. The credential could be live and validated, but the
+    # operator still gates routing through this toggle.
+    from shared.lane_execution import is_lane_execution_enabled  # noqa: WPS433
+    lane_for_toggle = intent_lane or "equity"
+    lane_exec_enabled = await is_lane_execution_enabled(lane_for_toggle)
+    gates.append({
+        "name": "lane_execution_enabled",
+        "passed": lane_exec_enabled,
+        "reason": (
+            f"operator has enabled execution for lane={lane_for_toggle!r}"
+            if lane_exec_enabled else
+            f"operator has NOT enabled execution for lane={lane_for_toggle!r} "
+            f"— flip via POST /api/admin/execution/lane-toggles"
+        ),
+    })
+
     # ─── 6.0 RoadGuard — deterministic market-structure caps ──────────
     # Doctrine (c, 2026-05-20): RoadGuard owns "is this market safe to
     # trade RIGHT NOW" as PURE MATH. No opinions, no calibrations, no

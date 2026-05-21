@@ -91,9 +91,20 @@ async def diagnostics(_user: dict = Depends(get_current_user)):
             "heartbeat_tier": _heartbeat_tier(hb_age),
         })
 
+    # Lane execution toggles — the operator's real kill switch.
+    # Surface alongside `deploy_mode` so the UI can stop misleading
+    # the operator with an env-var-only banner.
+    from shared.lane_execution import get_toggles as _lane_toggles  # noqa: WPS433
+    lane_toggles = await _lane_toggles()
+
     return {
         "now": datetime.now(timezone.utc).isoformat(),
         "deploy_mode": os.environ.get("DEPLOY_MODE", "observation"),
+        "lane_execution": {
+            "equity": lane_toggles["equity"],
+            "crypto": lane_toggles["crypto"],
+            "any_enabled": lane_toggles["equity"] or lane_toggles["crypto"],
+        },
         "heartbeat_stale_after_seconds": HEARTBEAT_STALE_AFTER_SECONDS,
         "heartbeat_ok_below_seconds": HEARTBEAT_OK_BELOW_SECONDS,
         "heartbeat_preview_drift_seconds": HEARTBEAT_PREVIEW_DRIFT_SECONDS,

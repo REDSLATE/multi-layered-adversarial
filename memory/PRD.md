@@ -3444,6 +3444,68 @@ it asserts `governor_action == "block"` but doctrine (c) made that "modulate"
 since 2026-05-20. NOT a tripwire, NOT introduced here — flagged for separate
 hygiene cleanup.
 
+## 2026-02-18 (later) — Lane Execution Toggles (operator kill switch)
+
+**Context**: From the prod Diagnostics screenshot, the banner read
+`DEPLOY MODE: EXECUTE / no broker has execution_enabled=true`. RCA showed
+the contradiction was real: the banner text was hardcoded conditional on
+`DEPLOY_MODE` env var, and **nothing in the routing path** (`_evaluate_gates`,
+`get_alpaca_adapter`, `get_kraken_adapter`, `broker_router.route_order`)
+ever read any `execution_enabled` toggle. The Kraken doc had an
+`execution_enabled` field defaulting `False`, but it was display-only —
+the operator's kill switch was wired to nothing.
+
+**Shipped**:
+
+1. **Two lane-level toggles** (`equity`, `crypto`) decoupled from broker
+   credential state. Singleton doc in `LANE_EXECUTION_TOGGLES`. Both default
+   OFF — execution is opt-in. Every flip is audit-logged with actor + ts in
+   `LANE_EXECUTION_AUDIT_LOG`.
+   File: `shared/lane_execution.py`.
+
+2. **New gate `lane_execution_enabled`** in `_evaluate_gates`, inserted after
+   `broker_connected`. Fails closed when the toggle is OFF with reason
+   "operator has NOT enabled execution for lane=… — flip via POST /api/
+   admin/execution/lane-toggles".
+
+3. **Endpoints**:
+   - `GET  /api/admin/execution/lane-toggles` — current state + doctrine note
+   - `POST /api/admin/execution/lane-toggles` — body `{lane, enabled}`, audit-logged
+   - `GET  /api/admin/execution/lane-toggles/history` — flip history
+
+4. **Diagnostics integration**: `/api/admin/diagnostics` response now includes
+   a `lane_execution: {equity, crypto, any_enabled}` block so the UI banner
+   has *truth* instead of relying on the DEPLOY_MODE env-var label.
+
+5. **Frontend panel** `LaneExecutionTogglesPanel.jsx` on `/admin/diagnostics`:
+   - Two tiles (equity, crypto) with green/red Power icons
+   - OFF → click-through confirm modal to enable
+   - ON → single-click to disable (kill switch should be fast)
+   - Surfaces last-flip timestamp + actor email
+   - Diagnostics banner now reads `equity ON · crypto OFF` from real state
+
+6. **Council diagnose contract tripwire updated** to include
+   `lane_execution_enabled` in the locked gate ordering — bumping the
+   contract is the doctrinal way to record an intentional new locked-in gate.
+
+**Tests**: +14 new tripwires (210 → **224 total, all green**).
+   - default-OFF behavior
+   - flips equity/crypto independently
+   - audit log records previous/next
+   - gate chain ordering tripwire (lane_execution_enabled after broker_connected)
+   - gate FAILS when toggle is OFF
+   - gate PASSES when operator enables
+   - decoupled from broker credentials (no side-effect writes)
+   - diagnostics surfaces the new block
+
+**Operator semantics**:
+   - Currently in preview both toggles default OFF, so the existing
+     `_evaluate_gates` would refuse to route on ANY lane until the operator
+     flips a toggle. This is the correct safe default.
+   - After redeploying to prod, the operator must hit `/admin/diagnostics`
+     and flip equity and/or crypto ON for execution to resume. *This is the
+     intended behavior.* No silent re-enable.
+
 **P1 / P2 — Backlog**
 - **P2 — Build 2 demote/freeze workflow**: operator-initiated downgrade + hard-freeze
   endpoints, both audit-logged. On hold pending Build 3 production verification.
