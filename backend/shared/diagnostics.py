@@ -16,10 +16,22 @@ from namespaces import (
 
 
 def _heartbeat_tier(age: float | None) -> str:
-    """Three-tier operator doctrine:
-        ok            < HEARTBEAT_OK_BELOW_SECONDS         (healthy)
-        drift         < HEARTBEAT_PREVIEW_DRIFT_SECONDS    (cycle blip / slow ping)
-        preview_drift ≥ HEARTBEAT_PREVIEW_DRIFT_SECONDS    (likely on preview URL)
+    """Liveness band ONLY — derived purely from heartbeat age.
+
+    Doctrine (2026-02-18): this function used to return a
+    `preview_drift` tier that conflated "stale heartbeat" with "wrong
+    MC URL". That heuristic produced false alarms whenever a brain
+    did real LLM work that exceeded the 110s window — operators spent
+    cycles chasing phantom MC_BASE_URL misconfiguration. The actual
+    "is this pod on preview?" verdict comes from
+    `sidecar_checkin._verdict_from_validation`, which inspects the
+    brain's stamped `env_name` + `mc_url`. THIS function answers only:
+    "how long since the brain last said hello?".
+
+    Bands:
+        ok            < HEARTBEAT_OK_BELOW_SECONDS      (healthy)
+        stale         < HEARTBEAT_PREVIEW_DRIFT_SECONDS (slow ping)
+        dead          ≥ HEARTBEAT_PREVIEW_DRIFT_SECONDS (no recent ping)
         unknown       no heartbeat ever recorded
     """
     if age is None:
@@ -27,8 +39,8 @@ def _heartbeat_tier(age: float | None) -> str:
     if age < HEARTBEAT_OK_BELOW_SECONDS:
         return "ok"
     if age < HEARTBEAT_PREVIEW_DRIFT_SECONDS:
-        return "drift"
-    return "preview_drift"
+        return "stale"
+    return "dead"
 
 
 router = APIRouter(prefix="/admin/diagnostics", tags=["diagnostics"])

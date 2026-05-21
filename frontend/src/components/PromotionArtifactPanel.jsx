@@ -226,6 +226,18 @@ export default function PromotionArtifactPanel() {
             benchmark <span className="text-rd-text">{data.benchmark_brain}</span>
             {" · window "}<span className="text-rd-text">{data.hours}h</span>
             {" · "}<span className="text-rd-text">{(data.reports || []).length}</span> brain reports
+            {(data.excluded_governors || []).length > 0 && (
+              <>
+                {" · "}
+                <span
+                  className="text-rd-chevelle"
+                  data-testid="excluded-governors-note"
+                  title="Governor authority is off-ladder — never evaluated for trading-seat promotion."
+                >
+                  off-ladder (governor): {data.excluded_governors.join(", ").toUpperCase()}
+                </span>
+              </>
+            )}
             {" · advisory only — Patent J countersign still required to promote"}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 p-4">

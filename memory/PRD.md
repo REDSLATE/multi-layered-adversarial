@@ -3506,6 +3506,64 @@ the operator's kill switch was wired to nothing.
      and flip equity and/or crypto ON for execution to resume. *This is the
      intended behavior.* No silent re-enable.
 
+## 2026-02-18 (third) — Drift detector decoupling + Promotion ladder fix
+
+**Context**: Operator looked at prod and saw the red "PREVIEW DRIFT" banner
+even though brains were configured for prod. Investigated and found MC had
+**two independent drift detectors** with overlapping wording:
+
+  1. `_verdict_from_validation` (`sidecar_checkin.py`) — actually reads
+     the brain's stamped `env_name` + `mc_url`. Real check.
+  2. `_heartbeat_tier` (`diagnostics.py`) — purely heartbeat age. Anything
+     over 110s was labeled `preview_drift` and the banner said "likely on
+     preview URL". Pure false alarm whenever a brain ran a slow LLM call.
+
+Separately, the operator pointed out **Chevelle should not be on the
+promotion ladder** — it's the Governor for both equity and crypto. The
+`promote_brain` endpoint already refused governor promotion (line 176),
+but the `promotion-artifact` reporter was iterating over RUNTIMES without
+checking authority state. Result: Chevelle was being evaluated as a
+shadow-vs-fill candidate against Alpha, inflating "3 brain reports" and
+suggesting it could be promoted.
+
+**Shipped (Option A on drift, exclusion fix on artifact)**:
+
+1. **`_heartbeat_tier` reduced to liveness-only.** Bands are now
+   `{ok, stale, dead, unknown}`. The `preview_drift` and `drift` tiers
+   are gone. Function docstring locks the doctrine: this answers
+   liveness, not URL config.
+
+2. **Banner + badge copy updated** (`Diagnostics.jsx`). Red banner now
+   reads `STALE HEARTBEAT — X heartbeating ≥110s ago. Possible hang,
+   slow LLM call, or pod restart.` Points the operator to the Sidecar
+   identity check-ins panel for the actual MC-URL verdict. Status badge
+   chips: `LIVE / STALE / DEAD / NO HEARTBEAT`. Status detail says
+   "possible hang" instead of the false "likely on preview URL".
+
+3. **`promotion-artifact` excludes governors.** Reader now calls
+   `_current_state(rt)` and skips any brain whose `authority_state ==
+   "governor"`. New response field `excluded_governors: ["chevelle"]`
+   so the UI can surface the off-ladder brains.
+
+4. **`PromotionArtifactPanel.jsx`** renders the excluded-governors note
+   inline with the benchmark/window/report-count line:
+   `off-ladder (governor): CHEVELLE`.
+
+**Tests**: +5 tripwires (224 → **229 total, all green**).
+   - `_heartbeat_tier` returns only canonical bands
+   - `_heartbeat_tier` never returns the forbidden `preview_drift`
+     literal at any input
+   - HTTP integration: every diagnostics row carries one of
+     {ok, stale, dead, unknown}
+   - promotion-artifact unit test: chevelle excluded, camaro present,
+     `excluded_governors` populated
+   - promotion-artifact HTTP contract: response includes
+     `excluded_governors` array
+
+**Live smoke (preview)**:
+   - diagnostics: `alpha→ok, camaro→stale(74s), chevelle→ok, redeye→unknown`
+   - promotion-artifact: `reports=[camaro, redeye], excluded_governors=[chevelle]`
+
 **P1 / P2 — Backlog**
 - **P2 — Build 2 demote/freeze workflow**: operator-initiated downgrade + hard-freeze
   endpoints, both audit-logged. On hold pending Build 3 production verification.

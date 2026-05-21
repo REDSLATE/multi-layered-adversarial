@@ -432,21 +432,25 @@ export default function Diagnostics() {
           </div>
 
           <Card className="p-0 overflow-hidden" testid="diag-runtimes">
-            {/* Top-of-table banner — fires the moment any brain crosses
-                the 110s preview-drift threshold. Operator rule:
-                ≥110s = brain is likely pointed at the PREVIEW URL,
-                not prod. Catches Camaro-style config drift fast. */}
-            {data.runtimes.some((r) => r.heartbeat_tier === "preview_drift") && (
+            {/* Top-of-table banner — STALE HEARTBEAT signal (no longer
+                conflated with "wrong MC URL"). Fires when any brain
+                hasn't pinged in ≥HEARTBEAT_PREVIEW_DRIFT_SECONDS. The
+                actual "is this pod on preview?" verdict is in the
+                Sidecar identity check-ins panel below — it reads the
+                brain's stamped env_name + mc_url. (2026-02-18: split
+                from the old preview-drift heuristic which produced
+                false alarms when brains ran slow.) */}
+            {data.runtimes.some((r) => r.heartbeat_tier === "dead") && (
               <div
                 className="bg-rd-danger/15 border-b border-rd-danger px-4 py-2 text-[11px] font-mono text-rd-danger"
-                data-testid="preview-drift-banner"
+                data-testid="stale-heartbeat-banner"
               >
-                ⚠ PREVIEW DRIFT — {data.runtimes
-                  .filter((r) => r.heartbeat_tier === "preview_drift")
+                ⚠ STALE HEARTBEAT — {data.runtimes
+                  .filter((r) => r.heartbeat_tier === "dead")
                   .map((r) => r.runtime.toUpperCase())
                   .join(", ")}{" "}
-                heartbeating ≥{data.heartbeat_preview_drift_seconds || 110}s ago. Likely pointed at the preview URL, not{" "}
-                <span className="text-rd-text font-bold">mission.risedual.ai</span>. Check the sidecar's <code>MC_BASE_URL</code>.
+                heartbeating ≥{data.heartbeat_preview_drift_seconds || 110}s ago. Possible hang, slow LLM call, or pod restart. For an actual MC-URL misconfig check, see the{" "}
+                <span className="text-rd-text font-bold">Sidecar identity check-ins</span> panel below.
               </div>
             )}
             <table className="w-full text-xs font-mono">
@@ -462,15 +466,14 @@ export default function Diagnostics() {
               <tbody>
                 {data.runtimes.map((r) => {
                   const meta = RUNTIME_META[r.runtime];
-                  // Three-tier operator doctrine. Tier comes from backend
-                  // so frontend & backend can never disagree on what counts
-                  // as drift vs preview-drift.
-                  const tier = r.heartbeat_tier || (r.heartbeat_stale ? "preview_drift" : "ok");
+                  // Liveness-only tier from backend. The drift/wrong-URL
+                  // verdict lives in the Sidecar check-ins panel below.
+                  const tier = r.heartbeat_tier || (r.heartbeat_stale ? "dead" : "ok");
                   const tierMeta = {
-                    ok:            { color: "#10B981", label: "LIVE" },
-                    drift:         { color: "#F59E0B", label: "DRIFT" },
-                    preview_drift: { color: "#DC2626", label: "PREVIEW URL" },
-                    unknown:       { color: "#A1A1AA", label: "NO HEARTBEAT" },
+                    ok:      { color: "#10B981", label: "LIVE" },
+                    stale:   { color: "#F59E0B", label: "STALE" },
+                    dead:    { color: "#DC2626", label: "DEAD" },
+                    unknown: { color: "#A1A1AA", label: "NO HEARTBEAT" },
                   }[tier];
                   return (
                     <tr
@@ -500,12 +503,12 @@ export default function Diagnostics() {
                             {Math.floor(r.heartbeat_age_seconds)}s
                           </span>
                         )}
-                        {tier === "preview_drift" && (
+                        {tier === "dead" && (
                           <span
                             className="ml-2 text-[10px] text-rd-danger"
-                            title="≥110s — operator rule says brain is on preview URL"
+                            title="≥110s since last ping — possible hang or slow LLM call. MC-URL config check lives in the Sidecar check-ins panel below."
                           >
-                            · likely on preview URL
+                            · possible hang
                           </span>
                         )}
                       </td>

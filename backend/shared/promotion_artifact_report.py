@@ -420,18 +420,35 @@ async def get_promotion_artifact_all(
     _user: dict = Depends(get_current_user),
 ):
     """All-brains scan against the benchmark brain. Used by the dashboard
-    Promotion-Evidence panel."""
+    Promotion-Evidence panel.
+
+    Doctrine (2026-02-18): brains currently holding GOVERNOR authority
+    are excluded from the report. Governor is off-ladder: it's a
+    terminal seat that cannot be promoted to a trading authority
+    (mirrors `promote_brain`'s explicit refusal at line 176). Chevelle
+    holds the equity AND crypto governor seats; evaluating it as a
+    promotion candidate against Alpha's fills is a category error and
+    confused the operator UI by inflating the "brain reports" count.
+    """
     if benchmark_brain not in RUNTIMES:
         raise HTTPException(status_code=400, detail=f"unknown benchmark_brain: {benchmark_brain}")
+    # Pull authority states once; cheap enough at 4 brains.
+    from shared.promotion import _current_state  # noqa: WPS433
+    excluded_governors: list[str] = []
     reports = []
     for rt in RUNTIMES:
         if rt == benchmark_brain:
+            continue
+        state = await _current_state(rt)
+        if (state or {}).get("authority_state") == "governor":
+            excluded_governors.append(rt)
             continue
         reports.append(await compute_brain_report(brain=rt, hours=hours, benchmark_brain=benchmark_brain))
     return {
         "benchmark_brain": benchmark_brain,
         "hours": hours,
         "reports": reports,
+        "excluded_governors": excluded_governors,
         "generated_at": _now().isoformat(),
         "report_version": "promotion_artifact_v1_shadow_vs_fill",
     }
