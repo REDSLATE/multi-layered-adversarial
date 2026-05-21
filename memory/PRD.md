@@ -3564,6 +3564,75 @@ suggesting it could be promoted.
    - diagnostics: `alpha→ok, camaro→stale(74s), chevelle→ok, redeye→unknown`
    - promotion-artifact: `reports=[camaro, redeye], excluded_governors=[chevelle]`
 
+## 2026-02-18 (fourth) — Forward-compat stamp + Intent snapshot persistence
+
+**Context**: Two real blockers came in via the operator's prod screenshots and
+the Camaro team's handoff note ("MC needs a server-side broker adapter").
+
+**Diagnosis 1 — `RuntimeStamp` was too strict**
+The Alpha + Camaro pods rolled out `env_pip_fingerprint()` shipping a new
+`pip_fingerprint` field in their `RuntimeStamp`. MC's `_validate_stamp_dict`
+did `RuntimeStamp(**stamp_dict)` against a dataclass that didn't know the new
+field, raising `TypeError: __init__() got an unexpected keyword argument
+'pip_fingerprint'`. Result: every brain that adopted the new envelope
+flipped to verdict=INVALID, displayed in red in the Sidecar Identity panel.
+
+**Diagnosis 2 — "MC needs a broker adapter" was wrong**
+The bridge actually exists. `shared/auto_router.py` already polls
+`shared_intents` every 30s, runs `_evaluate_gates`, and calls
+`route_order()` on passing intents. Started in lifespan when alpaca creds
+exist. In prod it IS running and IS evaluating every Camaro intent.
+
+The REAL blocker was an MC-side bug: both ingest paths
+(`/api/intents` runtime-token path AND `/api/admin/intents` admin path)
+were silently dropping the brain's `doctrine_snapshot` instead of
+persisting it on the intent doc. The labeler used it (and audit-logged it
+to `doctrine_sidecars`), but the gate chain reads `intent.snapshot.spread_bps`
+which was always None → `roadguard_spread_floor` failed closed at gate 7
+on every single intent for months with the misleading error
+"ROADGUARD_MISSING_SPREAD_BPS — snapshot absent".
+
+**Shipped**:
+
+1. **Forward-compat `RuntimeStamp` validator** (`sidecar_checkin.py`):
+   filter incoming dict to known dataclass fields BEFORE constructing the
+   typed object; persist the FULL raw stamp (including unknown extras)
+   so forward-compat data like `pip_fingerprint` survives the round trip;
+   surface `unknown_keys` array in the validation result.
+   Result: brain rollouts of new optional stamp fields no longer require a
+   lockstep MC redeploy.
+
+2. **Intent snapshot persisted to the gate-readable shape**
+   (`shared/intents.py`): both ingest paths now write
+   `"snapshot": dict(body.doctrine_snapshot or {})` onto the intent doc.
+   The gate chain immediately starts seeing `spread_bps` and
+   `roadguard_spread_floor` passes for healthy markets, fails correctly
+   for actually-wide spreads.
+
+**Tests**: +10 new tripwires (229 → **239 total, all green**).
+   - 6 tripwires for forward-compat stamp validation (tolerates unknown
+     keys, persists them, surfaces them, still rejects missing required
+     fields, still flags wrong `env_name` / `mc_url`)
+   - 4 tripwires for snapshot persistence (admin-proxy persists snapshot,
+     missing snapshot becomes `{}` not None, gate chain reads it
+     end-to-end, RoadGuard still fails on actually-wide spreads)
+
+**Live smoke (preview)**: synthetic Camaro/MSFT BUY with
+`spread_bps=4.0` now passes `roadguard_spread_floor` cleanly. Only
+preview-specific blockers remain (`broker_connected` — no Alpaca creds
+in preview; `lane_execution_enabled` — toggle defaults OFF).
+
+**What this means for prod after redeploy**:
+   - Sidecar Identity panel: Alpha + Camaro will flip from INVALID →
+     prod within one check-in cycle (no brain redeploy needed).
+   - Auto-router will start passing intents through gates 1-7 instead of
+     bouncing at 7. Real fills become possible the moment a Camaro or
+     Alpha intent passes governor/opponent/caps with both lane toggles ON
+     and broker connected (all already true in prod).
+   - The Decisions feed `gate_fail · ROADGUARD_MISSING_SPREAD_BPS` rows
+     should disappear, replaced by `gate_pass` rows showing actual spread
+     readings.
+
 **P1 / P2 — Backlog**
 - **P2 — Build 2 demote/freeze workflow**: operator-initiated downgrade + hard-freeze
   endpoints, both audit-logged. On hold pending Build 3 production verification.
