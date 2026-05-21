@@ -9,32 +9,31 @@ hitting refresh every minute doesn't burn tokens. Cache key is
 deterministic on the digest snapshot, so two callers seeing the same
 data get the same prose.
 
-Doctrine: the LLM is asked to summarize, not predict. The prompt
-forbids fabricating numbers and instructs the model to anchor every
-claim in the supplied JSON. Output is plain prose — no markdown, no
-disclaimers, no "as an AI…" preambles.
+Doctrine pin (2026-02-XX, migration):
+    All LLM calls in this file go through `shared.llm.llm_kernel`.
+    The kernel ledgers every call into `llm_calls`, stamps
+    `llm_authority="ADVISORY_ONLY"`, and exposes the call to the
+    operator's grading panel at `/admin/llm-ledger`. The actual
+    model used (gemini-3-flash-preview) is pinned here via
+    `provider_override` / `model_override` because narrative
+    summarization wants the cheaper Flash tier rather than the
+    routing-policy default of Pro.
 """
 from __future__ import annotations
 
 import hashlib
 import json
-import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from db import db
 from namespaces import PUBLIC_NARRATIVE_CACHE
+from shared.llm import llm_kernel
 
 from .auth import PublicCaller, public_trust_required
 from .digest import _build_predictions, _build_smart_money, _build_alerts, PAID_CAPS
-
-try:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-except ImportError:  # noqa: F401
-    LlmChat = None
-    UserMessage = None
 
 
 router = APIRouter(tags=["public"])
@@ -42,6 +41,13 @@ router = APIRouter(tags=["public"])
 CACHE_TTL_SECONDS = 300                   # 5 minutes; tune per cost appetite
 LLM_PROVIDER = "gemini"
 LLM_MODEL = "gemini-3-flash-preview"
+
+# Narrative role label. Free-form — the kernel uses it for logging /
+# grouping in the ledger; it doesn't have to match a routing
+# override. The operator filters `/admin/llm-ledger?role=public_narrator`
+# to see only these calls.
+LLM_ROLE = "public_narrator"
+LLM_TASK = "market_overview_summary"
 
 NARRATIVE_SYSTEM = (
     "You are RiseDual's market commentary engine. You write a tight, "
@@ -101,18 +107,6 @@ async def get_digest_narrative(
     Cached for 5 minutes on a content-hash key so refreshes don't burn
     tokens. Cached prose is served to every tier (narrative content is
     not gated — it's the same market either way)."""
-    if LlmChat is None:
-        raise HTTPException(
-            status_code=503,
-            detail="LLM integration not installed (emergentintegrations missing)",
-        )
-    api_key = os.environ.get("EMERGENT_LLM_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="LLM not configured (EMERGENT_LLM_KEY unset)",
-        )
-
     # Build the digest payload at paid-tier caps (we want rich context
     # for the LLM regardless of the caller's tier).
     full_preds = await _build_predictions(PAID_CAPS["predictions"])
@@ -141,20 +135,25 @@ async def get_digest_narrative(
 
     user_prompt = _build_user_prompt(full_preds, full_sm, full_alerts, active)
 
-    chat = LlmChat(
-        api_key=api_key,
+    # Route through the kernel so the call gets ledgered + graded.
+    result = await llm_kernel.call(
+        role=LLM_ROLE,
+        task=LLM_TASK,
+        prompt=user_prompt,
+        system=NARRATIVE_SYSTEM,
         session_id=f"narrative-{sig}",
-        system_message=NARRATIVE_SYSTEM,
-    ).with_model(LLM_PROVIDER, LLM_MODEL)
+        provider_override=LLM_PROVIDER,
+        model_override=LLM_MODEL,
+        metadata={"caller_tier": caller.tier, "cache_signature": sig},
+    )
 
-    try:
-        text = await chat.send_message(UserMessage(text=user_prompt))
-    except Exception as e:  # noqa: BLE001
+    if not result["ok"]:
         raise HTTPException(
-            status_code=502, detail=f"LLM call failed: {e}",
-        ) from e
+            status_code=502,
+            detail=f"LLM call failed: {result.get('error', 'unknown error')}",
+        )
 
-    text = (text or "").strip()
+    text = (result.get("response") or "").strip()
     if not text:
         raise HTTPException(status_code=502, detail="LLM returned empty narrative")
 
