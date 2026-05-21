@@ -1,6 +1,73 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🆕 2026-05-21 (latest): Unified `/api/ai/run` entry + portable architecture reference
+
+### B) `POST /api/ai/run` — unified front door
+The tutorial's `/api/ai/run` surface, but backed by the production stack
+(not a 3-string blocklist). Routes ad-hoc queries through the existing
+LLM Kernel + Ledger + Safety governor.
+
+#### Modes
+- `chat` → `kernel.call(role="auditor", task="ai_run_chat")`
+- `reason` → `kernel.call(role="strategist", task="ai_run_reason")`
+- `code` → `kernel.call(role="strategist", task="ai_run_code")`
+- `research` → `kernel.call(role="memory", task="ai_run_research")`
+- `trade` → READ-ONLY observation. NEVER calls LLM, NEVER posts an
+  order. Returns recent paradox_candidates + paradox_records.
+
+#### Safety check (real, not toy)
+Regex-screens prompts for THREE categories — blocks BEFORE any LLM
+call, returns a tame answer with the matched phrase:
+- `execution_intent` (place order, buy now, execute trade, fire order, submit intent)
+- `doctrine_tamper` (disable gate, bypass roadguard, override veto, turn off kill switch)
+- `auth_tamper` (steal password, malware, exploit bank, drain account)
+
+#### Response shape
+```
+{
+  request_id, mode, answer,
+  safety_status: "allowed" | "blocked",
+  safety_category, safety_matched,
+  call_id, provider, model, latency_ms,
+  llm_authority: "ADVISORY_ONLY",     # always
+  created_at, extra
+}
+```
+
+#### Tested
+- 12/12 endpoint tests pass (mode validation, auth gate, all three
+  safety categories, trade-mode-is-read-only, ADVISORY_ONLY passthrough).
+- Live smoke test: real Anthropic call via the kernel returned in ~2.2s,
+  ledgered to `llm_calls`, gradable from `/admin/llm-ledger`.
+
+### C) `/app/RISE_AI_KERNEL.py` — single-file architecture reference
+A 350-line documentation artifact at the repo root showing all 7
+boxes interlocking in one place. Self-contained, no DB, no broker,
+no Emergent dependencies. Designed for:
+- Onboarding new engineers
+- Explaining the architecture to stakeholders
+- Off-platform migration (the boundaries are explicit; the real
+  code is interface-compatible)
+
+Includes a working `python RISE_AI_KERNEL.py` demo that exercises
+all seven boxes. Header documentation maps each box to its real
+implementation path under `/app/backend/`.
+
+### Tripwires (5 new — 181 total)
+- `VALID_MODES = {chat, reason, code, trade, research}` pinned exactly
+- Safety screen blocks execution-intent prompts
+- Safety screen blocks doctrine-tamper prompts
+- Safety screen blocks auth-tamper prompts
+- `/api/ai/run` response ALWAYS stamps `llm_authority="ADVISORY_ONLY"`
+
+### Files
+- `routes/ai_run_routes.py` — unified entry + safety governor
+- `tests/test_ai_run_routes.py` — 12 tests, 5 tripwires
+- `/app/RISE_AI_KERNEL.py` — portable single-file reference
+
+
+
 ## 🆕 2026-05-21 (latest): Migrations + Paradox Coordinator v0
 
 ### A) Direct emergentintegrations callsites migrated
