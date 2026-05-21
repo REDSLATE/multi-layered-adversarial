@@ -87,6 +87,13 @@ from routes.memory_kernel_routes import router as memory_kernel_router
 from routes.orphan_inspection_routes import router as orphan_inspection_router
 from routes.orphan_replay_routes import router as orphan_replay_router
 from routes.paradox_routes import router as paradox_router
+from routes.paradox_agent_routes import router as paradox_agent_router
+from shared.coordinator.routes import router as coordinator_router
+from shared.coordinator.lifespan import (
+    start_paradox_coordinator,
+    stop_paradox_coordinator,
+)
+from shared.coordinator.user_seed import ensure_coordinator_user
 from shared.runtime.orphan_watchdog import (
     start_watchdog_if_enabled as start_orphan_watchdog,
     stop_watchdog as stop_orphan_watchdog,
@@ -172,6 +179,14 @@ async def lifespan(app: FastAPI):
         await start_orphan_watchdog()
     except Exception as e:  # noqa: BLE001
         logger.warning("orphan_watchdog start failed: %s", e)
+    # PARADOX coordinator — in-process agent scheduler. Every agent
+    # starts DISABLED; operator opts in per agent via
+    # `/api/admin/coordinator/enable/{agent}`.
+    try:
+        await ensure_coordinator_user()
+        await start_paradox_coordinator()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("paradox_coordinator start failed: %s", e)
     yield
     await stop_poller()
     await stop_tickler()
@@ -182,6 +197,7 @@ async def lifespan(app: FastAPI):
     await stop_scorecard_scheduler()
     await stop_position_monitor()
     await stop_orphan_watchdog()
+    await stop_paradox_coordinator()
     client.close()
 
 
@@ -280,6 +296,8 @@ api_router.include_router(memory_kernel_router)
 api_router.include_router(orphan_inspection_router)
 api_router.include_router(orphan_replay_router)
 api_router.include_router(paradox_router)
+api_router.include_router(paradox_agent_router)
+api_router.include_router(coordinator_router)
 api_router.include_router(runtime_bundles_router)
 api_router.include_router(promotion_artifact_report_router)
 api_router.include_router(public_news_router)

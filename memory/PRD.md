@@ -1,6 +1,50 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🆕 2026-05-21 (later): PARADOX in-process coordinator (LIVE in preview)
+
+Replaces the proposed Celery/Redis distributed scheduler with an
+asyncio-based in-process coordinator. Three doctrinally-locked rules:
+
+  1. **Every execute call goes through `/api/execution/submit`** — the
+     full 11-gate chain plus paradox-record writer. The execute agent
+     POSTs to `/api/admin/paradox/execute-next` which internally
+     re-POSTs to the gated submit path. No direct broker import.
+  2. **Each agent has its own enable flag.** There is no global kill
+     switch. Tripwire `test_no_global_kill_switch_constant` enforces
+     it at module-import time.
+  3. **Default state: every agent disabled.** Operator must explicitly
+     enable each one via `/api/admin/coordinator/enable/{agent}`.
+
+### Files
+  * `shared/coordinator/state.py` — in-memory `CoordinatorState` /
+    `AgentState`, 5 agents (scan, evaluate, execute, risk, retrain).
+  * `shared/coordinator/agents.py` — agent HTTP functions; mints a
+    short-lived JWT against `JWT_SECRET` for self-calls.
+  * `shared/coordinator/runner.py` — asyncio loop; `run_agent`,
+    `run_cycle`; failures captured into state, never raised.
+  * `shared/coordinator/routes.py` — operator endpoints under
+    `/api/admin/coordinator/{status,enable,disable,run,run-cycle,cycle-seconds}`.
+  * `shared/coordinator/lifespan.py` — wired into FastAPI lifespan.
+  * `shared/coordinator/user_seed.py` — idempotent seeding of
+    `paradox-coordinator` system user (no password; auth-only via the
+    internally-minted JWT).
+  * `routes/paradox_agent_routes.py` — thin stubs for `scan`,
+    `evaluate`, `execute-next`, `risk/check`, `ml/retrain/check`.
+    `execute-next` is the only non-stub: it pulls one queued intent
+    and routes it through `/api/execution/submit`.
+  * `tests/test_paradox_coordinator.py` — 12 tests, 5 tripwires.
+
+### Live verification
+  * All 5 agents fire in parallel via `run-cycle`
+  * Internal JWT authenticates as `paradox-coordinator` system user
+  * Execute agent correctly NO-OPs (`reason=no_queued_intents`) —
+    nothing fires through MC because nothing is queued
+  * Status panel reflects per-agent state with `last_result_summary`
+
+### Tripwire status: 151 passing (was 146; +5 coordinator locks)
+
+
 ## 🆕 2026-05-21: Roster page rewrite + paradox-record writer (LIVE in preview)
 
 ### Front-end PARADOX Roster panel
