@@ -49,6 +49,7 @@ const SECTIONS = [
     label: "Audit",
     items: [
       { to: "/admin/mc-shelly", label: "MC Memory", icon: Brain, testid: "nav-mc-shelly" },
+      { to: "/admin/llm-ledger", label: "LLM Ledger", icon: Sparkle, testid: "nav-llm-ledger" },
       { to: "/admin/receipts", label: "ADL Receipts", icon: Receipt, testid: "nav-receipts" },
       { to: "/admin/memory", label: "Memory Firewall", icon: Shield, testid: "nav-memory" },
       { to: "/admin/recent", label: "Live Tail", icon: Pulse, testid: "nav-recent" },

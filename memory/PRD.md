@@ -1,6 +1,61 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🆕 2026-05-21 (latest): LLM Ledger + Grading Panel — closing the learning loop
+
+The decision-trace ledger is now live as both a backend endpoint and a
+UI surface at `/admin/llm-ledger`. This is the piece that turns the
+LLM Kernel from a router into a **learning loop**.
+
+### Endpoints (mounted at `/api/admin/llm/`)
+* `GET /ledger?hours=<n>&limit=<n>&role=&provider=&only_ungraded=`
+  — paginated list (preview rows, 200-char prompt/response previews,
+  attached `latest_grade` + `grades_count`).
+* `GET /ledger/{call_id}` — full prompt + full response + every prior
+  grade in reverse-chronological order.
+* `POST /ledger/{call_id}/grade` — body `{score ∈ [-2..2], outcome,
+  note?}`. Writes to `llm_preference_log` and auto-enqueues into
+  `llm_distillation_queue` when `score ≥ +1`. Idempotent enqueue.
+
+### UI (`/admin/llm-ledger`, sidebar entry "LLM Ledger")
+* Filterable table: window (1h..7d), role, provider, ungraded-only.
+* Color-coded role + provider per row, latency, grade pill.
+* Click any row → detail modal showing full prompt/response,
+  ADVISORY_ONLY badge, prior grades, and the **+1 helpful / 0 neutral
+  / -1 wrong** grading buttons with outcome + note inputs.
+
+### Doctrine locks (added to tripwire suite)
+* Endpoints require admin JWT.
+* Grades route ONLY into the training pipeline — NEVER affect
+  execution or provider promotion. Tripwire confirms `llm_authority`
+  passthrough.
+* Invalid scores rejected at the API; unknown call_id 404s.
+* Positive grades (score ≥ +1) auto-enqueue exactly once into
+  distillation queue; idempotent.
+
+### Files
+* `routes/llm_ledger_routes.py` — three endpoints.
+* `pages/LlmLedger.jsx` — operator panel with grading modal.
+* `App.js` — `/admin/llm-ledger` route wired in.
+* `components/Layout.jsx` — sidebar nav entry under Audit.
+* `tests/test_llm_ledger_routes.py` — 12 tests (auth gate, list, detail,
+  grade with/without enqueue, advisory stamp passthrough).
+
+### The closed loop is now active
+```
+Brain → llm_kernel.call()      → llm_calls
+Operator → /admin/llm-ledger   → grade (+1/0/-1)
+Grade ≥ +1                     → llm_preference_log
+                               → llm_distillation_queue (auto-enqueue)
+Future trainer                 → dequeue → fine-tune local/self_trained
+eval_harness                   → compare candidate vs primary
+Operator                       → promote SHADOW → ADVISOR → PRIMARY
+```
+
+Total tripwires: 170 passing. Backend boots clean.
+
+
+
 ## 🆕 2026-05-21 (latest): RISE_AI LLM Kernel — the missing 7th box
 
 The Model Adapter Kernel is now live under `/app/backend/shared/llm/`.
