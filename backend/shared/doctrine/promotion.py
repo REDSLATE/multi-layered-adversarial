@@ -116,6 +116,26 @@ DOCTRINE_IDEALS = {
             "pullback on non-leading stock",
         ],
     },
+    "large_cap_equity_v1": {
+        "title": "Large-Cap Equity",
+        "summary": (
+            "Mega-cap day trading doctrine for names like NVDA / AMZN / "
+            "GOOGL / AAPL. Liquidity-aware; relaxed gap and RVOL "
+            "thresholds that match how large-caps actually move."
+        ),
+        "wants": [
+            "elevated relative volume (≥1.5x; ≥3x preferred)",
+            "directional gap (≥1%; ≥3% strong)",
+            "tight spread (≤25 bps; ≤10 bps preferred)",
+            "green-light market regime",
+            "news catalyst (bonus, not required)",
+        ],
+        "common_rejections": [
+            "rvol too quiet for directional",
+            "spread risk",
+            "weak market regime",
+        ],
+    },
     "crypto_sidecar_v1": {
         "title": "Crypto Generic",
         "summary": "Lane-isolated crypto doctrine. Liquidity + funding + regime aware.",

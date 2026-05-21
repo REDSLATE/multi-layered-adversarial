@@ -3375,6 +3375,75 @@ Doctrine: **one shared nervous system, three separate decision brains.**
   Digest → Heatmap → Signals → War Room → Agent Activity → Models Mind → Sectors →
   Market Overview narrative → RiseDualGPT chat.
 
+## 2026-02-18 — Brain Emission Diagnostic + Large-Cap Doctrine + Doctrine Hints
+
+**Context**: Prod screenshot showed 100 intents stuck on `mission.risedual.ai`,
+all Camaro, all HOLD, doctrine chips showing REJECT / RISK_DOWN. User originally
+hypothesized the "LEARNING 0/100 → doctrine_reject" loop was blocking execution.
+
+**RCA finding**: Doctrine state is already READ-ONLY everywhere it matters.
+The `Doctrine Health` panel (`/admin/doctrine/promotion-status`) is gate-stated
+"does not influence execution". The per-intent sidecar packet is documented in
+`shared/intents.py` as a "READ-ONLY ATTACHMENT — never modifies direction,
+confidence, or any gate state". `_build_governor` hardcodes `governor_action =
+"modulate"` (never "block") under doctrine (c). `risk_multiplier` floors at 0.10.
+
+The real deadlock is upstream: Camaro emits 100% HOLD intents which die at gate
+2 (`action_routable`), and Alpha (the equity executor seat) emits 0 intents.
+Brain runtimes are external pods, not in this repo.
+
+**Shipped (additive only, never mutates gate chain)**:
+
+1. **`GET /api/admin/brain/emission-diagnose[/{brain}]`** — read-only diagnostic
+   answering the 7 brain-silence hypotheses in one shape. Typed `silent_reasons`
+   codes: NO_HEARTBEAT_EVER, HEARTBEAT_DEAD/STALE, NO_SIDECAR_CHECKIN,
+   SIDECAR_CHECKIN_DRIFT/INVALID, NO_EXECUTOR_SEAT_FOR_LANE, NO_INTENT_EVER,
+   NO_INTENT_LAST_24H, ONLY_HOLD_ACTIONS, ALL_INTENTS_REJECTED_AT_INGEST,
+   PRODUCING_ROUTABLE_INTENTS, RECENT_DIRECTIONAL_PRESENT.
+   Combines heartbeat + sidecar checkin + roster + intent emission stats.
+   File: `routes/brain_emission_diagnose.py`.
+
+2. **`large_cap_equity_v1` doctrine** — new doctrine version for AMZN/GOOGL/
+   NVDA/AAPL-class names. Relaxed thresholds (gap ≥1%, RVOL ≥1.5x, no float
+   gate). Same role-keyed seat shape so audit/scorecard/auto-retire unchanged.
+   Doctrine (c) preserved: governor never hard-blocks, risk_multiplier floors
+   at 0.10. Router dispatches on `snapshot.market_cap_band ∈ {large,mega}` or
+   `snapshot.strategy == "large_cap"`. Added to `DOCTRINE_IDEALS` so the
+   Doctrine Health panel renders it.
+   File: `shared/doctrine/large_cap_doctrine.py`.
+
+3. **`GET /api/admin/brain/doctrine-hint`** — scaffolding endpoint brains MAY
+   read (JWT or X-Runtime-Token). Returns candidate doctrines, live verdict
+   (LEARNING/WATCHING/CANDIDATE_*), `recommended_emit_semantic` hint. Response
+   includes a `doctrine_note` pinning the invariants ("HOLD never becomes trade",
+   "LEARNING never blocks"). Never mutates state.
+   File: `routes/brain_doctrine_hint.py`.
+
+**Tests**: +26 tripwires (184 → 210 total, all green). Coverage:
+   - `tests/test_brain_emission_diagnose.py` (8 tripwires)
+   - `tests/test_brain_doctrine_hint.py` (7 tripwires)
+   - `tests/test_large_cap_doctrine.py` (11 tripwires)
+
+**Live smoke against preview env**: confirmed Camaro emits 0 intents in preview
+(no sidecar pod here), endpoint correctly classifies as
+"camaro has never contacted MC — sidecar pod likely not running." In prod the
+same endpoint should show ONLY_HOLD_ACTIONS + NO_EXECUTOR_SEAT_FOR_LANE for Camaro.
+
+**Operator next steps**:
+   - Hit `GET /api/admin/brain/emission-diagnose` against PROD to see typed
+     reasons for Alpha's silence + Camaro's HOLD-only emission.
+   - Update Camaro's external sidecar to tag mega-cap symbols with
+     `market_cap_band="large"` or `strategy="large_cap"` so they route to the
+     large-cap doctrine instead of small-account REJECTs.
+   - Update Alpha's external sidecar to actually emit BUY/SELL directional
+     intents (this fork cannot fix; it's external pod code).
+
+**Known pre-existing test issue**: `tests/test_doctrine_intent_attachment.py::
+test_equity_with_empty_snapshot_still_returns_packet` fails on `main` because
+it asserts `governor_action == "block"` but doctrine (c) made that "modulate"
+since 2026-05-20. NOT a tripwire, NOT introduced here — flagged for separate
+hygiene cleanup.
+
 **P1 / P2 — Backlog**
 - **P2 — Build 2 demote/freeze workflow**: operator-initiated downgrade + hard-freeze
   endpoints, both audit-logged. On hold pending Build 3 production verification.

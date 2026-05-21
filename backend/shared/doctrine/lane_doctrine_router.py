@@ -36,6 +36,16 @@ def build_lane_doctrine_packet(
         # to the generic small-account sidecar. Patent J can then
         # graduate (lane, seat, doctrine_version) slices indepedently.
         strategy = str(snapshot.get("strategy") or "").lower()
+        market_cap_band = str(snapshot.get("market_cap_band") or "").lower()
+        # Large-cap dispatch (2026-02-18): mega-cap names like NVDA /
+        # AMZN / GOOGL never satisfy small-account thresholds. Route
+        # them to `large_cap_equity_v1` if the snapshot flags them as
+        # large/mega-cap or the brain explicitly picks the strategy.
+        if strategy == "large_cap" or market_cap_band in ("large", "mega"):
+            from shared.doctrine.large_cap_doctrine import (  # noqa: WPS433
+                build_large_cap_doctrine_packet,
+            )
+            return build_large_cap_doctrine_packet(snapshot, seat_holders)
         if strategy in ("gap_and_go", "micro_pullback"):
             from shared.doctrine.strategy_doctrines import (  # noqa: WPS433
                 build_strategy_packet,

@@ -93,6 +93,8 @@ from routes.llm_ledger_routes import router as llm_ledger_router
 from routes.paradox_watchlist_routes import router as paradox_watchlist_router
 from routes.ai_run_routes import router as ai_run_router
 from routes.rise_ai_threads_routes import router as rise_ai_threads_router
+from routes.brain_emission_diagnose import router as brain_emission_diagnose_router
+from routes.brain_doctrine_hint import router as brain_doctrine_hint_router
 from shared.coordinator.routes import router as coordinator_router
 from shared.coordinator.lifespan import (
     start_paradox_coordinator,
@@ -307,6 +309,8 @@ api_router.include_router(llm_ledger_router)
 api_router.include_router(paradox_watchlist_router)
 api_router.include_router(ai_run_router)
 api_router.include_router(rise_ai_threads_router)
+api_router.include_router(brain_emission_diagnose_router)
+api_router.include_router(brain_doctrine_hint_router)
 api_router.include_router(coordinator_router)
 api_router.include_router(runtime_bundles_router)
 api_router.include_router(promotion_artifact_report_router)
