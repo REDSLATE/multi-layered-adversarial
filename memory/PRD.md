@@ -1,6 +1,82 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🆕 2026-05-21 (latest): Migrations + Paradox Coordinator v0
+
+### A) Direct emergentintegrations callsites migrated
+Audited the codebase — only ONE direct callsite existed outside
+`shared/llm/`: `shared/public_api/narrative.py` (gemini-3-flash-preview
+for the public market overview). Migrated it to
+`llm_kernel.call(role="public_narrator", task="market_overview_summary",
+provider_override="gemini", model_override="gemini-3-flash-preview")`.
+Every narrative call now ledgers into `llm_calls` and is gradable
+from `/admin/llm-ledger`. 170 tripwires still green post-migration.
+
+### B) Paradox Coordinator v0 — candidates + advisory evaluation
+Doctrine pin: v0 = candidate generator + advisory evaluator only.
+NO execution authority. NO auto-submit to broker. Everything writes
+to `paradox_candidates` / `paradox_records`. The existing 11-gate
+chain + human/admin promotion are still required for execution.
+
+#### Endpoints (under `/api/admin/`)
+- `POST /paradox/scan` — walk watchlist → filters → persist candidates
+- `POST /paradox/evaluate` — 3 LLM calls (strategist/opponent/auditor)
+   → aggregate → write paradox_record
+- `POST /risk/check` — per-candidate + global gate
+- `POST /ml/retrain/check` — retrain trigger eval
+- `POST /paradox/execute-next` — flush ONE queued intent via the
+   real gated submit path (unchanged from v0 stub)
+- `GET/POST/DELETE /paradox/watchlist` + `/toggle` — admin CRUD
+
+#### Service modules
+- `services/paradox_scanner.py` — universe (watchlist primary,
+  hardcoded fallback) + 5 filters: price≥2, vol≥500k, spread≤75bps,
+  rvol≥1.5, ¬halted. Filters pinned by tripwire.
+- `services/paradox_evaluator.py` — strategist/opponent/auditor via
+  kernel. Aggregation: `final_conviction=min(strategist, auditor)`,
+  opponent_veto→HOLD, HOLD never promotable, parse_error→rejected.
+- `services/paradox_risk.py` — per-symbol (open_count, duplicate,
+  exposure, lane_cap) + global (kill_switch, broker_health,
+  daily_loss). Global triggers pause the loop; per-symbol just
+  stamps risk_blocked and writes audit record.
+- `services/paradox_retrain.py` — three triggers (winners≥50,
+  eval_runs≥100, hours_since≥24). Writes a recommendation row;
+  NEVER auto-trains.
+
+#### Collections
+- `paradox_watchlist` — operator-curated universe
+- `paradox_candidates` — scanner output
+- `paradox_records` (existing, discriminated by `evaluation_kind`)
+  - `paradox_v0_evaluation` for evaluator output
+  - `paradox_v0_risk_block` for risk-block audit rows
+- `paradox_retrain_recommendations` — retrain trigger output
+
+#### Doctrine locks (tripwires — 6 new, total 176)
+- Filter thresholds pinned exactly (2 / 500k / 75 / 1.5).
+- `PROMOTABLE_ACTIONS = ("BUY", "SELL")` — HOLD MUST NOT be there.
+- `final_conviction = min(strategist, auditor)` aggregator.
+- Opponent veto forces HOLD.
+- HOLD action → status="rejected", promotable=False, regardless of scores.
+- Parse error on any brain → rejected.
+
+#### Files
+- `services/paradox_scanner.py`, `paradox_evaluator.py`,
+  `paradox_risk.py`, `paradox_retrain.py`
+- `routes/paradox_agent_routes.py` (refactored — calls services)
+- `routes/paradox_watchlist_routes.py` (new)
+- `namespaces.py` — 3 new collections
+- `tests/test_paradox_coordinator_v0.py` — 39 tests covering
+  filter pinning, aggregation logic, scan persistence, evaluator
+  with stubbed kernel, watchlist CRUD, risk/retrain HTTP paths
+
+#### What v0 is NOT yet
+- Real-time snapshot scraping (operator/sidecars supply snapshots)
+- Auto-promotion to /api/execution/submit (HUMAN gate stays in)
+- Actual trainer service consuming the retrain recommendations
+- A UI panel to display candidates + paradox_records (next P2 work)
+
+
+
 ## 🆕 2026-05-21 (latest): LLM Ledger + Grading Panel — closing the learning loop
 
 The decision-trace ledger is now live as both a backend endpoint and a

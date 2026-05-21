@@ -1,27 +1,36 @@
-"""Internal endpoints called by the PARADOX coordinator agents.
+"""Internal endpoints called by the PARADOX coordinator.
 
-These are deliberately thin. The scan / evaluate / risk / retrain
-agents are SCHEDULING SCAFFOLDS today — the real logic will be wired
-in over time. The execute agent is the load-bearing one: it pulls one
-queued intent and routes it through the FULL gated submit path so the
-11-gate chain + paradox-record writer fire.
+Doctrine pin (2026-02-XX, v0):
+    Coordinator v0 = candidate generator + advisory evaluator only.
+    NO execution authority. NO auto-submit to broker. Everything
+    writes to `paradox_candidates` / `paradox_records` first;
+    the existing 11-gate chain + human/admin promotion are still
+    required for execution.
 
-Doctrine: every endpoint here MUST require admin auth, and the
-execute-next endpoint MUST go through the real gated submit path. No
-direct broker calls live in this module.
+    `execute-next` is the EXCEPTION — it intentionally goes through
+    the real gated submit path. It pulls one already-queued intent
+    (an intent that some BRAIN already produced and gates already
+    let through to `queued`/`pending` state) and routes it through
+    `/api/execution/submit`. The coordinator does NOT bypass the
+    chain; it just nudges the queue along.
 """
 from __future__ import annotations
 
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from auth import get_current_user
 from db import db
+from services.paradox_evaluator import evaluate_candidate
+from services.paradox_retrain import check_retrain
+from services.paradox_risk import check_candidate, check_global
+from services.paradox_scanner import run_scan
 
 
 log = logging.getLogger("risedual.paradox_agent_routes")
@@ -29,63 +38,121 @@ log = logging.getLogger("risedual.paradox_agent_routes")
 router = APIRouter(prefix="/admin", tags=["paradox-coordinator-agents"])
 
 
-# ───── scan / evaluate / risk / retrain — stubs ───────────────────────
+# ─── /paradox/scan ────────────────────────────────────────────────────
+
+
+class ScanRequest(BaseModel):
+    snapshots: Optional[Dict[str, Dict[str, Any]]] = None
+    universe_override: Optional[List[Dict[str, str]]] = None
 
 
 @router.post("/paradox/scan")
-async def paradox_scan(_user: dict = Depends(get_current_user)) -> Dict[str, Any]:
-    """Scan stub. Real scanning is brain-side (Camaro/Alpha post intents
-    when they spot setups). This endpoint reports current pipeline
-    pressure so the operator can see whether the bottleneck is upstream
-    of MC or downstream."""
-    pending = await db.shared_intents.count_documents({
-        "gate_state": {"$in": ["pending", "queued"]},
-    })
-    blocked = await db.shared_intents.count_documents({"gate_state": "blocked"})
-    return {
-        "ok": True,
-        "stub": True,
-        "pipeline": {
-            "pending": pending,
-            "blocked": blocked,
-        },
-        "ts": datetime.now(timezone.utc).isoformat(),
-    }
+async def paradox_scan(
+    body: Optional[ScanRequest] = None,
+    _user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Walk the watchlist + filters, persist candidates.
+
+    Output rows go to `paradox_candidates`. NO trade intents
+    produced. Snapshots are operator-supplied — the scanner does
+    not invent market data.
+    """
+    body = body or ScanRequest()
+    return await run_scan(
+        snapshots=body.snapshots,
+        universe_override=body.universe_override,
+    )
+
+
+# ─── /paradox/evaluate ────────────────────────────────────────────────
+
+
+class EvaluateRequest(BaseModel):
+    candidate_id: str
 
 
 @router.post("/paradox/evaluate")
-async def paradox_evaluate(_user: dict = Depends(get_current_user)) -> Dict[str, Any]:
-    """Evaluate stub. Per-intent gate evaluation already happens in
-    `/api/execution/dry_run` (called by the brain sidecars). This
-    coordinator-level endpoint summarises recent dry-run verdicts so
-    the operator can see cycle-over-cycle pass-rates."""
-    one_hour_ago = datetime.now(timezone.utc).replace(microsecond=0)
-    counts = {"APPROVED": 0, "DAMPENED": 0, "REJECTED": 0}
-    async for d in db.paradox_records.find(
-        {"evaluation_kind": "dry_run"},
-        {"kernel_verdict": 1},
-    ).limit(500):
-        v = d.get("kernel_verdict")
-        if v in counts:
-            counts[v] += 1
-    return {
-        "ok": True,
-        "stub": True,
-        "recent_dry_run_verdicts": counts,
-        "ts": one_hour_ago.isoformat(),
-    }
+async def paradox_evaluate(
+    body: EvaluateRequest,
+    _user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """LLM-driven evaluation: strategist + opponent + auditor.
+
+    Writes a `paradox_records` row of kind
+    `paradox_v0_evaluation`. Does NOT post to /api/execution/submit
+    on success — human/admin promotion still required.
+    """
+    try:
+        return await evaluate_candidate(candidate_id=body.candidate_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+# ─── /paradox/risk/check ──────────────────────────────────────────────
+
+
+class RiskCheckRequest(BaseModel):
+    candidate_id: Optional[str] = None
+
+
+@router.post("/risk/check")
+async def paradox_risk_check(
+    body: Optional[RiskCheckRequest] = None,
+    _user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Per-candidate + global risk gate.
+
+    If `candidate_id` is supplied → check_candidate (stamps the
+    candidate `risk_blocked` if any gate fails and writes a
+    paradox_record audit row).
+    If omitted → return the global state only.
+    """
+    body = body or RiskCheckRequest()
+    if body.candidate_id:
+        try:
+            return await check_candidate(candidate_id=body.candidate_id)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+    return {"ok": True, "global": await check_global()}
+
+
+# ─── /paradox/ml/retrain/check ────────────────────────────────────────
+
+
+class RetrainCheckRequest(BaseModel):
+    force_recommend: bool = False
+
+
+@router.post("/ml/retrain/check")
+async def paradox_retrain_check(
+    body: Optional[RetrainCheckRequest] = None,
+    _user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Evaluate retrain triggers; persist a recommendation row
+    IFF any trigger fires. Does NOT auto-train and does NOT
+    promote local/self_trained — operator-only."""
+    body = body or RetrainCheckRequest()
+    return await check_retrain(force_recommend=body.force_recommend)
+
+
+# ─── /paradox/execute-next ────────────────────────────────────────────
 
 
 @router.post("/paradox/execute-next")
 async def paradox_execute_next(
     _user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Pull ONE queued intent that passed dry-run and submit it through
-    the real gated path.
+    """Pull ONE queued intent (produced by a BRAIN, already past
+    dry-run) and submit it through the real gated path.
 
     No direct broker calls. No bypass. If `/api/execution/submit`
     rejects, the rejection is returned verbatim and the orphan
     watchdog still has nothing to catch (because nothing fired).
+
+    NOTE: Coordinator v0 doctrine — this endpoint does NOT
+    promote `paradox_records` rows. It only flushes the existing
+    intent queue. Promotion from a paradox_record to a tradeable
+    intent is a separate human/admin step.
     """
     queued = await db.shared_intents.find_one({
         "gate_state": {"$in": ["pending", "queued"]},
@@ -104,10 +171,6 @@ async def paradox_execute_next(
             "intent_id": intent_id,
         }
 
-    # Submit via the real gated path. We do a self-call here so all
-    # of the gate chain (executor_seat_check, roadguard_spread_floor,
-    # governor_authority, opponent_objection, caps) and the
-    # paradox-record writer run as they would for any other operator.
     import jwt
     from datetime import timedelta
 
@@ -134,37 +197,11 @@ async def paradox_execute_next(
         )
         try:
             body = r.json()
-        except Exception:
+        except Exception:  # noqa: BLE001
             body = {"raw": r.text[:500]}
     return {
         "ok": r.status_code == 200,
         "status_code": r.status_code,
         "intent_id": intent_id,
         "submit_response": body,
-    }
-
-
-@router.post("/risk/check")
-async def paradox_risk_check(_user: dict = Depends(get_current_user)) -> Dict[str, Any]:
-    """Risk-check stub. Continuous exposure-cap evaluation already
-    runs in `position_monitor`; this endpoint summarises the current
-    snapshot so the coordinator can stamp it into the agent state."""
-    from shared.exposure_caps import caps_snapshot
-    try:
-        snapshot = caps_snapshot()
-    except Exception as e:  # noqa: BLE001
-        return {"ok": False, "stub": True, "error": str(e)}
-    return {"ok": True, "stub": True, "caps": snapshot}
-
-
-@router.post("/ml/retrain/check")
-async def paradox_retrain_check(_user: dict = Depends(get_current_user)) -> Dict[str, Any]:
-    """Retrain stub. Patent J already tracks per-brain readiness; this
-    endpoint reports whether any strategy crossed the promotion gate
-    since last cycle. Real retrain triggers are deferred until we
-    have closed-trade outcomes (`outcome_join` rows)."""
-    return {
-        "ok": True,
-        "stub": True,
-        "reason": "retrain_not_triggered_no_outcome_joins_yet",
     }

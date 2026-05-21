@@ -302,6 +302,32 @@ LLM_DISTILLATION_QUEUE = "llm_distillation_queue"
 # embeds the full per-prompt detail + a summary block.
 LLM_EVAL_RUNS = "llm_eval_runs"
 
+# ─── Paradox Coordinator v0 (2026-02-XX) ──────────────────────────────
+# Doctrine: candidate generator + advisory evaluator. NO execution
+# authority. Coordinator v0 NEVER posts to /api/execution/submit on
+# its own — human/admin promotion still required.
+#
+# `PARADOX_WATCHLIST` — operator-curated symbol list (primary universe
+# for /paradox/scan). Schema:
+#   {symbol, lane ∈ {equity, crypto}, active: bool, added_by,
+#    added_at, note?}
+PARADOX_WATCHLIST = "paradox_watchlist"
+
+# `PARADOX_CANDIDATES` — output of /paradox/scan. Append-only.
+# Schema:
+#   {candidate_id (uuid4), symbol, lane, source, status, reason,
+#    snapshot ({price, volume, spread_bps, rvol, halted}),
+#    filter_pass: bool, filter_failures: list[str],
+#    created_at, evaluated_at|None, evaluation_id|None}
+PARADOX_CANDIDATES = "paradox_candidates"
+
+# `PARADOX_RETRAIN_RECOMMENDATIONS` — output of
+# /paradox/ml/retrain/check when any trigger fires. Append-only,
+# operator-consumed. NEVER auto-promotes. Schema:
+#   {rec_id, triggers: list[str], stats, recommended_target,
+#    created_at, consumed_at|None, consumed_by|None}
+PARADOX_RETRAIN_RECOMMENDATIONS = "paradox_retrain_recommendations"
+
 RUNTIMES = ("alpha", "camaro", "chevelle", "redeye")
 
 # ───────────────────────────────────────────────────────────────────────

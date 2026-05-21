@@ -90,6 +90,7 @@ from routes.paradox_routes import router as paradox_router
 from routes.paradox_agent_routes import router as paradox_agent_router
 from routes.paradox_wake_routes import router as paradox_wake_router
 from routes.llm_ledger_routes import router as llm_ledger_router
+from routes.paradox_watchlist_routes import router as paradox_watchlist_router
 from shared.coordinator.routes import router as coordinator_router
 from shared.coordinator.lifespan import (
     start_paradox_coordinator,
@@ -301,6 +302,7 @@ api_router.include_router(paradox_router)
 api_router.include_router(paradox_agent_router)
 api_router.include_router(paradox_wake_router)
 api_router.include_router(llm_ledger_router)
+api_router.include_router(paradox_watchlist_router)
 api_router.include_router(coordinator_router)
 api_router.include_router(runtime_bundles_router)
 api_router.include_router(promotion_artifact_report_router)
