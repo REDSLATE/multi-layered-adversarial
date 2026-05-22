@@ -3761,6 +3761,98 @@ resolved=0 progress=0.0% / 100`.
   micro_paper → forces ≤ $50 paper; micro_live → forces ≤ $5 real).
   Brain's `size_multiplier` is honored within the rung ceiling.
 
+## 2026-02-18 (seventh) — Ladder Doctrine Phases 2 + 3
+
+**Phase 2 — RESOLVER WORKER (shipped)**
+
+Background asyncio task started in lifespan. Every `OBSERVATION_RESOLVER_TICK_SEC`
+(default 300s = 5min):
+  • Reads all `observation_receipts` with `resolved=False`
+  • For each: fetches current market price (Alpaca for equity via
+    `get_latest_trade` / position fallback; Kraken public ticker for
+    crypto via existing `_crypto_price_for`)
+  • Updates running `mfe_pct` / `mae_pct` (max favorable / adverse
+    excursion, side-aware)
+  • Records `horizon_prices[label]` at +1h / +4h / +1d / +5d as each
+    elapses
+  • When 5d horizon recorded → flips `resolved=True`, computes final
+    `pnl_pct` and `outcome` (`win` / `loss` / `neutral`)
+  • Outcome thresholds: ±2% crypto, ±1% equity
+  • Side handling: SELL/SHORT inverts sign so a price drop is a win
+  • Failure modes:
+      - Price fetch failure → silent retry next tick
+      - `anchor_price` missing → flips `resolved=True outcome="anchor_missing"`
+        so it stops retrying (structural failure)
+
+Started in `server.py` lifespan; stopped on shutdown. Read-only on
+brokers (no orders, no balances).
+
+File: `shared/observation_resolver.py`.
+
+**Phase 3 — LEARNING LADDER (shipped)**
+
+Per (brain, lane) stage tracker. New collections:
+  • `learning_ladder` — singleton-per-(brain, lane) state
+  • `learning_ladder_audit` — append-only transition log
+
+Stages: `observation_only → micro_paper → micro_live → normal_live`.
+Default: `observation_only`.
+
+Auto-promotion eligibility (computed; NOT auto-triggered — capital-risk
+transitions must be deliberate operator actions):
+  • `observation_only → micro_paper`:
+      ≥100 resolved observation receipts AND win_rate > 0.55
+  • `micro_paper → micro_live`:
+      ≥50 `execution_mode="ladder_paper"` fills AND expectancy_R > 0.30
+  • `micro_live → normal_live`: operator decision only
+
+Endpoints:
+  • `GET  /api/admin/learning-ladder` — full 4×2 grid (alpha/camaro/
+    chevelle/redeye × equity/crypto) with current stage + progress
+    metrics + `auto_promotable` flag
+  • `POST /api/admin/learning-ladder/promote` — body `{brain, lane,
+    reason}`, advances one rung
+  • `POST /api/admin/learning-ladder/demote` — same shape, reverses one
+    rung (always allowed)
+  • `GET  /api/admin/learning-ladder/history` — audit log
+
+Threshold constants are locked by a tripwire so they can't drift.
+
+File: `shared/learning_ladder.py`.
+
+**Tests**: +15 new tripwires (254 → **269 total, all green**).
+   Phase 2 (5 tests): pnl sign for BUY/SELL/SHORT, outcome
+   thresholds, anchor_missing handling, horizon set locked.
+   Phase 3 (10 tests): default state, auth required, full grid
+   listing, promote/demote semantics, bounds (no promote past top,
+   no demote below bottom), audit log, doctrine threshold lock,
+   unknown brain rejected.
+
+**Live preview proof**:
+  • Resolver started and graded 1 observation receipt on first tick
+  • Ladder endpoint returns all 8 (brain × lane) combos at
+    `observation_only` with `next: micro_paper` and `progress: 0/100`
+  • Doctrine block emits the four thresholds and the Phase 4 note
+
+**What this means in prod after redeploy**:
+  • Existing observation receipts (from Phase 1) start getting graded
+    automatically
+  • Operator can watch `/api/admin/learning-ladder` and `/observation-
+    receipts/counts` to see real progress numbers populate
+  • Once Camaro/Alpha accumulate 100 resolved observations per lane
+    with >55% win rate, `auto_promotable: True` appears on that row
+  • Operator manually POSTs to `/promote` when they're satisfied with
+    the evidence — promotion is NEVER automatic
+
+**Phase 4 — LADDER SIZING GATE (still pending)**
+   New gate `ladder_stage_sizing` after `governor_authority`. Reads
+   `learning_ladder` state for (brain, lane) and clamps effective
+   notional to the rung's cap. Brain's `size_multiplier` honored within
+   the ceiling. Without Phase 4, the ladder state is observed but does
+   not enforce sizing in the gate chain. ~80 LOC, tripwires for the
+   new gate's pass/fail semantics, two new lane-specific notional caps
+   (e.g., $50 paper / $5 live).
+
 **P1 / P2 — Backlog**
 - **P2 — Build 2 demote/freeze workflow**: operator-initiated downgrade + hard-freeze
   endpoints, both audit-logged. On hold pending Build 3 production verification.

@@ -96,6 +96,8 @@ from routes.rise_ai_threads_routes import router as rise_ai_threads_router
 from routes.brain_emission_diagnose import router as brain_emission_diagnose_router
 from routes.brain_doctrine_hint import router as brain_doctrine_hint_router
 from shared.observation_receipts import router as observation_receipts_router
+from shared.learning_ladder import router as learning_ladder_router
+
 
 from shared.lane_execution import router as lane_execution_router
 from shared.coordinator.routes import router as coordinator_router
@@ -108,6 +110,11 @@ from shared.runtime.orphan_watchdog import (
     start_watchdog_if_enabled as start_orphan_watchdog,
     stop_watchdog as stop_orphan_watchdog,
 )
+from shared.observation_resolver import (
+    start_observation_resolver,
+    stop_observation_resolver,
+)
+
 from shared.runtime_bundles import router as runtime_bundles_router
 from shared.promotion_artifact_report import router as promotion_artifact_report_router
 from shared.public_api.news import (
@@ -197,6 +204,14 @@ async def lifespan(app: FastAPI):
         await start_paradox_coordinator()
     except Exception as e:  # noqa: BLE001
         logger.warning("paradox_coordinator start failed: %s", e)
+    # Observation Resolver — Phase 2 of ladder doctrine. Grades
+    # observation receipts against market price at +1h/+4h/+1d/+5d
+    # horizons. Read-only on brokers; safe even without execution.
+    try:
+        await start_observation_resolver()
+        logger.info("Observation resolver started")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("observation_resolver start failed: %s", e)
     yield
     await stop_poller()
     await stop_tickler()
@@ -208,6 +223,7 @@ async def lifespan(app: FastAPI):
     await stop_position_monitor()
     await stop_orphan_watchdog()
     await stop_paradox_coordinator()
+    await stop_observation_resolver()
     client.close()
 
 
@@ -316,6 +332,7 @@ api_router.include_router(brain_emission_diagnose_router)
 api_router.include_router(brain_doctrine_hint_router)
 api_router.include_router(lane_execution_router)
 api_router.include_router(observation_receipts_router)
+api_router.include_router(learning_ladder_router)
 
 api_router.include_router(coordinator_router)
 api_router.include_router(runtime_bundles_router)

@@ -93,6 +93,16 @@ LANE_EXECUTION_TOGGLES = "lane_execution_toggles"
 # Resolved against market price by a later worker.
 OBSERVATION_RECEIPTS = "observation_receipts"
 
+# Learning Ladder (2026-02-18, Phase 3) — per-(brain, lane) promotion
+# stage tracker. Stages: observation_only → micro_paper → micro_live
+# → normal_live. Defaults observation_only. Operator-promotable.
+LEARNING_LADDER = "learning_ladder"
+LEARNING_LADDER_AUDIT = "learning_ladder_audit"
+
+# Execution receipts namespace alias for the ladder counter (reads
+# fills tagged execution_mode="ladder_paper" / "ladder_live").
+EXECUTION_RECEIPTS = "execution_receipts"
+
 LANE_EXECUTION_AUDIT_LOG = "lane_execution_audit_log"
 
 
