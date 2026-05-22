@@ -13,6 +13,15 @@ RISE_AI_KERNEL.py — single-file architecture reference
       * Migrating off the Emergent platform (the boundaries are
         clear here; the real code is interface-compatible)
 
+    ──────────────────────────────────────────────────────────────
+    📘 INTEGRATING A BRAIN POD?
+       Read /app/BRAIN_DEVELOPER_GUIDE.md first. It is the single
+       source of truth for the brain ↔ MC contract: POST shape,
+       runtime stamp, observation receipts, the ladder, and the
+       prohibitions. This file describes MC's INTERNAL anatomy;
+       BRAIN_DEVELOPER_GUIDE.md describes the EXTERNAL contract.
+    ──────────────────────────────────────────────────────────────
+
     The 7 boxes of RISE_AI:
 
         ┌────────────────────────────────────────────────────┐
