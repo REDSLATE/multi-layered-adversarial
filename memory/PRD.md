@@ -3667,6 +3667,100 @@ data deficit.
    - probe gate 7 passes on the sample (clean baseline)
    - probe first_blocker never cites `MISSING_SPREAD_BPS` again
 
+## 2026-02-18 (sixth) — Ladder Doctrine Phase 1: Observation Receipts
+
+**Doctrine reversal (this is important, supersedes earlier "no
+observation samples" stance)**:
+
+The original separation — "real fills go to doctrine expectancy;
+observation samples don't pollute" — was correct in isolation but
+created a deadlock when combined with the brain's "honest hold"
+behavior (display action=BUY, but `size_multiplier=0` and
+`would_trade_without_gates=false` because raw conviction is too low).
+Camaro emits ~100 intents/hr but the brain self-zeroes most of them,
+so zero learnable outcomes accumulate. After 3 months of operation
+only 3 days of real fills existed. Doctrines stuck at LEARNING 0/100
+forever — they needed samples to promote, samples needed fills, fills
+needed conviction, conviction needed calibration, calibration needed
+samples. Permanent paralysis.
+
+**New ladder doctrine**:
+
+    INTENT
+      → OBSERVATION RECEIPT     (gates pass, size collapsed)
+      → PAPER FILL              (size>0, Alpaca paper)
+      → MICRO LIVE FILL         (size>0, capped $5 real)
+      → NORMAL LIVE FILL        (size>0, full)
+
+Observation receipts are SYNTHETIC — no broker, no money — but they
+ARE graded against future market price. They accumulate real
+expectancy, win rate, MAE/MFE, and calibration WITHOUT capital risk.
+
+Phase 1 — SHIPPED 2026-02-18:
+  • New collection `observation_receipts`
+  • `shared/observation_receipts.py` — candidate classifier, receipt
+    builder, persistence helper, GET routes
+  • `auto_router._route_one` modified: before classifying as
+    `advisory_only`, check if the intent is an honest-hold
+    observation candidate. If yes, write a graded receipt and return
+    `verdict="observation_receipt"`.
+  • Eligibility:
+      - `action ∈ {BUY, SELL, SHORT, COVER}`
+      - `confidence ≥ 0.30`
+      - `lane` + `symbol` set
+      - brain self-zeroed (`size_multiplier == 0` OR
+        `would_trade_without_gates == false`)
+  • Receipt shape carries doctrine flags:
+      - `receipt_type: "observation_fill"`
+      - `synthetic: True`
+      - `eligible_for_learning: True`
+      - `eligible_for_live_unlock: False`   (Phase 3 read-only counter)
+  • Brain honesty telemetry round-trips into the receipt
+    (`raw_confidence`, `size_multiplier`, `would_trade_without_gates`,
+    `conviction_tier`) for calibration analysis.
+  • Endpoints:
+      - `GET /api/admin/observation-receipts` — list (filters: brain,
+        lane, resolved)
+      - `GET /api/admin/observation-receipts/counts` — per brain×lane
+        ladder progress against the 100-count threshold
+
+Tests: +12 tripwires (242 → **254 total, all green**).
+
+Live preview proof: Camaro/BNB/USD honest-hold intent → observation
+receipt born; counts endpoint surfaces `camaro/crypto: total=1
+resolved=0 progress=0.0% / 100`.
+
+**Phase 2 — RESOLVER (next iteration, ~100 LOC)**:
+  Background worker that runs every ~5 minutes. For each
+  `resolved=False` observation receipt:
+    1. Compute horizon timestamps from `created_at`: +1h, +4h, +1d, +5d
+    2. Once horizon elapsed, fetch market price (Alpaca quote for
+       equity; Kraken ticker for crypto)
+    3. Compute outcome: `pnl_pct` from anchor, `mae_pct` / `mfe_pct`
+    4. Outcome classification: `win | loss | neutral` (define
+       thresholds — e.g., >+0.5% = win, <-0.5% = loss for crypto
+       1h horizon; tune per lane)
+    5. Set `resolved=True`, `resolved_at`, `horizon_prices`, `outcome`
+
+**Phase 3 — UNLOCK COUNTER (after resolver lands)**:
+  New collection `learning_ladder` keyed by (brain, lane). State:
+    `observation_only | micro_paper | micro_live | normal_live`
+  Transitions:
+    100 resolved observation receipts with win_rate > 0.55
+      → unlocks `micro_paper` (Alpaca paper, $50 notional cap)
+    50 micro_paper fills with expectancy > 0.30R
+      → unlocks `micro_live` (Kraken USDC, $5 cap)
+    micro_live expectancy proves out
+      → unlocks `normal_live` (per-brain × lane authority promotion)
+  Operator can MANUALLY promote / demote at any rung. Audit-logged.
+
+**Phase 4 — LADDER SIZING GATE (after counter lands)**:
+  New gate `ladder_stage_sizing` after `governor_authority` that
+  reads `learning_ladder` state for (brain, lane) and clamps
+  effective notional to the rung's cap (observation → forces size 0;
+  micro_paper → forces ≤ $50 paper; micro_live → forces ≤ $5 real).
+  Brain's `size_multiplier` is honored within the rung ceiling.
+
 **P1 / P2 — Backlog**
 - **P2 — Build 2 demote/freeze workflow**: operator-initiated downgrade + hard-freeze
   endpoints, both audit-logged. On hold pending Build 3 production verification.

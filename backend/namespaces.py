@@ -86,6 +86,13 @@ PUBLIC_AUDIT_LOG = "public_audit_log"
 # Singleton doc keyed `"current"`. Defaults to ALL OFF — execution is
 # explicitly opted into. Every flip is audit-logged.
 LANE_EXECUTION_TOGGLES = "lane_execution_toggles"
+
+# Observation Receipts (2026-02-18, ladder doctrine) — graded
+# learning samples from "honest hold" intents (brain emitted
+# directional label but self-zeroed the size). Synthetic; no broker.
+# Resolved against market price by a later worker.
+OBSERVATION_RECEIPTS = "observation_receipts"
+
 LANE_EXECUTION_AUDIT_LOG = "lane_execution_audit_log"
 
 

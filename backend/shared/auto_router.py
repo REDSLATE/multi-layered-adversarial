@@ -83,6 +83,30 @@ async def _route_one(intent: dict) -> dict:
     min_exec_conf = 0.30
     classification = classify_brain_intent(intent, min_exec_conf=min_exec_conf)
     if classification.advisory_only:
+        # Ladder doctrine (2026-02-18): before classifying as pure
+        # advisory_only, check if this is a graded "honest hold"
+        # observation. If the brain emitted a directional label with
+        # conviction but self-zeroed size, we want this in the
+        # learning queue, not the silent advisory bucket.
+        from shared.observation_receipts import (  # noqa: WPS433
+            maybe_write_observation_receipt,
+        )
+        obs = await maybe_write_observation_receipt(intent)
+        if obs is not None:
+            logger.info(
+                "auto_router observation_receipt intent=%s brain=%s "
+                "lane=%s symbol=%s side=%s — graded learning sample",
+                intent_id, classification.brain, intent_lane,
+                classification.symbol, obs["side"],
+            )
+            await _persist_advisory_classification(intent_id, intent, classification)
+            return {
+                "intent_id": intent_id,
+                "verdict": "observation_receipt",
+                "reason": "honest_hold_graded_for_learning",
+                "execution_ready": False,
+                "observation_receipt": True,
+            }
         logger.info(
             "auto_router skip intent=%s brain=%s lane=%s symbol=%s "
             "advisory_only reason=%s",
