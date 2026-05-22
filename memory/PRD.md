@@ -3633,6 +3633,40 @@ in preview; `lane_execution_enabled` — toggle defaults OFF).
      should disappear, replaced by `gate_pass` rows showing actual spread
      readings.
 
+## 2026-02-18 (fifth) — Live-trade diagnose probe stopped lying
+
+**Context**: After Alpha + Camaro shipped the doctrine_snapshot contract
+(iter-106n), the operator screenshot showed prod's "LIVE TRADE: BLOCKED"
+panel still red on both lanes with `first_blocker = roadguard_spread_floor —
+ROADGUARD_MISSING_SPREAD_BPS — snapshot absent`. The panel was misleading:
+it was diagnosing a SYNTHETIC probe intent that MC constructs itself, NOT
+real brain traffic. The synthetic was built with `snapshot=None`, so gate 7
+correctly fail-closed on the probe's own missing data, then the operator UI
+loudly displayed "BLOCKED" — a permanent false alarm independent of MC's
+true health.
+
+**Shipped**: `execution_diagnose` now builds the synthetic intent with a
+healthy sample snapshot:
+   - equity: `{spread_bps: 5, price: 450, volume: 80M, market_regime: strong}`
+   - crypto: `{spread_bps: 12, price: 65000, volume: 50M, market_regime: strong}`
+
+Both samples sit far below the lane spread caps (50 bps equity / 200 bps
+crypto), so the probe's gate 7 now passes truthfully. If RoadGuard ever
+shows BLOCK on the probe again it's a real regression, not a self-induced
+data deficit.
+
+**Live smoke (preview)**:
+   - Probe equity: `roadguard_spread_floor PASS · spread 5.00 bps ≤ 50 bps cap`
+   - Probe crypto: `roadguard_spread_floor PASS · spread 12.00 bps ≤ 200 bps cap`
+   - First-blocker now correctly surfaces the actual preview gaps
+     (`broker_connected`, `executor_seat_check`) instead of the false
+     RoadGuard alarm.
+
+**Tests**: +3 tripwires (239 → **242 total, all green**).
+   - probe synthetic carries sample snapshot for both lanes
+   - probe gate 7 passes on the sample (clean baseline)
+   - probe first_blocker never cites `MISSING_SPREAD_BPS` again
+
 **P1 / P2 — Backlog**
 - **P2 — Build 2 demote/freeze workflow**: operator-initiated downgrade + hard-freeze
   endpoints, both audit-logged. On hold pending Build 3 production verification.

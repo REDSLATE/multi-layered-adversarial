@@ -824,6 +824,21 @@ async def execution_diagnose(
             executor_holder = h
             break
 
+    # Sample snapshot — gives the probe a realistic spread so gate 7
+    # doesn't pre-block the diagnostic on its OWN missing data. Before
+    # this (pre-2026-02-18), the synthetic emitted `snapshot=None` and
+    # gate 7 fail-closed with ROADGUARD_MISSING_SPREAD_BPS regardless
+    # of MC's actual health, making the "LIVE TRADE: BLOCKED" banner
+    # a permanent false alarm. The probe now answers the honest
+    # question: "if a real brain shipped a clean intent right now,
+    # would MC route it?".
+    sample_snapshot = (
+        {"spread_bps": 12.0, "price": 65000.0, "volume": 50_000_000,
+         "market_regime": "strong"}
+        if lane_l == "crypto" else
+        {"spread_bps": 5.0, "price": 450.0, "volume": 80_000_000,
+         "market_regime": "strong"}
+    )
     sim_intent = {
         "intent_id": "diagnose-sim",
         "stack": executor_holder or "operator",
@@ -835,6 +850,7 @@ async def execution_diagnose(
         "holds_executor_seat": executor_holder is not None,
         "executor_holder_at_post": executor_holder,
         "confidence": 0.7,
+        "snapshot": sample_snapshot,
     }
     gate_result = await _evaluate_gates(sim_intent, notional_usd)
 
