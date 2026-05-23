@@ -6,7 +6,9 @@ trace, but those traces land in different collections:
   Alpha / Camaro      → `shared_adl_receipts` + `shared_intents`
   Chevelle (governor) → `shared_adl_receipts` (authority_call action)
   REDEYE (opponent)   → `sovereign_audit_log` (contribution action) +
-                        `mc_shelly` (training signals)
+                        `mc_shelly` (engine audit events — gate_pass,
+                        gate_fail, intent_ingested, council_pass/block,
+                        position lifecycle, sidecar packets)
 
 Different stores, same operator question: *"what did this brain
 decide?"*. This module unifies all of them behind one endpoint so the
@@ -21,12 +23,19 @@ Normalized row shape:
       "ts": ISO timestamp,
       "brain": runtime identity (alpha|camaro|chevelle|redeye),
       "source_collection": which collection this row came from,
-      "kind": receipt | sovereign_audit | intent | training_signal,
+      "kind": receipt | sovereign_audit | intent | engine_audit,
       "action": brain-emitted action label (best-effort extraction),
       "symbol": best-effort symbol extraction,
       "summary": one-line human-readable summary,
       "raw": the original document (for forensics / payload inspection)
     }
+
+Doctrine note (2026-05-23): the `engine_audit` kind previously
+surfaced as `training_signal` in the UI — that label was misleading
+because mc_shelly captures REAL live engine events (passing/failing
+gates, real intent ingest, real position lifecycle), not training-
+only shadow signals. Renamed for accuracy. The legacy
+`training_signal` filter value is still accepted as an alias.
 """
 from __future__ import annotations
 
@@ -180,12 +189,19 @@ def _normalize_intent(doc: dict) -> dict:
 
 
 def _normalize_mc_shelly(doc: dict) -> dict:
-    et = doc.get("event_type") or "training_signal"
+    """`mc_shelly` is the MC engine's unified audit log — gate_pass /
+    gate_fail / intent_ingested / council_pass / council_block /
+    position_opened / position_closed / sidecar packets, etc. These
+    are LIVE system events, not training-only signals. The legacy UI
+    label `training_signal` was misleading (some emissions WERE
+    shadow/training but most are real audit rows from production
+    execution). Use `engine_audit` so the label tells the truth."""
+    et = doc.get("event_type") or "engine_event"
     return {
         "ts": doc.get("ts") or doc.get("timestamp"),
         "brain": doc.get("brain") or doc.get("runtime"),
         "source_collection": MC_SHELLY,
-        "kind": "training_signal",
+        "kind": "engine_audit",
         "action": et,
         "symbol": doc.get("symbol"),
         "summary": " · ".join(filter(None, [
@@ -212,7 +228,8 @@ async def decisions_feed(
     brain: Optional[str] = Query(default=None, description="filter by brain identity"),
     kinds: Optional[str] = Query(
         default=None,
-        description="comma-separated subset: receipt,sovereign_audit,intent,training_signal",
+        description="comma-separated subset: receipt,sovereign_audit,intent,engine_audit "
+                    "(legacy alias `training_signal` still accepted for back-compat)",
     ),
     limit: int = Query(default=50, ge=1, le=500),
     _user: dict = Depends(get_current_user),  # noqa: B008
@@ -223,12 +240,16 @@ async def decisions_feed(
     regardless of which collection the engine writes to. Each row
     carries `source_collection` so the operator can see whether a
     given decision came from a receipt, a sovereign-audit, an intent,
-    or an MC training row.
+    or an MC engine-audit row.
     """
     wanted_kinds = (
         {k.strip() for k in kinds.split(",") if k.strip()}
         if kinds else set()
     )
+    # Backward-compat: accept the legacy `training_signal` alias.
+    if "training_signal" in wanted_kinds:
+        wanted_kinds.discard("training_signal")
+        wanted_kinds.add("engine_audit")
 
     # How many rows to pull from each source. Over-fetch then merge-sort
     # so the requested `limit` reflects the truly-most-recent across
@@ -243,7 +264,7 @@ async def decisions_feed(
             SHARED_RECEIPTS: "receipt",
             SOVEREIGN_AUDIT_LOG: "sovereign_audit",
             SHARED_INTENTS: "intent",
-            MC_SHELLY: "training_signal",
+            MC_SHELLY: "engine_audit",
         }[coll]
         if wanted_kinds and kind_for_coll not in wanted_kinds:
             continue

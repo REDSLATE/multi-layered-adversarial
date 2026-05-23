@@ -15,13 +15,16 @@ const KIND_LABEL = {
   receipt: "RECEIPT",
   sovereign_audit: "SOV-AUDIT",
   intent: "INTENT",
-  training_signal: "TRAINING",
+  engine_audit: "ENGINE",
+  // Back-compat: any cached rows with the legacy label still render.
+  training_signal: "ENGINE",
 };
 const KIND_COLOR = {
   receipt: "#10B981",
   sovereign_audit: "#DC2626",
   intent: "#3B82F6",
-  training_signal: "#F59E0B",
+  engine_audit: "#64748B",
+  training_signal: "#64748B",
 };
 
 function DecisionsFeed() {
