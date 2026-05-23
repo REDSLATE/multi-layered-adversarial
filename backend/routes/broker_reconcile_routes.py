@@ -282,3 +282,28 @@ async def list_unverified(
         "count": len(items),
         "items": items,
     }
+
+
+@router.get("/legacy-positions")
+async def legacy_positions(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Snapshot of currently-open broker positions tagged
+    UNVERIFIED_BROKER_EXECUTION. These are the open positions from
+    the pre-MC bypass era — MC's record of what exists on the broker
+    even though MC didn't issue them. Will reconcile via
+    execution_receipts when each position is closed through MC."""
+    rows: List[Dict[str, Any]] = await db.legacy_broker_positions_snapshot.find(
+        {}, {"_id": 0},
+    ).sort("snapshot_at", -1).to_list(200)
+    account = next((r for r in rows if r.get("_account_snapshot")), None)
+    positions = [r for r in rows if not r.get("_account_snapshot")]
+    return {
+        "snapshot_at": positions[0]["snapshot_at"] if positions else None,
+        "position_count": len(positions),
+        "account": account,
+        "positions": positions,
+        "doctrine_note": (
+            "Snapshot of open broker positions that MC did not issue. "
+            "Tagged UNVERIFIED_BROKER_EXECUTION. Will become VERIFIED "
+            "as each is closed through MC's gate chain."
+        ),
+    }
