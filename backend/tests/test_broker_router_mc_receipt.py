@@ -38,8 +38,11 @@ class _FakeAdapter:
     def __init__(self):
         self.calls = []
 
-    async def submit_market_order(self, *, symbol, notional, side, client_order_id):
-        self.calls.append((symbol, notional, side, client_order_id))
+    async def submit_market_order(self, *, symbol, notional, side, client_order_id, mc_receipt=None):
+        # Adapter under test signature now includes `mc_receipt` (2026-05-23
+        # bypass-block doctrine). We accept but don't validate here — the
+        # router has already minted it before calling.
+        self.calls.append((symbol, notional, side, client_order_id, mc_receipt))
         return {
             "order_id": "fake-1",
             "status": "filled",
@@ -69,12 +72,31 @@ def receipt_secret(monkeypatch):
     monkeypatch.setenv("RISEDUAL_CRYPTO_CONFIDENCE_FLOOR", "0.20")
 
 
+@pytest.fixture
+async def broker_thawed():
+    """The 2026-05-23 audit phase wrote a freeze row to Mongo. These
+    router tests need the broker UNFROZEN — without a fresh thaw, every
+    route_order call short-circuits with BrokerRouteBlocked('FROZEN…')."""
+    from shared.broker_freeze import thaw
+    await thaw(actor="pytest_router_tests", reason="router_test_setup")
+    yield
+
+
 # ─────────────────── enforcement flag ─────────────────────────────────
 
 
-def test_enforcement_flag_default_off(monkeypatch):
+def test_enforcement_flag_default_on(monkeypatch):
+    """Doctrine pin (2026-05-23): after the orphan audit the flag DEFAULTS
+    to ON. Bypass is the bug we closed. Operators must explicitly opt OUT."""
     monkeypatch.delenv("RISEDUAL_BROKER_REQUIRE_MC_RECEIPT", raising=False)
-    assert _broker_require_mc_receipt() is False
+    assert _broker_require_mc_receipt() is True
+
+
+def test_enforcement_flag_explicit_false(monkeypatch):
+    """Operators can still opt out by setting the env var explicitly false."""
+    for v in ("false", "False", "0", "no", "off"):
+        monkeypatch.setenv("RISEDUAL_BROKER_REQUIRE_MC_RECEIPT", v)
+        assert _broker_require_mc_receipt() is False
 
 
 def test_enforcement_flag_truthy_variants(monkeypatch):
@@ -182,9 +204,10 @@ def test_mint_helper_rejects_sidecar_with_local_authority(receipt_secret):
 
 @pytest.mark.asyncio
 async def test_route_order_attaches_receipt_metadata_rollout_mode(
-    fake_alpaca_adapter, receipt_secret, monkeypatch,
+    fake_alpaca_adapter, receipt_secret, broker_thawed, monkeypatch,
 ):
-    monkeypatch.delenv("RISEDUAL_BROKER_REQUIRE_MC_RECEIPT", raising=False)
+    # Explicit rollout mode (opt out of the new default-on enforcement).
+    monkeypatch.setenv("RISEDUAL_BROKER_REQUIRE_MC_RECEIPT", "false")
     intent = {
         "intent_id": "i1",
         "stack": "alpha",
@@ -205,7 +228,7 @@ async def test_route_order_attaches_receipt_metadata_rollout_mode(
 
 @pytest.mark.asyncio
 async def test_route_order_enforces_when_flag_on_and_receipt_invalid(
-    fake_alpaca_adapter, monkeypatch,
+    fake_alpaca_adapter, broker_thawed, monkeypatch,
 ):
     monkeypatch.setenv("RISEDUAL_BROKER_REQUIRE_MC_RECEIPT", "true")
     monkeypatch.delenv("RISEDUAL_MC_RECEIPT_SECRET", raising=False)
@@ -229,7 +252,7 @@ async def test_route_order_enforces_when_flag_on_and_receipt_invalid(
 
 @pytest.mark.asyncio
 async def test_route_order_enforces_and_passes_with_valid_receipt(
-    fake_alpaca_adapter, receipt_secret, monkeypatch,
+    fake_alpaca_adapter, receipt_secret, broker_thawed, monkeypatch,
 ):
     monkeypatch.setenv("RISEDUAL_BROKER_REQUIRE_MC_RECEIPT", "true")
     intent = {
@@ -250,7 +273,7 @@ async def test_route_order_enforces_and_passes_with_valid_receipt(
 
 @pytest.mark.asyncio
 async def test_route_order_blocks_lying_sidecar_under_enforcement(
-    fake_alpaca_adapter, receipt_secret, monkeypatch,
+    fake_alpaca_adapter, receipt_secret, broker_thawed, monkeypatch,
 ):
     """A sidecar that claims `local_execution_authority=True` must NOT
     be able to fire a fill under enforcement."""

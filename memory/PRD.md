@@ -1,6 +1,80 @@
 # RISEDUAL Mission Control — Monorepo PRD
 
 
+## 🆕 2026-05-23 (latest): Broker Bypass Audit Phase — 6-step root-cause closure
+
+**Trigger**: Operator observed "trading happens sometimes then stops; we can't use the data." Investigation revealed the real story:
+
+- `lane_execution_toggles` collection was empty (default OFF). MC has **never** authorized routing through brokers via its own code path.
+- `alpaca_audit_log` shows **only** `alpaca_disconnect` events — MC has never held an active Alpaca connection.
+- The 500 broker_orders in DB all carry `source=access_key`. Camaro sidecar held its own API key and POSTed direct to Alpaca on May 15 + May 18, completely bypassing MC.
+- Trading "stopped" because Camaro's bypass cron lost its keys after May 18; MC was never the executor.
+- Diagnosis: **the bypass is the bug**. Feeding orphan data into the learning ladder is a bandaid.
+
+### Operator's 6-step plan (executed)
+
+1. **Freeze all broker execution** — explicit `broker_freeze_state` singleton + audit log.
+2. **Export Alpaca paper order history Apr 25–30 & May 4–18** — endpoint exposed; operator-initiated.
+3. **Backfill local broker receipts** — same endpoint, idempotent upsert into `broker_orders`.
+4. **Reconcile against Mongo** — match each `broker_orders` row vs. `execution_receipts` (doctrinal) and `shared_intents` (forensic hint). All 500 existing orphans confirmed `UNVERIFIED_BROKER_EXECUTION`.
+5. **Mark UNVERIFIED_BROKER_EXECUTION until matched** — propagated to `broker_orders.provenance` AND `memory_kernel_quarantine.provenance_explicit`.
+6. **Patch every Alpaca submit path** — adapter-level bypass guard + default-on receipt enforcement + freeze check above the lane toggles.
+
+### Code-level invariants now enforced
+
+- `RISEDUAL_BROKER_REQUIRE_MC_RECEIPT` defaults to **TRUE** (was false). Explicit opt-out only.
+- `AlpacaPaperAdapter.submit_market_order` / `submit_limit_order` **refuse** to submit without a structurally-valid `mc_receipt` kwarg (raises `BypassBlocked`).
+- `KrakenLiveAdapter.submit_market_order` applies the same invariant (raises `PermissionError`).
+- `broker_router.route_order` calls `assert_not_frozen()` **before** adapter resolution — the freeze supersedes everything.
+- All four invariants locked with 7 tripwire tests in `tests/test_broker_audit_phase.py`.
+
+### New endpoints (admin)
+
+- `GET  /api/admin/broker/freeze` — current freeze state + doctrine note
+- `POST /api/admin/broker/freeze` — flip ON (body: `{reason}`)
+- `POST /api/admin/broker/thaw` — flip OFF (body: `{reason?}`)
+- `GET  /api/admin/broker/freeze/history` — audit trail
+- `POST /api/admin/broker/reconcile` — run reconciliation pass over `broker_orders`
+- `GET  /api/admin/broker/reconcile/summary` — provenance breakdown
+- `GET  /api/admin/broker/reconcile/unverified` — list of orders MC never issued
+- `POST /api/admin/alpaca/ingest-orphans-batch` — multi-window batch ingest
+
+### New files
+
+- `backend/shared/broker_freeze.py` — freeze state module
+- `backend/routes/broker_freeze_routes.py` — admin endpoints
+- `backend/routes/broker_reconcile_routes.py` — reconciliation endpoints
+- `backend/scripts/exec_audit_phase_freeze_and_reconcile.py` — one-shot audit runner
+- `backend/tests/test_broker_audit_phase.py` — 7 new tripwires
+
+### Current operator state
+
+- **Broker FROZEN** by `admin@risedual.io` (reason: "post_orphan_audit_2026_05_23 — 500 fills bypassed MC; freeze until full reconcile + adapter patches verified")
+- **500 orphan fills** tagged `UNVERIFIED_BROKER_EXECUTION` in both `broker_orders` and `memory_kernel_quarantine`
+- **MC keys present** as env vars (`ALPACA_INGEST_KEY_ID` / `ALPACA_INGEST_SECRET_KEY`) — sufficient for the read-only orphan ingest path
+- Tripwire suite: 283 pass / 1 pre-existing failure (schema-drift in `test_intent_limbo_cleanup`, unrelated)
+
+### Next operator actions
+
+1. Fetch the missing ~495 orphans from Apr 25–30 + May 4–18 via:
+   ```
+   POST /api/admin/alpaca/ingest-orphans-batch
+   {
+     "windows": [
+       {"after": "2026-04-25T00:00:00Z", "until": "2026-04-30T23:59:59Z"},
+       {"after": "2026-05-04T00:00:00Z", "until": "2026-05-18T23:59:59Z"}
+     ],
+     "dry_run": false
+   }
+   ```
+2. Re-run `POST /api/admin/broker/reconcile` after batch ingest.
+3. Thaw the broker only after:
+   - Every `broker_orders` row carries an explicit provenance (not `(unreconciled)`).
+   - Camaro / Alpha / Chevelle / Redeye sidecars confirmed key-stripped (no `access_key` source can appear on a future fill).
+
+---
+
+
 ## 🆕 2026-05-21 (latest): RISE_AI Saved Threads — persistent reasoning memory
 
 Threads turn one-off chats into long-running reasoning artifacts.

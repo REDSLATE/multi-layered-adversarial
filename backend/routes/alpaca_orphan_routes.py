@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -53,17 +53,37 @@ def _now_iso() -> str:
 
 
 async def _resolve_creds() -> tuple[str, str]:
-    """Pull the live Alpaca credentials MC already has stored. No env
-    var fishing — the same creds the auto-router uses."""
-    from shared.broker.alpaca_routes import _decrypted_keys  # noqa: WPS433
-    keys = await _decrypted_keys()
-    if not keys:
-        raise HTTPException(
-            status_code=412,
-            detail="alpaca credentials not configured on MC — "
-                   "connect via /admin/alpaca first",
-        )
-    return keys
+    """Pull the live Alpaca credentials.
+
+    Resolution order:
+      1. Mongo `alpaca_credentials` singleton (operator connected via UI)
+      2. Env vars `ALPACA_INGEST_KEY_ID` / `ALPACA_INGEST_SECRET_KEY`
+         (read-only ingest keys, set on this stack)
+
+    Either is sufficient — Alpaca's `/v2/orders` requires only the
+    `read_orders` scope.
+    """
+    import os
+    from shared.broker.alpaca_routes import _SINGLETON_ID
+    from shared.credentials import decrypt
+    doc = await db["alpaca_credentials"].find_one(
+        {"_id": _SINGLETON_ID}, {"_id": 0, "api_key_enc": 1, "secret_key_enc": 1},
+    )
+    if doc:
+        try:
+            return decrypt(doc["api_key_enc"]), decrypt(doc["secret_key_enc"])
+        except Exception:  # noqa: BLE001 - bad ciphertext / rotated fernet
+            pass
+    env_key = os.environ.get("ALPACA_INGEST_KEY_ID", "").strip()
+    env_secret = os.environ.get("ALPACA_INGEST_SECRET_KEY", "").strip()
+    if env_key and env_secret:
+        return env_key, env_secret
+    raise HTTPException(
+        status_code=412,
+        detail="alpaca credentials not configured — set "
+               "ALPACA_INGEST_KEY_ID / ALPACA_INGEST_SECRET_KEY env vars "
+               "or POST /api/admin/alpaca/connect.",
+    )
 
 
 async def _fetch_filled(api_key: str, api_secret: str,
@@ -228,6 +248,16 @@ async def ingest_orphans(
     for order in orders:
         try:
             await _upsert_broker_order(order)
+            # Mark the broker_orders row with the explicit doctrinal
+            # label so downstream consumers (kernel, reconciler) read
+            # the same provenance string.
+            await db.broker_orders.update_one(
+                {"broker_order_id": order["id"]},
+                {"$set": {
+                    "provenance": "UNVERIFIED_BROKER_EXECUTION",
+                    "verified": False,
+                }},
+            )
             ingested_count += 1
             # Direct quarantine write — same as memory kernel's UV path.
             await db.memory_kernel_quarantine.update_one(
@@ -242,6 +272,7 @@ async def ingest_orphans(
                     "submitted_at": order.get("submitted_at"),
                     "alpaca_source": order.get("source", "access_key"),
                     "provenance": "UV",
+                    "provenance_explicit": "UNVERIFIED_BROKER_EXECUTION",
                     "alert_level": "CRITICAL",
                     "reason": "orphan_fill_no_mc_receipt",
                     "ingested_at": _now_iso(),
@@ -303,5 +334,113 @@ async def orphan_summary(
             "Orphan fills exist for audit only. They do NOT feed "
             "doctrine expectancy, observation receipts, or ladder "
             "progress. They will never be trainable."
+        ),
+    }
+
+
+class WindowSpec(BaseModel):
+    after: str
+    until: str
+
+
+class IngestBatchIn(BaseModel):
+    windows: list[WindowSpec] = Field(
+        ...,
+        description="List of {after, until} ISO-8601 windows to ingest in one pass",
+    )
+    dry_run: bool = Field(default=False)
+
+
+@router.post("/ingest-orphans-batch")
+async def ingest_orphans_batch(
+    body: IngestBatchIn,
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Multi-window batch ingest. The audit specifies two ranges
+    (Apr 25-30 + May 4-18) — this endpoint lets the operator submit
+    both atomically in one call instead of two.
+    """
+    api_key, api_secret = await _resolve_creds()
+    actor = user.get("email") or "operator"
+    per_window: list[dict] = []
+    totals = {"found": 0, "ingested": 0, "quarantined": 0, "errors": 0}
+
+    for w in body.windows:
+        try:
+            orders = await _fetch_filled(api_key, api_secret,
+                                         after=w.after, until=w.until)
+        except httpx.HTTPError as e:
+            per_window.append({"after": w.after, "until": w.until,
+                               "error": f"alpaca fetch failed: {e!r}"})
+            totals["errors"] += 1
+            continue
+        if body.dry_run:
+            per_window.append({
+                "after": w.after, "until": w.until,
+                "dry_run": True, "found_count": len(orders),
+            })
+            totals["found"] += len(orders)
+            continue
+        ingested = 0
+        quarantined = 0
+        errs = 0
+        for order in orders:
+            try:
+                await _upsert_broker_order(order)
+                await db.broker_orders.update_one(
+                    {"broker_order_id": order["id"]},
+                    {"$set": {
+                        "provenance": "UNVERIFIED_BROKER_EXECUTION",
+                        "verified": False,
+                    }},
+                )
+                ingested += 1
+                await db.memory_kernel_quarantine.update_one(
+                    {"broker_order_id": order["id"]},
+                    {"$set": {
+                        "broker_order_id": order["id"],
+                        "symbol": order.get("symbol"),
+                        "side": order.get("side"),
+                        "filled_qty": float(order.get("filled_qty") or 0),
+                        "filled_avg_price": float(order.get("filled_avg_price") or 0),
+                        "filled_at": order.get("filled_at"),
+                        "submitted_at": order.get("submitted_at"),
+                        "alpaca_source": order.get("source", "access_key"),
+                        "provenance": "UV",
+                        "provenance_explicit": "UNVERIFIED_BROKER_EXECUTION",
+                        "alert_level": "CRITICAL",
+                        "reason": "orphan_fill_no_mc_receipt",
+                        "ingested_at": _now_iso(),
+                        "ingested_by": actor,
+                    }},
+                    upsert=True,
+                )
+                quarantined += 1
+            except Exception as e:  # noqa: BLE001
+                logger.warning("orphan batch ingest failed order=%s err=%r",
+                               order.get("id"), e)
+                errs += 1
+        per_window.append({
+            "after": w.after, "until": w.until,
+            "found_count": len(orders),
+            "ingested": ingested,
+            "quarantined_UV": quarantined,
+            "errors": errs,
+        })
+        totals["found"] += len(orders)
+        totals["ingested"] += ingested
+        totals["quarantined"] += quarantined
+        totals["errors"] += errs
+
+    return {
+        "dry_run": body.dry_run,
+        "actor": actor,
+        "windows": per_window,
+        "totals": totals,
+        "doctrine_note": (
+            "All orphan fills tagged provenance=UNVERIFIED_BROKER_EXECUTION "
+            "in broker_orders AND propagated to memory_kernel_quarantine. "
+            "Never trainable. Run /admin/broker/reconcile next to attempt "
+            "matching against any later MC execution receipts."
         ),
     }

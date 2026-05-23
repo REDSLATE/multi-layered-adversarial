@@ -143,6 +143,7 @@ class KrakenLiveAdapter:
         notional: Optional[float] = None,
         side: str = "BUY",
         client_order_id: Optional[str] = None,
+        mc_receipt: Optional[dict] = None,
     ) -> dict:
         """Place a market order on Kraken.
 
@@ -150,7 +151,19 @@ class KrakenLiveAdapter:
         the resolver has already translated the canonical asset key
         before this method is called. The adapter does NOT do any
         identity-level resolution.
+
+        Doctrine pin (2026-05-23): refuses to submit without an MC
+        execution receipt (same bypass-blocking invariant as Alpaca).
         """
+        # Adapter-level bypass guard — last line of defence.
+        if not isinstance(mc_receipt, dict) or not mc_receipt.get("signature") \
+                or not mc_receipt.get("mc_policy_hash"):
+            raise PermissionError(
+                "kraken.submit_market_order refused: no MC execution "
+                "receipt attached. Doctrine: every broker write must "
+                "carry a signed receipt minted by MC's broker_router. "
+                "NO_TRADE."
+            )
         if (qty is None) == (notional is None):
             raise ValueError("supply exactly one of qty or notional")
 

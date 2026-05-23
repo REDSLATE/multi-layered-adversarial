@@ -105,6 +105,20 @@ EXECUTION_RECEIPTS = "execution_receipts"
 
 LANE_EXECUTION_AUDIT_LOG = "lane_execution_audit_log"
 
+# Broker Freeze — emergency kill switch above the lane toggles (2026-05-23).
+# Blocks ALL broker submit paths regardless of lane, credentials, or
+# gate state. Singleton doc keyed "current". Defaults to UNFROZEN when
+# the collection is empty.
+BROKER_FREEZE_STATE = "broker_freeze_state"
+BROKER_FREEZE_AUDIT_LOG = "broker_freeze_audit_log"
+
+# Broker reconciliation — one row per `broker_orders` row reconciled
+# against MC's internal records (`shared_intents`, `execution_receipts`).
+# Tags unmatched orders as UNVERIFIED_BROKER_EXECUTION so the kernel
+# permanently refuses to train on them.
+BROKER_RECONCILIATION = "broker_reconciliation"
+
+
 
 # Position primitive (2026-02-11) — discrete thesis object the 4 brains
 # discuss. Every brain stamps a stance (long / short / abstain) with

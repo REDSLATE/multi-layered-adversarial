@@ -32,6 +32,39 @@ from shared.broker.base import (
 )
 
 
+class BypassBlocked(Exception):
+    """Raised by the adapter when an order submission is attempted
+    without a valid MC execution receipt. Doctrine pin (2026-05-23):
+    every broker submit MUST carry a receipt minted by MC's
+    `broker_router._mint_and_verify_mc_receipt`. Going around the
+    router is the bypass we're closing — adapter-level enforcement
+    is the LAST line of defence."""
+
+
+def _require_mc_receipt(receipt: Optional[dict], *, op: str) -> None:
+    """Fail-closed if `receipt` is missing or structurally invalid.
+    The adapter does not verify the HMAC here (that's the router's
+    job — `broker_verify_receipt`); it just refuses to talk to the
+    broker when no receipt was attached at all.
+
+    Shape mirrors `MCExecutionReceipt.to_dict()`: flat dict with at
+    minimum `mc_policy_hash`, `issued_at_ms`, and `signature` fields.
+    """
+    if not isinstance(receipt, dict):
+        raise BypassBlocked(
+            f"alpaca_paper.{op} refused: no MC execution receipt attached "
+            f"(got {type(receipt).__name__}). Doctrine: every broker "
+            f"write must carry a signed receipt minted by MC's "
+            f"broker_router. NO_TRADE."
+        )
+    missing = [k for k in ("signature", "mc_policy_hash", "issued_at_ms") if not receipt.get(k)]
+    if missing:
+        raise BypassBlocked(
+            f"alpaca_paper.{op} refused: MC receipt missing required "
+            f"fields {missing}. NO_TRADE."
+        )
+
+
 def _to_side(side: str) -> OrderSide:
     s = (side or "").upper()
     if s == "BUY":
@@ -158,7 +191,13 @@ class AlpacaPaperAdapter(BrokerAdapter):
         notional: Optional[float] = None,
         side: str = "BUY",
         client_order_id: Optional[str] = None,
+        mc_receipt: Optional[dict] = None,
     ) -> BrokerOrder:
+        # Doctrine pin (2026-05-23): the adapter is the LAST line of
+        # defence against bypass. Even if a caller forgets to mint an
+        # MC receipt, the adapter refuses to talk to Alpaca without
+        # one. Fail-closed.
+        _require_mc_receipt(mc_receipt, op="submit_market_order")
         if (qty is None) == (notional is None):
             raise ValueError("supply exactly one of qty or notional")
         kwargs: dict = {
@@ -184,7 +223,9 @@ class AlpacaPaperAdapter(BrokerAdapter):
         limit_price: float,
         side: str = "BUY",
         client_order_id: Optional[str] = None,
+        mc_receipt: Optional[dict] = None,
     ) -> BrokerOrder:
+        _require_mc_receipt(mc_receipt, op="submit_limit_order")
         kwargs: dict = {
             "symbol": symbol.upper(),
             "qty": float(qty),

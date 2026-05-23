@@ -35,6 +35,7 @@ import os
 from typing import Optional
 
 from shared.broker.alpaca_routes import get_alpaca_adapter
+from shared.broker_freeze import BrokerFrozen, assert_not_frozen
 from shared.crypto.broker_adapter import get_kraken_adapter
 from shared.broker_symbol_resolver import (
     AssetKey,
@@ -85,9 +86,11 @@ class BrokerRouteBlocked(Exception):
 
 def _broker_require_mc_receipt() -> bool:
     """Read at call-time so the operator can flip the flag in `.env`
-    without restarting the server (uvicorn auto-reload picks it up
-    instantly because the value is checked per route_order call)."""
-    return os.getenv("RISEDUAL_BROKER_REQUIRE_MC_RECEIPT", "false").strip().lower() in {
+    without restarting the server. Doctrine pin (2026-05-23): defaults
+    to TRUE after the orphan audit — bypass is the bug we're closing.
+    Set RISEDUAL_BROKER_REQUIRE_MC_RECEIPT=false in `.env` only during
+    a deliberate rollback (logged + reviewed)."""
+    return os.getenv("RISEDUAL_BROKER_REQUIRE_MC_RECEIPT", "true").strip().lower() in {
         "true", "1", "yes", "on",
     }
 
@@ -221,6 +224,14 @@ async def route_order(
     """
     intent_id = intent.get("intent_id", "<unknown>")
 
+    # 0. Emergency freeze — supersedes everything. If the operator
+    #    flipped the freeze on, NO broker write happens, period. This
+    #    runs BEFORE adapter resolution so we never even fetch creds.
+    try:
+        await assert_not_frozen()
+    except BrokerFrozen as e:
+        raise BrokerRouteBlocked(str(e)) from e
+
     # 1. Compose canonical AssetKey.
     try:
         asset = compose_asset(intent)
@@ -277,6 +288,7 @@ async def route_order(
         notional=notional_usd,
         side=side,
         client_order_id=client_order_id,
+        mc_receipt=receipt_check.get("receipt"),
     )
     # Stamp routing metadata so receipts can be sliced by broker / lane.
     order.setdefault("broker", broker_name)

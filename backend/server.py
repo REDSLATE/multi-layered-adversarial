@@ -86,6 +86,9 @@ from shared.calibration.snapshot_completeness import router as snapshot_complete
 from routes.memory_kernel_routes import router as memory_kernel_router
 from routes.orphan_inspection_routes import router as orphan_inspection_router
 from routes.orphan_replay_routes import router as orphan_replay_router
+from routes.alpaca_orphan_routes import router as alpaca_orphan_router
+from routes.broker_freeze_routes import router as broker_freeze_router
+from routes.broker_reconcile_routes import router as broker_reconcile_router
 from routes.paradox_routes import router as paradox_router
 from routes.paradox_agent_routes import router as paradox_agent_router
 from routes.paradox_wake_routes import router as paradox_wake_router
@@ -323,6 +326,9 @@ api_router.include_router(snapshot_completeness_router)
 api_router.include_router(memory_kernel_router)
 api_router.include_router(orphan_inspection_router)
 api_router.include_router(orphan_replay_router)
+api_router.include_router(alpaca_orphan_router)
+api_router.include_router(broker_freeze_router)
+api_router.include_router(broker_reconcile_router)
 api_router.include_router(paradox_router)
 api_router.include_router(paradox_agent_router)
 api_router.include_router(paradox_wake_router)
