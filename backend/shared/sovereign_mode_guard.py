@@ -282,6 +282,17 @@ async def _persist_snapshot(brain: str, c: SovereignContribution,
     await db[SOVEREIGN_STATE_HISTORY].insert_one(history_row)
 
     # Audit log — operator-readable timeline.
+    # Doctrine pin (2026-05-23): previously the audit row only stored
+    # `ts/brain/action/mode/training_signal/delta_was_clamped/posted_as/
+    # seat_epoch`. Every other field the brain sent (notes, weights,
+    # recent_outcomes, learning_rate, confidence_delta, delta_reason,
+    # live_trading_enabled) was dropped on write. Dashboards reading
+    # the audit log surfaced `payload: {}` for every contribution —
+    # so the operator couldn't see whether Redeye was sending real
+    # reasoning or empty smoke-tests. We now carry the full content
+    # forward so the audit trail tells the truth. The detailed history
+    # row is still the source of truth, but the audit row is no longer
+    # a meaningless meta-stamp.
     await db[SOVEREIGN_AUDIT_LOG].insert_one({
         "ts": now,
         "brain": brain,
@@ -291,6 +302,26 @@ async def _persist_snapshot(brain: str, c: SovereignContribution,
         "delta_was_clamped": guard["delta_was_clamped"],
         "posted_as": policy["posted_as"],
         "seat_epoch": seat_epoch,
+        # Full contribution content (added 2026-05-23):
+        "live_trading_enabled": c.live_trading_enabled,
+        "weights": dict(c.weights),
+        "learning_rate": c.learning_rate,
+        "confidence_delta": guard["bounded_confidence_delta"],
+        "raw_confidence_delta": guard["raw_confidence_delta"],
+        "delta_reason": c.delta_reason,
+        "recent_outcomes_count": len(c.recent_outcomes),
+        "recent_outcomes": [o.model_dump() for o in c.recent_outcomes],
+        "notes": c.notes,
+        # Quick-glance "did this contribution carry real content?"
+        # signal for dashboards. True when the brain sent at least
+        # one substantive field beyond defaults.
+        "has_substance": bool(
+            c.notes.strip()
+            or c.weights
+            or c.recent_outcomes
+            or c.delta_reason.strip()
+            or c.confidence_delta != 0.0
+        ),
     })
 
     # Re-fetch the canonical doc minus _id for return.
