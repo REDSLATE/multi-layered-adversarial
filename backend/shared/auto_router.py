@@ -443,13 +443,72 @@ async def _post_submit_side_effects(receipt: dict, intent: dict) -> None:
         logger.warning("auto_router: vrl.verify_receipt failed: %s", e)
 
 
+async def _sweep_seat_mismatched_intents() -> int:
+    """Doctrine (2026-02-18, limbo cleanup): intents POSTed when the
+    brain did NOT hold the executor seat will FOREVER fail gate 3
+    (`executor_seat_check`) because `holds_executor_seat` is frozen
+    at post-time on the intent doc. The legacy auto-router scan only
+    picked up `holds_executor_seat=True` intents, so these silently
+    accumulated as `gate_state=pending` with no progress reporting
+    and no terminal disposition.
+
+    This sweep flips ALL such intents to `gate_state=blocked` with a
+    typed reason so the operator queue tells the truth. No broker
+    action is taken — these intents were never eligible to fire.
+    """
+    q = {
+        "gate_state": "pending",
+        "executed": {"$ne": True},
+        "action": {"$in": ["BUY", "SELL", "SHORT", "COVER"]},
+        "holds_executor_seat": False,
+    }
+    now = _now_iso()
+    candidates = await db[SHARED_INTENTS].find(
+        q, {"_id": 0, "intent_id": 1, "stack": 1, "symbol": 1,
+            "action": 1, "executor_holder_at_post": 1},
+    ).limit(500).to_list(500)
+    if not candidates:
+        return 0
+    for it in candidates:
+        await _persist_blocked_intent(
+            it["intent_id"], 0.0, {
+                "verdict": "blocked",
+                "gates": [{
+                    "name": "executor_seat_check",
+                    "passed": False,
+                    "reason": (
+                        f"intent posted when seat held by "
+                        f"{it.get('executor_holder_at_post')!r}, not "
+                        f"{it.get('stack')!r} — terminal, swept by "
+                        f"auto_router seat-mismatch cleanup at {now}"
+                    ),
+                }],
+                "risk_multiplier": 0.0,
+            },
+        )
+    logger.info("auto_router: swept %d seat-mismatched limbo intents", len(candidates))
+    return len(candidates)
+
+
 async def _tick() -> list[dict]:
-    """One scan pass. Picks up at most AUTO_ROUTER_MAX_PER_TICK eligible intents."""
+    """One scan pass. Picks up at most AUTO_ROUTER_MAX_PER_TICK eligible intents.
+
+    Also runs the seat-mismatch sweep at most once per tick so the
+    legacy limbo queue drains over time without flooding mongo on
+    every cycle.
+    """
+    # Drain seat-mismatch limbo first (cheap when empty).
+    await _sweep_seat_mismatched_intents()
     q = {
         "executed": {"$ne": True},
         "action": {"$in": ["BUY", "SELL", "SHORT", "COVER"]},
         "symbol": {"$ne": None},
         "holds_executor_seat": True,
+        # Honest queue: don't re-process intents already terminally
+        # blocked by an earlier tick. Without this, the auto_router
+        # would keep retrying gate-failed intents forever (the noise
+        # the operator saw in the TRAINING feed).
+        "gate_state": {"$nin": ["blocked", "no_trade", "advisory_only"]},
     }
     intents = await db[SHARED_INTENTS].find(q, {"_id": 0}).sort("created_at", 1).to_list(AUTO_ROUTER_MAX_PER_TICK)
     if not intents:
