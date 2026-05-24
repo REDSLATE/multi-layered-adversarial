@@ -53,8 +53,16 @@ function DecisionsFeed() {
     return () => clearInterval(t);
   }, [load]);
 
+  // "Pre-gate row" = a contribution audit row that has no substance.
+  // (The 2026-05-24 empty-contribution gate now blocks these at ingest,
+  // so this count should trend to zero for new traffic. Historical rows
+  // can still match.) The "(empty payload)" branch covers non-
+  // contribution sovereign rows that legitimately carry no payload.
   const emptyPayloadCount = useMemo(
-    () => (items || []).filter((r) => (r.summary || "").includes("empty payload")).length,
+    () => (items || []).filter((r) => {
+      const s = r.summary || "";
+      return s.includes("(no substance") || s.includes("(empty payload)");
+    }).length,
     [items],
   );
 
@@ -134,7 +142,7 @@ function DecisionsFeed() {
                 const rowKey = r.id || `${r.ts}-${r.source || r.brain || "x"}-${i}`;
                 const meta = r.brain && RUNTIME_META[r.brain];
                 const isOpen = expanded === rowKey;
-                const isSkeleton = (r.summary || "").includes("empty payload");
+                const isSkeleton = (r.summary || "").includes("(no substance") || (r.summary || "").includes("(empty payload)");
                 return (
                   <React.Fragment key={rowKey}>
                     <tr

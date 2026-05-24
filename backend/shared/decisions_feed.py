@@ -119,32 +119,133 @@ def _normalize_receipt(doc: dict) -> dict:
 
 
 def _normalize_sovereign(doc: dict) -> dict:
-    """REDEYE's primary store. `action: contribution` is the typical row."""
+    """REDEYE's primary store. `action: contribution` is the typical row.
+
+    Doctrine pin (2026-05-24): contributions are PERIODIC GLOBAL-STATE
+    snapshots, not per-symbol opinions. The renderer used to expect a
+    `payload` dict carrying `symbol/side/confidence`, but the audit
+    writer stores those fields at the top level (after 2026-05-23) and
+    contributions intentionally don't carry a single triggering symbol
+    — a 60-sec contribution may span multiple decisions in its window.
+
+    The summary line now reads contribution data off the audit-row top
+    level: `mode`, `notes`, `weights`, `recent_outcomes` count, and
+    (when recent_outcomes has entries) extracts the most-recent
+    symbol/action/confidence as a display anchor. This is presentation
+    only — it does NOT constrain the contribution schema."""
     action = doc.get("action") or doc.get("kind") or "sovereign_event"
+    # Back-compat: some older rows did store a `payload` dict. Fall
+    # back to the top-level keys (the canonical home post-2026-05-23).
     payload = doc.get("payload") or doc.get("data") or doc.get("contribution") or {}
     if not isinstance(payload, dict):
         payload = {}
-    symbol = payload.get("symbol") or doc.get("symbol")
-    side = payload.get("side") or payload.get("stance") or payload.get("bias") or doc.get("side")
-    conf = payload.get("confidence") or payload.get("conviction") or doc.get("confidence")
-    posted_as = doc.get("posted_as")
 
+    posted_as = doc.get("posted_as")
     bits = [action]
     if posted_as:
         bits.append(f"as {posted_as}")
-    if symbol:
-        bits.append(symbol)
-    if side:
-        bits.append(str(side))
-    if conf is not None:
-        try:
-            bits.append(f"conf={float(conf):.2f}")
-        except (TypeError, ValueError):
-            pass
-    # When the payload is empty (the REDEYE skeleton problem), surface
-    # the structural fact rather than hiding it.
-    if not payload and posted_as:
-        bits.append("(empty payload — no symbol/side/conf emitted)")
+
+    # For `contribution` rows, the doctrinal data lives at the top
+    # level of the audit row (mode/notes/weights/recent_outcomes/...).
+    # Surface what's actually there instead of demanding per-symbol
+    # fields contributions weren't designed to carry.
+    symbol = payload.get("symbol") or doc.get("symbol")
+    side = payload.get("side") or payload.get("stance") or payload.get("bias") or doc.get("side")
+    conf = payload.get("confidence") or payload.get("conviction") or doc.get("confidence")
+
+    if action == "contribution":
+        # Extract a display anchor from recent_outcomes (most recent
+        # entry) when present. Does NOT promote it to a schema field.
+        recent = doc.get("recent_outcomes") or []
+        if isinstance(recent, list) and recent and not symbol:
+            first = recent[0] if isinstance(recent[0], dict) else {}
+            symbol = first.get("symbol")
+            side = side or first.get("action")
+            conf = conf if conf is not None else first.get("confidence")
+
+        # If the symbol/side/conf came in via the legacy payload dict
+        # (very old contribution rows pre-dating the 2026-05-23 fix),
+        # surface those directly — same shape as non-contribution rows.
+        if symbol and not (doc.get("mode") or doc.get("weights") or doc.get("notes") or recent):
+            bits.append(symbol)
+            if side:
+                bits.append(str(side))
+            if conf is not None:
+                try:
+                    bits.append(f"conf={float(conf):.2f}")
+                except (TypeError, ValueError):
+                    pass
+            summary = " · ".join(bits)
+            return {
+                "ts": doc.get("ts") or doc.get("timestamp") or doc.get("created_at"),
+                "brain": doc.get("brain") or doc.get("runtime") or doc.get("stack"),
+                "source_collection": SOVEREIGN_AUDIT_LOG,
+                "kind": "sovereign_audit",
+                "action": action,
+                "symbol": symbol,
+                "summary": summary,
+                "raw": doc,
+            }
+
+        # Substance fields the audit row carries.
+        mode = doc.get("mode")
+        notes = doc.get("notes")
+        weights = doc.get("weights") or {}
+        outcomes_count = doc.get("recent_outcomes_count")
+        if outcomes_count is None and isinstance(recent, list):
+            outcomes_count = len(recent)
+
+        # Build a contribution-shaped summary.
+        if mode:
+            bits.append(f"mode={mode}")
+        if isinstance(outcomes_count, int) and outcomes_count > 0:
+            bits.append(f"outcomes={outcomes_count}")
+            if symbol:
+                bits.append(f"latest={symbol}")
+                if side:
+                    bits.append(str(side))
+                if conf is not None:
+                    try:
+                        bits.append(f"conf={float(conf):.2f}")
+                    except (TypeError, ValueError):
+                        pass
+        if isinstance(weights, dict) and weights:
+            bits.append(f"weights={len(weights)}")
+        if isinstance(notes, str) and notes.strip():
+            short = notes.strip()
+            if len(short) > 60:
+                short = short[:57] + "..."
+            bits.append(f'"{short}"')
+
+        # Only flag as skeleton if the audit row truly has nothing.
+        # That's the case the 422 empty-contribution gate now prevents
+        # — pre-gate historical rows can still surface this.
+        has_substance = doc.get("has_substance")
+        # Back-compat for rows pre-dating has_substance: compute it.
+        if has_substance is None:
+            has_substance = bool(
+                (isinstance(notes, str) and notes.strip())
+                or weights
+                or (isinstance(recent, list) and recent)
+                or (isinstance(doc.get("delta_reason"), str) and doc["delta_reason"].strip())
+                or (doc.get("confidence_delta") or 0) != 0
+            )
+        if not has_substance and posted_as:
+            bits.append("(no substance — pre-gate row)")
+    else:
+        # Non-contribution sovereign rows: original behaviour.
+        if symbol:
+            bits.append(symbol)
+        if side:
+            bits.append(str(side))
+        if conf is not None:
+            try:
+                bits.append(f"conf={float(conf):.2f}")
+            except (TypeError, ValueError):
+                pass
+        if not payload and posted_as:
+            bits.append("(empty payload)")
+
     summary = " · ".join(bits)
 
     return {
