@@ -101,12 +101,17 @@ async def test_inspect_returns_terminal_vs_transient_hint(auth_client, base_url)
     from namespaces import SHARED_INTENTS
 
     # Plant an intent that fails terminally on `executor_seat_check`
-    # (it didn't hold the seat at post-time).
+    # (it didn't hold the seat at post-time). Schema-pin fields are
+    # required by gate 1 (`schema_invariants`) — without them the
+    # intent dies at gate 1 and we never reach gate 3 (2026-05-17
+    # schema tightening; fixture updated 2026-05-24).
     await db[SHARED_INTENTS].insert_one({
         "intent_id": "tw-inspect-1",
         "stack": "camaro", "symbol": "AAPL", "action": "BUY",
         "lane": "equity",
         "confidence": 0.7,
+        "may_execute": False,
+        "requires_gate_pass": True,
         "gate_state": "pending",
         "executed": False,
         "holds_executor_seat": False,
