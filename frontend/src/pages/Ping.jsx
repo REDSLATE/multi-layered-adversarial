@@ -26,6 +26,20 @@ function backendBase() {
   return b.replace(/\/+$/, "");
 }
 
+function displayBase() {
+  // For the URL we SHOW the operator to bookmark, use the domain they
+  // actually visited from — not the build-time REACT_APP_BACKEND_URL,
+  // which may be a different host (e.g. emergent.host vs the public
+  // domain mission.risedual.ai). The heartbeat-ping endpoint is
+  // proxied through the same domain, so window.location.origin always
+  // works as the bookmark target. Fall back to backendBase() during
+  // SSR / non-browser contexts.
+  if (typeof window !== "undefined" && window.location && window.location.origin) {
+    return window.location.origin.replace(/\/+$/, "");
+  }
+  return backendBase();
+}
+
 function fmtRel(iso) {
   if (!iso) return "—";
   const diff = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -37,7 +51,7 @@ function fmtRel(iso) {
 
 export default function Ping() {
   const { brain } = useParams();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const token = params.get("token") || "";
   const meta = BRAIN_META[brain] || { label: brain?.toUpperCase() || "?", color: "#A1A1AA" };
 
@@ -45,6 +59,11 @@ export default function Ping() {
   const [lastSeen, setLastSeen] = useState(null);
   const [error, setError] = useState("");
   const [count, setCount] = useState(0);
+  // Local-only input state for the "paste your token" field. Once the
+  // operator clicks Activate, we promote it to the ?token= query string
+  // (which the rest of the page reads from).
+  const [tokenDraft, setTokenDraft] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const ping = useCallback(async () => {
     if (!token) { setStatus("err"); setError("missing ?token in URL"); return; }
@@ -80,8 +99,34 @@ export default function Ping() {
   }, [ping]);
 
   const pingUrl = token
-    ? `${backendBase()}/api/heartbeat-ping/${brain}?token=${token}`
-    : `${backendBase()}/api/heartbeat-ping/${brain}?token=<TOKEN>`;
+    ? `${displayBase()}/api/heartbeat-ping/${brain}?token=${token}`
+    : `${displayBase()}/api/heartbeat-ping/${brain}?token=<TOKEN>`;
+
+  // Bookmark URL = the PAGE URL with ?token=… so the operator can
+  // bookmark this page directly and every reload registers a beat
+  // (which is the documented use-case in the instructions below).
+  const bookmarkUrl = token
+    ? `${displayBase()}/ping/${brain}?token=${token}`
+    : null;
+
+  const activateToken = useCallback(() => {
+    const t = (tokenDraft || "").trim();
+    if (!t) return;
+    setParams({ token: t }, { replace: true });
+    setTokenDraft("");
+  }, [tokenDraft, setParams]);
+
+  const copyBookmark = useCallback(async () => {
+    if (!bookmarkUrl) return;
+    try {
+      await navigator.clipboard.writeText(bookmarkUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard API can fail under non-HTTPS / sandboxed iframes —
+      // operator can still copy from the visible URL block. Silent.
+    }
+  }, [bookmarkUrl]);
 
   const ok = status === "ok";
 
@@ -156,6 +201,65 @@ export default function Ping() {
           )}
         </div>
 
+        {/* Paste-token activation (shown only when no token in URL).
+            Operator pastes the brain's ingest token, clicks Activate,
+            and we rewrite the URL to include ?token=… — the rest of
+            the page lights up from there. */}
+        {!token && (
+          <div style={{
+            border: `1px dashed ${meta.color}`, padding: "16px 20px",
+            marginBottom: 24, background: "rgba(255,255,255,0.02)",
+          }} data-testid="ping-token-paste-panel">
+            <div style={{
+              fontSize: 10, letterSpacing: 3, textTransform: "uppercase",
+              color: "#a1a1aa", marginBottom: 10,
+            }}>
+              paste {meta.label} ingest token
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input
+                type="password"
+                value={tokenDraft}
+                onChange={(e) => setTokenDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") activateToken(); }}
+                placeholder={`${(brain || "").toUpperCase()}_INGEST_TOKEN`}
+                data-testid="ping-token-input"
+                style={{
+                  flex: "1 1 280px", padding: "10px 12px",
+                  background: "#0a0a0a", color: "#e5e7eb",
+                  border: "1px solid #27272a", fontSize: 12,
+                  fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace",
+                  outline: "none",
+                }}
+              />
+              <button
+                onClick={activateToken}
+                disabled={!tokenDraft.trim()}
+                data-testid="ping-activate-btn"
+                style={{
+                  padding: "10px 18px",
+                  background: tokenDraft.trim() ? meta.color : "#27272a",
+                  color: tokenDraft.trim() ? "#0a0a0a" : "#71717a",
+                  border: "none", fontSize: 11, letterSpacing: 3,
+                  textTransform: "uppercase", fontWeight: "bold",
+                  cursor: tokenDraft.trim() ? "pointer" : "not-allowed",
+                }}
+              >
+                Activate
+              </button>
+            </div>
+            <div style={{
+              fontSize: 10, color: "#71717a", marginTop: 10, lineHeight: 1.5,
+            }}>
+              Token comes from the backend <code>.env</code> file as{" "}
+              <code>{(brain || "").toUpperCase()}_INGEST_TOKEN</code>.
+              The token stays in your URL only — not transmitted anywhere
+              except to MC's heartbeat endpoint. Bookmark the resulting
+              URL to keep the row green permanently.
+            </div>
+          </div>
+        )}
+
         {/* Beat now */}
         <button
           onClick={ping}
@@ -198,11 +302,32 @@ export default function Ping() {
             overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all",
             border: "1px solid #18181b",
           }} data-testid="ping-url-block">{pingUrl}</pre>
+          {bookmarkUrl && (
+            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              <button
+                onClick={copyBookmark}
+                data-testid="ping-copy-bookmark-btn"
+                style={{
+                  padding: "8px 14px",
+                  background: copied ? "#22c55e" : "#27272a",
+                  color: copied ? "#0a0a0a" : "#e5e7eb",
+                  border: "1px solid #3f3f46", fontSize: 10, letterSpacing: 2,
+                  textTransform: "uppercase", fontWeight: "bold",
+                  cursor: "pointer",
+                }}
+              >
+                {copied ? "✓ Copied bookmark URL" : "Copy bookmark URL"}
+              </button>
+              <span style={{ fontSize: 10, color: "#71717a", alignSelf: "center" }}>
+                Bookmark <code>{bookmarkUrl}</code> — reloading the
+                bookmark fires a beat.
+              </span>
+            </div>
+          )}
           {!token && (
             <div style={{ fontSize: 11, color: "#fbbf24", marginTop: 8 }}>
-              Add the brain's ingest token as <code>?token=...</code> to
-              activate beats. The token lives in the backend .env as{" "}
-              <code>{(brain || "").toUpperCase()}_INGEST_TOKEN</code>.
+              Add the brain's ingest token via the paste panel above
+              (or set <code>?token=…</code> in the URL) to activate beats.
             </div>
           )}
         </div>
