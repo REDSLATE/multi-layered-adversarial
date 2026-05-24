@@ -379,6 +379,63 @@ async def get_position(
     return out
 
 
+# ── runtime discovery: list open positions for brain-side polling ──
+
+@router.get("/runtime-discussion/positions")
+async def runtime_list_positions(
+    runtime: str = Query(..., description="brain identity making the discovery call"),
+    status: Optional[str] = Query(
+        "open",
+        description="open | terminal | (any specific state) — defaults to open",
+    ),
+    symbol: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    x_runtime_token: str | None = Header(default=None, alias="X-Runtime-Token"),
+):
+    """Brain-facing position discovery (2026-05-24).
+
+    Returns the same shape as the operator endpoint `/shared/positions`
+    but authenticated via the per-runtime ingest token rather than the
+    admin JWT — so brain sidecars can poll position state on their own
+    cadence and stamp stances against the returned `position_id`s.
+
+    Doctrine pin: this is READ-ONLY. Brains discover; they don't open
+    or close positions through this surface. Position lifecycle stays
+    with MC's gate chain.
+
+    Returned rows include `position_id`, `symbol`, `side`, `lane`,
+    `state`, `opened_at`, `updated_at`, `stances_by_brain` (so a brain
+    can see what it has ALREADY stamped and avoid double-posting), and
+    `stance_counts`."""
+    verify_runtime_token(runtime, x_runtime_token or "")
+
+    q: dict = {}
+    if status == "open":
+        q["state"] = {"$in": list(OPEN_STATES)}
+    elif status == "terminal":
+        q["state"] = {"$in": list(TERMINAL_STATES)}
+    elif status:
+        q["state"] = status
+    if symbol:
+        q["symbol"] = symbol.upper()
+
+    rows = await db[SHARED_POSITIONS].find(q, {"_id": 0}).sort(
+        "updated_at", -1,
+    ).to_list(limit)
+    hydrated = [await _hydrate(r) for r in rows]
+    return {
+        "runtime": runtime,
+        "items": hydrated,
+        "count": len(hydrated),
+        "doctrine_note": (
+            "Read-only discovery. POST stance updates back to "
+            "/runtime-discussion/positions/{position_id}/stance using "
+            "the same X-Runtime-Token. Vocabulary: "
+            "stance ∈ {long, short, abstain}; confidence in [0,1]."
+        ),
+    }
+
+
 # ── stance posting: operator path (JWT) ──
 
 @router.post("/admin/positions/{position_id}/stance")
