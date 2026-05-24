@@ -6,6 +6,7 @@ import { ArrowUpRight } from "@phosphor-icons/react";
 import TechnicalsPanel from "@/components/TechnicalsPanel";
 import FeedersStrip from "@/components/FeedersStrip";
 import RosterPanel from "@/components/ParadoxRosterPanel";
+import AssignableRosterPanel from "@/components/RosterPanel";
 import LivePositionsPanel from "@/components/LivePositionsPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 
@@ -179,6 +180,9 @@ export default function Overview() {
               only damage its own slot, not blank the whole page. */}
           <PanelErrorBoundary panelName="Brain Roster" testid="panel-error-roster">
             <RosterPanel />
+          </PanelErrorBoundary>
+          <PanelErrorBoundary panelName="Roster Assignment" testid="panel-error-roster-assign">
+            <AssignableRosterPanel />
           </PanelErrorBoundary>
           <PanelErrorBoundary panelName="Live Positions" testid="panel-error-live-positions">
             <LivePositionsPanel />
