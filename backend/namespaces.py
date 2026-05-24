@@ -118,6 +118,15 @@ BROKER_FREEZE_AUDIT_LOG = "broker_freeze_audit_log"
 # permanently refuses to train on them.
 BROKER_RECONCILIATION = "broker_reconciliation"
 
+# Sovereign contribution attempt log (2026-05-24).
+# Every POST to /api/runtime-discussion/sovereign/contribution writes
+# one row here — both 200 successes AND 422 rejections — so the
+# operator panel can show split counters (pushed / rejected / errored)
+# canonically from MC's side. Brains' self-reported counters can't
+# be trusted in the failure-mode case (a sidecar that's failing to
+# serialize can't accurately count its own failures).
+SOVEREIGN_CONTRIB_ATTEMPTS = "sovereign_contribution_attempts"
+
 
 
 # Position primitive (2026-02-11) — discrete thesis object the 4 brains

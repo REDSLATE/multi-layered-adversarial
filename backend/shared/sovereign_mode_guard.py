@@ -46,6 +46,7 @@ from db import db
 from namespaces import (
     DISCUSSION_PARTICIPANTS,
     SOVEREIGN_AUDIT_LOG,
+    SOVEREIGN_CONTRIB_ATTEMPTS,
     SOVEREIGN_STATE,
     SOVEREIGN_STATE_HISTORY,
 )
@@ -121,6 +122,42 @@ def _list_empty_fields(c: "SovereignContribution") -> list[str]:
     if c.confidence_delta == 0.0:
         empties.append("confidence_delta")
     return empties
+
+
+async def _log_contribution_attempt(
+    *,
+    runtime: str,
+    outcome: str,
+    status_code: int,
+    empty_fields: list[str],
+    request_id: str | None,
+    error_kind: str | None,
+) -> None:
+    """Append a row to `sovereign_contribution_attempts`.
+
+    Best-effort — a Mongo failure here MUST NOT block the contribution
+    endpoint (the brain's contract is with the endpoint, not the audit
+    log). We swallow exceptions and let the next attempt try again.
+
+    Outcome vocabulary (intentionally aligned with the brain teams'
+    counter names — see RedEye telemetry summary 2026-05-24):
+        pushed_200      → contribution accepted and persisted
+        rejected_422    → empty_contribution gate fired
+        rejected_4xx    → other 4xx (validation, auth) — currently unused
+        error           → 5xx — reserved for future MC-side faults
+    """
+    try:
+        await db[SOVEREIGN_CONTRIB_ATTEMPTS].insert_one({
+            "ts": _now_iso(),
+            "brain": runtime,
+            "outcome": outcome,
+            "status_code": status_code,
+            "empty_fields": empty_fields,
+            "request_id": request_id,
+            "error_kind": error_kind,
+        })
+    except Exception:  # noqa: BLE001 — best-effort telemetry
+        pass
 
 
 # ──────────────────────── models ────────────────────────
@@ -385,12 +422,19 @@ async def post_sovereign_contribution(
     body: SovereignContribution,
     runtime: str = Query(..., description="brain posting the contribution"),
     x_runtime_token: str | None = Header(default=None, alias="X-Runtime-Token"),
+    x_client_request_id: str | None = Header(default=None, alias="X-Client-Request-Id"),
 ):
     """Brain sidecar POSTs its current sovereign state to MC.
 
     Auth: per-runtime ingest token (`X-Runtime-Token` header), same
     scheme as opinions / stances. Returns the canonical stored snapshot
-    plus guard report (whether the delta was clamped)."""
+    plus guard report (whether the delta was clamped).
+
+    Telemetry (2026-05-24): every attempt — successful OR rejected —
+    is logged to `sovereign_contribution_attempts` so the operator
+    panel can show split counters canonically. The optional
+    `X-Client-Request-Id` header is captured for correlation with the
+    brain's own counters."""
     verify_runtime_token(runtime, x_runtime_token or "")
     if runtime not in DISCUSSION_PARTICIPANTS:
         # verify_runtime_token also checks this; double-check for clarity.
@@ -408,6 +452,15 @@ async def post_sovereign_contribution(
         # ALL five fields empty = pure heartbeat = reject. At least one
         # populated = brain is contributing real data, accept.
         if len(empty_fields) >= 5:
+            # Log the rejection so the operator panel can see it.
+            await _log_contribution_attempt(
+                runtime=runtime,
+                outcome="rejected_422",
+                status_code=422,
+                empty_fields=empty_fields,
+                request_id=x_client_request_id,
+                error_kind="empty_contribution",
+            )
             raise HTTPException(
                 status_code=422,
                 detail={
@@ -423,12 +476,27 @@ async def post_sovereign_contribution(
                     ),
                     "empty_fields": empty_fields,
                     "runtime": runtime,
+                    "request_id": x_client_request_id,
                     "doctrine_ref": "BRAIN_DEVELOPER_GUIDE.md#contributions",
                 },
             )
 
     guard = assert_contribution_safe(body)
-    return await _persist_snapshot(runtime, body, guard)
+    result = await _persist_snapshot(runtime, body, guard)
+
+    # Log the successful attempt.
+    await _log_contribution_attempt(
+        runtime=runtime,
+        outcome="pushed_200",
+        status_code=200,
+        empty_fields=_list_empty_fields(body),
+        request_id=x_client_request_id,
+        error_kind=None,
+    )
+    # Echo the request_id so the brain can correlate.
+    if isinstance(result, dict) and x_client_request_id:
+        result["request_id"] = x_client_request_id
+    return result
 
 
 # Operator-facing reads (frontend tile uses these).
@@ -474,3 +542,98 @@ async def sovereign_audit(
         "ts", -1,
     ).to_list(limit)
     return {"items": rows, "count": len(rows)}
+
+
+
+@router.get("/admin/sovereign/contribution-health")
+async def contribution_health(
+    window: int = Query(
+        default=100, ge=1, le=2000,
+        description="rolling window size per brain — defaults to last 100 attempts",
+    ),
+    _user: dict = Depends(get_current_user),
+):
+    """Operator panel — split counters per brain for the most-recent N
+    contribution attempts (200s + 422s + errors).
+
+    This is the canonical view: it draws from
+    `sovereign_contribution_attempts` which MC writes regardless of
+    what the brain's own counters say. So even if a brain's
+    serialization is broken (it can't accurately count its own
+    failures), MC's count is honest.
+
+    Returns one row per brain. Telemetry vocabulary deliberately
+    matches the brain teams' counter names (`pushed_200` /
+    `rejected_422` / `error`) so a cross-side panel reads identically.
+    """
+    rows: list[dict] = []
+    for brain in DISCUSSION_PARTICIPANTS:
+        attempts = await db[SOVEREIGN_CONTRIB_ATTEMPTS].find(
+            {"brain": brain}, {"_id": 0},
+        ).sort("ts", -1).to_list(window)
+        if not attempts:
+            rows.append({
+                "brain": brain,
+                "total_attempts": 0,
+                "pushed_200": 0,
+                "rejected_422": 0,
+                "rejected_other": 0,
+                "errors": 0,
+                "latest_ts": None,
+                "latest_outcome": None,
+                "latest_request_id": None,
+                "top_empty_fields": [],
+                "health": "no_data",
+            })
+            continue
+
+        pushed_200 = sum(1 for a in attempts if a["outcome"] == "pushed_200")
+        rejected_422 = sum(1 for a in attempts if a["outcome"] == "rejected_422")
+        rejected_other = sum(
+            1 for a in attempts
+            if a["outcome"] not in ("pushed_200", "rejected_422", "error")
+        )
+        errors = sum(1 for a in attempts if a["outcome"] == "error")
+
+        field_counts: dict[str, int] = {}
+        for a in attempts:
+            if a["outcome"] == "rejected_422":
+                for f in a.get("empty_fields", []) or []:
+                    field_counts[f] = field_counts.get(f, 0) + 1
+        top_empty = sorted(field_counts.items(), key=lambda kv: -kv[1])[:3]
+
+        total = len(attempts)
+        if pushed_200 == total:
+            health = "healthy"
+        elif pushed_200 / total >= 0.9:
+            health = "mostly_healthy"
+        elif rejected_422 / total >= 0.5:
+            health = "fighting_contract"
+        else:
+            health = "degraded"
+
+        latest = attempts[0]
+        rows.append({
+            "brain": brain,
+            "total_attempts": total,
+            "pushed_200": pushed_200,
+            "rejected_422": rejected_422,
+            "rejected_other": rejected_other,
+            "errors": errors,
+            "latest_ts": latest.get("ts"),
+            "latest_outcome": latest.get("outcome"),
+            "latest_request_id": latest.get("request_id"),
+            "top_empty_fields": [{"field": k, "count": v} for k, v in top_empty],
+            "health": health,
+        })
+
+    return {
+        "window": window,
+        "brains": rows,
+        "doctrine_note": (
+            "Counts come from MC's own attempt log — authoritative even "
+            "when a brain's self-reported counters can't be trusted. "
+            "`fighting_contract` = >=50% of attempts hitting empty-payload "
+            "gate; investigate brain's serialize_contribution."
+        ),
+    }
