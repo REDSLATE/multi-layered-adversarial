@@ -1,3 +1,67 @@
+## 2026-05-24 — Shelly Memory Ingest (spec-locked, REDEYE-ready)
+
+**Endpoint contract** matches REDEYE's `MC_MEMORY_INGEST_SPEC.md` verbatim.
+
+### Routes (live)
+- `POST /api/runtime/shelly/memories` — `X-Runtime-Token` auth (per-brain self-push)
+- `POST /api/admin/shelly/memories`   — Admin JWT (operator backfill)
+- `GET  /api/admin/brain-memories/summary?brain=…`
+- `GET  /api/admin/brain-memories/ingest-audit?brain=…&limit=…`
+
+### Request shape (locked)
+```
+{batch_id, brain, memories[{
+  memory_id, decision_id, symbol, lane, decided_at,
+  decision: {raw_action, display_action, confidence, execution_decision},
+  resolution: {outcome, realized_r, mae, mfe, entry_price, exit_price, resolved_at, mode},
+  features: {…≤20 keys, ≤4KB},
+  text_summary: "…≤512 chars"
+}]}
+```
+
+### Response shape
+`{ok, batch_id, brain, received, stored, duplicates, parked_dead, rejected[]}`
+- HTTP 207 on partial success (any rejected rows)
+- 422 on schema violations (enum/range/bounds)
+
+### Guarantees verified live
+- Idempotent on `(brain, memory_id)` — re-POST increments `duplicates`
+- `mode="data_unavailable"` quarantined to `brain_memories_dead`
+- Enum hard-locks: `raw_action`/`display_action` ∈ {BUY,SELL,HOLD};
+  `execution_decision` ∈ {ALLOW,BLOCKED}; `mode` ∈ {shadow,live,data_unavailable};
+  `lane` ∈ {crypto,equity,options,futures,fx,unknown}; `outcome` ∈ {-1,0,1}
+- Sign invariants: `mae ≤ 0`, `mfe ≥ 0`
+- Symbol uppercased at ingress
+- HOLD rows accepted with null entry/exit prices + zero r/mae/mfe
+- Cross-brain push blocked: a token belonging to brain X cannot post
+  memories tagged `brain=Y`
+- Bulk cap: ≤500 memories per batch; ≤20 feature keys; ≤4KB features
+  payload; ≤512-char text_summary
+
+### Tests (19 new tripwires)
+- `test_brain_memory_ingest.py` — full contract coverage
+- Tripwire total: **339 passing** (was 321 baseline; +18 new)
+
+### REDEYE-side requirements answered
+- Endpoint path: `POST /api/runtime/shelly/memories` ✓
+- Token header: `X-Runtime-Token` ✓ (matches existing convention)
+- Lane taxonomy: `crypto | equity | options | futures | fx | unknown` ✓
+- Features: bounded ≤20 keys / ≤4KB ✓
+- Embeddings: MC will regenerate server-side from `text_summary` (REDEYE
+  doesn't ship its `shelly_vectors`)
+- HOLD rows: accepted by MC (signal-poor individually, useful in aggregate)
+- `data_unavailable` rows: stored in `brain_memories_dead`, never counted
+  as outcomes
+- 429 backpressure: MC has no explicit rate limit yet (REDEYE's
+  self-throttle at 10 msg/s is sufficient for the 16k backfill)
+
+### REDEYE-side outstanding
+- A preview MC token: use the existing `REDEYE_INGEST_TOKEN` env value
+  (see backend `.env`) — same token already used for opinions/heartbeat.
+
+---
+
+
 ## 2026-05-24 — Roster Doctrine v2 (5-seat equity, eligibility hard-lock)
 
 **Operator clarification**: The `decider` seat is renamed to `strategist`. The

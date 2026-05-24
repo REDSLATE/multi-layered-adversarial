@@ -76,8 +76,9 @@ BRAIN_MEMORIES_DEAD = "brain_memories_dead"
 
 # Hard caps — keep payloads bounded so a misbehaving brain can't OOM MC.
 MAX_BATCH = 500
-MAX_FEATURES_PER_MEMORY = 32           # cap; spec recommends ~20
-MAX_TEXT_SUMMARY = 500
+MAX_FEATURES_PER_MEMORY = 20           # spec contract: ≤20 keys / ≤4KB
+MAX_FEATURES_PAYLOAD_BYTES = 4096
+MAX_TEXT_SUMMARY = 512                 # spec: ≤512 chars
 
 
 # ─────────────────────────── models ───────────────────────────
@@ -85,50 +86,69 @@ MAX_TEXT_SUMMARY = 500
 
 # Extended to cover REDEYE's full taxonomy per spec Q1.
 LaneT = Literal["crypto", "equity", "options", "futures", "fx", "unknown"]
-OutcomeT = Literal[-1, 0, 1]  # -1 loss, 0 push/abstain, 1 win
+OutcomeT = Literal[-1, 0, 1]                                 # -1 loss · 0 HOLD/push · 1 win
+ActionT = Literal["BUY", "SELL", "HOLD"]
+ExecDecisionT = Literal["ALLOW", "BLOCKED"]
+ResolutionModeT = Literal["shadow", "live", "data_unavailable"]
 
 
 class MemoryDecision(BaseModel):
     """The decision the brain made at the time. Field shapes match
-    REDEYE's spec verbatim — raw_action + display_action are distinct
-    because a brain can rewrite its action between layers (e.g. SELL
-    raw → HOLD after governance review)."""
-    raw_action: str = Field(..., min_length=1, max_length=16)
-    display_action: str = Field(..., min_length=1, max_length=16)
+    REDEYE's spec verbatim — `raw_action` is the pre-gate verdict,
+    `display_action` is what the brain ultimately emitted (typically
+    equal; differs when a gate downgraded BUY/SELL → HOLD)."""
+    raw_action: ActionT
+    display_action: ActionT
     confidence: float = Field(..., ge=0.0, le=1.0)
-    execution_decision: Optional[str] = Field(default=None, max_length=32)
-    rationale: Optional[str] = Field(default=None, max_length=2000)
+    execution_decision: ExecDecisionT
 
 
 class MemoryResolution(BaseModel):
-    """How the decision resolved against market reality."""
+    """How the decision resolved against market reality.
+
+    Sign conventions (per spec):
+      - mae ≤ 0 (or 0 for HOLDs)
+      - mfe ≥ 0 (or 0 for HOLDs)
+      - realized_r aligned with `raw_action`
+    Entry/exit prices may be null for HOLDs (no fill).
+    """
     outcome: OutcomeT
-    realized_r: Optional[float] = None
-    mae: Optional[float] = None
-    mfe: Optional[float] = None
+    realized_r: float
+    mae: float
+    mfe: float
     entry_price: Optional[float] = None
     exit_price: Optional[float] = None
     resolved_at: str
-    # `mode` carries the resolver's confidence in the resolution itself:
-    #   "shadow" / "live"          → real outcome, fully trainable
-    #   "data_unavailable"         → soft-closed; goes to _dead collection
-    #   any other value            → stored normally, treated as cold-data
-    mode: Optional[str] = Field(default=None, max_length=32)
+    mode: ResolutionModeT
+
+    @field_validator("mae")
+    @classmethod
+    def _mae_non_positive(cls, v: float) -> float:
+        if v > 0:
+            raise ValueError(f"mae must be ≤ 0, got {v}")
+        return v
+
+    @field_validator("mfe")
+    @classmethod
+    def _mfe_non_negative(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError(f"mfe must be ≥ 0, got {v}")
+        return v
 
 
 class MemoryIn(BaseModel):
     memory_id: str = Field(..., min_length=1, max_length=128)
     # decision_id is REDEYE-side correlation back to the original
     # decision — kept distinct so memory_id can be a wrapper key
-    # (e.g. "WILD-<decision_id>").
-    decision_id: Optional[str] = Field(default=None, max_length=128)
+    # (e.g. "WILD-<decision_id>"). Required per spec.
+    decision_id: str = Field(..., min_length=1, max_length=128)
     symbol: str = Field(..., min_length=1, max_length=32)
     lane: LaneT
+    decided_at: str = Field(..., description="ISO-8601 of original decision")
     decision: MemoryDecision
     resolution: MemoryResolution
     features: Dict[str, float] = Field(default_factory=dict)
-    decided_at: str = Field(..., description="ISO-8601 of original decision")
-    text_summary: Optional[str] = Field(default=None, max_length=MAX_TEXT_SUMMARY)
+    text_summary: str = Field(..., min_length=1, max_length=MAX_TEXT_SUMMARY)
 
     @field_validator("features")
     @classmethod
@@ -141,7 +161,19 @@ class MemoryIn(BaseModel):
         for k in v:
             if not isinstance(k, str) or not k or len(k) > 64:
                 raise ValueError(f"feature key invalid: {k!r}")
+        # Total payload byte cap (defense-in-depth against pathological
+        # numeric keys / huge floats).
+        import json
+        if len(json.dumps(v).encode("utf-8")) > MAX_FEATURES_PAYLOAD_BYTES:
+            raise ValueError(
+                f"features payload exceeds {MAX_FEATURES_PAYLOAD_BYTES} bytes"
+            )
         return v
+
+    @field_validator("symbol")
+    @classmethod
+    def _symbol_upper(cls, v: str) -> str:
+        return v.upper()
 
 
 class IngestBatchIn(BaseModel):
