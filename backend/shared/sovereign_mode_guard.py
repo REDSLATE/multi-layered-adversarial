@@ -81,6 +81,48 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _reject_empty_contributions_enabled() -> bool:
+    """Doctrine pin (2026-05-24): empty contributions are silent waste —
+    they validate, they persist, they pollute the audit log with rows
+    that carry no learning signal. The dashboard surfaces them as
+    "skeleton rows", but MC was never refusing them.
+
+    This flag, default ON in preview, lets the operator ramp up
+    enforcement in prod without a code change. Set
+    `RISEDUAL_REJECT_EMPTY_CONTRIBUTIONS=false` in prod's `.env` until
+    Alpha + Camaro + Chevelle + RedEye sidecars are confirmed sending
+    substantive payloads. Then flip to true (the default)."""
+    import os
+    val = os.environ.get("RISEDUAL_REJECT_EMPTY_CONTRIBUTIONS", "true").strip().lower()
+    return val in {"true", "1", "yes", "on"}
+
+
+def _list_empty_fields(c: "SovereignContribution") -> list[str]:
+    """Return the list of fields that look hollow on this contribution.
+    A contribution is considered SUBSTANTIVE if AT LEAST ONE of:
+      - notes is non-empty (after strip)
+      - weights dict has any entries
+      - recent_outcomes list has any entries
+      - delta_reason is non-empty (after strip)
+      - confidence_delta is non-zero
+
+    We list every empty field so the brain author gets a precise
+    error message back ("you sent nothing in any of these fields")
+    not a vague "empty payload"."""
+    empties: list[str] = []
+    if not (c.notes or "").strip():
+        empties.append("notes")
+    if not c.weights:
+        empties.append("weights")
+    if not c.recent_outcomes:
+        empties.append("recent_outcomes")
+    if not (c.delta_reason or "").strip():
+        empties.append("delta_reason")
+    if c.confidence_delta == 0.0:
+        empties.append("confidence_delta")
+    return empties
+
+
 # ──────────────────────── models ────────────────────────
 
 class SovereignOutcome(BaseModel):
@@ -356,6 +398,34 @@ async def post_sovereign_contribution(
             status_code=400,
             detail=f"runtime must be one of {DISCUSSION_PARTICIPANTS}",
         )
+
+    # Reject hollow heartbeat-style payloads — they generate noise in
+    # the audit log without carrying any learning signal. Gated by an
+    # env var so prod can ramp enforcement after sidecar teams confirm
+    # they're sending substance. See `_reject_empty_contributions_enabled`.
+    if _reject_empty_contributions_enabled():
+        empty_fields = _list_empty_fields(body)
+        # ALL five fields empty = pure heartbeat = reject. At least one
+        # populated = brain is contributing real data, accept.
+        if len(empty_fields) >= 5:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "empty_contribution",
+                    "message": (
+                        f"runtime={runtime} POSTed a contribution with no "
+                        "substantive content. At least one of "
+                        "[notes, weights, recent_outcomes, delta_reason, "
+                        "confidence_delta] must carry a non-default value. "
+                        "Use the sidecar-checkin endpoint for liveness; "
+                        "the contribution endpoint is reserved for actual "
+                        "learning signal."
+                    ),
+                    "empty_fields": empty_fields,
+                    "runtime": runtime,
+                    "doctrine_ref": "BRAIN_DEVELOPER_GUIDE.md#contributions",
+                },
+            )
 
     guard = assert_contribution_safe(body)
     return await _persist_snapshot(runtime, body, guard)
