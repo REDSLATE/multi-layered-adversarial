@@ -127,6 +127,16 @@ BROKER_RECONCILIATION = "broker_reconciliation"
 # serialize can't accurately count its own failures).
 SOVEREIGN_CONTRIB_ATTEMPTS = "sovereign_contribution_attempts"
 
+# Brain memory ingest (2026-05-24).
+# Brains write resolved decision memories here (one row per resolved
+# decision: outcome + realized_r + features) so MC can render corpus
+# health on the operator dashboard and downstream consumers can train
+# against the same canonical store. Distinct from `shared_intents`
+# (forward-looking) and `execution_receipts` (broker-confirmed fills).
+# Idempotent insert keyed on `(brain, memory_id)`.
+BRAIN_MEMORIES = "brain_memories"
+BRAIN_MEMORY_INGEST_AUDIT = "brain_memory_ingest_audit"
+
 
 
 # Position primitive (2026-02-11) — discrete thesis object the 4 brains
