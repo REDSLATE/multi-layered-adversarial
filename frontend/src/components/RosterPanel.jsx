@@ -12,10 +12,11 @@ import { toast } from "sonner";
 // lane header already says "CRYPTO" — keeps the cards readable.
 const ROLE_META = {
   // ── EQUITY LANE ──
-  decider:          { label: "DECIDER",   desc: "Trust / reduce / veto / observation call on each intent.",                  color: "#F59E0B" },
+  strategist:       { label: "STRATEGIST", desc: "Forms the trust / reduce / veto / observation call on each intent.",        color: "#F59E0B" },
+  decider:          { label: "STRATEGIST", desc: "Trust / reduce / veto / observation call on each intent.",                  color: "#F59E0B" }, // legacy compat
   executor:         { label: "EXECUTOR",  desc: "Calls the long/short direction. Routes Alpaca orders.",                     color: "#3B82F6" },
   governor:         { label: "GOVERNOR",  desc: "Audits, gates, freezes — never decides, never executes",                    color: "#10B981" },
-  advisor:          { label: "ADVISOR",   desc: "Neutral counsel. Off-ladder. Never decides, never executes",                color: "#22C55E" },
+  advisor:          { label: "ADVISOR",   desc: "Deprecated — vacant by default.",                                            color: "#22C55E" },
   opponent:         { label: "OPPONENT",  desc: "Argues the contrary case. Off-ladder.",                                     color: "#06B6D4" },
   auditor:          { label: "AUDITOR",   desc: "Post-trade reviewer. Reads outcomes, scores doctrine; never decides.",      color: "#A1A1AA" },
   // ── CRYPTO LANE ──
@@ -23,7 +24,8 @@ const ROLE_META = {
   crypto_governor:  { label: "GOVERNOR",  desc: "Crypto-only governor. Audits, gates, freezes crypto intents.",              color: "#10B981" },
   crypto_advisor:   { label: "ADVISOR",   desc: "Crypto-only neutral counsel. Off-ladder.",                                  color: "#22C55E" },
   crypto_opponent:  { label: "OPPONENT",  desc: "Crypto-only contrary voice. Off-ladder.",                                   color: "#06B6D4" },
-  crypto_decider:   { label: "DECIDER",   desc: "Crypto-only deciding seat. Trust / reduce / veto / observation call.",      color: "#F59E0B" },
+  crypto_strategist:{ label: "STRATEGIST", desc: "Crypto-only strategist seat. Forms the trust / reduce / veto call.",        color: "#F59E0B" },
+  crypto_decider:   { label: "STRATEGIST", desc: "Crypto-only strategist seat (legacy name).",                                color: "#F59E0B" }, // legacy compat
   crypto_auditor:   { label: "AUDITOR",   desc: "Crypto-only post-trade auditor. Reviews outcomes; never decides, never executes.", color: "#A1A1AA" },
 };
 
@@ -34,8 +36,8 @@ const BRAIN_META = {
   redeye:   { label: "REDEYE",   color: "#DC2626" },
 };
 
-const EQUITY_ROLES = ["decider", "executor", "governor", "advisor", "opponent", "auditor"];
-const CRYPTO_ROLES = ["crypto", "crypto_decider", "crypto_governor", "crypto_advisor", "crypto_opponent", "crypto_auditor"];
+const EQUITY_ROLES = ["strategist", "executor", "governor", "advisor", "opponent", "auditor"];
+const CRYPTO_ROLES = ["crypto", "crypto_strategist", "crypto_governor", "crypto_advisor", "crypto_opponent", "crypto_auditor"];
 const ALL_ROLES = [...EQUITY_ROLES, ...CRYPTO_ROLES];
 const BRAINS = ["alpha", "camaro", "chevelle", "redeye"];
 
@@ -56,7 +58,7 @@ const _laneOf = (role) => (_CRYPTO_LANE_SET.has(role) ? "crypto" : "equity");
  * Brain Roster panel — operator swaps which brain occupies which role,
  * gated by an eligibility switch matrix. Renders two lanes side-by-side
  * (EQUITY | CRYPTO). Crypto seats are isolated: a brain can hold one
- * seat per lane simultaneously (Camaro: equity decider + crypto opponent,
+ * seat per lane simultaneously (Camaro: equity strategist + crypto opponent,
  * Chevelle: equity governor + crypto governor, etc.).
  *
  * Doctrine: descriptive metadata only. Does not grant execution.

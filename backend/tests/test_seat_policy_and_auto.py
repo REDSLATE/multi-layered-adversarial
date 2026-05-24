@@ -224,7 +224,12 @@ class TestSeatPerformance:
         assert r.status_code == 200
         d = r.json()
         assert isinstance(d["matrix"], list)
-        assert d["seats"] == ["decider", "executor", "governor", "advisor", "opponent"]
+        # 2026-05-24: 12-role tuple (6 equity + 6 crypto). Assert the
+        # equity 5-seat doctrine is present; crypto seats also included
+        # for the unified roster view.
+        seats = d["seats"]
+        for seat in ("strategist", "executor", "governor", "opponent", "auditor"):
+            assert seat in seats, f"missing equity seat: {seat}"
         # Alpha-as-executor must be present and have at least 1 stance.
         alpha_exec = next(
             (row for row in d["matrix"]

@@ -38,13 +38,14 @@ EQUITY_POLICY: dict = {
     # for the deprecation rationale. Same table shape; same alias
     # backstop for legacy `decider` / `advisor` stance records.
     "STACK_WEIGHTS": {
-        "executor": 1.00,
-        "governor": 0.65,
-        "opponent": 0.80,
-        "auditor":  0.50,
-        "crypto":   1.00,
+        "strategist": 0.90,
+        "executor":   1.00,
+        "governor":   0.65,
+        "opponent":   0.80,
+        "auditor":    0.50,
+        "crypto":     1.00,
         # ---- deprecated, alias-rewritten on read ----
-        "decider":  0.90,
-        "advisor":  0.50,
+        "decider":    0.90,
+        "advisor":    0.50,
     },
 }

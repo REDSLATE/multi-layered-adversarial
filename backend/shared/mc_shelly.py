@@ -13,8 +13,11 @@ Doctrine:
     `/app/backend/mc_memory/YYYY-MM-DD.jsonl`.
 
 Position abbreviations (3-letter codes):
-  DEC = decider · EXE = executor · GOV = governor
+  STR = strategist · EXE = executor · GOV = governor
   ADV = advisor · OPP = opponent · AUD = auditor
+
+  Legacy DEC = strategist (pre-rename code). Historical receipts that
+  recorded `DEC` continue to resolve through the legacy compat layer.
 
 Event types:
   intent_ingested      — brain pushed an intent envelope
@@ -63,13 +66,16 @@ MC_MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 # ─────────────────────────── position vocabulary ───────────────────────────
 
 POSITION_CODES: dict[str, str] = {
-    "decider":  "DEC",
-    "executor": "EXE",
-    "governor": "GOV",
-    "advisor":  "ADV",
-    "opponent": "OPP",
-    "auditor":  "AUD",
-    "none":     "NONE",
+    "strategist": "STR",
+    "executor":   "EXE",
+    "governor":   "GOV",
+    "advisor":    "ADV",
+    "opponent":   "OPP",
+    "auditor":    "AUD",
+    "none":       "NONE",
+    # Legacy alias (pre-2026-05-24 rename) — kept so old documents that
+    # stored `decider` continue to map to a code.
+    "decider":    "STR",
 }
 
 EVENT_TYPES: tuple[str, ...] = (
@@ -100,7 +106,7 @@ async def positions_at_now() -> dict[str, Optional[str]]:
 
     Shape:
         {
-          "DEC": "camaro" | None,
+          "STR": "camaro" | None,
           "EXE": "alpha"  | None,
           "GOV": "chevelle" | None,
           "ADV": None,
@@ -110,12 +116,15 @@ async def positions_at_now() -> dict[str, Optional[str]]:
     """
     roster = await db[BRAIN_ROSTER].find_one({"_id": "current"}, {"_id": 0}) or {}
     assignments = roster.get("assignments") or {}
+    # Read both canonical (`strategist`) and legacy (`decider`) keys so
+    # an in-flight migration doesn't blank the slot during the swap.
+    strategist_holder = assignments.get("strategist") or assignments.get("decider")
     out: dict[str, Optional[str]] = {
-        POSITION_CODES["decider"]:  assignments.get("decider"),
-        POSITION_CODES["executor"]: assignments.get("executor"),
-        POSITION_CODES["governor"]: assignments.get("governor"),
-        POSITION_CODES["advisor"]:  assignments.get("advisor"),
-        POSITION_CODES["opponent"]: assignments.get("opponent"),
+        POSITION_CODES["strategist"]: strategist_holder,
+        POSITION_CODES["executor"]:   assignments.get("executor"),
+        POSITION_CODES["governor"]:   assignments.get("governor"),
+        POSITION_CODES["advisor"]:    assignments.get("advisor"),
+        POSITION_CODES["opponent"]:   assignments.get("opponent"),
     }
     # Auditor seat lives in its own collection (separate rotation history)
     auditor = await db[SHARED_AUDITOR_SEAT].find_one({"_id": "auditor"}, {"_id": 0, "holder": 1}) or {}
@@ -126,11 +135,11 @@ async def positions_at_now() -> dict[str, Optional[str]]:
 def position_of_brain(positions: dict[str, Optional[str]], brain: Optional[str]) -> str:
     """Reverse-map: given a positions snapshot + a brain, return the
     3-letter code of the position that brain occupied. NONE if the brain
-    held no seat. If multiple, returns the first (DEC > EXE > GOV > ADV >
+    held no seat. If multiple, returns the first (STR > EXE > GOV > ADV >
     OPP > AUD) — by doctrine each brain should hold at most one role."""
     if not brain:
         return "NONE"
-    for code in ("DEC", "EXE", "GOV", "ADV", "OPP", "AUD"):
+    for code in ("STR", "EXE", "GOV", "ADV", "OPP", "AUD"):
         if positions.get(code) == brain:
             return code
     return "NONE"

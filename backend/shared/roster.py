@@ -1,13 +1,27 @@
 """Brain Roster — dynamic role assignment across the four brains.
 
-The roster maps four roles to four brains:
-  - decider:  forms the trust/reduce/veto/observation call
-  - executor: would carry the order to a broker IF execution were enabled
-  - governor: audits, gates, freezes — never decides, never executes
-  - advisor:  whispers context to the decider; never decides, never executes
+Doctrine (2026-05-24 — operator clarification):
+  Final equity seat set is FIVE: strategist, executor, auditor, governor,
+  opponent. The historical `decider` seat has been renamed to
+  `strategist` (same function — forms the trust/reduce/veto/observation
+  call). Legacy `decider` reads are alias-rewritten to `strategist`.
 
-Defaults match original doctrine (camaro / alpha / chevelle / redeye in that
-order). Operator can swap on demand. Roster changes are audit-logged.
+  Seat eligibility — operator doctrine:
+    * Camaro, Alpha, RedEye   may rotate through  strategist / executor / auditor
+    * RedEye, Chevelle        are the ONLY brains that may hold  governor / opponent
+    * Chevelle                may NOT hold strategist / executor / auditor
+    * Camaro, Alpha           may NOT hold governor / opponent
+
+Roles (legacy semantic anchors retained):
+  - strategist: forms the trust/reduce/veto/observation call
+  - executor:   would carry the order to a broker IF execution were enabled
+  - auditor:    post-trade reviewer; analyzes outcomes vs intent
+  - governor:   audits, gates, freezes — never decides, never executes
+  - opponent:   argues the contrary case; never decides, never executes
+
+Defaults: camaro = strategist, alpha = executor, redeye = opponent,
+chevelle = governor. Auditor starts vacant (operator-assigned).
+Operator can swap on demand within eligibility. Changes are audit-logged.
 
 Doctrine guards:
   - The roster is descriptive metadata. It does NOT touch `may_execute`,
@@ -25,7 +39,7 @@ Doctrine guards:
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Literal, Optional
+from typing import Iterable, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -36,26 +50,25 @@ from namespaces import BRAIN_ELIGIBILITY, BRAIN_ROSTER, DISCUSSION_PARTICIPANTS,
 
 
 ROLES: tuple[str, ...] = (
-    "decider", "executor", "governor", "advisor", "opponent", "auditor",
+    # ─── Equity lane — 5-seat doctrine (2026-05-24) ───────────────────
+    # `decider` was renamed to `strategist`. `advisor` is retained as a
+    # vacant-by-default slot for forensic compatibility with pre-rename
+    # roster docs and audit history but is NOT part of the operator's
+    # canonical 5-seat doctrine and has no default assignment.
+    "strategist", "executor", "governor", "advisor", "opponent", "auditor",
     "crypto",
     # ─── Crypto lane (isolated execution authority, 2026-02-15) ───────
-    # The crypto lane runs its own council — governor, advisor, opponent,
-    # decider, auditor — so equity policy never leaks into crypto routing.
-    # `crypto` (above) is the crypto EXECUTOR seat (legacy name retained
-    # for back-compat with the existing eligibility matrix). These add
-    # the rest of the crypto council. The doctrine: equity reads default
-    # seats, crypto reads crypto_* seats; if a crypto_* seat is vacant it
-    # falls back to the default. See `_seat_holder(role, lane=...)`.
+    # The crypto lane runs its own council. `crypto` is the crypto
+    # EXECUTOR seat (legacy name retained); the rest mirror the equity
+    # council. Lane isolation: equity reads default seats, crypto reads
+    # crypto_* seats; if a crypto_* seat is vacant it falls back to the
+    # default. See `_seat_holder(role, lane=...)`.
     #
-    # 2026-02-17: Doctrinal twin completed — added `crypto_decider` and
-    # `crypto_auditor` so every equity seat has a crypto counterpart.
-    # 2026-02-17 (rev2): Added `auditor` (equity) to complete the
-    # original 6-seat-per-lane spec from the user's problem statement.
-    # The legacy `/auditor` single-row registry in `auditor_seat.py`
-    # continues to operate for back-compat with hypothesis analysis;
-    # this entry just makes the seat visible in the unified roster UI.
+    # 2026-05-24: Renamed `crypto_decider` → `crypto_strategist` to
+    # mirror the equity rename. Legacy `crypto_decider` reads continue
+    # to resolve via the seat alias table.
     "crypto_advisor", "crypto_governor", "crypto_opponent",
-    "crypto_decider", "crypto_auditor",
+    "crypto_strategist", "crypto_auditor",
 )
 BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("alpha", "camaro", "chevelle", "redeye")
 
@@ -66,34 +79,57 @@ BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("alpha", "camaro", "chevel
 # starts vacated — operator chooses which brain takes the crypto-only
 # execution chair (it's a dedicated specialist seat, not a default).
 DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
-    "decider":  "camaro",
-    "executor": "alpha",
-    "governor": "chevelle",
-    "advisor":  None,        # operator-assigned
-    "opponent": "redeye",
-    "auditor":  None,        # operator-assigned: post-trade reviewer
-    "crypto":   None,        # operator-assigned: dedicated crypto executor
+    "strategist": "camaro",
+    "executor":   "alpha",
+    "governor":   "chevelle",
+    "advisor":    None,        # deprecated; vacant — operator can ignore
+    "opponent":   "redeye",
+    "auditor":    None,        # operator-assigned: post-trade reviewer
+    "crypto":     None,        # operator-assigned: dedicated crypto executor
     # Crypto council seats — all vacant until operator slots them.
     # When vacant, the council falls back to the equity seat for that role.
-    "crypto_advisor":  None,
-    "crypto_governor": None,
-    "crypto_opponent": None,
-    "crypto_decider":  None,
-    "crypto_auditor":  None,
+    "crypto_advisor":    None,
+    "crypto_governor":   None,
+    "crypto_opponent":   None,
+    "crypto_strategist": None,
+    "crypto_auditor":    None,
 }
 
-# Default eligibility — every brain is eligible for every seat by
-# default. Doctrine: identity is NOT restriction. The seat itself
-# carries the function and the restrictions; pulling a brain into a
-# seat applies that seat's policy. The operator chooses who fits where.
-# Eligibility can be tightened per-brain per-seat later via the operator
-# console if a brain's training intent makes a specific seat a bad fit.
-_ALL_TRUE = {role: True for role in ROLES}
+# ─── Default eligibility (2026-05-24 operator doctrine) ──────────────
+# Identity DOES carry hard constraints for some seats:
+#   * governor/opponent are reserved for chevelle and redeye only.
+#   * strategist/executor/auditor are reserved for camaro, alpha, redeye.
+#   * `advisor` is deprecated; everyone disallowed by default (vacant).
+#   * Crypto lane mirrors the same constraints on the parallel seats.
+#   * `crypto` (the lane's executor slot) follows the equity executor
+#     rule — chevelle disallowed; redeye/alpha/camaro allowed.
+# The operator may still toggle a cell true via the eligibility UI; the
+# default just encodes doctrine.
+def _seat_set(seats: Iterable[str]) -> dict[str, bool]:
+    """Build a per-role allow/deny dict from a positive seat allowlist."""
+    return {role: (role in set(seats)) for role in ROLES}
+
+
+# Equity rotating seats (Camaro / Alpha / RedEye eligible)
+_EQUITY_ROTATING: tuple[str, ...] = ("strategist", "executor", "auditor")
+# Equity council seats (RedEye / Chevelle exclusive)
+_EQUITY_COUNCIL: tuple[str, ...] = ("governor", "opponent")
+
+# Crypto lane mirrors the same doctrine on the parallel seats. `crypto`
+# (executor slot) is treated as a rotating seat for camaro/alpha/redeye;
+# crypto_governor / crypto_opponent are council seats for chevelle/redeye.
+_CRYPTO_ROTATING: tuple[str, ...] = (
+    "crypto", "crypto_strategist", "crypto_executor", "crypto_auditor",
+)
+_CRYPTO_COUNCIL: tuple[str, ...] = ("crypto_governor", "crypto_opponent")
+
 DEFAULT_ELIGIBILITY: dict[str, dict[str, bool]] = {
-    "alpha":    dict(_ALL_TRUE),
-    "camaro":   dict(_ALL_TRUE),
-    "chevelle": dict(_ALL_TRUE),
-    "redeye":   dict(_ALL_TRUE),
+    "alpha":    _seat_set(_EQUITY_ROTATING + _CRYPTO_ROTATING),
+    "camaro":   _seat_set(_EQUITY_ROTATING + _CRYPTO_ROTATING),
+    "chevelle": _seat_set(_EQUITY_COUNCIL + _CRYPTO_COUNCIL),
+    "redeye":   _seat_set(
+        _EQUITY_ROTATING + _EQUITY_COUNCIL + _CRYPTO_ROTATING + _CRYPTO_COUNCIL
+    ),
 }
 
 
@@ -103,6 +139,22 @@ def _now_iso() -> str:
 
 # ──────────────────────── singleton accessors ────────────────────────
 
+_LEGACY_ROLE_REWRITES: dict[str, str] = {
+    "decider": "strategist",
+    "crypto_decider": "crypto_strategist",
+}
+
+
+def _canonical_role(role: str) -> str:
+    """Rewrite legacy seat names to their canonical replacement.
+
+    Boundary normalization: any API request, alias resolution, or stored
+    document key for `decider` is silently rewritten to `strategist`
+    (and `crypto_decider` → `crypto_strategist`). Returns the input
+    unchanged for canonical names and unknown values."""
+    return _LEGACY_ROLE_REWRITES.get(role, role)
+
+
 async def get_roster() -> dict:
     """Return the live roster doc, creating defaults on first read."""
     doc = await db[BRAIN_ROSTER].find_one({"_id": "current"}, {"_id": 0})
@@ -110,13 +162,26 @@ async def get_roster() -> dict:
         # Backfill seat_epoch on legacy docs (one if missing).
         if "seat_epoch" not in doc:
             doc["seat_epoch"] = 1
+        assignments = doc.get("assignments") or {}
+        # Migration (2026-05-24): rewrite legacy role keys to canonical
+        # names. `decider → strategist`, `crypto_decider → crypto_strategist`.
+        # If both old and new keys exist, the canonical key wins; the
+        # legacy key is dropped. Persist the rewrite once.
+        dirty = False
+        for legacy, canonical in _LEGACY_ROLE_REWRITES.items():
+            if legacy in assignments:
+                if canonical not in assignments or assignments.get(canonical) is None:
+                    assignments[canonical] = assignments[legacy]
+                del assignments[legacy]
+                dirty = True
         # Backfill new roles on legacy docs so adding ROLES later doesn't
         # leave the assignments dict missing keys. Missing role → vacant.
-        assignments = doc.get("assignments") or {}
         missing = [r for r in ROLES if r not in assignments]
         if missing:
             for r in missing:
                 assignments[r] = None
+            dirty = True
+        if dirty:
             doc["assignments"] = assignments
             await db[BRAIN_ROSTER].update_one(
                 {"_id": "current"},
@@ -162,18 +227,19 @@ async def get_eligibility() -> dict[str, dict[str, bool]]:
     """Return the live eligibility matrix, seeding defaults on first read."""
     doc = await db[BRAIN_ELIGIBILITY].find_one({"_id": "current"}, {"_id": 0})
     if doc and isinstance(doc.get("matrix"), dict):
-        # When the operator adds a new role to ROLES, legacy eligibility
-        # docs won't have a cell for it. Doctrine (2026-02-17): default
-        # to ALLOWED for new roles — "identity is not restriction". The
-        # operator can flip a brain to disallowed via the eligibility UI
-        # if the new role doesn't suit. Fail-OPEN on schema growth.
-        matrix = {b: {r: True for r in ROLES} for b in BRAINS}
+        # Seed each row from the operator's default doctrine (NOT
+        # all-true) so newly-added roles inherit the same lockdown
+        # rules as the existing seats. The persisted matrix overlays
+        # this default for any cell the operator has explicitly toggled.
+        matrix = {b: dict(DEFAULT_ELIGIBILITY[b]) for b in BRAINS}
         for brain, roles in doc["matrix"].items():
             if brain not in matrix:
                 continue
             for role, allowed in (roles or {}).items():
-                if role in matrix[brain]:
-                    matrix[brain][role] = bool(allowed)
+                # Rewrite legacy `decider` keys to canonical `strategist`.
+                canonical = _canonical_role(role)
+                if canonical in matrix[brain]:
+                    matrix[brain][canonical] = bool(allowed)
         return matrix
     # Seed defaults
     seed = {
@@ -191,6 +257,7 @@ async def _ensure_assignment_eligible(role: str, brain: Optional[str]) -> None:
     the eligibility matrix. Vacating (brain=None) is always allowed."""
     if brain is None:
         return
+    role = _canonical_role(role)
     matrix = await get_eligibility()
     if not matrix.get(brain, {}).get(role, False):
         raise HTTPException(
@@ -215,10 +282,14 @@ async def _audit(action: str, actor: str, payload: dict) -> None:
 # ──────────────────────── models ────────────────────────
 
 RoleT = Literal[
-    "decider", "executor", "governor", "advisor", "opponent", "auditor",
+    "strategist", "executor", "governor", "advisor", "opponent", "auditor",
     "crypto",
     "crypto_advisor", "crypto_governor", "crypto_opponent",
-    "crypto_decider", "crypto_auditor",
+    "crypto_strategist", "crypto_auditor",
+    # ── Deprecated aliases — accepted at ingress, rewritten to canonical ──
+    # 2026-05-24: `decider` renamed to `strategist`. Old sidecars may
+    # still post the legacy names; we rewrite at the boundary.
+    "decider", "crypto_decider",
 ]
 BrainT = Literal["alpha", "camaro", "chevelle", "redeye"]
 
@@ -289,7 +360,9 @@ async def get_current(_user: dict = Depends(get_current_user)):
 
 CRYPTO_LANE_ROLES = (
     "crypto", "crypto_advisor", "crypto_governor", "crypto_opponent",
-    "crypto_decider", "crypto_auditor",
+    "crypto_strategist", "crypto_auditor",
+    # Legacy: rewritten by alias table before this check is meaningful.
+    "crypto_decider",
 )
 
 
@@ -301,9 +374,12 @@ def _lane_of_role(role: str) -> str:
 
 @router.post("/assign")
 async def assign(body: AssignIn, user: dict = Depends(get_current_user)):
+    # Legacy role names (`decider`, `crypto_decider`) are rewritten to
+    # their canonical replacement before any policy / eligibility check.
+    target_role = _canonical_role(body.role)
     # Eligibility gate — refuse to place a brain in a seat the operator
     # has marked disallowed.
-    await _ensure_assignment_eligible(body.role, body.brain)
+    await _ensure_assignment_eligible(target_role, body.brain)
 
     r = await get_roster()
     prev = dict(r["assignments"])
@@ -312,18 +388,16 @@ async def assign(body: AssignIn, user: dict = Depends(get_current_user)):
     # Doctrine (2026-02-15): one seat per brain WITHIN a lane. Multiple
     # seats per brain ACROSS lanes. Chevelle can hold equity governor AND
     # crypto_governor simultaneously — they're isolated councils.
-    # Camaro can hold equity decider AND crypto_opponent — different
-    # reflective duties per lane. Cross-lane multi-seating preserves the
-    # check-and-balance doctrine without forcing the operator to choose
-    # between lanes.
+    # Cross-lane multi-seating preserves the check-and-balance doctrine
+    # without forcing the operator to choose between lanes.
     if body.brain:
-        target_lane = _lane_of_role(body.role)
+        target_lane = _lane_of_role(target_role)
         for role, occupant in list(new_assignments.items()):
-            if occupant == body.brain and role != body.role and _lane_of_role(role) == target_lane:
+            if occupant == body.brain and role != target_role and _lane_of_role(role) == target_lane:
                 # Same brain, same lane, different role — vacate.
                 new_assignments[role] = None
 
-    new_assignments[body.role] = body.brain
+    new_assignments[target_role] = body.brain
 
     if new_assignments == prev:
         # No-op; don't audit-log a non-change.
@@ -341,8 +415,8 @@ async def assign(body: AssignIn, user: dict = Depends(get_current_user)):
         upsert=True,
     )
     await _audit("assign", actor, {
-        "role": body.role,
-        "from": prev.get(body.role),
+        "role": target_role,
+        "from": prev.get(target_role),
         "to": body.brain,
         "before": prev,
         "after": new_assignments,
@@ -353,16 +427,21 @@ async def assign(body: AssignIn, user: dict = Depends(get_current_user)):
 
 @router.post("/swap")
 async def swap(body: SwapIn, user: dict = Depends(get_current_user)):
+    # Rewrite legacy role names at the boundary.
+    role_a = _canonical_role(body.role_a)
+    role_b = _canonical_role(body.role_b)
+    if role_a == role_b:
+        raise HTTPException(status_code=422, detail="role_a and role_b must differ")
     r = await get_roster()
     prev = dict(r["assignments"])
     # Eligibility gate — the brain moving INTO role_a must be eligible
     # for role_a, and vice versa for role_b. Vacant moves are fine.
-    await _ensure_assignment_eligible(body.role_a, prev.get(body.role_b))
-    await _ensure_assignment_eligible(body.role_b, prev.get(body.role_a))
+    await _ensure_assignment_eligible(role_a, prev.get(role_b))
+    await _ensure_assignment_eligible(role_b, prev.get(role_a))
     new_assignments = dict(prev)
-    new_assignments[body.role_a], new_assignments[body.role_b] = (
-        prev.get(body.role_b),
-        prev.get(body.role_a),
+    new_assignments[role_a], new_assignments[role_b] = (
+        prev.get(role_b),
+        prev.get(role_a),
     )
     if new_assignments == prev:
         return await get_current(user)
@@ -379,8 +458,8 @@ async def swap(body: SwapIn, user: dict = Depends(get_current_user)):
         upsert=True,
     )
     await _audit("swap", actor, {
-        "role_a": body.role_a,
-        "role_b": body.role_b,
+        "role_a": role_a,
+        "role_b": role_b,
         "before": prev,
         "after": new_assignments,
         "seat_epoch": new_epoch,
@@ -442,8 +521,9 @@ async def get_eligibility_matrix(_user: dict = Depends(get_current_user)):
 async def set_eligibility_cell(
     body: EligibilitySetIn, user: dict = Depends(get_current_user),
 ):
+    target_role = _canonical_role(body.role)
     matrix = await get_eligibility()
-    current_value = matrix.get(body.brain, {}).get(body.role, False)
+    current_value = matrix.get(body.brain, {}).get(target_role, False)
     if current_value == body.allowed:
         return await get_eligibility_matrix(user)
 
@@ -452,16 +532,16 @@ async def set_eligibility_cell(
     # confusing state of "brain X is in role Y but matrix says no".
     if not body.allowed:
         roster = await get_roster()
-        if roster["assignments"].get(body.role) == body.brain:
+        if roster["assignments"].get(target_role) == body.brain:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"cannot disallow {body.brain} from {body.role} while "
+                    f"cannot disallow {body.brain} from {target_role} while "
                     f"they currently occupy that seat. Vacate or swap first."
                 ),
             )
 
-    matrix[body.brain][body.role] = body.allowed
+    matrix[body.brain][target_role] = body.allowed
     actor = user.get("email") or "operator"
     await db[BRAIN_ELIGIBILITY].update_one(
         {"_id": "current"},
@@ -474,7 +554,7 @@ async def set_eligibility_cell(
     )
     await _audit("eligibility_set", actor, {
         "brain": body.brain,
-        "role": body.role,
+        "role": target_role,
         "allowed": body.allowed,
     })
     return await get_eligibility_matrix(user)

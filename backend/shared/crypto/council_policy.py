@@ -53,13 +53,14 @@ CRYPTO_POLICY: dict = {
     # rewritten via `SEAT_ALIASES` at the lookup boundary in a future
     # phase. New stances should never write these names.
     "STACK_WEIGHTS": {
-        "executor": 1.00,
-        "governor": 0.65,
-        "opponent": 0.80,
-        "auditor":  0.50,          # post-trade lagging signal
-        "crypto":   1.00,
+        "strategist": 0.90,
+        "executor":   1.00,
+        "governor":   0.65,
+        "opponent":   0.80,
+        "auditor":    0.50,          # post-trade lagging signal
+        "crypto":     1.00,
         # ---- deprecated, alias-rewritten on read ----
-        "decider":  0.90,           # → executor; legacy stance records
-        "advisor":  0.50,           # → auditor; legacy stance records
+        "decider":    0.90,           # → strategist; legacy stance records
+        "advisor":    0.50,           # → opponent; legacy stance records
     },
 }

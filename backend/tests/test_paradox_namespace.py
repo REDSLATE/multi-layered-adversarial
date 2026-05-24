@@ -40,9 +40,12 @@ def test_paradox_role_anchors_locked():
 
 
 @pytest.mark.tripwire
-def test_no_auditor_seat():
-    """Auditor is NOT a seat. It is an emergent function — the
-    paradox_record artifact produced by (executor, opponent)."""
+def test_no_auditor_paradox_anchor():
+    """Auditor is a ROSTER SEAT (operator-assigned, dynamic) but it is
+    NOT a PARADOX role anchor. ROLE_ANCHORS pins one runtime per
+    architectural role (alpha=strategist, camaro=executor, etc.); the
+    auditor seat has no permanent runtime anchor — any eligible brain
+    may rotate into it."""
     assert "auditor" not in ROLE_ANCHORS
     assert "auditor" not in RUNTIME_ROLE.values()
 
@@ -94,38 +97,43 @@ def test_opponent_mode_constants_locked():
     assert OPPONENT_MODE_OFFLINE == "offline"
 
 
-# ───── Seat aliases — auditor correction ──────────────────────────────
+# ───── Seat aliases — auditor reinstated 2026-05-24 ───────────────────
 
 
 @pytest.mark.tripwire
 def test_advisor_aliases_to_opponent_not_auditor():
-    """The 2026-05-20 correction: advisor → opponent (not auditor).
-    Auditor was never a destination — it is an emergent function."""
+    """The 2026-05-20 correction: advisor → opponent (not auditor)."""
     assert SEAT_ALIASES["advisor"] == "opponent"
     assert SEAT_ALIASES["crypto_advisor"] == "crypto_opponent"
 
 
 @pytest.mark.tripwire
-def test_auditor_aliases_to_opponent_for_legacy_reads():
-    """Old code/data still using `seat=auditor` should transparently
-    resolve to the opponent seat. Auditor never grants a seat."""
-    assert SEAT_ALIASES["auditor"] == "opponent"
-    assert SEAT_ALIASES["crypto_auditor"] == "crypto_opponent"
+def test_auditor_is_real_seat_no_alias():
+    """2026-05-24: Auditor was reinstated as a real roster seat. It no
+    longer aliases to opponent — `auditor` and `crypto_auditor` resolve
+    to their own SEAT_POLICY rows."""
+    assert "auditor" not in SEAT_ALIASES
+    assert "crypto_auditor" not in SEAT_ALIASES
 
 
 @pytest.mark.tripwire
 def test_decider_alias_unchanged():
-    """decider → executor is the original alias and stays."""
+    """decider → executor is the original legacy alias and stays.
+    Note: the canonical roster slot was renamed `strategist` on
+    2026-05-24, but `decider` still resolves to `executor` for old
+    receipts that recorded the pre-rename name."""
     assert SEAT_ALIASES["decider"] == "executor"
     assert SEAT_ALIASES["crypto_decider"] == "crypto"
 
 
 def test_normalize_seat_advisor_yields_opponent():
     assert normalize_seat("advisor") == "opponent"
-    assert normalize_seat("auditor") == "opponent"
+    # auditor is now a canonical seat — passes through unchanged.
+    assert normalize_seat("auditor") == "auditor"
     assert normalize_seat("decider") == "executor"
 
 
 def test_normalize_seat_canonical_passthrough():
-    for canon in ("executor", "governor", "opponent", "strategist", "memory"):
+    for canon in ("executor", "governor", "opponent", "strategist",
+                  "auditor", "memory"):
         assert normalize_seat(canon) == canon

@@ -37,36 +37,38 @@ class SeatPolicy(TypedDict):
     lane_scope: list[str] | None
 
 
-# ─── Seat aliases (2026-02-19 deprecation; revised 2026-05-20) ──────
+# ─── Seat aliases (2026-02-19; revised 2026-05-24) ──────────────────
 #
-# Doctrine (after the 2026-05-20 PARADOX naming clarification):
+# Doctrine:
 #
-#   AUDITOR is NOT a seat. It is an emergent function of the
-#   (executor, opponent) interaction — the `paradox_record` artifact
-#   the kernel produces on every gated intent. The earlier alias
-#   `advisor → auditor` was structurally wrong; advisory work belongs
-#   to the OPPONENT seat, which already speaks the contrary case.
+#   2026-05-24 — Operator renamed the equity `decider` role to
+#   `strategist`. The seat function is unchanged (form the
+#   trust/reduce/veto/observation call). For policy lookup it still
+#   resolves to the same row as `executor` (which already carries
+#   may_decide=True) — but the ROSTER SLOT is a distinct seat occupied
+#   by a different brain.
 #
-# Final alias map:
+#   AUDITOR was revived as a real seat (2026-05-24). Under the prior
+#   PARADOX hierarchy, auditor was treated as an emergent artifact;
+#   the operator restored it as a roster slot for post-trade review.
 #
-#     decider  → executor   (executor already has may_decide=True;
-#                            the separate decider seat was redundant)
-#     advisor  → opponent   (advisory dissent is what the opponent
-#                            seat is for; auditor isn't a seat at all)
-#
-# Crypto twins follow the same rule. The aliases let old sidecars
-# that still send legacy seat names keep working — MC normalizes to
-# the canonical name at every boundary.
+#   The aliases let old sidecars that still send legacy seat names keep
+#   working — MC normalizes to the canonical name at every boundary.
 
 SEAT_ALIASES: dict[str, str] = {
-    "decider": "executor",
-    "crypto_decider": "crypto",        # crypto executor slot is `crypto`
-    "advisor": "opponent",
-    "crypto_advisor": "crypto_opponent",
-    # Old `auditor` references resolve to opponent — auditor is no
-    # longer a seat under the PARADOX hierarchy.
-    "auditor": "opponent",
-    "crypto_auditor": "crypto_opponent",
+    # ── Legacy compat ──────────────────────────────────────────────
+    # 2026-02-19: `decider`/`crypto_decider` were merged into `executor`/
+    # `crypto`. 2026-05-24: the equity seat was reinstated as a distinct
+    # role under the name `strategist` (see SEAT_POLICY below). Legacy
+    # sidecars still posting `decider` keep resolving to `executor`'s
+    # policy row for pre-rename receipt forensics; new code uses
+    # `strategist` directly.
+    "decider":         "executor",
+    "crypto_decider":  "crypto",
+    # `advisor` is no longer a doctrinal seat — legacy advisory
+    # references resolve to opponent.
+    "advisor":         "opponent",
+    "crypto_advisor":  "crypto_opponent",
 }
 
 
@@ -85,12 +87,24 @@ def normalize_seat(seat: str | None) -> str | None:
 
 
 SEAT_POLICY: dict[str, SeatPolicy] = {
+    "strategist": {
+        # 2026-05-24: Reinstated as a distinct equity seat (was the old
+        # `decider` slot, briefly merged into `executor`). Forms the
+        # trust/reduce/veto/observation call. Carries may_decide=True
+        # but NOT may_execute — strategist articulates the trade thesis,
+        # executor moves the order. Lane: equity only.
+        "may_decide": True,
+        "may_execute": False,
+        "may_veto": False,
+        "seat_required": True,  # strategist silence on a position = no thesis
+        "speaks_as": "strategist",
+        "lane_scope": ["equity"],
+    },
     "decider": {
-        # DEPRECATED — kept in this table only so legacy reads against
-        # the seat name resolve to a sensible policy. The alias machinery
-        # in `snapshot()` rewrites incoming `decider` lookups to
-        # `executor` before this row is even consulted. Do not add new
-        # callers that read this row directly.
+        # DEPRECATED — alias rewrites `decider` → `executor` for legacy
+        # sidecars. Kept in the policy table so historical receipts that
+        # recorded `seat=decider` resolve to a sensible row. New code
+        # uses `strategist` (above).
         "may_decide": True,
         "may_execute": False,
         "may_veto": False,
@@ -147,20 +161,19 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         "lane_scope": None,
     },
     "auditor": {
-        # DEPRECATED (2026-05-20). Under the PARADOX hierarchy, auditor
-        # is NOT a seat — it is the emergent paradox_record artifact
-        # produced by the (executor, opponent) pair on every gated
-        # intent. SEAT_ALIASES now maps `auditor → opponent` so any
-        # legacy read transparently resolves to the contrary-case
-        # seat. This row is retained ONLY for forensic queries
-        # against historical receipts that recorded `seat=auditor`
-        # before the alias change. New code MUST NOT reference it.
+        # 2026-05-24: REINSTATED as a real seat. Post-trade reviewer —
+        # analyzes the outcome vs the intent on every closed position.
+        # No deciding, no executing, no vetoing. Default-vacant in the
+        # roster; the operator assigns when a brain is ready to take the
+        # review chair. `seat_required=False` because the seat is
+        # optional under current doctrine (quorum doesn't degrade when
+        # vacant). Lane: equity (crypto twin is `crypto_auditor`).
         "may_decide": False,
         "may_execute": False,
         "may_veto": False,
         "seat_required": False,
         "speaks_as": "auditor",
-        "lane_scope": None,
+        "lane_scope": ["equity"],
     },
     "crypto": {
         # Dedicated crypto seat — observe, buy, sell crypto. No equity

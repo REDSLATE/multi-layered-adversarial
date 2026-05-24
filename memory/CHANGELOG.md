@@ -1,3 +1,52 @@
+## 2026-05-24 — Roster Doctrine v2 (5-seat equity, eligibility hard-lock)
+
+**Operator clarification**: The `decider` seat is renamed to `strategist`. The
+auditor seat is reinstated. Seat eligibility is hard-locked per identity.
+
+### Final 5 equity seats
+- `strategist` (was `decider`) · `executor` · `auditor` · `governor` · `opponent`
+- `advisor` is deprecated (vacant default, no eligibility)
+
+### Eligibility doctrine
+| Brain    | strategist | executor | auditor | governor | opponent |
+|----------|------------|----------|---------|----------|----------|
+| alpha    | ✓          | ✓        | ✓       | ✗        | ✗        |
+| camaro   | ✓          | ✓        | ✓       | ✗        | ✗        |
+| chevelle | ✗          | ✗        | ✗       | ✓        | ✓        |
+| redeye   | ✓          | ✓        | ✓       | ✓        | ✓        |
+
+Crypto lane mirrors the same constraints on parallel seats (`crypto`,
+`crypto_strategist`, `crypto_auditor`, `crypto_governor`, `crypto_opponent`).
+
+### Backward compatibility
+- `POST /api/admin/roster/assign` (or `/swap`) with `role=decider` is silently
+  rewritten to `strategist` (and `crypto_decider` → `crypto_strategist`).
+- Legacy DB roster docs are auto-migrated on first read (`get_roster()`).
+- `SEAT_ALIASES["decider"]="executor"` preserved so historical receipt
+  forensics still resolve.
+
+### Files touched
+- `backend/shared/roster.py` — ROLES, DEFAULT_ASSIGNMENTS, DEFAULT_ELIGIBILITY,
+  legacy rewrite, eligibility hard-lock, swap/assign/eligibility canonicalization
+- `backend/shared/seat_policy.py` — `strategist` policy row added; `auditor`
+  row reinstated as real seat (no longer aliased to opponent)
+- `backend/shared/mc_shelly.py` — POSITION_CODES adds `STR` (legacy `DEC` alias)
+- `backend/shared/equity/council_policy.py` + `crypto/council_policy.py` —
+  STACK_WEIGHTS `strategist: 0.90` (legacy `decider` retained)
+- `frontend/src/components/RosterPanel.jsx` — STRATEGIST label, role lists
+- `frontend/src/pages/BrainOperatorPage.jsx` — per-brain `expected_seats`
+- Tests: `test_roster.py`, `test_seat_aliases.py`, `test_paradox_namespace.py`,
+  `test_seat_policy_and_auto.py` updated to the new doctrine
+
+### Verification
+- 320/321 tripwires pass (1 pre-existing flaky seed-fixture test unrelated)
+- Live API confirmed: `decider` ingress → `strategist` canonical; camaro→governor
+  blocked (400); chevelle→strategist blocked (400)
+- Lint clean (ruff)
+
+---
+
+
 ## 2026-02-19 — Sidecar identity check-in surface (Portable Survival Layer companion)
 
 P1 task closed: MC can now answer "who's PROD vs preview?" with one
