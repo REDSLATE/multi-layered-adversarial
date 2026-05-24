@@ -1,62 +1,49 @@
 """Brain Memory Ingest — receive resolved decision memories from brain sidecars.
 
 Doctrine pin (2026-05-24):
-    Brains keep their own decision history locally (intent → resolution
-    → outcome). For the operator panel to render a "what does this brain
-    actually know?" column AND for downstream consumers to train against
-    the same canonical store, those resolved memories need to live in MC
-    too. This module accepts batched inserts and surfaces summary stats.
+    Aligned 1:1 with REDEYE's MC_MEMORY_INGEST_SPEC.md (2026-05-24).
+    Brains keep their own decision history locally; this endpoint
+    accepts batched inserts and surfaces summary stats so MC's
+    operator panel can render corpus health.
 
-    Endpoint contract (matches the spec REDEYE drafted, with one minor
-    refinement: separate admin vs. runtime auth paths so operators can
-    backfill on behalf of a brain that's offline):
+    Endpoints:
+      POST /api/runtime/shelly/memories          (X-Runtime-Token auth)
+      POST /api/admin/shelly/memories            (Admin JWT auth)
+      GET  /api/admin/brain-memories/summary
+      GET  /api/admin/brain-memories/ingest-audit
 
-      POST /api/runtime/shelly/memories
-        Auth: X-Runtime-Token (brain self-pushes its own memories)
-      POST /api/admin/shelly/memories
-        Auth: Admin JWT (operator pushes on behalf of any brain)
+    Request body matches REDEYE's spec exactly:
+      {
+        batch_id,
+        brain,
+        memories: [
+          {
+            memory_id, decision_id, symbol, lane,
+            decision: {raw_action, display_action, confidence, execution_decision},
+            resolution: {outcome, realized_r, mae, mfe, entry_price, exit_price,
+                         resolved_at, mode},
+            features: {bounded numeric dict},
+            decided_at,
+            text_summary
+          }
+        ]
+      }
 
-      Body:
-        {
-          batch_id: "uuid",                       # client-generated
-          brain: "redeye",                        # must match token
-          memories: [
-            {
-              memory_id: "<brain-side uuid>",     # idempotency key
-              symbol: "BTC/USD",
-              lane: "crypto",                     # crypto|equity|options
-              decision_ts: "2026-05-01T...",
-              decision: {action, confidence, ...},
-              resolution: {outcome, realized_r, mfe_pct, mae_pct, resolved_at, ...},
-              features: {bounded dict, <= 32 entries},
-              evidence_refs: [strings, pointers to brain-side artifacts]
-            },
-            ...
-          ]
-        }
-
-      Response:
-        {ok, batch_id, brain, accepted, deduped, rejected, errors[]}
+    Response (200 OK or 207 partial):
+      {ok, batch_id, received, stored, duplicates, rejected[]}
 
     Invariants:
-      - Bulk-only (no per-memory endpoint).
-      - Batch size capped at MAX_BATCH (default 500).
-      - Idempotent on `(brain, memory_id)`: re-running a batch = no
-        double-write; deduped count returned for telemetry.
-      - Every row tagged `provenance = "brain_memory_ingest"` so
-        downstream queries can include/exclude trivially.
-      - Stored in `brain_memories` — DISTINCT from `shared_intents`
-        and `execution_receipts`. Never pollute the forward-looking
-        intent stream with backfill data.
-      - Audit row written to `brain_memory_ingest_audit` per batch so
-        the operator panel can show ingest cadence.
-
-    What this endpoint does NOT do:
-      - Run gates. These are resolved memories, gate replay is a
-        separate (future) endpoint.
-      - Route to broker. Memories are historical, no execution path.
-      - Compute calibration curves. That's REDEYE's calibrator
-        endpoint (`/api/ingest/calibrators`).
+      - Bulk-only (single-row POSTs rejected by Pydantic min_length=1).
+      - Idempotent on `(brain, memory_id)`: re-running returns
+        `duplicates += 1` without double-write.
+      - Brain identity from `body.brain`; runtime token-owner MUST match
+        (no cross-brain runtime pushes; admin path bypasses for backfill).
+      - Stored in `brain_memories` (NOT mc_shelly — that's MC's engine
+        audit log).
+      - Every row stamped `provenance="brain_memory_ingest"`.
+      - Soft-closed rows (`resolution.mode == "data_unavailable"`) go
+        into `brain_memories_dead` instead, never counted as outcomes.
+      - HTTP 207 returned when any rows were rejected (partial success).
 """
 from __future__ import annotations
 
@@ -64,7 +51,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, Field, field_validator
 
 from auth import get_current_user
@@ -81,48 +68,67 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["brain-memory-ingest"])
 
+# `brain_memories_dead` is a sibling collection — soft-closed rows
+# (resolver couldn't validate against market data) park here so they're
+# auditable but never trainable.
+BRAIN_MEMORIES_DEAD = "brain_memories_dead"
+
 
 # Hard caps — keep payloads bounded so a misbehaving brain can't OOM MC.
 MAX_BATCH = 500
-MAX_FEATURES_PER_MEMORY = 32
-MAX_EVIDENCE_REFS = 16
+MAX_FEATURES_PER_MEMORY = 32           # cap; spec recommends ~20
+MAX_TEXT_SUMMARY = 500
 
 
 # ─────────────────────────── models ───────────────────────────
 
 
-LaneT = Literal["crypto", "equity", "options"]
-ActionT = Literal["BUY", "SELL", "HOLD"]
+# Extended to cover REDEYE's full taxonomy per spec Q1.
+LaneT = Literal["crypto", "equity", "options", "futures", "fx", "unknown"]
 OutcomeT = Literal[-1, 0, 1]  # -1 loss, 0 push/abstain, 1 win
 
 
 class MemoryDecision(BaseModel):
-    """The decision the brain made at the time."""
-    action: ActionT
+    """The decision the brain made at the time. Field shapes match
+    REDEYE's spec verbatim — raw_action + display_action are distinct
+    because a brain can rewrite its action between layers (e.g. SELL
+    raw → HOLD after governance review)."""
+    raw_action: str = Field(..., min_length=1, max_length=16)
+    display_action: str = Field(..., min_length=1, max_length=16)
     confidence: float = Field(..., ge=0.0, le=1.0)
-    # Optional brain-side reasoning hooks. Bounded so brains can't
-    # ship arbitrary blobs.
+    execution_decision: Optional[str] = Field(default=None, max_length=32)
     rationale: Optional[str] = Field(default=None, max_length=2000)
 
 
 class MemoryResolution(BaseModel):
     """How the decision resolved against market reality."""
     outcome: OutcomeT
-    realized_r: Optional[float] = None       # realized R-multiple
-    mfe_pct: Optional[float] = None          # max favourable excursion
-    mae_pct: Optional[float] = None          # max adverse excursion
-    resolved_at: str                          # ISO-8601
+    realized_r: Optional[float] = None
+    mae: Optional[float] = None
+    mfe: Optional[float] = None
+    entry_price: Optional[float] = None
+    exit_price: Optional[float] = None
+    resolved_at: str
+    # `mode` carries the resolver's confidence in the resolution itself:
+    #   "shadow" / "live"          → real outcome, fully trainable
+    #   "data_unavailable"         → soft-closed; goes to _dead collection
+    #   any other value            → stored normally, treated as cold-data
+    mode: Optional[str] = Field(default=None, max_length=32)
 
 
 class MemoryIn(BaseModel):
     memory_id: str = Field(..., min_length=1, max_length=128)
+    # decision_id is REDEYE-side correlation back to the original
+    # decision — kept distinct so memory_id can be a wrapper key
+    # (e.g. "WILD-<decision_id>").
+    decision_id: Optional[str] = Field(default=None, max_length=128)
     symbol: str = Field(..., min_length=1, max_length=32)
     lane: LaneT
-    decision_ts: str
     decision: MemoryDecision
     resolution: MemoryResolution
     features: Dict[str, float] = Field(default_factory=dict)
-    evidence_refs: List[str] = Field(default_factory=list)
+    decided_at: str = Field(..., description="ISO-8601 of original decision")
+    text_summary: Optional[str] = Field(default=None, max_length=MAX_TEXT_SUMMARY)
 
     @field_validator("features")
     @classmethod
@@ -136,16 +142,6 @@ class MemoryIn(BaseModel):
             if not isinstance(k, str) or not k or len(k) > 64:
                 raise ValueError(f"feature key invalid: {k!r}")
         return v
-
-    @field_validator("evidence_refs")
-    @classmethod
-    def _refs_bounded(cls, v: List[str]) -> List[str]:
-        if len(v) > MAX_EVIDENCE_REFS:
-            raise ValueError(
-                f"evidence_refs has {len(v)} entries, max is "
-                f"{MAX_EVIDENCE_REFS}"
-            )
-        return [r[:256] for r in v if isinstance(r, str)]
 
 
 class IngestBatchIn(BaseModel):
@@ -173,74 +169,84 @@ def _now_iso() -> str:
 async def _ingest_batch(
     brain: str, batch: IngestBatchIn, *, ingested_by: str,
 ) -> Dict[str, Any]:
-    """Insert/upsert the batch idempotently. Returns counts."""
-    accepted = 0
-    deduped = 0
-    rejected = 0
-    errors: List[Dict[str, Any]] = []
+    """Insert/upsert the batch idempotently. Returns counts in the
+    field names REDEYE's spec specifies: received / stored / duplicates."""
+    stored = 0
+    duplicates = 0
+    rejected: List[Dict[str, Any]] = []
+    parked_dead = 0
     now = _now_iso()
 
     for m in batch.memories:
         try:
-            # Idempotent upsert keyed on (brain, memory_id).
-            doc = {
+            base_doc = {
                 "brain": brain,
                 "memory_id": m.memory_id,
+                "decision_id": m.decision_id,
                 "symbol": m.symbol.upper(),
                 "lane": m.lane,
-                "decision_ts": m.decision_ts,
                 "decision": m.decision.model_dump(),
                 "resolution": m.resolution.model_dump(),
                 "features": m.features,
-                "evidence_refs": m.evidence_refs,
+                "decided_at": m.decided_at,
+                "text_summary": m.text_summary,
                 "provenance": "brain_memory_ingest",
                 "batch_id": batch.batch_id,
                 "ingested_at": now,
                 "ingested_by": ingested_by,
             }
-            result = await db[BRAIN_MEMORIES].update_one(
+
+            # Soft-closed rows go to the _dead sibling — auditable but
+            # never trainable. Distinct from `rejected` (which means
+            # MC refused to store at all).
+            target = (
+                BRAIN_MEMORIES_DEAD
+                if (m.resolution.mode == "data_unavailable")
+                else BRAIN_MEMORIES
+            )
+
+            result = await db[target].update_one(
                 {"brain": brain, "memory_id": m.memory_id},
                 {
-                    "$set": doc,
+                    "$set": base_doc,
                     "$setOnInsert": {"first_seen_at": now},
                 },
                 upsert=True,
             )
             if result.upserted_id is not None:
-                accepted += 1
+                if target == BRAIN_MEMORIES_DEAD:
+                    parked_dead += 1
+                else:
+                    stored += 1
             else:
-                # Update matched an existing row — treat as dedupe.
-                deduped += 1
+                duplicates += 1
         except Exception as e:  # noqa: BLE001
-            rejected += 1
-            errors.append({
+            rejected.append({
                 "memory_id": m.memory_id,
                 "error": repr(e)[:300],
             })
 
-    # Batch-level audit row so the operator panel can render ingest
-    # cadence + outcome.
     await db[BRAIN_MEMORY_INGEST_AUDIT].insert_one({
         "ts": now,
         "brain": brain,
         "batch_id": batch.batch_id,
         "ingested_by": ingested_by,
-        "n_received": len(batch.memories),
-        "accepted": accepted,
-        "deduped": deduped,
-        "rejected": rejected,
-        "errors_count": len(errors),
+        "received": len(batch.memories),
+        "stored": stored,
+        "duplicates": duplicates,
+        "parked_dead": parked_dead,
+        "rejected_count": len(rejected),
     })
 
     return {
         "ok": True,
-        "brain": brain,
         "batch_id": batch.batch_id,
-        "n_received": len(batch.memories),
-        "accepted": accepted,
-        "deduped": deduped,
-        "rejected": rejected,
-        "errors": errors[:20],  # cap error array so response stays bounded
+        "brain": brain,
+        "received": len(batch.memories),
+        "stored": stored,
+        "duplicates": duplicates,
+        "parked_dead": parked_dead,
+        "rejected": rejected[:50],
     }
 
 
@@ -250,42 +256,48 @@ async def _ingest_batch(
 @router.post("/runtime/shelly/memories")
 async def runtime_ingest_memories(
     body: IngestBatchIn,
-    runtime: str = Header(..., alias="X-Runtime", description="brain identity"),
+    response: Response,
     x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
+    x_client_request_id: Optional[str] = Header(default=None, alias="X-Client-Request-Id"),
 ):
     """Brain sidecar pushes its own resolved memories.
 
-    Auth: per-runtime token. The `body.brain` field MUST match the
-    runtime; a brain can NOT push memories on behalf of another brain
-    (use the admin endpoint for that — operator override).
+    Auth: per-runtime token. Brain identity derived from `body.brain`;
+    the runtime endpoint enforces token-owner matches the brain field.
+    Returns HTTP 207 if any rows were rejected (spec contract).
     """
     if not x_runtime_token:
         raise HTTPException(status_code=401, detail="X-Runtime-Token required")
-    verify_runtime_token(runtime, x_runtime_token)
+    # Use body.brain as the canonical identity — token-owner derived
+    # via the same verify_runtime_token helper used everywhere else.
+    verify_runtime_token(body.brain, x_runtime_token)
 
-    if body.brain != runtime:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                f"runtime={runtime!r} cannot ingest memories for "
-                f"brain={body.brain!r}. Use /api/admin/shelly/memories "
-                f"for cross-brain operator backfill."
-            ),
-        )
-
-    return await _ingest_batch(runtime, body, ingested_by=f"runtime:{runtime}")
+    result = await _ingest_batch(
+        body.brain, body,
+        ingested_by=f"runtime:{body.brain}",
+    )
+    if x_client_request_id:
+        result["request_id"] = x_client_request_id
+    # 207 = partial success when any rows were rejected.
+    if result["rejected"]:
+        response.status_code = 207
+    return result
 
 
 @router.post("/admin/shelly/memories")
 async def admin_ingest_memories(
     body: IngestBatchIn,
+    response: Response,
     user: dict = Depends(get_current_user),  # noqa: B008
 ):
-    """Operator-authed memory ingest. Useful for backfilling memories
-    from a brain that's offline or for one-shot CLI pushes."""
-    return await _ingest_batch(
-        body.brain, body, ingested_by=f"admin:{user.get('email') or 'operator'}",
+    """Operator-authed memory ingest for backfill / cross-brain ops."""
+    result = await _ingest_batch(
+        body.brain, body,
+        ingested_by=f"admin:{user.get('email') or 'operator'}",
     )
+    if result["rejected"]:
+        response.status_code = 207
+    return result
 
 
 # ─────────────────────────── read surface ───────────────────────────
@@ -298,29 +310,33 @@ async def memories_summary(
 ):
     """Per-brain corpus health for the operator dashboard.
 
-    For each brain returns: total memories, last_ingested_at, win rate
-    (count of outcome=1 / total resolved), lane breakdown, top symbols
-    by sample count. Designed for ~< 100ms render time so the panel
-    can poll it on a 30s cadence."""
+    Returns: total, by_lane, top_symbols, last_resolved_at, win_rate,
+    mean_r — the exact column-shape the operator panel binds to.
+    """
     brains = [brain] if brain else list(DISCUSSION_PARTICIPANTS)
     rows: List[Dict[str, Any]] = []
     for b in brains:
         total = await db[BRAIN_MEMORIES].count_documents({"brain": b})
+        dead = await db[BRAIN_MEMORIES_DEAD].count_documents({"brain": b})
         if total == 0:
             rows.append({
                 "brain": b,
                 "total_memories": 0,
-                "last_ingested_at": None,
+                "dead_memories": dead,
+                "last_resolved_at": None,
                 "win_rate": None,
+                "mean_r": None,
                 "by_lane": {},
                 "top_symbols": [],
             })
             continue
 
         latest = await db[BRAIN_MEMORIES].find_one(
-            {"brain": b}, {"_id": 0, "ingested_at": 1},
-            sort=[("ingested_at", -1)],
+            {"brain": b}, {"_id": 0, "resolution.resolved_at": 1},
+            sort=[("resolution.resolved_at", -1)],
         )
+        last_resolved = (latest or {}).get("resolution", {}).get("resolved_at")
+
         wins = await db[BRAIN_MEMORIES].count_documents(
             {"brain": b, "resolution.outcome": 1},
         )
@@ -329,6 +345,14 @@ async def memories_summary(
         )
         decided = wins + losses
         win_rate = round(wins / decided, 4) if decided else None
+
+        # mean realized_r across resolved rows.
+        mean_r = None
+        async for d in db[BRAIN_MEMORIES].aggregate([
+            {"$match": {"brain": b, "resolution.realized_r": {"$type": "double"}}},
+            {"$group": {"_id": None, "avg_r": {"$avg": "$resolution.realized_r"}}},
+        ]):
+            mean_r = round(d["avg_r"], 4) if d.get("avg_r") is not None else None
 
         by_lane: Dict[str, int] = {}
         async for d in db[BRAIN_MEMORIES].aggregate([
@@ -349,8 +373,10 @@ async def memories_summary(
         rows.append({
             "brain": b,
             "total_memories": total,
-            "last_ingested_at": latest.get("ingested_at") if latest else None,
+            "dead_memories": dead,
+            "last_resolved_at": last_resolved,
             "win_rate": win_rate,
+            "mean_r": mean_r,
             "by_lane": by_lane,
             "top_symbols": top_symbols,
         })
@@ -371,3 +397,4 @@ async def memories_ingest_audit(
     rows = await db[BRAIN_MEMORY_INGEST_AUDIT].find(q, {"_id": 0}) \
         .sort("ts", -1).to_list(min(max(limit, 1), 500))
     return {"items": rows, "count": len(rows)}
+
