@@ -79,15 +79,17 @@ BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("alpha", "camaro", "chevel
 # starts vacated — operator chooses which brain takes the crypto-only
 # execution chair (it's a dedicated specialist seat, not a default).
 DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
+    # 2026-05-24 (operator correction): REDEYE is NOT seated by default.
+    # It lives across positions via stances, not in a seat. Opponent is
+    # operator-assigned. Auditor stays operator-assigned.
     "strategist": "camaro",
     "executor":   "alpha",
     "governor":   "chevelle",
-    "advisor":    None,        # deprecated; vacant — operator can ignore
-    "opponent":   "redeye",
+    "advisor":    None,        # deprecated; vacant
+    "opponent":   None,        # operator-assigned
     "auditor":    None,        # operator-assigned: post-trade reviewer
     "crypto":     None,        # operator-assigned: dedicated crypto executor
     # Crypto council seats — all vacant until operator slots them.
-    # When vacant, the council falls back to the equity seat for that role.
     "crypto_advisor":    None,
     "crypto_governor":   None,
     "crypto_opponent":   None,
@@ -95,41 +97,21 @@ DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
     "crypto_auditor":    None,
 }
 
-# ─── Default eligibility (2026-05-24 operator doctrine) ──────────────
-# Identity DOES carry hard constraints for some seats:
-#   * governor/opponent are reserved for chevelle and redeye only.
-#   * strategist/executor/auditor are reserved for camaro, alpha, redeye.
-#   * `advisor` is deprecated; everyone disallowed by default (vacant).
-#   * Crypto lane mirrors the same constraints on the parallel seats.
-#   * `crypto` (the lane's executor slot) follows the equity executor
-#     rule — chevelle disallowed; redeye/alpha/camaro allowed.
-# The operator may still toggle a cell true via the eligibility UI; the
-# default just encodes doctrine.
-def _seat_set(seats: Iterable[str]) -> dict[str, bool]:
-    """Build a per-role allow/deny dict from a positive seat allowlist."""
-    return {role: (role in set(seats)) for role in ROLES}
-
-
-# Equity rotating seats (Camaro / Alpha / RedEye eligible)
-_EQUITY_ROTATING: tuple[str, ...] = ("strategist", "executor", "auditor")
-# Equity council seats (RedEye / Chevelle exclusive)
-_EQUITY_COUNCIL: tuple[str, ...] = ("governor", "opponent")
-
-# Crypto lane mirrors the same doctrine on the parallel seats. `crypto`
-# (executor slot) is treated as a rotating seat for camaro/alpha/redeye;
-# crypto_governor / crypto_opponent are council seats for chevelle/redeye.
-_CRYPTO_ROTATING: tuple[str, ...] = (
-    "crypto", "crypto_strategist", "crypto_executor", "crypto_auditor",
-)
-_CRYPTO_COUNCIL: tuple[str, ...] = ("crypto_governor", "crypto_opponent")
-
+# ─── Default eligibility (2026-05-24 — operator doctrine, corrected) ──
+# Doctrine: IDENTITY DOES NOT GRANT AUTHORITY. SEAT POLICY DOES.
+# All brains are eligible for all seats by default. The seat itself
+# carries the restrictions (may_decide, may_execute, may_veto) — the
+# operator can pull any brain into any seat and the seat's policy is
+# what kicks in. The operator may tighten a specific cell via the
+# eligibility UI if a brain's training intent makes a specific seat a
+# bad fit (e.g., disallow chevelle from executor if you want chevelle
+# strictly on governance), but the DEFAULT is fully open.
+_ALL_TRUE = {role: True for role in ROLES}
 DEFAULT_ELIGIBILITY: dict[str, dict[str, bool]] = {
-    "alpha":    _seat_set(_EQUITY_ROTATING + _CRYPTO_ROTATING),
-    "camaro":   _seat_set(_EQUITY_ROTATING + _CRYPTO_ROTATING),
-    "chevelle": _seat_set(_EQUITY_COUNCIL + _CRYPTO_COUNCIL),
-    "redeye":   _seat_set(
-        _EQUITY_ROTATING + _EQUITY_COUNCIL + _CRYPTO_ROTATING + _CRYPTO_COUNCIL
-    ),
+    "alpha":    dict(_ALL_TRUE),
+    "camaro":   dict(_ALL_TRUE),
+    "chevelle": dict(_ALL_TRUE),
+    "redeye":   dict(_ALL_TRUE),
 }
 
 

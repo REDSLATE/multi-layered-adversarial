@@ -70,12 +70,12 @@ class TestRosterBasics:
         assert r.status_code == 200
         d = r.json()
         a = d["assignments"]
-        # 2026-05-24: 5-seat doctrine. `decider` was renamed to
-        # `strategist`. `advisor` stays vacant.
+        # 2026-05-24 (corrected): REDEYE not seated by default. Opponent
+        # is operator-assigned. `decider` was renamed to `strategist`.
         assert a["strategist"] == "camaro"
         assert a["executor"]   == "alpha"
         assert a["governor"]   == "chevelle"
-        assert a["opponent"]   == "redeye"
+        assert a.get("opponent") is None
         assert a.get("auditor") is None
         assert a.get("advisor") is None
         # Doctrine note must be present in the response
@@ -177,7 +177,7 @@ class TestRosterBasics:
 
     def test_reset_restores_defaults(self):
         tok = _login()
-        # Mangle then reset — use an eligible assignment (camaro → executor)
+        # Mangle then reset
         requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
@@ -187,10 +187,11 @@ class TestRosterBasics:
         _reset(tok)
         r = requests.get(f"{BASE_URL}/api/admin/roster", headers=_hdr(tok), timeout=10)
         a = r.json()["assignments"]
+        # 2026-05-24 (corrected): REDEYE not seated by default
         assert a["strategist"] == "camaro"
         assert a["executor"]   == "alpha"
         assert a["governor"]   == "chevelle"
-        assert a["opponent"]   == "redeye"
+        assert a.get("opponent") is None
 
     def test_audit_log_captures_changes(self):
         tok = _login()
@@ -214,39 +215,64 @@ class TestRosterBasics:
 
 class TestEligibility:
     def test_default_matrix(self):
-        """2026-05-24 doctrine:
-          - Camaro/Alpha/RedEye rotate strategist/executor/auditor
-          - RedEye/Chevelle are the only brains eligible for governor/opponent
-          - Chevelle is NOT eligible for the rotating seats
-          - Camaro/Alpha are NOT eligible for governor/opponent
+        """2026-05-24 (operator correction):
+          IDENTITY DOES NOT GRANT AUTHORITY. SEAT POLICY DOES.
+          All brains are eligible for every seat by default. The seat
+          itself carries the restrictions; pulling a brain into a seat
+          applies that seat's policy. Operator tightens specific cells
+          only when a brain's training intent makes a seat a bad fit.
         """
         tok = _login()
         requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
         r = requests.get(f"{BASE_URL}/api/admin/roster/eligibility", headers=_hdr(tok), timeout=10)
         assert r.status_code == 200
         m = r.json()["matrix"]
-        # Chevelle: governor + opponent ONLY
-        assert m["chevelle"]["governor"]   is True
-        assert m["chevelle"]["opponent"]   is True
-        assert m["chevelle"]["strategist"] is False
-        assert m["chevelle"]["executor"]   is False
-        assert m["chevelle"]["auditor"]    is False
-        # RedEye: all five equity seats allowed
-        for seat in ("strategist", "executor", "auditor", "governor", "opponent"):
-            assert m["redeye"][seat] is True, f"redeye should be eligible for {seat}"
-        # Alpha/Camaro: rotating seats only
-        for b in ("alpha", "camaro"):
-            assert m[b]["strategist"] is True
-            assert m[b]["executor"]   is True
-            assert m[b]["auditor"]    is True
-            assert m[b]["governor"]   is False
-            assert m[b]["opponent"]   is False
+        # Every brain × every seat = True by default
+        for brain in ("alpha", "camaro", "chevelle", "redeye"):
+            for seat in ("strategist", "executor", "auditor", "governor",
+                         "opponent", "advisor", "crypto"):
+                assert m[brain][seat] is True, (
+                    f"default matrix should allow {brain}→{seat} per doctrine"
+                )
 
-    def test_assign_blocked_by_default_matrix(self):
+    def test_assign_any_brain_to_any_seat_by_default(self):
+        """No identity-based blocks by default. Operator can place any
+        brain in any seat without first toggling the eligibility cell."""
         tok = _login()
         _reset(tok)
         requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
-        # Camaro → governor is blocked (camaro disallowed for governor)
+        # Chevelle → strategist (would have been blocked under the
+        # discarded hard-lock doctrine; now accepted)
+        r = requests.post(
+            f"{BASE_URL}/api/admin/roster/assign",
+            headers=_hdr(tok),
+            json={"role": "strategist", "brain": "chevelle"},
+            timeout=10,
+        )
+        assert r.status_code == 200, r.text
+        # Camaro → governor (also previously blocked)
+        r = requests.post(
+            f"{BASE_URL}/api/admin/roster/assign",
+            headers=_hdr(tok),
+            json={"role": "governor", "brain": "camaro"},
+            timeout=10,
+        )
+        assert r.status_code == 200, r.text
+        _reset(tok)
+
+    def test_toggle_eligibility_then_assign(self):
+        tok = _login()
+        _reset(tok)
+        requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
+        # Operator chooses to disallow camaro→governor. Then re-allow.
+        r = requests.post(
+            f"{BASE_URL}/api/admin/roster/eligibility",
+            headers=_hdr(tok),
+            json={"brain": "camaro", "role": "governor", "allowed": False},
+            timeout=10,
+        )
+        assert r.status_code == 200
+        # Assign should now be blocked
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
@@ -254,21 +280,7 @@ class TestEligibility:
             timeout=10,
         )
         assert r.status_code == 400
-        assert "not eligible" in r.text.lower()
-        # Chevelle → strategist is blocked
-        r = requests.post(
-            f"{BASE_URL}/api/admin/roster/assign",
-            headers=_hdr(tok),
-            json={"role": "strategist", "brain": "chevelle"},
-            timeout=10,
-        )
-        assert r.status_code == 400
-
-    def test_toggle_eligibility_then_assign(self):
-        tok = _login()
-        _reset(tok)
-        requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
-        # Flip camaro→governor on
+        # Flip it back on
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/eligibility",
             headers=_hdr(tok),
@@ -276,7 +288,7 @@ class TestEligibility:
             timeout=10,
         )
         assert r.status_code == 200
-        # Now the assign succeeds — but first vacate chevelle from governor
+        # Vacate chevelle, then place camaro
         requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
@@ -289,9 +301,8 @@ class TestEligibility:
             json={"role": "governor", "brain": "camaro"},
             timeout=10,
         )
-        assert r.status_code == 200, r.text
+        assert r.status_code == 200
         assert r.json()["assignments"]["governor"] == "camaro"
-        # Restore
         _reset(tok)
         requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
 
@@ -309,19 +320,16 @@ class TestEligibility:
         assert r.status_code == 400
         assert "currently occupy" in r.text.lower()
 
-    def test_swap_blocked_by_eligibility(self):
+    def test_redeye_not_seated_by_default(self):
+        """REDEYE is NOT seated by default — it lives across positions
+        via stances. Opponent seat starts vacant; operator decides who
+        sits there (if anyone)."""
         tok = _login()
         _reset(tok)
-        requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
-        # Swap strategist ↔ governor would put camaro into governor
-        # (camaro is NOT eligible for governor by default).
-        r = requests.post(
-            f"{BASE_URL}/api/admin/roster/swap",
-            headers=_hdr(tok),
-            json={"role_a": "strategist", "role_b": "governor"},
-            timeout=10,
-        )
-        assert r.status_code == 400
+        r = requests.get(f"{BASE_URL}/api/admin/roster", headers=_hdr(tok), timeout=10)
+        a = r.json()["assignments"]
+        assert a.get("opponent") is None
+        assert "redeye" not in {v for v in a.values() if v}
 
 
 class TestTenure:
