@@ -1,3 +1,76 @@
+## 2026-05-24 (cont'd) — `/api/runtime/broker-status` shipped
+
+### Doctrine — 4-tier credential separation pinned
+
+  TIER 0  Public market data (OHLC, ticker)         — no auth, anyone
+  TIER 1  Account state derived from private keys   — MC SHARES via /runtime/broker-status
+  TIER 2  MC's own records (positions, receipts)    — MC SHARES via /runtime/positions etc.
+  TIER 3  Mutating actions (open/close orders)      — Brains REQUEST via /api/intents; MC routes through 12 gates
+
+Keys never leave MC. State derived from keys CAN leave MC.
+
+### Endpoint
+- `GET /api/runtime/broker-status` — unified, both lanes in one response
+- `GET /api/runtime/broker-status/{lane}` — per-lane variant
+- Auth: any valid `X-Runtime-Token` (operator can revoke per-brain by rotating its env token)
+- Response identical for all brains — endpoint is read-only state, doesn't care WHO asks
+- Server-side cache: 10s TTL per-lane (caps Kraken/Alpaca rate-limit pressure when all 4 brains poll on 30s heartbeats)
+
+### Payload shape (per lane)
+```
+{lane, connected, execution_enabled, lane_execution_enabled,
+ broker_live_order_enabled,
+ scopes: {query_funds, trade, ...},                   # bool per permission
+ balance_preview: {BTC: "0.001", ...},                # crypto only, top-3 assets
+ account_state: {cash, buying_power, daytrade_buying_power,
+                 equity, pattern_day_trader, trading_blocked},  # equity only
+ public_key_preview: "AKxx…1234",                     # 4-char preview ONLY
+ connected_at, updated_at,
+ last_fill_at, last_error, last_error_at}
+```
+
+### Hard tripwire: NEVER leak full keys
+`test_response_never_includes_full_keys` plants a fake key string in the
+credentials doc and asserts the endpoint response contains neither the
+full public_key nor encrypted_private_key. **Cannot regress accidentally.**
+
+### Tests (12 new tripwires)
+- Auth required (unified + per-lane)
+- Bogus token rejected
+- Bad lane rejected  
+- Returns `asked_by` field with matched brain name
+- Each of 4 brain tokens unlocks the endpoint
+- **Secret-leak tripwire** (above)
+- Disconnected shape (crypto + equity)
+- Equity account_state populated when connected
+- Cache returns same object within TTL
+- Cache separates lanes
+
+### Tripwire total: **351 passing** (was 339; +12 net)
+- Same pre-existing unrelated failure (`test_runtime_position_discovery.py`)
+
+### How brains should use it
+```
+status = GET /api/runtime/broker-status
+         Header: X-Runtime-Token: $BRAIN_TOKEN
+
+if not status['crypto']['connected']:
+    skip_crypto_intent()
+elif not status['crypto']['execution_enabled']:
+    emit_shadow_only()
+elif status['crypto']['balance_preview'] is too small:
+    size_down_or_skip()
+else:
+    emit_intent_normally()
+```
+
+Closes the asymmetry where brains POST blind into the void without
+knowing if MC is even connected to the broker. Sidecars wire this on
+their next deploy.
+
+---
+
+
 ## 2026-05-24 (cont'd) — Learning Scoreboard + new schema-health blocker
 
 ### Shipped: `GET /api/admin/learning/scoreboard`
