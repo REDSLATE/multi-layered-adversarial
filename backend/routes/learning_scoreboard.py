@@ -158,17 +158,26 @@ async def learning_scoreboard(
         closes_by_reason[bucket] = closes_by_reason.get(bucket, 0) + 1
 
     # ─── 3 + 4. Outcomes — overall mix + per-brain (within window) ───
+    # Field shape (preview, 2026-05-24):
+    #   shared_brain_outcomes.actual    → "win" | "loss" | "scratch" | "stopped_out"
+    #   shared_brain_outcomes.runtime   → brain
+    #   shared_brain_outcomes.resolved_by → operator email or brain name
+    # We read `.actual` first; fall back to `.outcome` for any legacy
+    # rows that used the older key (none observed on preview, but
+    # cheap insurance).
     outcome_mix: Dict[str, int] = {"win": 0, "loss": 0, "scratch": 0,
                                     "stopped_out": 0, "other": 0}
     outcomes_by_brain: Dict[str, Dict[str, int]] = {}
     resolved_total = 0
     cursor = db[SHARED_OUTCOMES].find(
         {"resolved_at": {"$gte": since_iso}},
-        {"_id": 0, "outcome": 1, "runtime": 1, "brain": 1, "resolved_at": 1},
+        {"_id": 0, "actual": 1, "outcome": 1, "runtime": 1, "brain": 1,
+         "resolved_at": 1, "resolved_by": 1},
     )
     async for o in cursor:
         resolved_total += 1
-        label = (o.get("outcome") or "other").lower()
+        raw = o.get("actual") or o.get("outcome") or "other"
+        label = str(raw).lower()
         if label not in outcome_mix:
             label = "other"
         outcome_mix[label] += 1
@@ -212,12 +221,14 @@ async def learning_scoreboard(
         }
 
     # Schema health — what fraction of outcome rows have a usable label?
-    # Operator pin (2026-05-24): "do not tune confidence again until
-    # outcome labels exist." If null_rate is high, the resolver is
-    # the blocker, not the brains.
-    null_outcome_count = await db[SHARED_OUTCOMES].count_documents(
-        {"resolved_at": {"$gte": since_iso}, "outcome": None},
-    )
+    # We accept `.actual` as the canonical column (matches the writer in
+    # `shared/opinions.py::resolve_opinion`); `.outcome` is a legacy
+    # name. Both null → unusable for calibration.
+    null_outcome_count = await db[SHARED_OUTCOMES].count_documents({
+        "resolved_at": {"$gte": since_iso},
+        "actual": {"$in": [None, ""]},
+        "outcome": {"$in": [None, ""]},
+    })
     null_outcome_rate: float | None = None
     if resolved_total:
         null_outcome_rate = round(null_outcome_count / resolved_total, 3)
