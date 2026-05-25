@@ -1,3 +1,74 @@
+## 2026-05-24 (cont'd) — Opinion Auto-Resolver + OPEN/CLOSE verbs
+
+### Two shipped this turn
+
+#### 1. `shared/opinion_resolver.py` — server-side market-data auto-grader
+
+Closes the 458/485 operator-driven outcomes gap. Background worker
+(every 5 min, env-configurable) scans `shared_opinions` for unresolved
+DIRECTIONAL stances older than the horizon (default 24h), fetches
+current price for the symbol's lane, computes sided PnL, and writes an
+outcome to `shared_brain_outcomes` with `resolved_by="auto:market-data"`.
+
+**Doctrine pins (tripwire-enforced):**
+- ONLY `long` and `short` stances auto-resolve. `observation`, `endorse`,
+  `veto` stay operator/peer-driven (price alone can't grade them).
+- Lane-aware win/loss thresholds (crypto ±2%, equity ±1%) — matches the
+  existing `observation_resolver`'s scale.
+- `long`+price↑=win, `short`+price↓=win (sided PnL).
+- No anchor → skip, never poison.
+- Idempotent — re-run cannot create duplicate outcomes for same `opinion_id`.
+
+**Anchor capture** added to `shared/opinions.py`: every long/short opinion
+now stamps `anchor_price` at post time using the resolver's price fetcher
+(best-effort, fails open if price fetch errors).
+
+**Lifecycle**: worker starts in `server.py::lifespan` alongside the
+observation resolver. Stops cleanly on shutdown.
+
+**Config (env-overridable):**
+- `OPINION_RESOLVER_TICK_SEC` default `300`
+- `OPINION_RESOLUTION_HORIZON_HOURS` default `24`
+
+**Tests:** 23 new tripwires covering stance lockdown, lane thresholds,
+sided PnL math, horizon respect, no-anchor skip, no-price retry,
+end-to-end win/loss/no-event grading for both long and short.
+
+#### 2. `OPEN` / `CLOSE` action verbs on `/api/intents`
+
+Extended `IntentIn.action` Literal to include `OPEN` and `CLOSE` for
+symmetry with the lifecycle vocabulary. Translation happens immediately
+in `post_intent` so the 12-gate chain only ever sees canonical actions.
+
+- `action="OPEN"` requires `direction: "long"|"short"`; rewrites to
+  `BUY` (long) or `SHORT` (short). 422 if direction missing.
+- `action="CLOSE"` requires `lane`; delegates to
+  `routes.runtime_position_close.close_position()` which discovers
+  side+qty from the broker and routes the inverse-side intent through
+  the SAME gate chain. 422 if lane missing; 503 if broker disconnected.
+- Legacy `BUY`/`SELL`/`SHORT`/`COVER`/`HOLD` unchanged. Brain teams that
+  don't want the lifecycle vocabulary can continue using the canonical
+  verbs directly.
+
+**Tests:** 10 new tripwires for verb translation (legacy still works,
+OPEN with direction, CLOSE with lane, invalid direction rejected,
+direction optional for legacy verbs).
+
+### Live verification (preview)
+- Opinion resolver started in lifespan logs:
+  `opinion_resolver: started tick=300s horizon=24.0h`
+- POST `/api/intents` with `action=OPEN` (no direction) → 422 with explicit message
+- POST `/api/intents` with `action=CLOSE` (no lane) → 422
+- POST `/api/intents` with `action=CLOSE, lane=equity` (preview, Alpaca disconnected) → 503 (cleanly delegated to close_position)
+
+### Tripwire total: **398 passing** (was 365; +33 net)
+- 23 opinion_resolver
+- 10 intent_open_close_verbs
+- 1 pre-existing unrelated failure (`test_runtime_position_discovery.py`)
+
+---
+
+
 ## 2026-05-24 (cont'd) — `/api/runtime/positions/close` shipped
 
 ### The gap this closed

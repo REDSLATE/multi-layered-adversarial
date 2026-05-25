@@ -62,7 +62,21 @@ class IntentIn(BaseModel):
     """Brain → MC. Subset of fields. MC fills the rest."""
 
     stack: Literal["alpha", "camaro", "chevelle", "redeye"]
-    action: Literal["BUY", "SELL", "SHORT", "COVER", "HOLD"]
+    # 2026-05-24: Extended verbs.
+    #   OPEN  — opens a new position; requires `direction` field
+    #           (`long`→BUY, `short`→SHORT). Rejected if `direction`
+    #           is absent.
+    #   CLOSE — closes an existing position; MC discovers side
+    #           (long→SELL, short→COVER) and qty from the broker.
+    #           `direction` ignored.
+    # OPEN/CLOSE are rewritten to canonical BUY/SELL/SHORT/COVER
+    # immediately on intake by `_normalize_action`; the rest of the
+    # 12-gate chain only ever sees the canonical actions, preserving
+    # all existing logic.
+    action: Literal["BUY", "SELL", "SHORT", "COVER", "HOLD", "OPEN", "CLOSE"]
+    # Direction for OPEN; ignored otherwise. Optional so legacy
+    # BUY/SHORT/SELL/COVER intents remain unchanged.
+    direction: Optional[Literal["long", "short"]] = None
     symbol: str = Field(min_length=1, max_length=24)
     # Lane is the brain's declared asset class for this intent. MC uses
     # it to compose the canonical asset key and pick the broker. Missing
@@ -541,6 +555,51 @@ async def post_intent(
     if not x_runtime_token:
         raise HTTPException(status_code=401, detail="X-Runtime-Token required")
     verify_runtime_token(body.stack, x_runtime_token)
+
+    # ─── OPEN / CLOSE verb translation (2026-05-24) ──────────────────
+    # Brains may post `action="OPEN"` or `"CLOSE"` for symmetry with
+    # the lifecycle vocabulary. We rewrite to canonical BUY/SHORT/SELL/
+    # COVER here so the rest of the gate chain only sees the legacy
+    # actions. OPEN requires `direction`. CLOSE delegates to the
+    # close_position helper to discover side+qty from the broker.
+    if body.action == "OPEN":
+        if body.direction not in {"long", "short"}:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "action=OPEN requires `direction` to be 'long' or 'short'. "
+                    "Send action=BUY/SHORT directly if you prefer to skip the "
+                    "lifecycle vocabulary."
+                ),
+            )
+        body.action = "BUY" if body.direction == "long" else "SHORT"
+        # Keep raw_action / display_action consistent if the brain set them.
+        if body.raw_action == "OPEN":
+            body.raw_action = body.action
+        if body.display_action == "OPEN":
+            body.display_action = body.action
+    elif body.action == "CLOSE":
+        # Hand off to the position-close flow which discovers side+qty
+        # from the broker, builds the inverse-side intent, and routes
+        # it through the SAME gate chain via this same function.
+        from routes.runtime_position_close import (  # noqa: WPS433
+            CloseIn, close_position,
+        )
+        if body.lane not in {"equity", "crypto"}:
+            raise HTTPException(
+                status_code=422,
+                detail="action=CLOSE requires lane ∈ {equity, crypto}",
+            )
+        return await close_position(
+            body=CloseIn(
+                symbol=body.symbol,
+                lane=body.lane,
+                fraction=1.0,
+                rationale=body.rationale,
+                confidence=body.confidence,
+            ),
+            x_runtime_token=x_runtime_token,
+        )
 
     # Per-brain × lane emission policy (2026-02-16). Reject at ingest
     # before we burn a uuid or write anything. Camaro→crypto is muted

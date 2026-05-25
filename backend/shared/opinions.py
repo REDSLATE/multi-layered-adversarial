@@ -305,6 +305,24 @@ async def post_opinion(
         "may_execute": False,           # belt and braces — stored explicitly false
         "posted_at": _now_iso(),
     }
+    # Anchor-price capture for directional opinions (2026-05-24).
+    # The opinion resolver needs a reference price to grade against.
+    # Best-effort — if the price fetch fails the opinion still posts;
+    # the resolver will skip it until an operator backfills the anchor.
+    if body.stance in {"long", "short"}:
+        try:
+            from shared.opinion_resolver import (  # noqa: WPS433
+                _fetch_current_price, _lane_for_topic, _symbol_from_topic,
+            )
+            sym = _symbol_from_topic(body.topic)
+            lane = _lane_for_topic(body.topic)
+            if sym:
+                anchor = await _fetch_current_price(sym, lane)
+                if anchor and anchor > 0:
+                    doc["anchor_price"] = float(anchor)
+                    doc["anchor_lane"] = lane
+        except Exception:  # noqa: BLE001
+            pass
     await db[SHARED_OPINIONS].insert_one(doc)
 
     # ── Governor authority-call mirror (2026-05-19) ──────────────────

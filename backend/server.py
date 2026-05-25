@@ -219,6 +219,16 @@ async def lifespan(app: FastAPI):
         logger.info("Observation resolver started")
     except Exception as e:  # noqa: BLE001
         logger.warning("observation_resolver start failed: %s", e)
+    # Opinion Resolver — auto-grades directional opinions (long/short)
+    # against market price after a configurable horizon (default 24h).
+    # Writes to shared_brain_outcomes with resolved_by="auto:market-data".
+    # 2026-05-24: built to close the 458/485-operator-driven gap.
+    try:
+        from shared.opinion_resolver import start_worker as _start_opinion_resolver
+        _start_opinion_resolver()
+        logger.info("Opinion resolver started")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("opinion_resolver start failed: %s", e)
     yield
     await stop_poller()
     await stop_tickler()
@@ -231,6 +241,11 @@ async def lifespan(app: FastAPI):
     await stop_orphan_watchdog()
     await stop_paradox_coordinator()
     await stop_observation_resolver()
+    try:
+        from shared.opinion_resolver import stop_worker as _stop_opinion_resolver
+        _stop_opinion_resolver()
+    except Exception:  # noqa: BLE001
+        pass
     client.close()
 
 
