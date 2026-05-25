@@ -80,7 +80,14 @@ async def _route_one(intent: dict) -> dict:
     # Lane-specific exec floor: crypto 0.30, equity 0.30 (operator
     # spec). Adjust here if you want different floors per lane.
     intent_lane = str(intent.get("lane") or "").lower()
-    min_exec_conf = 0.30
+    # 2026-05-24 (operator decision): Lifted from 0.30 → 0.35 to keep
+    # weak opinions in shadow until the new outcome data (from the
+    # max_hold_time lift) proves they deserve broker eligibility.
+    # Observation receipts continue to record at OBSERVATION_MIN_CONFIDENCE
+    # (0.30) — that's shadow-only logging, not order routing.
+    # Doctrine: longer hold = outcome learning; this floor = aggression
+    # change. Re-evaluate after 1 week of resolved-outcome data.
+    min_exec_conf = float(os.environ.get("RISEDUAL_EXEC_CONFIDENCE_FLOOR", "0.35"))
     classification = classify_brain_intent(intent, min_exec_conf=min_exec_conf)
     if classification.advisory_only:
         # Ladder doctrine (2026-02-18): before classifying as pure

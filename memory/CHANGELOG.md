@@ -1,3 +1,62 @@
+## 2026-05-24 — Doctrine course-correction (operator decision)
+
+### Reverted (P0 from prior checkpoint)
+- **Brain eligibility hard-lock removed**. Doctrine restored: *"Identity does
+  not grant authority. Seat policy does."* All 4 brains × all 12 seats = True
+  by default. Operator may tighten specific cells via the eligibility UI.
+- **REDEYE no longer seated by default** — opponent vacant. REDEYE lives
+  across positions via stances, not in a seat. Operator decides who (if
+  anyone) sits in opponent.
+- Tests updated: `test_roster.py::TestEligibility` rewritten to assert
+  all-True default + that the operator may still narrow per-cell.
+- Frontend `BrainOperatorPage.jsx::BRAIN_PROFILE.expected_seats` broadened
+  back to all seats for every brain.
+
+### Trading restriction loosening (operator decision)
+
+After 3 months of running with 1.5M intents and ZERO resolved outcomes,
+the operator identified `max_hold_time_guard` as the actual learning
+bottleneck (every position scratching at 24h before take-profit /
+stop-loss / trailing-stop could fire).
+
+**Two knobs changed:**
+
+1. **`MAX_HOLD_MINUTES`: 1440 (24h) → 10080 (7 days)**
+   - File: `shared/risk/position_monitor.py:79`
+   - Env override: `POSITION_MONITOR_MAX_HOLD_MINUTES`
+   - Doctrine: longer hold = positions actually resolve = brains can be
+     graded for the first time.
+
+2. **Execution confidence floor: 0.30 → 0.35**
+   - File: `shared/auto_router.py` (was hardcoded; now env-controlled)
+   - Env override: `RISEDUAL_EXEC_CONFIDENCE_FLOOR`
+   - Doctrine: tighten broker-eligible aggression slightly so weak
+     opinions stay in shadow until the new outcome data (from the
+     max_hold lift) proves they deserve to graduate.
+   - `OBSERVATION_MIN_CONFIDENCE = 0.30` unchanged — shadow-only logging
+     stays permissive. This is a SHADOW/EXECUTION split: opinions still
+     get recorded at 0.30; only orders get routed at 0.35.
+
+**Caps held**:
+- `CRYPTO_PER_ORDER_USD = $500` (unchanged)
+- `CAP_PER_ORDER_USD = $100k` equity (unchanged; already wide for paper)
+- `CAP_PER_DAY_USD = $1M` (unchanged)
+- `CAP_OPEN_NOTIONAL_USD = $1M` (unchanged)
+- `LANE_SPREAD_CAP` equity 50 bps / crypto 200 bps (unchanged)
+
+**Recheck after 1 week of data**:
+- win/loss/scratch mix (currently 100% scratch)
+- average hold time (will rise from ~24h cap to ~6-72h organic)
+- TP / SL / trailing-stop hit rates
+- confidence bucket performance (does 0.30-0.35 perform poorly enough
+  to justify keeping it in shadow, or does it earn graduation?)
+
+### Tripwire status: **339 passing** (no regressions from today's work)
+- 1 pre-existing unrelated failure (`test_runtime_position_discovery.py`)
+
+---
+
+
 ## 2026-05-24 — Session Checkpoint (operator-driven diagnostic session)
 
 ### Shipped this session

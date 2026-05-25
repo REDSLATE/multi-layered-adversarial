@@ -76,7 +76,13 @@ STOP_LOSS_PCT = _env_float("POSITION_MONITOR_STOP_LOSS_PCT", 2.0)
 TAKE_PROFIT_PCT = _env_float("POSITION_MONITOR_TAKE_PROFIT_PCT", 3.0)
 TRAIL_PCT = _env_float("POSITION_MONITOR_TRAIL_PCT", 1.5)
 TRAIL_ACTIVATE_PCT = _env_float("POSITION_MONITOR_TRAIL_ACTIVATE_PCT", 1.0)
-MAX_HOLD_MINUTES = _env_float("POSITION_MONITOR_MAX_HOLD_MINUTES", 60.0 * 24.0)
+# 2026-05-24 (operator decision): Lifted from 24h → 168h (7 days).
+# 24h was scratching every position before take-profit / stop-loss /
+# trailing-stop could fire, producing 1.5M intents and ZERO resolved
+# outcomes across 3 months. Longer hold = positions actually resolve =
+# brains can finally be graded. Env override stays so the operator can
+# tune without redeploy.
+MAX_HOLD_MINUTES = _env_float("POSITION_MONITOR_MAX_HOLD_MINUTES", 60.0 * 24.0 * 7)
 ENABLED = _env_bool("POSITION_MONITOR_ENABLED", True)
 
 
