@@ -337,6 +337,8 @@ from routes.learning_scoreboard import router as learning_scoreboard_router
 api_router.include_router(learning_scoreboard_router)
 from routes.runtime_broker_status import router as runtime_broker_status_router
 api_router.include_router(runtime_broker_status_router)
+from routes.runtime_position_close import router as runtime_position_close_router
+api_router.include_router(runtime_position_close_router)
 api_router.include_router(paradox_router)
 api_router.include_router(paradox_agent_router)
 api_router.include_router(paradox_wake_router)

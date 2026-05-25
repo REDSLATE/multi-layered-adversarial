@@ -1,3 +1,42 @@
+## 2026-05-24 (cont'd) — `/api/runtime/positions/close` shipped
+
+### The gap this closed
+Brains could OPEN positions today via `POST /api/intents` with `action=BUY`/`SHORT` — works through the 12 gates. **Closing was the gap**: to close a long, the brain had to (a) know its exact broker position size, (b) pick the right inverse side, (c) compute fractional sizing for partial closes. No brain had clean access to (a). Result on prod: AMZN/GOOGL/MSFT/NVDA positions accumulated 50-90 shares each — every BUY went through, no SELL ever did.
+
+### Endpoint
+- `POST /api/runtime/positions/close` — auth via `X-Runtime-Token` (any of 4 brains)
+- Body: `{symbol, lane: "equity"|"crypto", fraction: 0<f≤1.0 (default 1.0), rationale?, confidence?}`
+- Returns: `{intent_id, closing_brain, symbol, lane, close_action, underlying_qty, close_qty, underlying_side, fraction, routed_through_gate_chain: true}`
+
+### Doctrine guarantees
+- **NOT a broker bypass**. The close goes through `shared.intents.post_intent()` — the same 12-gate chain as a normal intent. A lane freeze or any guard blocks the close just like an open.
+- Long position → `action=SELL`. Short position → `action=COVER`. No other mapping exists.
+- Intent stamped with `close_intent=True, closing_brain, close_fraction, close_underlying_qty, close_target_qty, close_underlying_side` for forensic distinguishing of opens vs. closes in the audit feed.
+- 404 when no open position exists. 503 when Alpaca/Kraken disconnected.
+
+### Files
+- `backend/routes/runtime_position_close.py` (new)
+- `backend/tests/test_runtime_position_close.py` (new — 14 tripwires)
+- `backend/server.py` (router registration)
+
+### Tests
+- 14 new tripwires: long→SELL, short→COVER, partial close (fraction=0.5), schema (lane enum, fraction bounds), auth (no token, bad token), 404 no-position, 503 disconnected, gate-chain routing verification
+- Live curl verified 401 / 422 / 503 paths
+- **Tripwire total: 365 passing** (was 351; +14 net). Same pre-existing unrelated failure.
+
+### Brain-side adoption (1-line change per brain)
+Instead of the brain trying to construct a SELL intent itself, brain teams replace their open-close bookkeeping with:
+```
+POST /api/runtime/positions/close
+  Header: X-Runtime-Token: $BRAIN_TOKEN
+  Body: {"symbol": "AMZN", "lane": "equity"}
+→ {intent_id: "...", close_action: "SELL", close_qty: 50.0, ...}
+```
+MC handles the discovery, side selection, sizing, and gate routing.
+
+---
+
+
 ## 2026-05-24 (cont'd) — `/api/runtime/broker-status` shipped
 
 ### Doctrine — 4-tier credential separation pinned
