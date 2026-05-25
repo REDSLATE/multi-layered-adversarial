@@ -1,3 +1,65 @@
+## 2026-05-24 — Session Checkpoint (operator-driven diagnostic session)
+
+### Shipped this session
+- **Shelly Memory Ingest spec-locked** — `POST /api/runtime/shelly/memories` + `POST /api/admin/shelly/memories` matching REDEYE's `MC_MEMORY_INGEST_SPEC.md` verbatim. Enum hard-locks, sign invariants, idempotent on `(brain, memory_id)`, `data_unavailable` quarantine to `brain_memories_dead`. **19 new tripwires.**
+- **Assignable RosterPanel mounted** on `/admin/overview` (was orphaned). Operators can now actually assign brains to seats from the UI.
+- **Frontend strategist rename** wired through `RosterPanel.jsx`, `BrainOperatorPage.jsx`, legacy `decider` rewritten to `strategist` at ingress.
+
+### ⚠️ CRITICAL — must revert next session
+- **Eligibility hard-lock I added VIOLATES DOCTRINE**. Operator explicitly corrected:
+  *"The seat bears the restrictions. NOT the brain. ALL brains should be eligible for ALL seats. Only the position (seat policy) restricts what authority the occupant has."*
+- Also: **REDEYE should NOT be in any seat by default**. Operator's intent: REDEYE lives across positions via stances, not in a seat. Default opponent assignment was my error.
+- **Files to revert**:
+  - `backend/shared/roster.py` → `DEFAULT_ELIGIBILITY` back to all-True (24 cells); `DEFAULT_ASSIGNMENTS["opponent"]=None`
+  - `backend/tests/test_roster.py::TestEligibility` → drop the hard-lock assertions; assert "all brains × all seats = True"
+  - `frontend/src/pages/BrainOperatorPage.jsx::BRAIN_PROFILE.expected_seats` → broaden back to all 6
+- Keep: strategist rename, auditor reinstated as real seat, the legacy `decider→strategist` boundary rewrite.
+
+### 🚨 CRITICAL OPERATOR FINDINGS (surfaced via screenshots) — these are the REAL problems
+
+#### Three months of running, ZERO trainable outcomes
+- MC Memory Store: **1,526,108 events** logged. 91% gate-pass rate. Looks healthy on the surface.
+- `BRAIN TRACK RECORD: NO RESOLVED` — **not a single position has resolved into a trainable outcome.**
+- Root cause (suspected): `max_hold_time_guard` is scratching every position before it can hit take-profit or stop-loss. Closed positions tagged `scratch` via `[max_hold_time_guard]`.
+- **Next agent priority #1**: diagnose `shared/crypto/max_hold_time.py` + equity equivalent. The hold time is too short OR the take-profit/stop-loss never fire. Without real outcomes, NO BRAIN CAN BE GRADED. Three months wasted.
+
+#### Memory labeling firewall has been silent for 15 days
+- `shared_labeled_memories`:
+  - Alpha: 13 records, last write **2026-05-09** (15 days silent)
+  - Camaro: 12 records, last write **2026-05-09**
+  - Chevelle: bulk dump 2026-05-18, then silent
+  - REDEYE: **0 records ever** — never wired to the labeling firewall at all
+- This pipeline feeds training data. It stopped feeding two weeks ago.
+- **Next agent priority #2**: grep `/api/ingest/memory-label` or equivalent endpoint, check write logs, determine if brain-side stopped calling OR MC stopped accepting. Likely brain-side regression but MC may have schema drift.
+
+#### Brain asymmetry — heartbeat ≠ intent emission
+- **Camaro/Chevelle**: heartbeats rare, intents flow constantly (1.5M from Camaro alone)
+- **Alpha/REDEYE**: heartbeat regular, ~zero intents visible
+- Alpha is likely producing `HOLD` verdicts (silent on the wire) — investigate Alpha's decision loop.
+- REDEYE having zero intents is **expected** (opponent doesn't initiate) but it also has **zero stances, zero opinions, zero memories** — meaning REDEYE's ENTIRE output surface is dark. Cannot graduate from shadow→live without recorded performance data.
+- **Next agent priority #3**: write `/api/admin/runtime-activity-audit` — single endpoint that fans out to `shared_intents`, `runtime_opinions`, `position_stances`, `sovereign_audit_log`, `brain_memories`, `runtime_heartbeats` per runtime; returns counts + last-write timestamps. Gives operator a one-page truth view of "what is each brain actually doing."
+
+#### Kraken bypass — false alarm, but defense gap remains
+- 6 BTC trades (May 23-24, ~$75 each, mechanical 6h cadence after a 3-min retry burst) appeared on Kraken dashboard.
+- **Pattern matches Kraken's "Recurring Buy" feature, not MC.** MC has no DCA/scheduler code. Operator should check Kraken → Settings → Recurring orders and cancel.
+- **Defense gap NOT closed**: MC has zero visibility into Kraken's actual fill stream. Anything that touches the Kraken account outside MC's adapter goes undetected. **Kraken Rogue-Fills Reconciler** (proposed but not built) would poll `TradesHistory` hourly, join against `execution_receipts`, flag unmatched fills as `UNVERIFIED_BROKER_EXECUTION`. **Priority #4** (lower than learning-loop fixes).
+
+### Files referenced (no-touch unless reverting):
+- `backend/shared/roster.py` (eligibility lock — revert)
+- `backend/shared/seat_policy.py` (strategist policy row — keep)
+- `backend/shared/mc_shelly.py` (STR position code — keep)
+- `backend/routes/brain_memory_ingest.py` (spec-locked — keep)
+- `backend/tests/test_brain_memory_ingest.py` (19 tripwires — keep)
+- `frontend/src/components/RosterPanel.jsx` (now mounted — keep, but reconsider after revert)
+- `frontend/src/pages/Overview.jsx` (mounts assignable panel — keep)
+
+### Tripwire status
+- **339 passing** (was 321 baseline; +18 net)
+- 1 pre-existing unrelated failure: `test_runtime_position_discovery.py::test_runtime_list_returns_open_by_default` (seed-fixture issue)
+
+---
+
+
 ## 2026-05-24 — Shelly Memory Ingest (spec-locked, REDEYE-ready)
 
 **Endpoint contract** matches REDEYE's `MC_MEMORY_INGEST_SPEC.md` verbatim.

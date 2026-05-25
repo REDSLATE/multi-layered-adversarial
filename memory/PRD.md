@@ -1,3 +1,58 @@
+# 🚨 NEXT AGENT — START HERE
+
+The system has been running 3 months and produced ZERO trainable outcomes.
+Stop building new features. The next four tasks, in order:
+
+## P0 — Revert my doctrine violation (15 min)
+I added a brain-eligibility hard-lock today. Operator corrected:
+**"The seat bears the restrictions. NOT the brain identity."**
+- `backend/shared/roster.py::DEFAULT_ELIGIBILITY` → all-True (every brain × every seat)
+- `DEFAULT_ASSIGNMENTS["opponent"]=None` (REDEYE not seated by default)
+- `backend/tests/test_roster.py::TestEligibility` → rewrite to assert all-True default
+- `frontend/src/pages/BrainOperatorPage.jsx::BRAIN_PROFILE.expected_seats` → broaden
+- Keep: strategist rename, auditor as real seat, legacy `decider→strategist` boundary rewrite
+
+## P0 — Diagnose `max_hold_time_guard` (30-60 min)
+1,526,108 intents. ZERO resolved outcomes. Every position closes as `scratch` via max_hold_time_guard.
+- Read `backend/shared/crypto/max_hold_time.py` + equity equivalent
+- Check guard threshold vs typical position duration
+- Verify take_profit / stop_loss are firing BEFORE max_hold_time hits
+- WITHOUT THIS FIX: no brain can ever be graded. The entire learning thesis is blocked.
+
+## P1 — Investigate labeling firewall silence (20-30 min)
+`shared_labeled_memories` stopped accepting writes from Alpha/Camaro on 2026-05-09.
+REDEYE has zero records ever.
+- Find the writer endpoint (probably `/api/ingest/memory-label` or similar)
+- Check MC's recent ingest logs for that endpoint
+- Determine: brain-side regression OR MC-side acceptance break
+- REDEYE's labeling path may never have been wired — investigate
+
+## P1 — Build `/api/admin/runtime-activity-audit` (30 min)
+One endpoint, fan out per-runtime to:
+- `shared_intents` (count, last write)
+- `runtime_opinions`
+- `position_stances`
+- `sovereign_audit_log`
+- `brain_memories`
+- `runtime_heartbeats`
+Returns one-page truth view per brain. Operator currently has no single surface
+to see "what is each brain actually doing." Brain asymmetry (Alpha/REDEYE heartbeat
+but emit nothing; Camaro/Chevelle don't heartbeat but flood intents) cannot be
+diagnosed without this.
+
+## P2 — Kraken Rogue-Fills Reconciler
+MC has zero visibility into Kraken fills outside its own adapter. Poll
+`TradesHistory` hourly, join against `execution_receipts`, flag unmatched as
+`UNVERIFIED_BROKER_EXECUTION`. Same pattern as the Alpaca reconciler.
+**Operator's recent 6 BTC trades were Kraken Recurring Buy** (not MC, not a brain
+bypass) — but the visibility gap is real and should be closed before another
+incident is ambiguous.
+
+---
+
+# RiseDual Mission Control — Product Requirements (full)
+
+
 # RISEDUAL Mission Control — Monorepo PRD
 
 
