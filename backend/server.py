@@ -333,6 +333,8 @@ api_router.include_router(broker_freeze_router)
 api_router.include_router(broker_reconcile_router)
 api_router.include_router(broker_force_close_router)
 api_router.include_router(brain_memory_ingest_router)
+from routes.learning_scoreboard import router as learning_scoreboard_router
+api_router.include_router(learning_scoreboard_router)
 api_router.include_router(paradox_router)
 api_router.include_router(paradox_agent_router)
 api_router.include_router(paradox_wake_router)

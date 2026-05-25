@@ -1,3 +1,49 @@
+## 2026-05-24 (cont'd) — Learning Scoreboard + new schema-health blocker
+
+### Shipped: `GET /api/admin/learning/scoreboard`
+Single endpoint answers operator's 5 truth checks:
+- Open positions age buckets + oldest hours
+- Closes by reason (`take_profit / stop_loss / trailing_stop / max_hold_time / executor_call / operator_manual / other / unknown`)
+- Outcome mix + scratch% + per-brain win rate
+- Memory labels by brain (count, last_write_at, silent_hours, silent flag)
+- Schema-health warning when `outcome=None` rate is high
+
+File: `backend/routes/learning_scoreboard.py`
+Mount: `server.py:336`
+No new tests this turn — read-only endpoint, structure verified live.
+
+### 🚨 SCHEMA BLOCKER surfaced by scoreboard probe
+
+Preview MC state:
+- **404 governance positions open**, oldest 314 hours (~13 days)
+- `shared_positions` (governance store) = 438 rows; states are `proposed / discussing / consensus_long / consensus_short / rejected`
+- `shared_live_positions` (broker-fill lifecycle store) = **0 rows**. Position monitor / max_hold guard / TP / SL / trailing-stop appear never to have populated this collection.
+- `shared_brain_outcomes` = 485 rows, **100% have `outcome=None`**
+- `shared_position_audit` = 904 rows
+
+Implication: **Lifting `MAX_HOLD_MINUTES` and the confidence floor alone may NOT produce graded outcomes.** Two upstream pipelines look broken:
+1. **Position lifecycle write path** — broker fills aren't landing in `shared_live_positions`. Either the position monitor doesn't run, doesn't write, writes to a different name, or runs only on prod.
+2. **Resolver outcome labeling** — even when outcome rows exist (485 on preview), the `outcome` field is null. Calibrator has nothing to grade.
+
+### Confirmed brain memory labeling silence (preview)
+| Brain | Last write | Silent hours |
+|---|---|---|
+| Alpha    | 2026-05-09 10:00 | 376 (15+ days) |
+| Camaro   | 2026-05-09 08:13 | 377 (15+ days) |
+| Chevelle | 2026-05-13 17:56 | 272 (11+ days) |
+| REDEYE   | never            | n/a            |
+
+All 4 brains stopped between May 9-13. Brain-side regression confirmed (the MC endpoint `/api/ingest/memory-labels` accepts writes — verified earlier with REDEYE wiring).
+
+### Next agent must:
+1. Validate scoreboard against **production** MC (preview may have different state than prod — operator confirmed prod has TP/SL/max_hold close events visible in MC Memory Store)
+2. **Fix outcome resolver** — find where rows are written to `shared_brain_outcomes` with null `outcome` field, populate the `win/loss/scratch/stopped_out` label correctly
+3. **Validate position monitor is writing to `shared_live_positions`** on Prod (preview has zero rows; this may be a preview-only data gap, but needs confirmation)
+4. **Then** redeploy + watch scoreboard for 7-10 days
+
+---
+
+
 ## 2026-05-24 — Doctrine course-correction (operator decision)
 
 ### Reverted (P0 from prior checkpoint)
