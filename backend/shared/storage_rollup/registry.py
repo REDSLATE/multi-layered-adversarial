@@ -13,10 +13,19 @@ from __future__ import annotations
 # Rolled-up collections + their timestamp field.
 ROLLUP_COLLECTIONS: list[dict] = [
     # ── MC ──
-    {"name": "shared_intents",         "ts_field": "ingest_ts"},
-    {"name": "doctrine_sidecars",      "ts_field": "ts"},
-    {"name": "shared_adl_receipts",    "ts_field": "timestamp"},
-    {"name": "shared_brain_outcomes",  "ts_field": "resolved_at"},
+    {"name": "shared_intents",          "ts_field": "ingest_ts"},
+    {"name": "doctrine_sidecars",       "ts_field": "ts"},
+    {"name": "shared_adl_receipts",     "ts_field": "timestamp"},
+    {"name": "shared_brain_outcomes",   "ts_field": "resolved_at"},
+
+    # ── Sovereign state history (2026-05-26 TTL→rollup conversion) ──
+    # Was on a 30d TTL-DELETE index; now rolled up to slim labels via
+    # this pipeline so the operator preserves the analytical surface
+    # (mode, clamp/apply event, applied delta sign) without keeping
+    # the full 3.8 KB payload. The TTL index is removed by
+    # `scripts/drop_sovereign_history_ttl.py` once the rollup has
+    # caught up.
+    {"name": "sovereign_state_history", "ts_field": "received_at_dt"},
 
     # ── Brain runtimes ──
     # These collections live in the brain sidecars' own Mongo, not

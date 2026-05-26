@@ -1,3 +1,61 @@
+## 2026-05-26 (pass #3) — Spread-bps Enrichment + Sovereign TTL→Rollup
+
+**Fix #1: `spread_bps` MC-side enrichment (Camaro crypto + equity)**
+
+Camaro was shipping empty `doctrine_snapshot` dicts, triggering RoadGuard's `ROADGUARD_MISSING_SPREAD_BPS` kill on every intent. MC now walks a fallback ladder at ingest before the gate chain runs:
+1. `brain` — brain-supplied `snapshot.spread_bps` (if numeric, non-sentinel)
+2. `mc_derived_bid_ask` — canonical `compute_spread_bps(bid, ask)` if both present
+3. `mc_indicator_cache` — most recent `shared_indicator_snapshots` row (configurable freshness window, default 10 min)
+4. `mc_kraken_public` — Kraken public Ticker API (crypto only, **opt-in** via `SPREAD_FETCH_KRAKEN_ENABLED=true`)
+5. `sentinel_unknown` — `SPREAD_BPS_UNKNOWN=9999.0` so RoadGuard fails closed with explicit provenance
+
+Provenance stamped on every intent: `snapshot.spread_source` + `spread_enrichment_diagnostics.attempts`. Operator can audit MC's reasoning at any time.
+
+**Verified live (3 ingest cases):**
+- `bid=99.5, ask=100.5` (no spread) → `mc_derived_bid_ask` → 100 bps ✅
+- `{}` empty crypto snapshot → walks ladder → `sentinel_unknown` 9999.0 ✅
+- `spread_bps=7.5` brain-supplied → preserved → `source=brain` ✅
+
+Wired into both runtime path (`/api/intents`) and admin proxy (`/api/admin/intents`).
+
+**Files:** new `shared/market_data/__init__.py` + `shared/market_data/spread_enrichment.py`, updated `shared/intents.py` (both ingest paths).
+
+---
+
+**Fix #2: `sovereign_state_history` TTL→rollup conversion**
+
+Previous 30d TTL-DELETE index `sovereign_history_ttl_30d` removed by `scripts/drop_sovereign_history_ttl.py`. Replaced with `storage_rollup` pipeline (60d window, 7d hold), preserving labels instead of deleting.
+
+**New derivation in `shared/storage_rollup/derive.py`:**
+- Sovereign-row detection via signature `mode + learning_rate + brain`
+- `derive_movement` → `"snapshot"` (not a trade)
+- `derive_event` → `delta_clamped_pos|neg|zero` / `delta_applied_pos|neg` / `no_change`
+
+**Slim rollup keeps** (sovereign-specific): `mode`, `confidence_delta`, `raw_confidence_delta`, `delta_was_clamped`, `learning_rate`, `posted_as`, `seat_epoch`. **Drops** the heavy fields: `weights`, `recent_outcomes`, `notes`.
+
+Registered in `shared/storage_rollup/registry.py` with `ts_field="received_at_dt"`. Now picked up by `/api/admin/storage-rollup/preview` and `/run`.
+
+**Tripwires added (24, all passing):**
+`tests/test_spread_enrichment_and_sovereign_rollup.py` covers: brain-supplied wins, brain-sentinel falls through, derive from bid/ask, indicator cache fresh, indicator cache stale ignored, sentinel when no source, diagnostics carry attempt trail, canonical formula sanity. Sovereign: recognized as snapshot, clamp/apply/no-change events (pos/neg/zero), non-sovereign row not misclassified, rollup doc preserves analytical fields, intent rollup does not carry sovereign fields. Plus TTL drop idempotency.
+
+**Total tripwires across today's work:** 95 (FK schema 10 + modulator bounds 11 + storage tightening 7 + rollups 31 + spread+sovereign 24, plus 12 unchanged cross-brain memory). Zero regressions to existing 1,080 passing tests.
+
+**Operator playbook for sovereign migration:**
+```
+# 1. Drop the legacy TTL-delete index
+python scripts/drop_sovereign_history_ttl.py --dry-run
+python scripts/drop_sovereign_history_ttl.py
+
+# 2. Preview rollup impact (will now include sovereign_state_history)
+curl … /api/admin/storage-rollup/preview
+
+# 3. Run rollup when ready
+curl -X POST … /api/admin/storage-rollup/run
+```
+
+---
+
+
 ## 2026-05-26 (storage pass #2) — Cold Rollups (60-day Compaction)
 
 Operator handoff merged. Past 60 days, verbose telemetry collapses to slim `{movement, event}`-labeled rollup rows. Nothing leaves Mongo. Shellys + brain_memories + quarantine labels + executed real-money trades are doctrine-protected.

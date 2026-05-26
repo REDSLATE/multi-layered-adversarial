@@ -64,8 +64,14 @@ def is_protected(row: dict) -> bool:
 def _build_rollup_doc(
     row: dict, collection_name: str, movement: str, event: str,
 ) -> dict:
-    """Slim rollup row — keeps the analytical surface, drops payload."""
-    return {
+    """Slim rollup row — keeps the analytical surface, drops payload.
+
+    Sovereign rows get a couple extra keys (`mode`, `confidence_delta`,
+    `delta_was_clamped`) because that's the analytical surface the
+    operator cares about for sovereign-history rollups. None of those
+    fields exist on intent / outcome / receipt rows, so they stay None
+    there — kept lean."""
+    doc = {
         "rollup_id": str(uuid4()),
         "rollup_version": ROLLUP_VERSION,
         "source_collection": collection_name,
@@ -82,6 +88,21 @@ def _build_rollup_doc(
         "confidence": row.get("confidence"),
         "rolled_at": _now(),
     }
+    # Sovereign-specific analytical surface — only stamped when the
+    # row IS a sovereign snapshot (signature check; matches the
+    # derive.py heuristic).
+    if (
+        isinstance(row.get("mode"), str)
+        and isinstance(row.get("learning_rate"), (int, float))
+    ):
+        doc["mode"] = row.get("mode")
+        doc["confidence_delta"] = row.get("confidence_delta")
+        doc["raw_confidence_delta"] = row.get("raw_confidence_delta")
+        doc["delta_was_clamped"] = bool(row.get("delta_was_clamped"))
+        doc["learning_rate"] = row.get("learning_rate")
+        doc["posted_as"] = row.get("posted_as")
+        doc["seat_epoch"] = row.get("seat_epoch")
+    return doc
 
 
 async def rollup_collection(

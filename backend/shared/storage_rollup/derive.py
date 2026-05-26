@@ -8,7 +8,13 @@ from typing import Any
 
 
 def derive_movement(row: dict) -> str:
-    """long | short | flat | blocked | rejected | ambiguous."""
+    """long | short | flat | blocked | rejected | snapshot | ambiguous.
+
+    Adds `snapshot` for sovereign rows (the brain reported its
+    internal state; no trade direction is being made)."""
+    # Sovereign-history rows — they're brain self-reports, not trades.
+    if _is_sovereign_row(row):
+        return "snapshot"
     gate = str(row.get("gate_state") or "").lower()
     if gate == "rejected_at_ingest":
         return "rejected"
@@ -39,7 +45,11 @@ def derive_movement(row: dict) -> str:
 def derive_event(row: dict) -> str:
     """executed_win | executed_loss | executed_scratch |
     blocked_<gate> | rejected_at_ingest | expired_no_fill |
-    shadow_observation | ambiguous."""
+    shadow_observation | delta_clamped_<sign> | delta_applied_<sign> |
+    no_change | ambiguous."""
+    # Sovereign-history rows — distinct lifecycle vocabulary.
+    if _is_sovereign_row(row):
+        return _derive_sovereign_event(row)
     # Executed real trades — outcome resolves the event.
     if row.get("executed") is True:
         outcome = row.get("outcome") or (
@@ -83,3 +93,51 @@ def derive_event(row: dict) -> str:
 
     # A non-executed, non-blocked row is a shadow / observation.
     return "shadow_observation"
+
+
+# ─── sovereign helpers ───────────────────────────────────────────────
+
+
+def _is_sovereign_row(row: dict) -> bool:
+    """Sovereign rows carry `mode` + `learning_rate` + (typically)
+    `confidence_delta`. Use this signature so the runner can dispatch
+    to the right derivation without coupling the runner to a
+    collection-name hardcode."""
+    has_mode = isinstance(row.get("mode"), str) and row.get("mode")
+    has_lr = isinstance(row.get("learning_rate"), (int, float))
+    has_brain = isinstance(row.get("brain"), str)
+    return bool(has_mode and has_lr and has_brain)
+
+
+def _derive_sovereign_event(row: dict) -> str:
+    """Sovereign rollup event labels:
+        delta_clamped_pos | delta_clamped_neg | delta_clamped_zero
+        delta_applied_pos | delta_applied_neg
+        no_change
+    Operator preserves the answer to:
+      "did this brain ever submit a delta that MC had to clamp?"
+    """
+    clamped = bool(row.get("delta_was_clamped"))
+    raw = row.get("raw_confidence_delta")
+    applied = row.get("confidence_delta")
+    try:
+        applied_f = float(applied)
+    except (TypeError, ValueError):
+        applied_f = 0.0
+    if clamped:
+        if raw is None:
+            return "delta_clamped_zero"
+        try:
+            r = float(raw)
+        except (TypeError, ValueError):
+            return "delta_clamped_zero"
+        if r > 0:
+            return "delta_clamped_pos"
+        if r < 0:
+            return "delta_clamped_neg"
+        return "delta_clamped_zero"
+    if applied_f > 0:
+        return "delta_applied_pos"
+    if applied_f < 0:
+        return "delta_applied_neg"
+    return "no_change"

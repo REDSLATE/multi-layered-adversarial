@@ -798,6 +798,19 @@ async def post_intent(
         ingest_method="runtime_token",
     )
 
+    # ─── Spread-bps enrichment (2026-05-26) ───
+    # Doctrine: brains SHOULD ship `spread_bps` in `doctrine_snapshot`.
+    # When they don't (Camaro, historically), MC walks a fallback
+    # ladder: brain → derive(bid,ask) → indicator cache → kraken
+    # public (crypto, opt-in) → sentinel. Result is stamped on the
+    # persisted `snapshot` field so RoadGuard reads a value rather
+    # than failing with ROADGUARD_MISSING_SPREAD_BPS.
+    from shared.market_data import enrich_snapshot_spread  # noqa: WPS433
+    enriched_snapshot, spread_diag = await enrich_snapshot_spread(
+        dict(body.doctrine_snapshot or {}),
+        symbol=body.symbol, lane=effective_lane,
+    )
+
     doc = {
         "intent_id": intent_id,
         "stack": body.stack,
@@ -852,14 +865,15 @@ async def post_intent(
         "ingest_method": "runtime_token",
         # MARKET SNAPSHOT — persisted so gates that need ground-truth
         # market structure (RoadGuard reads `spread_bps`, future gates
-        # may read more) can find it on the intent doc. Field
-        # explicitly mirrors what `_build_and_persist_doctrine_packet`
-        # consumes — the brain's `doctrine_snapshot` becomes the
-        # intent's `snapshot`. Pre-2026-02-18 this was silently dropped,
-        # which caused EVERY intent to fail `roadguard_spread_floor`
-        # at gate 7 with ROADGUARD_MISSING_SPREAD_BPS even when the
-        # brain dutifully sent the field.
-        "snapshot": dict(body.doctrine_snapshot or {}),
+        # may read more) can find it on the intent doc. The brain's
+        # `doctrine_snapshot` has been MC-enriched (2026-05-26) so
+        # `spread_bps` is always populated — either by the brain, by
+        # MC derivation from bid/ask, MC's indicator cache, the
+        # optional Kraken public ticker (crypto), or the explicit
+        # sentinel `SPREAD_BPS_UNKNOWN=9999.0`. The provenance lives
+        # in `snapshot.spread_source` and `spread_enrichment_diagnostics`.
+        "snapshot": enriched_snapshot,
+        "spread_enrichment_diagnostics": spread_diag,
         # LIFECYCLE
         "gate_state": "pending",   # pending | passed | blocked | dry_run_passed | dry_run_blocked
         "executed": False,
@@ -1130,6 +1144,13 @@ async def admin_post_intent(
         admin_email=user.get("email"),
     )
 
+    # Spread-bps enrichment ladder — same doctrine as runtime path.
+    from shared.market_data import enrich_snapshot_spread  # noqa: WPS433
+    enriched_snapshot, spread_diag = await enrich_snapshot_spread(
+        dict(body.doctrine_snapshot or {}),
+        symbol=body.symbol, lane=effective_lane,
+    )
+
     doc = {
         "intent_id": intent_id,
         "stack": body.stack,
@@ -1156,10 +1177,11 @@ async def admin_post_intent(
         "ingest_method": "admin_proxy",
         "ingest_admin_email": user.get("email"),
         # See doctrine note on the runtime-token ingest path: the
-        # brain's `doctrine_snapshot` is persisted under `snapshot` so
-        # the gate chain can read market-structure facts. Without this,
-        # `roadguard_spread_floor` fails closed on every intent.
-        "snapshot": dict(body.doctrine_snapshot or {}),
+        # brain's `doctrine_snapshot` is enriched with `spread_bps`
+        # via MC's fallback ladder so RoadGuard reads a value rather
+        # than failing with ROADGUARD_MISSING_SPREAD_BPS.
+        "snapshot": enriched_snapshot,
+        "spread_enrichment_diagnostics": spread_diag,
         "gate_state": "pending",
         "executed": False,
         "executed_at": None,
