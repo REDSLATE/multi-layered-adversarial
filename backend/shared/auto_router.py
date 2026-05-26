@@ -128,13 +128,34 @@ async def _route_one(intent: dict) -> dict:
             "execution_ready": False,
         }
 
-    # Phase 1: clamp notional to the lane's per-order cap.
-    notional, was_clamped = _clamp_notional_to_lane(notional_raw, intent.get("lane"))
-    if was_clamped:
+    # Phase 1: clamp notional via the SIZING GATE.
+    # Doctrine pin (2026-05-26): the sizing gate evaluates BOTH the
+    # engineering lane cap AND the operator's micro_live rail, then
+    # binds to whichever is tighter. Provenance stamped on the
+    # decision so receipts carry the audit trail. When MICRO_LIVE is
+    # enabled the cap is typically $5/order — small enough that a
+    # brain mistake costs lunch, not rent.
+    from shared.sizing_gate import evaluate_sizing  # noqa: WPS433
+    sizing = evaluate_sizing(notional_raw, intent.get("lane"))
+    notional = sizing.final_usd
+    if sizing.was_clamped:
         logger.info(
-            "auto_router clamping intent=%s lane=%s notional $%.2f → $%.2f (lane cap)",
-            intent_id, intent.get("lane"), notional_raw, notional,
+            "auto_router sizing intent=%s lane=%s req $%.2f → final $%.2f rail=%s "
+            "lane_cap=$%.2f micro_live=$%s",
+            intent_id, intent.get("lane"), sizing.requested_usd, sizing.final_usd,
+            sizing.binding_rail, sizing.lane_cap_usd,
+            f"{sizing.micro_live_cap_usd:.2f}" if sizing.micro_live_cap_usd else "off",
         )
+    if notional <= 0:
+        await _persist_no_trade(intent_id, intent, f"sizing_gate_zero:{sizing.binding_rail}")
+        return {"intent_id": intent_id, "verdict": "no_trade", "reason": f"sizing_gate_zero:{sizing.binding_rail}"}
+
+    # Phase 1b: RUNTIME KILL SWITCH (2026-05-26). Operator-flipped
+    # Mongo doc takes precedence over env. Fail-CLOSED on read errors.
+    from routes.trading_controls import is_trading_enabled  # noqa: WPS433
+    if not await is_trading_enabled():
+        await _persist_no_trade(intent_id, intent, "trading_controls_disabled")
+        return {"intent_id": intent_id, "verdict": "no_trade", "reason": "trading_controls_disabled"}
 
     # Phase 2: run the gate chain.
     result = await _evaluate_gates(intent, notional)
@@ -165,6 +186,16 @@ async def _route_one(intent: dict) -> dict:
         effective_notional=effective, requested_notional=notional,
         risk_multiplier=risk_multiplier, gates=result["gates"], now_iso=now,
     )
+    # Stamp sizing provenance — micro_live audit trail.
+    receipt["sizing_provenance"] = {
+        "requested_usd": sizing.requested_usd,
+        "final_usd": sizing.final_usd,
+        "was_clamped": sizing.was_clamped,
+        "binding_rail": sizing.binding_rail,
+        "micro_live_enabled": sizing.micro_live_enabled,
+        "lane_cap_usd": sizing.lane_cap_usd,
+        "micro_live_cap_usd": sizing.micro_live_cap_usd,
+    }
     await _persist_executed_intent(intent_id, receipt, order, effective, notional, risk_multiplier, result["gates"], now)
 
     # Phase 6: audit + post-submit side effects (live position open, VRL).

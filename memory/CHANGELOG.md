@@ -1,3 +1,81 @@
+## 2026-05-26 (pass #6) — Live Trading Enablement: Sizing Gate + Kill Switch
+
+Operator confirmed: ready to enable execution. Camaro to take crypto seat (operator's call when ready). Kraken live (crypto) + Alpaca paper (equity). Phase 2 broker bridge already exists (`shared/broker_router.route_order`) — what was missing was the operator's safety rails. Built both.
+
+### #4 Sizing Gate — `shared/sizing_gate.py` (NEW)
+
+Phase 4 Ladder Doctrine. Hard per-order cap that **overrides every other sizing input** when enabled.
+
+**Env vars:**
+- `MICRO_LIVE_ENABLED=true|false` (default false)
+- `MICRO_LIVE_DEFAULT_CAP_USD=5.0`
+- `MICRO_LIVE_CRYPTO_CAP_USD=5.0` (per-lane override)
+- `MICRO_LIVE_EQUITY_CAP_USD=5.0`
+
+**Doctrine:** Evaluates BOTH the engineering lane cap (`exposure_caps.cap_for_lane` — $500 crypto, $100k equity) AND the operator's micro_live rail. **Tighter rail wins.** Fail-CLOSED to 0 on garbage / negative / non-numeric inputs.
+
+**Provenance:** Every clamped order carries `sizing_provenance` on its receipt with the requested USD, final USD, binding rail, both cap values, and the micro_live state. Operator can trace exactly which rail bound the size.
+
+### #5 Kill Switch — `routes/trading_controls.py` (NEW)
+
+Mongo-backed runtime switch. Auto-router consults it on every tick. Operator flips via HTTP (no redeploy).
+
+**Endpoints:**
+- `GET /api/admin/trading/status` — read-only state (runtime flag, env flag, will_fire computed, micro_live mode, last toggle audit fields)
+- `POST /api/admin/trading/toggle` — `{enabled: bool, reason: str}` — flips the switch. **Enabling REQUIRES a non-empty reason** (audit-chain receipt). Disabling does not.
+- `GET /api/admin/trading/audit?limit=N` — append-only audit log of every flip
+
+**Doctrine:** **Fail-CLOSED.** First boot returns `enabled=false`. Mongo unreachable → `is_trading_enabled` returns False. Two layers must align: env `AUTO_ROUTER_ENABLED=true` AND runtime `trading_controls.enabled=true`. Either OFF = no orders.
+
+**Halt is non-destructive:** existing positions stay open, broker reconciliation keeps running, gates still evaluate. Only `route_order()` is suppressed.
+
+### Auto-router wired (`shared/auto_router.py`)
+
+`_route_one()` now does (in order):
+1. Phase 1: **Sizing Gate** — `evaluate_sizing(requested, lane)` returns clamped notional + provenance
+2. Phase 1b: **Runtime Kill Switch** — `is_trading_enabled()` check
+3. Phase 2-6: existing gate chain → broker route → receipt → audit (unchanged)
+
+Receipt now carries `sizing_provenance` for audit.
+
+### Verified live (5/5 smoke tests pass):
+1. ✅ `GET /status` baseline: `trading_will_fire=false` (fail-CLOSED first boot)
+2. ✅ Enable without reason → 400 "reason required when enabling trading"
+3. ✅ Enable with reason → 200, audit row written by admin@risedual.io
+4. ✅ Disable → 200, second audit row written
+5. ✅ `GET /audit` returns both flips in reverse-chrono order
+
+**Tripwires (13 new, all passing):**
+`tests/test_sizing_gate_and_kill_switch.py` — sizing gate: lane cap binds when micro_live off, micro_live clamps when on, per-lane overrides work, tighter-rail-wins doctrine (both directions), invalid input fail-CLOSED. Kill switch: first-boot disabled, fail-CLOSED on unset state, set/read/audit roundtrip, disable-after-enable.
+
+### Operator playbook (when ready to trade)
+
+```
+# 1. Confirm kill switch is OFF (default)
+curl … /api/admin/trading/status
+
+# 2. Set micro_live env in prod, redeploy
+MICRO_LIVE_ENABLED=true
+MICRO_LIVE_DEFAULT_CAP_USD=5
+
+# 3. Move Camaro into crypto seat (or whichever brain/lane you want)
+curl -X POST … /api/admin/roster/assign \
+     -d '{"role":"crypto","brain":"camaro"}'
+
+# 4. FLIP THE SWITCH
+curl -X POST … /api/admin/trading/toggle \
+     -d '{"enabled":true,"reason":"first live crypto session — micro_live $5"}'
+
+# 5. Watch /api/admin/trading/audit + Kraken account for fills.
+# 6. To halt instantly:
+curl -X POST … /api/admin/trading/toggle \
+     -d '{"enabled":false,"reason":"halting for review"}'
+# Takes effect within AUTO_ROUTER_INTERVAL_SEC (default 30s).
+```
+
+---
+
+
 ## 2026-05-26 (pass #5) — Governor-Exclusivity Doctrine
 
 Operator pinned the seat-eligibility doctrine to one rule:
