@@ -1,3 +1,80 @@
+## 2026-05-24 (cont'd) — Cross-Brain Memory Join (`/api/runtime/memories`)
+
+### Shipped — the Shellys are linked
+
+`GET /api/runtime/memories?symbol=AAPL&lane=equity&limit=50` — runtime-token authed, returns memories from ALL 4 brains for a given symbol, source-tagged and source-weighted.
+
+### Doctrine guarantees (tripwire-enforced)
+
+**Quarantine contagion**
+If ANY brain files a `quarantine` label for a memory_id, that memory is excluded from the `peer_memories` view corpus-wide. One brain saying "don't train on this" kills it everywhere. The quarantined corpus is still inspectable via `?include_quarantined=true` for forensics.
+
+The endpoint parses `decision_id=<id>` out of `shared_labeled_memories.reason` and `payload_summary` (regex covers alphanumeric + underscore + hyphen, not just hex — the previous regex would have missed brain-side ID conventions like `WILD-<uuid>`).
+
+**Per-source weighting**
+Each brain's safe rows carry `source_weight ∈ [0.5, 2.0]`. Formula: `clamp(0.5, 2.0, 2.0 * win_rate)`, computed from `shared_brain_outcomes` over the last 90 days (env: `MEMORY_LINK_WIN_WINDOW_DAYS`).
+
+  - No data → weight 1.0 (neutral)
+  - 50% wins → 1.0
+  - 60% wins → 1.2
+  - 100% wins → 2.0 (clamped)
+  - 0% wins → 0.5 (clamped)
+
+Brains get calibrator-blessed training weights baked into the response — no client-side scoring needed.
+
+### Live verification (preview snapshot)
+```
+counts_by_brain: alpha=0  camaro=0  chevelle=0  redeye=0  (no AAPL memories on preview yet)
+weights_by_brain:
+  alpha:    w=137 l=111 win_rate=0.5524 → weight=1.1048
+  camaro:   w= 40 l= 60 win_rate=0.40   → weight=0.80
+  chevelle: w= 40 l= 40 win_rate=0.50   → weight=1.00
+  redeye:   w= 29 l= 28 win_rate=0.5088 → weight=1.0175
+```
+
+### Cache
+60s server-side per `(symbol, lane, limit, include_quarantined)`. A brain polling on heartbeat hits cache 4-6 times per real query.
+
+### Response shape
+```
+{symbol, lane, asked_by, cache_hit,
+ counts_by_brain: {alpha, camaro, chevelle, redeye},
+ weights_by_brain: {brain: {wins, losses, win_rate, source_weight, ...}},
+ quarantine_corpus_size,
+ peer_memories: [{...row, source_brain, source_weight, quarantined: false}],
+ safe_count,
+ quarantined_count,
+ quarantined_memories: [...]   # only if ?include_quarantined=true
+}
+```
+
+### Tests
+- 13 new tripwires: weight math (5), auth (3), quarantine contagion end-to-end (1), per-brain weights shape (1), counts shape (1), helper resolution (1), boundary clamps (1)
+- **Tripwire total: 411 passing** (was 398; +13 net)
+- Live verified: 200 + per-brain weight calculation, 401 auth refused
+
+### Files shipped
+- `backend/routes/runtime_cross_brain_memories.py` (new)
+- `backend/tests/test_cross_brain_memories.py` (new)
+- `backend/server.py` (router registration)
+
+### Brain-side usage pattern
+```
+GET /api/runtime/memories?symbol=AAPL&lane=equity
+  X-Runtime-Token: $BRAIN_TOKEN
+
+→ {peer_memories: [
+     {memory_id, source_brain: "alpha",    source_weight: 1.10, ...},
+     {memory_id, source_brain: "redeye",   source_weight: 1.02, ...},
+     {memory_id, source_brain: "camaro",   source_weight: 0.80, ...},
+   ], weights_by_brain: {...}, ...}
+```
+
+Brain can fold `source_weight` directly into its training loss. A 1.10-weighted Alpha memory contributes 10% more gradient than a neutral one; a 0.80-weighted Camaro memory 20% less. The calibrator's wisdom is baked into the corpus itself.
+
+---
+
+
 ## 2026-05-24 (cont'd) — Opinion Auto-Resolver + OPEN/CLOSE verbs
 
 ### Two shipped this turn
