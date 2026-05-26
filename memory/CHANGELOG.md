@@ -1,3 +1,41 @@
+## 2026-05-26 (later same day) — Storage Tightening Pass #1
+
+**Camaro identified as storage criminal — 65% of all brain-attributed writes.**
+- `shared_intents`: Camaro 8,373 of 8,406 (99.6%)
+- `mc_shelly`: Camaro 25,046 of 37,615 (66.6%)
+- `doctrine_sidecars`: Camaro 7,265 of 7,448 (97.5%)
+- `sovereign_state_history`: Camaro 2,840 of 4,194 (67.7%)
+
+Of Camaro's 8,373 intents, 4% (338) were `rejected_at_ingest` muted-by-brain-lane-policy rows at ~879 B each. 96% are real intents at ~4,100 B each (the doctrine_packet/snapshot/weights bloat — bigger lever, future work).
+
+**P0-2 (storage): Slim rejection rows (`shared/intents.py::_audit_lane_policy_rejection`)**
+- Stripped `evidence`, full `rationale`, `executed_at`, `execution_receipt_id` from the row.
+- Truncated rationale to 240-char `rationale_stub` (full text preserved in mc_shelly).
+- Added `slim_v=2` marker so future regressions are catchable.
+- Result: rejection row size drops from ~880 B → <500 B (verified by tripwire `test_rejection_size_under_one_kb`).
+- Downstream consumers untouched: `confidence_floor_sweep` already skips `rejected_at_ingest`; `brain_emission_diagnose` only needs `gate_state` + counts which are preserved.
+
+**P0-3 (storage): 30-day TTL on `sovereign_state_history`**
+- Writer (`shared/sovereign_mode_guard.py`) now stamps `received_at_dt` as a BSON Date alongside the ISO string `received_at` (TTL requires Date type).
+- TTL index installed in `db.py::ensure_indexes`: `received_at_dt → expireAfterSeconds=30*86400`. Idempotent install.
+- Backfill: `scripts/backfill_sovereign_history_ttl.py` walks legacy rows, parses ISO `received_at`/`ts`, falls back to `ObjectId.generation_time`, stamps the Date field. Verified end-to-end: 4,197/4,197 rows now have the field.
+
+**Tripwires added (7 new tests):** `tests/test_storage_tightening_2026_05_26.py`
+- Rejection row contract (no heavy fields, slim_v marker, downstream fields preserved).
+- Rejection row size budget (<1 KB).
+- TTL index installed at startup (30d on `received_at_dt`).
+- New history writes carry BSON Date (not ISO string).
+- Backfill idempotent / writes from ISO / dry-run safe.
+
+**Total tripwires passing across all today's work:** 40 (this pass + earlier schema work). Pre-existing 33 unrelated failures unchanged.
+
+**Surfaced for follow-up:**
+- The bigger Camaro lever is on **normal intents** (8,035 of them at 4.1 KB each ≈ 33 MB just in preview). The `doctrine_packet` + `snapshot` + `evidence.regime_fp` payloads bloat each row. Splitting `shared_intents` into a lean core + sidecar `intent_packets` keyed by `intent_id` is the proposed next move.
+- Index-to-data ratio is 63% in preview — likely worse on prod; warrants an audit.
+
+---
+
+
 ## 2026-05-26 — Memory Firewall Schema Tightening + Modulator Bound Enforcement
 
 Operator priority: data needs labeling and control. Schema only.

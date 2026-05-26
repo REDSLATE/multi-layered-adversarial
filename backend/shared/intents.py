@@ -287,20 +287,33 @@ async def _audit_lane_policy_rejection(
     """Record a brain-lane-policy rejection so the operator can see
     that a brain TRIED to emit and was muted at ingest.
 
-    Two writes:
+    Storage-tightening 2026-05-26:
+      The rejection used to write a full intent doc (rationale up to
+      4 KB, evidence, regime_fp, etc.) into `shared_intents`. With
+      muted brains generating tens of thousands of rejections per week
+      this dominated storage growth. We now write a SLIM rejection row
+      (intent_id + identifiers + gate_state + timestamps — ~250 B),
+      and rely on mc_shelly for the rich provenance.
+
+    Two writes (unchanged surface, leaner payload):
       1. mc_shelly — keeps the rejection in the training-data substrate
          alongside successful emissions. Same `event_type` prefix as
          normal intent ingest so feeds pick it up automatically.
-      2. shared_intents — write a 'rejected_at_ingest' row so the
-         existing Intents UI surfaces it without any new view. The row
-         carries `gate_state='rejected_ingest'`, `executed=False`,
-         `may_execute=False`. This is FAILS-CLOSED: the row exists for
-         audit only, the gate chain will refuse to execute it.
+      2. shared_intents — slim 'rejected_at_ingest' row so the existing
+         Intents UI / confidence-floor sweep / diagnostic counters keep
+         working. Carries `gate_state='rejected_at_ingest'`,
+         `executed=False`, `may_execute=False`. FAILS-CLOSED: row
+         exists for audit only, gate chain refuses to execute it.
     """
     import uuid as _uuid  # noqa: WPS433
     rejection_id = f"rejected-{_uuid.uuid4().hex}"
     now = _now_iso()
-    doc = {
+    # Slim row: only the fields downstream readers actually consume
+    # (confidence_floor_sweep, brain_emission_diagnose, intent_inspect,
+    # operator UI badge). Rationale is truncated to 240 chars — full
+    # rationale lives on mc_shelly below.
+    rationale_stub = (rationale or "")[:240]
+    slim_doc = {
         "intent_id": rejection_id,
         "stack": stack,
         "action": action,
@@ -308,8 +321,6 @@ async def _audit_lane_policy_rejection(
         "lane": lane,
         "lane_source": "brain",
         "confidence": float(confidence),
-        "rationale": rationale,
-        "evidence": {},
         # ── gate-state: rejected before any gate ran ──
         "gate_state": "rejected_at_ingest",
         "rejected_reason": "brain_lane_policy",
@@ -317,16 +328,16 @@ async def _audit_lane_policy_rejection(
         "may_execute": False,
         "requires_gate_pass": False,
         "executed": False,
-        "executed_at": None,
-        "execution_receipt_id": None,
         # ── audit ──
         "ingest_ts": now,
         "ingest_method": ingest_method,
         "ingest_admin_email": admin_email,
         "audit_only": True,
+        "rationale_stub": rationale_stub,
+        "slim_v": 2,  # 2026-05-26 storage-tightening marker
     }
     try:
-        await db[SHARED_INTENTS].insert_one(doc.copy())
+        await db[SHARED_INTENTS].insert_one(slim_doc)
     except Exception:  # noqa: BLE001
         pass
     try:

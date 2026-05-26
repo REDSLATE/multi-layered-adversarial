@@ -351,12 +351,22 @@ async def _persist_snapshot(brain: str, c: SovereignContribution,
     # the dashboard's `find().sort({ts: -1})` queries returned rows in
     # insertion order with `ts: None`. Now `ts` is explicit and equals
     # the contribution received_at.
+    #
+    # Storage-tightening 2026-05-26 (TTL prep):
+    #   `received_at_dt` is a real BSON Date — MongoDB TTL indexes
+    #   require Date type, not ISO string. The 30d TTL installed in
+    #   `db.py::ensure_indexes` walks this field. The existing ISO
+    #   string `received_at` stays for dashboards / readers that
+    #   parsed strings; both fields carry the same instant.
+    from datetime import datetime as _dt, timezone as _tz  # noqa: WPS433
+    received_at_dt = _dt.now(_tz.utc)
     history_row = {
         **doc,
         "ts": now,
         "raw_confidence_delta": guard["raw_confidence_delta"],
         "delta_was_clamped": guard["delta_was_clamped"],
         "received_at": now,
+        "received_at_dt": received_at_dt,
     }
     await db[SOVEREIGN_STATE_HISTORY].insert_one(history_row)
 

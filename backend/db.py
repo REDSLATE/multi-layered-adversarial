@@ -93,3 +93,19 @@ async def ensure_indexes() -> None:
     await db.mc_shelly.create_index([("brain", 1), ("ts", -1)])
     await db.mc_shelly.create_index([("symbol", 1), ("ts", -1)])
     await db.mc_shelly.create_index([("ref_id", 1)])
+
+    # ── Sovereign state history — TTL 30d (storage-tightening 2026-05-26) ──
+    # `sovereign_state_history` is an immutable per-contribution snapshot
+    # log. The latest snapshot per brain lives in `sovereign_state`; the
+    # history rows carry no doctrine after 30 days (no replay window
+    # consults them past that point). TTL on the BSON Date field
+    # `received_at_dt` populated at write time by sovereign_mode_guard.
+    # Rows without the Date field (pre-migration legacy) are picked up
+    # by `scripts/backfill_sovereign_history_ttl.py`.
+    try:
+        await db.sovereign_state_history.create_index(
+            "received_at_dt", expireAfterSeconds=30 * 86400,
+            name="sovereign_history_ttl_30d",
+        )
+    except Exception:  # noqa: BLE001 — idempotent; pre-existing index w/ different opts is fine
+        pass
