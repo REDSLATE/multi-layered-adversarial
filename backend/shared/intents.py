@@ -86,6 +86,14 @@ class IntentIn(BaseModel):
     risk_multiplier: float = Field(ge=0.0, le=1.0, default=0.0)
     rationale: str = Field(min_length=1, max_length=4000)
 
+    # ─── Memory modulator hook (2026-05-24) ───
+    # Numeric per-bar signal vector. When present on a BUY/SHORT intent,
+    # MC's memory_modulator computes cosine similarity vs the brain's
+    # prior memories for the same symbol and nudges `confidence` by
+    # ∈ [-0.25, +0.10]. When absent or for HOLD/non-directional intents,
+    # no modulation runs. Optional for backward-compat.
+    features: Optional[dict[str, float]] = None
+
     # ─── Honesty telemetry (2026-05-14 doctrine) ───
     # Brains MUST tell MC the truth about their own thinking. Specifically:
     # separate MARKET JUDGMENT from EXECUTION JUDGMENT so a blocked trade
@@ -601,6 +609,38 @@ async def post_intent(
             x_runtime_token=x_runtime_token,
         )
 
+    # ─── Memory modulator (2026-05-24, doctrine-locked) ───
+    # PRE-GATE step. Nudges confidence based on similarity to prior
+    # memories for this (brain, symbol, action). Doctrine: may not
+    # promote HOLD, may not create direction, may not bypass any gate.
+    # Output is stamped on the intent's audit row for full provenance.
+    memory_modulator_info: Optional[dict] = None
+    if body.action in {"BUY", "SHORT"} and body.features:
+        try:
+            from shared.memory_modulator import (  # noqa: WPS433
+                apply_to_confidence, compute_memory_modulator,
+            )
+            memory_modulator_info = await compute_memory_modulator(
+                brain=body.stack,
+                symbol=body.symbol,
+                action=body.action,
+                features=body.features,
+            )
+            mod_value = memory_modulator_info["modulator"]
+            if mod_value != 0.0:
+                new_conf = apply_to_confidence(body.confidence, mod_value)
+                memory_modulator_info["original_confidence"] = body.confidence
+                memory_modulator_info["modulated_confidence"] = new_conf
+                body.confidence = new_conf
+        except Exception as e:  # noqa: BLE001
+            # Fail-OPEN: a modulator error must NEVER block an intent.
+            # Log + record skip; downstream gates run on unmodulated confidence.
+            logger.warning("memory_modulator: error %r — skipping nudge", e)
+            memory_modulator_info = {
+                "modulator": 0.0, "skipped": True,
+                "reason": f"modulator error: {e!r}",
+            }
+
     # Per-brain × lane emission policy (2026-02-16). Reject at ingest
     # before we burn a uuid or write anything. Camaro→crypto is muted
     # by default (see brain_lane_policy.seed_default_policy).
@@ -744,10 +784,9 @@ async def post_intent(
         "executed_at": None,
         "execution_receipt_id": None,
     }
+    if memory_modulator_info is not None:
+        doc["memory_modulator"] = memory_modulator_info
     await db[SHARED_INTENTS].insert_one(doc)
-
-    # MC Shelly — record this ingest in MC's memory, tagged with the
-    # full position snapshot at the moment of ingest. Fire-and-forget
     # so the brain never waits on bookkeeping.
     from shared.mc_shelly import record_async  # noqa: WPS433
     record_async(
