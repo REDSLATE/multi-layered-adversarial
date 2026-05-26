@@ -215,34 +215,38 @@ class TestRosterBasics:
 
 class TestEligibility:
     def test_default_matrix(self):
-        """2026-05-24 (operator correction):
-          IDENTITY DOES NOT GRANT AUTHORITY. SEAT POLICY DOES.
-          All brains are eligible for every seat by default. The seat
-          itself carries the restrictions; pulling a brain into a seat
-          applies that seat's policy. Operator tightens specific cells
-          only when a brain's training intent makes a seat a bad fit.
+        """2026-05-26 (operator doctrine revision):
+          All seats are open to all brains EXCEPT `governor` and its
+          crypto twin `crypto_governor`, which are exclusive to
+          Chevelle and RedEye. All other cells default True.
         """
         tok = _login()
         requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
         r = requests.get(f"{BASE_URL}/api/admin/roster/eligibility", headers=_hdr(tok), timeout=10)
         assert r.status_code == 200
         m = r.json()["matrix"]
-        # Every brain × every seat = True by default
+        # Non-governor seats: every brain × every seat = True
+        non_gov = ("strategist", "executor", "auditor", "opponent",
+                   "advisor", "crypto")
         for brain in ("alpha", "camaro", "chevelle", "redeye"):
-            for seat in ("strategist", "executor", "auditor", "governor",
-                         "opponent", "advisor", "crypto"):
+            for seat in non_gov:
                 assert m[brain][seat] is True, (
-                    f"default matrix should allow {brain}→{seat} per doctrine"
+                    f"default matrix should allow {brain}→{seat}"
                 )
+        # Governor + crypto_governor: only Chevelle and RedEye
+        for seat in ("governor", "crypto_governor"):
+            assert m["alpha"][seat] is False
+            assert m["camaro"][seat] is False
+            assert m["chevelle"][seat] is True
+            assert m["redeye"][seat] is True
 
-    def test_assign_any_brain_to_any_seat_by_default(self):
-        """No identity-based blocks by default. Operator can place any
-        brain in any seat without first toggling the eligibility cell."""
+    def test_assign_any_brain_to_any_non_governor_seat_by_default(self):
+        """All non-governor seats: any brain accepted by default.
+        Governor seats: only Chevelle / RedEye accepted."""
         tok = _login()
         _reset(tok)
         requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
-        # Chevelle → strategist (would have been blocked under the
-        # discarded hard-lock doctrine; now accepted)
+        # Chevelle → strategist — accepted (non-governor)
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
@@ -250,45 +254,17 @@ class TestEligibility:
             timeout=10,
         )
         assert r.status_code == 200, r.text
-        # Camaro → governor (also previously blocked)
+        # Camaro → governor — REJECTED (governor exclusivity)
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
             json={"role": "governor", "brain": "camaro"},
             timeout=10,
         )
-        assert r.status_code == 200, r.text
-        _reset(tok)
-
-    def test_toggle_eligibility_then_assign(self):
-        tok = _login()
-        _reset(tok)
-        requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
-        # Operator chooses to disallow camaro→governor. Then re-allow.
-        r = requests.post(
-            f"{BASE_URL}/api/admin/roster/eligibility",
-            headers=_hdr(tok),
-            json={"brain": "camaro", "role": "governor", "allowed": False},
-            timeout=10,
-        )
-        assert r.status_code == 200
-        # Assign should now be blocked
-        r = requests.post(
-            f"{BASE_URL}/api/admin/roster/assign",
-            headers=_hdr(tok),
-            json={"role": "governor", "brain": "camaro"},
-            timeout=10,
-        )
-        assert r.status_code == 400
-        # Flip it back on
-        r = requests.post(
-            f"{BASE_URL}/api/admin/roster/eligibility",
-            headers=_hdr(tok),
-            json={"brain": "camaro", "role": "governor", "allowed": True},
-            timeout=10,
-        )
-        assert r.status_code == 200
-        # Vacate chevelle, then place camaro
+        assert r.status_code == 400, r.text
+        assert "exclusive" in (r.json().get("detail") or "").lower()
+        # RedEye → governor — accepted (eligible brain)
+        # First vacate chevelle so the seat is open.
         requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
@@ -298,11 +274,51 @@ class TestEligibility:
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
-            json={"role": "governor", "brain": "camaro"},
+            json={"role": "governor", "brain": "redeye"},
+            timeout=10,
+        )
+        assert r.status_code == 200, r.text
+        _reset(tok)
+
+    def test_toggle_eligibility_then_assign(self):
+        """Operator can tighten a non-governor cell and re-open it.
+        Governor cells are doctrine-locked — re-open attempt is refused."""
+        tok = _login()
+        _reset(tok)
+        requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
+        # Non-governor: operator disallows alpha→opponent, then re-allows.
+        r = requests.post(
+            f"{BASE_URL}/api/admin/roster/eligibility",
+            headers=_hdr(tok),
+            json={"brain": "alpha", "role": "opponent", "allowed": False},
             timeout=10,
         )
         assert r.status_code == 200
-        assert r.json()["assignments"]["governor"] == "camaro"
+        # Alpha→opponent assignment now blocked
+        r = requests.post(
+            f"{BASE_URL}/api/admin/roster/assign",
+            headers=_hdr(tok),
+            json={"role": "opponent", "brain": "alpha"},
+            timeout=10,
+        )
+        assert r.status_code == 400
+        # Re-allow.
+        r = requests.post(
+            f"{BASE_URL}/api/admin/roster/eligibility",
+            headers=_hdr(tok),
+            json={"brain": "alpha", "role": "opponent", "allowed": True},
+            timeout=10,
+        )
+        assert r.status_code == 200
+        # Governor: operator CANNOT re-enable alpha→governor (doctrine lock)
+        r = requests.post(
+            f"{BASE_URL}/api/admin/roster/eligibility",
+            headers=_hdr(tok),
+            json={"brain": "alpha", "role": "governor", "allowed": True},
+            timeout=10,
+        )
+        assert r.status_code == 400
+        assert "exclusive" in (r.json().get("detail") or "").lower()
         _reset(tok)
         requests.post(f"{BASE_URL}/api/admin/roster/eligibility/reset", headers=_hdr(tok), timeout=10)
 

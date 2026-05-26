@@ -1,16 +1,27 @@
 """Brain Roster — dynamic role assignment across the four brains.
 
-Doctrine (2026-05-24 — operator clarification):
+Doctrine (2026-05-26 — operator clarification):
   Final equity seat set is FIVE: strategist, executor, auditor, governor,
   opponent. The historical `decider` seat has been renamed to
   `strategist` (same function — forms the trust/reduce/veto/observation
   call). Legacy `decider` reads are alias-rewritten to `strategist`.
 
-  Seat eligibility — operator doctrine:
-    * Camaro, Alpha, RedEye   may rotate through  strategist / executor / auditor
-    * RedEye, Chevelle        are the ONLY brains that may hold  governor / opponent
-    * Chevelle                may NOT hold strategist / executor / auditor
-    * Camaro, Alpha           may NOT hold governor / opponent
+  Seat eligibility — OPERATOR DOCTRINE (2026-05-26 revision):
+    * ALL seats are open to ALL brains by default — strategist,
+      executor, auditor, opponent, crypto, and every `crypto_*` slot.
+      Identity does not grant authority; seat policy does. The seat's
+      policy is what determines abilities.
+    * EXCEPTION: the `governor` seat (and its crypto twin
+      `crypto_governor`) are EXCLUSIVE TO CHEVELLE AND REDEYE. No
+      other brain may hold either governor slot. This is a hard
+      doctrine line, enforced both at default seeding (defaults to
+      False for alpha/camaro) and at runtime via
+      `_GOVERNOR_EXCLUSIVE_BRAINS` — the eligibility-toggle endpoint
+      refuses any request that would let alpha or camaro hold a
+      governor seat.
+    * The operator may tighten any non-governor cell through the
+      eligibility UI if a brain's training intent makes a specific
+      seat a bad fit. They cannot LOOSEN governor.
 
 Roles (legacy semantic anchors retained):
   - strategist: forms the trust/reduce/veto/observation call
@@ -97,22 +108,35 @@ DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
     "crypto_auditor":    None,
 }
 
-# ─── Default eligibility (2026-05-24 — operator doctrine, corrected) ──
+# ─── Default eligibility (2026-05-26 — operator doctrine, governor-exclusive) ──
 # Doctrine: IDENTITY DOES NOT GRANT AUTHORITY. SEAT POLICY DOES.
-# All brains are eligible for all seats by default. The seat itself
-# carries the restrictions (may_decide, may_execute, may_veto) — the
-# operator can pull any brain into any seat and the seat's policy is
-# what kicks in. The operator may tighten a specific cell via the
-# eligibility UI if a brain's training intent makes a specific seat a
-# bad fit (e.g., disallow chevelle from executor if you want chevelle
-# strictly on governance), but the DEFAULT is fully open.
+# All brains are eligible for all seats by default EXCEPT the
+# `governor` and `crypto_governor` seats — those two are exclusive to
+# Chevelle and RedEye and enforced at the eligibility-toggle endpoint
+# (see `_GOVERNOR_EXCLUSIVE_BRAINS` and the validator that refuses any
+# request to set alpha/camaro to governor=True). The operator may
+# tighten any non-governor cell; they cannot loosen governor.
 _ALL_TRUE = {role: True for role in ROLES}
-DEFAULT_ELIGIBILITY: dict[str, dict[str, bool]] = {
-    "alpha":    dict(_ALL_TRUE),
-    "camaro":   dict(_ALL_TRUE),
-    "chevelle": dict(_ALL_TRUE),
-    "redeye":   dict(_ALL_TRUE),
-}
+
+# Seats Chevelle/RedEye exclusively may hold. Equity + crypto twins.
+_GOVERNOR_EXCLUSIVE_SEATS: tuple[str, ...] = ("governor", "crypto_governor")
+_GOVERNOR_EXCLUSIVE_BRAINS: tuple[str, ...] = ("chevelle", "redeye")
+
+
+def _build_default_eligibility() -> dict[str, dict[str, bool]]:
+    """Per-brain seat-eligibility map. All True except governor cells
+    for non-Chevelle/RedEye brains."""
+    out: dict[str, dict[str, bool]] = {}
+    for brain in BRAINS:
+        row = dict(_ALL_TRUE)
+        if brain not in _GOVERNOR_EXCLUSIVE_BRAINS:
+            for seat in _GOVERNOR_EXCLUSIVE_SEATS:
+                row[seat] = False
+        out[brain] = row
+    return out
+
+
+DEFAULT_ELIGIBILITY: dict[str, dict[str, bool]] = _build_default_eligibility()
 
 
 def _now_iso() -> str:
@@ -236,10 +260,28 @@ async def get_eligibility() -> dict[str, dict[str, bool]]:
 
 async def _ensure_assignment_eligible(role: str, brain: Optional[str]) -> None:
     """Raise 400 if this (role, brain) pair is currently disallowed by
-    the eligibility matrix. Vacating (brain=None) is always allowed."""
+    the eligibility matrix. Vacating (brain=None) is always allowed.
+
+    Hard doctrine guard (2026-05-26): the governor + crypto_governor
+    seats are exclusive to Chevelle and RedEye. Refuse any assignment
+    that would put alpha or camaro into either seat BEFORE consulting
+    the stored matrix — this defends against a stale or corrupted
+    matrix doc."""
     if brain is None:
         return
     role = _canonical_role(role)
+    if (
+        role in _GOVERNOR_EXCLUSIVE_SEATS
+        and brain not in _GOVERNOR_EXCLUSIVE_BRAINS
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"doctrine: the {role} seat is exclusive to "
+                f"{', '.join(_GOVERNOR_EXCLUSIVE_BRAINS)}. "
+                f"{brain} cannot occupy it."
+            ),
+        )
     matrix = await get_eligibility()
     if not matrix.get(brain, {}).get(role, False):
         raise HTTPException(
@@ -504,6 +546,27 @@ async def set_eligibility_cell(
     body: EligibilitySetIn, user: dict = Depends(get_current_user),
 ):
     target_role = _canonical_role(body.role)
+
+    # ── Doctrine guard: governor exclusivity (2026-05-26) ──
+    # The governor / crypto_governor seats are EXCLUSIVE to Chevelle
+    # and RedEye. The operator cannot grant either to alpha or camaro
+    # via the eligibility endpoint — that's a hard doctrine line, not
+    # a soft default. Tightening the cell (allowed=False) is always
+    # permitted; loosening it for a non-eligible brain is refused.
+    if (
+        target_role in _GOVERNOR_EXCLUSIVE_SEATS
+        and body.brain not in _GOVERNOR_EXCLUSIVE_BRAINS
+        and body.allowed is True
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"doctrine: the {target_role} seat is exclusive to "
+                f"{', '.join(_GOVERNOR_EXCLUSIVE_BRAINS)}. "
+                f"{body.brain} cannot be granted eligibility for it."
+            ),
+        )
+
     matrix = await get_eligibility()
     current_value = matrix.get(body.brain, {}).get(target_role, False)
     if current_value == body.allowed:

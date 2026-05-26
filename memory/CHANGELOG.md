@@ -1,3 +1,33 @@
+## 2026-05-26 (pass #5) — Governor-Exclusivity Doctrine
+
+Operator pinned the seat-eligibility doctrine to one rule:
+
+> **All seats are open to all brains EXCEPT `governor` (and its crypto twin `crypto_governor`), which are EXCLUSIVE to Chevelle and RedEye.**
+
+**Implementation in `shared/roster.py`:**
+- New doctrine constants: `_GOVERNOR_EXCLUSIVE_SEATS = ("governor", "crypto_governor")` and `_GOVERNOR_EXCLUSIVE_BRAINS = ("chevelle", "redeye")`.
+- `DEFAULT_ELIGIBILITY` rebuilt via `_build_default_eligibility()`: every cell True except governor cells for alpha/camaro (False).
+- `_ensure_assignment_eligible()` now refuses governor → alpha/camaro BEFORE consulting the stored matrix (defense-in-depth against stale or corrupted matrix docs). Vacating (`brain=None`) is always allowed.
+- `POST /eligibility` endpoint refuses any attempt to set `allowed=True` for a governor seat on alpha or camaro. Operator can still tighten cells; cannot loosen governor.
+- Docstring at top of file rewritten to reflect new doctrine.
+
+**Stored matrix migrated:** ran live update on preview MongoDB — `alpha.governor`, `alpha.crypto_governor`, `camaro.governor`, `camaro.crypto_governor` all flipped True → False. Stamped `updated_by="doctrine_migration_2026_05_26"`.
+
+**Live smoke-tested (all expected outcomes confirmed):**
+1. `POST /eligibility` `{brain:"alpha", role:"governor", allowed:true}` → **400** "exclusive to chevelle, redeye"
+2. `POST /assign` `{role:"governor", brain:"camaro"}` → **400** "camaro cannot occupy it"
+3. `POST /assign` `{role:"governor", brain:"redeye"}` → **200** assignment.governor=redeye
+4. `POST /assign` `{role:"governor", brain:"chevelle"}` → **200** restored to chevelle
+
+**Tripwires (33 passing, 0 regressions):**
+- New: `tests/test_governor_exclusivity_doctrine.py` (13 tests) — DEFAULT_ELIGIBILITY shape, _GOVERNOR_EXCLUSIVE_* constants, assignment validator rejects alpha/camaro for governor, accepts chevelle/redeye, vacate-always-allowed, non-governor seats unaffected.
+- Updated: `tests/test_roster.py::TestEligibility` (3 tests rewritten to express new doctrine — old tests asserted the now-superseded "all seats open to all brains" rule).
+
+**Operator note (Camaro execution):** the doctrine guard only locks the *governor* seat. Camaro **is fully eligible for executor, strategist, auditor, opponent, advisor, crypto, and every other crypto_* seat**. If you want Camaro to execute trades, swap Camaro into `executor` (equity) or `crypto` (crypto) — both are now one POST away with no doctrine obstacle.
+
+---
+
+
 ## 2026-05-26 (pass #4) — Preview-Bleed-to-Prod Audit + Fixes
 
 User asked me to check the preview for anything that might have been pushed unintentionally to production. Three real findings, all fixed.
