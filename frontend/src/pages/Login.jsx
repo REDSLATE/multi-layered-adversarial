@@ -6,7 +6,7 @@ import { LockKey, ArrowRight } from "@phosphor-icons/react";
 export default function Login() {
   const { user, login, status } = useAuth();
   const nav = useNavigate();
-  const [email, setEmail] = useState("admin@risedual.io");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);

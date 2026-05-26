@@ -379,3 +379,14 @@ credentials.json
 *.pem
 *.key
 .credentials
+
+# ── Operational telemetry — untracked 2026-05-26 ──
+# Large append-only JSONL files generated at runtime by the MC memory
+# writer. Was inflating the repo (~23 MB and growing daily) and
+# bloating "Save to GitHub" uploads with no source-control value.
+backend/mc_memory/
+backend/mc_memory/*.jsonl
+
+# Test-iteration reports — runtime artifacts, not source.
+test_reports/iteration_*.json
+

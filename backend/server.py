@@ -402,10 +402,22 @@ app.include_router(api_router)
 app.middleware("http")(rate_limit_middleware)
 app.middleware("http")(public_traffic_middleware)
 
+# CORS — explicit origin list from env (2026-05-26).
+# Defaults to wildcard ONLY when CORS_ALLOWED_ORIGINS is unset, so
+# preview / local dev keep working out of the box. Production should
+# set `CORS_ALLOWED_ORIGINS=https://mission.risedual.ai,…` so the
+# allow_origins list is exact-match.
+_cors_env = os.environ.get("CORS_ALLOWED_ORIGINS", "").strip()
+_cors_origins = (
+    [o.strip() for o in _cors_env.split(",") if o.strip()]
+    if _cors_env else ["*"]
+)
+_cors_allow_credentials = bool(_cors_env)  # only honor creds when origins are pinned
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )

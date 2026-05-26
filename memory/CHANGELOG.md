@@ -1,3 +1,32 @@
+## 2026-05-26 (pass #4) — Preview-Bleed-to-Prod Audit + Fixes
+
+User asked me to check the preview for anything that might have been pushed unintentionally to production. Three real findings, all fixed.
+
+**Fix #1: Login.jsx — admin email no longer pre-filled**
+`frontend/src/pages/Login.jsx` line 9: `useState("admin@risedual.io")` → `useState("")`. Admin email was being shipped pre-populated on the login form (dev convenience that leaked to prod). Now the field shows the placeholder hint only. Verified live via screenshot.
+
+**Fix #2: `mc_memory/` + `test_reports/iteration_*.json` untracked from git**
+`backend/mc_memory/*.jsonl` files were tracked at 23 MB and growing daily — operational telemetry, not source. Added to `.gitignore`; ran `git rm --cached -r backend/mc_memory/` + `git rm --cached test_reports/iteration_*.json`. Files preserved on disk (so MC keeps writing); just no longer tracked. **Tracked repo size dropped from ~29 MB → 6 MB.**
+
+This is likely the root cause of the user's intermittent "Save to GitHub" failures — 23 MB of bloat made every push fragile under Cloudflare/edge timeouts.
+
+**Fix #3: CORS env-driven origin pinning**
+`backend/server.py` lines 405-411: previously hardcoded `allow_origins=["*"]`. Now reads `CORS_ALLOWED_ORIGINS` env var (comma-separated). When set: exact-match origins + `allow_credentials=True`. When unset: falls back to wildcard (preview/local-dev backward compat). Production should set `CORS_ALLOWED_ORIGINS=https://mission.risedual.ai`.
+
+**Smoke-tested:** backend healthy, CORS headers honoring env default (wildcard, no env set in preview), login page renders with empty email field.
+
+**Things audited and confirmed CLEAN:**
+- `.env` files gitignored (~40 entries in `.gitignore`) — preview URLs cannot leak via GitHub
+- No `console.log` / `debugger` / `debug=True` in shipping code
+- No hardcoded `localhost:8001` URLs in production paths (only in tests + env-var fallbacks)
+- `mc_memory/` content scanned — no secrets / tokens / private keys
+- `test_credentials.md` is gitignored ✓
+
+**Operator note:** the JWT `_create_access` issues a 60-minute access token + 7-day refresh. Cookies are scoped per-host so preview cookies cannot validate on production (or vice versa) — that's correct isolation.
+
+---
+
+
 ## 2026-05-26 (pass #3) — Spread-bps Enrichment + Sovereign TTL→Rollup
 
 **Fix #1: `spread_bps` MC-side enrichment (Camaro crypto + equity)**
