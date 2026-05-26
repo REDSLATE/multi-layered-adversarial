@@ -188,23 +188,55 @@ async def compute_memory_modulator(
         datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
     ).isoformat()
 
+    # ── Doctrine firewall (2026-05-25) ──
+    # Exclude memory_ids any brain has self-labeled `quarantine`. If
+    # any quarantined memory makes it into the similarity pool, the
+    # firewall is decoration. Pulled once per modulator call (each
+    # intent ingest), cached implicitly via the 60s cache in the
+    # cross-brain memories endpoint when brains use that path.
+    try:
+        from routes.runtime_cross_brain_memories import (  # noqa: WPS433
+            _quarantined_memory_ids,
+        )
+        quarantined = await _quarantined_memory_ids(symbol)
+    except Exception as e:  # noqa: BLE001
+        # Fail-CLOSED on the quarantine join (operator-pinned doctrine):
+        # if the firewall can't be consulted, refuse to upweight on
+        # potentially-poisoned data. Return neutral.
+        logger.warning(
+            "memory_modulator: quarantine lookup failed (%r) — "
+            "skipping nudge to honor firewall fail-closed doctrine",
+            e,
+        )
+        return _skipped("quarantine lookup unavailable; firewall fail-closed")
+
     # Pull historical memories: same brain, same symbol, directional
     # action (we filter `decision.raw_action` to BUY/SHORT). 90d window.
+    query: dict = {
+        "brain": brain,
+        "symbol": symbol.upper(),
+        "decided_at": {"$gte": since},
+        "decision.raw_action": {"$in": list(DIRECTIONAL_ACTIONS)},
+    }
+    if quarantined:
+        query["memory_id"] = {"$nin": list(quarantined)}
     cursor = db[BRAIN_MEMORIES].find(
-        {
-            "brain": brain,
-            "symbol": symbol.upper(),
-            "decided_at": {"$gte": since},
-            "decision.raw_action": {"$in": list(DIRECTIONAL_ACTIONS)},
-        },
+        query,
         {"_id": 0, "decision": 1, "resolution": 1, "features": 1,
-         "memory_id": 1},
+         "memory_id": 1, "decision_id": 1},
     ).limit(2000)
 
     winner_sims: list[float] = []
     loser_sims: list[float] = []
 
     async for row in cursor:
+        # Second-pass firewall: a memory may carry a quarantined
+        # decision_id even if its own memory_id is fine. The Mongo
+        # query above only excluded by memory_id; this catches the
+        # decision_id case so the firewall is total.
+        did = row.get("decision_id")
+        if did and did in quarantined:
+            continue
         hist_action = (row.get("decision") or {}).get("raw_action", "")
         if not _action_matches(hist_action, action):
             continue

@@ -29,6 +29,7 @@ Doctrine:
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Literal, Optional
@@ -51,6 +52,8 @@ from shared.regime_keys import (  # canonical regime/crypto primitives
 
 
 router = APIRouter(tags=["intents"])
+
+logger = logging.getLogger(__name__)
 
 # Strict action vocabulary — extend deliberately.
 ACTIONS = ("BUY", "SELL", "SHORT", "COVER", "HOLD")
@@ -93,6 +96,57 @@ class IntentIn(BaseModel):
     # ∈ [-0.25, +0.10]. When absent or for HOLD/non-directional intents,
     # no modulation runs. Optional for backward-compat.
     features: Optional[dict[str, float]] = None
+
+    # ─── Brain-supplied modulator receipt (2026-05-25, doctrine bound) ───
+    # Brain-side modulator (per the operator-locked spec sent to all
+    # four brains) computes a confidence nudge locally and ships the
+    # receipt here. MC's invariants:
+    #   1. `value` (alias `modulator`) MUST be ∈ [-0.25, +0.10].
+    #      Any out-of-bound value is a HARD REJECT (422). MC does NOT
+    #      silently clamp — a brain that ships out-of-bound is buggy
+    #      and the operator must see the violation.
+    #   2. When the brain ships a receipt, MC TRUSTS the brain's
+    #      already-modulated `confidence` field and does NOT recompute
+    #      server-side (no double-application).
+    #   3. MC stamps the receipt onto the intent's audit row verbatim
+    #      so the operator can replay why confidence moved.
+    memory_modulator: Optional[dict] = Field(default=None)
+
+    @field_validator("memory_modulator")
+    @classmethod
+    def _memory_modulator_bounded(cls, v):
+        """Doctrine: brain-supplied modulator `value` must be in
+        [-0.25, +0.10] — the spec the operator pinned for all four
+        brains. Out-of-bound = hard 422. Both `value` and the legacy
+        `modulator` alias are honored."""
+        if v is None:
+            return None
+        if not isinstance(v, dict):
+            raise ValueError("memory_modulator must be an object")
+        if "value" not in v and "modulator" not in v:
+            raise ValueError(
+                "memory_modulator must include a numeric `value` "
+                "(or legacy alias `modulator`)"
+            )
+        raw = v.get("value", v.get("modulator"))
+        try:
+            num = float(raw)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"memory_modulator.value must be numeric, got {raw!r}"
+            )
+        if num < -0.25 or num > 0.10:
+            raise ValueError(
+                f"memory_modulator.value={num} out of doctrine bounds "
+                f"[-0.25, +0.10]"
+            )
+        # Cap size: the receipt is for audit, not a smuggling channel.
+        import json
+        if len(json.dumps(v, default=str)) > 4 * 1024:
+            raise ValueError("memory_modulator must be ≤4 KB serialized")
+        # Normalize: always carry the canonical `value` key.
+        v.setdefault("value", num)
+        return v
 
     # ─── Honesty telemetry (2026-05-14 doctrine) ───
     # Brains MUST tell MC the truth about their own thinking. Specifically:
@@ -614,8 +668,23 @@ async def post_intent(
     # memories for this (brain, symbol, action). Doctrine: may not
     # promote HOLD, may not create direction, may not bypass any gate.
     # Output is stamped on the intent's audit row for full provenance.
+    #
+    # Schema-tightening 2026-05-25:
+    #   If the brain shipped a `memory_modulator` receipt on the
+    #   envelope, MC trusts the brain's already-modulated `confidence`
+    #   (the IntentIn validator already enforced `value ∈
+    #   [-0.25, +0.10]`). MC stamps the receipt verbatim and skips its
+    #   own compute — single source of modulation, no double-apply.
     memory_modulator_info: Optional[dict] = None
-    if body.action in {"BUY", "SHORT"} and body.features:
+    if body.memory_modulator is not None:
+        # Brain-supplied path: bounds already validated by Pydantic.
+        # Stamp `source="brain"` so the operator can tell brain-side
+        # modulation from MC-side at a glance.
+        memory_modulator_info = dict(body.memory_modulator)
+        memory_modulator_info.setdefault("source", "brain")
+        memory_modulator_info["mc_validated"] = True
+        memory_modulator_info["mc_bounds"] = {"min": -0.25, "max": 0.10}
+    elif body.action in {"BUY", "SHORT"} and body.features:
         try:
             from shared.memory_modulator import (  # noqa: WPS433
                 apply_to_confidence, compute_memory_modulator,
@@ -632,6 +701,7 @@ async def post_intent(
                 memory_modulator_info["original_confidence"] = body.confidence
                 memory_modulator_info["modulated_confidence"] = new_conf
                 body.confidence = new_conf
+            memory_modulator_info["source"] = "mc"
         except Exception as e:  # noqa: BLE001
             # Fail-OPEN: a modulator error must NEVER block an intent.
             # Log + record skip; downstream gates run on unmodulated confidence.
@@ -639,6 +709,7 @@ async def post_intent(
             memory_modulator_info = {
                 "modulator": 0.0, "skipped": True,
                 "reason": f"modulator error: {e!r}",
+                "source": "mc",
             }
 
     # Per-brain × lane emission policy (2026-02-16). Reject at ingest
@@ -1083,6 +1154,15 @@ async def admin_post_intent(
         "executed_at": None,
         "execution_receipt_id": None,
     }
+    # Brain-supplied modulator receipt (bounds already validated by
+    # IntentIn). Persisted on the admin path the same as the runtime
+    # path so admin replays carry the same provenance trail.
+    if body.memory_modulator is not None:
+        receipt = dict(body.memory_modulator)
+        receipt.setdefault("source", "brain")
+        receipt["mc_validated"] = True
+        receipt["mc_bounds"] = {"min": -0.25, "max": 0.10}
+        doc["memory_modulator"] = receipt
     await db[SHARED_INTENTS].insert_one(doc)
 
     # MC Shelly — record this admin-proxied ingest too. Tagged with the

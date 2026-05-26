@@ -1,3 +1,31 @@
+## 2026-05-26 — Memory Firewall Schema Tightening + Modulator Bound Enforcement
+
+Operator priority: data needs labeling and control. Schema only.
+
+**P0-1: shared_labeled_memories.memory_id FK**
+- `MemoryLabelIn` (`shared/ingest.py`) now accepts top-level `memory_id` + `decision_id` (both optional for back-compat). Both persisted on `shared_labeled_memories` row.
+- `runtime_cross_brain_memories._quarantined_memory_ids` upgraded: PRIMARY direct FK lookup, REGEX fallback only for legacy rows with no FK. Both paths union into one quarantine set. The two paths can run in parallel forever; once corpus is fully migrated, regex fallback is deletable.
+- Backfill: `scripts/backfill_memory_label_fk.py` — idempotent, dry-run flag, regex-parses legacy `payload_summary`/`reason` and stamps the top-level FK. Safe to re-run.
+- New endpoint `GET /api/runtime/quarantined-memory-ids` — clean handshake for brain-side memory modulators to fetch the current quarantine set (30s cache).
+
+**P0-2: MC-side modulator bound enforcement**
+- `IntentIn.memory_modulator` (new optional field): brain-supplied receipt. Pydantic validator REJECTS any `value` outside [-0.25, +0.10] with 422 (no silent clamping — buggy brains must surface).
+- Accepts legacy `modulator` alias and normalizes to canonical `value`. 4 KB payload cap (anti-smuggling).
+- `post_intent` flow: when brain ships a receipt, MC trusts the brain's already-modulated `confidence`, stamps the receipt with `source=brain` + `mc_validated=true` + `mc_bounds`, and SKIPS its own server-side compute (no double-application). When brain omits the receipt, the legacy MC-side compute still runs and now ALSO excludes quarantined memory_ids from its similarity pool.
+- `shared/memory_modulator.compute_memory_modulator` now fetches the quarantine set first (fail-CLOSED if it can't reach the firewall) and excludes those memory_ids from the Mongo query plus a second-pass filter on `decision_id` for belt-and-suspenders.
+
+**Tripwires added (33 new tests, all passing):**
+- `tests/test_memory_label_fk_schema.py` (10 tests): schema accepts FK; back-compat preserved; DB round-trip; direct FK quarantine lookup; regex fallback for legacy rows; union of FK + legacy paths; backfill idempotency; backfill writes legacy rows; dry-run is a no-op.
+- `tests/test_memory_modulator_bounds.py` (11 tests): bounds inclusive at -0.25/+0.10; out-of-bound rejected both directions; legacy `modulator` alias accepted; missing/non-numeric `value` rejected; receipt optional; 4 KB cap; non-dict rejected.
+- All 13 existing `test_cross_brain_memories.py` tripwires still pass.
+
+**Verification:** end-to-end smoke confirmed via direct `_quarantined_memory_ids` call against MongoDB. Backend restarts clean.
+
+**Pre-existing failures (33 tests, unrelated, confirmed via git stash):** `test_execution_gates`, `test_quorum_and_provenance`, `test_public_phase2`, `test_sovereign`, etc. Untouched by this PR.
+
+---
+
+
 ## 2026-05-24 (cont'd) — Cross-Brain Memory Join (`/api/runtime/memories`)
 
 ### Shipped — the Shellys are linked

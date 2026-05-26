@@ -105,10 +105,26 @@ async def ingest_receipt(
 
 # ----------------------------- Memory labels -----------------------------
 class MemoryLabelIn(BaseModel):
+    """Memory firewall self-label from a brain.
+
+    Schema-tightening 2026-05-25:
+      * `memory_id` and `decision_id` are now first-class top-level
+        fields (a.k.a. the FK the memory-modulator + cross-brain query
+        join against). Both remain OPTIONAL for backward-compat with
+        legacy emitters, but new emitters MUST send `memory_id`
+        (matches the `memory_id` the brain shipped in `/runtime/shelly/memories`).
+      * When `memory_id` is missing, the row falls back to
+        `payload_summary` regex parsing — the legacy join path.
+        Once all brains are upgraded, the operator can drop the
+        regex fallback in `runtime_cross_brain_memories.py`.
+    """
     runtime: Literal["alpha", "camaro", "chevelle", "redeye"]
     label: Literal["safe", "review", "quarantine"]
     reason: str = Field("", max_length=512)
     payload_summary: str = Field("", max_length=1024)
+    # FK back to brain_memories. New emitters SHOULD send this.
+    memory_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    decision_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
 
 @router.post("/memory-labels")
@@ -123,10 +139,17 @@ async def ingest_memory_label(
         "label": body.label,
         "reason": body.reason,
         "payload_summary": body.payload_summary,
+        "memory_id": body.memory_id,
+        "decision_id": body.decision_id,
         "timestamp": _now_iso(),
     }
     await db[SHARED_MEMORY].insert_one(doc)
-    return {"ok": True, "id": doc["id"]}
+    return {
+        "ok": True,
+        "id": doc["id"],
+        "memory_id": body.memory_id,
+        "decision_id": body.decision_id,
+    }
 
 
 # ----------------------------- Calibrators -----------------------------

@@ -130,27 +130,52 @@ async def _per_brain_weights() -> dict[str, dict]:
 
 
 async def _quarantined_memory_ids(symbol: str) -> set[str]:
-    """Memory IDs explicitly labeled `quarantine` by ANY brain.
+    """Memory IDs labeled `quarantine` by ANY brain.
 
-    `shared_labeled_memories` does not enforce a memory_id FK (schema
-    drift on MC's backlog), but other brains' writers include
-    `decision_id=<id>` in the `payload_summary` field by convention.
-    We parse that out to build the quarantine set.
+    Schema-tightening 2026-05-25:
+        New emitters write the `memory_id` FK directly on
+        `shared_labeled_memories` (see `MemoryLabelIn` in
+        `shared/ingest.py`). The PRIMARY path is now a direct FK
+        lookup. Legacy rows (older self-labels that pre-date the FK)
+        are picked up via the regex fallback on `payload_summary` +
+        `reason` so existing quarantines stay enforced. Both paths
+        union into a single set.
 
-    For label rows that don't include a parseable decision_id, we fall
-    back to the `reason` field (Chevelle's bulk_replay writer stuffs
-    decision_id there). Anything we can't link is a soft-quarantine
-    on its `payload_summary` substring match against the row's
-    `text_summary` — same heuristic Hypothesis panel uses.
+        Once every brain emits the FK and the backfill script has
+        backstamped legacy rows, the regex fallback can be deleted —
+        but it stays on by default until the operator confirms.
     """
     import re
     quarantined: set[str] = set()
-    cursor = db[SHARED_MEMORY].find(
-        {"label": "quarantine"},
+
+    # ── PRIMARY: direct FK ────────────────────────────────────────
+    fk_cursor = db[SHARED_MEMORY].find(
+        {"label": "quarantine",
+         "$or": [
+             {"memory_id": {"$exists": True, "$ne": None}},
+             {"decision_id": {"$exists": True, "$ne": None}},
+         ]},
+        {"_id": 0, "memory_id": 1, "decision_id": 1},
+    )
+    async for row in fk_cursor:
+        mid = row.get("memory_id")
+        did = row.get("decision_id")
+        if mid:
+            quarantined.add(str(mid).strip())
+        if did:
+            quarantined.add(str(did).strip())
+
+    # ── FALLBACK: legacy rows without FK — parse decision_id out of
+    # payload_summary / reason. Skipped if BOTH fields are absent on
+    # every row (i.e. brains have fully migrated).
+    decision_id_re = re.compile(r"decision_id=([A-Za-z0-9_-]+)", re.IGNORECASE)
+    legacy_cursor = db[SHARED_MEMORY].find(
+        {"label": "quarantine",
+         "memory_id": {"$in": [None, ""]},
+         "decision_id": {"$in": [None, ""]}},
         {"_id": 0, "payload_summary": 1, "reason": 1},
     )
-    decision_id_re = re.compile(r"decision_id=([A-Za-z0-9_-]+)", re.IGNORECASE)
-    async for row in cursor:
+    async for row in legacy_cursor:
         for field in ("payload_summary", "reason"):
             value = row.get(field) or ""
             for match in decision_id_re.finditer(str(value)):
@@ -222,6 +247,49 @@ async def _build_response(
 
 
 # ─────────────────────────── endpoint ───────────────────────────
+
+
+@router.get("/quarantined-memory-ids")
+async def quarantined_memory_ids(
+    symbol: Optional[str] = Query(None, max_length=32,
+                                  description="Optional symbol filter (currently unused — quarantines are corpus-wide)."),
+    x_runtime_token: str | None = Header(default=None, alias="X-Runtime-Token"),
+) -> dict:
+    """Doctrine-firewall handshake (2026-05-25).
+
+    Returns the union of all memory_ids + decision_ids any brain has
+    self-labeled `quarantine`. Brains MUST call this before computing
+    the memory modulator and exclude these IDs from their similarity
+    pool — otherwise quarantined memories silently influence confidence
+    via cosine match, defeating the firewall.
+
+    Doctrine guarantee: if brain A flags a memory as poisoned, brain B's
+    modulator MUST NOT train against it. This endpoint is how that
+    contract is honored.
+
+    Cached for 30s so the modulator (called on every directional intent)
+    doesn't pound Mongo.
+    """
+    if not x_runtime_token:
+        raise HTTPException(status_code=401, detail="X-Runtime-Token required")
+    asked_by = _resolve_runtime_from_token(x_runtime_token)
+    if not asked_by:
+        raise HTTPException(status_code=401, detail="invalid runtime ingest token")
+
+    cache_key = ("__quarantine_only__", symbol)
+    now = time.monotonic()
+    cached = _cache.get(cache_key)
+    if cached and (now - cached[0]) < 30.0:
+        return {**cached[1], "asked_by": asked_by, "cache_hit": True}
+
+    ids = await _quarantined_memory_ids(symbol or "")
+    payload = {
+        "quarantined_ids": sorted(ids),
+        "count": len(ids),
+        "as_of_monotonic": now,
+    }
+    _cache[cache_key] = (now, payload)
+    return {**payload, "asked_by": asked_by, "cache_hit": False}
 
 
 @router.get("/memories")
