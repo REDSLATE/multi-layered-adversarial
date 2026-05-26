@@ -1,3 +1,42 @@
+## 2026-05-26 (storage pass #2) — Cold Rollups (60-day Compaction)
+
+Operator handoff merged. Past 60 days, verbose telemetry collapses to slim `{movement, event}`-labeled rollup rows. Nothing leaves Mongo. Shellys + brain_memories + quarantine labels + executed real-money trades are doctrine-protected.
+
+**New module: `shared/storage_rollup/`**
+- `config.py` — `ROLLUP_WINDOW_DAYS=60`, `ROLLUP_DELETE_HOLD_DAYS=7`, `PROTECTED_FLAGS={executed,live_order,real_money}`, `PROTECTED_LABELS={quarantine}`, 12 `PROTECTED_COLLECTIONS` (mc_shelly, shared_labeled_memories, brain_memories, per-brain shellys, per-brain brain_memories).
+- `derive.py` — movement (long/short/flat/blocked/rejected/ambiguous) + event (executed_win/executed_loss/blocked_<gate>/rejected_at_ingest/shadow_observation/ambiguous). Reads existing fields only — never guesses; ambiguous rows are skipped.
+- `registry.py` — 17 collections + per-collection `ts_field` map (MC uses `ingest_ts`, `ts`, `timestamp`, `resolved_at` — not hardcoded `created_at`).
+- `runner.py` — two-phase pipeline:
+  - **Phase 1 (rollup):** insert slim row to `{collection}_rollups`, stamp original with `rolled_up_at`. Idempotent (re-runs find nothing new).
+  - **Phase 2 (purge):** delete original after `ROLLUP_DELETE_HOLD_DAYS` post-rollup. Safety net refuses to delete if the slim rollup doc is missing.
+
+**Endpoints (admin JWT only):**
+- `GET  /api/admin/storage-rollup/preview` — Phase 1 dry-run
+- `POST /api/admin/storage-rollup/run` — Phase 1 live
+- `GET  /api/admin/storage-rollup/purge-preview` — Phase 2 dry-run
+- `POST /api/admin/storage-rollup/purge` — Phase 2 live
+- `GET  /api/admin/storage-rollup/stats` — per-collection sizes + rollup coverage
+
+**Tripwires added (31, all passing):**
+`test_storage_rollup.py` covers: BUY/OPEN→long, SHORT→short, SELL/HOLD/CLOSE→flat, blocked-gate carries name, executed-win/loss/scratch events; protected flags (executed/live_order/real_money); protected labels (quarantine); 12 protected collections by name; old rejected row rolls correctly; executed row NEVER rolls; protected collection skipped at runner; idempotent re-run picks zero; recent row untouched; purge protects collection; purge refuses orphan rows; purge deletes after hold; dry-run writes nothing.
+
+**Verified live on preview backend:**
+- `/preview` returns 4 MC collections scanned (0 rolled — no rows >60d in preview env), 13 brain-runtime collections correctly tagged `collection_not_present_in_mc`.
+- `/stats` shows: shared_intents 8.4k docs 26 MB, doctrine_sidecars 7.5k docs 19 MB, shared_adl_receipts 16.5k 6 MB, shared_brain_outcomes 0.5k <1 MB, all 0% rolled (clean baseline).
+
+**Operator playbook on prod:**
+```
+curl … /api/admin/storage-rollup/stats        # baseline
+curl … /api/admin/storage-rollup/preview      # impact estimate (dry-run)
+curl -X POST … /api/admin/storage-rollup/run  # Phase 1 — slim rollups written
+# wait ≥7 days, verify nothing flagged
+curl … /api/admin/storage-rollup/purge-preview  # Phase 2 dry-run
+curl -X POST … /api/admin/storage-rollup/purge  # Phase 2 live — originals deleted
+```
+
+---
+
+
 ## 2026-05-26 (later same day) — Storage Tightening Pass #1
 
 **Camaro identified as storage criminal — 65% of all brain-attributed writes.**

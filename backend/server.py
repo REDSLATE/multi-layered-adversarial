@@ -103,6 +103,7 @@ from routes.brain_doctrine_hint import router as brain_doctrine_hint_router
 from shared.observation_receipts import router as observation_receipts_router
 from shared.learning_ladder import router as learning_ladder_router
 from routes.intent_inspect import router as intent_inspect_router
+from routes.storage_rollup import router as storage_rollup_router
 
 
 
@@ -387,6 +388,7 @@ api_router.include_router(flags_router)
 api_router.include_router(alpha_router)
 api_router.include_router(camaro_router)
 api_router.include_router(chevelle_router)
+api_router.include_router(storage_rollup_router)
 
 app.include_router(api_router)
 
