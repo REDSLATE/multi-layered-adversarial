@@ -89,6 +89,22 @@ class IntentIn(BaseModel):
     risk_multiplier: float = Field(ge=0.0, le=1.0, default=0.0)
     rationale: str = Field(min_length=1, max_length=4000)
 
+    # ─── Risk/Reward fields (2026-05-27, Phase A — equity-only) ───
+    # When provided on a BUY/SHORT equity intent, MC's `rr_gate`
+    # enforces a 3:1 reward-to-risk floor. Phase A is fail-SOFT when
+    # either field is missing (intent passes with a typed warning so
+    # brain teams have a rollout window). Phase B will flip the
+    # missing-fields case to fail-CLOSED via the `RR_REQUIRE_FIELDS_HARD`
+    # env. The 3:1 ratio enforcement itself is HARD from day one.
+    #
+    #   BUY (long):   target_price MUST be > entry; stop_price MUST be < entry
+    #   SHORT:        target_price MUST be < entry; stop_price MUST be > entry
+    # Incoherent prices (target on the wrong side of entry) are a
+    # HARD REJECT even in Phase A — that's a broken intent, not a
+    # configuration gap.
+    target_price: Optional[float] = Field(default=None, gt=0)
+    stop_price: Optional[float] = Field(default=None, gt=0)
+
     # ─── Memory modulator hook (2026-05-24) ───
     # Numeric per-bar signal vector. When present on a BUY/SHORT intent,
     # MC's memory_modulator computes cosine similarity vs the brain's
@@ -823,6 +839,12 @@ async def post_intent(
         "confidence": float(body.confidence),
         "risk_multiplier": float(body.risk_multiplier),
         "rationale": body.rationale,
+        # Phase A R:R fields — used by `shared.rr_gate.evaluate_rr` in
+        # the gate chain. Optional today; brains rolling out can ship
+        # `target_price` + `stop_price` to engage the 3:1 floor. Phase B
+        # will require both on equity entries.
+        "target_price": body.target_price,
+        "stop_price": body.stop_price,
         "evidence": evidence,
         "doctrine_packet": doctrine_packet,
         "decision_id": body.decision_id,
@@ -1163,6 +1185,12 @@ async def admin_post_intent(
         "confidence": float(body.confidence),
         "risk_multiplier": float(body.risk_multiplier),
         "rationale": body.rationale,
+        # Phase A R:R fields — used by `shared.rr_gate.evaluate_rr` in
+        # the gate chain. Optional today; brains rolling out can ship
+        # `target_price` + `stop_price` to engage the 3:1 floor. Phase B
+        # will require both on equity entries.
+        "target_price": body.target_price,
+        "stop_price": body.stop_price,
         "evidence": evidence,
         "doctrine_packet": doctrine_packet,
         "decision_id": body.decision_id,

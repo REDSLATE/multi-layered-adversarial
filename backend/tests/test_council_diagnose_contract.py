@@ -55,6 +55,12 @@ EXPECTED_GATES_IN_ORDER = (
     # structure safety and runs BEFORE council. Governor sizes within
     # the safe zone; RoadGuard kills if structure itself is unsafe.
     "roadguard_spread_floor",
+    # Phase A R:R floor (2026-05-27): equity entries must clear a
+    # 3:1 reward-to-risk ratio. Crypto + exit verbs pass cleanly with
+    # typed RR_NOT_APPLICABLE_* reasons. Sits between RoadGuard
+    # (deterministic market structure) and Council (graduated
+    # verdicts) so any pre-council gate failure surfaces first.
+    "rr_ratio_floor",
     "governor_authority",
     "opponent_objection",
     # Cap rows vary by lane — equity gets `cap_per_order`; crypto gets

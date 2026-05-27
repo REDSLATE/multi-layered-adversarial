@@ -390,3 +390,4 @@ backend/mc_memory/*.jsonl
 # Test-iteration reports — runtime artifacts, not source.
 test_reports/iteration_*.json
 
+frontend/node_modules/.cache/default-development/16.pack

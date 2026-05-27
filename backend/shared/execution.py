@@ -282,6 +282,45 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
                 ),
             })
 
+    # ─── 6.0b R:R floor (2026-05-27, Phase A — equity-only, 3:1) ─────
+    # Doctrine: every equity entry intent (BUY / SHORT) must clear a
+    # 3:1 reward-to-risk ratio. Phase A is fail-SOFT for intents
+    # missing target_price/stop_price (typed warn, pass) so brain
+    # teams have a rollout window. The 3:1 ratio enforcement itself
+    # is HARD from day one. Crypto + exit verbs skip this gate.
+    # Pure-function evaluator lives in `shared/rr_gate.py`.
+    from shared.rr_gate import evaluate_rr  # noqa: WPS433
+    rr = evaluate_rr(intent)
+    rr_gate_reason = rr.reason
+    if rr.passed and rr.rr_ratio is not None:
+        rr_gate_reason = (
+            f"RR_RATIO_OK — reward/risk = {rr.rr_ratio:.2f} "
+            f"≥ {rr.rr_min:.1f} floor ({rr.direction})"
+        )
+    elif rr.passed and rr.phase_a_soft:
+        rr_gate_reason = (
+            f"{rr.reason} — Phase A soft-pass; brain should ship "
+            f"target_price + stop_price + snapshot.price to engage "
+            f"the {rr.rr_min:.1f}:1 floor"
+        )
+    elif not rr.passed and rr.rr_ratio is not None:
+        rr_gate_reason = (
+            f"RR_RATIO_BELOW_FLOOR — reward/risk = {rr.rr_ratio:.2f} "
+            f"< {rr.rr_min:.1f} floor ({rr.direction}); "
+            f"target={rr.target_price} stop={rr.stop_price} entry={rr.entry_price}"
+        )
+    elif not rr.passed and rr.reason == "RR_INVALID_PRICES":
+        rr_gate_reason = (
+            f"RR_INVALID_PRICES — {rr.direction} intent with incoherent "
+            f"target/stop: target={rr.target_price} entry={rr.entry_price} "
+            f"stop={rr.stop_price} (reward={rr.reward} risk={rr.risk})"
+        )
+    gates.append({
+        "name": "rr_ratio_floor",
+        "passed": rr.passed,
+        "reason": rr_gate_reason,
+    })
+
     # ─── 6a. Council enforcement ──────────────────────────────────────
     # Doctrine (rev3, 2026-02-15): SEAT-BOUND graduated verdict. The
     # Governor seat holder's most-recent stance shapes the verdict;

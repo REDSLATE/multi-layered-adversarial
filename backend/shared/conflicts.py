@@ -493,6 +493,77 @@ async def get_conflict(
     return doc
 
 
+# ──────────────────────── stale conflicts (operator alert) ────────────
+
+@router.get("/admin/conflicts/stale")
+async def list_stale_conflicts(
+    older_than_hours: float = Query(
+        24.0, ge=0.0, le=24 * 365,
+        description="Open conflicts older than this many hours are 'stale'.",
+    ),
+    limit: int = Query(200, ge=1, le=1000),
+    _user: dict = Depends(get_current_user),
+):
+    """Open conflicts that have been sitting unresolved past the threshold.
+
+    Doctrine: stale conflicts indicate hypotheses that nobody attached
+    outcomes to AND the operator never resolved manually. They clog the
+    discussion chain and prevent pair-scorecards from updating. Surfaced
+    here as a first-class alert so the operator can sweep them.
+
+    Threshold is `open` AND `detected_at` older than `older_than_hours`.
+    `status="stale"` rows (auto-resolved as indecisive) are NOT included —
+    those are already closed, just without a winner.
+    """
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+    ).isoformat()
+
+    q = {"status": "open", "detected_at": {"$lt": cutoff}}
+    items = await (
+        db[SHARED_CONFLICTS]
+        .find(q, {"_id": 0})
+        .sort("detected_at", 1)            # oldest first — operator triages top
+        .to_list(limit)
+    )
+
+    # Bucket by participant runtime so the operator sees which brains are
+    # piling up unresolved disagreements. Each conflict has two participants,
+    # so it counts toward both buckets.
+    by_runtime: dict[str, int] = {}
+    for c in items:
+        for p in c.get("participants", []):
+            r = p.get("runtime")
+            if r:
+                by_runtime[r] = by_runtime.get(r, 0) + 1
+
+    # Oldest-age summary — drives the Overview tile color.
+    oldest_age_hours: Optional[float] = None
+    if items:
+        try:
+            oldest = datetime.fromisoformat(items[0]["detected_at"])
+            oldest_age_hours = round(
+                (datetime.now(timezone.utc) - oldest).total_seconds() / 3600.0, 2
+            )
+        except Exception:  # noqa: BLE001
+            oldest_age_hours = None
+
+    return {
+        "older_than_hours": older_than_hours,
+        "count": len(items),
+        "oldest_age_hours": oldest_age_hours,
+        "by_runtime": by_runtime,
+        "items": items,
+        "doctrine": (
+            "Stale conflicts are alerts, not failures. Operator should "
+            "either resolve manually (/api/admin/conflicts/{id}/resolve) "
+            "or wait for outcomes to attach and auto-resolve. They do "
+            "NOT modify brain authority."
+        ),
+        "generated_at": _now_iso(),
+    }
+
+
 # ──────────────────────── manual resolution ────────────────────────
 
 class ResolveBody(BaseModel):

@@ -89,7 +89,6 @@ from routes.orphan_replay_routes import router as orphan_replay_router
 from routes.alpaca_orphan_routes import router as alpaca_orphan_router
 from routes.broker_freeze_routes import router as broker_freeze_router
 from routes.broker_reconcile_routes import router as broker_reconcile_router
-from routes.broker_force_close_routes import router as broker_force_close_router
 from routes.brain_memory_ingest import router as brain_memory_ingest_router
 from routes.paradox_routes import router as paradox_router
 from routes.paradox_agent_routes import router as paradox_agent_router
@@ -349,7 +348,6 @@ api_router.include_router(orphan_replay_router)
 api_router.include_router(alpaca_orphan_router)
 api_router.include_router(broker_freeze_router)
 api_router.include_router(broker_reconcile_router)
-api_router.include_router(broker_force_close_router)
 api_router.include_router(brain_memory_ingest_router)
 from routes.learning_scoreboard import router as learning_scoreboard_router
 api_router.include_router(learning_scoreboard_router)

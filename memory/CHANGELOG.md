@@ -1,3 +1,53 @@
+## 2026-05-27 (pass #9) — Force-Close Removal + Stale-Conflict Alert + 3:1 R:R Gate
+
+Operator delivered three fixes in one pass. P0 doctrine loophole closed, operator now sees conflict backlog at a glance, and equity entries face a deterministic 3:1 reward-to-risk floor.
+
+### #1 — `broker_force_close_routes.py` DELETED (P0 doctrine)
+- Removed `routes/broker_force_close_routes.py` entirely (315 lines, including `/admin/broker/force-close-all` and `/admin/broker/force-close-log`).
+- Removed import + `include_router` lines from `server.py`.
+- All position closes now MUST flow through MC's `CLOSE` intent verb → full 12-gate chain. No more operator override path that minted `OPERATOR_FORCED_CLOSE` receipts outside the gate evaluation.
+- Tripwires: `test_broker_force_close_module_is_deleted`, `test_force_close_endpoint_returns_404`, `test_force_close_log_endpoint_returns_404` in `tests/test_force_close_removed_and_stale_conflicts.py`.
+
+### #2 — Stale-Conflicts endpoint + Overview tile (P1)
+- New endpoint `GET /api/admin/conflicts/stale?older_than_hours=24&limit=200` in `shared/conflicts.py`.
+- Returns: `{count, oldest_age_hours, by_runtime, items, doctrine, generated_at}`.
+- Only includes `status=open` conflicts past the threshold. `status=stale` (auto-resolved indecisive) is excluded.
+- New `StaleConflictsTile` in `frontend/src/pages/Overview.jsx` — renders count + ACTION REQUIRED / ATTENTION / CLEAR band + per-runtime breakdown + triage queue link. Fail-soft (never blanks the page on backend error).
+- Tripwires: 2 endpoint tests in `tests/test_force_close_removed_and_stale_conflicts.py` (schema + filter correctness).
+- **Preview observation**: 200 open conflicts >24h, oldest 16.5d, distributed across alpha/redeye/camaro.
+
+### #3 — Phase A R:R Gate at 3:1 (P1)
+- New module `shared/rr_gate.py` with pure-function `evaluate_rr(intent)` returning `RRDecision`.
+- Scope: equity lane + BUY/SHORT verbs ONLY. Crypto + exit verbs (SELL/COVER) pass cleanly with typed `RR_NOT_APPLICABLE_*` reasons.
+- Math:
+  - BUY: `reward = target - entry`; `risk = entry - stop`; ratio = reward/risk ≥ 3
+  - SHORT: `reward = entry - target`; `risk = stop - entry`; ratio = reward/risk ≥ 3
+- New optional fields `target_price` + `stop_price` on `IntentIn` (`shared/intents.py`). Persisted on both runtime-token + admin-proxy ingest paths.
+- Gate inserted as `rr_ratio_floor` between `roadguard_spread_floor` and `governor_authority` in `shared/execution.py:_evaluate_gates`. `EXPECTED_GATES_IN_ORDER` updated in the diagnose contract.
+- **Phase A is fail-SOFT** for intents missing `target_price` / `stop_price` (brain teams have a rollout window). Reason returned: `RR_MISSING_TARGET_OR_STOP`. Flip env `RR_REQUIRE_FIELDS_HARD=true` → Phase B hard-reject.
+- **3:1 ratio enforcement is HARD from day one** — `RR_RATIO_BELOW_FLOOR` blocks. Floor is env-tunable via `RR_RATIO_MIN_EQUITY=3.0` (default).
+- Direction-incoherent prices (target on wrong side of entry, etc.) → `RR_INVALID_PRICES` HARD REJECT in Phase A too.
+- Tripwires: 18 tests in `tests/test_rr_gate.py` covering pass/fail at boundary, both directions, invalid prices, missing fields soft-pass, Phase B flip, crypto skip, exit-verb skip, env-tunable floor, and reason-vocabulary lock.
+- **Curl-verified end-to-end**: 3:1 setup passes (`RR_RATIO_OK — reward/risk = 3.00 ≥ 3.0 floor`); 1.5:1 fails (`RR_RATIO_BELOW_FLOOR`); missing target/stop soft-passes.
+
+### #4 — `HEARTBEAT ONLY` classifier diagnosis (no code change)
+Operator asked: is the `partial`/`HEARTBEAT ONLY` badge gated on (a) last contribution received, or (b) whether the contribution carries *new* information (weights movement)?
+
+**Answer (from source, `shared/heartbeat_ping.py:171-187`)**: AGE-BASED ONLY. The classifier checks `sovereign_state.updated_at < 300s`. There is NO weights-equality check, NO "defaults" gate, NO previous-tick comparison. So if a brain shows `HEARTBEAT ONLY · 22s ago`, MC is NOT seeing the sovereign contribution upsert at all — either the sidecar isn't calling `/api/runtime-discussion/sovereign/contribution`, or it's hitting 401/422 before `_persist_snapshot()` runs.
+
+**Diagnostic curl**:
+```bash
+curl -s "$API_URL/api/admin/sovereign/contribution-health?window=200" -H "Authorization: Bearer $TOKEN"
+```
+Returns per-brain `{pushed_200, rejected_422, errors, top_empty_fields, latest_outcome}` — authoritative because logged from MC's side (same class as the runtime-token health endpoint shipped pass #8).
+
+### Test summary
+- Tripwires: 433 pass (up from 410, +23: 5 force-close/stale + 18 R:R). 2 pre-existing unrelated failures (`test_intent_snapshot_persistence` admin-proxy spread sentinel, `test_runtime_position_discovery` seeded fixture).
+- Lint: clean across all modified files.
+
+---
+
+
 ## 2026-05-27 (pass #8) — Doctrine Collapse + Liveness Truth
 
 Operator ground truth: dashboard was lying. Camaro labeled DEAD while emitting 383 intents/24h. REDEYE had 21k backlog with only 24 recognized. Alpha 20× quieter than Camaro flagged as critical. Plus the REVIEW button only led to a splash page. Three fixes in one pass.

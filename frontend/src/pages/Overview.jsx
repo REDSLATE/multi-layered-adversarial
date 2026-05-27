@@ -14,19 +14,24 @@ export default function Overview() {
   const [overview, setOverview] = useState(null);
   const [flags, setFlags] = useState(null);
   const [diag, setDiag] = useState(null);
+  const [staleConflicts, setStaleConflicts] = useState(null);
   const [err, setErr] = useState("");
 
   useEffect(() => {
     (async () => {
       try {
-        const [o, f, d] = await Promise.all([
+        const [o, f, d, sc] = await Promise.all([
           api.get("/shared/overview"),
           api.get("/admin/flags"),
           api.get("/admin/diagnostics"),
+          // Stale-conflicts tile — fail-soft so this never blanks the page.
+          api.get("/admin/conflicts/stale?older_than_hours=24")
+            .catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
         ]);
         setOverview(o.data);
         setFlags(f.data);
         setDiag(d.data);
+        setStaleConflicts(sc.data);
       } catch (e) {
         setErr(e?.response?.data?.detail || e.message);
       }
@@ -174,6 +179,13 @@ export default function Overview() {
             })}
           </div>
 
+          {/* Stale conflicts alert — open conflicts older than 24h.
+              Surfaces hypotheses that nobody resolved so the operator
+              can sweep them. Doctrine: alert only, never authority. */}
+          {staleConflicts && !staleConflicts._error && (
+            <StaleConflictsTile data={staleConflicts} />
+          )}
+
           {/* Shared Technical Feed — Mission-page panel.
               Each panel is isolated by an ErrorBoundary so one bad
               render (PROD blank-screen regression, 2026-02-17) can
@@ -249,5 +261,87 @@ function FlagLine({ name, on }) {
       <span className="font-mono text-[11px] text-rd-muted truncate pr-2">{name}</span>
       <Badge color={on ? "#10B981" : "#71717A"}>{on ? "TRUE" : "FALSE"}</Badge>
     </div>
+  );
+}
+
+function StaleConflictsTile({ data }) {
+  const count = data?.count || 0;
+  const oldest = data?.oldest_age_hours;
+  const byRuntime = data?.by_runtime || {};
+
+  // Heat band — drives the color. >0 = warn, >5 or 72h+ = danger.
+  const danger = count >= 5 || (oldest != null && oldest >= 72);
+  const warn = count > 0 && !danger;
+  const color = danger ? "#EF4444" : warn ? "#FBBF24" : "#10B981";
+  const label = danger ? "ACTION REQUIRED" : warn ? "ATTENTION" : "CLEAR";
+
+  return (
+    <Card
+      accentColor={color}
+      className="mb-6"
+      testid="stale-conflicts-tile"
+    >
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div className="label-eyebrow mb-1">Conflict backlog</div>
+          <div className="flex items-baseline gap-3">
+            <span
+              className="font-display text-4xl font-black tracking-tighter"
+              style={{ color }}
+              data-testid="stale-conflicts-count"
+            >
+              {count}
+            </span>
+            <span className="text-xs font-mono text-rd-muted">
+              open · &gt; 24h
+            </span>
+            <Badge color={color} testid="stale-conflicts-label">
+              {label}
+            </Badge>
+          </div>
+          {oldest != null && count > 0 && (
+            <div
+              className="text-[11px] font-mono text-rd-muted mt-2"
+              data-testid="stale-conflicts-oldest"
+            >
+              oldest: {oldest >= 24 ? `${(oldest / 24).toFixed(1)}d` : `${oldest.toFixed(1)}h`} unresolved
+            </div>
+          )}
+          {count === 0 && (
+            <div className="text-[11px] font-mono text-rd-muted mt-2">
+              No hypotheses sitting longer than 24h. Discussion chain is clean.
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col items-end gap-2 min-w-[180px]">
+          <Link
+            to="/admin/conflicts?status=open"
+            className="text-[11px] uppercase tracking-widest font-mono text-rd-muted hover:text-rd-text underline"
+            data-testid="stale-conflicts-link"
+          >
+            Triage queue →
+          </Link>
+          {Object.keys(byRuntime).length > 0 && (
+            <div className="flex flex-wrap gap-1 justify-end" data-testid="stale-conflicts-by-runtime">
+              {Object.entries(byRuntime)
+                .sort((a, b) => b[1] - a[1])
+                .map(([rt, n]) => {
+                  const meta = RUNTIME_META[rt] || { color: "#A1A1AA", label: rt.toUpperCase() };
+                  return (
+                    <Badge
+                      key={rt}
+                      color={meta.color}
+                      testid={`stale-conflicts-runtime-${rt}`}
+                    >
+                      {meta.label} · {n}
+                    </Badge>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }
