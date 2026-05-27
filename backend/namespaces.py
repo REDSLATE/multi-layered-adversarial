@@ -35,6 +35,15 @@ SHARED_OPINIONS = "shared_brain_opinions"                   # threaded discussio
 SHARED_OUTCOMES = "shared_brain_outcomes"                   # operator/chevelle-resolved outcomes per opinion
 SHARED_CONFLICTS = "shared_brain_conflicts"                 # auto-detected disagreement pairs
 
+# Pattern snapshots (2026-05-27) — descriptive evidence layer.
+# Per (source, symbol, tf, last_bar_ts) snapshot of the
+# `shared.patterns.base_breakout` detector. Brains pull via the
+# existing technical feed; this collection makes detections
+# REPLAYABLE for training (Shelly substrate) and historical audit.
+# Doctrine: PURE EVIDENCE. No authority. No gate. No execution
+# implication. Brains read; seat holder acts.
+SHARED_PATTERN_SNAPSHOTS = "shared_pattern_snapshots"
+
 # Shared technical evidence (OHLCV + indicator snapshots; pull-only)
 # Doctrine: the technical layer is shared evidence — same bars, four
 # brains read it, each forms its own opinion. No brain owns it.

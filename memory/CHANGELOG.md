@@ -1,3 +1,53 @@
+## 2026-05-27 (pass #10) — Base-Formation Pattern Detector (Reddit setup)
+
+Operator showed a Reddit chart: 3-signal small-cap pattern (long-term MA200 base → consolidation/volume accumulation → explosive breakout). Approved doctrinally-clean implementation: MC stamps evidence, brains judge evidence, seat holder acts. No gate, no authority, no hard blocks.
+
+### Built (in order, per operator instruction)
+1. **`shared/patterns/base_breakout.py`** — pure-function detector
+   - Three deterministic signals from OHLCV bars (no DB, no env reads beyond module load):
+     - `ma200_uptrend_active`: MA200 slope > 0 over trailing 30 bars
+     - `consolidation_zone`: range ≤ 12% of MA200, ≥ 20 bars, MA(5/10/20/50) within 3% spread, with `volume_accumulation_score`
+     - `explosive_breakout`: close > ceiling × 1.02, volume ≥ 1.8× 20-bar avg, fired within last 5 bars
+   - Composite `setup_score ∈ [0, 1]` — weighted descriptive blend (MA200 0.30, Consolidation 0.40, Breakout 0.30)
+   - `small_cap_qualified` flag — stamped IF caller provides `float_shares_millions` (default threshold ≤ 20M); `None` when unknown
+   - Every threshold env-tunable via `PATTERN_*` env vars; `reload_env()` lets operator tighten mid-session
+   - `config_snapshot` carried on every result for replay reproducibility
+2. **Technical feed attachment** — `shared/technicals.py` 
+   - Added optional `float_shares_millions` query param to both endpoints
+   - `pattern_signals` attached to live + replay paths
+   - Live path persists snapshot; replay path returns in-flight (no pollution)
+3. **`shared_pattern_snapshots` collection** — new namespace in `namespaces.py`
+   - Idempotent upsert keyed on `(source, symbol, tf, last_bar_ts)` — verified: 4 API calls = 1 row
+   - Each row carries the full signals packet + `config_snapshot` + `computed_at` for Shelly training substrate
+
+### Tripwires
+- 18 pure-function tests in `tests/test_pattern_base_breakout.py`:
+  - Schema contract (key sets, score range, ready flag)
+  - Default thresholds pinned to operator-approved values
+  - Insufficient-data paths return typed reasons (no exceptions)
+  - Textbook pattern fires all three signals + score > 0.55
+  - Volume-surge-insufficient → no breakout (false-breakout guard)
+  - Close-below-ceiling → no breakout
+  - Env-tunable: tightening consolidation range / breakout volume disqualifies
+  - Small-cap qualifier: None / True / False paths
+  - **Doctrine guard**: banned keys (`may_execute`, `execute_now`, `authority`, `requires_gate`, `force_buy`) MUST NOT appear in serialized payload
+  - Composite score capped at 1.0
+  - Config snapshot keys pinned
+
+### End-to-end verified on real data
+NVDA 1h (thinkorswim, 250 bars): `ma200_uptrend=True (slope +0.234/bar)`, `consolidation=True`, `breakout=False (no_breakout_in_window)`, `setup_score=0.58`, `small_cap_qualified=False` (NVDA float 2500M > 20M threshold). Snapshot persisted; re-calls hit upsert idempotently.
+
+### What brains do now
+Each sidecar's existing `/api/runtime-discussion/technical/{symbol}` pull now returns `pattern_signals` automatically. Brains decide how to weight `setup_score` in their own feature builders. **Not auto-promoted, not gated, not required.** Camaro might bias long; REDEYE might argue against late entries; Chevelle reads it as governance evidence. Their call.
+
+### Test summary
+- Tripwires: 451 pass (up from 433, +18). Same 2 pre-existing unrelated failures.
+- Lint: clean across all modified files.
+- Live API curl verified end-to-end (preview env).
+
+---
+
+
 ## 2026-05-27 (pass #9) — Force-Close Removal + Stale-Conflict Alert + 3:1 R:R Gate
 
 Operator delivered three fixes in one pass. P0 doctrine loophole closed, operator now sees conflict backlog at a glance, and equity entries face a deterministic 3:1 reward-to-risk floor.

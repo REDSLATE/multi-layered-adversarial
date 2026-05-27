@@ -37,9 +37,11 @@ from namespaces import (
     DISCUSSION_PARTICIPANTS,
     SHARED_INDICATOR_SNAPSHOTS,
     SHARED_OHLCV_BARS,
+    SHARED_PATTERN_SNAPSHOTS,
 )
 from runtime_auth import verify_runtime_token
 from shared.indicators import build_snapshot
+from shared.patterns import detect_pattern
 
 
 # ──────────────────────── config ────────────────────────
@@ -361,9 +363,19 @@ async def get_technical(
         None,
         description="ISO 8601 timestamp; recompute snapshot using bars ≤ this moment (audit replay)",
     ),
+    float_shares_millions: Optional[float] = Query(
+        None, ge=0.0,
+        description=(
+            "Optional share float in millions. When provided, the pattern "
+            "detector stamps `small_cap_qualified` on the response. "
+            "Descriptive only — never modifies authority."
+        ),
+    ),
     _user: dict = Depends(get_current_user),
 ):
-    return await _read_technical(symbol.upper(), tf, source, bars, as_of)
+    return await _read_technical(
+        symbol.upper(), tf, source, bars, as_of, float_shares_millions,
+    )
 
 
 # ──────────────────────── read (runtime) ────────────────────────
@@ -376,6 +388,7 @@ async def runtime_get_technical(
     source: Optional[str] = Query(None),
     bars: int = Query(50, ge=1, le=300),
     as_of: Optional[str] = Query(None),
+    float_shares_millions: Optional[float] = Query(None, ge=0.0),
     x_runtime_token: str | None = Header(default=None, alias="X-Runtime-Token"),
 ):
     """Same payload as the operator endpoint, but runtime-token auth so
@@ -388,10 +401,16 @@ async def runtime_get_technical(
             status_code=400,
             detail=f"caller must be one of {DISCUSSION_PARTICIPANTS}",
         )
-    return await _read_technical(symbol.upper(), tf, source, bars, as_of)
+    return await _read_technical(
+        symbol.upper(), tf, source, bars, as_of, float_shares_millions,
+    )
 
 
-async def _read_technical(symbol: str, tf: str, source: Optional[str], bars_n: int, as_of: Optional[str] = None) -> dict:
+async def _read_technical(
+    symbol: str, tf: str, source: Optional[str], bars_n: int,
+    as_of: Optional[str] = None,
+    float_shares_millions: Optional[float] = None,
+) -> dict:
     if tf not in TIMEFRAMES:
         raise HTTPException(status_code=400, detail=f"tf must be one of {TIMEFRAMES}")
 
@@ -426,12 +445,23 @@ async def _read_technical(symbol: str, tf: str, source: Optional[str], bars_n: i
         ).sort("ts", -1).to_list(bars_n)
         tail.reverse()
 
+        # Pattern detection over the full lookback window — bars served
+        # in `tail` may be a short tail (e.g., 50 bars). The detector
+        # needs ≥200 for MA200; pull a wider window from storage for
+        # detection but return the requested tail to the caller.
+        pattern_signals, pattern_snap_id = await _compute_and_persist_pattern(
+            source=source, symbol=symbol, tf=tf,
+            float_shares_millions=float_shares_millions, as_of=None,
+        )
+
         return {
             "source": source,
             "symbol": symbol,
             "tf": tf,
             "bars": tail,
             "snapshot": snap,
+            "pattern_signals": pattern_signals,
+            "pattern_snapshot_id": pattern_snap_id,
             "replayed": False,
             "doctrine": (
                 "Shared technical evidence. Same bars, four brains, four "
@@ -464,12 +494,25 @@ async def _read_technical(symbol: str, tf: str, source: Optional[str], bars_n: i
         "indicators": build_snapshot(bars),
     }
     tail = bars[-bars_n:]
+
+    # Replay pattern detection using the same bar window. Replay
+    # detections are NOT persisted (would pollute the live snapshot
+    # collection with audit re-runs); we return them in-flight so the
+    # caller can compare what was true at `as_of`.
+    from dataclasses import asdict as _asdict
+    replay_pattern = _asdict(detect_pattern(
+        bars, symbol=symbol, tf=tf,
+        float_shares_millions=float_shares_millions,
+    ))
+
     return {
         "source": source,
         "symbol": symbol,
         "tf": tf,
         "bars": tail,
         "snapshot": replayed_snap,
+        "pattern_signals": replay_pattern,
+        "pattern_snapshot_id": None,
         "replayed": True,
         "as_of": as_of,
         "doctrine": (
@@ -477,3 +520,57 @@ async def _read_technical(symbol: str, tf: str, source: Optional[str], bars_n: i
             "the same pure-function pipeline as live snapshots."
         ),
     }
+
+
+async def _compute_and_persist_pattern(
+    *,
+    source: str, symbol: str, tf: str,
+    float_shares_millions: Optional[float],
+    as_of: Optional[str],
+) -> tuple[dict, Optional[str]]:
+    """Live-path detection. Pulls the lookback window from storage,
+    runs the detector, persists a snapshot keyed on
+    (source, symbol, tf, last_bar_ts) so re-reads are idempotent,
+    and returns the serialized signals + the snapshot doc id.
+
+    Failure to persist must NEVER blank the caller's response — the
+    pattern is descriptive evidence, not an authority gate. We
+    swallow Mongo errors and return the in-memory signals only."""
+    from dataclasses import asdict as _asdict
+    bars = await db[SHARED_OHLCV_BARS].find(
+        {"source": source, "symbol": symbol, "tf": tf},
+        {"_id": 0},
+    ).sort("ts", -1).to_list(SNAPSHOT_LOOKBACK_BARS)
+    bars.reverse()
+    if not bars:
+        empty = _asdict(detect_pattern([], symbol=symbol, tf=tf))
+        return empty, None
+
+    signals = detect_pattern(
+        bars, symbol=symbol, tf=tf,
+        float_shares_millions=float_shares_millions,
+    )
+    body = _asdict(signals)
+
+    # Idempotent upsert keyed on (source, symbol, tf, last_bar_ts).
+    # Re-running detection on the same bar tail leaves one row, not N.
+    try:
+        snap_doc = {
+            **body,
+            "source": source,
+            "computed_at": _now_iso(),
+        }
+        await db[SHARED_PATTERN_SNAPSHOTS].update_one(
+            {
+                "source": source, "symbol": symbol, "tf": tf,
+                "last_bar_ts": signals.last_bar_ts,
+            },
+            {"$set": snap_doc},
+            upsert=True,
+        )
+        snap_id = (
+            f"{source}:{symbol}:{tf}:{signals.last_bar_ts or 'no_bars'}"
+        )
+        return body, snap_id
+    except Exception:  # noqa: BLE001 — best-effort, never block read
+        return body, None
