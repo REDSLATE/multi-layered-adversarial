@@ -20,6 +20,7 @@ Invariants pinned:
 from __future__ import annotations
 
 import pytest
+import pytest_asyncio
 
 from db import db
 from namespaces import SHARED_POSITIONS
@@ -29,7 +30,7 @@ from shared.positions import runtime_list_positions
 pytestmark = [pytest.mark.tripwire, pytest.mark.asyncio]
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def seed_positions():
     """Plant two open positions + one closed for shape tests."""
     await db[SHARED_POSITIONS].delete_many(
@@ -39,20 +40,20 @@ async def seed_positions():
         {
             "position_id": "tw-pos-open-1",
             "symbol": "AAPL", "side": "long", "lane": "equity",
-            "state": "discussing", "opened_at": "2026-05-24T10:00:00+00:00",
-            "updated_at": "2026-05-24T10:00:00+00:00",
+            "state": "discussing", "opened_at": "2099-12-31T10:00:00+00:00",
+            "updated_at": "2099-12-31T10:00:00+00:00",
         },
         {
             "position_id": "tw-pos-open-2",
             "symbol": "BTC/USD", "side": "long", "lane": "crypto",
-            "state": "proposed", "opened_at": "2026-05-24T10:05:00+00:00",
-            "updated_at": "2026-05-24T10:05:00+00:00",
+            "state": "proposed", "opened_at": "2099-12-31T10:05:00+00:00",
+            "updated_at": "2099-12-31T10:05:00+00:00",
         },
         {
             "position_id": "tw-pos-closed-1",
             "symbol": "NVDA", "side": "long", "lane": "equity",
-            "state": "rejected", "opened_at": "2026-05-23T10:00:00+00:00",
-            "updated_at": "2026-05-24T09:00:00+00:00",
+            "state": "rejected", "opened_at": "2099-12-31T10:00:00+00:00",
+            "updated_at": "2099-12-31T09:00:00+00:00",
         },
     ])
     yield

@@ -81,7 +81,21 @@ async def test_admin_proxy_handles_missing_snapshot_as_empty_dict(auth_client, b
     )
     assert intent is not None
     snap = intent.get("snapshot")
-    assert snap == {}, f"missing snapshot must persist as empty dict; got {snap!r}"
+    # Doctrine pin (2026-05-27): auto-dry-run injects a sentinel
+    # `spread_bps=9999.0` + `spread_source="sentinel_unknown"` when
+    # the brain omits the doctrine_snapshot, so RoadGuard fails-closed
+    # with a clear reason instead of crashing on missing key. The
+    # intent doc must still expose those sentinel fields under
+    # `snapshot` so downstream `.get('spread_bps')` callers work.
+    assert isinstance(snap, dict), (
+        f"missing snapshot must persist as a dict; got {snap!r}"
+    )
+    assert snap.get("spread_bps") == 9999.0, (
+        f"missing snapshot must carry sentinel spread_bps=9999.0; got {snap!r}"
+    )
+    assert snap.get("spread_source") == "sentinel_unknown", (
+        f"missing snapshot must carry spread_source=sentinel_unknown; got {snap!r}"
+    )
 
 
 # ─── Gate-chain end-to-end ────────────────────────────────────────────
