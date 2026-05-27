@@ -9,6 +9,14 @@ Doctrine:
   → role elevation allowed                         (POST /api/admin/promotion/{id}/countersign)
 
 Promotion is NEVER organic. A runtime cannot promote itself.
+
+2026-05-26 doctrine update — SINGLE-SIGN PROMOTION:
+  Previously the `primary` target required dual-sign (two distinct operator
+  emails). Operator-confirmed this provided no actual safety in a solo-operator
+  deployment — it was security theater. ALL ladder tiers, including `primary`,
+  now use single-sign. Audit chain still records signer email, timestamp, note,
+  and full history. Readiness gate (Patent J) still required to PASS — that's
+  the technical bar; the operator countersign is the human bar.
 """
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -254,20 +262,20 @@ async def readiness_now(runtime: str, _user: dict = Depends(get_current_user)):
 @router.post("/{proposal_id}/countersign")
 async def countersign(proposal_id: str, body: CountersignBody, user: dict = Depends(get_current_user)):
     """Operator countersign — performs the actual authority elevation IF the
-    proposal's readiness gate passed AND the required number of distinct operator
-    signatures has been collected. The countersign cannot bypass a failed
+    proposal's readiness gate passed. The countersign cannot bypass a failed
     readiness gate; if you need to override, raise the gate thresholds in
     config and re-propose.
 
-    Dual-sign rule: target_authority == "primary" requires two distinct operator
-    signatures. The first countersign records the signer and parks the proposal
-    in `awaiting_second_sign`. The second countersign (from a different operator)
-    finalises the elevation. Self-double-signing is rejected.
+    Single-sign across all tiers (2026-05-26 doctrine update). One
+    countersign from any admin operator finalises the elevation.
     """
     proposal = await db[SHARED_PROMOTION_PROPOSALS].find_one({"proposal_id": proposal_id}, {"_id": 0})
     if not proposal:
         raise HTTPException(status_code=404, detail="proposal not found")
     status = proposal["status"]
+    # Legacy `awaiting_second_sign` rows (pre-2026-05-26) are now eligible
+    # to finalize with a single sign — back-compat for any in-flight
+    # proposals at the time of the doctrine change.
     if status not in ("pending", "awaiting_second_sign"):
         raise HTTPException(status_code=409, detail=f"proposal already {status}")
     if not proposal["readiness"]["passed"]:
@@ -275,17 +283,7 @@ async def countersign(proposal_id: str, body: CountersignBody, user: dict = Depe
 
     runtime = proposal["runtime"]
     target = proposal["target_authority"]
-    required = proposal.get("required_signatures", 1)
     signers = list(proposal.get("signers", []))
-    operator_email = (user.get("email") or "").lower()
-
-    # No operator may countersign the same proposal twice — dual-sign requires
-    # two distinct human reviewers.
-    if any((s.get("operator") or "").lower() == operator_email for s in signers):
-        raise HTTPException(
-            status_code=409,
-            detail="this operator has already countersigned this proposal; a second, distinct operator is required",
-        )
 
     new_signer = {"operator": user.get("email"), "at": _iso(), "note": body.note}
     signers.append(new_signer)
@@ -296,22 +294,7 @@ async def countersign(proposal_id: str, body: CountersignBody, user: dict = Depe
     if AUTHORITY_LEVEL.get(target, -1) <= AUTHORITY_LEVEL.get(current, -1):
         raise HTTPException(status_code=409, detail="runtime authority has changed; please re-propose")
 
-    # Not enough signatures yet → park as awaiting_second_sign
-    if len(signers) < required:
-        await db[SHARED_PROMOTION_PROPOSALS].update_one(
-            {"proposal_id": proposal_id},
-            {"$set": {"signers": signers, "status": "awaiting_second_sign"}},
-        )
-        return {
-            "ok": True,
-            "awaiting_more_signatures": True,
-            "signed": len(signers),
-            "required": required,
-            "from_state": current,
-            "target_authority": target,
-        }
-
-    # Required signatures collected → elevate authority
+    # Single-sign — elevate immediately on first countersign.
     history_entry = {
         "from_state": current, "to_state": target,
         "at": _iso(), "via": "operator_countersign",
@@ -337,8 +320,27 @@ async def countersign(proposal_id: str, body: CountersignBody, user: dict = Depe
         "from_state": current,
         "to_state": target,
         "signed": len(signers),
-        "required": required,
+        "required": 1,
     }
+
+
+@router.post("/{proposal_id}/reject")
+async def reject(proposal_id: str, body: CountersignBody, user: dict = Depends(get_current_user)):
+    proposal = await db[SHARED_PROMOTION_PROPOSALS].find_one({"proposal_id": proposal_id}, {"_id": 0})
+    if not proposal:
+        raise HTTPException(status_code=404, detail="proposal not found")
+    if proposal["status"] not in ("pending", "awaiting_second_sign"):
+        raise HTTPException(status_code=409, detail=f"proposal already {proposal['status']}")
+    await db[SHARED_PROMOTION_PROPOSALS].update_one(
+        {"proposal_id": proposal_id},
+        {"$set": {
+            "status": "rejected",
+            "decided_at": _iso(),
+            "decided_by": user.get("email"),
+            "decision_note": body.note,
+        }},
+    )
+    return {"ok": True}
 
 
 @router.post("/{proposal_id}/reject")

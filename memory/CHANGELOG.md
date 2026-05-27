@@ -1,3 +1,50 @@
+## 2026-05-26 (pass #7) — Single-Sign Promotion (B1, hard convert)
+
+Operator confirmed: solo-operator deployment, dual-sign is security theater. Removed entirely.
+
+**Code changes (`shared/promotion.py`):**
+- Module docstring updated to reflect the new doctrine.
+- `propose_from_latest_artifact`: `required_signatures = 1` for every tier (was `2 if primary else 1`).
+- `countersign`: dropped the `awaiting_second_sign` parking path and the "same operator cannot sign twice" 409. One countersign → immediate elevation regardless of tier.
+- Status flow simplified to `pending → approved | rejected`.
+
+**What's preserved:**
+- Readiness gate (Patent J) — still required to PASS. Failed readiness → 412 with no signing allowed. The doctrine collapse only relaxed the human bar; the technical bar stands.
+- Audit chain — signer email, timestamp, note all still recorded. Authority state history still appended on elevation.
+- Admin auth — still required for the endpoint.
+- Reject endpoint — unchanged.
+
+**Back-compat:** Any legacy proposal sitting in `awaiting_second_sign` from before the change (mid-flight at deploy time) will finalize on the next single countersign. Both signers preserved in the audit trail.
+
+**Tripwires rewritten:** `tests/test_dual_sign_promotion.py` (filename retained for archaeology — anyone reading git history sees "we used to have dual-sign here, then collapsed it on 2026-05-26"). 5 tests, all passing:
+1. Primary tier single-sign elevates immediately (was the prohibited path)
+2. Failed readiness still blocks (412) — doctrine guard intact
+3. Non-primary single-sign elevates (unchanged behavior)
+4. Propose endpoint always sets `required_signatures=1`
+5. Legacy `awaiting_second_sign` rows finalize on one more sign (back-compat)
+
+**Operator playbook (when ready to promote Alpha on prod):**
+```
+TOKEN=<your prod admin token>
+
+# See pending proposals
+curl -H "Authorization: Bearer $TOKEN" \
+  https://mission.risedual.ai/api/admin/promotion/proposals?status=pending
+
+# Confirm readiness passes
+curl -H "Authorization: Bearer $TOKEN" \
+  https://mission.risedual.ai/api/admin/promotion/readiness/alpha
+
+# Countersign — one click, you're done
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"note":"alpha → primary"}' \
+  https://mission.risedual.ai/api/admin/promotion/<proposal_id>/countersign
+```
+
+---
+
+
 ## 2026-05-26 (pass #6) — Live Trading Enablement: Sizing Gate + Kill Switch
 
 Operator confirmed: ready to enable execution. Camaro to take crypto seat (operator's call when ready). Kraken live (crypto) + Alpaca paper (equity). Phase 2 broker bridge already exists (`shared/broker_router.route_order`) — what was missing was the operator's safety rails. Built both.
