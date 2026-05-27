@@ -1,3 +1,71 @@
+## 2026-05-27 (pass #13) — 5-Shelly Memory/Reasoning Pipeline shipped
+
+Operator-specified architecture built end-to-end: one LocalShelly per brain (4 today, N when `LIVE_RUNTIMES` expands), one MCShelly head, shared contract module, sync pymongo, fail-soft hooks, admin surface, 34 tripwires.
+
+### Architecture
+```
+Alpha   → Shelly-Alpha    \
+Camaro  → Shelly-Camaro    \
+Chevelle→ Shelly-Chevelle   → MC Shelly → shared memory/reasoning
+RedEye  → Shelly-RedEye    /
+
+Brain Shelly  = local learning
+MC Shelly     = shared memory head
+MC core       = verifier / notary  (existing 12-gate chain)
+RoadGuard     = safety              (existing market-structure guards)
+Brains        = decision authority  (existing seat doctrine)
+```
+
+### Files shipped
+- `shelly/contracts.py` — `ShellyMemoryEvent` + `ShellyReasoningReceipt` dataclasses. Locks vocabulary, confidence-delta bounds, authority tag. `event_hash` excludes `created_at` so idempotent upserts dedupe correctly (regression-guarded by tripwire).
+- `shelly/local_shelly.py` — per-brain memory + reasoning. Idempotent `remember`, threshold-based `reason`, `rollup_for_mc` / `mark_rolled_to_mc` state machine.
+- `shelly/mc_shelly.py` — head shelly. `ingest_rollup` dedupes by event_hash AND re-stamps authority at the boundary (tampered tags rejected). `reason_across_shellys` produces fleet verdict + brain-conflict detection.
+- `shelly/pipeline.py` — `ShellyPipeline` singleton auto-extending with `LIVE_RUNTIMES`. Public hooks: `after_brain_receipt`, `nightly_shelly_rollup_job`.
+- `shelly/sync_db.py` — sync pymongo client isolated from the motor async hot path.
+- `shelly/routes.py` — admin endpoints: `GET /admin/shelly/status`, `POST /admin/shelly/rollup`, `POST /admin/shelly/reason`.
+- `shelly/__init__.py` — public exports.
+
+### Doctrine pins (locked by tripwires)
+- **Allowed vocabulary**: `support` / `warn` / `neutral` / `seen_before` — ONLY.
+- **Banned vocabulary**: `execute` / `block` / `override` / `promote` / `approve` / `reject` / `kill` / `force`. Every banned word has a parametrized tripwire that ensures `ShellyReasoningReceipt.to_doc()` raises on construction.
+- **Authority tag**: every artifact carries `authority="memory_reasoning_only"`. Tampered tags rejected.
+- **Confidence delta bounded** to `[-0.25, +0.10]` so Shelly cannot single-handedly tank or pump a brain's confidence.
+- **Disjoint vocabularies**: allowed ∩ banned = ∅. Tested.
+- **Auto-extends with LIVE_RUNTIMES**: when six-brain refactor lands, no Shelly file needs touching.
+
+### Async vs sync decision
+Initial implementation tried motor async; pytest's per-test event-loop binding produced "loop closed" errors on every DB call. User direction: keep it strictly sync. **Right architectural call** — Shelly intentionally runs outside the gate-chain critical path; a Shelly DB hiccup must not block live trading. Sync pymongo with a process-wide singleton client is the right shape. FastAPI auto-runs sync route handlers in the threadpool. From async paths, `asyncio.to_thread(after_brain_receipt, brain, receipt)`.
+
+### Test summary
+- 34 new tripwires in `tests/test_shelly_pipeline.py`. All pass.
+- 514 total tripwires (up from 480, +34). Same 2 pre-existing unrelated failures.
+- Lint clean across all new modules.
+- End-to-end curl on preview: status endpoint returns canonical shape; reason probe returns neutral verdict with "0 shared cases" message; rollup endpoint idempotent.
+
+### Coexistence with existing `shared/mc_shelly.py`
+The legacy `mc_shelly` collection (generic event audit log) is UNTOUCHED. New collections are namespaced:
+- `shelly_alpha_memories` / `shelly_alpha_reasoning_receipts` (× 4 brains)
+- `shelly_mc_shared_memory` / `shelly_mc_reasoning_receipts`
+
+A tripwire (`test_new_shelly_collections_distinct_from_existing_mc_shelly`) asserts disjointness so a future refactor can't merge them accidentally.
+
+### Wire-in status (NOT yet active in production flow)
+The `after_brain_receipt(brain, receipt)` hook is BUILT but not yet called from any existing code path. Wiring it in requires deciding WHERE in the intent/opinion/position ingest paths to attach. Recommended sites:
+- `shared/intents.py:_ingest` — after `_fire_and_forget_dry_run`
+- `shared/opinions.py:post_opinion` — after the opinion insert
+- `shared/positions.py:post_position` — after position insert
+
+Deferred to a future pass so the operator can review the integration surface separately.
+
+### Operator next steps on PROD
+1. Deploy pass #13.
+2. Hit `GET /api/admin/shelly/status` — confirms all 4 LocalShellys initialized and the vocabulary is pinned.
+3. Hit `POST /api/admin/shelly/reason` with `{symbol, direction}` to test the probe.
+4. (Future) Decide where `after_brain_receipt` plugs into your existing brain emission paths.
+
+---
+
+
 ## 2026-05-27 (pass #12) — SOV-AUDIT clarification + Pattern Watch tile + Sidecar Diagnostics aggregator
 
 ### Correction from pass #11 — the "21k mystery" is not a backlog
