@@ -1,6 +1,6 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import { ArrowUpRight, Cpu, Eye, MessageSquare, ShieldCheck } from "lucide-react";
+import { ArrowUpRight, Cpu, Eye, LogIn, MessageSquare, ShieldCheck } from "lucide-react";
 
 function Pill({ children }) {
   return (
@@ -61,6 +61,13 @@ export default function Landing() {
               className="inline-flex items-center gap-2 rounded-md border border-slate-600 bg-slate-800/60 px-5 py-2.5 text-[13px] text-zinc-300 transition-colors hover:border-slate-500 hover:text-white"
             >
               Ask RiseDualGPT <MessageSquare size={14} strokeWidth={1.8} />
+            </Link>
+            <Link
+              to="/login"
+              data-testid="rd-cta-signin"
+              className="inline-flex items-center gap-2 rounded-md border border-emerald-500/40 bg-transparent px-5 py-2.5 text-[13px] text-emerald-300 transition-colors hover:border-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-200"
+            >
+              Operator sign in <LogIn size={14} strokeWidth={1.8} />
             </Link>
           </div>
         </div>
