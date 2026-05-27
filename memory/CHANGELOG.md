@@ -1,3 +1,75 @@
+## 2026-05-27 (pass #14) — Data Stack Phase 1 + tripwire suite back to 100% green
+
+### Phase 1 Data Stack shipped
+Operator-approved (DATA_STACK_PLAN.md Phase 1): Finnhub equity OHLCV (primary), SEC EDGAR Form-4 filings index, FRED macro series. Each runs as an async polling worker spawned in the FastAPI lifespan; each is a no-op until its `*_ENABLED=true` env-var is flipped. Missing API keys produce one row in `feeder_health_audit` and the worker idles.
+
+### New backend modules
+- `shared/feeders/feeder_health.py` — central rolling audit log helper (capped at 500 rows per provider)
+- `shared/feeders/finnhub_equity.py` — OHLCV polling worker + weekly `/stock/profile2` refresh → `symbol_metadata`
+- `shared/alt_data/sec_edgar.py` — Form-4 filings index poller; loads SEC's company_tickers.json once for CIK resolution
+- `shared/alt_data/fred.py` — FRED macro series poller (CPIAUCNS, UNRATE, FEDFUNDS, DGS10, T10Y2Y by default)
+- `routes/data_stack_admin.py` — operator endpoints (health audit, universe CRUD, symbol-metadata read, alt-data reads)
+
+### New MongoDB collections
+- `symbol_metadata` — float, market cap, sector, CIK per symbol
+- `patterns_universe` — operator-managed watchlist (seeded with AAPL, MSFT, NVDA, TSLA, AMD, HOTH, AMC, GME)
+- `feeder_health_audit` — per-feeder rolling 429/error log
+- `alt_data_filings` — SEC EDGAR Form-4 index rows
+- `alt_data_macro` — FRED series observations cache
+
+### New API endpoints
+- `GET /api/admin/feeders/health-audit`
+- `GET/POST/DELETE /api/admin/patterns/universe[/{symbol}]`
+- `GET /api/admin/symbol-metadata`
+- `GET /api/admin/alt-data/filings`
+- `GET /api/admin/alt-data/macro`
+
+### Schema extensions
+- `shared/technicals.py:FEEDERS` += `finnhub_equity` → `FINNHUB_FEEDER_TOKEN`
+- `OHLCVBarIn.source` Literal extended to accept `finnhub_equity`
+- Preferred-source order extended
+
+### Doctrine pins (tripwire-locked)
+- All three providers carry EVIDENCE only. No execution authority.
+- `alt_data_macro` and `alt_data_filings` ingest paths strip `may_execute` defensively.
+- All workers degrade gracefully on missing API keys → audit row + idle.
+- Idempotent upserts everywhere (re-fetching same data = 0 net writes).
+
+### Stale tripwires fixed (P1 from handoff)
+- `test_intent_snapshot_persistence.py::test_admin_proxy_handles_missing_snapshot_as_empty_dict` — updated to assert sentinel `spread_bps=9999.0` + `spread_source="sentinel_unknown"` that auto-dry-run injects.
+- `test_runtime_position_discovery.py` — `@pytest.fixture` → `@pytest_asyncio.fixture` for async-generator fixture; seed `updated_at` bumped to a far-future date so the seeded rows sort to the top of the limit=100 window.
+
+### Test summary
+- **532 tripwires pass, 0 fail** (up from 516 pass + 2 fail on handoff)
+- 16 new Phase-1 tripwires in `tests/test_data_stack_phase1.py` (httpx MockTransport-based; no real network calls)
+
+### .env additions (placeholders — operator fills keys to enable)
+```
+FINNHUB_API_KEY=
+FINNHUB_FEEDER_TOKEN=
+FINNHUB_ENABLED=false
+FINNHUB_POLL_INTERVAL_SEC=300
+FINNHUB_TIMEFRAME=5
+FRED_API_KEY=
+FRED_ENABLED=false
+FRED_POLL_INTERVAL_SEC=86400
+FRED_SERIES_IDS=CPIAUCNS,UNRATE,FEDFUNDS,DGS10,T10Y2Y
+SEC_EDGAR_USER_AGENT=Risedual MissionControl ops@risedual.ai
+SEC_EDGAR_ENABLED=false
+SEC_EDGAR_POLL_INTERVAL_SEC=900
+SEC_EDGAR_REQUEST_GAP_SEC=0.2
+```
+
+### To activate live ingest
+1. Get FINNHUB_API_KEY at https://finnhub.io/dashboard (free; 60 calls/min)
+2. Get FRED_API_KEY at https://fred.stlouisfed.org/docs/api/api_key.html (free; 120 req/min)
+3. Set `FINNHUB_FEEDER_TOKEN` to a 32-hex token (matches what /api/ingest/ohlcv accepts)
+4. Set `*_ENABLED=true` for the providers you want polling
+5. `sudo supervisorctl restart backend`
+
+---
+
+
 ## 2026-05-27 (pass #13) — 5-Shelly Memory/Reasoning Pipeline shipped
 
 Operator-specified architecture built end-to-end: one LocalShelly per brain (4 today, N when `LIVE_RUNTIMES` expands), one MCShelly head, shared contract module, sync pymongo, fail-soft hooks, admin surface, 34 tripwires.

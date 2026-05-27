@@ -58,9 +58,10 @@ TIMEFRAMES = ("1m", "5m", "15m", "1h", "4h", "1d")
 # Feeder identities. Each maps to an env-var token. Adding a new feeder
 # is a 2-line change (here + .env).
 FEEDERS: dict[str, str] = {
-    "kraken_pro":   "KRAKEN_FEEDER_TOKEN",
-    "thinkorswim":  "TOS_FEEDER_TOKEN",
-    "manual":       "MANUAL_FEEDER_TOKEN",   # optional; for backfill
+    "kraken_pro":     "KRAKEN_FEEDER_TOKEN",
+    "thinkorswim":    "TOS_FEEDER_TOKEN",
+    "finnhub_equity": "FINNHUB_FEEDER_TOKEN",   # Phase 1 — primary US equity OHLCV
+    "manual":         "MANUAL_FEEDER_TOKEN",    # optional; for backfill
 }
 
 # Symbol shape — uppercase alnum, optional slash for crypto pairs
@@ -94,7 +95,7 @@ def _verify_feeder(source: str, token: str | None) -> None:
 
 class OHLCVBarIn(BaseModel):
     """A single OHLCV bar from a feeder sidecar."""
-    source: Literal["kraken_pro", "thinkorswim", "manual"]
+    source: Literal["kraken_pro", "thinkorswim", "finnhub_equity", "manual"]
     symbol: str = Field(..., min_length=1, max_length=32)
     tf: Literal["1m", "5m", "15m", "1h", "4h", "1d"]
     ts: str = Field(..., description="ISO 8601 bar-open timestamp, UTC")
@@ -242,7 +243,7 @@ def _preferred_source(rows: list[dict]) -> str | None:
     kraken_pro (live crypto) then thinkorswim then manual."""
     if not rows:
         return None
-    order = {"kraken_pro": 0, "thinkorswim": 1, "manual": 2}
+    order = {"kraken_pro": 0, "thinkorswim": 1, "finnhub_equity": 2, "manual": 3}
     rows = sorted(rows, key=lambda r: order.get(r.get("source", ""), 99))
     return rows[0]["source"]
 

@@ -50,6 +50,20 @@ SHARED_PATTERN_SNAPSHOTS = "shared_pattern_snapshots"
 SHARED_OHLCV_BARS = "shared_ohlcv_bars"
 SHARED_INDICATOR_SNAPSHOTS = "shared_indicator_snapshots"
 
+# Data Stack Phase 1 (2026-05-27) — market-data + alt-data layer.
+# Doctrine: All data is EVIDENCE. Brains read it; brains weight it;
+# seat holder acts. MC verifies feed integrity (auth, schema,
+# freshness) but never evaluates trade quality based on the data.
+# Adding a new provider must not introduce any execution-authority
+# path. The OHLCV ingest schema must continue to reject any
+# `may_execute` field.
+SYMBOL_METADATA = "symbol_metadata"          # per-symbol float, market cap, sector
+PATTERNS_UNIVERSE = "patterns_universe"      # operator-managed watchlist
+FEEDER_HEALTH_AUDIT = "feeder_health_audit"  # per-feeder 429/error rolling log
+ALT_DATA_FILINGS = "alt_data_filings"        # SEC EDGAR Form 4 / filing index
+ALT_DATA_MACRO = "alt_data_macro"            # FRED series cache
+
+
 # Kraken Pro connection — encrypted credential storage + execution toggle.
 # Single-tenant: at most one connected key set lives here. Stored as one
 # document with key `"singleton"`. Doctrine: keys store reads-only data by

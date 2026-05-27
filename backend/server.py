@@ -90,6 +90,19 @@ from routes.alpaca_orphan_routes import router as alpaca_orphan_router
 from routes.broker_freeze_routes import router as broker_freeze_router
 from routes.broker_reconcile_routes import router as broker_reconcile_router
 from routes.sidecar_diagnostics import router as sidecar_diagnostics_router
+from routes.data_stack_admin import router as data_stack_admin_router
+from shared.feeders.finnhub_equity import (
+    start_worker_if_enabled as start_finnhub_worker,
+    stop_worker as stop_finnhub_worker,
+)
+from shared.alt_data.sec_edgar import (
+    start_worker_if_enabled as start_sec_edgar_worker,
+    stop_worker as stop_sec_edgar_worker,
+)
+from shared.alt_data.fred import (
+    start_worker_if_enabled as start_fred_worker,
+    stop_worker as stop_fred_worker,
+)
 from shelly import router as shelly_router
 from routes.brain_memory_ingest import router as brain_memory_ingest_router
 from routes.paradox_routes import router as paradox_router
@@ -233,6 +246,37 @@ async def lifespan(app: FastAPI):
         logger.info("Opinion resolver started")
     except Exception as e:  # noqa: BLE001
         logger.warning("opinion_resolver start failed: %s", e)
+    # Data Stack Phase 1 — Finnhub equity OHLCV, SEC EDGAR Form 4
+    # filings index, and FRED macro series. Each worker is a no-op
+    # unless its `*_ENABLED=true` env-var is set; missing API keys
+    # produce one feeder_health_audit row and the worker idles.
+    try:
+        start_finnhub_worker()
+        start_sec_edgar_worker()
+        start_fred_worker()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("data_stack workers start failed: %s", e)
+    # Seed the initial patterns_universe watchlist (idempotent).
+    try:
+        from db import db as _db
+        from namespaces import PATTERNS_UNIVERSE
+        seed_symbols = [
+            "AAPL", "MSFT", "NVDA", "TSLA", "AMD", "HOTH", "AMC", "GME",
+        ]
+        for sym in seed_symbols:
+            await _db[PATTERNS_UNIVERSE].update_one(
+                {"symbol": sym},
+                {"$setOnInsert": {
+                    "symbol": sym, "active": True,
+                    "added_by": "seed",
+                    "added_at": "seed",
+                    "note": "Phase 1 seed",
+                }},
+                upsert=True,
+            )
+        logger.info("patterns_universe seeded (%d symbols)", len(seed_symbols))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("patterns_universe seed failed: %s", e)
     yield
     await stop_poller()
     await stop_tickler()
@@ -248,6 +292,12 @@ async def lifespan(app: FastAPI):
     try:
         from shared.opinion_resolver import stop_worker as _stop_opinion_resolver
         _stop_opinion_resolver()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        await stop_finnhub_worker()
+        await stop_sec_edgar_worker()
+        await stop_fred_worker()
     except Exception:  # noqa: BLE001
         pass
     client.close()
@@ -351,6 +401,7 @@ api_router.include_router(alpaca_orphan_router)
 api_router.include_router(broker_freeze_router)
 api_router.include_router(broker_reconcile_router)
 api_router.include_router(sidecar_diagnostics_router)
+api_router.include_router(data_stack_admin_router)
 api_router.include_router(shelly_router)
 api_router.include_router(brain_memory_ingest_router)
 from routes.learning_scoreboard import router as learning_scoreboard_router
