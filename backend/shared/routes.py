@@ -84,10 +84,36 @@ async def overview(_user: dict = Depends(get_current_user)):
         last_receipt = await db[SHARED_RECEIPTS].find_one(
             {"runtime": rt}, {"_id": 0}, sort=[("timestamp", -1)]
         )
-        # Authority state — single source of truth for execution
+        # Authority state — informational metadata only (2026-05-26
+        # doctrine collapse). The lock is now SEAT POLICY + KILL SWITCH:
+        #   * `execution_allowed` = is this runtime currently sitting
+        #     in a seat whose `may_execute=True` policy? (Seat-based,
+        #     not identity-based.)
+        #   * The authority_state field is kept for historical
+        #     continuity but no longer gates anything.
         state_doc = await db["shared_authority_state"].find_one({"runtime": rt}, {"_id": 0})
         authority_state = state_doc["authority_state"] if state_doc else "observer"
-        execution_allowed = authority_state in {"co_trader", "primary"}
+
+        # Seat-based execution permission. Look up the current roster
+        # assignment and ask seat_policy whether THAT seat may execute.
+        execution_allowed = False
+        seat_name = None
+        try:
+            from shared.roster import get_roster  # noqa: WPS433
+            from shared.seat_policy import SEAT_POLICY  # noqa: WPS433
+            roster = await get_roster()
+            assignments = (roster or {}).get("assignments") or {}
+            for seat, occupant in assignments.items():
+                if occupant == rt:
+                    seat_name = seat
+                    pol = SEAT_POLICY.get(seat) or {}
+                    if pol.get("may_execute") is True:
+                        execution_allowed = True
+                        break
+        except Exception:  # noqa: BLE001
+            # Fail-CLOSED: if seat policy can't be consulted, no execution.
+            execution_allowed = False
+            seat_name = None
 
         # Heartbeat staleness — visibility only
         hb = await db[SHARED_HEARTBEATS].find_one({"runtime": rt}, {"_id": 0})
@@ -106,6 +132,7 @@ async def overview(_user: dict = Depends(get_current_user)):
             "role_tagline": ROLES[rt]["tagline"],
             "authority_state": authority_state,
             "execution_allowed": execution_allowed,
+            "current_seat": seat_name,
             "mode": "observation",
             "receipts_count": receipts_count,
             "memory_labels_count": labels_count,

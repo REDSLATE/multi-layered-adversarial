@@ -1,3 +1,77 @@
+## 2026-05-27 (pass #8) — Doctrine Collapse + Liveness Truth
+
+Operator ground truth: dashboard was lying. Camaro labeled DEAD while emitting 383 intents/24h. REDEYE had 21k backlog with only 24 recognized. Alpha 20× quieter than Camaro flagged as critical. Plus the REVIEW button only led to a splash page. Three fixes in one pass.
+
+### #1 — Runtime-token rejection audit (REDEYE 21k mystery)
+
+Found: REDEYE 401s never showed anywhere. The wrong-token POSTs just got dropped before persistence.
+
+**New:** `shared/runtime_token_audit.py` — fire-and-forget audit writer hooked into `runtime_auth.verify_runtime_token`. Every 401/503 logs reason (`token_mismatch` / `missing_header` / `token_not_configured`) to `runtime_token_rejections` collection.
+
+**New endpoint:** `GET /api/admin/runtime-tokens/health?window_hours=24` — returns per-brain rejection counts + diagnosis (`healthy` / `token_mismatch_high_volume` / `header_missing_high_volume`).
+
+**Verified live:** sent a wrong-token POST → 401 surfaced as `token_mismatch` rejection row, picked up by health endpoint.
+
+**Operator value:** when prod redeploys, REDEYE's misaligned token will surface within minutes as `token_mismatch_high_volume` on the health endpoint. Brain team can be pointed at hard evidence.
+
+### #2 — Authority-ladder collapse (REVIEW splash-page dead end)
+
+**Found:** the authority ladder (observer → advisor → challenger → co_trader → primary) was never actually gating execution in the auto-router or gate chain. It was purely a status badge in `shared/routes.py:90`. Two parallel gates (seat policy + authority state) existed; only seat policy mattered.
+
+**Code:** `shared/routes.py:90` — `execution_allowed` now computed from seat occupancy + seat policy's `may_execute=True`, NOT from authority_state. Authority state remains as informational metadata on the response. `current_seat` field added so the UI can show which seat each brain occupies.
+
+**Verified live:**
+```
+alpha    seat=executor   exec_allowed=True   ✅ (seat is gate)
+camaro   seat=strategist exec_allowed=False  ✅ (correct doctrine)
+chevelle seat=governor   exec_allowed=False  ✅ (governor never executes)
+redeye   seat=None       exec_allowed=False  ✅
+```
+
+**Doctrine result:** drop Camaro into `crypto` seat → `exec_allowed=True` immediately. No promotion ladder, no REVIEW button, no splash page dead end.
+
+### #3 — Multi-signal liveness (false-DEAD on Camaro)
+
+**Found:** liveness was computed from sovereign-contribution age alone. Camaro had 383 intents/24h but stale sovereign → false DEAD.
+
+**Code:** `routes/brain_emission_diagnose.py::_heartbeat_status` rewritten. Now reads four signals:
+- `heartbeat_fresh` (< 2 min)
+- `sovereign_fresh` (< 5 min)
+- `intent_recent` (< 1 hour)
+- `opinion_recent` (< 1 hour)
+
+**Classification:**
+- `active` = any of those + at least one productive signal (intent/opinion/sovereign)
+- `dormant` = heartbeat fresh but otherwise quiet (Alpha's case — reachable but low conviction)
+- `dead` = no signal of any kind
+
+Also adds `intents_last_hour/24h` and `opinions_last_hour/24h` to the panel so the operator sees what each brain is actually doing.
+
+**Verified live (preview):**
+```
+camaro   liveness=active   intents_24h=383
+alpha    liveness=dormant  intents_24h=3
+chevelle liveness=dormant  intents_24h=0
+redeye   liveness=dead     no heartbeat row at all
+```
+
+### Tripwires (12 new, all passing)
+- `tests/test_authority_collapse_and_token_audit.py` (7): overview exposes seat+authority separately, executor seat grants execution, governor never grants execution, seatless cannot execute, authority_state does not force execution, wrong token logs rejection, health endpoint lists all brains + diagnosis field.
+- `tests/test_multi_signal_liveness.py` (5): liveness field present, multi-signal indicators present, intent/opinion counts exposed, any recent intent implies not-dead, sovereign-silent + intent-busy = active not dead.
+
+### Operator next steps
+1. **Redeploy prod** to push these three fixes
+2. On the dashboard:
+   - Camaro will flip from DEAD → ACTIVE
+   - Alpha will read DORMANT (truthful — quiet but reachable)
+   - REVIEW button + PENDING APPROVAL card no longer relevant (authority state is informational)
+   - LIVE EXEC will compute from seat (no more all-FALSE)
+3. **To enable Camaro trading:** `POST /api/admin/roster/assign {role:"crypto", brain:"camaro"}` → drops Camaro into crypto seat → `exec_allowed=True` → kill switch is then the only remaining gate.
+4. **Find REDEYE token mismatch:** `GET /api/admin/runtime-tokens/health` will show the count and reason. Email the brain team with the hard number.
+
+---
+
+
 ## 2026-05-26 (pass #7) — Single-Sign Promotion (B1, hard convert)
 
 Operator confirmed: solo-operator deployment, dual-sign is security theater. Removed entirely.

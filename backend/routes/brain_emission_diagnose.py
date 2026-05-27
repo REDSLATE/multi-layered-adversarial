@@ -91,12 +91,65 @@ def _heartbeat_band(age: Optional[float]) -> str:
 
 
 async def _heartbeat_status(brain: str) -> dict:
+    """Liveness indicator (2026-05-26 multi-signal):
+        A brain is `ACTIVE` if ANY of these signals are recent:
+          * heartbeat in last 2 min
+          * sovereign contribution in last 5 min
+          * intent posted in last 1 hour
+          * opinion posted in last 1 hour
+        This prevents the false-DEAD signal that hit Camaro
+        (intent-busy, sovereign-silent) and Alpha (heartbeat-fresh,
+        intent-quiet but not dead).
+    """
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz  # noqa: WPS433
+
     hb = await db[SHARED_HEARTBEATS].find_one({"runtime": brain}, {"_id": 0})
     sv = await db[SOVEREIGN_STATE].find_one({"brain": brain}, {"_id": 0})
     hb_iso = (hb or {}).get("last_seen")
     sv_iso = (sv or {}).get("updated_at")
     hb_age = _age_seconds(hb_iso)
     sv_age = _age_seconds(sv_iso)
+
+    # Activity counts over the last hour + 24h.
+    now = _dt.now(_tz.utc)
+    cutoff_1h = (now - _td(hours=1)).isoformat()
+    cutoff_24h = (now - _td(hours=24)).isoformat()
+    intents_1h = await db["shared_intents"].count_documents(
+        {"stack": brain, "ingest_ts": {"$gte": cutoff_1h}},
+    )
+    intents_24h = await db["shared_intents"].count_documents(
+        {"stack": brain, "ingest_ts": {"$gte": cutoff_24h}},
+    )
+    try:
+        opinions_1h = await db["shared_brain_opinions"].count_documents(
+            {"brain": brain, "created_at": {"$gte": cutoff_1h}},
+        )
+        opinions_24h = await db["shared_brain_opinions"].count_documents(
+            {"brain": brain, "created_at": {"$gte": cutoff_24h}},
+        )
+    except Exception:  # noqa: BLE001
+        opinions_1h = 0
+        opinions_24h = 0
+
+    # Multi-signal liveness.
+    signals = {
+        "heartbeat_fresh": hb_age is not None and hb_age < 120,
+        "sovereign_fresh": sv_age is not None and sv_age < 300,
+        "intent_recent": intents_1h > 0,
+        "opinion_recent": opinions_1h > 0,
+    }
+    is_active = any(signals.values())
+    # Mark as DORMANT (not DEAD) if heartbeat fresh but no other activity —
+    # the brain is reachable but quiet (low conviction, or governor-style
+    # role). DEAD is reserved for "no signal of any kind."
+    if is_active:
+        liveness = "active" if (
+            signals["intent_recent"] or signals["opinion_recent"]
+            or signals["sovereign_fresh"]
+        ) else "dormant"
+    else:
+        liveness = "dead"
+
     return {
         "last_heartbeat_at": hb_iso,
         "heartbeat_age_seconds": hb_age,
@@ -105,6 +158,13 @@ async def _heartbeat_status(brain: str) -> dict:
         "contribution_age_seconds": sv_age,
         "ever_heartbeated": hb_iso is not None,
         "ever_contributed": sv_iso is not None,
+        # 2026-05-26 additions — multi-signal liveness
+        "liveness": liveness,
+        "signals": signals,
+        "intents_last_hour": intents_1h,
+        "intents_last_24h": intents_24h,
+        "opinions_last_hour": opinions_1h,
+        "opinions_last_24h": opinions_24h,
     }
 
 

@@ -17,14 +17,27 @@ def _expected_token(runtime: str) -> str | None:
 
 def verify_runtime_token(runtime: str, x_runtime_token: str) -> None:
     if runtime not in DISCUSSION_PARTICIPANTS:
+        # Don't audit — this is malformed input, not auth misalignment.
         raise HTTPException(
             status_code=400,
             detail=f"runtime must be one of {DISCUSSION_PARTICIPANTS}",
         )
     expected = _expected_token(runtime)
+    # Audit non-success outcomes so silent rejections (e.g. REDEYE's
+    # ~21k bounced intents from a token mismatch) become visible on
+    # `/api/admin/runtime-tokens/health`.
+    from shared.runtime_token_audit import record_rejection  # noqa: WPS433
     if not expected:
-        raise HTTPException(status_code=503, detail=f"ingest token for {runtime} is not configured")
-    if not x_runtime_token or x_runtime_token != expected:
+        record_rejection(runtime, "token_not_configured")
+        raise HTTPException(
+            status_code=503,
+            detail=f"ingest token for {runtime} is not configured",
+        )
+    if not x_runtime_token:
+        record_rejection(runtime, "missing_header")
+        raise HTTPException(status_code=401, detail="invalid runtime ingest token")
+    if x_runtime_token != expected:
+        record_rejection(runtime, "token_mismatch")
         raise HTTPException(status_code=401, detail="invalid runtime ingest token")
 
 
