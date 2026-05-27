@@ -371,6 +371,65 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
 
 # ───────────────────────────── dry-run ─────────────────────────────
 
+async def run_dry_run_for_intent(
+    intent_id: str,
+    order_notional_usd: float = 10.0,
+    *,
+    actor: str = "auto_dry_run",
+) -> dict:
+    """Internal dry-run runner — same gate evaluation as the HTTP
+    endpoint, callable from background tasks. Returns the result dict.
+
+    Doctrine pin (2026-05-27, auto-dry-run-on-ingest):
+        Intents must NEVER sit at `gate_state=pending` indefinitely.
+        Before this hook existed, brains emitted intents and nothing
+        automatic evaluated them — operators had to manually call
+        `/execution/dry_run` for every single one. Result: 100+
+        pending intents per brain on prod, 6000+ on preview. This
+        runner is fire-and-forget from `shared/intents.py:_ingest`
+        so every new intent has a verdict within milliseconds.
+
+    Best-effort: persistence failures are swallowed so the brain's
+    POST never blocks on bookkeeping. The intent stays at `pending`
+    if anything fails, and a manual re-run will recover.
+    """
+    intent = await db[SHARED_INTENTS].find_one({"intent_id": intent_id}, {"_id": 0})
+    if not intent:
+        raise HTTPException(status_code=404, detail=f"intent {intent_id} not found")
+
+    result = await _evaluate_gates(intent, order_notional_usd)
+    new_state = "dry_run_passed" if result["verdict"] == "would_pass" else "dry_run_blocked"
+    await db[SHARED_INTENTS].update_one(
+        {"intent_id": intent_id},
+        {"$set": {
+            "gate_state": new_state,
+            "last_dry_run_ts": _now_iso(),
+            "last_dry_run_by": actor,
+            "last_dry_run_notional_usd": order_notional_usd,
+        }},
+    )
+    await db[SHARED_GATE_RESULTS].insert_one({
+        "intent_id": intent_id,
+        "kind": "dry_run",
+        "ts": _now_iso(),
+        "by": actor,
+        "order_notional_usd": order_notional_usd,
+        "verdict": result["verdict"],
+        "gates": result["gates"],
+    })
+
+    # PARADOX audit — append-only emergent-auditor artifact. Best-effort.
+    await write_paradox_record(
+        intent=intent,
+        gates=result["gates"],
+        risk_multiplier=result.get("risk_multiplier"),
+        evaluation_kind="dry_run",
+        evaluated_by=actor,
+    )
+
+    return result
+
+
 @router.post("/execution/dry_run")
 async def execution_dry_run(
     intent_id: str = Query(..., description="intent_id to evaluate"),
@@ -383,47 +442,76 @@ async def execution_dry_run(
     user: dict = Depends(get_current_user),  # noqa: B008
 ):
     """Evaluate the full gate chain WITHOUT placing an order."""
-    intent = await db[SHARED_INTENTS].find_one({"intent_id": intent_id}, {"_id": 0})
-    if not intent:
-        raise HTTPException(status_code=404, detail=f"intent {intent_id} not found")
-
-    result = await _evaluate_gates(intent, order_notional_usd)
-    new_state = "dry_run_passed" if result["verdict"] == "would_pass" else "dry_run_blocked"
-    await db[SHARED_INTENTS].update_one(
-        {"intent_id": intent_id},
-        {"$set": {
-            "gate_state": new_state,
-            "last_dry_run_ts": _now_iso(),
-            "last_dry_run_by": user.get("email"),
-            "last_dry_run_notional_usd": order_notional_usd,
-        }},
+    result = await run_dry_run_for_intent(
+        intent_id, order_notional_usd, actor=user.get("email") or "operator",
     )
-    await db[SHARED_GATE_RESULTS].insert_one({
-        "intent_id": intent_id,
-        "kind": "dry_run",
-        "ts": _now_iso(),
-        "by": user.get("email"),
-        "order_notional_usd": order_notional_usd,
-        "verdict": result["verdict"],
-        "gates": result["gates"],
-    })
-
-    # PARADOX audit — append-only emergent-auditor artifact. Best-effort:
-    # never crashes the live path on a failure.
-    await write_paradox_record(
-        intent=intent,
-        gates=result["gates"],
-        risk_multiplier=result.get("risk_multiplier"),
-        evaluation_kind="dry_run",
-        evaluated_by=user.get("email"),
-    )
-
     return {
         "intent_id": intent_id,
         "evaluated_by": user.get("email"),
         "ts": _now_iso(),
         **result,
     }
+
+
+# ───────────────────── auto-dry-run drain (one-time backfill) ─────────────────────
+
+@router.post("/admin/intents/auto-dry-run-drain")
+async def auto_dry_run_drain(
+    limit: int = Query(500, ge=1, le=5000, description="max pending intents to process"),
+    stack: Optional[str] = Query(None, description="filter to one brain (alpha|camaro|chevelle|redeye)"),
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """One-shot drain of `gate_state=pending` intents through dry-run.
+
+    Doctrine: this is the catch-up sweep for backlog accumulated before
+    the auto-dry-run-on-ingest hook was wired. Idempotent: re-running
+    after the first pass leaves zero `pending` rows so it's a no-op.
+
+    Each intent gets the same `_evaluate_gates` call as a manual
+    dry-run, transitioning to `dry_run_passed` or `dry_run_blocked`
+    with full `shared_gate_results` provenance. Per-intent failures
+    are swallowed so a single bad row doesn't halt the drain.
+    """
+    q: dict = {"gate_state": "pending"}
+    if stack:
+        q["stack"] = stack
+    pending = await db[SHARED_INTENTS].find(
+        q, {"_id": 0, "intent_id": 1, "stack": 1, "symbol": 1},
+    ).sort("ingest_ts", 1).to_list(limit)
+
+    actor = f"auto_drain:{user.get('email','operator')}"
+    processed = 0
+    passed = 0
+    blocked = 0
+    failures: list[dict] = []
+
+    for p in pending:
+        iid = p["intent_id"]
+        try:
+            result = await run_dry_run_for_intent(iid, 10.0, actor=actor)
+            processed += 1
+            if result["verdict"] == "would_pass":
+                passed += 1
+            else:
+                blocked += 1
+        except Exception as e:  # noqa: BLE001
+            failures.append({"intent_id": iid, "error": repr(e)[:200]})
+
+    return {
+        "requested_limit": limit,
+        "stack_filter": stack,
+        "pending_found": len(pending),
+        "processed": processed,
+        "would_pass": passed,
+        "would_block": blocked,
+        "failures": failures[:20],
+        "failure_count": len(failures),
+        "doctrine_note": (
+            "Drain runs the same gate chain as a manual dry-run. "
+            "Re-run safely; once the backlog is cleared this is a no-op."
+        ),
+    }
+
 
 
 # ───────────────────────────── submit ─────────────────────────────

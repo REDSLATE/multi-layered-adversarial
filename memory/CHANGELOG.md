@@ -1,3 +1,66 @@
+## 2026-05-27 (pass #11) — Auto-Dry-Run-on-Ingest + Backlog Drain (RedEye/Camaro "Not Moving" fix)
+
+Operator diagnosed: RedEye showed "21k intents not moving" on PROD; preview confirmed Camaro had 100 PENDING intents accumulated, oldest 14 days old, never auto-evaluated. Root cause identified: **MC had no automatic dry-run worker**. Intents sat at `gate_state=pending` until an operator manually called `/execution/dry_run` for each one. This pass closes that gap.
+
+### Diagnosis (full forensic on PROD + preview)
+
+Three independent root causes uncovered:
+
+1. **No auto-dry-run worker** (this fix) — Camaro's 100 PROD pending intents + preview's 6473 had no automatic evaluator. The "24 recognized vs 21k" pattern is exactly this: 24 got manually dry-run'd; 21k sat at pending.
+2. **Vacant crypto seats on PREVIEW** (operator handles, not code) — preview had crypto/crypto_strategist/crypto_governor/crypto_auditor all `None`, so all RedEye crypto intents hard-blocked at `executor_seat_check`. PROD has crypto seats correctly assigned (Alpha exec, RedEye auditor) per operator screenshot.
+3. **Sovereign contribution silent for 3/4 brains** (brain-side, not MC) — `contribution-health` confirms only Camaro hits `/sovereign/contribution`; Alpha/Chevelle/RedEye have `total_attempts: 0`. Source-cited last pass that this is what drives `HEARTBEAT ONLY` badges.
+
+### #1 — Auto-Dry-Run-on-Ingest hook
+
+`shared/intents.py:_fire_and_forget_dry_run`:
+- Fires `_evaluate_gates` immediately after every `shared_intents.insert_one`.
+- Wired into BOTH runtime-token ingest (line ~890) AND admin-proxy ingest (line ~1227).
+- Fire-and-forget via `asyncio.create_task` so the brain's POST returns instantly (gate verdict lands ~50ms later).
+- Failures swallowed — best-effort. If anything fails, the intent reverts to old behavior (stays at `pending`, operator can manually re-run).
+- **Env-gated**: `AUTO_DRY_RUN_ON_INGEST` (default `true`). Operator flips to `false` on PROD for load relief while tuning; no code change needed.
+
+### #2 — Reusable internal runner
+
+`shared/execution.py:run_dry_run_for_intent(intent_id, order_notional_usd=10.0, actor=...)`:
+- Extracted from `execution_dry_run` HTTP handler so both the auto hook and the new drain endpoint can share the exact same gate evaluation.
+- HTTP handler is now a thin wrapper around this — zero behavior change for existing manual dry-run flows.
+
+### #3 — One-Shot Drain endpoint
+
+`POST /api/admin/intents/auto-dry-run-drain?limit=N&stack=...`:
+- Catches up the backlog accumulated BEFORE this hook existed.
+- Iterates all `gate_state=pending` intents, runs `run_dry_run_for_intent` on each.
+- Idempotent: re-running after the first pass leaves zero pending rows.
+- Per-intent failures logged but never halt the drain.
+- Returns `{requested_limit, pending_found, processed, would_pass, would_block, failures, failure_count, doctrine_note}`.
+- **Verified on preview**: drained 100 pending intents in one call → 100 would_block, 0 would_pass, 0 failures. Zero pending after.
+
+### Tripwires (17 new in `tests/test_auto_dry_run_on_ingest.py`)
+- Env gate: default ON; off via 5 falsy values; on via 5 truthy values
+- `run_dry_run_for_intent` is importable + has the expected signature
+- Drain endpoint requires auth + returns canonical schema
+- Drain endpoint accepts `stack` filter
+- **End-to-end regression guard**: post intent → wait → confirm `gate_state != pending`
+- Disabled mode still works (env-gated escape hatch)
+- Doctrine note pinned on drain response
+
+### Test summary
+- Tripwires: 468 pass (up from 451, +17). Same 2 pre-existing unrelated failures.
+- Lint: clean across all modified files.
+- End-to-end curl on preview: confirmed 100→0 drain.
+
+### Operator next steps on PROD
+1. Deploy this pass.
+2. (Optional) Set `AUTO_DRY_RUN_ON_INGEST=true` explicitly in env. Default is already `true`.
+3. Call `POST /api/admin/intents/auto-dry-run-drain?limit=500` to drain the existing PROD backlog. Repeat with higher limits if `pending_found` returns 500 (means more remain).
+4. Future intent emissions auto-flip to `dry_run_passed` / `dry_run_blocked` within ~50ms. The PENDING column on the dashboard will drop to near-zero and stay there.
+
+### Doctrine pin
+Auto-dry-run does NOT grant execution authority. It ONLY transitions intents from `pending` → `dry_run_passed` / `dry_run_blocked`. Real execution still requires the operator to call `/execution/submit` with explicit `confirm=execute`. No behavior change to live trading; only visibility into the gate verdict was added.
+
+---
+
+
 ## 2026-05-27 (pass #10) — Base-Formation Pattern Detector (Reddit setup)
 
 Operator showed a Reddit chart: 3-signal small-cap pattern (long-term MA200 base → consolidation/volume accumulation → explosive breakout). Approved doctrinally-clean implementation: MC stamps evidence, brains judge evidence, seat holder acts. No gate, no authority, no hard blocks.

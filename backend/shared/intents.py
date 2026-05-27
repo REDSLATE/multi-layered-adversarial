@@ -59,6 +59,56 @@ logger = logging.getLogger(__name__)
 ACTIONS = ("BUY", "SELL", "SHORT", "COVER", "HOLD")
 
 
+# ─── Auto-dry-run-on-ingest hook (2026-05-27) ───────────────────────
+# Doctrine: intents must never sit at `gate_state=pending` indefinitely.
+# Before this hook, brain emissions piled up at `pending` because the
+# gate chain was only evaluated when an operator manually called
+# `/execution/dry_run`. Prod accumulated 100+ Camaro pending intents;
+# preview accumulated 6,000+. This hook fires `_evaluate_gates`
+# immediately after a successful insert so every new intent transitions
+# to `dry_run_passed` / `dry_run_blocked` within milliseconds.
+#
+# Env-gated. Default ON. Operator can flip OFF on prod via
+# `AUTO_DRY_RUN_ON_INGEST=false` while load-tuning. Off does NOT break
+# anything — intents revert to the old behavior (sit at `pending`
+# until manual dry-run).
+import os as _os  # noqa: WPS433
+import asyncio as _asyncio  # noqa: WPS433
+
+
+def _auto_dry_run_enabled() -> bool:
+    val = _os.environ.get("AUTO_DRY_RUN_ON_INGEST", "true").strip().lower()
+    return val in {"true", "1", "yes", "on"}
+
+
+async def _fire_and_forget_dry_run(intent_id: str, actor: str) -> None:
+    """Best-effort dry-run launcher. Always swallows exceptions so the
+    brain's POST never blocks on bookkeeping. We schedule the actual
+    gate evaluation as a background task; the response to the brain
+    returns immediately with `gate_state=pending` (the dry-run flip
+    happens asynchronously, typically within ~50ms)."""
+    if not _auto_dry_run_enabled():
+        return
+    try:
+        from shared.execution import run_dry_run_for_intent  # noqa: WPS433
+        # Schedule on the running event loop; do NOT await — we want
+        # the ingest response to be unblocked.
+        _asyncio.create_task(_run_safely(run_dry_run_for_intent(intent_id, 10.0, actor=actor)))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("auto_dry_run schedule failed for %s: %s", intent_id, e)
+
+
+async def _run_safely(coro) -> None:
+    """Swallow exceptions in the background dry-run task. The intent
+    just stays at `pending` if anything goes wrong — operator can
+    manually re-run via the existing endpoint."""
+    try:
+        await coro
+    except Exception as e:  # noqa: BLE001
+        logger.warning("auto_dry_run background task failed: %s", e)
+
+
+
 # ─────────────────────────────── schema ───────────────────────────────
 
 class IntentIn(BaseModel):
@@ -919,6 +969,11 @@ async def post_intent(
         ref_id=intent_id,
     )
 
+    # Auto-dry-run hook (2026-05-27). Fire-and-forget so the brain's
+    # POST returns immediately; the gate verdict lands ~50ms later.
+    # Env-gated via AUTO_DRY_RUN_ON_INGEST (default ON).
+    await _fire_and_forget_dry_run(intent_id, actor="auto_dry_run:runtime_token")
+
     return {
         "ok": True,
         "intent_id": intent_id,
@@ -1242,6 +1297,10 @@ async def admin_post_intent(
         ref_id=intent_id,
         extra={"ingest_method": "admin_proxy", "by": user.get("email")},
     )
+
+    # Auto-dry-run hook (2026-05-27). Fire-and-forget so the admin
+    # response returns immediately; verdict lands shortly after.
+    await _fire_and_forget_dry_run(intent_id, actor=f"auto_dry_run:admin_proxy:{user.get('email','operator')}")
 
     return {
         "ok": True,
