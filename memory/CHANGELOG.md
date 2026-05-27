@@ -1,3 +1,81 @@
+## 2026-05-27 (pass #12) — SOV-AUDIT clarification + Pattern Watch tile + Sidecar Diagnostics aggregator
+
+### Correction from pass #11 — the "21k mystery" is not a backlog
+
+PROD screenshots revealed the actual schema: the prominent `21503` next to RedEye on the Diagnostics page is the **DECISION LOG** column, which counts rows in `sovereign_audit_log`, NOT pending intents in `shared_intents`. Source-cited from `shared/sovereign_mode_guard.py:385`: every accepted sovereign contribution writes one row to `sovereign_audit_log` per sidecar tick (~1/min). **21,503 rows ÷ 60s ≈ 358h ≈ 15 days of healthy operation.** These are heartbeat-style audit checkpoints, not stuck intents.
+
+The auto-dry-run fix from pass #11 is still useful — it correctly addresses the `shared_intents.gate_state=pending` pile-up problem that DOES exist (verified on preview: 100 pending Camaro intents, drained successfully). The mistake was attributing the "21k" number to the same problem.
+
+The actually-concerning signals from the PROD screenshots:
+1. **CAMARO is DEAD** with 31,425s (8h+) stale heartbeat. Pod likely hung or OOM-killed.
+2. **RedEye `LAST RECEIPT: —`** — zero gate-chain intent emissions despite 21k audit checkpoints. Either RedEye is intentionally audit-only (crypto_auditor role) or its signal-emit path is broken.
+
+### #1 — Pattern Watch endpoint + Overview tile
+
+`GET /api/admin/patterns/scan?limit=N&min_score=X&tf=X&breakout_only=bool&small_cap_only=bool` in `shared/technicals.py`:
+- Ranks rows from `shared_pattern_snapshots` (populated by pass #10 detector) by `setup_score` descending.
+- Returns `{filters, count, tier_counts, items, doctrine}`.
+- `tier_counts` summary: `breakout_active`, `consolidation_only`, `uptrend_only`.
+- Per-item operator-facing summary: symbol, tf, setup_score, ma200/consolidation/breakout booleans, breakout_pct + volume_surge_multiple, small_cap_qualified.
+
+New `PatternWatchTile` on Overview:
+- Heat-banded (green ≥1 breakout, amber ≥1 setup, gray otherwise).
+- Top 8 symbols listed with per-row badges (BREAKOUT / CONSOLIDATING / SMALL CAP).
+- Doctrine reminder rendered top-right: *"Descriptive evidence · brains decide"*.
+- Fail-soft: if endpoint errors, tile silently omits (Overview page never blanks).
+
+### #2 — Sidecar Diagnostics aggregator
+
+New module `routes/sidecar_diagnostics.py`:
+- `GET /api/admin/sidecar-diagnostics` — one curl returns every signal needed to triage "is each brain alive, contributing, emitting, discussing?"
+- Pulls in parallel from `shared_heartbeats`, `sovereign_state`, `sovereign_audit_log`, `shared_intents`, `shared_brain_opinions`.
+- Per-brain row: `{brain, verdict, operator_hint, heartbeat:{...}, sovereign_contribution:{live_count, audit_log_total, ...}, intents:{total, latest_*, ...}, opinions:{total, ...}}`.
+- **`audit_log_total` is explicitly labeled** so no future reader confuses it with a backlog. This is the lesson from the 21k misread, pinned in schema.
+- Verdict uses the SAME classifier as LivePulse (`connected` / `partial` / `stale` / `dead` / `never`) so panels never disagree.
+- Per-brain `operator_hint` — one-line, actionable next step (e.g., *"Check sidecar pod logs — likely hung, OOM-killed, or rate-limited"* for dead brains).
+- Fleet-wide rollup: `{total_brains, connected, partial, stale, dead, never, brains_with_no_intents_ever, brains_with_no_opinions_ever}`.
+
+New `SidecarDiagnosticsTile` on Overview:
+- Heat-banded by worst verdict in fleet.
+- Header shows `X/Y connected · ATTENTION` band.
+- Per-brain cards (4 in a 2-col grid): runtime label, verdict badge, operator hint, counter grid (intents / opinions / audit log / heartbeat age).
+- Live verification on preview: Alpha=PARTIAL (heartbeat fresh but sovereign stale), Camaro=CONNECTED, Chevelle=PARTIAL with 0 intents ever, RedEye=STALE.
+
+### Tripwires (12 new in `tests/test_pattern_watch_and_sidecar_diagnostics.py`)
+
+Pattern Watch (6):
+- Auth required
+- Canonical response shape (top-level keys + `tier_counts` keys)
+- Per-item schema keys pinned (so dashboard tile never silently breaks)
+- `min_score` filter actually applies
+- `breakout_only` filter actually filters
+- Doctrine note mentions "evidence" + "never" + ("authority" OR "trigger")
+
+Sidecar Diagnostics (6):
+- Auth required
+- Canonical top-level shape
+- Fleet rollup keys pinned (8 expected counters)
+- Per-brain shape pinned across all 5 sub-channels
+- Verdict vocabulary locked to the LivePulse classifier set
+- Doctrine note explains audit log is heartbeat, not backlog (so the 21k lesson is encoded forever)
+
+### Test summary
+- Tripwires: 480 pass (up from 468, +12). Same 2 pre-existing unrelated failures.
+- Lint: clean across all modified files.
+- Frontend: smoke-tested via screenshot — both new tiles render on Overview page.
+- Endpoints verified end-to-end on preview.
+
+### Operator next steps (PROD)
+1. Hit `GET /api/admin/sidecar-diagnostics` on PROD. The output will show:
+   - Whether CAMARO's 8h-stale heartbeat is recovered or still hung
+   - Whether RedEye's intent emission path is actually broken or it's just an audit-only role
+   - Which brains never emit intents (the `brains_with_no_intents_ever` counter)
+2. The PROD `21k` number in DECISION LOG is healthy — leave it alone. If it grows past 60d worth of rows, the storage_rollup runner (pass #8) compacts it.
+3. The Pattern Watch tile will populate as brains pull the technical feed. Currently sparse on preview (1 NVDA snapshot from earlier curl); will fill as brain-side consumers go online.
+
+---
+
+
 ## 2026-05-27 (pass #11) — Auto-Dry-Run-on-Ingest + Backlog Drain (RedEye/Camaro "Not Moving" fix)
 
 Operator diagnosed: RedEye showed "21k intents not moving" on PROD; preview confirmed Camaro had 100 PENDING intents accumulated, oldest 14 days old, never auto-evaluated. Root cause identified: **MC had no automatic dry-run worker**. Intents sat at `gate_state=pending` until an operator manually called `/execution/dry_run` for each one. This pass closes that gap.

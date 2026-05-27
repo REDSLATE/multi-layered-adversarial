@@ -275,6 +275,115 @@ async def list_symbols(
     return {"items": docs, "count": len(docs)}
 
 
+@router.get("/admin/patterns/scan")
+async def patterns_scan(
+    limit: int = Query(20, ge=1, le=100, description="max symbols to return"),
+    min_score: float = Query(
+        0.5, ge=0.0, le=1.0,
+        description="only return symbols with setup_score ≥ this value",
+    ),
+    tf: Optional[str] = Query(
+        None, description="filter to a specific timeframe (1h | 1d | etc.)",
+    ),
+    breakout_only: bool = Query(
+        False,
+        description=(
+            "if true, only return symbols whose explosive_breakout signal "
+            "is currently active"
+        ),
+    ),
+    small_cap_only: bool = Query(
+        False, description="if true, only return symbols stamped small_cap_qualified=True",
+    ),
+    _user: dict = Depends(get_current_user),
+):
+    """Pattern Watch — rank all stored pattern snapshots by setup_score.
+
+    Doctrine pin (2026-05-27, pass #10):
+        DESCRIPTIVE EVIDENCE ONLY. This endpoint never triggers trades.
+        It surfaces where the textbook base-formation → consolidation →
+        explosive-breakout pattern is currently scoring high so the
+        operator can eyeball the universe at a glance. Brains read the
+        same evidence via the technical feed; this endpoint is purely
+        an operator dashboard utility.
+
+    Returns rows from `shared_pattern_snapshots` (populated whenever a
+    brain or operator pulls a technical feed) ranked by `setup_score`
+    descending. Stale snapshots are still included — if a brain hasn't
+    pulled NVDA in 3 days, its 3-day-old snapshot still shows up. That's
+    intentional: the operator sees "we evaluated this; here's what we
+    saw last time" rather than a blank.
+    """
+    q: dict = {"setup_score": {"$gte": min_score}}
+    if tf:
+        q["tf"] = tf
+    if breakout_only:
+        q["breakout.active"] = True
+    if small_cap_only:
+        q["small_cap_qualified"] = True
+
+    rows = await db[SHARED_PATTERN_SNAPSHOTS].find(
+        q, {"_id": 0},
+    ).sort("setup_score", -1).to_list(limit)
+
+    # Trim verbose internals — operator-facing summary keeps the tile
+    # compact. Full snapshot is still queryable via the technical feed.
+    items: list[dict] = []
+    for r in rows:
+        items.append({
+            "symbol": r.get("symbol"),
+            "tf": r.get("tf"),
+            "source": r.get("source"),
+            "setup_score": r.get("setup_score"),
+            "ma200_uptrend": bool(r.get("ma200_uptrend", {}).get("active")),
+            "consolidation": bool(r.get("consolidation", {}).get("active")),
+            "consolidation_duration_bars": (
+                r.get("consolidation", {}).get("duration_bars")
+            ),
+            "breakout": bool(r.get("breakout", {}).get("active")),
+            "breakout_pct": r.get("breakout", {}).get("breakout_pct"),
+            "volume_surge_multiple": (
+                r.get("breakout", {}).get("volume_surge_multiple")
+            ),
+            "bars_since_breakout": (
+                r.get("breakout", {}).get("bars_since_breakout")
+            ),
+            "small_cap_qualified": r.get("small_cap_qualified"),
+            "last_close": r.get("last_close"),
+            "last_bar_ts": r.get("last_bar_ts"),
+            "computed_at": r.get("computed_at"),
+        })
+
+    # Tier summary so the Overview tile can render a heat strip without
+    # iterating the full list client-side.
+    tier_counts = {
+        "breakout_active": sum(1 for i in items if i["breakout"]),
+        "consolidation_only": sum(
+            1 for i in items
+            if i["consolidation"] and not i["breakout"]
+        ),
+        "uptrend_only": sum(
+            1 for i in items
+            if i["ma200_uptrend"] and not i["consolidation"] and not i["breakout"]
+        ),
+    }
+
+    return {
+        "filters": {
+            "limit": limit, "min_score": min_score, "tf": tf,
+            "breakout_only": breakout_only, "small_cap_only": small_cap_only,
+        },
+        "count": len(items),
+        "tier_counts": tier_counts,
+        "items": items,
+        "doctrine": (
+            "Descriptive evidence only. Pattern signals never trigger "
+            "trades and never modify authority. Brains read the same "
+            "snapshots via the technical feed."
+        ),
+    }
+
+
 @router.get("/shared/technical/feeders")
 async def list_feeders(
     _user: dict = Depends(get_current_user),

@@ -15,23 +15,31 @@ export default function Overview() {
   const [flags, setFlags] = useState(null);
   const [diag, setDiag] = useState(null);
   const [staleConflicts, setStaleConflicts] = useState(null);
+  const [patternScan, setPatternScan] = useState(null);
+  const [sidecarDiag, setSidecarDiag] = useState(null);
   const [err, setErr] = useState("");
 
   useEffect(() => {
     (async () => {
       try {
-        const [o, f, d, sc] = await Promise.all([
+        const [o, f, d, sc, ps, sd] = await Promise.all([
           api.get("/shared/overview"),
           api.get("/admin/flags"),
           api.get("/admin/diagnostics"),
-          // Stale-conflicts tile — fail-soft so this never blanks the page.
+          // Fail-soft on each diagnostic — none of them must blank the page.
           api.get("/admin/conflicts/stale?older_than_hours=24")
+            .catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
+          api.get("/admin/patterns/scan?limit=10&min_score=0.5")
+            .catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
+          api.get("/admin/sidecar-diagnostics")
             .catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
         ]);
         setOverview(o.data);
         setFlags(f.data);
         setDiag(d.data);
         setStaleConflicts(sc.data);
+        setPatternScan(ps.data);
+        setSidecarDiag(sd.data);
       } catch (e) {
         setErr(e?.response?.data?.detail || e.message);
       }
@@ -184,6 +192,21 @@ export default function Overview() {
               can sweep them. Doctrine: alert only, never authority. */}
           {staleConflicts && !staleConflicts._error && (
             <StaleConflictsTile data={staleConflicts} />
+          )}
+
+          {/* Sidecar Diagnostics — fleet health at a glance.
+              Doctrine: read-only. Surfaces the "21k mystery" answer
+              (audit log totals are healthy heartbeats, not backlogs)
+              and per-brain operator hints. */}
+          {sidecarDiag && !sidecarDiag._error && (
+            <SidecarDiagnosticsTile data={sidecarDiag} />
+          )}
+
+          {/* Pattern Watch — top symbols showing the textbook
+              base-formation → consolidation → breakout pattern.
+              Doctrine: DESCRIPTIVE EVIDENCE ONLY. Never authority. */}
+          {patternScan && !patternScan._error && (
+            <PatternWatchTile data={patternScan} />
           )}
 
           {/* Shared Technical Feed — Mission-page panel.
@@ -345,3 +368,210 @@ function StaleConflictsTile({ data }) {
     </Card>
   );
 }
+
+function SidecarDiagnosticsTile({ data }) {
+  const fleet = data?.fleet || {};
+  const brains = data?.brains || [];
+  // Color the tile by the worst verdict in the fleet — danger if any
+  // brain is `dead`, warn if any `stale`/`partial`/`never`, else ok.
+  const danger = fleet.dead > 0;
+  const warn = !danger && (fleet.stale > 0 || fleet.partial > 0 || fleet.never > 0);
+  const color = danger ? "#EF4444" : warn ? "#FBBF24" : "#10B981";
+  const label = danger ? "ACTION REQUIRED" : warn ? "ATTENTION" : "FLEET HEALTHY";
+
+  const verdictColor = {
+    connected: "#10B981",
+    partial: "#FBBF24",
+    stale: "#FB923C",
+    dead: "#EF4444",
+    never: "#71717A",
+  };
+
+  return (
+    <Card
+      accentColor={color}
+      className="mb-6"
+      testid="sidecar-diagnostics-tile"
+    >
+      <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
+        <div>
+          <div className="label-eyebrow mb-1">Sidecar fleet</div>
+          <div className="flex items-baseline gap-3">
+            <span
+              className="font-display text-4xl font-black tracking-tighter"
+              style={{ color }}
+              data-testid="sidecar-diagnostics-connected-count"
+            >
+              {fleet.connected}/{fleet.total_brains}
+            </span>
+            <span className="text-xs font-mono text-rd-muted">connected</span>
+            <Badge color={color} testid="sidecar-diagnostics-label">
+              {label}
+            </Badge>
+          </div>
+          <div className="text-[11px] font-mono text-rd-muted mt-2 flex flex-wrap gap-3">
+            {fleet.partial > 0 && (
+              <span data-testid="sidecar-diagnostics-partial">
+                {fleet.partial} partial
+              </span>
+            )}
+            {fleet.stale > 0 && (
+              <span data-testid="sidecar-diagnostics-stale">
+                {fleet.stale} stale
+              </span>
+            )}
+            {fleet.dead > 0 && (
+              <span data-testid="sidecar-diagnostics-dead" className="text-rd-danger">
+                {fleet.dead} dead
+              </span>
+            )}
+            {fleet.brains_with_no_intents_ever > 0 && (
+              <span data-testid="sidecar-diagnostics-noemitters">
+                {fleet.brains_with_no_intents_ever} never-emitted
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {brains.map((b) => {
+          const meta = RUNTIME_META[b.brain] || { color: "#A1A1AA", label: b.brain.toUpperCase() };
+          const v = b.verdict;
+          return (
+            <div
+              key={b.brain}
+              className="border border-rd-line/40 p-3 text-[11px] font-mono space-y-1"
+              data-testid={`sidecar-row-${b.brain}`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-display text-sm tracking-tight" style={{ color: meta.color }}>
+                  {meta.label}
+                </span>
+                <Badge color={verdictColor[v] || "#71717A"} testid={`sidecar-row-verdict-${b.brain}`}>
+                  {v.toUpperCase()}
+                </Badge>
+              </div>
+              <div className="text-rd-muted">{b.operator_hint}</div>
+              <div className="grid grid-cols-2 gap-x-2 gap-y-0 mt-2">
+                <span>intents</span>
+                <span className="text-right" data-testid={`sidecar-row-intents-${b.brain}`}>
+                  {b.intents.total}
+                </span>
+                <span>opinions</span>
+                <span className="text-right" data-testid={`sidecar-row-opinions-${b.brain}`}>
+                  {b.opinions.total}
+                </span>
+                <span>audit log</span>
+                <span className="text-right" data-testid={`sidecar-row-audit-${b.brain}`}>
+                  {b.sovereign_contribution.audit_log_total}
+                </span>
+                <span>heartbeat age</span>
+                <span className="text-right">
+                  {b.heartbeat.age_seconds != null
+                    ? `${Math.round(b.heartbeat.age_seconds)}s`
+                    : "—"}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+
+function PatternWatchTile({ data }) {
+  const items = data?.items || [];
+  const tiers = data?.tier_counts || {};
+  const hasBreakouts = tiers.breakout_active > 0;
+  const color = hasBreakouts ? "#10B981" : items.length > 0 ? "#FBBF24" : "#71717A";
+
+  return (
+    <Card
+      accentColor={color}
+      className="mb-6"
+      testid="pattern-watch-tile"
+    >
+      <div className="flex items-start justify-between gap-4 flex-wrap mb-3">
+        <div>
+          <div className="label-eyebrow mb-1">Pattern watch</div>
+          <div className="flex items-baseline gap-3">
+            <span
+              className="font-display text-4xl font-black tracking-tighter"
+              style={{ color }}
+              data-testid="pattern-watch-count"
+            >
+              {items.length}
+            </span>
+            <span className="text-xs font-mono text-rd-muted">
+              setups · score ≥ 0.5
+            </span>
+          </div>
+          <div className="text-[11px] font-mono text-rd-muted mt-2 flex flex-wrap gap-3">
+            {tiers.breakout_active > 0 && (
+              <span data-testid="pattern-watch-breakouts" style={{ color: "#10B981" }}>
+                {tiers.breakout_active} breakouts active
+              </span>
+            )}
+            {tiers.consolidation_only > 0 && (
+              <span data-testid="pattern-watch-consolidating">
+                {tiers.consolidation_only} consolidating
+              </span>
+            )}
+            {tiers.uptrend_only > 0 && (
+              <span data-testid="pattern-watch-uptrend">
+                {tiers.uptrend_only} uptrend only
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="text-[10px] font-mono text-rd-muted uppercase tracking-widest max-w-[260px] text-right">
+          Descriptive evidence · brains decide
+        </div>
+      </div>
+
+      {items.length === 0 ? (
+        <div className="text-[11px] font-mono text-rd-muted">
+          No qualifying setups right now. As brains and operators pull the technical feed, pattern snapshots populate and rank here.
+        </div>
+      ) : (
+        <div className="space-y-1" data-testid="pattern-watch-list">
+          {items.slice(0, 8).map((it) => (
+            <div
+              key={`${it.source}:${it.symbol}:${it.tf}`}
+              className="flex items-center justify-between border border-rd-line/30 px-2 py-1 text-[11px] font-mono"
+              data-testid={`pattern-watch-row-${it.symbol}`}
+            >
+              <div className="flex items-center gap-2">
+                <span className="font-display text-sm tracking-tight">{it.symbol}</span>
+                <span className="text-rd-muted">{it.tf}</span>
+                {it.small_cap_qualified === true && (
+                  <Badge color="#A78BFA">SMALL CAP</Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                {it.breakout && (
+                  <Badge color="#10B981" testid={`pattern-watch-breakout-${it.symbol}`}>
+                    BREAKOUT
+                    {it.volume_surge_multiple
+                      ? ` · ${it.volume_surge_multiple.toFixed(1)}× vol`
+                      : ""}
+                  </Badge>
+                )}
+                {!it.breakout && it.consolidation && (
+                  <Badge color="#FBBF24">CONSOLIDATING · {it.consolidation_duration_bars}b</Badge>
+                )}
+                <span className="text-rd-text font-bold">
+                  {(it.setup_score * 100).toFixed(0)}%
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
