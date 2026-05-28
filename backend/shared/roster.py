@@ -61,24 +61,23 @@ from namespaces import BRAIN_ELIGIBILITY, BRAIN_ROSTER, DISCUSSION_PARTICIPANTS,
 
 
 ROLES: tuple[str, ...] = (
-    # ─── Equity lane — 5-seat doctrine (2026-05-24) ───────────────────
-    # `decider` was renamed to `strategist`. `advisor` is retained as a
-    # vacant-by-default slot for forensic compatibility with pre-rename
-    # roster docs and audit history but is NOT part of the operator's
-    # canonical 5-seat doctrine and has no default assignment.
-    "strategist", "executor", "governor", "advisor", "opponent", "auditor",
+    # ─── Equity lane — 4-seat doctrine (2026-05-27) ───────────────────
+    # `decider` was renamed to `strategist`. `opponent` was merged INTO
+    # `auditor` (2026-05-27 operator decision): the auditor now holds
+    # BOTH the pre-trade contrary-case argument AND the post-trade
+    # outcome review. Doctrinal rationale: both roles are skeptical /
+    # critical and operate off the execution path, just at different
+    # time windows. Combining them gives the brain that wrote the
+    # pre-mortem the natural seat for writing the post-mortem.
+    # `advisor` is retained as a vacant-by-default slot for forensic
+    # compatibility with pre-rename roster docs and audit history but
+    # is NOT part of the operator's canonical 4-seat doctrine.
+    "strategist", "executor", "governor", "advisor", "auditor",
     "crypto",
     # ─── Crypto lane (isolated execution authority, 2026-02-15) ───────
-    # The crypto lane runs its own council. `crypto` is the crypto
-    # EXECUTOR seat (legacy name retained); the rest mirror the equity
-    # council. Lane isolation: equity reads default seats, crypto reads
-    # crypto_* seats; if a crypto_* seat is vacant it falls back to the
-    # default. See `_seat_holder(role, lane=...)`.
-    #
-    # 2026-05-24: Renamed `crypto_decider` → `crypto_strategist` to
-    # mirror the equity rename. Legacy `crypto_decider` reads continue
-    # to resolve via the seat alias table.
-    "crypto_advisor", "crypto_governor", "crypto_opponent",
+    # Mirrors the equity 4-seat doctrine. `crypto_opponent` merged into
+    # `crypto_auditor` per the 2026-05-27 rename.
+    "crypto_advisor", "crypto_governor",
     "crypto_strategist", "crypto_auditor",
 )
 BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("alpha", "camaro", "chevelle", "redeye")
@@ -90,20 +89,20 @@ BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("alpha", "camaro", "chevel
 # starts vacated — operator chooses which brain takes the crypto-only
 # execution chair (it's a dedicated specialist seat, not a default).
 DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
-    # 2026-05-24 (operator correction): REDEYE is NOT seated by default.
-    # It lives across positions via stances, not in a seat. Opponent is
-    # operator-assigned. Auditor stays operator-assigned.
+    # 2026-05-27: Opponent merged into Auditor. The auditor seat now
+    # carries the doctrinal weight of BOTH pre-trade contrary-case
+    # argument AND post-trade outcome review. Default holder is still
+    # operator-assigned (no automatic Redeye-to-auditor — operator
+    # picks).
     "strategist": "camaro",
     "executor":   "alpha",
     "governor":   "chevelle",
     "advisor":    None,        # deprecated; vacant
-    "opponent":   None,        # operator-assigned
-    "auditor":    None,        # operator-assigned: post-trade reviewer
+    "auditor":    None,        # operator-assigned: pre-trade opponent + post-trade reviewer
     "crypto":     None,        # operator-assigned: dedicated crypto executor
     # Crypto council seats — all vacant until operator slots them.
     "crypto_advisor":    None,
     "crypto_governor":   None,
-    "crypto_opponent":   None,
     "crypto_strategist": None,
     "crypto_auditor":    None,
 }
@@ -148,6 +147,13 @@ def _now_iso() -> str:
 _LEGACY_ROLE_REWRITES: dict[str, str] = {
     "decider": "strategist",
     "crypto_decider": "crypto_strategist",
+    # 2026-05-27: Opponent seat merged into Auditor. Any roster doc,
+    # API request, or sidecar that still references `opponent` is
+    # silently rewritten to `auditor`. The pre-trade adversarial
+    # argument and the post-trade review are now the same seat's
+    # responsibility — same brain, two time windows.
+    "opponent": "auditor",
+    "crypto_opponent": "crypto_auditor",
 }
 
 

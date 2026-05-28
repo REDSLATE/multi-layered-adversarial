@@ -97,21 +97,34 @@ def test_opponent_mode_constants_locked():
     assert OPPONENT_MODE_OFFLINE == "offline"
 
 
-# ───── Seat aliases — auditor reinstated 2026-05-24 ───────────────────
+# ───── Seat aliases — opponent merged into auditor 2026-05-27 ─────────
 
 
 @pytest.mark.tripwire
-def test_advisor_aliases_to_opponent_not_auditor():
-    """The 2026-05-20 correction: advisor → opponent (not auditor)."""
-    assert SEAT_ALIASES["advisor"] == "opponent"
-    assert SEAT_ALIASES["crypto_advisor"] == "crypto_opponent"
+def test_advisor_aliases_to_auditor_post_merge():
+    """2026-05-27 update: opponent was merged into auditor. The
+    advisor alias was previously `advisor → opponent`; it's now
+    `advisor → auditor` (same end state — the absorbed seat).
+    Old roster docs storing `advisor` reads continue to resolve to a
+    valid policy row."""
+    assert SEAT_ALIASES["advisor"] == "auditor"
+    assert SEAT_ALIASES["crypto_advisor"] == "crypto_auditor"
+
+
+@pytest.mark.tripwire
+def test_opponent_aliases_to_auditor():
+    """2026-05-27: opponent → auditor (operator merge). Legacy code
+    paths that still read `opponent` resolve to the auditor seat."""
+    assert SEAT_ALIASES["opponent"] == "auditor"
+    assert SEAT_ALIASES["crypto_opponent"] == "crypto_auditor"
 
 
 @pytest.mark.tripwire
 def test_auditor_is_real_seat_no_alias():
     """2026-05-24: Auditor was reinstated as a real roster seat. It no
-    longer aliases to opponent — `auditor` and `crypto_auditor` resolve
-    to their own SEAT_POLICY rows."""
+    longer aliases to anything — `auditor` and `crypto_auditor` resolve
+    to their own SEAT_POLICY rows. 2026-05-27: auditor also absorbed
+    the opponent role; the seat itself remains canonical."""
     assert "auditor" not in SEAT_ALIASES
     assert "crypto_auditor" not in SEAT_ALIASES
 
@@ -126,14 +139,21 @@ def test_decider_alias_unchanged():
     assert SEAT_ALIASES["crypto_decider"] == "crypto"
 
 
-def test_normalize_seat_advisor_yields_opponent():
-    assert normalize_seat("advisor") == "opponent"
-    # auditor is now a canonical seat — passes through unchanged.
+def test_normalize_seat_advisor_yields_auditor():
+    """2026-05-27: advisor → auditor (was: advisor → opponent, before
+    opponent was merged into auditor)."""
+    assert normalize_seat("advisor") == "auditor"
+    # auditor is the canonical merged seat — passes through unchanged.
     assert normalize_seat("auditor") == "auditor"
     assert normalize_seat("decider") == "executor"
+    # opponent → auditor (the merge)
+    assert normalize_seat("opponent") == "auditor"
 
 
 def test_normalize_seat_canonical_passthrough():
-    for canon in ("executor", "governor", "opponent", "strategist",
+    """Canonical seat names must pass through unchanged. Note that
+    `opponent` is NO LONGER canonical (merged into auditor on
+    2026-05-27) — it's now an alias, exercised by the test above."""
+    for canon in ("executor", "governor", "strategist",
                   "auditor", "memory"):
         assert normalize_seat(canon) == canon

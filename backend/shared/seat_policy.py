@@ -65,10 +65,15 @@ SEAT_ALIASES: dict[str, str] = {
     # `strategist` directly.
     "decider":         "executor",
     "crypto_decider":  "crypto",
-    # `advisor` is no longer a doctrinal seat — legacy advisory
-    # references resolve to opponent.
-    "advisor":         "opponent",
-    "crypto_advisor":  "crypto_opponent",
+    # 2026-05-27: opponent merged into auditor. Legacy advisory refs
+    # now resolve to auditor as well (same end state: skeptical voice).
+    "advisor":         "auditor",
+    "crypto_advisor":  "crypto_auditor",
+    # 2026-05-27: opponent seat merged into auditor. Any code path
+    # still referencing `opponent`/`crypto_opponent` resolves to the
+    # auditor seat policy row.
+    "opponent":        "auditor",
+    "crypto_opponent": "crypto_auditor",
 }
 
 
@@ -148,32 +153,51 @@ SEAT_POLICY: dict[str, SeatPolicy] = {
         "lane_scope": None,
     },
     "opponent": {
-        # The adversarial seat — argues the contrary case. Distinguished
-        # from advisor only by training intent; both are non-deciding.
+        # 2026-05-27: DEPRECATED — opponent seat merged into auditor.
+        # This entry is retained for legacy code paths that still read
+        # `SEAT_POLICY["opponent"]` directly (forensic audit, intent
+        # receipts predating the merge). All NEW roster assignments
+        # for `opponent` are alias-rewritten to `auditor` via
+        # `_LEGACY_ROLE_REWRITES` in roster.py and `SEAT_ALIASES` above.
+        # The policy row mirrors `auditor` so downstream readers see
+        # the same permissions either way.
         "may_decide": False,
         "may_execute": False,
         "may_veto": False,
-        # Opponent silence = adversarial blindness, the exact failure
-        # mode the operator flagged: "if REDEYE dies, you stop hearing
-        # the contrary case and silently dial up risk." Required.
-        "seat_required": True,
-        "speaks_as": "opponent",
+        "seat_required": True,  # same as auditor — silence = adversarial blindness
+        "speaks_as": "auditor",
         "lane_scope": None,
     },
     "auditor": {
-        # 2026-05-24: REINSTATED as a real seat. Post-trade reviewer —
-        # analyzes the outcome vs the intent on every closed position.
-        # No deciding, no executing, no vetoing. Default-vacant in the
-        # roster; the operator assigns when a brain is ready to take the
-        # review chair. `seat_required=False` because the seat is
-        # optional under current doctrine (quorum doesn't degrade when
-        # vacant). Lane: equity (crypto twin is `crypto_auditor`).
+        # 2026-05-27 — Auditor ABSORBED the opponent role. The seat now
+        # carries TWO doctrinal jobs across the trade lifecycle:
+        #   (1) PRE-TRADE — argues the contrary case (formerly opponent)
+        #   (2) POST-TRADE — analyzes outcome vs intent on closed positions
+        # Both are skeptical/critical roles that sit OFF the execution
+        # path. Combining them gives the brain that wrote the
+        # pre-mortem the natural seat to write the post-mortem —
+        # closes the learning loop. No deciding, no executing, no
+        # vetoing. `seat_required=True` (inherited from opponent): an
+        # empty auditor seat means MC silently loses both the
+        # contrary-case voice AND the post-trade review. Lane: None
+        # (general — operator can assign per-lane via `crypto_auditor`).
         "may_decide": False,
         "may_execute": False,
         "may_veto": False,
-        "seat_required": False,
+        "seat_required": True,
         "speaks_as": "auditor",
-        "lane_scope": ["equity"],
+        "lane_scope": None,
+    },
+    "crypto_auditor": {
+        # 2026-05-27: crypto twin of the merged auditor seat. Same
+        # pre-trade-opponent + post-trade-review doctrine, scoped to
+        # the crypto lane.
+        "may_decide": False,
+        "may_execute": False,
+        "may_veto": False,
+        "seat_required": True,
+        "speaks_as": "auditor",
+        "lane_scope": ["crypto"],
     },
     "crypto": {
         # Dedicated crypto seat — observe, buy, sell crypto. No equity
@@ -209,11 +233,13 @@ def snapshot(seat: str | None) -> dict:
     (which roster row) enforces lane isolation at the lookup layer
     (see `shared/council._seat_holder`).
 
-    Aliases (2026-02-19): `decider`→`executor`, `advisor`→`auditor`,
-    and their `crypto_*` twins. Old sidecars sending the deprecated
-    seat names still resolve to a working policy without behavioral
-    change because the alias targets carry the responsibilities the
-    old names tried to express.
+    Aliases (2026-05-27): `opponent`→`auditor`, `crypto_opponent`→
+    `crypto_auditor` (opponent seat merged into auditor). Also
+    (2026-02-19): `decider`→`executor`, `advisor`→`auditor`, and their
+    `crypto_*` twins. Old sidecars sending the deprecated seat names
+    still resolve to a working policy without behavioral change
+    because the alias targets carry the responsibilities the old
+    names tried to express.
 
     Unknown seats fall through to the empty-permission record (NOT raise)
     because the operator may have invented a seat name in eligibility

@@ -27,18 +27,19 @@ import { CircleNotch, WarningCircle, CheckCircle, Pulse } from "@phosphor-icons/
 
 const ROLES_EQUITY = [
   { key: "strategist", label: "STRATEGIST", desc: "conviction signal" },
-  { key: "opponent",   label: "OPPONENT",   desc: "argues contrary case" },
   { key: "governor",   label: "GOVERNOR",   desc: "risk sizer" },
   { key: "executor",   label: "EXECUTOR",   desc: "fires intents" },
-  { key: "auditor",    label: "AUDITOR",    desc: "post-trade reviewer" },
+  // 2026-05-27: opponent merged INTO auditor. Auditor now carries
+  // BOTH the pre-trade contrary-case argument AND the post-trade
+  // outcome review — same brain, two time windows.
+  { key: "auditor",    label: "AUDITOR",    desc: "contrary case · post-trade review" },
 ];
 
 const ROLES_CRYPTO = [
   { key: "crypto_strategist", label: "STRATEGIST", desc: "conviction signal" },
-  { key: "crypto_opponent",   label: "OPPONENT",   desc: "argues contrary case" },
   { key: "crypto_governor",   label: "GOVERNOR",   desc: "risk sizer" },
   { key: "crypto",            label: "EXECUTOR",   desc: "fires intents" },
-  { key: "crypto_auditor",    label: "AUDITOR",    desc: "post-trade reviewer" },
+  { key: "crypto_auditor",    label: "AUDITOR",    desc: "contrary case · post-trade review" },
 ];
 
 // Freshness thresholds (mirror sidecar_diagnostics.py).
@@ -137,7 +138,7 @@ function LaneRow({ title, roles, assignments, diagByBrain }) {
       <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-rd-text">
         {title}
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
         {roles.map((r) => {
           const holder = assignments?.[r.key] || null;
           const diag = holder ? diagByBrain[holder] : null;

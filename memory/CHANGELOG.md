@@ -1,3 +1,47 @@
+## 2026-05-27 (pass #16) — Opponent merged into Auditor + SeatRosterStrip live on Intents page
+
+### Operator decision
+With 4 brains (Alpha/Camaro/Chevelle/RedEye) and 5 seats per lane (= 10 seats across both lanes), the math didn't work — three seats were always empty. The empty seats made MC silently fall back to deterministic doctrine sidecars, producing identical-per-lane "strategist conviction · adversary objections · governor risk_mult" values across every intent (which on the screenshots looked like "MC rejecting every trade").
+
+Doctrinal merge: **opponent absorbed into auditor**. The auditor seat now carries BOTH pre-trade contrary-case argument AND post-trade outcome review. Same brain, two time windows. Doctrinal rationale: both roles are skeptical/critical and sit OFF the execution path — combining them gives the brain that wrote the pre-mortem the natural seat to write the post-mortem.
+
+### Resulting 4-seat doctrine (per lane)
+| Seat | Doctrine |
+|---|---|
+| strategist | proposes thesis |
+| governor | risk sizer |
+| executor | fires intents |
+| **auditor** | **contrary case (pre) · outcome review (post)** |
+
+### Implementation pattern
+Same `_LEGACY_ROLE_REWRITES` / `SEAT_ALIASES` alias-rewrite pattern as the earlier `decider → strategist` rename. Zero touches needed across the 25+ backend files + 5 frontend files that reference `opponent` strings — they continue to resolve via the alias table.
+
+### Modified backend
+- `shared/roster.py` — `opponent → auditor` and `crypto_opponent → crypto_auditor` added to `_LEGACY_ROLE_REWRITES`; `ROLES` tuple shrinks to 4 doctrinal seats per lane; `DEFAULT_ASSIGNMENTS` drops opponent keys
+- `shared/seat_policy.py` — auditor absorbs opponent's `seat_required=True` and broadens `lane_scope` from `["equity"]` to `None`; new `crypto_auditor` entry; opponent row retained for legacy direct-readers but mirrors auditor permissions; `SEAT_ALIASES` updated
+
+### Modified frontend
+- `components/SeatRosterStrip.jsx` — shows 4 seats per lane with merged AUDITOR label (`contrary case · post-trade review`); grid columns 5 → 4; fixed timestamp rendering bug (was passing seconds-since-epoch to `relTime()` which expects ISO; replaced with local `formatAge(seconds)` helper)
+- Pinned to `pages/Intents.jsx` right under PageHeader so all seats per lane are visible alongside the intent list
+
+### Tripwires
+- New: `tests/test_opponent_auditor_merge.py` — 15 tripwires locking the alias rewrites, permissions, lane scope, and the legacy-readers-still-work invariant
+- Updated: `tests/test_paradox_namespace.py` — 2 stale tests that asserted on the old `advisor → opponent` alias now correctly point at `advisor → auditor` and `opponent → auditor`
+
+### Test summary
+- **564 tripwires pass, 0 fail** (up from 547)
+- 15 new merge tripwires
+- Backend hot-reloaded; no restart needed
+
+### Why this fixes the "deadlocked rejection" symptom
+Pre-merge: 3 empty equity seats + 5 empty crypto seats forced MC's gate chain to fall back on the deterministic doctrine sidecar for every brain voice. The sidecar packet produces identical-per-lane values from the snapshot's base labels, which the UI was displaying as if four independent brain voices had spoken. With 4 seats matching the 4 brains, all positions can be filled, the doctrine fallback is bypassed, and the gate chain sees real per-brain opinions per intent.
+
+### Operator next step
+Assign RedEye to the AUDITOR seat in both lanes via the existing `/admin/roster` panel. That brings the lane to 4/4 filled and removes the last source of doctrine fallback.
+
+---
+
+
 ## 2026-05-27 (pass #15) — Shelly Phase 2: semantic retrieval via cloned local adapter
 
 Operator-approved clone of `local_adapter.py` pattern into an embedding adapter, then wired Shelly as the first consumer. ADVISORY_ONLY throughout — no execution authority touched.
