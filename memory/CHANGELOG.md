@@ -1,3 +1,49 @@
+## 2026-05-28 (pass #20) — Opinion-silent watchdog + brain-author response docs
+
+### Shipped
+1. **`POST /api/admin/opinion-silence-watchdog/scan`** — scans every occupied seat, flags any holder whose last opinion is older than threshold (default 4h) or who has NEVER posted an opinion. Writes to `opinion_silence_alerts` collection with cooldown throttling (default 30min per brain/seat pair). Authority pin: `advisory_observability_only`.
+2. **`GET /api/admin/opinion-silence-watchdog/recent`** — operator read for the last N alerts.
+3. **`/app/memory/RESPONSE_TO_ALPHA_AUTHOR_OPINIONS.md`** — verified contract spec for Alpha's `POST /api/ingest/opinion` patch. Includes the 4 schema corrections (URL, header, collection name, stance vocab).
+4. **`/app/memory/RESPONSE_TO_BRAIN_AUTHOR_ITER106z11.md`** — already on file from pass #19; redirects Camaro's broker-key proxy to the data-key endpoint.
+
+### Live verification on preview
+Dry-run scan with threshold=4h flagged exactly the seats Alpha-author predicted:
+- `alpha @ strategist` — kind=never
+- `chevelle @ governor` — kind=never
+
+(Other seats vacant on preview; on production this would also flag any RedEye-occupied seat.)
+
+### Why this watchdog matters
+Pattern from Alpha-author's iter-106z11 follow-up: *"making it a logged event means it surfaces in alerts the moment a sidecar regression happens, instead of waiting for an operator to notice trades aren't firing."* The Seat Roster strip already shows opinion-silent visually; this endpoint makes it a **logged event** for downstream alerting (Slack/PagerDuty hookup, log analysis, audit forensics).
+
+### Doctrine pin
+The watchdog OBSERVES only. It NEVER:
+- Forces a seat reassignment
+- Vetoes an intent
+- Modifies execution authority
+
+All advisory observability. Operator-controlled.
+
+### Next Action Items (unchanged from pass #19)
+- 🔴 P0 — Operator: redeploy preview → production (pushes passes #15-20)
+- 🔴 P0 — Operator: provision data-key env values on prod MC via Emergent Support
+- 🟡 P0 — Alpha author: ship the `/api/ingest/opinion` patch per response.md
+- 🟡 P0 — Other brain teams: copy Camaro's `mc_key_proxy.py` pattern (offered) and adopt it
+- 🟡 P1 — Wire the watchdog as a periodic scan in FastAPI lifespan (currently manual via POST)
+- 🟡 P1 — `/api/admin/intents/why-stuck/{intent_id}` diagnostic endpoint
+- 🟢 P3 — Cleanup RedEye dead broker code (deferred)
+
+### What this thread proved
+Doctrine system worked under three distinct pressure tests this session:
+1. **Broker-key proxy (Camaro author)** — proposed wrong endpoint, recognized violation, self-corrected, withdrew
+2. **Sidecar opinions (Alpha author)** — diagnosed correctly but schema-wrong, accepted correction, will ship
+3. **Operator pressure ("eliminate dry-run buttons")** — boundary held; doctrine pins explicit; no slippage
+
+Three different actors, three correct outcomes, zero authority leaks.
+
+---
+
+
 ## 2026-05-28 (pass #19, addendum) — Brain author feedback on broker keys
 
 ### iter-106z11 follow-up — RedEye author stood down on broker-key rip-out
