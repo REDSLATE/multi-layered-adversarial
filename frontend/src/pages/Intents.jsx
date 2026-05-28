@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, RUNTIME_META, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
-import ExecutorSeatTile, { AuditorSeatTile } from "@/components/ExecutorSeatTile";
-import RosterSeatTile from "@/components/RosterSeatTile";
 import SeatRosterStrip from "@/components/SeatRosterStrip";
+import QuickSeatSwitches from "@/components/QuickSeatSwitches";
 import AlpacaConnect from "@/components/AlpacaConnect";
 import KrakenBrokerTile from "@/components/KrakenBrokerTile";
 import DoctrineStrip from "@/components/DoctrineStrip";
@@ -14,7 +13,7 @@ import { toast } from "sonner";
 import {
   Lightning, ArrowsClockwise, Funnel, Pulse,
   CheckCircle, XCircle, Hourglass, Eye, CaretDown, CaretUp, Rocket,
-  Crosshair, ShieldWarning, CurrencyBtc, Buildings,
+  CurrencyBtc, Buildings,
 } from "@phosphor-icons/react";
 
 const BRAIN_META = {
@@ -513,44 +512,38 @@ export default function Intents() {
         </PanelErrorBoundary>
       </div>
 
+      {/* ─── Quick Seat Switches (2026-05-27, pass #17) ───
+          One-click seat assignment for all 4 seats per lane. Optional
+          reason field. Uses /api/admin/roster/assign — same backend
+          path as the full RosterPanel, but compact and inline so the
+          operator can react to the SeatRosterStrip's freshness chips
+          without navigating away. */}
+      <div className="mb-4" data-testid="intents-quick-switches-mount">
+        <PanelErrorBoundary label="Quick Seat Switches">
+          <QuickSeatSwitches />
+        </PanelErrorBoundary>
+      </div>
+
       {/* ─── Twin authority lanes ─── Doctrine: equity and crypto are
-          symmetric. Each lane has its own Executor seat, Auditor seat,
-          and Broker tile. A brain can hold seats in both lanes (cross-
-          lane multi-seating); within a single lane it can hold one
-          seat at a time. */}
+          symmetric. Each lane has its own broker tile and exposure
+          caps. Seat assignment for all 4 seats × 2 lanes is handled
+          by the QuickSeatSwitches panel above — the legacy per-seat
+          dedicated tiles (ExecutorSeatTile, AuditorSeatTile,
+          RosterSeatTile) were removed 2026-05-27 (pass #18) per
+          operator request to eliminate redundant assignment surfaces. */}
       <SectionDivider
         title="Equity Lane"
         icon={Buildings}
-        sub="Alpaca-routed equity execution. Default seats: ALPHA executor, REDEYE opponent. Decider/Auditor by operator assignment."
+        sub="Alpaca-routed equity execution. Seat assignment lives in Quick Seat Switches above."
         testid="intents-section-equity"
       />
-      <ExecutorSeatTile />
-      <AuditorSeatTile />
       <AlpacaConnect />
 
       <SectionDivider
         title="Crypto Lane"
         icon={CurrencyBtc}
-        sub="Kraken-routed crypto execution. All crypto seats empty by default — operator must assign before any crypto trade can fire."
+        sub="Kraken-routed crypto execution. Seat assignment lives in Quick Seat Switches above. All crypto seats empty by default — operator must assign before any crypto trade can fire."
         testid="intents-section-crypto"
-      />
-      <RosterSeatTile
-        role="crypto"
-        title="Crypto Executor Seat"
-        description="Single, rotatable. Empty by default. Only this brain may route crypto orders through Kraken. Independent of the equity executor seat — a brain can hold both, one, or neither."
-        laneBadgeColor="#F97316"
-        laneBadgeText="CRYPTO LANE"
-        icon={Crosshair}
-        testid="crypto-executor-seat-tile"
-      />
-      <RosterSeatTile
-        role="crypto_auditor"
-        title="Crypto Auditor Seat"
-        description="Single, rotatable. Empty by default. Plays the contrary case on crypto theses — twin of the equity Auditor for the crypto lane."
-        laneBadgeColor="#F97316"
-        laneBadgeText="CRYPTO LANE"
-        icon={ShieldWarning}
-        testid="crypto-auditor-seat-tile"
       />
       <KrakenBrokerTile />
 
