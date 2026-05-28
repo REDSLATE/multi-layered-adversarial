@@ -1,3 +1,45 @@
+## 2026-05-27 (pass #15) — Shelly Phase 2: semantic retrieval via cloned local adapter
+
+Operator-approved clone of `local_adapter.py` pattern into an embedding adapter, then wired Shelly as the first consumer. ADVISORY_ONLY throughout — no execution authority touched.
+
+### New files
+- `shared/llm/adapters/local_embedding_adapter.py` — fastembed BGE-small-en-v1.5 (384-dim, ~80MB ONNX, offline). Cloned shape from `local_adapter.py`. Lazy-loaded model; `is_ready()` checks dep presence only.
+- `shared/llm/embed.py` — mini provider-dispatch kernel mirroring text-gen kernel: `embed_text`, `embed_texts`, `cosine_similarity`, `EMBED_DIM=384`. Future seam for `self_trained` + `openai` embedding adapters.
+- `shelly/embeddings.py` — Shelly-side helpers: `memory_event_to_text` (deterministic serialization), `compute_event_embedding`, `cosine_rank` (pure-Python, no numpy on hot path).
+- `tests/test_shelly_phase2_embeddings.py` — 16 tripwires.
+
+### Modified
+- `shelly/local_shelly.py` — `remember()` now computes + persists a 384-dim `embedding` field on each event (idempotent — same content → same vector). New `find_similar(case, top_k, min_score)` method does cosine retrieval over the brain's own memories.
+- `shelly/routes.py` — new endpoint `POST /api/admin/shelly/find-similar` (operator-facing semantic retrieval probe).
+- `requirements.txt` — added `fastembed==0.8.0` + `onnxruntime==1.26.0` (+51MB venv).
+
+### Why this clone vs a Chroma sidecar
+- Same SHADOW→PRIMARY doctrine as the text-gen kernel — future `self_trained_adapter` for embeddings is a drop-in.
+- Mongo stays the truth store (vectors stored INSIDE the memory doc). No new infrastructure.
+- fastembed (ONNX) is 10x smaller than torch+sentence-transformers; 51MB venv impact vs ~700MB.
+- Phase 3 (Cross-Shelly federation) can later plug a vector index here without changing call sites.
+
+### Doctrine pins (tripwire-locked)
+- Every embed result carries `llm_authority="ADVISORY_ONLY"` (parity with text kernel).
+- Embeddings inform retrieval; never modify execution authority, never gate intents, never modify RoadGuard.
+- `memory_event_to_text` is deterministic (sorted feature keys; nested values skipped).
+- `cosine_rank` tolerates Phase-1 memories without embeddings (silent skip, not crash).
+- `find_similar` returns `[]` on empty pool rather than raising.
+
+### Test summary
+- **547 tripwires pass**, 1 unrelated pre-existing flaky test (test_lane_toggles_rejects_unknown_lane — passes in isolation, order-dependent issue in suite; NOT caused by Phase 2).
+- 16 new Phase 2 tripwires; all green in isolation AND full-suite.
+
+### Shadow self-training status (operator question, deferred to Phase 3+)
+- LLM ledger (`llm_calls`) is accumulating ALL external LLM calls today — that's the corpus.
+- `self_trained_adapter.py` is a stub — no actual model trained yet.
+- `distillation_queue.py` referenced in `__init__.py` but not on disk.
+- `eval_harness.py` uses Jaccard token overlap (its own TODO says "swap for embedding cosine once the embedding adapter exists" — that adapter now exists).
+- Next time we revisit: build `distillation_queue.py` + shadow-mode parallel calls + swap eval_harness Jaccard → cosine.
+
+---
+
+
 ## 2026-05-27 (pass #14) — Data Stack Phase 1 + tripwire suite back to 100% green
 
 ### Phase 1 Data Stack shipped

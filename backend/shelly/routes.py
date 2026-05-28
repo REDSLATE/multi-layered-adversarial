@@ -38,6 +38,15 @@ class ReasonProbeBody(BaseModel):
     )
 
 
+class SimilarProbeBody(BaseModel):
+    brain: str = Field(..., min_length=1, max_length=32)
+    symbol: str = Field(..., min_length=1, max_length=32)
+    direction: str = Field(..., min_length=1, max_length=16)
+    features: Optional[dict[str, Any]] = Field(default=None)
+    top_k: int = Field(default=10, ge=1, le=50)
+    min_score: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
 @router.post("/admin/shelly/rollup")
 def trigger_rollup(user: dict = Depends(get_current_user)):  # noqa: B008
     """Drain every LocalShelly's un-rolled memories into MCShelly.
@@ -135,5 +144,49 @@ def reason_probe(
             "Reasoning probe — informational only. The verdict "
             "carries no authority and does not modify any seat, "
             "gate, or execution decision."
+        ),
+    }
+
+
+
+@router.post("/admin/shelly/find-similar")
+def find_similar_probe(
+    body: SimilarProbeBody,
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Phase 2 — semantic retrieval over a brain's memories.
+
+    Doctrine: ADVISORY_ONLY. Returns ranked candidates with cosine
+    `similarity` scores in [0, 1]. Carries no execution authority.
+    """
+    brain = body.brain.lower()
+    local = shelly_pipeline.locals.get(brain)
+    if local is None:
+        return {
+            "ok": False,
+            "reason": "UNKNOWN_BRAIN",
+            "brain": brain,
+            "known_brains": sorted(shelly_pipeline.locals.keys()),
+            "authority": AUTHORITY_MEMORY_REASONING_ONLY,
+        }
+    case: dict[str, Any] = {
+        "symbol": body.symbol.upper(),
+        "direction": body.direction.upper(),
+    }
+    if body.features:
+        case["features"] = body.features
+    matches = local.find_similar(
+        case, top_k=body.top_k, min_score=body.min_score,
+    )
+    return {
+        "ok": True,
+        "brain": brain,
+        "case": case,
+        "matches": matches,
+        "count": len(matches),
+        "authority": AUTHORITY_MEMORY_REASONING_ONLY,
+        "doctrine_note": (
+            "Semantic retrieval — ADVISORY context. Brain decides; "
+            "MC verifies; RoadGuard guards safety."
         ),
     }

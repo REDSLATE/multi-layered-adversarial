@@ -20,6 +20,11 @@ from shelly.contracts import (
     ShellyMemoryEvent,
     ShellyReasoningReceipt,
 )
+from shelly.embeddings import (
+    CANDIDATE_POOL_DEFAULT,
+    compute_event_embedding,
+    cosine_rank,
+)
 from shelly.sync_db import get_db
 
 
@@ -51,10 +56,23 @@ class LocalShelly:
     # ──────────────────────── write path ────────────────────────
 
     def remember(self, event: ShellyMemoryEvent) -> dict[str, Any]:
-        """Idempotent upsert keyed on event_hash."""
+        """Idempotent upsert keyed on event_hash.
+
+        Phase 2 (2026-05-27): on FIRST insert, compute and store a
+        384-dim embedding so `find_similar` can do semantic retrieval.
+        Embedding failures are silent — Phase 1 exact-match path
+        continues to work without them.
+        """
         doc = event.to_doc()
         doc["shelly_scope"] = "local"
         doc["owner_brain"] = self.brain_name
+
+        # Compute embedding once per event (idempotent — same hash,
+        # same content, same vector). Failures are non-fatal.
+        vec, _meta = compute_event_embedding(doc)
+        if vec is not None:
+            doc["embedding"] = vec
+            doc["embedding_provider"] = _meta.get("provider", "local")
 
         self.memories.update_one(
             {"event_hash": doc["event_hash"]},
@@ -62,6 +80,38 @@ class LocalShelly:
             upsert=True,
         )
         return doc
+
+    # ──────────────────────── Phase 2 similarity ────────────────────────
+
+    def find_similar(
+        self,
+        current_case: dict[str, Any],
+        *,
+        top_k: int = 10,
+        candidate_pool: int = CANDIDATE_POOL_DEFAULT,
+        min_score: float = 0.0,
+    ) -> list[dict[str, Any]]:
+        """Semantic retrieval over THIS brain's memories.
+
+        Doctrine: ADVISORY_ONLY. Returns ranked candidates with a
+        `similarity` score in [0, 1]. The brain may consult these
+        as additional context; they never modify execution
+        authority. Phase 1's `reason()` (exact-match) is the formal
+        reasoning path; this is a richer second view.
+        """
+        query_vec, _meta = compute_event_embedding(current_case)
+        if query_vec is None:
+            return []
+        # Pull a recent candidate pool. Cap so cosine ranking stays
+        # millisecond-scale on the sync path.
+        candidates = list(
+            self.memories.find({"embedding": {"$exists": True}}, {"_id": 0})
+            .sort("created_at", -1)
+            .limit(candidate_pool)
+        )
+        return cosine_rank(
+            query_vec, candidates, top_k=top_k, min_score=min_score,
+        )
 
     # ──────────────────────── reasoning ────────────────────────
 
