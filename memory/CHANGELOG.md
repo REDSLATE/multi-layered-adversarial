@@ -1,3 +1,33 @@
+## 2026-05-28 (pass #19, addendum) — Brain author feedback on broker keys
+
+### iter-106z11 follow-up — RedEye author stood down on broker-key rip-out
+
+RedEye's author independently reached the correct doctrinal conclusion after the response from `/app/memory/RESPONSE_TO_BRAIN_AUTHOR_ITER106z11.md` was sent. Key acknowledgments:
+
+- RedEye's broker code (~983 LOC) is **inert legacy** — rotated Alpaca keys, blank IBKR env, `execute_trade` stub flagged in `wild_adaptive_core` notes
+- Not a live doctrine violation (no active broker keys on the brain pod)
+- Will be reclaimed as **P3 cleanup** once MC's `/api/admin/keys/market-data` endpoint is production-stable
+
+### P3 cleanup task (deferred)
+**When**: After MC data-key proxy has run stable on production for ~2 weeks AND orphan watchdog has confirmed zero broker-key writes from any brain pod across at least one full audit cycle
+
+**What**: Drop the broker SDK + routes + env slots from RedEye (and apply same audit to Alpha/Camaro/Chevelle)
+
+**Why wait**: Dead broker code is currently *evidence of compliance* (visible but inert). Premature deletion creates a window where a brain could be issued broker keys via misconfiguration without the orphan-fill detector catching it (because there's no SDK to fire orders with).
+
+**Estimated LOC reclaim**: ~6% of RedEye backend (~983 lines). Same audit should be run against Alpha/Camaro/Chevelle to confirm similar dead-broker-code patterns across all four sidecars.
+
+### Doctrine reinforcement
+The brain author originally proposed `/api/admin/keys/broker` (would have re-opened 2026-05-23 orphan-execution path). After receiving the doctrine explanation, they:
+- Recognized the violation
+- Voluntarily withdrew the proposal
+- Identified their own dead broker code as a cleanup target
+
+This is the doctrine working correctly: load-bearing pins held; brain teams self-corrected when the boundary was made explicit.
+
+---
+
+
 ## 2026-05-28 (pass #19) — Market-data key proxy + Seat-as-Authority labeling
 
 ### Two-part surgery, both doctrine-preserving
