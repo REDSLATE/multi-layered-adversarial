@@ -15,6 +15,8 @@ Properties enforced here:
 """
 from __future__ import annotations
 
+import asyncio
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Literal, Optional
@@ -307,9 +309,25 @@ async def post_opinion(
     }
     # Anchor-price capture for directional opinions (2026-05-24).
     # The opinion resolver needs a reference price to grade against.
-    # Best-effort — if the price fetch fails the opinion still posts;
-    # the resolver will skip it until an operator backfills the anchor.
+    # Best-effort — if the price fetch fails OR exceeds the bounded
+    # deadline the opinion still posts; the resolver will skip it
+    # until an operator backfills the anchor or a later fetch lands.
+    #
+    # 2026-05-28 — Chevelle-author reported 504s from MC's
+    # `/api/ingest/opinion` under load: "hard wall-clock deadline 10.0s
+    # exceeded" from the platform ingress. Root cause: this anchor-price
+    # fetch synchronously calls Alpaca's get_latest_trade (equity) or
+    # Kraken's public ticker (crypto), and when those brokers slow
+    # down the POST hangs past the proxy's 10s deadline. Fix: bound
+    # the fetch with a short asyncio timeout (default 1.5s, env-
+    # tuneable). On timeout we drop the anchor capture, log a debug
+    # breadcrumb, and let the opinion land. The resolver re-grades
+    # later — anchor_price is not needed for the opinion itself to be
+    # ingested, only for outcome scoring downstream.
     if body.stance in {"long", "short"}:
+        anchor_timeout_s = float(os.environ.get(
+            "OPINION_ANCHOR_FETCH_TIMEOUT_SEC", "1.5",
+        ))
         try:
             from shared.opinion_resolver import (  # noqa: WPS433
                 _fetch_current_price, _lane_for_topic, _symbol_from_topic,
@@ -317,10 +335,16 @@ async def post_opinion(
             sym = _symbol_from_topic(body.topic)
             lane = _lane_for_topic(body.topic)
             if sym:
-                anchor = await _fetch_current_price(sym, lane)
+                anchor = await asyncio.wait_for(
+                    _fetch_current_price(sym, lane),
+                    timeout=anchor_timeout_s,
+                )
                 if anchor and anchor > 0:
                     doc["anchor_price"] = float(anchor)
                     doc["anchor_lane"] = lane
+        except asyncio.TimeoutError:
+            # Don't block the post on a slow broker. Resolver backfills.
+            pass
         except Exception:  # noqa: BLE001
             pass
     await db[SHARED_OPINIONS].insert_one(doc)
@@ -343,8 +367,25 @@ async def post_opinion(
         pass
 
     # Conflict auto-detection — never blocks the post.
+    # 2026-05-28 — also bounded; conflict detection runs one indexed
+    # mongo query + per-candidate idempotency lookups. Under high
+    # opinion-volume load it can occasionally exceed the ingress
+    # deadline. Bound at 2.0s; on timeout we return an empty
+    # conflicts_detected list and let the operator detect conflicts
+    # on-demand via the conflicts router.
     from shared.conflicts import detect_conflicts_for_opinion  # noqa: WPS433
-    new_conflicts = await detect_conflicts_for_opinion(doc)
+    conflicts_timeout_s = float(os.environ.get(
+        "OPINION_CONFLICT_DETECT_TIMEOUT_SEC", "2.0",
+    ))
+    try:
+        new_conflicts = await asyncio.wait_for(
+            detect_conflicts_for_opinion(doc),
+            timeout=conflicts_timeout_s,
+        )
+    except asyncio.TimeoutError:
+        new_conflicts = []
+    except Exception:  # noqa: BLE001
+        new_conflicts = []
 
     return {
         "ok": True,
