@@ -237,19 +237,21 @@ export default function BrainConsole() {
   const [conflicts, setConflicts] = useState(null);
   const [proposals, setProposals] = useState(null);
   const [authority, setAuthority] = useState(null);
+  const [roster, setRoster] = useState(null);
   const [err, setErr] = useState("");
 
   const reload = useCallback(async () => {
     if (!meta) return;
     setErr("");
     try {
-      const [s, o, sc, cf, pr, au] = await Promise.all([
+      const [s, o, sc, cf, pr, au, rs] = await Promise.all([
         api.get(`/heartbeat-status/${brain}`),
         api.get("/shared/opinions", { params: { runtime: brain, limit: 10 } }),
         api.get("/shared/scorecard", { params: { runtime: brain } }).catch(() => ({ data: null })),
         api.get("/shared/conflicts", { params: { runtime: brain, limit: 8 } }).catch(() => ({ data: { items: [] } })),
         api.get("/admin/promotion/proposals").catch(() => ({ data: { items: [] } })),
         api.get("/admin/promotion/state").catch(() => ({ data: { items: [] } })),
+        api.get("/admin/roster").catch(() => ({ data: null })),
       ]);
       setStatus(s.data);
       setOpinions(o.data?.items || []);
@@ -257,6 +259,7 @@ export default function BrainConsole() {
       setConflicts(cf.data?.items || []);
       setProposals((pr.data?.items || []).filter((p) => p.runtime === brain));
       setAuthority((au.data?.items || []).find((a) => a.runtime === brain) || null);
+      setRoster(rs.data);
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
     }
@@ -273,6 +276,44 @@ export default function BrainConsole() {
     () => (proposals || []).filter((p) => p.status === "awaiting_second_sign" || p.status === "pending"),
     [proposals],
   );
+
+  // Pass #19 (2026-05-28) — seat-as-authority doctrine.
+  // The brain's current seat IS its authority. The promotion-ladder
+  // rank (CHALLENGER / CO_TRADER / PRIMARY / ADVISOR) is no longer
+  // an authority concept on this page — it's been removed per
+  // operator decision: "restrictions belong with the position not
+  // the brains. The seats restrict their movements."
+  const currentSeat = useMemo(() => {
+    const assignments = roster?.assignments || {};
+    const seatsHeld = Object.entries(assignments)
+      .filter(([_, b]) => b === brain)
+      .map(([seat, _]) => seat);
+    if (seatsHeld.length === 0) return null;
+    // Prefer equity seats over crypto when a brain holds both.
+    const preferenceOrder = [
+      "strategist", "executor", "governor", "auditor",
+      "crypto_strategist", "crypto", "crypto_governor", "crypto_auditor",
+    ];
+    seatsHeld.sort(
+      (a, b) => preferenceOrder.indexOf(a) - preferenceOrder.indexOf(b),
+    );
+    return seatsHeld;
+  }, [roster, brain]);
+
+  const seatLabel = useMemo(() => {
+    if (!currentSeat || currentSeat.length === 0) return "VACANT";
+    const friendly = {
+      strategist: "STRATEGIST",
+      executor: "EXECUTOR",
+      governor: "GOVERNOR",
+      auditor: "AUDITOR",
+      crypto: "CRYPTO EXECUTOR",
+      crypto_strategist: "CRYPTO STRATEGIST",
+      crypto_governor: "CRYPTO GOVERNOR",
+      crypto_auditor: "CRYPTO AUDITOR",
+    };
+    return currentSeat.map((s) => friendly[s] || s.toUpperCase()).join(" · ");
+  }, [currentSeat]);
 
   if (!meta) {
     return (
@@ -292,7 +333,12 @@ export default function BrainConsole() {
         right={
           <div className="flex items-center gap-3">
             <LivePulse runtime={brain} />
-            <Badge color={meta.color}>{meta.roleTitle || meta.label}</Badge>
+            <Badge
+              color={currentSeat && currentSeat.length > 0 ? meta.color : "#6B7280"}
+              data-testid="brain-header-seat-badge"
+            >
+              {seatLabel}
+            </Badge>
             <button
               onClick={reload}
               data-testid="brain-reload"
@@ -330,23 +376,36 @@ export default function BrainConsole() {
         <SectionCard
           icon={ShieldCheck}
           title="Authority"
-          sub="seat policy + promotion state"
+          sub="seat policy is the source of authority"
           testid="authority-section"
         >
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase tracking-widest text-rd-dim">State</span>
-              <Badge color={meta.color}>{authority?.authority_state || "—"}</Badge>
+              <span className="text-[10px] uppercase tracking-widest text-rd-dim">Seat</span>
+              <Badge
+                color={currentSeat && currentSeat.length > 0 ? meta.color : "#6B7280"}
+                data-testid="authority-seat-badge"
+              >
+                {seatLabel}
+              </Badge>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase tracking-widest text-rd-dim">Pending</span>
-              <span className="font-mono text-sm text-rd-text" data-testid="authority-pending-count">
-                {pendingForBrain.length}
-              </span>
+              <span className="text-[10px] uppercase tracking-widest text-rd-dim">May execute</span>
+              <Badge
+                color={currentSeat && currentSeat.some((s) => s === "executor" || s === "crypto") ? "#10B981" : "#6B7280"}
+                data-testid="authority-may-execute"
+              >
+                {currentSeat && currentSeat.some((s) => s === "executor" || s === "crypto") ? "TRUE" : "FALSE"}
+              </Badge>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase tracking-widest text-rd-dim">Live exec</span>
-              <Badge color="#DC2626">FALSE</Badge>
+              <span className="text-[10px] uppercase tracking-widest text-rd-dim">May veto</span>
+              <Badge
+                color={currentSeat && currentSeat.some((s) => s === "governor" || s === "crypto_governor" || s === "auditor" || s === "crypto_auditor") ? "#10B981" : "#6B7280"}
+                data-testid="authority-may-veto"
+              >
+                {currentSeat && currentSeat.some((s) => s === "governor" || s === "crypto_governor" || s === "auditor" || s === "crypto_auditor") ? "TRUE" : "FALSE"}
+              </Badge>
             </div>
           </div>
         </SectionCard>
@@ -420,37 +479,14 @@ export default function BrainConsole() {
         <SpeakAsForm brain={brain} onPosted={reload} />
       </SectionCard>
 
-      {/* Pending approvals */}
-      {pendingForBrain.length > 0 && (
-        <SectionCard
-          icon={Scales}
-          title="Pending approvals"
-          sub="Promotion proposals awaiting countersign"
-          testid="pending-approvals-section"
-        >
-          <div className="space-y-2" data-testid="pending-list">
-            {pendingForBrain.map((p) => (
-              <div key={p.proposal_id} className="border border-rd-border p-3 flex items-center justify-between" data-testid={`pending-${p.proposal_id}`}>
-                <div>
-                  <div className="font-mono text-[12px] text-rd-text">
-                    {p.from_state} → {p.target_authority}
-                  </div>
-                  <div className="text-[10px] text-rd-dim mt-0.5 font-mono">
-                    {relTime(p.proposed_at)} · {p.status}
-                  </div>
-                </div>
-                <Link
-                  to="/promotion"
-                  data-testid={`pending-link-${p.proposal_id}`}
-                  className="px-2.5 py-1 border border-rd-border text-[11px] font-mono uppercase tracking-widest text-rd-dim hover:text-rd-text hover:border-rd-text"
-                >
-                  Review
-                </Link>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
-      )}
+      {/* Pending approvals section removed in pass #19 (2026-05-28).
+          Per operator decision: "restrictions belong with the position
+          not the brains." The promotion-ladder approval flow
+          (challenger → co_trader → primary) is no longer an authority
+          gate. Seat assignment IS the authority — see Quick Seat
+          Switches on the Intents page. The backend
+          /admin/promotion/proposals endpoint still exists for forensic
+          audit but its output is not consumed on this page. */}
     </div>
   );
 }

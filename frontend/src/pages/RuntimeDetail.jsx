@@ -19,24 +19,60 @@ export default function RuntimeDetail() {
   const [rows, setRows] = useState(null);
   const [calibs, setCalibs] = useState(null);
   const [artifacts, setArtifacts] = useState(null);
+  // Pass #19 (2026-05-28) — seat-as-authority doctrine. The page
+  // header badge shows the BRAIN'S CURRENT SEAT (or VACANT) instead
+  // of just repeating the brain's identity. The seat IS the
+  // restriction; the brain itself carries no separate authority.
+  const [roster, setRoster] = useState(null);
 
   useEffect(() => {
     if (!meta) return;
     setStatus(null);
     setRows(null);
     (async () => {
-      const [s, r, c, a] = await Promise.all([
+      const [s, r, c, a, rs] = await Promise.all([
         api.get(`/runtime/${runtime}/status`),
         api.get(sub.url),
         api.get(`/shared/calibrators?runtime=${runtime}`),
         api.get(`/shared/artifacts?runtime=${runtime}`),
+        api.get("/admin/roster").catch(() => ({ data: null })),
       ]);
       setStatus(s.data);
       setRows(r.data);
       setCalibs(c.data);
       setArtifacts(a.data);
+      setRoster(rs.data);
     })();
   }, [runtime, meta, sub]);
+
+  // Compute the brain's current seat(s) from the roster.
+  const seatLabel = React.useMemo(() => {
+    const assignments = roster?.assignments || {};
+    const seatsHeld = Object.entries(assignments)
+      .filter(([_, b]) => b === runtime)
+      .map(([seat, _]) => seat);
+    if (seatsHeld.length === 0) return "VACANT";
+    const friendly = {
+      strategist: "STRATEGIST",
+      executor: "EXECUTOR",
+      governor: "GOVERNOR",
+      auditor: "AUDITOR",
+      crypto: "CRYPTO EXECUTOR",
+      crypto_strategist: "CRYPTO STRATEGIST",
+      crypto_governor: "CRYPTO GOVERNOR",
+      crypto_auditor: "CRYPTO AUDITOR",
+    };
+    const preferenceOrder = [
+      "strategist", "executor", "governor", "auditor",
+      "crypto_strategist", "crypto", "crypto_governor", "crypto_auditor",
+    ];
+    seatsHeld.sort(
+      (a, b) => preferenceOrder.indexOf(a) - preferenceOrder.indexOf(b),
+    );
+    return seatsHeld.map((s) => friendly[s] || s.toUpperCase()).join(" · ");
+  }, [roster, runtime]);
+
+  const hasSeat = seatLabel !== "VACANT";
 
   if (!meta) {
     return (
@@ -58,7 +94,12 @@ export default function RuntimeDetail() {
         right={
           <div className="flex items-center gap-3">
             <LivePulse runtime={runtime} />
-            <Badge color={meta.color}>{meta.label}</Badge>
+            <Badge
+              color={hasSeat ? meta.color : "#6B7280"}
+              data-testid="runtime-header-seat-badge"
+            >
+              {seatLabel}
+            </Badge>
           </div>
         }
         testid={`runtime-header-${runtime}`}

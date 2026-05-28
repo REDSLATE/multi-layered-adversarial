@@ -1,3 +1,88 @@
+## 2026-05-28 (pass #19) — Market-data key proxy + Seat-as-Authority labeling
+
+### Two-part surgery, both doctrine-preserving
+
+**Part A — Market-data key proxy** (`/api/admin/keys/market-data`)
+Brain teams need their sidecars to read market data (bars, quotes, news, fundamentals) from third-party providers. When the 2026-05-23 audit revoked broker keys from sidecars, brains also lost their direct-to-Alpaca READ pipe (they were misusing broker keys for data too). The result: brains see stale/empty snapshots, fall back to HOLD with `STUCK_FEATURES_NO_DIVERSITY` veto.
+
+Built MC endpoint to distribute DATA-source tokens (Polygon, Finnhub, Alpha Vantage, FRED, NewsAPI, SEC user-agent) to authenticated brain sidecars. **Broker keys remain impossible to leak through this surface by construction**:
+
+- **Whitelist**: Only fields in `MARKET_DATA_KEY_FIELDS` are served
+- **Forbidden fragments**: Any field name containing ALPACA / KRAKEN / IBKR / COINBASE / BINANCE / BROKER / SECRET_KEY / EXECUTE / TRADING_TOKEN / BROKER_TOKEN is rejected even if it makes it into the whitelist (defence in depth)
+- Auth: same `<BRAIN>_INGEST_TOKEN` pattern as sidecar checkin (X-Brain-Id + X-Runtime-Token headers)
+- Audit: every fetch logged to `market_data_key_fetches` collection
+- Manifest endpoint (`/admin/keys/market-data/manifest`) publishes contract without values
+
+**New backend files:**
+- `routes/market_data_keys.py` — endpoint + auth + audit log
+- `tests/test_market_data_keys_proxy.py` — **17 doctrine tripwires** locking the broker-key-leak-impossible invariant
+
+**Part B — Seat-as-Authority labeling**
+Operator decision: *"restrictions belong with the position not the brains. The seats restrict their movements."*
+
+The Brain Console (`/admin/runtime/<brain>/console`) and Runtime Detail (`/admin/runtime/<brain>`) pages were showing the **promotion-ladder rank** (CHALLENGER / CO_TRADER / PRIMARY / ADVISOR) as if it were an authority concept. The backend had already collapsed ladder authority into seat policy on 2026-05-26 (`shared/routes.py:87-95` comment: *"authority_state field is kept for historical continuity but no longer gates anything"*) but the UI still implied a parallel restriction system.
+
+Removed the parallel labeling. Both pages now show:
+- **Top-right badge**: current seat (STRATEGIST / EXECUTOR / GOVERNOR / AUDITOR / CRYPTO_* variants) or **VACANT** if unseated
+- **Brain Console Authority card**: "Seat" + "May execute" + "May veto" derived from seat policy
+- Removed "Pending approvals" promotion-ladder approval flow from Brain Console
+- Removed "LIVE EXEC: FALSE" misleading row (it was always a ladder-derived display gate; the seat already governs)
+
+**Modified frontend files:**
+- `pages/BrainConsole.jsx` — fetch roster, derive seat, replace ladder badge + State/Pending/Live exec rows, remove Pending approvals section
+- `pages/RuntimeDetail.jsx` — fetch roster, derive seat, replace brain-name badge with seat-name badge
+
+### Test summary
+- 580 tripwires baseline (from pass #18); pass #19 adds 17 → **597 tripwires green**
+- 1 pre-existing flaky test (`test_shelly_admin_endpoints_require_auth`) — passes in isolation; order-dependent
+
+### To activate live ingest (still operator action on production)
+1. Brain teams update their sidecars to call `GET /api/admin/keys/market-data` at boot with their existing `<BRAIN>_INGEST_TOKEN` header. Pull `POLYGON_API_KEY` / `FINNHUB_API_KEY` / etc. from the response into the sidecar's env.
+2. Operator sets the actual key values in MC production env (Emergent Support env update):
+   ```
+   POLYGON_API_KEY=...
+   FINNHUB_API_KEY=...
+   ALPHA_VANTAGE_API_KEY=...
+   FRED_API_KEY=...
+   NEWSAPI_API_KEY=... (optional)
+   ```
+3. Restart MC + restart brain sidecars. Brains now have read-only data tokens. Brain-internal feature computation unblocks. `STUCK_FEATURES_NO_DIVERSITY` veto stops firing. BUY intents flow → MC gates green → trades fire through MC-owned broker keys.
+
+### Brain teams' contract (paste in their docs)
+```
+GET https://mission.risedual.ai/api/admin/keys/market-data
+Headers:
+  X-Brain-Id: <camaro | alpha | chevelle | redeye>
+  X-Runtime-Token: <same INGEST_TOKEN as /checkin>
+
+Response 200:
+{
+  "brain": "...",
+  "keys": {
+    "POLYGON_API_KEY": "...",
+    "FINNHUB_API_KEY": "...",
+    "ALPHA_VANTAGE_API_KEY": "...",
+    "FRED_API_KEY": "...",
+    "SEC_EDGAR_USER_AGENT": "..."
+  },
+  "served_fields": [...],
+  "unconfigured_fields": [...],
+  "doctrine": "market_data_only",
+  "ts": "..."
+}
+
+Optional probe (no auth): GET /api/admin/keys/market-data/manifest
+```
+
+### Doctrine pins added (D-DATA-KEYS-2026-05-28)
+- MC may distribute DATA-source API keys to authenticated brain sidecars
+- MC MUST NEVER distribute BROKER API keys (Alpaca, Kraken, IBKR, Coinbase, Binance)
+- The boundary is enforced by whitelist + forbidden-fragments check
+- Tripwire-pinned at 17 invariants
+
+---
+
+
 ## 2026-05-27 (pass #16) — Opponent merged into Auditor + SeatRosterStrip live on Intents page
 
 ### Operator decision
