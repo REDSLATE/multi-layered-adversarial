@@ -48,17 +48,24 @@ ALERT_COOLDOWN_SEC = 30 * 60
 
 
 async def _last_opinion_age(brain: str) -> Optional[float]:
-    """Seconds since brain's last opinion POST. None if never."""
+    """Seconds since brain's last opinion POST. None if never.
+
+    NOTE: opinions are persisted with a `posted_at` ISO field (see
+    `shared/opinions.py::post_opinion`). Earlier drafts read
+    `created_at` which the schema never sets — that bug made every
+    brain look "never posted" and produced false-positive silences
+    on every scan.
+    """
     row = await db[SHARED_OPINIONS].find_one(
         {"runtime": brain},
-        {"_id": 0, "created_at": 1},
-        sort=[("created_at", -1)],
+        {"_id": 0, "posted_at": 1},
+        sort=[("posted_at", -1)],
     )
-    if not row or not row.get("created_at"):
+    if not row or not row.get("posted_at"):
         return None
     try:
         ts = datetime.fromisoformat(
-            (row["created_at"] or "").replace("Z", "+00:00"),
+            (row["posted_at"] or "").replace("Z", "+00:00"),
         )
         return (datetime.now(timezone.utc) - ts).total_seconds()
     except (ValueError, TypeError):
@@ -87,28 +94,18 @@ async def _recent_alert_exists(
     return row is not None
 
 
-@router.post("/opinion-silence-watchdog/scan")
-async def scan(
-    threshold_sec: int = Query(
-        DEFAULT_SILENCE_THRESHOLD_SEC, ge=60, le=86400,
-        description="seconds without opinion to consider 'silent'",
-    ),
-    cooldown_sec: int = Query(
-        ALERT_COOLDOWN_SEC, ge=60, le=86400,
-        description="don't re-alert same (brain,seat) within this window",
-    ),
-    dry_run: bool = Query(
-        False, description="don't write alerts, just return what would be written",
-    ),
-    _user: dict = Depends(get_current_user),
-):
-    """Scan every occupied seat. For each holder whose last opinion is
-    older than threshold OR has never posted: emit one row to
-    `opinion_silence_alerts` (unless an alert for that (brain, seat)
-    was written within cooldown).
+async def perform_scan(
+    threshold_sec: int = DEFAULT_SILENCE_THRESHOLD_SEC,
+    cooldown_sec: int = ALERT_COOLDOWN_SEC,
+    dry_run: bool = False,
+) -> dict:
+    """Pure scan implementation — callable from both the HTTP handler
+    and the background worker. Returns the same shape both reach.
 
     Doctrine: ADVISORY observability only. No execution authority is
-    affected by this scan.
+    affected by this scan. No exceptions escape — any error degrades
+    to an empty-result row so the caller (especially the background
+    worker) keeps ticking.
     """
     assignments = await _seat_assignments()
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -145,7 +142,6 @@ async def scan(
         }
         if not dry_run:
             await db["opinion_silence_alerts"].insert_one(alert)
-            # Pop _id mongo just added in-place
             alert.pop("_id", None)
         flagged.append(alert)
 
@@ -162,6 +158,74 @@ async def scan(
         "occupied_seats_scanned": sum(
             1 for b in assignments.values() if b in LIVE_RUNTIMES
         ),
+        "doctrine": "advisory_observability_only",
+    }
+
+
+@router.post("/opinion-silence-watchdog/scan")
+async def scan(
+    threshold_sec: int = Query(
+        DEFAULT_SILENCE_THRESHOLD_SEC, ge=60, le=86400,
+        description="seconds without opinion to consider 'silent'",
+    ),
+    cooldown_sec: int = Query(
+        ALERT_COOLDOWN_SEC, ge=60, le=86400,
+        description="don't re-alert same (brain,seat) within this window",
+    ),
+    dry_run: bool = Query(
+        False, description="don't write alerts, just return what would be written",
+    ),
+    _user: dict = Depends(get_current_user),
+):
+    """Scan every occupied seat. For each holder whose last opinion is
+    older than threshold OR has never posted: emit one row to
+    `opinion_silence_alerts` (unless an alert for that (brain, seat)
+    was written within cooldown).
+
+    Doctrine: ADVISORY observability only. No execution authority is
+    affected by this scan.
+    """
+    return await perform_scan(
+        threshold_sec=threshold_sec,
+        cooldown_sec=cooldown_sec,
+        dry_run=dry_run,
+    )
+
+
+@router.get("/opinion-silence-watchdog/status")
+async def status(
+    threshold_sec: int = Query(
+        DEFAULT_SILENCE_THRESHOLD_SEC, ge=60, le=86400,
+    ),
+    _user: dict = Depends(get_current_user),
+):
+    """Live silence picture without writing alerts. UI / dashboard read.
+
+    Returns one row per occupied seat with current age + silent flag.
+    """
+    assignments = await _seat_assignments()
+    rows: list[dict] = []
+    silent_count = 0
+    for seat, brain in assignments.items():
+        if not brain or brain not in LIVE_RUNTIMES:
+            continue
+        age = await _last_opinion_age(brain)
+        is_silent = (age is None) or (age > threshold_sec)
+        if is_silent:
+            silent_count += 1
+        rows.append({
+            "seat": seat,
+            "brain": brain,
+            "age_sec": age,
+            "silent": is_silent,
+            "kind": "never" if age is None else ("stale" if is_silent else "fresh"),
+        })
+    return {
+        "ok": True,
+        "threshold_sec": threshold_sec,
+        "occupied_seats": rows,
+        "silent_count": silent_count,
+        "occupied_count": len(rows),
         "doctrine": "advisory_observability_only",
     }
 

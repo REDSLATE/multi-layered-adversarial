@@ -1,3 +1,35 @@
+## 2026-05-28 (pass #21) — Opinion-silent watchdog: bug fix + background scanner + tripwires
+
+### Shipped
+1. **Bug fix** — `routes/opinion_silence_watchdog.py::_last_opinion_age` was reading `created_at`, a field the opinion schema **never writes** (see `shared/opinions.py::post_opinion` which stores `posted_at`). The watchdog therefore reported every brain as "never posted" on every scan — false-positive flood. Now reads `posted_at`. Live `/status` now correctly shows camaro/alpha/chevelle ages in seconds.
+2. **Background worker** — `shared/runtime/opinion_silence_worker.py`. Autonomous tick (default 15 min) runs the same `perform_scan(...)` the HTTP `/scan` endpoint uses → exactly ONE silence-detection code path. Doctrine-pinned advisory-only; cannot ever import broker/execution surfaces (locked by tripwire).
+3. **New `GET /api/admin/opinion-silence-watchdog/status`** — UI-facing live silence picture without writing alerts. Returns `{seat, brain, age_sec, silent, kind}` per occupied seat.
+4. **Refactor** — `scan()` HTTP endpoint now delegates to `perform_scan(...)`. Makes the worker + HTTP surface share one tested implementation.
+5. **Lifespan wiring** — `server.py` starts the watchdog worker on boot, stops it on shutdown. Disabled cleanly via `OPINION_SILENCE_WATCHDOG_ENABLED=false`.
+6. **Tripwires** — `tests/test_opinion_silence_watchdog.py` (14 tests): pins `posted_at` field read, vacant-seat skip, LIVE_RUNTIMES-only scope, cooldown throttling, stale-seat alert emission, worker start/stop idempotency, and `no_execution_authority` doctrine bans (broker_router / alpaca_credentials / kraken_credentials / may_execute / etc. cannot appear in either module's source).
+
+### Live verification on preview
+- `/api/admin/opinion-silence-watchdog/status` → 3 occupied seats, all returning real ages (1.4s / 188s / 207s).
+- `/api/admin/opinion-silence-watchdog/scan?dry_run=true&threshold_sec=60` → correctly flags alpha + chevelle as stale, marks camaro as `skipped_fresh`.
+- Background worker boots in lifespan: `opinion_silence_worker started: tick=900s threshold=14400s cooldown=1800s`.
+
+### Tripwire status
+595 tripwires green (up from 580+ baseline; +14 new tests, +1 sanity preserved). Other 76 non-tripwire HTTP-roundtrip failures (public-API, rate-limit, alpaca_execution_pipeline, etc.) are pre-existing and unrelated to this change.
+
+### Doctrine pins reinforced
+- ADVISORY OBSERVABILITY ONLY. Worker + route both source-scanned for forbidden execution imports.
+- `perform_scan` is the sole detection path — operator-on-demand scan and autonomous worker scan cannot diverge.
+
+### Next Action Items
+- 🔴 P0 — Operator: redeploy preview → production (pushes pass #21 watchdog)
+- 🔴 P0 — Operator: provision data-key env values on prod MC via Emergent Support
+- 🟡 P0 — Brain authors (Alpha, Camaro): ship the `/api/ingest/opinion` patch per `RESPONSE_TO_ALPHA_AUTHOR_OPINIONS.md`
+- 🟡 P1 — 6-Brain Expansion Refactor per `SIX_BRAIN_REFACTOR_PLAN.md`
+- 🟡 P1 — Phase 2 Broker Bridge: real Kraken/Alpaca order placement in `shared/broker_router.py`
+
+---
+
+
 ## 2026-05-28 (pass #20) — Opinion-silent watchdog + brain-author response docs
 
 ### Shipped

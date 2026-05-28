@@ -258,6 +258,18 @@ async def lifespan(app: FastAPI):
         start_fred_worker()
     except Exception as e:  # noqa: BLE001
         logger.warning("data_stack workers start failed: %s", e)
+    # Opinion-silent watchdog — autonomous scan that emits an alert
+    # row when any occupied seat goes > threshold without an opinion
+    # POST. Advisory observability only. Doctrine pin:
+    # `shared/runtime/opinion_silence_worker.py`.
+    try:
+        from shared.runtime.opinion_silence_worker import (
+            start_worker as _start_opinion_silence_worker,
+        )
+        _start_opinion_silence_worker()
+        logger.info("Opinion-silent watchdog started")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("opinion_silence_worker start failed: %s", e)
     # Seed the initial patterns_universe watchlist (idempotent).
     try:
         from db import db as _db
@@ -300,6 +312,13 @@ async def lifespan(app: FastAPI):
         await stop_finnhub_worker()
         await stop_sec_edgar_worker()
         await stop_fred_worker()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from shared.runtime.opinion_silence_worker import (
+            stop_worker as _stop_opinion_silence_worker,
+        )
+        await _stop_opinion_silence_worker()
     except Exception:  # noqa: BLE001
         pass
     client.close()
