@@ -3,6 +3,7 @@ import { api, RUNTIME_META, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 import ExecutorSeatTile, { AuditorSeatTile } from "@/components/ExecutorSeatTile";
 import RosterSeatTile from "@/components/RosterSeatTile";
+import SeatRosterStrip from "@/components/SeatRosterStrip";
 import AlpacaConnect from "@/components/AlpacaConnect";
 import KrakenBrokerTile from "@/components/KrakenBrokerTile";
 import DoctrineStrip from "@/components/DoctrineStrip";
@@ -499,6 +500,18 @@ export default function Intents() {
         }
         testid="intents-header"
       />
+
+      {/* ─── Seat Roster strip (2026-05-27, pass #15) ───
+          All four seats per lane in one view + freshness of each
+          brain's last opinion/sovereign-contribution. Surfaces the
+          gap between "heartbeating" and "actually contributing" so
+          the operator can tell at a glance when MC is showing
+          doctrine-fallback values instead of real brain voices. */}
+      <div className="mb-4" data-testid="intents-seat-roster-mount">
+        <PanelErrorBoundary label="Seat Roster">
+          <SeatRosterStrip />
+        </PanelErrorBoundary>
+      </div>
 
       {/* ─── Twin authority lanes ─── Doctrine: equity and crypto are
           symmetric. Each lane has its own Executor seat, Auditor seat,
