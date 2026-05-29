@@ -7,7 +7,8 @@ from auth import get_current_user
 from db import db, client
 from namespaces import (
     SHARED_RECEIPTS, SHARED_MEMORY, SHARED_HEARTBEATS,
-    ALPHA_DECISION_LOG, CAMARO_SHADOW_ROWS, CHEVELLE_MEMORY_LABELS, RUNTIMES,
+    ALPHA_DECISION_LOG, CAMARO_SHADOW_ROWS, CHEVELLE_MEMORY_LABELS,
+    REDEYE_DECISION_LOG, RUNTIMES,
     SHARED_OPINIONS,
     HEARTBEAT_STALE_AFTER_SECONDS,
     HEARTBEAT_OK_BELOW_SECONDS,
@@ -54,15 +55,25 @@ async def _last_receipt_ts(runtime: str) -> str | None:
 
 
 async def _runtime_log_count(runtime: str) -> int:
-    # REDEYE was promoted from sidecar to a full seat (2026-02-11) — it
-    # has no per-brain decision-log collection like the trading runtimes,
-    # so we count its opinion posts instead. That's its primary output.
+    """Per-brain canonical decision-log count.
+
+    2026-05-29: REDEYE now has its own `redeye_decision_log` collection
+    (parity with alpha/camaro/chevelle). MC reads from it directly so
+    the column shows TRUE intent count instead of falling back to the
+    opinion-post count it was using before. Contract for the RedEye
+    team: see /app/memory/MC_HANDOFF_redeye_decision_log.md.
+
+    If RedEye's log doesn't exist yet (brand-new pod, or stamp not
+    arrived), the count returns 0 instead of crashing.
+    """
     coll = {
-        "alpha": ALPHA_DECISION_LOG,
-        "camaro": CAMARO_SHADOW_ROWS,
+        "alpha":    ALPHA_DECISION_LOG,
+        "camaro":   CAMARO_SHADOW_ROWS,
         "chevelle": CHEVELLE_MEMORY_LABELS,
+        "redeye":   REDEYE_DECISION_LOG,
     }.get(runtime)
     if coll is None:
+        # Unknown runtime — opinion-post count as the safe fallback.
         return await db[SHARED_OPINIONS].count_documents({"runtime": runtime})
     return await db[coll].count_documents({})
 

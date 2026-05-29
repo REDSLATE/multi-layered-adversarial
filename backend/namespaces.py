@@ -12,6 +12,11 @@ SHARED_ARTIFACTS = "shared_artifact_inventory"
 ALPHA_DECISION_LOG = "alpha_decision_log"
 CAMARO_SHADOW_ROWS = "camaro_shadow_rows"
 CHEVELLE_MEMORY_LABELS = "chevelle_memory_labels"
+# 2026-05-29: RedEye now has its own per-brain decision log (parity
+# with the other three brains). MC's diagnostics column reads from
+# here for an apples-to-apples intent count. Contract owned by the
+# RedEye team — see /app/memory/MC_HANDOFF_redeye_decision_log.md.
+REDEYE_DECISION_LOG = "redeye_decision_log"
 
 # Heartbeats from runtime sidecars (one upserted doc per runtime)
 SHARED_HEARTBEATS = "shared_heartbeats"
