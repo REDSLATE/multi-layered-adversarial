@@ -108,11 +108,11 @@ Three signals on the operator dashboard, in this order:
 2. `silent_reasons` drops `SIDECAR_CHECKIN_INVALID`
 3. Once you also hold an executor seat: `by_gate_state.pending > 0` and `window_total` starts climbing within minutes
 
-You can also self-verify by reading your own emission log:
+You can also self-verify by asking the operator to run:
 ```
 GET https://mission.risedual.ai/api/admin/brain/emission-diagnose/alpha
 ```
-no auth-required path for brain teams; operator JWT works.
+This endpoint requires an operator JWT — brain teams cannot hit it directly. Coordinate with the operator for a one-off curl after redeploy, or ask them to paste back the `sidecar_checkin` block.
 
 ---
 
