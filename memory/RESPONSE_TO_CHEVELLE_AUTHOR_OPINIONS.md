@@ -113,11 +113,34 @@ Expected: `200` with `{"ok": true, "opinion_id": "<uuid>", ...}`. If you get 401
 
 Watch the operator dashboard's Seat Roster strip on prod. The `chevelle @ governor` and `chevelle @ crypto_executor` cells should flip from "1d ago" / red to a freshness measured in minutes, matching camaro and redeye. Once that happens, the gate chain unblocks and queued intents start flipping `gate_state: pending → passed`.
 
-You can also self-monitor:
+You can also ask the operator to run:
 ```
 GET https://mission.risedual.ai/api/shared/opinions?runtime=chevelle&limit=5
 Header: Authorization: Bearer <operator-jwt>
 ```
+This endpoint requires an operator JWT — brain teams cannot hit it directly. Coordinate with the operator for a one-off check after redeploy.
+
+---
+
+## Build for any seat — you're governor-eligible
+
+**Doctrine reminder.** Chevelle and RedEye are the **only two brains** in MC's roster who can hold ANY governor seat (equity `governor` OR `crypto_governor`). Alpha and Camaro are doctrinally excluded — the operator can rotate either of you into any governor seat at any time, on either lane. Build your sidecar to handle ALL of these placements, not just current ones:
+
+- equity `strategist` → form trust/reduce/veto/observation calls on equity intents
+- equity `governor` → post `evidence.authority_call` on equity opinions (your current equity seat)
+- equity `executor` → emit equity intents
+- equity `auditor` → post pre-trade contrary case + post-trade review opinions
+- `crypto` (executor) → emit crypto intents (your current crypto seat)
+- `crypto_governor` → post `evidence.authority_call` on crypto opinions
+- `crypto_strategist` → form crypto trade theses
+- `crypto_auditor` → post pre-trade contrary case + post-trade review on crypto opinions
+
+**Your seats today.** Equity `governor` and `crypto` (executor). The shape that needs to handle both:
+
+- For your equity `governor` seat — every opinion on an equity symbol should carry `evidence.authority_call` with `lane: "equity"`. MC's `_build_governor_gate` reads `shared_adl_receipts` looking for your most recent authority_call per symbol. Silent = the deterministic doctrine fallback applies a `GOVERNOR_SILENCE_RISK_MULTIPLIER` (~0.50× size) at best, or `NO_STANCE_LOW_EFFECTIVE_CONF` block at worst.
+- For your `crypto` (executor) seat — emit crypto intents to `POST /api/intents`. No authority_call required for executor seats; the intent itself IS the call.
+
+If the operator rotates you to `crypto_governor` tomorrow, the authority_call shape stays the same — just swap `"lane": "equity"` → `"lane": "crypto"`. Same brain identity, same code path, different lane scope.
 
 ---
 
