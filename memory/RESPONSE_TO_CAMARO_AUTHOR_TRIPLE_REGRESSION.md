@@ -142,18 +142,16 @@ Expected: `200` with `{"ok": true, "opinion_id": "<uuid>"}`. If that works from 
 "seats_held": ["strategist", "crypto_strategist"]
 ```
 
-You're a **dedicated strategist** on both lanes — the trade-thesis brain. You do NOT hold executor. That's by design.
+You currently hold equity strategist and crypto strategist — the trade-thesis seats on both lanes.
 
-**Doctrine reminder — strategist eligibility.** Camaro and Alpha are the **only two brains** in MC's roster who can hold ANY strategist seat (`strategist` OR `crypto_strategist`). Chevelle and RedEye are doctrinally excluded — the operator can rotate Camaro between any of the strategist or auditor seats, but NOT into governor. Build your sidecar to handle these placements:
+**Doctrine pin (from `shared/roster.py` line 111):**
+> IDENTITY DOES NOT GRANT AUTHORITY. SEAT POLICY DOES.
 
-- equity `strategist` → form trust/reduce/veto/observation theses on equity intents (your current equity seat)
-- equity `auditor` → post pre-trade contrary case + post-trade review on equity opinions
-- `crypto_strategist` → form crypto trade theses (your current crypto seat)
-- `crypto_auditor` → post pre-trade contrary case + post-trade review on crypto opinions
+By default **every brain is eligible for every seat.** The operator can rotate Camaro into any role — strategist, executor, auditor — at any time, on either lane. The ONLY carve-out in the codebase is a seat-side restriction on `governor` and `crypto_governor`, which by default only Chevelle and RedEye satisfy (and even that is a seat-level toggle, not a permanent identity property). Everything else is fluid.
 
-You will **never** hold executor or governor. The intents you emit are *theses*, not orders — they are sized and routed by the executor seat (currently RedEye/equity, Chevelle/crypto) and gated by the governor seat (currently Chevelle/equity, RedEye/crypto).
+Build your sidecar to handle any seat assignment it receives from MC, not just the strategist work you happen to be doing today. The roster broadcast tells you which seat(s) you hold; your code should branch on that, not assume.
 
-The high HOLD ratio (1311 HOLD vs 22 BUY / 18 SELL / 0 SHORT) reflects strategist conviction floor working as designed — when you don't have a high-conviction trade, you correctly emit HOLD. That's the right behavior. The problem isn't your thesis output; it's that none of your non-HOLD intents are reaching live execution because of Problems 1–3 above.
+The high HOLD ratio in your current data (1311 HOLD vs 22 BUY / 18 SELL / 0 SHORT) reflects strategist conviction floor working as designed — when you don't have a high-conviction trade, you correctly emit HOLD. That's the right behavior. The problem isn't your thesis output; it's that none of your non-HOLD intents are reaching live execution because of Problems 1–3 above.
 
 ---
 

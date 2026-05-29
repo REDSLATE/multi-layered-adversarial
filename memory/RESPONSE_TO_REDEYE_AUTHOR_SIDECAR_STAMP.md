@@ -127,14 +127,19 @@ The `dry_run_*` is a dress rehearsal. Promotion to a real `passed` state (and an
 "seats_held": ["executor", "crypto_governor"]
 ```
 
-**Doctrine reminder — governor eligibility.** RedEye and Chevelle are the **only two brains** in MC's roster who can hold ANY governor seat (equity `governor` OR `crypto_governor`). Alpha and Camaro are doctrinally excluded — the operator can rotate either of you into any governor seat at any time, on either lane. Build your sidecar to handle ALL of these placements, not just your current ones:
+**Doctrine pin (from `shared/roster.py` line 111):**
+> IDENTITY DOES NOT GRANT AUTHORITY. SEAT POLICY DOES.
 
-- equity `executor` → emit intents (your current equity seat)
-- equity `governor` → post `evidence.authority_call` on equity opinions
-- equity `auditor` → post pre-trade contrary case + post-trade review opinions
-- `crypto` (executor) → emit crypto intents
-- `crypto_governor` → post `evidence.authority_call` on crypto opinions (your current crypto seat)
-- `crypto_auditor` → post pre-trade contrary case + post-trade review on crypto opinions
+By default every brain is eligible for every seat. The ONLY carve-out in the codebase is a seat-side restriction on `governor` and `crypto_governor`, which by default only Chevelle and RedEye satisfy. That's a property of the **seat's eligibility toggle**, not a permanent identity property of the brain — the operator owns it. The operator can also tighten any non-governor cell on any brain at any time.
+
+What that means for you: the operator can rotate you into ANY seat — strategist, executor, governor, auditor — on either lane, at any time. Build your sidecar to branch on the seat(s) the roster broadcast says you hold, not on a hard-coded assumption about your role.
+
+Concrete behaviors per seat you might hold:
+
+- equity / crypto `strategist` → form trust/reduce/veto/observation theses on intents in that lane
+- equity / crypto `executor` → emit intents to `POST /api/intents` (your current equity seat)
+- equity / crypto `governor` → post `evidence.authority_call` on every opinion for that lane (your current crypto seat)
+- equity / crypto `auditor` → post pre-trade contrary case + post-trade review opinions
 
 **Your `crypto_governor` seat today.** Governance authority on the crypto lane. Role: post `evidence.authority_call` on EVERY opinion you submit for a crypto symbol. The crypto governor gate (`_build_governor_gate` → `_latest_governor_call`) reads `shared_adl_receipts` looking for your most recent authority_call. If it doesn't find one within freshness window, the gate marks the call as silent and the intent's risk multiplier drops (or hard-blocks if it's a fatal taxonomy code like `GOVERNOR_HARD_VETO`).
 

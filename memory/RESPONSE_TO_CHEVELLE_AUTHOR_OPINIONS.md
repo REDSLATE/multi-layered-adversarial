@@ -122,18 +122,21 @@ This endpoint requires an operator JWT — brain teams cannot hit it directly. C
 
 ---
 
-## Build for any seat — you're governor-eligible
+## Build for any seat — seat policy is fluid
 
-**Doctrine reminder.** Chevelle and RedEye are the **only two brains** in MC's roster who can hold ANY governor seat (equity `governor` OR `crypto_governor`). Alpha and Camaro are doctrinally excluded — the operator can rotate either of you into any governor seat at any time, on either lane. Build your sidecar to handle ALL of these placements, not just current ones:
+**Doctrine pin (from `shared/roster.py` line 111):**
+> IDENTITY DOES NOT GRANT AUTHORITY. SEAT POLICY DOES.
 
-- equity `strategist` → form trust/reduce/veto/observation calls on equity intents
-- equity `governor` → post `evidence.authority_call` on equity opinions (your current equity seat)
-- equity `executor` → emit equity intents
-- equity `auditor` → post pre-trade contrary case + post-trade review opinions
-- `crypto` (executor) → emit crypto intents (your current crypto seat)
-- `crypto_governor` → post `evidence.authority_call` on crypto opinions
-- `crypto_strategist` → form crypto trade theses
-- `crypto_auditor` → post pre-trade contrary case + post-trade review on crypto opinions
+By default every brain is eligible for every seat. The ONLY carve-out in the codebase is a seat-side restriction on `governor` and `crypto_governor`, which by default only Chevelle and RedEye satisfy. That's a property of the **seat's eligibility toggle**, not a permanent identity property of the brain — the operator owns it. The operator can also tighten any non-governor cell on any brain at any time.
+
+What that means for you: the operator can rotate you into ANY seat — strategist, executor, governor, auditor — on either lane, at any time. Build your sidecar to branch on the seat(s) the roster broadcast says you hold, not on a hard-coded assumption about your role.
+
+Concrete behaviors per seat you might hold:
+
+- equity / crypto `strategist` → form trust/reduce/veto/observation theses on intents in that lane
+- equity / crypto `executor` → emit intents to `POST /api/intents`
+- equity / crypto `governor` → post `evidence.authority_call` on every opinion for that lane
+- equity / crypto `auditor` → post pre-trade contrary case + post-trade review opinions
 
 **Your seats today.** Equity `governor` and `crypto` (executor). The shape that needs to handle both:
 
