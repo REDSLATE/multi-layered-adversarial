@@ -1,3 +1,31 @@
+## 2026-05-30 (pass #34) — Brain status tile surfaces RedEye's new check-in identity fields
+
+### Operator directive
+RedEye agent shipped both new identity surfaces (`mc_url_set`/`ingest_token_set` for check-in, `mc_base_url_set`/`redeye_ingest_token_set` for heartbeat, plus the composite `checkin_worker_eligible` boolean) plus a "STARTED|NOT STARTED" lifecycle log line. Goal: turn the prod 7-hour-gap diagnostic from "curl + grep" into "look at the chip on the runtime page."
+
+### Audit on MC side
+- MC's proxy at `routes/brain_runtime.py::_fetch_upstream` reads `resp.json()` verbatim into `payload` — new fields flow through unmodified on prod. No proxy code change needed.
+- Preview MC has no `REDEYE_STATUS_URL` configured (expected for dev passthrough) — the proxy correctly returns `no_upstream_configured` and the dashboard tile renders the graceful degraded state. End-to-end will be live on prod once MC redeploys.
+
+### Shipped
+1. **`frontend/src/components/BrainProxiedStatusTile.jsx`** — Identity section now:
+   - Renders a top-line chip (green/red/grey dot + ELIGIBLE/NOT ELIGIBLE/unknown label) for `payload.identity.checkin_worker_eligible`. Sits above the KV rows so the operator sees the composite verdict first.
+   - Adds two new KV rows for the heartbeat pair: `mc_base_url_set`, `redeye_ingest_token_set`. Keeps the existing check-in pair (`mc_url_set`, `ingest_token_set`).
+   - Each row carries a stable `data-testid` so the testing agent / operator can target individual booleans.
+
+### Diagnostic flow now
+1. Operator opens `/admin/runtime/redeye` on prod.
+2. Chip color answers the question in <1s:
+   - **GREEN ELIGIBLE** → worker IS running. If the 7h gap persists, the issue is downstream (MC dedup, network blip, silent 5xx). Need: grep prod logs for `mc_checkin: periodic ping failed`.
+   - **RED NOT ELIGIBLE** → worker never started. Look at the 4 boolean rows directly under the chip — whichever is `false` names the missing env var.
+   - **GREY unknown** → sidecar is older than the new spec; ship the upgrade or fall back to grep.
+
+### Doctrine fit
+The tile remains purely observational (operator-read-only, proxy auditing every call to `brain_status_proxy_audit`). Nothing about authority, gates, or seat assignment changes.
+
+---
+
+
 ## 2026-05-30 (pass #33) — Seat-holder nudges (operator → silent seat)
 
 ### Operator directive

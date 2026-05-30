@@ -170,13 +170,61 @@ export default function BrainProxiedStatusTile({ brain, proxied }) {
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
         {p.identity && (
           <Section title="Identity" testid={`proxied-${brain}-identity`}>
+            {/* Checkin-worker eligibility chip — top-line answer to
+                "is this brain even able to call MC?". Green = both
+                env pairs are set AND worker was eligible at boot.
+                Red = at least one env var missing; expand the rows
+                below to see which. Undefined = brain hasn't shipped
+                the flag yet (older sidecar). */}
+            {p.identity.checkin_worker_eligible !== undefined && (
+              <div
+                className="flex items-center gap-2 mb-2 pb-2 border-b border-rd-border"
+                data-testid={`proxied-${brain}-checkin-chip`}
+              >
+                <Dot
+                  color={
+                    p.identity.checkin_worker_eligible === true
+                      ? "#10B981"
+                      : p.identity.checkin_worker_eligible === false
+                      ? "#DC2626"
+                      : "#71717A"
+                  }
+                  size={10}
+                />
+                <span className="text-[11px] font-mono uppercase tracking-widest text-rd-text">
+                  checkin worker
+                </span>
+                <span
+                  className="text-[11px] font-mono"
+                  style={{
+                    color:
+                      p.identity.checkin_worker_eligible === true
+                        ? "#10B981"
+                        : "#FCA5A5",
+                  }}
+                  data-testid={`proxied-${brain}-checkin-state`}
+                >
+                  {p.identity.checkin_worker_eligible === true
+                    ? "ELIGIBLE"
+                    : "NOT ELIGIBLE"}
+                </span>
+              </div>
+            )}
             <KV k="app_name" v={p.identity.app_name} />
             <KV k="env_name" v={p.identity.env_name} />
             <KV k="git_sha" v={p.identity.git_sha} />
             <KV k="broker_mode" v={p.identity.broker_mode} />
             <KV k="sidecar_version" v={p.identity.sidecar_version} />
-            <KV k="mc_url_set" v={p.identity.mc_url_set} />
-            <KV k="ingest_token_set" v={p.identity.ingest_token_set} />
+            {/* Check-in pair (MC ← brain periodic ping) */}
+            <KV k="mc_url_set" v={p.identity.mc_url_set} testid="identity-mc-url-set" />
+            <KV k="ingest_token_set" v={p.identity.ingest_token_set} testid="identity-ingest-token-set" />
+            {/* Heartbeat pair (brain ← MC opinion stream) */}
+            <KV k="mc_base_url_set" v={p.identity.mc_base_url_set} testid="identity-mc-base-url-set" />
+            <KV
+              k="redeye_ingest_token_set"
+              v={p.identity.redeye_ingest_token_set}
+              testid="identity-redeye-ingest-token-set"
+            />
           </Section>
         )}
         {p.seats && (
