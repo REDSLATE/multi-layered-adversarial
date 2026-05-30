@@ -94,6 +94,7 @@ from routes.data_stack_admin import router as data_stack_admin_router
 from routes.market_data_keys import router as market_data_keys_router
 from routes.opinion_silence_watchdog import router as opinion_silence_watchdog_router
 from routes.brain_health import router as brain_health_router
+from routes.market_data_snapshot import router as market_data_snapshot_router
 from shared.feeders.finnhub_equity import (
     start_worker_if_enabled as start_finnhub_worker,
     stop_worker as stop_finnhub_worker,
@@ -427,6 +428,7 @@ api_router.include_router(data_stack_admin_router)
 api_router.include_router(market_data_keys_router)
 api_router.include_router(opinion_silence_watchdog_router)
 api_router.include_router(brain_health_router)
+api_router.include_router(market_data_snapshot_router)
 api_router.include_router(shelly_router)
 api_router.include_router(brain_memory_ingest_router)
 from routes.learning_scoreboard import router as learning_scoreboard_router
