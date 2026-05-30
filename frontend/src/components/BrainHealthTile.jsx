@@ -139,6 +139,50 @@ function BrainCard({ brain, payload, thresholds }) {
   const overallMeta = OVERALL_META[overall] || OVERALL_META.dead;
   const reasons = payload?.overall?.reasons || [];
 
+  // ── Per-brain worker-eligibility chip ──
+  // Independent of the brain-health composite. Hits MC's status proxy
+  // for this specific brain and reads `payload.identity.checkin_worker_eligible`.
+  // Distinguishes three diagnostic states the composite endpoint
+  // can't:  ELIGIBLE (env set + worker started) / NOT ELIGIBLE
+  // (missing env var) / unknown (older sidecar / no upstream wired).
+  // Cheap (proxied through MC's 10s cache). Quiet on failure — the
+  // brain-health composite is the primary signal; this is an
+  // upstream-truth augmentation.
+  const [identity, setIdentity] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: d } = await api.get(`/admin/runtime/${brain}/status`);
+        if (cancelled) return;
+        setIdentity(d?.payload?.identity || (d?.ok === false ? { _unavailable: d.error } : {}));
+      } catch {
+        if (!cancelled) setIdentity({ _unavailable: "fetch_failed" });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [brain]);
+  const eligibility = identity?.checkin_worker_eligible;
+  const eligibilityColor =
+    eligibility === true ? "#10B981"
+    : eligibility === false ? "#DC2626"
+    : "#71717A";
+  const eligibilityLabel =
+    eligibility === true ? "ELIGIBLE"
+    : eligibility === false ? "NOT ELIGIBLE"
+    : identity?._unavailable ? "no upstream"
+    : identity == null ? "…"
+    : "unknown";
+  // For RED state, surface which env-var pair is broken so the
+  // operator doesn't have to click through to the runtime detail.
+  const failedEnvVars = [];
+  if (eligibility === false) {
+    if (identity.mc_url_set === false) failedEnvVars.push("MC_URL");
+    if (identity.ingest_token_set === false) failedEnvVars.push("INGEST_TOKEN");
+    if (identity.mc_base_url_set === false) failedEnvVars.push("MC_BASE_URL");
+    if (identity.redeye_ingest_token_set === false) failedEnvVars.push("REDEYE_INGEST_TOKEN");
+  }
+
   const checkin = payload?.checkin || {};
   const checkinMeta = CHECKIN_VERDICT_META[checkin.verdict] || CHECKIN_VERDICT_META.never;
 
@@ -215,6 +259,25 @@ function BrainCard({ brain, payload, thresholds }) {
         </span>
       </div>
 
+      <SignalRow
+        label="Worker"
+        value={
+          failedEnvVars.length > 0
+            ? `${eligibilityLabel} · missing: ${failedEnvVars.join(", ")}`
+            : eligibilityLabel
+        }
+        color={eligibilityColor}
+        testid={`brain-health-${brain}-worker-eligibility`}
+        title={
+          eligibility === true
+            ? "Brain's check-in worker reports ELIGIBLE at boot (both env-var pairs set)"
+            : eligibility === false
+            ? `Brain's check-in worker did NOT start. Missing env: ${failedEnvVars.join(", ") || "see runtime detail"}`
+            : identity?._unavailable
+            ? `MC has no proxy upstream wired for ${brain.toUpperCase()} — set ${brain.toUpperCase()}_STATUS_URL`
+            : "Brain has not shipped the checkin_worker_eligible boolean yet"
+        }
+      />
       <SignalRow
         label="Checkin"
         value={`${checkinMeta.label} · ${fmtAge(checkin.age_sec)}`}
