@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, RUNTIME_META, relTime } from "@/lib/api";
 import { Card, LoadingRow } from "@/components/ui-bits";
 
@@ -148,10 +149,12 @@ function BrainCard({ brain, payload, thresholds }) {
   const dataKeysColor = dataKeys.last_fetch_ts ? "#10B981" : "#71717A";
 
   return (
-    <div
-      className="bg-rd-bg border border-rd-border p-4"
+    <Link
+      to={`/admin/runtime/${brain}`}
+      className="block bg-rd-bg border border-rd-border p-4 transition-colors hover:bg-[#141414] hover:border-rd-warn focus:outline-none focus:border-rd-warn focus:bg-[#141414] cursor-pointer no-underline"
       style={{ borderLeft: `3px solid ${meta.color || "#71717A"}` }}
       data-testid={`brain-health-card-${brain}`}
+      title={`Open ${meta.label || brain.toUpperCase()} runtime detail`}
     >
       <div className="flex items-start justify-between mb-3">
         <div>
@@ -171,6 +174,12 @@ function BrainCard({ brain, payload, thresholds }) {
             {meta.project || ""}
           </div>
         </div>
+        <span
+          className="text-[10px] font-mono text-rd-dim uppercase tracking-widest opacity-60 group-hover:opacity-100"
+          aria-hidden="true"
+        >
+          ↗
+        </span>
       </div>
 
       <SignalRow
@@ -217,7 +226,7 @@ function BrainCard({ brain, payload, thresholds }) {
           </div>
         </div>
       )}
-    </div>
+    </Link>
   );
 }
 

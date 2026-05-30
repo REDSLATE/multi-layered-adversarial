@@ -24,17 +24,33 @@ export default function RuntimeDetail() {
   // of just repeating the brain's identity. The seat IS the
   // restriction; the brain itself carries no separate authority.
   const [roster, setRoster] = useState(null);
+  // `loaded` flips true after the parallel fetches complete (success
+  // or failure). Lets us distinguish "still loading" (show spinner)
+  // from "fetched but no status endpoint" (show graceful unavailable
+  // message instead of an eternal LoadingRow).
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     if (!meta) return;
     setStatus(null);
     setRows(null);
+    setLoaded(false);
     (async () => {
+      // `sub` is undefined for brains without a curated sub-endpoint
+      // (e.g. redeye, whose decision log lives elsewhere). Skip the
+      // sub-rows fetch in that case so the page still renders the
+      // status / calibrators / artifacts panels instead of crashing
+      // on `sub.url`. Each fetch is independently catch-shielded so
+      // a single 404 (e.g. `/runtime/redeye/status` not present on
+      // the backend) cannot tank the whole page.
+      const subPromise = sub
+        ? api.get(sub.url).catch(() => ({ data: null }))
+        : Promise.resolve({ data: null });
       const [s, r, c, a, rs] = await Promise.all([
-        api.get(`/runtime/${runtime}/status`),
-        api.get(sub.url),
-        api.get(`/shared/calibrators?runtime=${runtime}`),
-        api.get(`/shared/artifacts?runtime=${runtime}`),
+        api.get(`/runtime/${runtime}/status`).catch(() => ({ data: null })),
+        subPromise,
+        api.get(`/shared/calibrators?runtime=${runtime}`).catch(() => ({ data: null })),
+        api.get(`/shared/artifacts?runtime=${runtime}`).catch(() => ({ data: null })),
         api.get("/admin/roster").catch(() => ({ data: null })),
       ]);
       setStatus(s.data);
@@ -42,6 +58,7 @@ export default function RuntimeDetail() {
       setCalibs(c.data);
       setArtifacts(a.data);
       setRoster(rs.data);
+      setLoaded(true);
     })();
   }, [runtime, meta, sub]);
 
@@ -105,7 +122,20 @@ export default function RuntimeDetail() {
         testid={`runtime-header-${runtime}`}
       />
 
-      {!status && <LoadingRow />}
+      {!loaded && !status && <LoadingRow />}
+
+      {loaded && !status && (
+        <Card testid={`runtime-status-unavailable-${runtime}`}>
+          <div className="label-eyebrow mb-2">Status</div>
+          <div className="text-sm font-mono text-rd-muted">
+            No per-runtime status endpoint is wired for{" "}
+            <span className="text-rd-text">{meta.label}</span>. This brain
+            reports its telemetry through the shared sovereign-audit /
+            opinion / sidecar-check-in surfaces — see the Diagnostics
+            page for live signals.
+          </div>
+        </Card>
+      )}
 
       {status && (
         <>
@@ -131,7 +161,7 @@ export default function RuntimeDetail() {
               <div className="font-display text-2xl font-bold tracking-tight" style={{ color: meta.color }}>
                 {status.decision_log_count ?? status.shadow_rows_count ?? status.memory_labels_count ?? 0}
               </div>
-              <div className="text-[10px] text-rd-dim font-mono mt-1">{sub.title}</div>
+              <div className="text-[10px] text-rd-dim font-mono mt-1">{sub?.title || "—"}</div>
             </Card>
             <Card accentColor={meta.color}>
               <div className="label-eyebrow mb-2">Doctrine</div>
@@ -146,48 +176,53 @@ export default function RuntimeDetail() {
             <SovereignTile runtime={runtime} accent={meta.color} />
           </div>
 
-          {/* Decision log */}
-          <Card className="p-0 overflow-hidden mb-6" testid={`runtime-rows-${runtime}`}>
-            <div className="px-4 py-3 border-b border-rd-border flex items-center justify-between">
-              <div>
-                <div className="label-eyebrow">Isolated decision store</div>
-                <div className="font-mono text-sm">{sub.title}</div>
+          {/* Decision log — only rendered when this runtime has a
+              curated sub-endpoint. Brains without one (e.g. redeye)
+              show their telemetry elsewhere; skipping the card keeps
+              the page from crashing on `sub.title`. */}
+          {sub && (
+            <Card className="p-0 overflow-hidden mb-6" testid={`runtime-rows-${runtime}`}>
+              <div className="px-4 py-3 border-b border-rd-border flex items-center justify-between">
+                <div>
+                  <div className="label-eyebrow">Isolated decision store</div>
+                  <div className="font-mono text-sm">{sub.title}</div>
+                </div>
+                <div className="text-[10px] text-rd-dim uppercase tracking-widest">
+                  {rows?.count || 0} records
+                </div>
               </div>
-              <div className="text-[10px] text-rd-dim uppercase tracking-widest">
-                {rows?.count || 0} records
-              </div>
-            </div>
-            {!rows && <LoadingRow />}
-            {rows && rows.items.length === 0 && <EmptyState message="No records in this runtime's log." />}
-            {rows && rows.items.length > 0 && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs font-mono">
-                  <thead>
-                    <tr className="bg-rd-bg3 text-rd-dim uppercase tracking-widest">
-                      {sub.cols.map((c) => (
-                        <th key={c} className="text-left px-4 py-3 border-b border-rd-border">{c}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.items.map((row, i) => (
-                      <tr key={row.id || i} className="border-b border-rd-border last:border-b-0 hover:bg-rd-bg3">
+              {!rows && <LoadingRow />}
+              {rows && rows.items.length === 0 && <EmptyState message="No records in this runtime's log." />}
+              {rows && rows.items.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs font-mono">
+                    <thead>
+                      <tr className="bg-rd-bg3 text-rd-dim uppercase tracking-widest">
                         {sub.cols.map((c) => (
-                          <td key={c} className="px-4 py-2.5">
-                            {c === "timestamp"
-                              ? `${fmtTime(row[c])} (${relTime(row[c])})`
-                              : row[c] != null
-                              ? String(row[c])
-                              : "—"}
-                          </td>
+                          <th key={c} className="text-left px-4 py-3 border-b border-rd-border">{c}</th>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
+                    </thead>
+                    <tbody>
+                      {rows.items.map((row, i) => (
+                        <tr key={row.id || i} className="border-b border-rd-border last:border-b-0 hover:bg-rd-bg3">
+                          {sub.cols.map((c) => (
+                            <td key={c} className="px-4 py-2.5">
+                              {c === "timestamp"
+                                ? `${fmtTime(row[c])} (${relTime(row[c])})`
+                                : row[c] != null
+                                ? String(row[c])
+                                : "—"}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          )}
 
           {/* Calibrators + Artifacts side-by-side */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
