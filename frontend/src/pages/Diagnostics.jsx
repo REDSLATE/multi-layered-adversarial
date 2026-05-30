@@ -6,6 +6,7 @@ import LiveTradeDiagnose from "@/components/LiveTradeDiagnose";
 import RuntimeTokensPanel from "@/components/RuntimeTokensPanel";
 import RuntimeBundlesPanel from "@/components/RuntimeBundlesPanel";
 import SidecarCheckinPanel from "@/components/SidecarCheckinPanel";
+import BrainHealthTile from "@/components/BrainHealthTile";
 import LaneExecutionTogglesPanel from "@/components/LaneExecutionTogglesPanel";
 import PromotionArtifactPanel from "@/components/PromotionArtifactPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
@@ -563,6 +564,17 @@ export default function Diagnostics() {
           <div className="mt-6">
             <PanelErrorBoundary panelName="PromotionArtifactPanel">
               <PromotionArtifactPanel />
+            </PanelErrorBoundary>
+          </div>
+
+          {/* Brain-Health composite tile — single-glance fleet
+              readiness. Joins sidecar-checkin + opinion-watchdog +
+              data-keys-audit + sovereign-audit-log per (role, lane).
+              Built so post-redeploy verification collapses to one
+              page glance instead of three curls. Read-only. */}
+          <div className="mt-6">
+            <PanelErrorBoundary panelName="BrainHealthTile">
+              <BrainHealthTile />
             </PanelErrorBoundary>
           </div>
 

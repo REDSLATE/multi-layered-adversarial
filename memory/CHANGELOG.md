@@ -1,3 +1,47 @@
+## 2026-02-17 (pass #23) — Brain-Health composite endpoint + admin tile
+
+### Operator pattern
+Post-redeploy verification used to require three curls against three independent surfaces: sidecar-checkin / opinion-silence-watchdog / sovereign-audit-log walk per seat. This pass collapses that to ONE endpoint and ONE tile glance.
+
+### Shipped
+1. **`routes/brain_health.py`** — read-only composite. Two endpoints:
+   - `GET /api/admin/runtime/brain-health/{brain}` — singleton
+   - `GET /api/admin/runtime/brain-health` — fleet rollup (used by tile)
+   - Joins `sidecar_checkins` + `shared_opinions` + `market_data_key_fetches` + `sovereign_audit_log`. Never writes.
+2. **Doctrine-pinned thresholds in the payload** — `checkin_max_age_s=300`, `opinion_max_age_s=900`, `seat_walk_max_age_s=1800`. Operator's contract: tile + alerter + future LLM summariser all read the same numbers without grepping source.
+3. **Lane-scoped seat-walk** — per `(role, lane)` cell: `{ts, age_sec, stale, mode, seat}` if the brain CURRENTLY holds the seat, `null` if not. A historical walk for a previously-held seat is filtered out by consulting the live roster. Operator's explicit ask: null = dimmed dot, not red.
+4. **`overall.verdict`** — `green | degraded | dead` with `reasons[]` array (e.g. `checkin_dead_4221s`, `opinion_silent_5000s`, `governor_equity_stale_3600s`). A seatless brain that's opinion-silent is correctly GREEN (no seat → nothing to opine on).
+5. **Frontend `BrainHealthTile.jsx`** — 4-card grid on `/admin/diagnostics`. Per brain: verdict dot, three signal rows (checkin/opinion/data-keys), seat-walk role × lane grid, "why" reasons. 15s auto-refresh.
+
+### Tripwires (15 new in `tests/test_brain_health.py`)
+- Thresholds present + sane in module-level constant
+- Lane-seat map covers both lanes for every role
+- Source-scan: no `.insert_*`/`.update_*`/`.delete_*` calls anywhere in the module (read-only enforcement)
+- Source-scan: no broker key references (ALPACA_API_KEY / KRAKEN_SECRET / etc.)
+- `_compute_overall`: green / degraded / dead branches; seatless-brain-opinion-silence is NOT degraded; null seat cells never generate reasons; thresholds always echoed
+- Routes registered on documented paths + guarded by `get_current_user`
+- `_gather_seat_walk` MUST call `get_roster` + filter via `held_seats` set (prevents historical-walk regression)
+
+### Live verification on preview
+```
+$ curl /api/admin/runtime/brain-health
+brains: ['alpha', 'camaro', 'chevelle', 'redeye']
+  alpha:    verdict=dead  reasons=['checkin_dead_4221s']
+  camaro:   verdict=dead  reasons=['checkin_dead_588889s']
+  chevelle: verdict=dead  reasons=['checkin_never']
+  redeye:   verdict=dead  reasons=['checkin_never']
+```
+All-dead is correct for preview (brains check into prod, not preview). Camaro's seat-walk correctly shows only `strategist × equity` populated; phantom `executor × equity` historical walk filtered out. Tile renders 4 cards with verdict dots, lane-scoped seat dots, threshold echo in header.
+
+### Next Action Items
+- 🟢 Operator: nothing to do for this pass. After RedEye redeploys (their torch decision), the tile turns green automatically.
+- 🟡 P1 — 6-Brain Expansion Refactor per `SIX_BRAIN_REFACTOR_PLAN.md`
+- 🟡 P1 — Real `relative_volume` via Kraken OHLC + Polygon/Finnhub bar consumption
+- 🟡 P1 — R:R Scanner Phase C/D
+
+---
+
+
 ## 2026-02-17 (pass #22) — Frontend AuthContext resilience: stop logging operators out on transient backend errors
 
 ### Bug
