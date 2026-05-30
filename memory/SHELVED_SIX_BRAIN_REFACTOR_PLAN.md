@@ -1,6 +1,18 @@
-# Mission Control — Six-Brain Expansion Refactor Plan
+# SHELVED — Mission Control — Six-Brain Expansion Refactor Plan
 
-**Status**: PLAN ONLY (not yet implemented)
+> **SHELVED PERMANENTLY 2026-02-17** by operator decision. Do NOT
+> implement. Do NOT propose this as a next task in future planning.
+> If the 4-brain roster ever needs to grow, design that work from
+> first principles against the live codebase rather than reviving
+> this document — it predates several doctrine passes (sovereign
+> mode guard, seat-policy hardening, governor exclusivity) and is
+> almost certainly stale.
+>
+> File preserved for archaeological reference only.
+
+---
+
+**Status**: SHELVED (do not implement)
 **Drafted**: 2026-05-27 (pass #12 follow-up)
 **Owner**: pending — recommended **separate fork**, not main-branch development
 **Estimated effort**: 8-12 hours of focused work, broken into 5 phases

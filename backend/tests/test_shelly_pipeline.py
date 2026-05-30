@@ -358,8 +358,8 @@ def test_pipeline_rejects_unknown_brain():
 @pytest.mark.tripwire
 def test_pipeline_auto_extends_with_live_runtimes():
     """The pipeline initializes one LocalShelly per LIVE_RUNTIMES.
-    Six-brain refactor (SIX_BRAIN_REFACTOR_PLAN.md) must not require
-    touching this file — assertion guards that contract."""
+    Any future change to the brain roster must not require touching
+    this file — assertion guards that contract."""
     from namespaces import LIVE_RUNTIMES
     assert set(shelly_pipeline.locals.keys()) == set(LIVE_RUNTIMES)
 

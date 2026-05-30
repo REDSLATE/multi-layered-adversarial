@@ -1,3 +1,30 @@
+## 2026-02-17 (pass #27) — Backlog cleanup: 6-Brain Expansion Refactor SHELVED PERMANENTLY
+
+### Operator decision
+Operator: *"You can get rid of the 6 brains idea. Just shelf it permanently."*
+
+### Shipped
+- Renamed `/app/memory/SIX_BRAIN_REFACTOR_PLAN.md` → `/app/memory/SHELVED_SIX_BRAIN_REFACTOR_PLAN.md`
+- Prepended a `SHELVED PERMANENTLY 2026-02-17` banner at the top warning future agents not to revive or implement. File preserved for archaeological reference only.
+- Removed the in-source breadcrumb in `tests/test_shelly_pipeline.py:test_pipeline_auto_extends_with_live_runtimes` docstring (was the only test-suite reference). The test contract still holds — shelly pipeline must auto-extend with LIVE_RUNTIMES regardless of future roster changes — but no longer points at the dead plan.
+
+### What this means going forward
+Brain roster stays at 4 (Alpha, Camaro, Chevelle, RedEye). If the roster ever needs to grow, the work should be designed from first principles against the live codebase, NOT by reviving the shelved plan (which predates several doctrine passes: sovereign mode guard, seat-policy hardening, governor exclusivity).
+
+### Next Action Items (post-shelving)
+- 🟡 P1 — Real `relative_volume` + Polygon/Finnhub bar consumption (MC endpoint shipped pass #25; awaiting brain wire-up)
+- 🟡 P1 — R:R Scanner Phase C/D (tiered cache + strict 5:1 enforcement)
+- 🟡 P1 — Phase 3 cross-Shelly federation HTTP bridge
+
+### Future / Backlog
+- 🟢 P2 — Pre-existing `test_quorum_and_provenance::test_governor_silent_flags_governance_blindness` failure
+- 🟢 P2 — SSE stream `/api/mc-connection/stream` for live dashboard
+- 🟢 P2 — Pulse review-queue UI for Governance Reviewer
+- 🟢 P3 — Cleanup: legacy `decider` paths, dead RedEye broker code, stale `deploy_mode == "observation"` fixtures
+
+---
+
+
 ## 2026-02-17 (pass #26) — Opinion-staleness gate hardening + executor seat doctrine in brain-health tile
 
 ### The loophole
