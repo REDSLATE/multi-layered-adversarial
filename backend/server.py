@@ -52,6 +52,7 @@ from shared.flags import router as flags_router, get_flags_snapshot
 from shared.intents import router as intents_router
 from shared.executor_seat import router as executor_router
 from shared.auditor_seat import router as auditor_router
+from shared.seat_nudges import router as seat_nudges_router
 from shared.broker.alpaca_routes import router as alpaca_router
 from shared.decisions_feed import router as decisions_router
 from shared.doctrine_routes import router as doctrine_router
@@ -403,6 +404,7 @@ api_router.include_router(doctrine_router)
 api_router.include_router(intents_router)
 api_router.include_router(executor_router)
 api_router.include_router(auditor_router)
+api_router.include_router(seat_nudges_router)
 api_router.include_router(alpaca_router)
 api_router.include_router(execution_router)
 api_router.include_router(live_positions_router)

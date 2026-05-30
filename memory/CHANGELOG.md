@@ -1,3 +1,40 @@
+## 2026-05-30 (pass #33) — Seat-holder nudges (operator → silent seat)
+
+### Operator directive
+Confirmed the improvement proposed at end of pass #32: a one-click "Notify holder" action on each missing seat in the Positions quorum stripe — fires a typed nudge to the brain currently in that chair via the runtime-token channel, with cooldown.
+
+### Shipped
+1. **`shared/seat_nudges.py`** — new module with three endpoints:
+   - `POST /api/admin/positions/{position_id}/nudge-seat` — operator pings the brain currently holding `seat`. Resolves the address at SEND time from the live roster (position-model purity: same brain that quorum considers "engaged" is the brain that gets the nudge). 30-min cooldown per (position, seat). Returns 422 unknown seat, 404 vacant or missing position, 429 cooldown with `retry_after_seconds`.
+   - `GET /api/admin/positions/{position_id}/nudges` — operator reads history.
+   - `GET /api/runtime-discussion/seat-nudges?runtime={brain}&since={iso}` — brain-callable via runtime-token. Poll-friendly with `since` cursor.
+
+2. **`namespaces.py`** — `SEAT_NUDGES = "seat_nudges"` (append-only collection).
+
+3. **`server.py`** — `seat_nudges_router` wired into `/api`.
+
+4. **`frontend/src/pages/Positions.jsx`** — `SeatNudgeRow` component renders inside the quorum stripe. For each missing seat with a current holder, a `↗ NUDGE <BRAIN> /<seat>` button. For vacant required seats, a dashed-border `VACANT /<seat>` chip (no one to ping). Sonner toast on success / typed cooldown message on 429. Page-level roster fetch parallels positions fetch on every 15s poll so newly-rotated holders are addressed correctly on the next render.
+
+5. **`tests/test_seat_nudges.py`** — 7 tests cover: nudge addresses CURRENT holder (proves resolve-at-send-time), vacant seat 404, unknown seat 422, unknown position 404, cooldown 429, per-(position,seat) isolation, newest-first listing.
+
+### Doctrine guard
+The nudge endpoint is stamped `authority: "advisory_observability_only"` in every row and the docstring asserts:
+- does NOT force a seat reassignment
+- does NOT veto an intent
+- does NOT modify execution authority
+- does NOT affect any gate decision
+
+Brain pulls via poll — MC never pushes / retries / escalates. Operator can chain nudges with cooldown gaps. Same pattern as `opinion_silence_watchdog`.
+
+### Verified
+- All 7 backend tests pass.
+- Live curl confirmed: first nudge → 200 with brain=chevelle (current governor holder); immediate retry → 429 with retry_after_seconds=1799.
+- UI screenshot at `/admin/positions` shows the stripe with both nudge buttons (NUDGE CAMARO /STRATEGIST, NUDGE CHEVELLE /GOVERNOR, NUDGE ALPHA /EXECUTOR where applicable) and VACANT chips for unfilled required seats.
+- Live click recorded a row in `seat_nudges` with seat=strategist, brain=camaro — proving the address resolves through the live roster, not from any stale stamp.
+
+---
+
+
 ## 2026-05-30 (pass #32) — Position-model quorum for strategist / auditor / all required seats
 
 ### Operator directive

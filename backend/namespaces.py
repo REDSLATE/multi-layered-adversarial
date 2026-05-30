@@ -176,6 +176,13 @@ SHARED_POSITIONS = "shared_positions"
 SHARED_POSITION_STANCES = "shared_position_stances"
 SHARED_POSITION_AUDIT = "shared_position_audit"
 
+# Seat-holder nudges (2026-05-30) — operator pings the brain CURRENTLY
+# holding a missing/silent seat on a specific position. Read-only
+# observability for the brain side (poll-able via runtime-token).
+# Cooldown-throttled to prevent spam. Authority: ADVISORY ONLY — does
+# not affect any gate, seat assignment, or execution authority.
+SEAT_NUDGES = "seat_nudges"
+
 # Decision Machine — intent envelopes (brain-emitted), gate audit log
 SHARED_INTENTS = "shared_intents"                          # brain-emitted decision intents
 SHARED_GATE_RESULTS = "shared_gate_results"                # one row per gate check on an intent

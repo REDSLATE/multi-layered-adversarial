@@ -32,11 +32,90 @@ const STATE_META = {
   stale:           { label: "STALE",           color: "#52525B" },
 };
 
+// ─── Seat-nudge button row ─────────────────────────────────────────────
+// Operator-facing inline action on the quorum stripe. For each missing
+// seat that has a CURRENT holder, render a "Nudge <BRAIN>" button. For
+// vacant required seats, render a static "VACANT" chip (no one to ping).
+// Doctrine: ADVISORY ONLY. The nudge does not affect any gate, seat
+// assignment, or execution authority. 30-min cooldown per (position, seat).
+function SeatNudgeRow({ positionId, seatsMissing, vacantRequired, roster }) {
+  const [sending, setSending] = React.useState(null); // seat name in flight
+  const vacantSet = new Set(vacantRequired || []);
+  const nudgeable = (seatsMissing || []).filter((s) => !vacantSet.has(s));
+
+  const onNudge = async (seat) => {
+    setSending(seat);
+    try {
+      const { data } = await api.post(
+        `/admin/positions/${positionId}/nudge-seat`,
+        { seat },
+      );
+      const brain = data?.nudge?.brain || roster[seat] || "holder";
+      toast.success(`Nudged ${brain.toUpperCase()} (${seat})`);
+    } catch (e) {
+      const detail = e?.response?.data?.detail;
+      if (detail?.blocked_by === "nudge_cooldown") {
+        const mins = Math.ceil((detail.retry_after_seconds || 0) / 60);
+        toast.error(`Cooldown — retry in ${mins}m`);
+      } else {
+        toast.error(typeof detail === "string" ? detail : (detail?.reason || e.message));
+      }
+    } finally {
+      setSending(null);
+    }
+  };
+
+  if (nudgeable.length === 0 && vacantRequired.length === 0) {
+    return <span className="ml-auto opacity-80">missing: —</span>;
+  }
+
+  return (
+    <div
+      className="ml-auto flex items-center gap-1.5 flex-wrap"
+      data-testid={`nudge-row-${positionId}`}
+    >
+      {nudgeable.map((seat) => {
+        const brain = roster[seat];
+        if (!brain) return null;
+        return (
+          <button
+            key={seat}
+            onClick={() => onNudge(seat)}
+            disabled={sending === seat}
+            className="px-2 py-0.5 border border-current text-current hover:bg-current hover:bg-opacity-20 disabled:opacity-40 transition-colors text-[10px] font-mono uppercase tracking-widest"
+            title={`Notify ${brain} (${seat}) — 30m cooldown`}
+            data-testid={`nudge-btn-${positionId}-${seat}`}
+          >
+            {sending === seat ? "…" : `↗ nudge ${brain}`}
+            <span className="opacity-60 ml-1">/{seat}</span>
+          </button>
+        );
+      })}
+      {vacantRequired.map((seat) => (
+        <span
+          key={seat}
+          className="px-2 py-0.5 border border-dashed border-current opacity-50 text-[10px] font-mono uppercase tracking-widest"
+          title={`${seat} seat is vacant — assign a holder via the Roster page`}
+          data-testid={`nudge-vacant-${positionId}-${seat}`}
+        >
+          vacant /{seat}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+
+
 export default function Positions() {
   const [items, setItems] = useState(null);
   const [filter, setFilter] = useState("open");
   const [propOpen, setPropOpen] = useState(false);
   const [err, setErr] = useState("");
+  // Live roster — used by the quorum stripe's nudge buttons to address
+  // the brain CURRENTLY holding each missing seat. Refreshes on every
+  // poll so a freshly-rotated holder gets pinged on the next render.
+  const [roster, setRoster] = useState({});
 
   const refresh = useCallback(async () => {
     setErr("");
@@ -44,8 +123,12 @@ export default function Positions() {
       const params = new URLSearchParams();
       if (filter !== "all") params.set("state", filter);
       params.set("limit", "100");
-      const { data } = await api.get(`/shared/positions?${params.toString()}`);
-      setItems(data.items);
+      const [posResp, rosterResp] = await Promise.all([
+        api.get(`/shared/positions?${params.toString()}`),
+        api.get("/admin/roster").catch(() => ({ data: { assignments: {} } })),
+      ]);
+      setItems(posResp.data.items);
+      setRoster(rosterResp.data?.assignments || {});
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
     }
@@ -116,7 +199,12 @@ export default function Positions() {
       {items && items.length > 0 && (
         <div className="space-y-3" data-testid="positions-list">
           {items.map((p) => (
-            <PositionCard key={p.position_id} p={p} onChange={refresh} />
+            <PositionCard
+              key={p.position_id}
+              p={p}
+              roster={roster}
+              onChange={refresh}
+            />
           ))}
         </div>
       )}
@@ -130,7 +218,7 @@ export default function Positions() {
   );
 }
 
-function PositionCard({ p, onChange }) {
+function PositionCard({ p, roster, onChange }) {
   const state = STATE_META[p.state] || STATE_META.proposed;
   const executor = p.executor_seat;
   const isOpen = ["proposed", "discussing"].includes(p.state);
@@ -178,7 +266,7 @@ function PositionCard({ p, onChange }) {
       {/* Quorum stripe — surfaces adversarial / governance blindness */}
       {p.quorum?.degraded && (
         <div
-          className="px-4 py-1.5 flex items-center gap-3 text-[10px] font-mono uppercase tracking-widest"
+          className="px-4 py-1.5 flex items-center gap-3 text-[10px] font-mono uppercase tracking-widest flex-wrap"
           style={{
             background: p.quorum.adversarial_blindness ? "rgba(220,38,38,0.10)" : "rgba(245,158,11,0.10)",
             borderBottom: `1px solid ${p.quorum.adversarial_blindness ? "#DC2626" : "#F59E0B"}`,
@@ -197,9 +285,12 @@ function PositionCard({ p, onChange }) {
               · governance blindness (governor silent)
             </span>
           )}
-          <span className="ml-auto opacity-80">
-            missing: {(p.quorum.seats_missing || []).join(", ") || "—"}
-          </span>
+          <SeatNudgeRow
+            positionId={p.position_id}
+            seatsMissing={p.quorum.seats_missing || []}
+            vacantRequired={p.quorum.vacant_required_seats || []}
+            roster={roster || {}}
+          />
         </div>
       )}
 
