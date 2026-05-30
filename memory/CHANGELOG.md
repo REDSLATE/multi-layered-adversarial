@@ -1,3 +1,46 @@
+## 2026-05-30 (pass #32) — Position-model quorum for strategist / auditor / all required seats
+
+### Operator directive
+*"Do what is necessary to get these seats inline with the doctrine."* — for auditor seat and strategist seat, following the executor-seat position-only relaxation in pass #31.
+
+### Audit findings (read-only sweep)
+| Seat | Where it's checked | Brain-coupled? |
+|---|---|---|
+| executor | `_evaluate_gates` `executor_seat_check` | Was coupled → fixed in pass #31 |
+| governor | `_latest_governor_call`, `_governance_verdict` | Already position-model — `_seat_holder("governor", lane)` resolves current holder, then queries that brain's contributions |
+| opponent / auditor | `_evaluate_opponent_gate` (council.py:663) | Already position-model AND advisory-never-blocks |
+| strategist | Doctrine packet `fetch_seat_holders`, runtime profile overlay (`doctrine_routes.py:96`) | Already position-model |
+| **quorum** | `_compute_quorum` (positions.py:227) | **WAS brain-coupled via `posted_as`** — fixed in this pass |
+| opinion-silence watchdog | `routes/opinion_silence_watchdog.py:118` | Already position-model — iterates current roster |
+
+### The doctrine bug `_compute_quorum` was hiding
+The old implementation called a seat "engaged" if ANY historical stance carried `posted_as=<seat>`. A stance written by Camaro under `strategist`, then a rotation to Alpha → Camaro's residue still counted as the strategist seat being engaged, silently satisfying quorum on Alpha's behalf. Same brain-coupling family as the executor-seat-check bug: "the seat is engaged because the prior brain spoke under it" ≠ "the seat is engaged because the current authority spoke."
+
+### Shipped
+1. **`shared/positions.py::_compute_quorum`** — rewritten to position-model. A required seat is "engaged" iff `roster_assignments[seat]` exists AND that brain is in `stances_by_brain`. After rotation, prior-holder stances no longer satisfy the new holder's quorum. `stances_by_seat` continues to be exposed in the response for the UI's "what was last said under each seat" history view, but quorum no longer reads it.
+
+2. **`shared/positions.py::_hydrate`** — passes `stances_by_brain` to `_compute_quorum`. `stances_by_seat` becomes display-only history; doctrine comment added.
+
+3. **`tests/test_quorum_position_model.py`** — 7 new pure-function tests covering:
+   - seat engaged when current holder stanced
+   - seat MISSING when current holder silent even if predecessor spoke (the doctrine-critical case)
+   - vacant required seats correctly flagged in both `vacant_required_seats` AND `seats_missing`
+   - one brain holding multiple required seats engages both via a single stance
+   - degraded flag correctness
+   - governance_blindness clears when current governor speaks
+   - governance_blindness PERSISTS after rotation if new governor silent (doctrine teeth)
+
+### Verified
+- All 7 new quorum tests pass.
+- Live `/api/shared/positions` returns position-model correct payloads: e.g., `engaged=['executor']` (only alpha — current executor — stanced), `missing=['strategist','governor','opponent','auditor',...]` (current holders of these seats haven't stanced this position), `vacant=['opponent','auditor','crypto_auditor','crypto']` (no current holder).
+- Lint clean on `shared/positions.py`.
+
+### Operator visibility
+The Positions page (`/admin/positions`) "missing seats" stripe now accurately reflects the **current** holders' silence, not stale historical engagement. After rotation, freshly-vacant authority is visible immediately — the new holder must re-stance to clear quorum.
+
+---
+
+
 ## 2026-05-30 (pass #31) — Position-model executor seat + last-block-reason diagnostic
 
 ### Operator directive

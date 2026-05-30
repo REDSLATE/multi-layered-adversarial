@@ -224,26 +224,51 @@ async def _stance_summary(position_id: str) -> dict:
     }
 
 
-async def _compute_quorum(stances_by_seat: dict[str, dict],
+async def _compute_quorum(stances_by_brain: dict[str, dict],
+                          stances_by_seat: dict[str, dict],
                           roster_assignments: dict[str, Optional[str]]) -> dict:
-    """Quorum awareness — surfaces silent adversarial / governance
-    blindness so a missing OPPONENT (REDEYE down) doesn't quietly
-    dial up risk.
+    """Quorum awareness — POSITION model (Doctrine, 2026-05-30).
+
+    A required seat is "engaged" iff the brain CURRENTLY holding that
+    seat has authored a stance on this position. Authority lives in
+    the seat; when the seat rotates, the new holder must re-speak.
+    A stance written by the previous holder no longer satisfies the
+    seat's quorum — because authority moved with the seat.
+
+    Prior implementation read `posted_as` (seat-at-write-time) and
+    counted any historical stance under that seat as engagement,
+    even after rotation. That allowed Alpha to take the strategist
+    seat while Camaro's old strategist stance silently held quorum
+    on his behalf — which is brain-coupling masquerading as
+    "history". Same fix family as the executor_seat_check
+    position-model relaxation (2026-05-28).
 
     Computes:
-      - seats_engaged: list of seats that have stamped a stance
+      - seats_engaged: required seats whose CURRENT holder has stanced
       - seats_required: list of seats marked seat_required=True
-      - seats_missing: seats that are required but unstamped
+      - seats_missing: required seats whose current holder is silent
+        (either no stance from current holder, or seat is vacant)
       - vacant_required_seats: required seats that have no brain assigned
-        (worse than just unstamped — there's literally no one to ask)
+        (worse than silent — there's literally no one to ask)
       - adversarial_blindness: opponent seat is required and unstamped
       - governance_blindness: governor seat is required and unstamped
       - degraded: any required seat is unstamped or vacant
     """
     req = list(required_seats())
-    engaged = list(stances_by_seat.keys())
-    vacant_required = [s for s in req if not roster_assignments.get(s)]
-    missing = [s for s in req if s not in engaged]
+    engaged: list[str] = []
+    missing: list[str] = []
+    vacant_required: list[str] = []
+    for seat in req:
+        current_holder = roster_assignments.get(seat)
+        if not current_holder:
+            vacant_required.append(seat)
+            missing.append(seat)
+            continue
+        # Position-model engagement: current holder must have stanced.
+        if current_holder in stances_by_brain:
+            engaged.append(seat)
+        else:
+            missing.append(seat)
     return {
         "seats_engaged": engaged,
         "seats_required": req,
@@ -262,15 +287,20 @@ async def _hydrate(doc: dict) -> dict:
         roster = await get_roster()
     except Exception:  # noqa: BLE001
         roster = {"assignments": {}}
-    # Build seat → stance map (latest stance from whichever brain held
-    # that seat at write time).
+    # Build seat → stance map FOR DISPLAY ONLY. This shows the operator
+    # "what stance was last written under each seat" regardless of who
+    # currently holds it — useful historical context for the UI. Quorum
+    # itself uses `stances_by_brain` + current roster to enforce the
+    # position-model engagement check (see `_compute_quorum`).
     stances_by_seat: dict[str, dict] = {}
     for stance in summary["stances_by_brain"].values():
         seat = stance.get("posted_as")
         if seat:
             stances_by_seat[seat] = stance
     quorum = await _compute_quorum(
-        stances_by_seat, roster.get("assignments") or {},
+        summary["stances_by_brain"],
+        stances_by_seat,
+        roster.get("assignments") or {},
     )
     return {
         **doc,
