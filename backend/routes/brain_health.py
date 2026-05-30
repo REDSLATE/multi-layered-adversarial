@@ -302,12 +302,20 @@ def _compute_overall(
         # preview / policy_drift / invalid — degraded but not dead.
         reasons.append(f"checkin_verdict_{checkin['verdict']}")
 
-    # 2) opinion — only material if this brain has at least one seat
-    held_any_seat = any(
+    # 2) opinion — only material if this brain has at least one
+    # opinion-producing seat. Executors route orders, they don't opine;
+    # crypto-executor seats ditto. Doctrine pin (2026-02-17): silence
+    # on a brain whose ONLY seat is executor is correct behavior, not
+    # a regression — the operator's brain-health tile must not red-flag
+    # Alpha as "opinion silent" while it sits in the executor chair.
+    opinion_producing_seat_roles = {"strategist", "governor", "auditor", "advisor"}
+    held_opinion_seat = any(
         cell is not None
-        for role in seat_walk.values() for cell in role.values()
+        for role, lanes in seat_walk.items()
+        for cell in lanes.values()
+        if role in opinion_producing_seat_roles
     )
-    if held_any_seat and opinion.get("silent"):
+    if held_opinion_seat and opinion.get("silent"):
         age_op = opinion.get("age_sec")
         if age_op is None:
             reasons.append("opinion_never")

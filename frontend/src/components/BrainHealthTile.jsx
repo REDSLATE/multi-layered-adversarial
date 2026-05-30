@@ -144,7 +144,39 @@ function BrainCard({ brain, payload, thresholds }) {
 
   const opinion = payload?.opinion || {};
   const opinionFresh = !opinion.silent && opinion.age_sec != null;
-  const opinionColor = opinion.age_sec == null ? "#71717A" : opinion.silent ? "#F59E0B" : "#10B981";
+  // Doctrine pin (2026-02-17): executor / crypto seats DO NOT post
+  // opinions — they execute strategist signals. Showing "OPINION: NEVER"
+  // for an executor-seated brain (e.g. Alpha) is misleading the operator
+  // into thinking it's a bug. Detect executor-only seating and surface
+  // "n/a (executor)" with a neutral dot.
+  const seatWalk = payload?.seat_walk || {};
+  const heldSeats = [];
+  Object.entries(seatWalk).forEach(([role, lanes]) => {
+    Object.entries(lanes || {}).forEach(([lane, cell]) => {
+      if (cell != null) heldSeats.push({ role, lane });
+    });
+  });
+  const heldOpinionProducingSeats = heldSeats.filter(
+    (s) => s.role !== "executor",
+  );
+  const executorOnly =
+    heldSeats.length > 0 && heldOpinionProducingSeats.length === 0;
+
+  const opinionColor = executorOnly
+    ? "#71717A"  // dim — doesn't apply, not a problem
+    : opinion.age_sec == null
+    ? "#71717A"
+    : opinion.silent
+    ? "#F59E0B"
+    : "#10B981";
+  const opinionValue = executorOnly
+    ? "n/a (executor)"
+    : `${opinionFresh ? "fresh" : opinion.age_sec == null ? "never" : "silent"} · ${fmtAge(opinion.age_sec)}`;
+  const opinionTitle = executorOnly
+    ? "Executor seats route orders; they do not post opinions. This row is informational only."
+    : opinion.last_posted_at
+    ? `Last opinion: ${opinion.last_posted_at}`
+    : "No opinions on record";
 
   const dataKeys = payload?.data_keys || {};
   const dataKeysColor = dataKeys.last_fetch_ts ? "#10B981" : "#71717A";
@@ -192,10 +224,10 @@ function BrainCard({ brain, payload, thresholds }) {
       />
       <SignalRow
         label="Opinion"
-        value={`${opinionFresh ? "fresh" : opinion.age_sec == null ? "never" : "silent"} · ${fmtAge(opinion.age_sec)}`}
+        value={opinionValue}
         color={opinionColor}
         testid={`brain-health-${brain}-opinion`}
-        title={opinion.last_posted_at ? `Last opinion: ${opinion.last_posted_at}` : "No opinions on record"}
+        title={opinionTitle}
       />
       <SignalRow
         label="Data keys"

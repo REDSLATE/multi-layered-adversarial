@@ -392,3 +392,4 @@ test_reports/iteration_*.json
 
 frontend/node_modules/.cache/default-development/16.pack
 frontend/node_modules/.cache/default-development/22.pack
+frontend/node_modules/.cache/default-development/27.pack

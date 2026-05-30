@@ -514,16 +514,40 @@ async def _resolve_governor_context(
     call for `sym`, and whether the seat is alive overall.
 
     Returns: (governor_holder, gov_norm, governor_alive, gov_any_ts).
+
+    Doctrine pin (2026-02-17, opinion-staleness gate hardening):
+        Before this pass, a `gov_norm` found for `sym` set
+        `governor_alive = True` unconditionally — meaning a 6h-old
+        stance on SPY would keep the governor gate "live" forever.
+        After this pass, the stance ITSELF is freshness-checked
+        against `_GOVERNOR_OFFLINE_THRESHOLD_SECONDS`. A stale
+        stance is treated as `gov_norm = None` + `alive = False`,
+        which routes downstream into the GOVERNOR_OFFLINE → hard-
+        block path. Closes the "dead governor, cached opinion still
+        gates trades" loophole.
     """
     governor_holder, gov_doc = await _latest_governor_call(sym, lane=lane)
     gov_norm = _normalize_governor_call(gov_doc)
-    if gov_norm is None:
+    if gov_norm is not None:
+        # Freshness gate on the stance itself. If stale → treat as if
+        # the governor has no current stance AT ALL on this symbol AND
+        # has gone offline. Downstream `_governance_verdict` will hit
+        # the `gov_norm is None + not governor_alive` branch and emit
+        # `GOVERNOR_OFFLINE` (hard block) — same behavior as if the
+        # governor had never opined.
+        if not _is_fresh(gov_norm.get("ts"), _GOVERNOR_OFFLINE_THRESHOLD_SECONDS):
+            stale_ts = gov_norm.get("ts")
+            gov_norm = None
+            gov_any_ts = stale_ts
+            governor_alive = False
+            return governor_holder, gov_norm, governor_alive, gov_any_ts
+        # Stance is fresh → proceed as before.
+        governor_alive = True
+        gov_any_ts = gov_norm.get("ts")
+    else:
         _, gov_any = await _latest_governor_any_call(lane=lane)
         governor_alive = _is_fresh(_doc_ts(gov_any), _GOVERNOR_OFFLINE_THRESHOLD_SECONDS)
         gov_any_ts = _doc_ts(gov_any)
-    else:
-        governor_alive = True
-        gov_any_ts = gov_norm.get("ts")
     return governor_holder, gov_norm, governor_alive, gov_any_ts
 
 

@@ -1,3 +1,40 @@
+## 2026-02-17 (pass #26) — Opinion-staleness gate hardening + executor seat doctrine in brain-health tile
+
+### The loophole
+`shared/council.py:_resolve_governor_context` set `governor_alive = True` unconditionally whenever `gov_norm` (the governor's normalized stance for a symbol) was non-None. A 6h-old stance kept the governor gate "live" forever — allowing intents to fire through a long-dead governor's cached opinion. Operator caught this on prod when Chevelle's 3h-stale `neutral @ conf 0.00` was still satisfying the governor-quorum on Alpha's intents.
+
+### Shipped
+
+1. **Council-side fix** — `_resolve_governor_context` now applies `_is_fresh(gov_norm.ts, _GOVERNOR_OFFLINE_THRESHOLD_SECONDS)` to the stance itself. A stale stance is treated as `gov_norm = None` AND `governor_alive = False`, routing into the existing GOVERNOR_OFFLINE → hard-block path. Boundary tested at 29min (fresh) and 31min (stale).
+
+2. **Brain-health tile** — executor / crypto-executor seats are no longer flagged for opinion-silence:
+   - Backend `_compute_overall` checks `opinion_producing_seat_roles = {strategist, governor, auditor, advisor}` and only flags silence when one of those is held.
+   - Frontend `BrainHealthTile` shows `OPINION: n/a (executor)` with neutral dot + tooltip explaining "Executor seats route orders; they do not post opinions."
+   - Counter-test included: a brain holding `strategist` is STILL flagged on silence (exemption is per-role, not blanket).
+
+### Tripwires
+- 5 new in `test_governor_staleness_gate.py` — boundary test at 30min threshold; fresh stance pass-through; source-scan invariant against re-introducing the unconditional `governor_alive = True` pattern.
+- 2 new in `test_brain_health.py` — executor-only exemption + strategist counter-test.
+- Pre-existing test `test_quorum_and_provenance::test_governor_silent_flags_governance_blindness` fails on main with or without my changes (verified via `git stash` round-trip). Unrelated to this pass.
+
+### Operator pattern
+**Before:** Chevelle DEAD 3h → her last cached `neutral @ conf 0.00` keeps satisfying governor-quorum → Alpha fires intents on a dead governor's stale opinion.
+
+**After:** Chevelle's stance ages past 30min → `gov_norm = None` + `governor_alive = False` → `_governance_verdict` emits `GOVERNOR_OFFLINE` → hard block. Same behavior as if the governor never opined. Fail-closed.
+
+### Operator pattern (UI)
+**Before:** Alpha (executor) shows `OPINION: NEVER` → operator thinks Alpha is broken.
+
+**After:** Alpha shows `OPINION: n/a (executor)` with dimmed dot → operator immediately sees this is expected behavior.
+
+### Next Action Items
+- 🟢 **Operator** — redeploy MC. Both fixes ship together (one council edit + one brain-health edit + one frontend label edit). Net effect on prod: any 30min+ stale governor stance starts hard-blocking trades instead of silently passing them.
+- 🟡 P1 — 6-Brain Expansion Refactor (deferred)
+- 🟡 P1 — R:R Scanner Phase C/D
+
+---
+
+
 ## 2026-02-17 (pass #25) — Feature service + brain-callable roster + status proxy
 
 ### Shipped (one-shot for the next MC redeploy)
