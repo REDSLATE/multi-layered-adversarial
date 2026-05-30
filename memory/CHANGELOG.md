@@ -1,3 +1,46 @@
+## 2026-02-17 (pass #22) — Frontend AuthContext resilience: stop logging operators out on transient backend errors
+
+### Bug
+`/app/frontend/src/context/AuthContext.js` cleared the operator's token (`setToken(null)`) inside a bare `catch {}` around `/auth/me`. Any non-2xx response (5xx, 502 Cloudflare blip, network timeout, MC redeploy gap) bounced the operator to /login mid-incident-response. Recurring P1 in handoff. The user is on `mission.risedual.ai` (prod) — they hit this regularly during the live trading flip.
+
+### Shipped
+1. **`AuthContext.js` rewrite** —
+   - New `AUTH_ERROR_STATUSES = new Set([401, 403])` — the ONLY statuses that purge the token.
+   - New `RETRY_DELAYS_MS = [500, 1500, 3000]` — three retries with exponential-ish backoff (~5s patience window) before giving up.
+   - New `isAuthRejection(err)` helper — gates the token clear behind an explicit status check; treats `err.response === null` (network failure) as transient.
+   - On retry exhaustion: KEEP the token in localStorage so next page-load / refresh can re-auth once MC is healthy. User is shown /login (status=ready, user=null) rather than hanging on "Authenticating".
+
+2. **5 new pytest tripwires** — `tests/test_frontend_auth_context_resilience.py`:
+   - `AUTH_ERROR_STATUSES` must be exactly `{401, 403}` (no 5xx leakage).
+   - `RETRY_DELAYS_MS` must exist with ≥500ms cumulative patience.
+   - Forbids `catch { setToken(null) }` regression pattern via regex.
+   - Every `setToken(null)` in the file must be reachable only from an `isAuthRejection` branch or the `logout` callback.
+
+### Live verification on preview
+- Logged in as `admin@risedual.io` → token minted ✅
+- Intercepted `/auth/me` with synthetic `503` via Playwright `page.route` → reloaded `/admin/hypothesis` → **token survived in localStorage** ✅ (old code would have cleared it on the first 503)
+- 401 path unchanged by design and locked by `test_isauthrejection_guards_token_clear`.
+
+### Tripwire status
+1385 backend tests collected, +5 new (frontend resilience). My JS-only change cannot affect backend pytest. Pre-existing 73 failures (e.g. `test_health_ok` asserting `deploy_mode == "observation"` while prod is now `"execution"` post-flip) are stale fixtures for the new live-trading state — unrelated to this change.
+
+### Doctrine pins reinforced
+- Operator session = scarce resource during incident response. Transient infra failure must NEVER be confused with auth rejection.
+- Source-level invariants prevent silent regression (no jsdom dependency added).
+
+### Next Action Items
+- 🟡 P1 — 6-Brain Expansion Refactor per `SIX_BRAIN_REFACTOR_PLAN.md`
+- 🟡 P1 — Real `relative_volume` via Kraken historical OHLC in MC labeler
+- 🟡 P1 — Polygon/Finnhub bar consumption in `market_data_service.py`; `has_news` indicator
+- 🟡 P1 — R:R Scanner Phase C/D (tiered cache + strict 5:1 enforcement)
+- 🟡 P1 — Phase 3 cross-Shelly federation HTTP bridge
+- 🟢 P2 — SSE stream `/api/mc-connection/stream` for live dashboard
+- 🟢 P2 — Pulse review-queue UI for Governance Reviewer
+- 🟢 P3 — Cleanup: legacy `decider` paths, dead RedEye broker code
+
+---
+
+
 ## 2026-05-28 (pass #21) — Opinion-silent watchdog: bug fix + background scanner + tripwires
 
 ### Shipped
