@@ -320,15 +320,18 @@ function ProposalsTable({ items, onCountersign, onReject, busy, currentUserEmail
         <tbody>
           {items.map((p) => {
             const meta = RUNTIME_META[p.runtime];
-            const required = p.required_signatures ?? 1;
+            // Single-sign across all tiers (2026-05-26 doctrine; solo
+            // operator). Any legacy `required_signatures > 1` row is
+            // auto-normalised on the server side by list_proposals'
+            // self-healing migration, but we coerce here too so a
+            // stale cached payload never displays `0/2`.
+            const required = 1;
             const signers = p.signers || [];
             const signed = signers.length;
             const alreadySigned = signers.some(
               (s) => (s.operator || "").toLowerCase() === me
             );
-            const isDualSign = required > 1;
-            const elevatesToPrimary = p.target_authority === "primary";
-            const sigBadgeColor = signed >= required ? "#10B981" : (signed > 0 ? "#F59E0B" : "#A1A1AA");
+            const sigBadgeColor = signed >= required ? "#10B981" : "#A1A1AA";
             return (
               <tr key={p.proposal_id} className="border-b border-rd-border last:border-b-0 hover:bg-rd-bg3"
                   data-testid={`proposal-row-${p.proposal_id}`}>
@@ -338,11 +341,6 @@ function ProposalsTable({ items, onCountersign, onReject, busy, currentUserEmail
                 </td>
                 <td className="px-4 py-2.5">
                   {p.from_state} → <span className="text-rd-text font-bold">{p.target_authority}</span>
-                  {elevatesToPrimary && (
-                    <span className="ml-2 inline-block">
-                      <Badge color="#FBBF24">DUAL-SIGN</Badge>
-                    </span>
-                  )}
                 </td>
                 <td className="px-4 py-2.5">
                   <Badge color={p.readiness?.passed ? "#10B981" : "#EF4444"}>
@@ -385,20 +383,12 @@ function ProposalsTable({ items, onCountersign, onReject, busy, currentUserEmail
                             !p.readiness?.passed
                               ? "Patent J gate has not passed"
                               : alreadySigned
-                              ? "You have already signed this proposal — a second, distinct operator is required"
-                              : (isDualSign && signed === 0)
-                              ? "First of two required signatures"
-                              : (isDualSign && signed === 1)
-                              ? "Second & final signature — will elevate on submit"
-                              : ""
+                              ? "You have already signed this proposal"
+                              : "Single countersign will elevate on submit"
                           }
                         >
                           <ShieldCheck size={12} weight="bold" className="inline mr-1" />
-                          {isDualSign && signed < required - 1
-                            ? "Sign (1st of 2)"
-                            : isDualSign
-                            ? "Co-sign & elevate"
-                            : "Countersign"}
+                          Countersign &amp; elevate
                         </button>
                         <button
                           disabled={busy === `reject-${p.proposal_id}`}
@@ -409,11 +399,6 @@ function ProposalsTable({ items, onCountersign, onReject, busy, currentUserEmail
                           Reject
                         </button>
                       </div>
-                      {alreadySigned && signed < required && (
-                        <span className="text-[10px] text-rd-warn font-mono uppercase tracking-widest">
-                          waiting on a second operator
-                        </span>
-                      )}
                       {!p.readiness?.passed && (
                         <span
                           className="text-[10px] text-rd-danger font-mono uppercase tracking-widest"

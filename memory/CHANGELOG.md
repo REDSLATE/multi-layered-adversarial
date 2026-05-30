@@ -1,3 +1,41 @@
+## 2026-02-17 (pass #28) — Dual-sign removal completed (was security theater) + investigation finding on "the quiet"
+
+### Operator decision
+Operator: *"Can we get rid of the co-signing, it's only me remember?"*
+
+### Backstory
+2026-05-26 pass marked dual-sign as removed in `shared/promotion.py:13-19` doctrine comment, but the actual `required_signatures = 2 if target_authority == "primary" else 1` line at the proposal-creation path was NEVER changed. Existing in-flight proposals stored `required_signatures: 2`, the frontend rendered a `DUAL-SIGN` badge + 2-of-2 button labels, and the operator's prod dashboard still showed Alpha's pending `co_trader → primary` proposal stuck at `0/2` signatures from 2026-05-20 — perpetually un-countersignable.
+
+### Shipped
+1. **`shared/promotion.py:propose_from_latest_artifact`** — hard-codes `required_signatures = 1` for ALL ladder tiers. No conditional branch on target.
+2. **`shared/promotion.py:list_proposals`** — self-healing migration: any legacy `required_signatures > 1` row in pending or `awaiting_second_sign` state is normalised to 1 on every read. Idempotent, safe to call.
+3. **Deleted duplicate `reject` route** — pre-existing F811 error in source (two identical `@router.post("/{proposal_id}/reject")` blocks). One removed.
+4. **`frontend/src/pages/Promotion.jsx`** — stripped `DUAL-SIGN` badge, "1st of 2 / Co-sign & elevate / waiting on a second operator" UX. Single button: "Countersign & elevate". `const required = 1;` hardcoded so a stale cache can't display `0/2`.
+5. **6 doctrine tripwires** in `test_single_sign_promotion.py` — source-scan locks against re-introducing dual-sign anywhere (backend OR frontend).
+
+### Live verified on preview
+- `/admin/promotion` page renders cleanly
+- `dual_sign_badges_on_page = 0` (no DUAL-SIGN label rendered anywhere)
+- 6/6 tripwires green
+
+### "The quiet" — investigation finding
+Operator asked whether Patent J FAIL might cascade into the trading path and cause silent intent suppression.
+
+**Answer: NO.** Patent J readiness is consulted in exactly two places, both inside `shared/promotion.py` (`propose_from_latest_artifact` + `readiness_now`). The execution gate chain (`shared/execution.py`), intent processing (`shared/intents.py`), and council orchestration (`shared/council.py`) NEVER read it. Patent J FAIL only blocks AUTHORITY ELEVATION; it does not affect trading.
+
+**Actual reasons for the quiet** (unchanged from prior passes):
+- Camaro's heartbeat dies recurrently → no strategist BUY/SELL → Alpha has nothing to execute
+- RedEye decision_log = 0 → no governor stance updates → opinion-staleness gate (pass #26) hard-blocks at 30min stale
+- Chevelle DEAD 3h on prod → same staleness gate fires
+
+### Next Action Items
+- 🟢 **Operator** — redeploy MC. On first dashboard load post-redeploy, the legacy `0/2` proposals will self-heal to `0/1` and become countersignable.
+- 🟡 P1 — Polygon/Finnhub bar consumption + `has_news` indicator
+- 🟡 P1 — R:R Scanner Phase C/D
+
+---
+
+
 ## 2026-02-17 (pass #27) — Backlog cleanup: 6-Brain Expansion Refactor SHELVED PERMANENTLY
 
 ### Operator decision

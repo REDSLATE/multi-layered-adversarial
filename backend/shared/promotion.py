@@ -195,10 +195,11 @@ async def propose_from_latest_artifact(
     artifact = await db[SHARED_PROMOTION_ARTIFACTS].find_one(q, {"_id": 0}, sort=[("emitted_at", -1)])
     readiness = await evaluate_readiness(runtime, target_authority, artifact)
 
-    # Dual-sign rule: elevation TO primary requires two distinct operator signatures.
-    # Every other rung on the ladder remains single-sign. The countersign cannot
-    # bypass a failed Patent J gate either way.
-    required_signatures = 2 if target_authority == "primary" else 1
+    # Single-sign across ALL ladder tiers (2026-05-26 doctrine update,
+    # reaffirmed 2026-02-17). Solo-operator deployment — dual-sign was
+    # security theater. Patent J readiness is the technical bar; one
+    # operator countersign is the human bar. No tier is special.
+    required_signatures = 1
 
     proposal_id = str(uuid.uuid4())
     doc = {
@@ -209,8 +210,7 @@ async def propose_from_latest_artifact(
         "readiness": readiness,
         "artifact_id": (artifact or {}).get("artifact_id"),
         # status flow:
-        #   pending → (single-sign target) approved | rejected
-        #   pending → (primary target, 1st sign) awaiting_second_sign → approved | rejected
+        #   pending → approved | rejected   (single-sign across all tiers)
         "status": "pending",
         "required_signatures": required_signatures,
         "signers": [],
@@ -236,6 +236,20 @@ async def list_proposals(
     limit: int = Query(50, ge=1, le=500),
     _user: dict = Depends(get_current_user),
 ):
+    # Self-healing migration (2026-02-17): any legacy pending proposal
+    # with `required_signatures: 2` is normalised to 1 on read. The
+    # 2026-05-26 doctrine update removed dual-sign across all tiers,
+    # but existing in-flight proposals stored the old value. The
+    # countersign path already elevates on the first signer regardless
+    # (see comment in countersign()), so flipping the stored value is
+    # purely cosmetic + lets the operator dashboard show `0/1`
+    # instead of `0/2` on those rows.
+    await db[SHARED_PROMOTION_PROPOSALS].update_many(
+        {"status": {"$in": ["pending", "awaiting_second_sign"]},
+         "required_signatures": {"$gt": 1}},
+        {"$set": {"required_signatures": 1}},
+    )
+
     q: dict = {}
     if status:
         q["status"] = status
@@ -322,25 +336,6 @@ async def countersign(proposal_id: str, body: CountersignBody, user: dict = Depe
         "signed": len(signers),
         "required": 1,
     }
-
-
-@router.post("/{proposal_id}/reject")
-async def reject(proposal_id: str, body: CountersignBody, user: dict = Depends(get_current_user)):
-    proposal = await db[SHARED_PROMOTION_PROPOSALS].find_one({"proposal_id": proposal_id}, {"_id": 0})
-    if not proposal:
-        raise HTTPException(status_code=404, detail="proposal not found")
-    if proposal["status"] not in ("pending", "awaiting_second_sign"):
-        raise HTTPException(status_code=409, detail=f"proposal already {proposal['status']}")
-    await db[SHARED_PROMOTION_PROPOSALS].update_one(
-        {"proposal_id": proposal_id},
-        {"$set": {
-            "status": "rejected",
-            "decided_at": _iso(),
-            "decided_by": user.get("email"),
-            "decision_note": body.note,
-        }},
-    )
-    return {"ok": True}
 
 
 @router.post("/{proposal_id}/reject")
