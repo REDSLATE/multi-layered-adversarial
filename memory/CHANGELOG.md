@@ -1,3 +1,41 @@
+## 2026-05-30 (pass #31) — Position-model executor seat + last-block-reason diagnostic
+
+### Operator directive
+*"There shouldn't be any seat permanently assigned to a brain. Restrict to the position not the brain."* — after seat-rotation experiment failed to unblock trading; data showed brain-coupling in `executor_seat_check`.
+
+### Findings (preview DB, last 72h)
+- 89 routable intents (BUY/SELL/SHORT/COVER) emitted. **0 passed, 100% blocked.**
+- 1491 HOLD intents marked `dry_run_blocked` — these are watchlist signals, not trade attempts (false noise).
+- First-failing-gate breakdown for routable intents:
+  - `broker_connected`: 66 (camaro equity, Alpaca adapter = None on preview)
+  - `executor_seat_check`: 23 (alpha/redeye/camaro crypto, wrong-brain or vacant)
+- `may_execute pinned False` was misread as a block reason; it's gate-1's PASS message. Authority is in the receipt minted by `broker_router.route_order` after gates pass, not in any mutable intent field.
+
+### Doctrine correction
+The `executor_seat_check` gate was brain-coupled: required `holder == intent.stack` AND `executor_holder_at_post == intent.stack`. This made seat rotation useless — pending intents emitted while Camaro held the seat could not execute after the operator swapped to Alpha. Doctrine restated by operator (2026-05-30): **authority lives in the seat, not the brain. Whichever brain currently holds an execute-capable seat for the intent's lane has routing authority. Brain that posted is informational only.**
+
+### Shipped
+1. **`shared/execution.py` `_evaluate_gates` — position-model seat check.** Drop `holder == intent_stack` and `held_at_post == intent_stack` couplings. Gate now passes iff (a) some brain currently holds an execute-capable seat for the lane AND (b) that seat's policy permits the lane. `holds_executor_seat` / `executor_holder_at_post` continue to be stamped on intents for the audit trail but no longer participate in the gate decision.
+
+2. **New endpoint: `GET /api/admin/execution/last-block-reason`** — read-only diagnostic. Returns the last N (default 20, max 100) blocked intents with first failing gate name + reason, plus a `summary_by_failing_gate` aggregation. Query params: `stack` (optional), `limit`, `include_hold` (default false — HOLDs are excluded to surface only true trade attempts).
+
+3. **`RuntimeDetail.jsx` — "Last 20 blocked routable intents" card.** Renders the diagnostic above the decision log on every brain's runtime page. Shows summary chips (`N × gate_name`) plus per-intent rows: when, symbol, action, lane, failing gate, reason.
+
+4. **`tests/test_execution_gates.py`** — renamed `test_stale_seat_blocks_after_rotation` → `test_seat_rotation_does_not_block_under_position_model`. Now asserts Camaro's pending intent passes the seat gate when Alpha currently holds the executor seat. Also fixed `_intent` fixture to include `lane="equity"` so newer lane-aware gates can evaluate.
+
+5. **`tests/test_last_block_reason.py`** — 4 new tests covering: HOLD exclusion by default, first-failing-gate surfacing, `include_hold=true` opt-in, and summary count aggregation. Uses a unique fixture stack name to isolate from real DB rows.
+
+### Verified
+- All 4 last-block-reason tests pass; position-model test passes.
+- Live endpoint returns real data on preview (summary: 19 × executor_seat_check, 1 × broker_connected for alpha).
+- UI card renders correctly with summary chips and per-row reasons at `/admin/runtime/alpha`.
+
+### Operator follow-up
+Historical `dry_run_blocked` intents stamped with the old brain-coupled reason ("held by camaro at post time, not alpha") will now PASS the seat gate under the new doctrine — but their cached `shared_gate_results` rows still show the old reason text. Operator can re-evaluate them by calling `POST /api/admin/intents/auto-dry-run-drain` which re-runs the chain. Production preview is currently blocked by infrastructure (Alpaca adapter = None, executor seat empty, lane toggle off) — not by the seat-check doctrine. Plumbing must be filled before trades fire.
+
+---
+
+
 ## 2026-02-17 (pass #29) — P3 test-fixture staleness + decider-alias doctrine lock
 
 ### Operator directive

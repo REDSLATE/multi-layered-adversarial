@@ -96,10 +96,25 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
         ),
     })
 
-    # 3. Executor seat — held at ingest AND still held now.
-    #    The seat policy is also lane-scoped: a brain holding the equity
-    #    `executor` seat cannot fire a crypto intent (and vice versa).
-    #    Both checks must pass.
+    # 3. Executor seat — POSITION model (Doctrine, 2026-05-28).
+    #    Authority lives in the SEAT, not in any specific brain.
+    #    Whichever brain currently holds an execute-capable seat for
+    #    this intent's lane has the authority to route. The brain that
+    #    posted the intent is informational only.
+    #
+    #    Prior to this revision, the gate required
+    #    `holder == intent.stack` AND `held_at_post == intent.stack`,
+    #    which effectively bound authority to the brain at post-time.
+    #    That made rotation useless: pending intents emitted while
+    #    Camaro held the seat could not execute after the operator
+    #    swapped Camaro out, because they were stamped
+    #    `executor_holder_at_post=camaro` and would only pass if
+    #    Camaro re-took the seat. Operator confirmed (2026-05-28) the
+    #    correct doctrine is position-only: seat = authority.
+    #
+    #    `holds_executor_seat` and `executor_holder_at_post` continue
+    #    to be stamped on every intent for the audit trail, but they
+    #    no longer participate in the gate decision.
     from shared.seat_policy import seat_may_execute_lane  # noqa: WPS433
     from shared.executor_seat import (  # noqa: WPS433
         get_seat_holder,
@@ -108,54 +123,36 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
     intent_lane_for_seat = intent.get("lane")
     intent_stack = intent.get("stack")
 
-    # Find any execute-capable seat that's lane-eligible AND currently
-    # held by this intent's brain.
+    # Find ANY execute-capable seat for this lane that is currently held.
     eligible_seats = seats_with_execute(intent_lane_for_seat)
     current_holder = None
     matched_seat = None
     for seat_name in eligible_seats:
         holder = await get_seat_holder(seat_name)
-        if holder == intent_stack:
+        if holder:
             matched_seat = seat_name
             current_holder = holder
             break
-    if current_holder is None:
-        # No execute-capable seat for this lane is held by anyone.
-        # Do NOT fall back to the equity executor lookup — that would
-        # leak equity authority into crypto messaging. Surface the
-        # vacancy honestly (2026-02-16 fix).
-        current_holder = None
 
-    held_at_intent = bool(intent.get("holds_executor_seat"))
-    held_at_post = intent.get("executor_holder_at_post")  # lane-aware as of 2026-02-16
     holds_now = matched_seat is not None
-    # Lane-scope check: the matched seat's policy must allow this lane.
     lane_allowed = seat_may_execute_lane(matched_seat, intent_lane_for_seat)
 
-    if holds_now and lane_allowed and held_at_intent:
+    if holds_now and lane_allowed:
         seat_pass, seat_reason = True, (
-            f"{intent_stack} holds the {matched_seat!r} seat "
-            f"(lane={intent_lane_for_seat or 'any'}); held at ingest"
+            f"executor seat for lane={intent_lane_for_seat or 'any'!r} held by "
+            f"{current_holder!r} (seat={matched_seat!r}); position-model authority — "
+            f"intent posted by {intent_stack!r}"
         )
     elif holds_now and not lane_allowed:
         seat_pass, seat_reason = False, (
-            f"{intent_stack} holds {matched_seat!r}, but seat does not authorize "
+            f"{current_holder!r} holds {matched_seat!r}, but seat does not authorize "
             f"lane={intent_lane_for_seat!r} — wrong-lane seat blocked"
-        )
-    elif held_at_intent and not holds_now:
-        seat_pass, seat_reason = False, (
-            f"{intent_stack} held an execute-seat at ingest but no longer "
-            f"holds one matching lane={intent_lane_for_seat!r}"
-        )
-    elif not held_at_intent and held_at_post is None:
-        seat_pass, seat_reason = False, (
-            f"No execute-seat was held for lane={intent_lane_for_seat!r} when intent was posted "
-            f"— seat vacant, no authority"
         )
     else:
         seat_pass, seat_reason = False, (
-            f"Execute-seat for lane={intent_lane_for_seat!r} was held by {held_at_post} "
-            f"at post time, not {intent_stack}"
+            f"executor seat for lane={intent_lane_for_seat!r} is vacant — "
+            f"no authority to route. Assign via POST /api/executor/rotate "
+            f"(or roster assignment for crypto seats)."
         )
     gates.append({"name": "executor_seat_check", "passed": seat_pass, "reason": seat_reason})
 
@@ -1031,4 +1028,113 @@ async def execution_diagnose(
         "caps": gate_result.get("caps"),
         "risk_multiplier": gate_result.get("risk_multiplier"),
         "checked_at": _now_iso(),
+    }
+
+
+
+# ──────────────────── last-block-reason (operator) ────────────────────
+# Surfaces the most recent N intents per brain (or fleet-wide) along
+# with the FIRST failing gate row from `shared_gate_results`. Turns
+# "no trades are firing" into a 5-second glance — operator sees the
+# gate name + reason for each blocked intent without scrolling
+# individual receipts.
+
+@router.get("/admin/execution/last-block-reason")
+async def last_block_reason(
+    stack: Optional[str] = Query(
+        default=None,
+        description="filter to one brain (alpha|camaro|chevelle|redeye). Omit for fleet-wide.",
+    ),
+    limit: int = Query(default=20, ge=1, le=100),
+    include_hold: bool = Query(
+        default=False,
+        description="include HOLD intents (watchlist signals). Off by default — HOLDs "
+                    "are not trade attempts and clutter the view.",
+    ),
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Return the latest N blocked intents with the FIRST failing gate.
+
+    Doctrine: this is a *read-only* diagnostic. No state mutation, no
+    re-evaluation. It joins `shared_intents` (gate_state in
+    {dry_run_blocked, blocked, rejected_at_ingest}) with the latest
+    `shared_gate_results` row per intent and surfaces the first
+    `passed=False` gate.
+
+    Useful when the operator sees "intents emitted but no trades" —
+    one call answers "which gate is killing them, and why".
+    """
+    q: dict = {"gate_state": {"$in": ["dry_run_blocked", "blocked", "rejected_at_ingest"]}}
+    if stack:
+        q["stack"] = stack
+    if not include_hold:
+        q["action"] = {"$in": ["BUY", "SELL", "SHORT", "COVER"]}
+
+    intents = await db[SHARED_INTENTS].find(
+        q,
+        {
+            "_id": 0,
+            "intent_id": 1,
+            "stack": 1,
+            "symbol": 1,
+            "action": 1,
+            "lane": 1,
+            "gate_state": 1,
+            "ingest_ts": 1,
+            "last_dry_run_ts": 1,
+        },
+    ).sort("ingest_ts", -1).to_list(limit)
+
+    out: list[dict] = []
+    gate_counter: dict[str, int] = {}
+    for it in intents:
+        gr = await db[SHARED_GATE_RESULTS].find_one(
+            {"intent_id": it["intent_id"]},
+            {"_id": 0, "gates": 1, "ts": 1, "kind": 1},
+            sort=[("ts", -1)],
+        )
+        first_fail = None
+        if gr:
+            first_fail = next(
+                (g for g in (gr.get("gates") or []) if not g.get("passed")),
+                None,
+            )
+        if it.get("gate_state") == "rejected_at_ingest" and not first_fail:
+            # Ingest-time rejection — no gate row, surface a synthetic one.
+            first_fail = {
+                "name": "ingest_rejection",
+                "passed": False,
+                "reason": "intent rejected at ingest (schema / lane / sovereign mode)",
+            }
+        row = {
+            "intent_id": it["intent_id"],
+            "stack": it.get("stack"),
+            "symbol": it.get("symbol"),
+            "action": it.get("action"),
+            "lane": it.get("lane"),
+            "gate_state": it.get("gate_state"),
+            "ingest_ts": it.get("ingest_ts"),
+            "last_evaluated_ts": (gr or {}).get("ts") or it.get("last_dry_run_ts"),
+            "evaluation_kind": (gr or {}).get("kind"),
+            "first_failing_gate": (first_fail or {}).get("name"),
+            "reason": (first_fail or {}).get("reason"),
+        }
+        out.append(row)
+        gname = row["first_failing_gate"] or "unknown"
+        gate_counter[gname] = gate_counter.get(gname, 0) + 1
+
+    # Summary by failing-gate, sorted descending.
+    summary = sorted(
+        [{"gate": k, "n": v} for k, v in gate_counter.items()],
+        key=lambda r: -r["n"],
+    )
+
+    return {
+        "stack_filter": stack,
+        "include_hold": include_hold,
+        "requested_limit": limit,
+        "returned": len(out),
+        "checked_at": _now_iso(),
+        "summary_by_failing_gate": summary,
+        "items": out,
     }

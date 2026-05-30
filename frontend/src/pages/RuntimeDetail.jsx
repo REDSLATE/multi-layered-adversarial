@@ -32,6 +32,10 @@ export default function RuntimeDetail() {
   // without cross-origin pain. Wrapper shape: `{brain, ok, payload?,
   // error?, _proxy_duration_ms?, _proxied_from?}`.
   const [proxied, setProxied] = useState(null);
+  // Last 20 blocked intents for this brain + summary of which gate
+  // killed them. Surfaces "intents fired, no trades happened" without
+  // scrolling individual receipts. Read-only diagnostic.
+  const [blocks, setBlocks] = useState(null);
   // `loaded` flips true after the parallel fetches complete (success
   // or failure). Lets us distinguish "still loading" (show spinner)
   // from "fetched but no status endpoint" (show graceful unavailable
@@ -61,13 +65,14 @@ export default function RuntimeDetail() {
       const subPromise = sub
         ? api.get(sub.url).catch(() => ({ data: null }))
         : Promise.resolve({ data: null });
-      const [s, r, c, a, rs, prx] = await Promise.all([
+      const [s, r, c, a, rs, prx, lbr] = await Promise.all([
         api.get(`/runtime/${runtime}/status`).catch(() => ({ data: null })),
         subPromise,
         api.get(`/shared/calibrators?runtime=${runtime}`).catch(() => ({ data: null })),
         api.get(`/shared/artifacts?runtime=${runtime}`).catch(() => ({ data: null })),
         api.get("/admin/roster").catch(() => ({ data: null })),
         api.get(`/admin/runtime/${runtime}/status`).catch(() => ({ data: null })),
+        api.get(`/admin/execution/last-block-reason?stack=${runtime}&limit=20`).catch(() => ({ data: null })),
       ]);
       setStatus(s.data);
       setRows(r.data);
@@ -75,6 +80,7 @@ export default function RuntimeDetail() {
       setArtifacts(a.data);
       setRoster(rs.data);
       setProxied(prx.data);
+      setBlocks(lbr.data);
       setLoaded(true);
     })();
   }, [runtime, meta, sub]);
@@ -202,6 +208,69 @@ export default function RuntimeDetail() {
           <div className="mb-6">
             <SovereignTile runtime={runtime} accent={meta.color} />
           </div>
+
+          {/* Last blocks — surfaces which gate killed this brain's
+              recent routable intents. The single highest-leverage
+              diagnostic when "intents emitted, no trades fired". */}
+          {blocks && (blocks.returned > 0) && (
+            <Card className="p-0 overflow-hidden mb-6" testid={`runtime-blocks-${runtime}`}>
+              <div className="px-4 py-3 border-b border-rd-border flex items-center justify-between">
+                <div>
+                  <div className="label-eyebrow">Last 20 blocked routable intents</div>
+                  <div className="font-mono text-sm">
+                    first failing gate · BUY/SELL/SHORT/COVER only
+                  </div>
+                </div>
+                <div className="text-[10px] text-rd-dim uppercase tracking-widest" data-testid={`runtime-blocks-count-${runtime}`}>
+                  {blocks.returned} blocked
+                </div>
+              </div>
+              {/* Summary chips */}
+              {blocks.summary_by_failing_gate?.length > 0 && (
+                <div className="px-4 py-3 border-b border-rd-border bg-rd-bg3 flex flex-wrap gap-2" data-testid={`runtime-blocks-summary-${runtime}`}>
+                  {blocks.summary_by_failing_gate.map((s) => (
+                    <span
+                      key={s.gate}
+                      className="font-mono text-[10px] px-2 py-1 rounded border border-rd-border text-rd-text"
+                      data-testid={`runtime-blocks-summary-${runtime}-${s.gate}`}
+                    >
+                      <span className="text-rd-danger font-bold">{s.n}</span> ×{" "}
+                      <span className="text-rd-muted">{s.gate}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {/* Per-intent rows */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs font-mono">
+                  <thead>
+                    <tr className="bg-rd-bg3 text-rd-dim uppercase tracking-widest">
+                      <th className="text-left px-4 py-3 border-b border-rd-border">when</th>
+                      <th className="text-left px-4 py-3 border-b border-rd-border">symbol</th>
+                      <th className="text-left px-4 py-3 border-b border-rd-border">action</th>
+                      <th className="text-left px-4 py-3 border-b border-rd-border">lane</th>
+                      <th className="text-left px-4 py-3 border-b border-rd-border">failing gate</th>
+                      <th className="text-left px-4 py-3 border-b border-rd-border">reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {blocks.items.map((b) => (
+                      <tr key={b.intent_id} className="border-b border-rd-border last:border-b-0 hover:bg-rd-bg3" data-testid={`runtime-blocks-row-${runtime}-${b.intent_id}`}>
+                        <td className="px-4 py-2.5 text-rd-muted">{relTime(b.last_evaluated_ts || b.ingest_ts)}</td>
+                        <td className="px-4 py-2.5">{b.symbol || "—"}</td>
+                        <td className="px-4 py-2.5">{b.action}</td>
+                        <td className="px-4 py-2.5">{b.lane || "—"}</td>
+                        <td className="px-4 py-2.5 text-rd-danger">{b.first_failing_gate || "—"}</td>
+                        <td className="px-4 py-2.5 text-rd-muted max-w-[40ch] truncate" title={b.reason || ""}>
+                          {b.reason || "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
 
           {/* Decision log — only rendered when this runtime has a
               curated sub-endpoint. Brains without one (e.g. redeye)
