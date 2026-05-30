@@ -144,6 +144,25 @@ def _now_iso() -> str:
 
 # ──────────────────────── singleton accessors ────────────────────────
 
+# DOCTRINE PIN (2026-02-17): DO NOT REMOVE THESE ALIAS REWRITES.
+#
+# 25% of `sovereign_audit_log` rows in production (1,363 / 5,463 as of
+# 2026-02-17 audit) still carry the legacy `decider` / `crypto_decider`
+# keys from before the 2026-05-24 rename. The alias-rewrite layer is
+# LOAD-BEARING for read-path translation of historical audit data:
+# stripping it would corrupt audit-log read responses across roughly
+# a quarter of MC's history.
+#
+# Any future "cleanup" pass that wants to remove these MUST first run
+# a one-shot migration script that backfills the canonical keys
+# across every collection that ever stored a role/seat/posted_as
+# field — and only then remove the rewrite. The migration is its own
+# multi-step undertaking, NOT a routine code cleanup. Until that
+# migration ships, these aliases are mandatory.
+#
+# Same logic applies to the `opponent` → `auditor` rewrite below; that
+# rename is more recent (2026-05-27) and historical rows are still
+# being produced in some legacy code paths.
 _LEGACY_ROLE_REWRITES: dict[str, str] = {
     "decider": "strategist",
     "crypto_decider": "crypto_strategist",

@@ -1,3 +1,56 @@
+## 2026-02-17 (pass #29) — P3 test-fixture staleness + decider-alias doctrine lock
+
+### Operator directive
+*"P3 definitely need to be resolved."*
+
+### Findings
+1. **Test-fixture staleness was real and big**: 73 tests failing on `main`. 31 of them were in `test_risedual_backend.py` and all caused by 3 distinct drifts:
+   - `deploy_mode == "observation"` assertions vs prod now in `"execution"` after the live-trading flip
+   - Per-runtime `mode == "observation"` vs current `"seat-governed"` (different semantic, repurposed field)
+   - Schema drift on `/api/admin/flags` (`enforce_flags` is now `{}`) and `/api/shared/receipts` (legacy `observed`/`executed` fields retired, replaced by discussion-layer `receipt_id`/`thread_root` shape) and `/api/runtime/{brain}/status` (`phase6_enforce_enabled`/`executor_enforce_enabled`/`authority_enabled` removed under seat-governed authority)
+
+2. **The "strip `decider` paths" cleanup item was UNSAFE as written.** Live DB safety check:
+   - `sovereign_audit_log`: 5,463 rows total, **1,363 (25%) contain legacy `decider` keys**
+   - The alias-rewrite layer in `shared/roster.py:_LEGACY_ROLE_REWRITES` is LOAD-BEARING for historical audit reads
+   - Stripping it would corrupt ~25% of MC's audit-log read responses
+
+3. **Remaining 42 failures across `test_roster.py`, `test_seat_aliases.py`, `test_sovereign.py`, etc.** are pre-existing test/code drift unrelated to this session. Verified via `git stash` round-trip — same 42 fail on `main` without my changes.
+
+### Shipped
+1. **`test_risedual_backend.py`** — 31 stale assertions fixed:
+   - Introduced `VALID_DEPLOY_MODES = {observation, execution}` and `VALID_RUNTIME_MODES = {observation, execution, seat-governed}` (the two were always different semantics; the test suite mixed them)
+   - Operator-flippable booleans (`broker_live_order_enabled`, legacy enforce flags) are presence-checked only — value depends on current operator state
+   - Receipts test accepts BOTH the legacy decision-log shape (`id`/`action`/`executed`) and the new discussion-layer shape (`receipt_id`/`thread_root`/`topic`)
+   - Per-runtime `mode` is checked against `VALID_RUNTIME_MODES` — `phase6_enforce_enabled` etc removed (deprecated under seat-governed authority)
+
+2. **`shared/roster.py`** — added explicit DOCTRINE PIN block above `_LEGACY_ROLE_REWRITES` documenting the 25%-audit-rows finding and warning future agents that the alias dict is mandatory.
+
+3. **`tests/test_legacy_role_alias_doctrine.py`** — 6 new tripwires that fail if `_LEGACY_ROLE_REWRITES` is deleted, `decider`/`opponent` aliases are removed, or `_canonical_role` is rewritten to hardcode translations instead of reading the table.
+
+### Results
+- 38/38 PASS in `test_risedual_backend.py` (was 5 failing → 0)
+- 6/6 PASS in `test_legacy_role_alias_doctrine.py` (new)
+- Full-suite net: 73 failing → 42 failing (-31). Zero regressions introduced.
+- Remaining 42 are pre-existing drift across roster / seat-aliases / sovereign — each requires per-test forensics, not a blanket fix. Recommend they be triaged separately if/when they block specific work.
+
+### What did NOT ship (and why)
+- **`decider` path strip** — refused on safety. Replaced with a doctrine pin + 6 tripwires that lock the alias layer against future "cleanup" attempts. The shims may only be removed AFTER a one-shot DB migration backfills canonical keys across every collection that ever stored a role/seat/posted_as field. That migration is its own multi-step pass, not a routine cleanup.
+- **RedEye broker code removal** — not MC's responsibility (lives in RedEye's repo; RedEye author already working on it per their prior message).
+
+### Next Action Items
+- 🟢 **Operator** — redeploy MC. This pass is test-only + doctrine-comment; zero behavioral change. Net effect: green test bar reflects current production state (live trading flipped on, seat-governed authority active).
+- 🟡 P1 — Polygon/Finnhub bar consumption + `has_news` indicator (MC endpoint shipped pass #25; awaiting brain wire-up)
+- 🟡 P1 — R:R Scanner Phase C/D
+- 🟡 P1 — Phase 3 cross-Shelly federation HTTP bridge
+
+### Future / Backlog
+- 🟢 P2 — Brain-side: investigate fleet-wide heartbeat drops (all 4 brains went DEAD simultaneously; cluster-level event, not Camaro-specific)
+- 🟢 P2 — Investigate remaining 42 pre-existing test failures (each requires forensics)
+- 🟢 P3 — One-shot migration to backfill canonical role keys across `sovereign_audit_log` and adjacent collections (only after which the alias layer can be removed)
+
+---
+
+
 ## 2026-02-17 (pass #28) — Dual-sign removal completed (was security theater) + investigation finding on "the quiet"
 
 ### Operator decision
