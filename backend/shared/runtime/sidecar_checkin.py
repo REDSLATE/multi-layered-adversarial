@@ -42,7 +42,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Path
+from fastapi import APIRouter, Depends, HTTPException, Header, Path, Request
 from pydantic import BaseModel, Field
 
 from auth import get_current_user
@@ -157,6 +157,7 @@ class CheckinResponse(BaseModel):
 
 @router.post("/sidecar-checkin/{brain}", response_model=CheckinResponse)
 async def post_sidecar_checkin(
+    request: Request,
     body: CheckinRequest,
     brain: str = Path(..., description="brain id — alpha|camaro|chevelle|redeye"),
     x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
@@ -164,7 +165,18 @@ async def post_sidecar_checkin(
     """Token-authed POST a sidecar makes on boot (and periodically) to
     declare its identity. Persists the latest stamp + verdict and
     returns the validation result so the sidecar can self-quarantine
-    if it drifted."""
+    if it drifted.
+
+    2026-05-30 — added source-IP + per-payload audit row. The
+    upserted `sidecar_checkins` doc is great for "what's the latest
+    stamp?" but it OVERWRITES on every checkin, which lost the
+    Alpha-preview-pod-impersonating-prod incident. The new
+    `sidecar_checkin_audit` collection appends one row per POST with
+    the full validated stamp + source IP + brain's self-reported
+    `process_identity` (if present). That lets the operator query
+    "how many distinct (pid, hostname) tuples ever checked in as
+    alpha?" and catch duplicate pods even after they've been fixed.
+    """
     brain = brain.lower()
     if brain not in DISCUSSION_PARTICIPANTS:
         raise HTTPException(status_code=404, detail=f"unknown brain {brain!r}")
@@ -191,6 +203,42 @@ async def post_sidecar_checkin(
     now = _now()
     now_iso = now.isoformat()
 
+    # ── audit-log first (append-only) ─────────────────────────────────
+    # Source IP at the EDGE — defense in depth per Alpha's request.
+    # Respects X-Forwarded-For if present (ingress/proxy) and falls
+    # back to the direct connection. Never trusted as authoritative,
+    # just useful for "which pod IP did this come from?" forensics.
+    xff = request.headers.get("x-forwarded-for")
+    source_ip = (
+        (xff.split(",")[0].strip() if xff else None)
+        or (request.client.host if request.client else None)
+        or "unknown"
+    )
+    # The brain may include `process_identity` in the stamp now —
+    # Alpha started including {pid, hostname, process_boot_at} in
+    # 2026-05-30. Extract if present, store as a sibling for easy
+    # querying. Backward compatible: missing → None.
+    process_identity = (stamp or {}).get("process_identity")
+    try:
+        await db["sidecar_checkin_audit"].insert_one({
+            "runtime": brain,
+            "ts": now_iso,
+            "ts_epoch": now.timestamp(),
+            "source_ip": source_ip,
+            "verdict": verdict,
+            "errors": validation.get("errors", []),
+            "policy_hash_match": policy_match,
+            "stamp_env_name": (stamp or {}).get("env_name"),
+            "stamp_git_sha": (stamp or {}).get("git_sha"),
+            "stamp_pip_sha": (
+                ((stamp or {}).get("pip_fingerprint") or {}).get("pip_freeze_sha256")
+            ),
+            "process_identity": process_identity,
+        })
+    except Exception:  # noqa: BLE001
+        # Audit is best-effort. NEVER block a checkin on it.
+        pass
+
     # Upsert. We keep `first_seen_at` and `checkin_count` ourselves
     # (atomic $inc + $setOnInsert) so the panel can show uptime &
     # how chatty each sidecar is.
@@ -209,6 +257,7 @@ async def post_sidecar_checkin(
                 "policy_hash_match": policy_match,
                 "mc_policy_hash": mc_hash,
                 "last_checkin_at": now_iso,
+                "last_source_ip": source_ip,
             },
             "$setOnInsert": {"first_checkin_at": now_iso},
             "$inc": {"checkin_count": 1},
@@ -329,3 +378,105 @@ async def get_sidecar_checkin(
         raise HTTPException(status_code=404, detail=f"unknown brain {brain!r}")
     doc = await db[SIDECAR_CHECKINS].find_one({"runtime": brain}, {"_id": 0})
     return _row_for_response(doc, brain, _now())
+
+
+
+@router.get("/sidecar-checkin/{brain}/audit")
+async def get_sidecar_checkin_audit(
+    brain: str,
+    limit: int = 50,
+    _user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Append-only per-checkin audit log for one brain.
+
+    Returns the most recent N checkins with full source-IP +
+    process_identity + env_name + git_sha + pip_freeze_sha. Used to
+    forensically diagnose duplicate-pod scenarios (a preview pod
+    impersonating prod, a rogue local sidecar, etc.).
+
+    Doctrine: ADVISORY observability only. Read-only. Does NOT affect
+    execution authority.
+    """
+    brain = brain.lower()
+    if brain not in DISCUSSION_PARTICIPANTS:
+        raise HTTPException(status_code=404, detail=f"unknown brain {brain!r}")
+    limit = max(1, min(500, int(limit)))
+    rows = await db["sidecar_checkin_audit"].find(
+        {"runtime": brain}, {"_id": 0},
+    ).sort("ts_epoch", -1).limit(limit).to_list(length=limit)
+    return {
+        "runtime": brain,
+        "count": len(rows),
+        "rows": rows,
+        "doctrine": "advisory_observability_only",
+    }
+
+
+@router.get("/sidecar-checkin/{brain}/imposter-scan")
+async def get_sidecar_checkin_imposter_scan(
+    brain: str,
+    hours: int = 24,
+    _user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Detect duplicate-pod scenarios in the audit log.
+
+    Aggregates the last N hours of audit rows by
+    (source_ip, env_name, pip_freeze_sha, process_identity hostname/pid)
+    and returns the distinct buckets. If more than ONE bucket has a
+    non-trivial count, two different processes have been
+    authenticating as the same brain — that's the bug pattern that
+    caught Alpha (preview pod posting to prod MC with the same token).
+
+    Doctrine: ADVISORY observability only. Read-only.
+    """
+    brain = brain.lower()
+    if brain not in DISCUSSION_PARTICIPANTS:
+        raise HTTPException(status_code=404, detail=f"unknown brain {brain!r}")
+    hours = max(1, min(168, int(hours)))
+    cutoff = _now().timestamp() - (hours * 3600)
+
+    rows = await db["sidecar_checkin_audit"].find(
+        {"runtime": brain, "ts_epoch": {"$gte": cutoff}}, {"_id": 0},
+    ).to_list(length=10000)
+
+    # Bucket by the strongest available identity signal. Prefer
+    # process_identity (Alpha 2026-05-30+), fall back to
+    # (source_ip, pip_sha, env_name) for older / non-stamped brains.
+    buckets: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        pi = r.get("process_identity") or {}
+        if pi.get("pid") and pi.get("hostname"):
+            key = f"pid={pi['pid']}@{pi['hostname']}"
+        else:
+            key = (
+                f"ip={r.get('source_ip')}"
+                f"|env={r.get('stamp_env_name')}"
+                f"|pip={(r.get('stamp_pip_sha') or '')[:8]}"
+            )
+        b = buckets.setdefault(key, {
+            "count": 0, "first_ts": None, "last_ts": None,
+            "env_name": r.get("stamp_env_name"),
+            "source_ip": r.get("source_ip"),
+            "process_identity": pi,
+        })
+        b["count"] += 1
+        ts = r.get("ts")
+        if ts:
+            if b["first_ts"] is None or ts < b["first_ts"]:
+                b["first_ts"] = ts
+            if b["last_ts"] is None or ts > b["last_ts"]:
+                b["last_ts"] = ts
+
+    # Only flag as suspicious if 2+ buckets EACH have ≥ 3 checkins.
+    # A single rogue ping shouldn't trigger; sustained dupes should.
+    sustained = [b for b in buckets.values() if b["count"] >= 3]
+    return {
+        "runtime": brain,
+        "window_hours": hours,
+        "total_checkins_in_window": len(rows),
+        "distinct_identities": len(buckets),
+        "sustained_identities": len(sustained),
+        "imposter_suspected": len(sustained) > 1,
+        "buckets": list(buckets.values()),
+        "doctrine": "advisory_observability_only",
+    }
