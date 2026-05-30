@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, RUNTIME_META, relTime } from "@/lib/api";
 import { Card, LoadingRow } from "@/components/ui-bits";
+import { computeRegressions } from "@/lib/brainHealthAlerts";
 
 /**
  * BrainHealthTile — single-screen confirmation that a brain is wired
@@ -235,6 +236,26 @@ export default function BrainHealthTile() {
   const [err, setErr] = useState("");
   const [lastFetched, setLastFetched] = useState(null);
 
+  // ── Regression alerting (operator opt-in) ──
+  // Persisted in localStorage so the operator's preference survives
+  // refreshes. Default OFF — desktop notifications require explicit
+  // user consent both at the OS level AND by intent (per RedEye
+  // author's doctrine pin, no surprise pings).
+  const [alertsEnabled, setAlertsEnabled] = useState(() => {
+    try {
+      return localStorage.getItem("brain_health_alerts_enabled") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [notifPerm, setNotifPerm] = useState(() => {
+    if (typeof Notification === "undefined") return "unsupported";
+    return Notification.permission; // "granted" | "denied" | "default"
+  });
+  // Mutable refs to avoid re-renders for in-flight bookkeeping.
+  const prevVerdictsRef = useRef({});
+  const lastNotifMsRef = useRef({});
+
   const load = useCallback(async () => {
     try {
       const { data: d } = await api.get("/admin/runtime/brain-health");
@@ -254,6 +275,86 @@ export default function BrainHealthTile() {
     const t = setInterval(load, 15000);
     return () => clearInterval(t);
   }, [load]);
+
+  // ── Regression-detection side effect ──
+  // Runs whenever the fleet payload updates. Doctrine pins enforced
+  // by the pure `computeRegressions(...)` helper:
+  //   - Only green → degraded/dead fires (not the inverse, not
+  //     degraded↔dead flips).
+  //   - Per-brain 60s debounce against pod flapping.
+  //   - First-load (no prior verdict) NEVER fires.
+  useEffect(() => {
+    if (!data?.brains) return;
+    const currentVerdicts = {};
+    for (const [brain, payload] of Object.entries(data.brains)) {
+      currentVerdicts[brain] = payload?.overall?.verdict || "dead";
+    }
+    if (alertsEnabled && notifPerm === "granted") {
+      const nowMs = Date.now();
+      const regressed = computeRegressions(
+        prevVerdictsRef.current,
+        currentVerdicts,
+        lastNotifMsRef.current,
+        nowMs,
+      );
+      for (const brain of regressed) {
+        const verdict = currentVerdicts[brain];
+        const reasons = data.brains[brain]?.overall?.reasons || [];
+        const meta = RUNTIME_META[brain] || {};
+        try {
+          new Notification(`${meta.label || brain.toUpperCase()} ${verdict.toUpperCase()}`, {
+            body: reasons.length ? reasons.slice(0, 3).join(" · ") : "Brain health regressed.",
+            tag: `brain-health-${brain}`,
+            requireInteraction: verdict === "dead",
+          });
+        } catch (e) {
+          // Some browsers throw if the page isn't focused; that's fine —
+          // the notification permission is still effective at the OS
+          // level, and the dropped alert isn't worth retrying.
+          // eslint-disable-next-line no-console
+          console.warn("[brain-health] notification dispatch failed:", e?.message);
+        }
+        lastNotifMsRef.current[brain] = nowMs;
+      }
+    }
+    // ALWAYS update prev verdicts — even when alerts are disabled —
+    // so flipping alerts on mid-session doesn't fire a phantom alert
+    // for a brain that was already degraded.
+    prevVerdictsRef.current = currentVerdicts;
+  }, [data, alertsEnabled, notifPerm]);
+
+  const handleToggleAlerts = useCallback(async () => {
+    if (alertsEnabled) {
+      setAlertsEnabled(false);
+      try {
+        localStorage.setItem("brain_health_alerts_enabled", "false");
+      } catch {
+        // localStorage can be denied; toggle still takes effect for this session.
+      }
+      return;
+    }
+    if (typeof Notification === "undefined") {
+      setNotifPerm("unsupported");
+      return;
+    }
+    let perm = Notification.permission;
+    if (perm === "default") {
+      try {
+        perm = await Notification.requestPermission();
+      } catch {
+        perm = "denied";
+      }
+    }
+    setNotifPerm(perm);
+    if (perm === "granted") {
+      setAlertsEnabled(true);
+      try {
+        localStorage.setItem("brain_health_alerts_enabled", "true");
+      } catch {
+        // ignore — preference will reset on next load
+      }
+    }
+  }, [alertsEnabled]);
 
   const thresholds = data?.thresholds;
   const brains = data?.brains || {};
@@ -288,13 +389,41 @@ export default function BrainHealthTile() {
           <div className="text-[10px] font-mono text-rd-text mt-0.5">
             {lastFetched ? relTime(lastFetched.toISOString()) : "—"}
           </div>
-          <button
-            onClick={load}
-            className="mt-2 text-[10px] font-mono uppercase tracking-widest text-rd-warn hover:text-rd-text border border-rd-border px-2 py-1"
-            data-testid="brain-health-refresh-btn"
-          >
-            ↻ refresh
-          </button>
+          <div className="flex items-center gap-2 mt-2 justify-end">
+            <button
+              onClick={handleToggleAlerts}
+              className={`text-[10px] font-mono uppercase tracking-widest border px-2 py-1 transition-colors ${
+                alertsEnabled
+                  ? "border-emerald-500 text-emerald-400 hover:text-emerald-300"
+                  : "border-rd-border text-rd-dim hover:text-rd-text hover:border-rd-warn"
+              }`}
+              data-testid="brain-health-alerts-toggle"
+              title={
+                notifPerm === "unsupported"
+                  ? "Browser does not support desktop notifications"
+                  : notifPerm === "denied"
+                  ? "Notifications blocked at OS/browser level — re-enable in site settings"
+                  : alertsEnabled
+                  ? "Click to disable. Pings ONLY on green→degraded/dead, debounced 60s/brain."
+                  : "Click to enable desktop notifications on green→degraded/dead regressions"
+              }
+              disabled={notifPerm === "unsupported"}
+            >
+              {alertsEnabled ? "● alerts ON" : "○ alerts OFF"}
+            </button>
+            <button
+              onClick={load}
+              className="text-[10px] font-mono uppercase tracking-widest text-rd-warn hover:text-rd-text border border-rd-border px-2 py-1"
+              data-testid="brain-health-refresh-btn"
+            >
+              ↻ refresh
+            </button>
+          </div>
+          {notifPerm === "denied" && alertsEnabled === false && (
+            <div className="text-[9px] text-amber-400 font-mono mt-1" data-testid="brain-health-alerts-denied">
+              browser blocked notifications
+            </div>
+          )}
         </div>
       </div>
 

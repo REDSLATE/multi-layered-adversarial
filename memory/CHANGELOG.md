@@ -1,3 +1,35 @@
+## 2026-02-17 (pass #24) — Brain-Health click-through + regression-only desktop notifications
+
+### Shipped
+1. **Card click-through** — every Brain-Health card is now a `<Link to="/admin/runtime/{brain}">` with hover/focus border highlight + ↗ glyph. Glance → click degraded card → forensics in one motion.
+2. **Pre-existing crash fix in `RuntimeDetail.jsx`** (surfaced by the click-through):
+   - `SUB_ENDPOINT[redeye]` was undefined → `Cannot read properties of undefined (reading 'url')` crash on any nav to `/admin/runtime/redeye`. Gated with `?.title` + `{sub && (...)}` wrap around the decision-log card.
+   - Each `Promise.all` fetch wrapped in `.catch(() => ({data: null}))` so a single 404 (e.g. `/runtime/redeye/status` not present yet) can't tank the whole page.
+   - New `loaded` state distinguishes "loading" from "fetched-but-no-status-endpoint" → graceful "No per-runtime status endpoint is wired for REDEYE" card pointing back to Diagnostics.
+3. **Opt-in desktop notifications on regression** (`lib/brainHealthAlerts.js` + tile integration) with operator-pinned doctrine:
+   - Fires ONLY on `green → degraded` or `green → dead`.
+   - Does NOT fire on the inverse (any → green is recovery, not regression).
+   - Does NOT fire on `degraded ↔ dead` flips (already broken; second ping is noise).
+   - Does NOT fire on first-load (no prior verdict).
+   - Per-brain 60s debounce — flapping pod cannot machine-gun the operator.
+   - Persisted toggle in localStorage; explicit OS permission request on click; graceful "browser blocked" indicator when denied.
+4. **17 doctrine tripwires** in `lib/__tests__/brainHealthAlerts.test.mjs` — pure-Node, no jsdom. Exercises every transition matrix cell + composite `computeRegressions(...)` + debounce window.
+
+### Live verification on preview
+- Click redeye card from Diagnostics → URL → `/admin/runtime/redeye` → page mounts cleanly (no error overlay, `runtime-page-redeye` testid present, graceful unavailable card visible).
+- `○ ALERTS OFF` toggle renders next to `↻ REFRESH`; headless Chromium shows `browser blocked notifications` amber indicator (denied path working).
+- All 4 brain cards still render correctly: Alpha exec×equity (2h), Chevelle gov×equity (2h), Camaro stra×equity (2m), Redeye fully null (no held seats).
+- 17/17 alert tripwires pass.
+
+### Next Action Items
+- 🟢 **Operator** — redeploy MC. RedEye author is holding their redeploy until MC ships. No MC-side blocker remains.
+- 🟡 P1 — 6-Brain Expansion Refactor
+- 🟡 P1 — Real `relative_volume` via Kraken OHLC + Polygon/Finnhub bar consumption
+- 🟡 P1 — R:R Scanner Phase C/D
+
+---
+
+
 ## 2026-02-17 (pass #23) — Brain-Health composite endpoint + admin tile
 
 ### Operator pattern
