@@ -1,3 +1,50 @@
+## 2026-02-17 (pass #25) — Feature service + brain-callable roster + status proxy
+
+### Shipped (one-shot for the next MC redeploy)
+
+1. **`shared/market_data/feature_service.py`** — derives `relative_volume` + `has_news` from MC's existing `shared_ohlcv_bars` collection + Finnhub news API.
+   - Doctrine pin: `relative_volume = None` (NOT 0.0) when bars insufficient → prevents false-positive `STUCK_FEATURES_NO_DIVERSITY` self-vetoes downstream.
+   - `has_news = None` on Finnhub failure (missing key, timeout, error-dict response); only `False` on successful empty fetch.
+   - In-process news cache TTL 300s, operator-tunable.
+
+2. **`routes/market_data_snapshot.py`** — operator + brain dual-auth.
+   - `GET /api/admin/market-data/snapshot/{symbol}`
+   - `GET /api/admin/market-data/snapshot?symbols=NVDA,AAPL,TSLA` (batch ≤50, per-symbol error isolation)
+   - `POST /api/admin/market-data/snapshot/cache/reset-news` (operator escape hatch)
+
+3. **`routes/brain_runtime.py`** — three brain-callable + operator endpoints.
+   - `GET /api/admin/runtime/roster?caller={brain}` — brain-callable lean roster (dual auth). Returns `your_seats` lane-resolved + full `assignments` map. Brain caller is FORCED to its authenticated brain id (can't peek at another brain's seats by passing `?caller=other`). Doctrine-compatible by being read-only — governor exclusivity is enforced at write time in `shared/roster.py:_ensure_assignment_eligible`.
+   - `GET /api/admin/runtime/{brain}/status` — operator-only status PROXY. Fetches `<BRAIN>_STATUS_URL` env var, bounded timeout 4s, cached 10s, returns `{ok, payload}` wrapper. Brain pods can ship a `/status` endpoint per RedEye's wire-up kit and operator dashboard surfaces it without cross-origin pain.
+   - `POST /api/admin/runtime/{brain}/status/refresh` — operator force-refresh.
+   - `GET /api/admin/runtime/status-proxy-audit` — operator forensics on proxy hits/misses.
+   - Every proxy call writes one row to `brain_status_proxy_audit` (success AND failure).
+
+4. **`components/BrainProxiedStatusTile.jsx`** — renders the proxied brain payload on `/admin/runtime/{brain}` page. 7-section grid (identity, seats, heartbeat, governor_emitter, data_keys, neuro_engine, intents) — each section silently no-ops when absent so different brains can expose different subsets. Cache badge, force-refresh button, graceful `no_upstream_configured` state with the env-var instructions inline.
+
+### Tripwires (50/50 PASS across this session's modules)
+- `test_market_data_feature_service.py` — 22 tests (RVOL math, news fallback contract, cache hit, broker-key abstinence, route auth)
+- `test_brain_runtime.py` — 13 tests (roster lane-scoping, brain-caller can't peek, proxy timeout bound, audit-writes-every-attempt, governor doctrine compatibility)
+- `test_brain_health.py` — 15 tests (still green from pass #23)
+
+### Live verification on preview
+- `/api/admin/market-data/snapshot/NVDA` → `{relative_volume: null, reason: "no_bars_for_symbol", has_news: null, reason: "finnhub_api_key_missing"}` ✅
+- `/api/admin/runtime/roster?caller=redeye` → `seat_epoch=221, your_seats=[]` ✅ (redeye correctly unseated in preview)
+- `/api/admin/runtime/redeye/status` → `{ok: false, error: "no_upstream_configured"}` ✅
+- `/admin/runtime/redeye` page → tile renders `no_upstream_configured` state with env-var instructions; retry button + secondary graceful card both present.
+
+### Next Action Items
+- 🟢 **Operator** — redeploy MC. RedEye author is unblocked the moment this lands:
+  - Set `REDEYE_MC_ROSTER_URL=https://mission.risedual.ai/api/admin/runtime/roster?caller=redeye` in RedEye's `.env` → their `redeye_seat_state.refresh_from_mc()` populates from authoritative source.
+  - Set `REDEYE_STATUS_URL=https://redeye.risedual.ai/api/admin/runtime/redeye/status` in MC's `.env` → dashboard tile lights up green with brain-internal telemetry.
+- 🟡 P1 — 6-Brain Expansion Refactor (deferred)
+- 🟡 P1 — R:R Scanner Phase C/D
+
+### Doctrine note
+Operator reaffirmed Doctrine (c): *"The seat determines the pool permissions and restrictions not the brain. The only restrictions should be on the Governor seat for the two brains to be seated, RedEye and Chevelle."* MC's existing `shared/roster.py:_ensure_assignment_eligible` already enforces this (governor + crypto_governor exclusive to Chevelle/RedEye; everything else seat-based). My new brain-callable read endpoint is doctrine-compatible by abstinence — no write paths, locked by `test_roster_endpoint_doctrine_compatible`.
+
+---
+
+
 ## 2026-02-17 (pass #24) — Brain-Health click-through + regression-only desktop notifications
 
 ### Shipped

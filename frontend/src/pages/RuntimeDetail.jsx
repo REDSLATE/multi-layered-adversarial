@@ -4,6 +4,7 @@ import { api, RUNTIME_META, fmtTime, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 import SovereignTile from "@/components/SovereignTile";
 import LivePulse from "@/components/LivePulse";
+import BrainProxiedStatusTile from "@/components/BrainProxiedStatusTile";
 
 const SUB_ENDPOINT = {
   alpha: { url: "/runtime/alpha/decisions", title: "alpha_decision_log", cols: ["timestamp", "decision", "symbol", "score"] },
@@ -24,6 +25,13 @@ export default function RuntimeDetail() {
   // of just repeating the brain's identity. The seat IS the
   // restriction; the brain itself carries no separate authority.
   const [roster, setRoster] = useState(null);
+  // MC-side proxy of the brain's own `/status` payload (when the
+  // operator has wired `<BRAIN>_STATUS_URL` in MC's env). Surfaces
+  // brain-internal telemetry — checkin, heartbeat, governor emitter,
+  // data-keys, neuro engine, intents — inside the MC dashboard
+  // without cross-origin pain. Wrapper shape: `{brain, ok, payload?,
+  // error?, _proxy_duration_ms?, _proxied_from?}`.
+  const [proxied, setProxied] = useState(null);
   // `loaded` flips true after the parallel fetches complete (success
   // or failure). Lets us distinguish "still loading" (show spinner)
   // from "fetched but no status endpoint" (show graceful unavailable
@@ -34,6 +42,7 @@ export default function RuntimeDetail() {
     if (!meta) return;
     setStatus(null);
     setRows(null);
+    setProxied(null);
     setLoaded(false);
     (async () => {
       // `sub` is undefined for brains without a curated sub-endpoint
@@ -43,21 +52,29 @@ export default function RuntimeDetail() {
       // on `sub.url`. Each fetch is independently catch-shielded so
       // a single 404 (e.g. `/runtime/redeye/status` not present on
       // the backend) cannot tank the whole page.
+      //
+      // Added 2026-02-17: ALSO fetch MC's status PROXY for this brain
+      // (`/api/admin/runtime/{brain}/status`). The proxy returns
+      // either `{ok: true, payload: <brain's full /status payload>}`
+      // OR `{ok: false, error}`. We render the payload as a composite
+      // tile below the standard status card when present.
       const subPromise = sub
         ? api.get(sub.url).catch(() => ({ data: null }))
         : Promise.resolve({ data: null });
-      const [s, r, c, a, rs] = await Promise.all([
+      const [s, r, c, a, rs, prx] = await Promise.all([
         api.get(`/runtime/${runtime}/status`).catch(() => ({ data: null })),
         subPromise,
         api.get(`/shared/calibrators?runtime=${runtime}`).catch(() => ({ data: null })),
         api.get(`/shared/artifacts?runtime=${runtime}`).catch(() => ({ data: null })),
         api.get("/admin/roster").catch(() => ({ data: null })),
+        api.get(`/admin/runtime/${runtime}/status`).catch(() => ({ data: null })),
       ]);
       setStatus(s.data);
       setRows(r.data);
       setCalibs(c.data);
       setArtifacts(a.data);
       setRoster(rs.data);
+      setProxied(prx.data);
       setLoaded(true);
     })();
   }, [runtime, meta, sub]);
@@ -123,6 +140,16 @@ export default function RuntimeDetail() {
       />
 
       {!loaded && !status && <LoadingRow />}
+
+      {/* MC-proxied brain `/status` payload — composite view of the
+          brain's own telemetry endpoint (when wired via the
+          `<BRAIN>_STATUS_URL` env var on MC). Renders ABOVE the
+          MC-side status card so the operator sees brain-internal
+          state first when troubleshooting. Read-only; pings MC's
+          proxy which writes one audit row per call. */}
+      {loaded && proxied && (
+        <BrainProxiedStatusTile brain={runtime} proxied={proxied} />
+      )}
 
       {loaded && !status && (
         <Card testid={`runtime-status-unavailable-${runtime}`}>
