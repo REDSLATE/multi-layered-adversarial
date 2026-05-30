@@ -51,8 +51,9 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 
+from auth import get_current_user
 from db import db
 
 
@@ -241,4 +242,49 @@ async def get_market_data_manifest() -> dict:
         ),
         "auth": "X-Brain-Id + X-Runtime-Token (same <BRAIN>_INGEST_TOKEN as sidecar_checkin)",
         "audit_collection": "market_data_key_fetches",
+    }
+
+
+@router.get("/market-data/audit")
+async def get_market_data_audit(
+    limit: int = 50,
+    brain: Optional[str] = None,
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    """Operator-only audit of who has fetched market-data keys.
+
+    Doctrine: read-only visibility into the `market_data_key_fetches`
+    collection. The proxy itself records the audit row on every
+    successful GET; this endpoint exposes it for operator dashboards
+    so we can answer "which brains have actually wired the proxy?"
+    in one curl, without each brain team duplicating audit logic
+    on their side.
+
+    Default `limit=50`, max 500. Optional `brain` filter for a
+    per-brain view ("when did Chevelle first fetch?").
+    """
+    limit = max(1, min(500, int(limit)))
+    query: dict = {}
+    if brain:
+        query["brain"] = brain.strip().lower()
+
+    rows = await db["market_data_key_fetches"].find(
+        query, {"_id": 0},
+    ).sort("ts", -1).limit(limit).to_list(length=limit)
+
+    # Per-brain rollup over the returned slice. Cheap, useful at a glance.
+    by_brain: dict[str, dict] = {}
+    for r in rows:
+        b = r.get("brain") or "?"
+        d = by_brain.setdefault(b, {"count": 0, "last_ts": None})
+        d["count"] += 1
+        ts = r.get("ts")
+        if ts and (d["last_ts"] is None or ts > d["last_ts"]):
+            d["last_ts"] = ts
+
+    return {
+        "items": rows,
+        "count": len(rows),
+        "by_brain": by_brain,
+        "doctrine": "operator_read_only",
     }
