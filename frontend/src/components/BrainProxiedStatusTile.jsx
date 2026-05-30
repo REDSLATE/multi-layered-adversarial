@@ -221,9 +221,9 @@ export default function BrainProxiedStatusTile({ brain, proxied }) {
             {/* Heartbeat pair (brain ← MC opinion stream) */}
             <KV k="mc_base_url_set" v={p.identity.mc_base_url_set} testid="identity-mc-base-url-set" />
             <KV
-              k="redeye_ingest_token_set"
-              v={p.identity.redeye_ingest_token_set}
-              testid="identity-redeye-ingest-token-set"
+              k="heartbeat_token_set"
+              v={p.identity.heartbeat_token_set}
+              testid="identity-heartbeat-token-set"
             />
           </Section>
         )}

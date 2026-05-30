@@ -180,7 +180,7 @@ function BrainCard({ brain, payload, thresholds }) {
     if (identity.mc_url_set === false) failedEnvVars.push("MC_URL");
     if (identity.ingest_token_set === false) failedEnvVars.push("INGEST_TOKEN");
     if (identity.mc_base_url_set === false) failedEnvVars.push("MC_BASE_URL");
-    if (identity.redeye_ingest_token_set === false) failedEnvVars.push("REDEYE_INGEST_TOKEN");
+    if (identity.heartbeat_token_set === false) failedEnvVars.push("HEARTBEAT_TOKEN");
   }
 
   const checkin = payload?.checkin || {};
