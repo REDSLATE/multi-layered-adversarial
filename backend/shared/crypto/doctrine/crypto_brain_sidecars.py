@@ -167,14 +167,29 @@ def _build_execution_judge(base, labels, holder, snapshot):
         "has_existing_intent": bool(snapshot.get("existing_intent")),
         "spread_ok": "WIDE_SPREAD" not in labels,
         "liquidity_ok": "EXCHANGE_LIQUIDITY_OK" in labels,
-        "quality": base.quality,
+        "quality_ok": base.quality in {"A_QUALITY", "B_QUALITY"},
+        "score_ok": base.score >= 0.60,
     }
+    execution_ready = (
+        bool(snapshot.get("existing_intent")) and base.score >= 0.60
+    )
+    # Surface WHICH checks failed (2026-05-31). Previously the judge
+    # returned a single boolean; now we name the failing keys so the
+    # operator/brain can fix the gap (a missing field vs a quality
+    # threshold vs a missing intent are all very different fixes).
+    failed_checks = [k for k, v in execution_checks.items() if not v]
     return {
         "role": "execution_judge",
         "seat": CRYPTO_SEAT_MAP["execution_judge"],
         "holder": holder,
-        "execution_ready": bool(snapshot.get("existing_intent")) and base.score >= 0.60,
+        "execution_ready": execution_ready,
         "execution_checks": execution_checks,
+        "failed_checks": failed_checks,
+        "not_ready_reason": (
+            None
+            if execution_ready
+            else "; ".join(failed_checks) or "no_failing_check_recorded"
+        ),
         "lesson": "Only execute after independent direction exists and crypto liquidity + spread + quality are acceptable.",
         "may_execute": False,
         "may_create_direction": False,

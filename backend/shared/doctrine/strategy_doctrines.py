@@ -139,6 +139,7 @@ def _build_gap_and_go_v1(snapshot, seat_holders):
         "spread_ok": "SPREAD_ACCEPTABLE" in labels,
         "quality_ok": base.quality in {"A_QUALITY", "B_QUALITY"},
     }
+    _ej_failed = [k for k, v in execution_checks.items() if not v]
 
     return _packet(
         doctrine_version="gap_and_go_v1",
@@ -163,6 +164,12 @@ def _build_gap_and_go_v1(snapshot, seat_holders):
         execution_judge={
             "execution_ready": all(execution_checks.values()),
             "execution_checks": execution_checks,
+            "failed_checks": _ej_failed,
+            "not_ready_reason": (
+                None
+                if not _ej_failed
+                else "; ".join(_ej_failed)
+            ),
             "lesson": "Only execute after premarket-high cross or bull-flag break confirms the breakout direction.",
         },
     )
@@ -245,6 +252,7 @@ def _build_micro_pullback_v1(snapshot, seat_holders):
         "pullback_low_known": pullback_low_known,
         "spread_ok": "SPREAD_ACCEPTABLE" in labels,
     }
+    _ej_failed = [k for k, v in execution_checks.items() if not v]
 
     return _packet(
         doctrine_version="micro_pullback_v1",
@@ -269,6 +277,12 @@ def _build_micro_pullback_v1(snapshot, seat_holders):
         execution_judge={
             "execution_ready": all(execution_checks.values()),
             "execution_checks": execution_checks,
+            "failed_checks": _ej_failed,
+            "not_ready_reason": (
+                None
+                if not _ej_failed
+                else "; ".join(_ej_failed)
+            ),
             "lesson": "Only execute when the leader is pulling back near a round-dollar level with a known low and active momentum.",
         },
     )

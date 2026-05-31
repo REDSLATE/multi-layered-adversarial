@@ -103,8 +103,17 @@ function seatHeadline(role, seat) {
   }
   if (role === "execution_judge") {
     const ready = !!seat.execution_ready;
+    const failed = (seat.failed_checks && Array.isArray(seat.failed_checks))
+      ? seat.failed_checks
+      : Object.entries(seat.execution_checks || {})
+          .filter(([, v]) => v === false || v === null || v === undefined)
+          .map(([k]) => k);
     return {
-      text: ready ? "READY" : "not ready",
+      text: ready
+        ? "READY"
+        : failed.length === 1
+          ? `not ready · ${failed[0]}`
+          : `not ready · ${failed.length} checks failed`,
       color: ready ? "#10B981" : "#F59E0B",
       flagged: !ready,
     };

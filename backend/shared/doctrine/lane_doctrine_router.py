@@ -113,6 +113,8 @@ def hoist_packet_audit_fields(packet: Dict[str, Any]) -> Dict[str, Any]:
         "governor_action": None, "governor_risk_multiplier": None,
         "governor_block_reason_count": None, "governor_holder": None,
         "execution_judge_ready": None, "execution_judge_holder": None,
+        "execution_judge_failed_checks": [],
+        "execution_judge_not_ready_reason": None,
         # ── legacy brain-named aliases (deprecated, will be removed) ──
         "redeye_challenge_required": None,
         "chevelle_governor_action": None,
@@ -162,6 +164,8 @@ def hoist_packet_audit_fields(packet: Dict[str, Any]) -> Dict[str, Any]:
             # execution_judge seat
             "execution_judge_ready": bool(execution_judge.get("execution_ready")),
             "execution_judge_holder": execution_judge.get("holder"),
+            "execution_judge_failed_checks": list(execution_judge.get("failed_checks") or []),
+            "execution_judge_not_ready_reason": execution_judge.get("not_ready_reason"),
             # legacy aliases (deprecated)
             "redeye_challenge_required": challenge_required,
             "chevelle_governor_action": governor.get("governor_action"),
@@ -192,6 +196,8 @@ def hoist_packet_audit_fields(packet: Dict[str, Any]) -> Dict[str, Any]:
         "governor_block_reason_count": None, "governor_holder": None,
         "execution_judge_ready": execution_ready,
         "execution_judge_holder": None,
+        "execution_judge_failed_checks": [],
+        "execution_judge_not_ready_reason": None,
         # legacy aliases (already the source names here)
         "redeye_challenge_required": challenge_required,
         "chevelle_governor_action": governor_action,

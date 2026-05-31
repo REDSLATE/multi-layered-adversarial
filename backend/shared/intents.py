@@ -561,6 +561,8 @@ async def _build_and_persist_doctrine_packet(
         "governor_holder": hoisted["governor_holder"],
         "execution_judge_ready": hoisted["execution_judge_ready"],
         "execution_judge_holder": hoisted["execution_judge_holder"],
+        "execution_judge_failed_checks": hoisted.get("execution_judge_failed_checks") or [],
+        "execution_judge_not_ready_reason": hoisted.get("execution_judge_not_ready_reason"),
         # ── legacy brain-named aliases (DEPRECATED) ─────────────────
         # Kept for one deprecation cycle. New consumers MUST use the
         # seat-keyed names above. Will be removed in a future pass.
