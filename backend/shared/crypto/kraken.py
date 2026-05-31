@@ -271,6 +271,38 @@ SCOPE_PROBES = [
     ("query_ledger",       "/0/private/Ledgers",       {}),
 ]
 
+# Trade-scope probes use AddOrder/CancelOrder with `validate=true` so
+# Kraken checks PERMISSION + ORDER-SHAPE without placing any order.
+# A Kraken error mentioning "Permission denied" / "Invalid permissions"
+# means the scope is missing. Order-validation errors (EOrder:*) prove
+# the scope IS granted — auth + permission passed, only order shape
+# was rejected. Probe params are chosen so they hit EOrder, not EAPI.
+TRADE_SCOPE_PROBES = [
+    # `create_modify_orders` — validate a tiny far-from-market BTC buy.
+    # 0.0002 BTC × $50k = $10 nominal, comfortably above Kraken's $5 min
+    # but limit at $50k means it would never fill even if fired live.
+    (
+        "create_modify_orders",
+        "/0/private/AddOrder",
+        {
+            "pair": "XXBTZUSD",
+            "type": "buy",
+            "ordertype": "limit",
+            "price": "50000.00",
+            "volume": "0.0002",
+            "validate": "true",
+        },
+    ),
+    # `cancel_close_orders` — try to cancel a non-existent txid. Permission
+    # check happens BEFORE txid lookup, so a permission-granted key gets
+    # "EOrder:Invalid order" rather than "EAPI:Invalid permissions".
+    (
+        "cancel_close_orders",
+        "/0/private/CancelOrder",
+        {"txid": "OFAKEX-XXXXX-XXXXXX"},
+    ),
+]
+
 
 import logging
 
@@ -278,7 +310,7 @@ logger = logging.getLogger("risedual.kraken")
 
 
 async def probe_scopes(public_key: str, private_key_b64: str) -> dict[str, bool | str]:
-    """Probe the five common read scopes.
+    """Probe the five read scopes AND the two trade scopes.
 
     Returns a dict keyed by scope name with bool values. The probe also
     returns:
@@ -289,6 +321,7 @@ async def probe_scopes(public_key: str, private_key_b64: str) -> dict[str, bool 
     out: dict[str, bool | str | dict] = {}
     errors: dict[str, str] = {}
     balance_preview = None
+    # Read-scope probes — straightforward: success ⇒ True.
     for scope, path, params in SCOPE_PROBES:
         try:
             result = await call_private(path, public_key, private_key_b64, params)
@@ -296,8 +329,6 @@ async def probe_scopes(public_key: str, private_key_b64: str) -> dict[str, bool 
             if scope == "query_funds":
                 balance_preview = _summarise_balance(result)
         except KrakenError as e:
-            # "Invalid permissions" is the expected denial; everything
-            # else is reported but treated as "scope unavailable".
             msg = "; ".join(e.errors)
             out[scope] = False
             errors[scope] = msg
@@ -306,8 +337,39 @@ async def probe_scopes(public_key: str, private_key_b64: str) -> dict[str, bool 
             out[scope] = False
             errors[scope] = f"transport: {e}"
             logger.warning("Kraken probe %s transport error: %s", scope, e)
-        # Tiny gap to be friendly with the rate limit.
         await asyncio.sleep(0.15)
+
+    # Trade-scope probes — interpretation is INVERTED:
+    #   - Success (validate=true returns OK) ⇒ scope granted
+    #   - KrakenError with "Permission" / "Invalid permissions" ⇒ scope DENIED
+    #   - Any OTHER KrakenError (EOrder:*, EOrder:Invalid order, etc.) ⇒
+    #     scope granted; only the order shape / txid was rejected
+    for scope, path, params in TRADE_SCOPE_PROBES:
+        try:
+            result = await call_private(path, public_key, private_key_b64, params)
+            out[scope] = True
+        except KrakenError as e:
+            msg = "; ".join(e.errors)
+            denied = any(
+                ("permission" in err.lower() or "invalid permissions" in err.lower())
+                for err in e.errors
+            )
+            if denied:
+                out[scope] = False
+                errors[scope] = msg
+                logger.warning("Kraken trade probe %s DENIED: %s", scope, msg)
+            else:
+                # Order-shape / txid error → permission IS granted.
+                out[scope] = True
+                logger.info(
+                    "Kraken trade probe %s permission OK (Kraken: %s)",
+                    scope, msg,
+                )
+        except httpx.HTTPError as e:
+            out[scope] = False
+            errors[scope] = f"transport: {e}"
+        await asyncio.sleep(0.15)
+
     out["_balance_preview"] = balance_preview
     out["_errors"] = errors
     return out
