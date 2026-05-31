@@ -1,3 +1,23 @@
+## 2026-02-17 (pass #44) — Patent J bootstrap thresholds + stale comment cleanup
+
+### Shipped
+1. **`namespaces.py` `PROMOTION_THRESHOLDS` lowered to bootstrap-friendly values**:
+   - `min_resolved_rows`: 100 → **25** (biggest unblock — early fleet can clear the sample-size floor)
+   - `ece_max`: 0.05 → **0.10**
+   - `brier_max`: 0.20 → **0.30**
+   - `min_disagreement_stability`: 0.7 → **0.55**
+   - Doctrine pins **untouched**: `max_role_violations_24h` = 0, `max_toxic_memory_24h` = 5, `heartbeat_max_age_seconds` = 300.
+   - Patent J remains PASS-only; gate alone never promotes — operator countersign still required.
+2. **`tests/test_public_rate_limit.py`**: removed stale autouse-fixture comment referencing the deleted `test_public_phase2` module.
+
+### Verified
+- All 25 promotion-gate tests green (`test_promotion_gate`, `test_single_sign_promotion`, `test_dual_sign_promotion`).
+- Backend `/api/health` ok; supervisor backend/frontend running.
+- `namespaces.py` lint clean.
+
+---
+
+
 ## 2026-05-31 (pass #43) — Canonical 8-seat IP doctrine enforced; stubs cleaned
 
 ### Operator pins

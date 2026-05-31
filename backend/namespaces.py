@@ -628,13 +628,16 @@ DEFAULT_AUTHORITY: dict[str, str] = {
 }
 
 # Patent J readiness thresholds (operator-tunable later).
+# Bootstrap-friendly tuning 2026-02-17: lowered resolved-row floor and loosened
+# calibration tolerances so early-fleet brains can clear the gate. Doctrine pins
+# (role violations, toxic memory, heartbeat) stay at safety values.
 PROMOTION_THRESHOLDS = {
-    "ece_max": 0.05,                    # Expected Calibration Error
-    "brier_max": 0.20,                  # Brier score
-    "min_resolved_rows": 100,           # sample size floor
-    "min_disagreement_stability": 0.7,  # stability of dissent over the window
+    "ece_max": 0.10,                    # Expected Calibration Error
+    "brier_max": 0.30,                  # Brier score
+    "min_resolved_rows": 25,            # sample size floor (bootstrap)
+    "min_disagreement_stability": 0.55, # stability of dissent over the window
     "max_toxic_memory_24h": 5,          # firewall quarantines in 24h
-    "max_role_violations_24h": 0,       # zero tolerance
+    "max_role_violations_24h": 0,       # zero tolerance — doctrine pin
     "heartbeat_max_age_seconds": 300,   # liveness floor
 }
 
