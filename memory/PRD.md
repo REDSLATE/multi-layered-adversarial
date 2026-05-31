@@ -1,3 +1,26 @@
+# ✅ 2026-05-31 — Daily Market Snapshots subsystem shipped
+
+Three frozen, point-in-time captures of the full S&P-500 (502 symbols) per
+NYSE trading day land at 09:35 / 12:30 / 16:05 ET. Rows retained 5 trading
+days, then wiped lazily at the next `open` capture. Brains retrieve via:
+- `GET /api/admin/market-data/daily-snapshots/labels`
+- `GET /api/admin/market-data/daily-snapshots?label=open|midday|close`
+- `GET /api/admin/market-data/daily-snapshots/symbol/{symbol}`
+- `GET /api/admin/market-data/daily-snapshots/history/{symbol}?days=5`
+
+Operator manual fire: `POST /api/admin/market-data/daily-snapshots/capture?label=open` (JWT-only).
+
+Doctrine: derived evidence only; no broker quotes; missing bars surface as `price: null, price_reason: "no_bars_for_symbol"`.
+Implementation: `shared/snapshots/` + `routes/daily_snapshots.py`. Tests: `tests/test_daily_market_snapshots.py` (14 passing).
+
+**Note for prod:** on next deploy, the worker boots automatically via
+`server.py` lifespan. Disable with `MC_SNAPSHOT_WORKER_ENABLED=false` if needed.
+The Finnhub equity feeder must be writing 1Day bars to `shared_ohlcv_bars`
+for symbols to populate price/ohlc; otherwise rows land as null with auditable reason.
+
+---
+
+
 # 🚨 NEXT AGENT — START HERE
 
 The system has been running 3 months and produced ZERO trainable outcomes.

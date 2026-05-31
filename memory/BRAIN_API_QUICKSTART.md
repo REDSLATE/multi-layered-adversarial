@@ -102,6 +102,48 @@ GET /api/admin/market-data/snapshot?symbols=AAPL,NVDA,BTC/USD
 
 Same query params + auth. Returns `{ "items": [ ... ], "count": N }`.
 
+### Daily market snapshots (S&P-500-wide, frozen 3x/day)
+
+Three frozen, point-in-time views of the full S&P-500 universe per
+NYSE trading day. Useful when a brain wants to compare against the
+same market state every other brain saw at that label, instead of
+re-pulling per-symbol live bars.
+
+| Label    | Captured at (US/Eastern) |
+| -------- | ------------------------ |
+| `open`   | 09:35                    |
+| `midday` | 12:30                    |
+| `close`  | 16:05                    |
+
+Captures run automatically on every NYSE trading day; weekends and
+holidays are skipped. The previous **5 trading days** are retained
+(rolling). On the next `open` capture each day, rows older than the
+5-day window are wiped.
+
+```
+# Which labels have been captured today?
+GET /api/admin/market-data/daily-snapshots/labels
+
+# Full universe for one label (paginated up to 1000 rows)
+GET /api/admin/market-data/daily-snapshots?label=open
+
+# Filter by symbol list
+GET /api/admin/market-data/daily-snapshots?label=close&symbols=AAPL,NVDA,MSFT
+
+# All labels for one symbol on the current market day
+GET /api/admin/market-data/daily-snapshots/symbol/NVDA
+
+# Last N (max 5) market days of snapshots for one symbol
+GET /api/admin/market-data/daily-snapshots/history/NVDA?days=5
+```
+
+Same dual auth as `/snapshot/{symbol}`. Each item has the same
+shape as the single-symbol snapshot (`price`, `ohlc`, `asof`,
+`relative_volume`, `price_ok`, `price_reason`, etc.). Symbols with
+no bars at capture time land as `price: null,
+price_reason: "no_bars_for_symbol"` — visible coverage gap, never
+silently dropped.
+
 ### What's NOT here
 
 | Want | Where | Why |

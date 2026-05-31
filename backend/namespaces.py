@@ -65,6 +65,18 @@ SHARED_INDICATOR_SNAPSHOTS = "shared_indicator_snapshots"
 SYMBOL_METADATA = "symbol_metadata"          # per-symbol float, market cap, sector
 PATTERNS_UNIVERSE = "patterns_universe"      # operator-managed watchlist
 FEEDER_HEALTH_AUDIT = "feeder_health_audit"  # per-feeder 429/error rolling log
+
+# Daily Market Snapshots (2026-06-XX) — three frozen, point-in-time
+# views of the S&P-500 equity universe per trading day. Captured at
+# 09:35 / 12:30 / 16:05 ET. Doctrine: DERIVED EVIDENCE ONLY. Brains
+# poll for retrieval; MC never executes off these. Retention is N
+# trading days (default 5); the wipe pass runs at the start of each
+# new trading day. Index: (market_day, label, symbol).
+DAILY_MARKET_SNAPSHOTS = "daily_market_snapshots"
+# Captured-batch audit row (one per capture run, regardless of how
+# many symbols had bars). Lets the operator confirm "Yes, MC did
+# fire the 09:35 capture today" even if every symbol came back null.
+DAILY_SNAPSHOT_CAPTURE_LOG = "daily_snapshot_capture_log"
 ALT_DATA_FILINGS = "alt_data_filings"        # SEC EDGAR Form 4 / filing index
 ALT_DATA_MACRO = "alt_data_macro"            # FRED series cache
 

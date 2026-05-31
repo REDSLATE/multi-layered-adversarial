@@ -101,6 +101,14 @@ from routes.opinion_silence_watchdog import router as opinion_silence_watchdog_r
 from routes.brain_health import router as brain_health_router
 from routes.market_data_snapshot import router as market_data_snapshot_router
 from routes.brain_runtime import router as brain_runtime_router
+from routes.daily_snapshots import router as daily_snapshots_router
+from shared.snapshots.service import (
+    ensure_indexes as ensure_daily_snapshot_indexes,
+)
+from shared.snapshots.worker import (
+    start_worker_if_enabled as start_daily_snapshot_worker,
+    stop_worker as stop_daily_snapshot_worker,
+)
 from shared.feeders.finnhub_equity import (
     start_worker_if_enabled as start_finnhub_worker,
     stop_worker as stop_finnhub_worker,
@@ -303,6 +311,15 @@ async def lifespan(app: FastAPI):
         logger.info("patterns_universe seeded (%d symbols)", len(seed_symbols))
     except Exception as e:  # noqa: BLE001
         logger.warning("patterns_universe seed failed: %s", e)
+    # Daily market snapshots — three S&P-500-wide point-in-time
+    # captures per NYSE trading day (09:35 / 12:30 / 16:05 ET).
+    # Doctrine: derived evidence only; never hits broker quotes.
+    try:
+        await ensure_daily_snapshot_indexes()
+        start_daily_snapshot_worker()
+        logger.info("daily_snapshot worker started")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("daily_snapshot worker start failed: %s", e)
     yield
     await stop_poller()
     await stop_alpaca_pinger()
@@ -316,6 +333,10 @@ async def lifespan(app: FastAPI):
     await stop_orphan_watchdog()
     await stop_paradox_coordinator()
     await stop_observation_resolver()
+    try:
+        await stop_daily_snapshot_worker()
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from shared.opinion_resolver import stop_worker as _stop_opinion_resolver
         _stop_opinion_resolver()
@@ -441,6 +462,7 @@ api_router.include_router(market_data_keys_router)
 api_router.include_router(opinion_silence_watchdog_router)
 api_router.include_router(brain_health_router)
 api_router.include_router(market_data_snapshot_router)
+api_router.include_router(daily_snapshots_router)
 api_router.include_router(brain_runtime_router)
 api_router.include_router(shelly_router)
 api_router.include_router(brain_memory_ingest_router)

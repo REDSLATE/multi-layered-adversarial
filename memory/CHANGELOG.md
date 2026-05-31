@@ -1,3 +1,49 @@
+## 2026-05-31 (pass #38) — Daily Market Snapshots (S&P-500-wide, 3x/day)
+
+### Operator ask
+"Set up snapshots throughout the day — one at open, one ~3h later, one at close — and hold them for the brains to retrieve, then wipe at the start of the next market day. Use S&P 500 because brains need to learn options trading."
+
+### Shipped
+
+1. **S&P-500 universe** (`shared/snapshots/sp500_universe.py`): 502 tickers pinned as a static list (alphabetical, deduped). Updated by PR when the index reshuffles — deterministic across pod restarts.
+
+2. **NYSE calendar helper** (`shared/snapshots/nyse_calendar.py`): pure date-math (no external API). Pinned holidays for 2025/2026/2027. Exposes `is_trading_day()`, `previous_n_trading_days(anchor, n)`, `market_day_today()`, `now_eastern()`.
+
+3. **Capture service** (`shared/snapshots/service.py`):
+   - `capture_snapshot(label)` — async fan-out across the universe (concurrency=25 via semaphore), each symbol reads its latest `shared_ohlcv_bars` row (preferring `finnhub_equity` source, falling back to any source) + computes RVOL from the existing `feature_service`. Persists one upserted doc per `(market_day, label, symbol)` into `daily_market_snapshots`. Writes one audit row into `daily_snapshot_capture_log`. Idempotent.
+   - `wipe_old_snapshots(keep_trading_days=5)` — deletes rows older than the Nth-most-recent NYSE trading day.
+   - `ensure_indexes()` — unique compound index `(market_day, label, symbol)` + 2 query indexes.
+   - 502-symbol sweep completes in **~685ms** on preview.
+
+4. **Capture worker** (`shared/snapshots/worker.py`): single asyncio task, 30s tick cadence, 60s trigger window. Fires `open` at 09:35 ET, `midday` at 12:30 ET, `close` at 16:05 ET on NYSE trading days only. Skips weekends + pinned holidays. On the `open` capture each day, runs `wipe_old_snapshots()` first so retention is enforced lazily (no separate midnight job). Idempotent on hot reload + crash. Disable via `MC_SNAPSHOT_WORKER_ENABLED=false`. Wired into `server.py` lifespan.
+
+5. **Retrieval API** (`routes/daily_snapshots.py`) — dual auth (operator JWT OR brain `X-Runtime-Token`):
+   - `GET /api/admin/market-data/daily-snapshots/labels` — which labels captured today.
+   - `GET /api/admin/market-data/daily-snapshots?label=open` — full universe for one label (filterable by `symbols=`).
+   - `GET /api/admin/market-data/daily-snapshots/symbol/{symbol}` — all 3 labels today for one symbol, pivoted.
+   - `GET /api/admin/market-data/daily-snapshots/history/{symbol}?days=5` — last N market days for one symbol.
+   - `POST /api/admin/market-data/daily-snapshots/capture?label=open` — operator-only manual fire (e.g., backfill a missed scheduled trigger after a pod restart).
+
+6. **14 new tests** in `tests/test_daily_market_snapshots.py`:
+   - NYSE calendar (weekends, holidays, previous-N math).
+   - Capture: missing-bars case, with-bars case, idempotency, bad-label rejection.
+   - Wipe: keeps last 5 trading days, deletes older.
+   - Worker: due-label window matching, weekend skip, already-captured idempotency.
+   - SP500 universe: ≥500 unique uppercase symbols, no whitespace.
+
+7. **Brain Quickstart doc** (`memory/BRAIN_API_QUICKSTART.md`) extended with the new section + endpoints.
+
+### Verified
+- All 14 tests pass.
+- Backend reboots cleanly; worker logs `daily_snapshot worker started`.
+- End-to-end curl on preview: labels, batch, single-symbol, history, bad-label rejection, bad-auth rejection — all correct.
+- Operator `POST /capture` sweeps 502 symbols in 685 ms; produces audit row + 502 snapshot rows (all `price: null, price_reason: "no_bars_for_symbol"` on preview because this DB has no `finnhub_equity` bars — correct per the contract).
+
+### Doctrine pin
+- **Derived evidence only.** Capture path never hits broker quotes; reads `shared_ohlcv_bars` exclusively. Brains retrieve; no execution authority on this surface.
+- **Coverage gaps are auditable.** Missing bars → `price: null, price_reason: "no_bars_for_symbol"` (never silently dropped).
+
+
 ## 2026-05-31 (pass #37) — Auto-router position-model alignment (the actual "no line to execute" fix)
 
 ### Operator finding
