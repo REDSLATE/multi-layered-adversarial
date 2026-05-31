@@ -62,19 +62,37 @@ curl "$BASE/api/admin/market-data/snapshot/NVDA?include_news=true" \
 ```json
 {
   "symbol": "NVDA",
-  "tf": "1Day",
-  "source": "alpaca",
+  "tf": "5m",
+  "source": "finnhub_equity",
   "price": 142.05,
-  "spread_bps": 4.1,
-  "relative_volume": 1.63,
-  "has_news": false,
-  "ohlc": { "o": 140.2, "h": 143.8, "l": 139.9, "c": 142.05, "v": 18432210 },
+  "ohlc": { "o": 140.20, "h": 143.80, "l": 139.90, "c": 142.05, "v": 18432210 },
+  "price_ok": true,
+  "price_reason": null,
+  "last_bar_age_sec": 47,
   "asof": "2026-05-31T20:42:18+00:00",
-  "served_to": "<brain>",
-  "doctrine": "derived_evidence_only",
-  "ttl_remaining_sec": 47
+  "relative_volume": 1.63,
+  "relative_volume_ok": true,
+  "relative_volume_reason": null,
+  "has_news": false,
+  "has_news_ok": true,
+  "served_to": "brain:<brain>",
+  "doctrine": "derived_evidence_only"
 }
 ```
+
+**About `price`**: `price` is the **last-bar close** from MC's federation
+(not a live quote). When MC has no bars for the symbol, `price` is
+`null` with `price_reason: "no_bars_for_symbol"`. Brains needing a
+live quote pull it directly from their broker adapter
+(Alpaca/Kraken/etc) and include it in `doctrine_snapshot.price` on
+the intent.
+
+**About `spread_bps`**: **MC does NOT return `spread_bps` on this
+endpoint.** Spread requires a live broker quote, which MC will not
+hit on the snapshot path (`derived_evidence_only` doctrine + broker
+rate-limit protection). **Brains compute and ship `spread_bps`
+broker-direct in the intent's `doctrine_snapshot`.** Pulling from
+Alpaca's last quote or Kraken's WS L1 is the typical pattern.
 
 ### Batch (up to 50 symbols)
 

@@ -333,6 +333,81 @@ def _timedelta(hours: int):
 # ──────────────────────── build_market_snapshot ────────────────────────
 
 
+async def _fetch_latest_bar(
+    symbol: str, tf: str, source: str, db=None,
+) -> Dict[str, Any]:
+    """Pull the most-recent OHLCV bar for `symbol` from MC's federation.
+
+    Doctrine: `price` on the snapshot is the LAST-BAR CLOSE, not a live
+    quote. MC does NOT hit the broker on the snapshot path (would add
+    rate-limit pressure to every brain feature call and break the
+    `derived_evidence_only` invariant). Brains that need a live quote
+    pull it directly from their broker adapter and ship it in
+    `doctrine_snapshot.price` on the intent envelope.
+
+    `spread_bps` is INTENTIONALLY OMITTED from this surface for the
+    same reason — without a live quote there's no spread to report.
+    Brains compute spread broker-direct.
+
+    Returns:
+        {
+          "price": float | None,         # close of the last bar
+          "ohlc": {o,h,l,c,v} | None,    # full last-bar context
+          "last_bar_ts": str | None,     # ISO ts of the latest bar
+          "last_bar_age_sec": int | None,
+          "ok": bool,
+          "reason": str | None,
+        }
+    """
+    if db is None:
+        db = _default_db
+
+    row = await db[SHARED_OHLCV_BARS].find_one(
+        {"source": source, "symbol": symbol.upper(), "tf": tf},
+        {"_id": 0, "o": 1, "h": 1, "l": 1, "c": 1, "v": 1, "ts": 1},
+        sort=[("ts", -1)],
+    )
+    if not row:
+        return {
+            "price": None, "ohlc": None,
+            "last_bar_ts": None, "last_bar_age_sec": None,
+            "ok": False, "reason": "no_bars_for_symbol",
+        }
+
+    close = row.get("c")
+    if close is None:
+        return {
+            "price": None, "ohlc": None,
+            "last_bar_ts": row.get("ts"), "last_bar_age_sec": None,
+            "ok": False, "reason": "last_bar_close_missing",
+        }
+
+    # Compute age in seconds. `ts` is ISO string in the schema.
+    last_bar_ts = row.get("ts")
+    age_sec: Optional[int] = None
+    try:
+        if isinstance(last_bar_ts, str):
+            bar_dt = datetime.fromisoformat(last_bar_ts.replace("Z", "+00:00"))
+            age_sec = int((datetime.now(timezone.utc) - bar_dt).total_seconds())
+    except (ValueError, TypeError):
+        age_sec = None
+
+    return {
+        "price": float(close),
+        "ohlc": {
+            "o": row.get("o"), "h": row.get("h"),
+            "l": row.get("l"), "c": close, "v": row.get("v"),
+        },
+        "last_bar_ts": last_bar_ts,
+        "last_bar_age_sec": age_sec,
+        "ok": True,
+        "reason": None,
+    }
+
+
+# ──────────────────────── build_market_snapshot ────────────────────────
+
+
 async def build_market_snapshot(
     symbol: str,
     tf: str = DEFAULT_TIMEFRAME,
@@ -364,6 +439,7 @@ async def build_market_snapshot(
         }
     """
     rv = await compute_relative_volume(symbol, tf=tf, source=source, db=db)
+    latest = await _fetch_latest_bar(symbol, tf=tf, source=source, db=db)
     snapshot = {
         "symbol": symbol.upper(),
         "tf": tf,
@@ -376,6 +452,17 @@ async def build_market_snapshot(
         "relative_volume": rv["value"],
         "relative_volume_ok": rv["ok"],
         "relative_volume_reason": rv["reason"],
+        # Price + OHLC from MC's federation (last bar's close).
+        # `spread_bps` deliberately not surfaced — brains pull live
+        # quotes broker-direct (see _fetch_latest_bar doctrine note).
+        "price": latest["price"],
+        "ohlc": latest["ohlc"],
+        "price_ok": latest["ok"],
+        "price_reason": latest["reason"],
+        "last_bar_age_sec": latest["last_bar_age_sec"],
+        # Compatibility alias for brains that expect "asof" — same
+        # value as last_bar_ts (the as-of timestamp of the price).
+        "asof": latest["last_bar_ts"],
     }
 
     if include_news:
