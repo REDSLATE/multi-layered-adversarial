@@ -41,10 +41,10 @@ PT = _token()
 
 @pytest.fixture(autouse=True)
 def _wipe_rate_limit_state():
-    """Other test modules (test_public_phase2) fill the Mongo-backed
-    per-minute counter with their warmups. Without this autouse wipe,
-    these rate-limit tests inherit a bucket already past the free cap
-    and 429 instead of 200. Wipe before each test → deterministic."""
+    """Other test modules can fill the Mongo-backed per-minute counter with
+    their warmups. Without this autouse wipe, these rate-limit tests inherit
+    a bucket already past the free cap and 429 instead of 200. Wipe before
+    each test → deterministic."""
     import asyncio
     from motor.motor_asyncio import AsyncIOMotorClient
     mongo_url = os.environ.get("MONGO_URL")
