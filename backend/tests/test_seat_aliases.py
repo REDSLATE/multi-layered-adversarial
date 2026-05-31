@@ -34,10 +34,12 @@ from shared.seat_policy import (
 
 
 def test_normalize_seat_alias_table_minimum_shape():
-    """The alias table contains the deprecation mappings post-2026-05-27.
-    If new aliases land in a future phase, THIS test should fail and the
-    operator should explicitly bump it."""
+    """The alias table contains the deprecation mappings post-2026-05-31.
+    Includes the symmetric `crypto_executor` → `crypto` mapping.
+    If new aliases land in a future phase, THIS test should fail and
+    the operator should explicitly bump it."""
     assert SEAT_ALIASES == {
+        "crypto_executor": "crypto",
         "decider": "executor",
         "crypto_decider": "crypto",
         "advisor": "auditor",

@@ -98,10 +98,9 @@ class TestSeatPolicy:
         assert "seat_epoch" in d
         # Live registry must equal the operator-visible policy keys.
         assert set(d["policy"].keys()) == set(SEAT_POLICY.keys())
-        # Core invariants — executor + crypto execute; opponent/auditor never do.
+        # Core invariants — executor + crypto execute; auditor never does.
         assert d["policy"]["executor"]["may_execute"] is True
         assert d["policy"]["crypto"]["may_execute"] is True
-        assert d["policy"]["opponent"]["may_execute"] is False
         assert d["policy"]["auditor"]["may_execute"] is False
         # Governor has veto, executor does not.
         assert d["policy"]["governor"]["may_veto"] is True
@@ -224,11 +223,10 @@ class TestSeatPerformance:
         assert r.status_code == 200
         d = r.json()
         assert isinstance(d["matrix"], list)
-        # 2026-05-24: 12-role tuple (6 equity + 6 crypto). Assert the
-        # equity 5-seat doctrine is present; crypto seats also included
-        # for the unified roster view.
+        # 2026-05-31: canonical 8-seat doctrine (4 equity + 4 crypto).
+        # Assert the canonical equity 4-seat lineup is present.
         seats = d["seats"]
-        for seat in ("strategist", "executor", "governor", "opponent", "auditor"):
+        for seat in ("strategist", "executor", "governor", "auditor"):
             assert seat in seats, f"missing equity seat: {seat}"
         # Alpha-as-executor must be present and have at least 1 stance.
         alpha_exec = next(

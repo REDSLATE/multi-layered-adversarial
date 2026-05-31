@@ -97,10 +97,11 @@ def test_crypto_auditor_seat_required():
     assert SEAT_POLICY["crypto_auditor"]["lane_scope"] == ["crypto"]
 
 
-def test_auditor_lane_scope_is_general():
-    """After absorbing opponent, auditor's lane_scope must be None
-    (general). Per-lane scoping is delegated to the crypto_* twin."""
-    assert SEAT_POLICY["auditor"]["lane_scope"] is None
+def test_auditor_lane_scope_is_equity():
+    """2026-05-31 canonical 8-seat: auditor is the EQUITY-lane review
+    seat (lane_scope=['equity']); crypto post-trade review is the
+    crypto_auditor's job. Each lane has its own auditor by IP."""
+    assert SEAT_POLICY["auditor"]["lane_scope"] == ["equity"]
 
 
 def test_auditor_speaks_as_auditor_not_opponent():
@@ -116,18 +117,16 @@ def test_auditor_carries_no_execution_authority():
     assert p["may_veto"] is False
 
 
-def test_opponent_policy_row_retained_for_legacy_readers():
-    """Legacy code reading SEAT_POLICY["opponent"] directly must keep
-    working — the row mirrors auditor's permissions."""
-    assert "opponent" in SEAT_POLICY
-    op = SEAT_POLICY["opponent"]
-    au = SEAT_POLICY["auditor"]
-    assert op["may_decide"] == au["may_decide"]
-    assert op["may_execute"] == au["may_execute"]
-    assert op["may_veto"] == au["may_veto"]
-    assert op["seat_required"] == au["seat_required"]
-    # speaks_as is "auditor" on both — the merged identity
-    assert op["speaks_as"] == "auditor"
+def test_opponent_seat_removed_from_canonical_policy():
+    """2026-05-31 canonical 8-seat doctrine: `opponent` is NOT in
+    SEAT_POLICY anymore. Legacy reads must come through SEAT_ALIASES
+    (`opponent` → `auditor`). Any direct lookup must KeyError, which
+    surfaces the dead-code path immediately."""
+    from shared.seat_policy import SEAT_ALIASES
+    assert "opponent" not in SEAT_POLICY
+    assert "crypto_opponent" not in SEAT_POLICY
+    assert SEAT_ALIASES["opponent"] == "auditor"
+    assert SEAT_ALIASES["crypto_opponent"] == "crypto_auditor"
 
 
 def test_snapshot_for_opponent_resolves_to_auditor_policy():

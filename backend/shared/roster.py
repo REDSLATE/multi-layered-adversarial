@@ -61,49 +61,27 @@ from namespaces import BRAIN_ELIGIBILITY, BRAIN_ROSTER, DISCUSSION_PARTICIPANTS,
 
 
 ROLES: tuple[str, ...] = (
-    # ─── Equity lane — 4-seat doctrine (2026-05-27) ───────────────────
-    # `decider` was renamed to `strategist`. `opponent` was merged INTO
-    # `auditor` (2026-05-27 operator decision): the auditor now holds
-    # BOTH the pre-trade contrary-case argument AND the post-trade
-    # outcome review. Doctrinal rationale: both roles are skeptical /
-    # critical and operate off the execution path, just at different
-    # time windows. Combining them gives the brain that wrote the
-    # pre-mortem the natural seat for writing the post-mortem.
-    # `advisor` is retained as a vacant-by-default slot for forensic
-    # compatibility with pre-rename roster docs and audit history but
-    # is NOT part of the operator's canonical 4-seat doctrine.
-    "strategist", "executor", "governor", "advisor", "auditor",
-    "crypto",
-    # ─── Crypto lane (isolated execution authority, 2026-02-15) ───────
-    # Mirrors the equity 4-seat doctrine. `crypto_opponent` merged into
-    # `crypto_auditor` per the 2026-05-27 rename.
-    "crypto_advisor", "crypto_governor",
-    "crypto_strategist", "crypto_auditor",
+    # ─── The canonical 8-seat roster (operator pin, 2026-05-31) ───────
+    # Equity lane:
+    "strategist", "executor", "governor", "auditor",
+    # Crypto lane (lane-isolated execution authority):
+    "crypto_strategist", "crypto", "crypto_governor", "crypto_auditor",
 )
 BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("alpha", "camaro", "chevelle", "redeye")
 
-# Default assignment — matches the doctrine. REDEYE defaults to opponent
-# (its training intent is adversarial / argue-the-contrary). `advisor`
-# starts vacated — there's no doctrinal pick for a neutral-counsel seat,
-# and we'd rather leave it empty than miscast a brain. `crypto` also
-# starts vacated — operator chooses which brain takes the crypto-only
-# execution chair (it's a dedicated specialist seat, not a default).
+# Default seat → brain assignment. Operator-pinned defaults for the
+# equity lane (strategist=camaro, executor=alpha, governor=chevelle);
+# auditor + every crypto seat start vacant so the operator slots them
+# explicitly. A brain MAY hold one equity seat AND one crypto seat
+# simultaneously — eligibility (below) only restricts Governor seats.
 DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
-    # 2026-05-27: Opponent merged into Auditor. The auditor seat now
-    # carries the doctrinal weight of BOTH pre-trade contrary-case
-    # argument AND post-trade outcome review. Default holder is still
-    # operator-assigned (no automatic Redeye-to-auditor — operator
-    # picks).
-    "strategist": "camaro",
-    "executor":   "alpha",
-    "governor":   "chevelle",
-    "advisor":    None,        # deprecated; vacant
-    "auditor":    None,        # operator-assigned: pre-trade opponent + post-trade reviewer
-    "crypto":     None,        # operator-assigned: dedicated crypto executor
-    # Crypto council seats — all vacant until operator slots them.
-    "crypto_advisor":    None,
-    "crypto_governor":   None,
+    "strategist":        "camaro",
+    "executor":          "alpha",
+    "governor":          "chevelle",
+    "auditor":           None,
     "crypto_strategist": None,
+    "crypto":            None,
+    "crypto_governor":   None,
     "crypto_auditor":    None,
 }
 

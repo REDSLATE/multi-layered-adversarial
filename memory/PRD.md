@@ -1,3 +1,29 @@
+# ✅ 2026-05-31 — Canonical 8-seat IP doctrine ENFORCED
+
+The IP boundary is now code-pinned: `shared/seat_policy.py::CANONICAL_SEATS`
+is a tuple of exactly 8 names with a module-level assertion that fails import
+if anyone mutates `SEAT_POLICY` away from that set.
+
+**The 8 seats:**
+
+| Equity              | Crypto                       |
+|---------------------|------------------------------|
+| `strategist`        | `crypto_strategist`          |
+| `executor`          | `crypto` (= `crypto_executor`) |
+| `governor` †        | `crypto_governor` †          |
+| `auditor`           | `crypto_auditor`             |
+
+† Governor seats are restricted to Chevelle + RedEye. Every other seat is
+open to every brain. Brains may hold one equity + one crypto seat at the
+same time.
+
+Deprecated stubs removed from policy: `decider`, `advisor`, `opponent` and
+their crypto twins. They live only as aliases in `SEAT_ALIASES` for legacy
+sidecars sending old seat names.
+
+---
+
+
 # ✅ 2026-05-31 — Finnhub LIVE + 10yr S&P-500 historical backfill COMPLETE
 
 **1,234,440 daily candles across all 502 S&P-500 symbols, 10 years deep.**

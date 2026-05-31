@@ -104,11 +104,11 @@ class TestRosterBasics:
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
-            json={"role": "opponent", "brain": None},
+            json={"role": "auditor", "brain": None},
             timeout=10,
         )
         assert r.status_code == 200
-        assert r.json()["assignments"]["opponent"] is None
+        assert r.json()["assignments"]["auditor"] is None
 
     def test_swap_atomic(self):
         tok = _login()
@@ -225,9 +225,9 @@ class TestEligibility:
         r = requests.get(f"{BASE_URL}/api/admin/roster/eligibility", headers=_hdr(tok), timeout=10)
         assert r.status_code == 200
         m = r.json()["matrix"]
-        # Non-governor seats: every brain × every seat = True
-        non_gov = ("strategist", "executor", "auditor", "opponent",
-                   "advisor", "crypto")
+        # Non-governor seats from the canonical 8: every brain × seat = True
+        non_gov = ("strategist", "executor", "auditor",
+                   "crypto_strategist", "crypto", "crypto_auditor")
         for brain in ("alpha", "camaro", "chevelle", "redeye"):
             for seat in non_gov:
                 assert m[brain][seat] is True, (
@@ -344,7 +344,7 @@ class TestEligibility:
         _reset(tok)
         r = requests.get(f"{BASE_URL}/api/admin/roster", headers=_hdr(tok), timeout=10)
         a = r.json()["assignments"]
-        assert a.get("opponent") is None
+        assert a.get("auditor") is None
         assert "redeye" not in {v for v in a.values() if v}
 
 
@@ -356,11 +356,12 @@ class TestTenure:
         assert r.status_code == 200
         d = r.json()
         assert "per_role" in d
-        # 2026-05-24: `decider` renamed to `strategist`. Other equity
-        # seats unchanged.
+        # 2026-05-31 canonical 8-seat doctrine — these are the only roles
+        # the tenure aggregator should return.
         roles = {row["role"] for row in d["per_role"]}
-        for seat in ("strategist", "executor", "governor", "advisor",
-                     "opponent", "auditor"):
+        for seat in ("strategist", "executor", "governor", "auditor",
+                     "crypto_strategist", "crypto", "crypto_governor",
+                     "crypto_auditor"):
             assert seat in roles, f"missing seat in tenure: {seat}"
         assert "average_tenure_days" in d
         assert "churn_state" in d

@@ -250,7 +250,9 @@ async def _compute_quorum(stances_by_brain: dict[str, dict],
         (either no stance from current holder, or seat is vacant)
       - vacant_required_seats: required seats that have no brain assigned
         (worse than silent — there's literally no one to ask)
-      - adversarial_blindness: opponent seat is required and unstamped
+      - adversarial_blindness: auditor seat is required and unstamped
+        (2026-05-27 — opponent merged into auditor; this flag now
+        triggers on auditor silence)
       - governance_blindness: governor seat is required and unstamped
       - degraded: any required seat is unstamped or vacant
     """
@@ -274,7 +276,11 @@ async def _compute_quorum(stances_by_brain: dict[str, dict],
         "seats_required": req,
         "seats_missing": missing,
         "vacant_required_seats": vacant_required,
-        "adversarial_blindness": "opponent" in missing,
+        # 2026-05-27 doctrine merge: opponent merged into auditor. The
+        # auditor now carries BOTH pre-trade-contrary AND post-trade
+        # review. Adversarial blindness now triggers when the auditor
+        # is silent on a position.
+        "adversarial_blindness": "auditor" in missing,
         "governance_blindness": "governor" in missing,
         "degraded": len(missing) > 0,
     }

@@ -1,3 +1,44 @@
+## 2026-05-31 (pass #43) — Canonical 8-seat IP doctrine enforced; stubs cleaned
+
+### Operator pins
+- **The IP defines exactly 8 seats**, no more, no less:
+    - Equity: `strategist`, `executor`, `governor`, `auditor`
+    - Crypto: `crypto_strategist`, `crypto` (= `crypto_executor`), `crypto_governor`, `crypto_auditor`
+- **Brains may hold ONE equity seat AND ONE crypto seat simultaneously.**
+- **Governor seats (equity + crypto) restricted to Chevelle and RedEye**; every other seat is open to every brain (including Chevelle/RedEye).
+- Anything outside these 8 seats is **NOT part of the IP** and must alias back in via `SEAT_ALIASES`.
+
+### Shipped
+1. **`shared/seat_policy.py` refactored**:
+   - SEAT_POLICY reduced from 9 entries to the canonical 8.
+   - Removed deprecated stub rows: `decider`, `advisor`, `opponent` (and their crypto twins). They live ONLY as aliases now.
+   - Added missing canonical rows: `crypto_strategist`, `crypto_governor`.
+   - Added new alias `crypto_executor` → `crypto` for symmetric naming.
+   - Added `CANONICAL_SEATS` constant with assertion (`len == 8`, equals SEAT_POLICY keys) — guards against schema drift.
+   - `snapshot()` simplified: direct lookup through canonical 8 + alias normalization; no more "crypto_* falls through to equity twin" magic.
+   - `seat_may_execute_lane()` simplified: direct lookup against the 8-seat table.
+   - `SEATS` export now equals `CANONICAL_SEATS`.
+2. **`shared/roster.py` refactored**:
+   - `ROLES` tuple reduced to the canonical 8.
+   - `DEFAULT_ASSIGNMENTS` cleaned: equity defaults preserved (camaro=strategist, alpha=executor, chevelle=governor), all crypto seats and equity auditor start vacant.
+3. **`shared/positions.py` fix**: `_stance_summary()` was reporting `adversarial_blindness = "opponent" in missing`, but `opponent` is no longer in `required_seats()` — flag would always be False. Updated to check for `auditor` per the 2026-05-27 doctrine merge.
+4. **Test cleanup**:
+   - Deleted obsolete `TestQuorum` class from `test_quorum_and_provenance.py` per operator decision ("scaffolding hiccup, never part of IP"). Provenance tests preserved.
+   - Updated `test_seat_aliases.py`, `test_seat_policy_and_auto.py`, `test_opponent_auditor_merge.py`, `test_roster.py` to assert the canonical 8.
+
+### Verified
+- **67/67 tests pass** in `test_quorum_and_provenance.py + test_seat_aliases.py + test_opponent_auditor_merge.py + test_seat_policy_and_auto.py + test_roster.py`.
+- Backend boots clean; 13 authority probes all pass:
+    - `seat_may_execute_lane('executor','equity')` = True
+    - `seat_may_execute_lane('crypto','crypto')` = True
+    - `seat_may_execute_lane('crypto_executor','crypto')` = True (via alias)
+    - Cross-lane: all return False
+    - Legacy `decider`/`opponent` still alias correctly.
+
+### Doctrine boundary
+- The `CANONICAL_SEATS` constant + assertion is the IP boundary in code. Any commit that mutates SEAT_POLICY drift-asserts at module import — system won't boot if drift is introduced.
+
+
 ## 2026-05-31 (pass #42) — Prod mobile login fix: same-origin API resolver
 
 ### Operator report

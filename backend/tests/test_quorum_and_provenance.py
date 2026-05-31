@@ -1,10 +1,13 @@
-"""Quorum awareness + memory provenance tests.
+"""Memory provenance tests.
 
-Quorum: surfaces silent adversarial / governance blindness so a missing
-OPPONENT (e.g. REDEYE dies) doesn't quietly dial up risk.
-
-Provenance: stances optionally carry memory_sources + confidence_origin
+Stance ingestion optionally carries `memory_sources` + `confidence_origin`
 so future audits can trace memory poisoning / reinforcement loops.
+
+2026-05-31: The TestQuorum class that previously lived in this module
+was deleted — it asserted an early 3-required-seat shape (executor +
+governor + opponent) that was a scaffolding hiccup. The canonical IP
+doctrine pins exactly 8 seats; new quorum tests will be written when
+operator pins lane-filtering behavior.
 """
 import os
 import uuid
@@ -79,81 +82,23 @@ def _reset_roster(tok: str) -> None:
 
 
 # ──────────────────────── quorum ────────────────────────
-
-class TestQuorum:
-    def test_fresh_position_has_all_required_seats_missing(self):
-        tok = _login()
-        _reset_roster(tok)
-        p = _propose(tok)
-        q = p["quorum"]
-        assert set(q["seats_required"]) == {"executor", "governor", "opponent"}
-        assert set(q["seats_missing"]) == {"executor", "governor", "opponent"}
-        assert q["adversarial_blindness"] is True
-        assert q["governance_blindness"] is True
-        assert q["degraded"] is True
-
-    def test_opponent_silent_flags_adversarial_blindness(self):
-        tok = _login()
-        _reset_roster(tok)
-        p = _propose(tok)
-        pid = p["position_id"]
-        _post(pid, "alpha", stance="long")
-        _post(pid, "camaro", stance="long")
-        final = _post(pid, "chevelle", stance="abstain")
-        q = final["quorum"]
-        assert q["adversarial_blindness"] is True
-        assert q["governance_blindness"] is False
-        assert q["degraded"] is True
-        assert q["seats_missing"] == ["opponent"]
-
-    def test_governor_silent_flags_governance_blindness(self):
-        tok = _login()
-        _reset_roster(tok)
-        p = _propose(tok)
-        pid = p["position_id"]
-        _post(pid, "alpha", stance="long")
-        _post(pid, "camaro", stance="long")
-        final = _post(pid, "redeye", stance="short")
-        q = final["quorum"]
-        assert q["governance_blindness"] is True
-        assert q["adversarial_blindness"] is False
-        assert "governor" in q["seats_missing"]
-
-    def test_full_quorum_clears_all_flags(self):
-        tok = _login()
-        _reset_roster(tok)
-        p = _propose(tok)
-        pid = p["position_id"]
-        _post(pid, "alpha", stance="long")
-        _post(pid, "camaro", stance="long")
-        _post(pid, "chevelle", stance="abstain")
-        final = _post(pid, "redeye", stance="short")
-        q = final["quorum"]
-        assert q["adversarial_blindness"] is False
-        assert q["governance_blindness"] is False
-        assert q["degraded"] is False
-        assert q["seats_missing"] == []
-
-    def test_vacant_required_seat_is_surfaced(self):
-        tok = _login()
-        _reset_roster(tok)
-        # Vacate the opponent seat — REDEYE is the only brain eligible
-        # for opponent in defaults, so this leaves opponent vacant.
-        requests.post(
-            f"{BASE_URL}/api/admin/roster/assign",
-            headers=_hdr(tok),
-            json={"role": "opponent", "brain": None},
-            timeout=10,
-        )
-        p = _propose(tok)
-        q = p["quorum"]
-        assert "opponent" in q["vacant_required_seats"]
-        assert q["adversarial_blindness"] is True
-        # Re-fill so we don't leave the system in a weird state.
-        _reset_roster(tok)
+#
+# 2026-05-31 — The TestQuorum class that lived here asserted an early
+# 3-required-seat shape (executor + governor + opponent) that was a
+# scaffolding hiccup, not part of the canonical IP doctrine. The IP
+# pins exactly 8 seats (4 equity + 4 crypto). Those obsolete tests were
+# deleted per operator decision; they were testing a shape MC was
+# never supposed to have.
+#
+# Future doctrinal quorum tests should:
+#   - assert against `shared.seat_policy.CANONICAL_SEATS` (the 8-seat IP boundary)
+#   - decide lane-filtering: do equity positions require crypto-seat
+#     stances or are they filtered? (Open doctrinal question — pin
+#     before writing tests against the answer.)
 
 
 # ──────────────────────── memory provenance ────────────────────────
+
 
 class TestProvenance:
     def test_stance_persists_memory_sources_and_origin(self):
