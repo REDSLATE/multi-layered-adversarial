@@ -641,6 +641,14 @@ PROMOTION_THRESHOLDS = {
     "heartbeat_max_age_seconds": 300,   # liveness floor
 }
 
+# Promotion countersign requirement (2026-02-17 doctrine):
+# Solo-operator deployment. The propose call ALREADY required an authenticated
+# admin JWT — that's the human sign. A second click on /countersign for the
+# same human added zero safety. Set this False to auto-elevate inside /propose
+# when Patent J readiness passes. When helpers are onboarded, flip to True
+# and /propose will fall back to the pending-then-countersign flow.
+REQUIRE_COUNTERSIGN = False
+
 # Heartbeat staleness threshold for the dashboard alert. A runtime is "stale"
 # if its last_seen is older than this. Tuned so a single missed heartbeat
 # (45s loop) is forgiven, but two consecutive misses raise the alarm.

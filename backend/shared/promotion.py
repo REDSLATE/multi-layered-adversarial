@@ -32,6 +32,7 @@ from namespaces import (
     SHARED_PROMOTION_PROPOSALS, SHARED_RECEIPTS, SHARED_MEMORY,
     SHARED_HEARTBEATS, RUNTIMES, AUTHORITY_LADDER, AUTHORITY_LEVEL,
     DEFAULT_AUTHORITY, GOVERNOR_STATE, PROMOTION_THRESHOLDS,
+    REQUIRE_COUNTERSIGN,
     is_on_ladder, next_authority,
 )
 
@@ -202,6 +203,7 @@ async def propose_from_latest_artifact(
     required_signatures = 1
 
     proposal_id = str(uuid.uuid4())
+    now = _iso()
     doc = {
         "proposal_id": proposal_id,
         "runtime": runtime,
@@ -214,18 +216,53 @@ async def propose_from_latest_artifact(
         "status": "pending",
         "required_signatures": required_signatures,
         "signers": [],
-        "created_at": _iso(),
+        "created_at": now,
         "created_by": user.get("email"),
         "decided_at": None,
         "decided_by": None,
         "decision_note": None,
     }
+
+    auto_elevated = False
+    # 2026-02-17 doctrine: when REQUIRE_COUNTERSIGN is False (solo-operator),
+    # /propose auto-elevates immediately on Patent J pass. The propose call
+    # already required an admin JWT — that IS the sign. No separate
+    # countersign step needed for a single human operator. Audit chain
+    # still records the operator, timestamp, proposal_id, and full history.
+    if readiness["passed"] and not REQUIRE_COUNTERSIGN:
+        operator = user.get("email") or "operator"
+        history_entry = {
+            "from_state": current,
+            "to_state": target_authority,
+            "at": now,
+            "via": "operator_propose_auto_elevate",
+            "operator": operator,
+            "proposal_id": proposal_id,
+            "signers": [operator],
+        }
+        await db[SHARED_AUTHORITY_STATE].update_one(
+            {"runtime": runtime},
+            {"$set": {"authority_state": target_authority},
+             "$push": {"history": history_entry}},
+        )
+        doc.update({
+            "status": "approved",
+            "signers": [{"operator": operator, "at": now, "note": "auto-elevated on propose"}],
+            "decided_at": now,
+            "decided_by": operator,
+            "decision_note": "auto-elevated on propose (REQUIRE_COUNTERSIGN=False)",
+        })
+        auto_elevated = True
+
     await db[SHARED_PROMOTION_PROPOSALS].insert_one(doc)
     return {
         "ok": True,
         "proposal_id": proposal_id,
         "readiness_passed": readiness["passed"],
         "required_signatures": required_signatures,
+        "auto_elevated": auto_elevated,
+        "from_state": current,
+        "to_state": target_authority if auto_elevated else None,
     }
 
 

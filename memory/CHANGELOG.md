@@ -1,3 +1,34 @@
+## 2026-02-17 (pass #45) — Cosigner removed; /propose auto-elevates on Patent J pass
+
+### Operator pin
+Solo-operator deployment. The `/admin/promotion/propose` call already requires an
+authenticated admin JWT — that's the human sign. A second click on `/countersign`
+by the same human added zero safety. Removed.
+
+### Shipped
+1. **`namespaces.py`**: new `REQUIRE_COUNTERSIGN = False` toggle. Flip to `True`
+   when helpers are added; no other code change needed.
+2. **`shared/promotion.py::propose_from_latest_artifact`**:
+   - When `readiness.passed and not REQUIRE_COUNTERSIGN`, the propose call now
+     **immediately elevates** authority state and writes a single-signer audit
+     entry with `via="operator_propose_auto_elevate"`.
+   - Returns shape extended with `auto_elevated: bool`, `from_state`, `to_state`.
+   - When readiness fails: behaviour unchanged — proposal stays `pending`, no
+     elevation, operator re-proposes after fixing the gate.
+3. **`/countersign` and `/reject` endpoints**: untouched. `/countersign` remains
+   a legacy ratify path (still 412s on a failed readiness gate — doctrine pin).
+4. **Audit history**: `shared_authority_state.history` entry tagged
+   `via="operator_propose_auto_elevate"` instead of `"operator_countersign"`,
+   so the audit trail visibly distinguishes auto-elevated from manually-ratified.
+
+### Verified
+- All 25 promotion tests still green (`test_promotion_gate`,
+  `test_single_sign_promotion`, `test_dual_sign_promotion`).
+- Backend restarted cleanly; `/api/health` ok.
+
+---
+
+
 ## 2026-02-17 (pass #44) — Patent J bootstrap thresholds + stale comment cleanup
 
 ### Shipped
