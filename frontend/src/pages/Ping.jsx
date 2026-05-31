@@ -12,6 +12,7 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
+import { BACKEND_URL } from "@/lib/api";
 
 const BRAIN_META = {
   alpha:    { label: "ALPHA",    color: "#3B82F6" },
@@ -21,9 +22,11 @@ const BRAIN_META = {
 };
 
 function backendBase() {
-  // Vite/CRA both expose REACT_APP_BACKEND_URL.
-  const b = process.env.REACT_APP_BACKEND_URL || "";
-  return b.replace(/\/+$/, "");
+  // BACKEND_URL is resolved by `lib/api.js::resolveBackendUrl()` which
+  // prefers same-origin on `mission.risedual.ai` and falls back to the
+  // env value elsewhere — so the ping call lands on whichever host the
+  // operator is currently visiting (no mobile-Chrome cross-origin pain).
+  return (BACKEND_URL || "").replace(/\/+$/, "");
 }
 
 function displayBase() {

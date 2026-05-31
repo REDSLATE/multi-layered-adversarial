@@ -1,3 +1,27 @@
+## 2026-05-31 (pass #42) — Prod mobile login fix: same-origin API resolver
+
+### Operator report
+"It's blocked logins again" — screenshot showed mobile Chrome at `mission.risedual.ai/login` displaying "Something went wrong. Please try again." despite valid credentials.
+
+### Diagnosis
+- Backend at `mission.risedual.ai/api/*` returns 200 with valid tokens.
+- Desktop Playwright run logged in successfully and reached dashboard.
+- Root cause: **prod frontend bundle was built with `REACT_APP_BACKEND_URL=https://multi-brain-backbone.emergent.host`**, while the frontend is served from `mission.risedual.ai`. That's a cross-origin call; CORS is configured correctly, but **mobile Chrome silently fails the fetch under certain third-party cookie / cross-site request modes**, producing a `null` response that surfaces as the generic "Something went wrong" string.
+- Cloudflare on `mission.risedual.ai` already proxies `/api/*` to the same backend — so same-origin calls work fine and eliminate the entire cross-site surface.
+
+### Shipped
+1. **`frontend/src/lib/api.js`** — added `resolveBackendUrl()` that prefers SAME-ORIGIN when the frontend is hosted on a known prod domain (`mission.risedual.ai`, `www.risedual.ai`, `risedual.ai`). Falls back to `REACT_APP_BACKEND_URL` env on preview / dev where same-origin proxy isn't wired.
+2. **Exported `BACKEND_URL`** from `lib/api.js` and converted all 6 direct `process.env.REACT_APP_BACKEND_URL` usages across the frontend to import the resolved value:
+   - `risedual/lib/mc.js`, `risedual/pages/Markets.jsx`, `risedual/components/{NewsTicker,DarkPoolWidget,CandleChart}.jsx`, `pages/{Ping,McShelly}.jsx`.
+3. Verified preview login still works (Playwright run: 200 OK, redirect to dashboard).
+
+### Operator action required to roll out
+Redeploy the prod frontend. **Once deployed, mobile login will hit `mission.risedual.ai/api/auth/login` (same-origin), eliminating the cross-site failure mode.**
+
+### Doctrine pin
+- `lib/api.js::resolveBackendUrl()` ALL config decisions happen at runtime, not build-time. Preview behavior unchanged.
+
+
 ## 2026-05-31 (pass #41) — Finnhub LIVE + 10yr historical backfill
 
 ### Operator action

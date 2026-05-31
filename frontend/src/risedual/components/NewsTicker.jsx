@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { BACKEND_URL } from "@/lib/api";
 
 /**
  * NewsTicker — compact, auto-refreshing market headlines strip.
@@ -17,7 +18,7 @@ export default function NewsTicker() {
 
   useEffect(() => {
     let cancelled = false;
-    const url = `${process.env.REACT_APP_BACKEND_URL}/api/public/news?limit=${VISIBLE_LIMIT}`;
+    const url = `${BACKEND_URL}/api/public/news?limit=${VISIBLE_LIMIT}`;
 
     async function load() {
       try {

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { BACKEND_URL } from "@/lib/api";
 
 /**
  * DarkPoolWidget — compact congressional / insider / corporate filings.
@@ -26,7 +27,7 @@ export default function DarkPoolWidget({ expanded = false, ticker = null }) {
     let cancelled = false;
     const limit = expanded ? 50 : 10;
     const tickerParam = ticker ? `&ticker=${encodeURIComponent(ticker)}` : "";
-    const url = `${process.env.REACT_APP_BACKEND_URL}/api/public/dark-pool?type=all&limit=${limit}${tickerParam}`;
+    const url = `${BACKEND_URL}/api/public/dark-pool?type=all&limit=${limit}${tickerParam}`;
 
     async function load() {
       try {

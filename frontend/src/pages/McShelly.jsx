@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "@/lib/api";
+import { api, BACKEND_URL } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState } from "@/components/ui-bits";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -121,7 +121,7 @@ export default function McShelly() {
     if (filters.event_type) qs.set("event_type", filters.event_type);
     if (filters.position) qs.set("position", filters.position);
     if (filters.since_hours) qs.set("since_hours", filters.since_hours);
-    const url = `${process.env.REACT_APP_BACKEND_URL}/api/mc/shelly/export.jsonl?${qs.toString()}`;
+    const url = `${BACKEND_URL}/api/mc/shelly/export.jsonl?${qs.toString()}`;
     const tok = localStorage.getItem("risedual_access_token");
     // Use fetch + blob so we can attach the Bearer header (download
     // attribute on <a> doesn't support headers).

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useTier } from "../context/TierContext";
 import { Search } from "lucide-react";
+import { BACKEND_URL } from "@/lib/api";
 import CandleChart from "../components/CandleChart";
 import NewsTicker from "../components/NewsTicker";
 import DarkPoolWidget from "../components/DarkPoolWidget";
@@ -23,7 +24,7 @@ export default function Markets() {
   useEffect(() => {
     let cancelled = false;
     setItems({ loading: true, list: [], error: null });
-    fetch(`${process.env.REACT_APP_BACKEND_URL}/api/public/bars`, {
+    fetch(`${BACKEND_URL}/api/public/bars`, {
       headers: {
         "X-RiseDual-Token": process.env.REACT_APP_RISEDUAL_TOKEN || "",
         "X-RiseDual-User-Tier": tier || "free",

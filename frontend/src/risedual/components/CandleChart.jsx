@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createChart, CandlestickSeries, HistogramSeries, ColorType } from "lightweight-charts";
 import { useTier } from "../context/TierContext";
+import { BACKEND_URL } from "@/lib/api";
 
 const TFS = [
   { id: "1m", label: "1m" },
@@ -74,7 +75,7 @@ export default function CandleChart({ symbol }) {
     setMeta({ loading: true, error: null, count: 0, source: null });
 
     fetch(
-      `${process.env.REACT_APP_BACKEND_URL}/api/public/bars/${symbol}?tf=${tf}&limit=300`,
+      `${BACKEND_URL}/api/public/bars/${symbol}?tf=${tf}&limit=300`,
       {
         headers: {
           "X-RiseDual-Token": process.env.REACT_APP_RISEDUAL_TOKEN || "",

@@ -8,7 +8,8 @@
 // All endpoints return JSON. Errors normalize to { ok:false, status, detail }
 // so call sites can render without throwing.
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+import { BACKEND_URL } from "@/lib/api";
+
 const PUBLIC_TOKEN = process.env.REACT_APP_RISEDUAL_TOKEN || "";
 const BASE = `${BACKEND_URL}/api/public`;
 

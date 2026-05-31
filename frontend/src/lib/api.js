@@ -1,7 +1,41 @@
 import axios from "axios";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+// Doctrine pin (2026-05-31): when the frontend is hosted on its own
+// production domain (e.g., `mission.risedual.ai`), prefer SAME-ORIGIN
+// `/api` calls instead of the env-baked cross-origin URL. The prod
+// build was historically wired to `multi-brain-backbone.emergent.host`
+// while the frontend lives on `mission.risedual.ai` — that worked on
+// desktop browsers (CORS configured) but quietly failed on mobile
+// Chrome under third-party-cookie / cross-site-fetch restrictions,
+// producing the generic "Something went wrong" error post-200-OK.
+// Cloudflare on `mission.risedual.ai` proxies `/api` to the same
+// backend, so same-origin calls hit the same data with zero cross-site
+// surface. Preview / dev environments still use the env var because
+// the dev frontend (localhost / *.preview.emergentagent.com) doesn't
+// proxy `/api`.
+function resolveBackendUrl() {
+  const envUrl = process.env.REACT_APP_BACKEND_URL;
+  // Server-side / build-time: just use the env value.
+  if (typeof window === "undefined") return envUrl;
+  const host = window.location.host;
+  // Same-origin override list — domains where Cloudflare/ingress is
+  // known to proxy `/api/*` to the backend. Add new prod domains here.
+  const SAME_ORIGIN_HOSTS = new Set([
+    "mission.risedual.ai",
+    "www.risedual.ai",
+    "risedual.ai",
+  ]);
+  if (SAME_ORIGIN_HOSTS.has(host)) {
+    return `${window.location.protocol}//${host}`;
+  }
+  return envUrl;
+}
+
+const BACKEND_URL = resolveBackendUrl();
 export const API = `${BACKEND_URL}/api`;
+// Export the resolved backend root so other modules can build their
+// own URLs against the same same-origin-vs-env-var policy.
+export { BACKEND_URL };
 
 const TOKEN_KEY = "risedual_access_token";
 
