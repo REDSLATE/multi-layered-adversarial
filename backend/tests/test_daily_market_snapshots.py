@@ -118,8 +118,10 @@ async def test_capture_writes_one_row_per_symbol_missing_bars(fresh_test_db):
         "open", universe=universe, market_day=date(2026, 6, 1), db=proxy,
     )
     assert summary["universe_size"] == 3
-    assert summary["rows_with_price"] == 0
-    assert summary["rows_missing_price"] == 3
+    assert summary["intraday_rows_with_price"] == 0
+    assert summary["intraday_rows_missing_price"] == 3
+    assert summary["daily_rows_with_price"] == 0
+    assert summary["daily_rows_missing_price"] == 3
     assert summary["label"] == "open"
     assert summary["market_day"] == "2026-06-01"
 
@@ -129,8 +131,14 @@ async def test_capture_writes_one_row_per_symbol_missing_bars(fresh_test_db):
     ).sort("symbol", 1).to_list(length=10)
     assert [r["symbol"] for r in rows] == ["AAPL", "MSFT", "NVDA"]
     for r in rows:
-        assert r["price"] is None
-        assert r["price_reason"] == "no_bars_for_symbol"
+        # Both timeframe blocks present, both with null prices.
+        assert "intraday" in r and "daily" in r
+        assert r["intraday"]["tf"] == "5m"
+        assert r["daily"]["tf"] == "1d"
+        assert r["intraday"]["price"] is None
+        assert r["intraday"]["price_reason"] == "no_bars_for_symbol"
+        assert r["daily"]["price"] is None
+        assert r["daily"]["price_reason"] == "no_bars_for_symbol"
 
 
 @pytest.mark.asyncio
@@ -142,37 +150,71 @@ async def test_capture_uses_bars_when_present(fresh_test_db):
 
     real_db, tag = fresh_test_db
     proxy = _make_test_db_proxy(real_db, tag)
-    # Seed 7 bars so RVOL has basis >= MIN_BASIS_BARS (5).
-    bars = [
-        {"source": "finnhub_equity", "symbol": "NVDA", "tf": "1Day",
-         "ts": f"2026-05-2{i}T00:00:00+00:00",
-         "o": 140.0 + i, "h": 142.0 + i, "l": 138.0 + i,
-         "c": 141.0 + i, "v": 1_000_000 + i * 10_000}
-        for i in range(1, 8)
-    ]
-    for b in bars:
-        await proxy[SHARED_OHLCV_BARS].insert_one(b)
+    # Seed 7 5m bars + 7 1d bars so RVOL has basis >= MIN_BASIS_BARS (5)
+    # for BOTH timeframes.
+    for tf in ("5m", "1d"):
+        for i in range(1, 8):
+            await proxy[SHARED_OHLCV_BARS].insert_one({
+                "source": "finnhub_equity", "symbol": "NVDA", "tf": tf,
+                "ts": f"2026-05-2{i}T00:00:00+00:00",
+                "o": 140.0 + i, "h": 142.0 + i, "l": 138.0 + i,
+                "c": 141.0 + i, "v": 1_000_000 + i * 10_000,
+            })
 
     summary = await capture_snapshot(
         "midday", universe=("NVDA",), market_day=date(2026, 5, 28), db=proxy,
     )
-    assert summary["rows_with_price"] == 1
-    assert summary["rows_missing_price"] == 0
+    assert summary["intraday_rows_with_price"] == 1
+    assert summary["daily_rows_with_price"] == 1
 
     row = await proxy[DAILY_MARKET_SNAPSHOTS].find_one(
         {"market_day": "2026-05-28", "label": "midday", "symbol": "NVDA"},
         {"_id": 0},
     )
     assert row is not None
-    assert row["price"] is not None
-    assert row["ohlc"] is not None
-    assert set(row["ohlc"].keys()) == {"o", "h", "l", "c", "v"}
-    assert row["asof"] == "2026-05-27T00:00:00+00:00"  # most-recent bar
-    assert row["price_ok"] is True
-    assert row["price_reason"] is None
-    # RVOL: 7 bars total → 6 baseline (>= 5 min). Should compute.
-    assert row["relative_volume"] is not None
-    assert row["relative_volume_ok"] is True
+    for block_name in ("intraday", "daily"):
+        block = row[block_name]
+        assert block["price"] is not None
+        assert block["ohlc"] is not None
+        assert set(block["ohlc"].keys()) == {"o", "h", "l", "c", "v"}
+        assert block["asof"] == "2026-05-27T00:00:00+00:00"
+        assert block["price_ok"] is True
+        assert block["price_reason"] is None
+        assert block["relative_volume"] is not None
+        assert block["relative_volume_ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_capture_handles_asymmetric_coverage(fresh_test_db):
+    """5m bars present, 1d missing → intraday populated, daily null.
+    Proves the dual-timeframe blocks don't conflate."""
+    from shared.snapshots.service import capture_snapshot
+    from namespaces import DAILY_MARKET_SNAPSHOTS, SHARED_OHLCV_BARS
+
+    real_db, tag = fresh_test_db
+    proxy = _make_test_db_proxy(real_db, tag)
+    # Only 5m bars, no 1d bars.
+    for i in range(1, 8):
+        await proxy[SHARED_OHLCV_BARS].insert_one({
+            "source": "finnhub_equity", "symbol": "AAPL", "tf": "5m",
+            "ts": f"2026-05-2{i}T13:0{i}:00+00:00",
+            "o": 200.0, "h": 201.0, "l": 199.5, "c": 200.5,
+            "v": 50_000,
+        })
+
+    summary = await capture_snapshot(
+        "open", universe=("AAPL",), market_day=date(2026, 5, 28), db=proxy,
+    )
+    assert summary["intraday_rows_with_price"] == 1
+    assert summary["daily_rows_with_price"] == 0
+
+    row = await proxy[DAILY_MARKET_SNAPSHOTS].find_one(
+        {"market_day": "2026-05-28", "label": "open", "symbol": "AAPL"},
+        {"_id": 0},
+    )
+    assert row["intraday"]["price"] == 200.5
+    assert row["daily"]["price"] is None
+    assert row["daily"]["price_reason"] == "no_bars_for_symbol"
 
 
 @pytest.mark.asyncio

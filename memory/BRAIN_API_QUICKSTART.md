@@ -137,12 +137,55 @@ GET /api/admin/market-data/daily-snapshots/symbol/NVDA
 GET /api/admin/market-data/daily-snapshots/history/NVDA?days=5
 ```
 
-Same dual auth as `/snapshot/{symbol}`. Each item has the same
-shape as the single-symbol snapshot (`price`, `ohlc`, `asof`,
-`relative_volume`, `price_ok`, `price_reason`, etc.). Symbols with
-no bars at capture time land as `price: null,
-price_reason: "no_bars_for_symbol"` — visible coverage gap, never
-silently dropped.
+Same dual auth as `/snapshot/{symbol}`. Each item has **two** OHLCV
+blocks, so brains can read intraday volatility AND the most-recent
+daily bar from a single row:
+
+```json
+{
+  "market_day": "2026-05-29",
+  "label": "open",
+  "symbol": "NVDA",
+  "captured_at": "2026-05-31T09:29:10+00:00",
+  "source": "finnhub_equity",
+  "intraday_tf": "5m",
+  "daily_tf": "1d",
+  "intraday": {
+    "tf": "5m",
+    "price": 142.05,
+    "ohlc": { "o": 141.80, "h": 142.30, "l": 141.55, "c": 142.05, "v": 184300 },
+    "asof": "2026-05-29T13:30:00+00:00",
+    "bar_source": "finnhub_equity",
+    "price_ok": true, "price_reason": null,
+    "relative_volume": 1.63,
+    "relative_volume_ok": true, "relative_volume_reason": null,
+    "basis_bars": 30, "current_v": 184300, "avg_v": 113050
+  },
+  "daily": {
+    "tf": "1d",
+    "price": 141.20,
+    "ohlc": { "o": 139.10, "h": 142.80, "l": 138.40, "c": 141.20, "v": 18432210 },
+    "asof": "2026-05-28T00:00:00+00:00",
+    "bar_source": "finnhub_equity",
+    "price_ok": true, "price_reason": null,
+    "relative_volume": 1.21,
+    "relative_volume_ok": true, "relative_volume_reason": null,
+    "basis_bars": 30, "current_v": 18432210, "avg_v": 15234560
+  }
+}
+```
+
+**About the two timeframes**:
+- `intraday` (5m) → the bar that just closed at capture moment.
+  Open=09:30 bar, Midday=12:25 bar, Close=15:55 bar. Best for
+  detecting intraday volatility / fresh RVOL spikes.
+- `daily` (1d)  → the most-recent completed daily bar. On `open` and
+  `midday` this is yesterday's daily; on `close` it's today's.
+
+**Coverage gaps** — if MC has no bars for a symbol at a given
+timeframe, that block lands as `price: null, price_reason:
+"no_bars_for_symbol"`. Coverage is per-timeframe (intraday may
+populate while daily is null and vice versa); they don't conflate.
 
 ### What's NOT here
 

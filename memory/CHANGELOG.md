@@ -1,3 +1,23 @@
+## 2026-05-31 (pass #39) — Daily Snapshots: dual-timeframe OHLCV (5m + 1d)
+
+### Operator follow-up
+"Will this include OHLCV as well?" → "Yes, but you only had 1d — I want both intraday + daily" (Option C).
+
+### Shipped
+- **Schema change**: each `daily_market_snapshots` row now contains two nested blocks — `intraday` (default `tf=5m`) and `daily` (default `tf=1d`). Each block has its own `price`, `ohlc`, `asof`, `bar_source`, `price_ok`, `price_reason`, `relative_volume`, `basis_bars`, `current_v`, `avg_v`. Coverage gaps are per-timeframe (intraday may populate while daily is null).
+- **Capture path**: `_build_one` now fans out 4 parallel DB queries per symbol (latest_5m, latest_1d, RVOL_5m, RVOL_1d) via `asyncio.gather`; concurrency cap of 25 keeps Motor pool healthy.
+- **Capture-log audit**: summary row now reports both `intraday_rows_with_price` and `daily_rows_with_price`.
+- **Fixed timeframe constants**: corrected to match the Finnhub feeder's actual writes (`5m` / `1d`, not the wrong `1Day` I had in pass #38). Env overrides: `MC_SNAPSHOT_INTRADAY_TF`, `MC_SNAPSHOT_DAILY_TF`.
+- **Brain doc**: `BRAIN_API_QUICKSTART.md` updated with the new dual-block response shape + per-timeframe coverage doctrine.
+- **+1 new test**: `test_capture_handles_asymmetric_coverage` proves intraday-present-daily-missing produces correct nulls in only the daily block.
+
+### Verified
+- **15/15 tests pass** (was 14, +1 for asymmetric coverage).
+- Backend reboots clean; worker logs the new tf set.
+- 502-symbol × 4-query operator capture completes in **~1.5s** on preview.
+- Curl E2E: row payload shows both `intraday` and `daily` nested blocks per symbol.
+
+
 ## 2026-05-31 (pass #38) — Daily Market Snapshots (S&P-500-wide, 3x/day)
 
 ### Operator ask
