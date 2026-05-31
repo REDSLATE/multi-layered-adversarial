@@ -283,11 +283,56 @@ function IntentRow({ intent, expanded, onToggle, onDryRun, onSubmit, dryRunResul
                       </span>
                     </div>
                     {submitResult.error ? (
-                      <div className="border border-rd-danger text-rd-danger px-3 py-2 text-[11px] font-mono" data-testid={`submit-error-${intent.intent_id}`}>
-                        {typeof submitResult.error === "string"
-                          ? submitResult.error
-                          : (submitResult.error?.reason || JSON.stringify(submitResult.error))}
-                      </div>
+                      (() => {
+                        const err = submitResult.error;
+                        const isObj = err && typeof err === "object";
+                        const blockedBy = isObj ? err.blocked_by : null;
+                        const reason = isObj ? err.reason : null;
+                        const gates = isObj ? err.gates : null;
+                        const failingGates = Array.isArray(gates)
+                          ? gates.filter((g) => g && g.passed === false)
+                          : [];
+                        return (
+                          <div
+                            className="border border-rd-danger bg-rd-danger/5 px-3 py-2 text-[11px] font-mono space-y-2"
+                            data-testid={`submit-error-${intent.intent_id}`}
+                          >
+                            <div className="text-rd-danger">
+                              {blockedBy ? (
+                                <>
+                                  <span className="font-bold">blocked_by</span>{" "}
+                                  <span className="text-rd-text">{blockedBy}</span>
+                                  {submitResult.status ? (
+                                    <span className="text-rd-dim ml-2">· HTTP {submitResult.status}</span>
+                                  ) : null}
+                                </>
+                              ) : (
+                                <span>{typeof err === "string" ? err : JSON.stringify(err)}</span>
+                              )}
+                            </div>
+                            {reason && (
+                              <div className="text-rd-text leading-relaxed">{reason}</div>
+                            )}
+                            {failingGates.length > 0 && (
+                              <div className="border border-rd-border bg-rd-bg2 divide-y divide-rd-border">
+                                {failingGates.map((g) => (
+                                  <div
+                                    key={g.name}
+                                    className="px-2 py-1.5 flex items-start gap-2"
+                                    data-testid={`submit-failing-gate-${g.name}`}
+                                  >
+                                    <XCircle size={12} weight="bold" className="text-rd-danger mt-0.5 shrink-0" />
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-rd-text">{g.name}</div>
+                                      <div className="text-[10px] text-rd-dim leading-relaxed mt-0.5">{g.reason}</div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()
                     ) : (
                       <div className="border border-rd-success bg-rd-bg2 p-3 text-[11px] font-mono space-y-1" data-testid={`submit-receipt-${intent.intent_id}`}>
                         <div><span className="text-rd-dim">broker_order_id</span> <span className="text-rd-text">{submitResult.receipt?.broker_order_id}</span></div>
@@ -437,10 +482,29 @@ export default function Intents() {
       return;
     }
     const laneLabel = lane ? lane.toUpperCase() : "GLOBAL";
+
+    // Operator-typed notional. Defaults to the lane cap; operator can
+    // dial it down (never up — the cap is the doctrine ceiling).
+    const raw = window.prompt(
+      `${laneLabel} order notional in USD?\n\n` +
+      `Cap: $${cap.toFixed(2)} (per-order, lane=${laneLabel}).\n` +
+      `Enter any value ≤ cap. Defaults to cap.`,
+      String(cap),
+    );
+    if (raw === null) return; // operator cancelled
+    const notional = Number(raw);
+    if (!Number.isFinite(notional) || notional <= 0) {
+      toast.error("Notional must be a positive number.");
+      return;
+    }
+    if (notional > cap) {
+      toast.error(`Notional $${notional.toFixed(2)} > per-order cap $${cap.toFixed(2)}. Lower the amount or raise the cap.`);
+      return;
+    }
     if (!window.confirm(
       `Route this ${laneLabel} intent to the broker?\n\n` +
-      `A $${cap.toFixed(2)} notional market-day order will be placed.\n` +
-      `(Live ${laneLabel} per-order cap from MC doctrine surface.)`
+      `A $${notional.toFixed(2)} notional market-day order will be placed.\n` +
+      `(Cap: $${cap.toFixed(2)} per-order, lane=${laneLabel}.)`
     )) {
       return;
     }
@@ -449,19 +513,23 @@ export default function Intents() {
     try {
       const res = await api.post("/execution/submit", {
         intent_id: intentId,
-        order_notional_usd: cap,
+        order_notional_usd: notional,
         confirm: "execute",
       });
       setSubmitByIntent((m) => ({ ...m, [intentId]: res.data }));
-      toast.success(`Order routed · $${cap.toFixed(2)} · ${res.data?.order?.status || "submitted"}`);
+      toast.success(`Order routed · $${notional.toFixed(2)} · ${res.data?.order?.status || "submitted"}`);
       load();
     } catch (e) {
+      const status = e?.response?.status;
       const detail = e?.response?.data?.detail;
       setSubmitByIntent((m) => ({
         ...m,
-        [intentId]: { error: detail || e.message },
+        [intentId]: { error: detail || e.message, status },
       }));
-      toast.error(typeof detail === "string" ? detail : (detail?.reason || "submit blocked"));
+      const shortReason = typeof detail === "string"
+        ? detail
+        : (detail?.blocked_by ? `${detail.blocked_by}: ${detail.reason}` : (detail?.reason || `HTTP ${status || "?"}`));
+      toast.error(shortReason);
     }
   };
 
