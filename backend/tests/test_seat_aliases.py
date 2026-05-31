@@ -1,7 +1,7 @@
 """Seat-alias compatibility merge — Phase 1 tests.
 
-Doctrine (revised 2026-05-24 — operator renamed `decider` to
-`strategist`, AUDITOR reinstated as a real seat):
+Doctrine (revised 2026-05-27 — operator merged `opponent` into
+`auditor`; `advisor` also now points to `auditor`):
 
     decider          → executor          (legacy compat; was previously
                                           merged into executor — kept
@@ -10,14 +10,14 @@ Doctrine (revised 2026-05-24 — operator renamed `decider` to
                                           `strategist`, which is a
                                           distinct SEAT_POLICY row.)
     crypto_decider   → crypto            (crypto-lane executor slot)
-    advisor          → opponent          (contrary-case is opponent's job)
-    crypto_advisor   → crypto_opponent   (lane twin)
+    advisor          → auditor           (2026-05-27 doctrine merge)
+    crypto_advisor   → crypto_auditor    (2026-05-27 doctrine merge)
+    opponent         → auditor           (2026-05-27 doctrine merge)
+    crypto_opponent  → crypto_auditor    (2026-05-27 doctrine merge)
 
-`auditor` / `crypto_auditor` are NO LONGER aliased — they are real
-roster seats with their own SEAT_POLICY rows.
-
-Aliases let old sidecars sending deprecated seat names keep working.
-New code uses canonical names.
+`auditor` / `crypto_auditor` are CANONICAL seats with their own
+SEAT_POLICY rows. Aliases let old sidecars sending deprecated seat
+names keep working.
 """
 from __future__ import annotations
 
@@ -34,32 +34,34 @@ from shared.seat_policy import (
 
 
 def test_normalize_seat_alias_table_minimum_shape():
-    """The alias table must contain exactly the four deprecation
-    mappings and nothing else. 2026-05-24: auditor / crypto_auditor
-    are NO LONGER aliased — they are real seats. If new aliases land
-    in a future phase, THIS test should fail and the operator should
-    explicitly bump it."""
+    """The alias table contains the deprecation mappings post-2026-05-27.
+    If new aliases land in a future phase, THIS test should fail and the
+    operator should explicitly bump it."""
     assert SEAT_ALIASES == {
         "decider": "executor",
         "crypto_decider": "crypto",
-        "advisor": "opponent",
-        "crypto_advisor": "crypto_opponent",
+        "advisor": "auditor",
+        "crypto_advisor": "crypto_auditor",
+        "opponent": "auditor",
+        "crypto_opponent": "crypto_auditor",
     }
 
 
 def test_normalize_seat_rewrites_deprecated():
     assert normalize_seat("decider") == "executor"
     assert normalize_seat("crypto_decider") == "crypto"
-    assert normalize_seat("advisor") == "opponent"
-    assert normalize_seat("crypto_advisor") == "crypto_opponent"
-    # auditor / crypto_auditor pass through unchanged — they are real seats.
+    assert normalize_seat("advisor") == "auditor"
+    assert normalize_seat("crypto_advisor") == "crypto_auditor"
+    assert normalize_seat("opponent") == "auditor"
+    assert normalize_seat("crypto_opponent") == "crypto_auditor"
+    # auditor / crypto_auditor pass through unchanged — they are canonical seats.
     assert normalize_seat("auditor") == "auditor"
     assert normalize_seat("crypto_auditor") == "crypto_auditor"
 
 
 def test_normalize_seat_passes_canonical_unchanged():
-    for name in ["executor", "governor", "opponent", "crypto",
-                 "crypto_governor", "crypto_opponent"]:
+    for name in ["executor", "governor", "auditor", "strategist",
+                 "crypto", "crypto_governor", "crypto_auditor"]:
         assert normalize_seat(name) == name
 
 
@@ -84,19 +86,20 @@ def test_snapshot_decider_resolves_to_executor_policy():
     assert s["may_veto"] == exec_s["may_veto"]
 
 
-def test_snapshot_advisor_resolves_to_opponent_policy():
-    """PARADOX correction (2026-05-20): advisor now resolves to
-    opponent (not auditor)."""
+def test_snapshot_advisor_resolves_to_auditor_policy():
+    """2026-05-27 doctrine merge: advisor now resolves to auditor
+    (not opponent — opponent itself was merged into auditor)."""
     s = snapshot("advisor")
-    opp = snapshot("opponent")
-    assert s["may_decide"] == opp["may_decide"]
-    assert s["may_execute"] == opp["may_execute"]
-    assert s["may_veto"] == opp["may_veto"]
+    aud = snapshot("auditor")
+    assert s["may_decide"] == aud["may_decide"]
+    assert s["may_execute"] == aud["may_execute"]
+    assert s["may_veto"] == aud["may_veto"]
 
 
 def test_snapshot_auditor_resolves_to_real_auditor_policy():
     """2026-05-24: auditor is a real seat with its own policy row.
-    Snapshot must NOT route it through opponent anymore."""
+    2026-05-27: it absorbed opponent's role too. Snapshot must NOT
+    route it through any deprecated alias."""
     s = snapshot("auditor")
     assert s["may_decide"] is False
     assert s["may_execute"] is False
@@ -111,11 +114,12 @@ def test_snapshot_crypto_decider_resolves_to_crypto_executor_policy():
     assert s["may_execute"] == crypto["may_execute"]
 
 
-def test_snapshot_crypto_advisor_resolves_to_crypto_opponent_policy():
+def test_snapshot_crypto_advisor_resolves_to_crypto_auditor_policy():
+    """2026-05-27 doctrine merge: crypto_advisor → crypto_auditor."""
     s = snapshot("crypto_advisor")
-    crypto_opp = snapshot("crypto_opponent")
-    assert s["may_decide"] == crypto_opp["may_decide"]
-    assert s["may_execute"] == crypto_opp["may_execute"]
+    crypto_aud = snapshot("crypto_auditor")
+    assert s["may_decide"] == crypto_aud["may_decide"]
+    assert s["may_execute"] == crypto_aud["may_execute"]
 
 
 # ───── may_override removed from doctrine ─────────────────────────────
@@ -165,9 +169,9 @@ def test_seat_may_execute_lane_crypto_decider_routes_to_crypto():
 
 
 def test_seat_may_execute_lane_advisor_fails_closed():
-    """Advisor aliases to opponent (PARADOX correction, 2026-05-20),
-    which has may_execute=False. Either name should refuse execution.
-    Auditor (real seat as of 2026-05-24) also has may_execute=False."""
+    """Advisor / opponent both alias to auditor (2026-05-27 doctrine
+    merge), which has may_execute=False. Every variant must refuse
+    execution."""
     assert seat_may_execute_lane("advisor", "equity") is False
     assert seat_may_execute_lane("opponent", "equity") is False
     assert seat_may_execute_lane("auditor", "equity") is False
