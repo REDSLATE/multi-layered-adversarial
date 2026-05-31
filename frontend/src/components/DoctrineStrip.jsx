@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import {
-  CaretDown, CaretUp, Sparkle, Sword, Shield, Lightning, Warning,
+  CaretDown, CaretUp, Sparkle, MagnifyingGlass, Shield, Lightning, Warning,
 } from "@phosphor-icons/react";
 
 /**
@@ -33,13 +33,19 @@ const QUALITY_BG = {
 
 const SEAT_ICON = {
   strategist: Sparkle,
-  adversary: Sword,
+  adversary: MagnifyingGlass,
   governor: Shield,
 };
 
 const SEAT_LABEL = {
   strategist: "Strategist",
-  adversary: "Adversary",
+  // Display-only rename (2026-02-17 prod feedback): the doctrine packet
+  // still keys this role as `adversary` for backend schema continuity
+  // (5+ collections store adversary-keyed audit + scorecard rows), but
+  // the user-facing label here aligns with the canonical AUDITOR seat
+  // it merged into per the 8-seat IP. Same brain holds the seat; the
+  // word "Adversary" was carrying obsolete combative framing.
+  adversary: "Auditor",
   governor: "Governor",
 };
 

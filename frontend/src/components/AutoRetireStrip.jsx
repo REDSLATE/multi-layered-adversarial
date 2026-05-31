@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import {
-  Warning, CaretDown, CaretUp, ArrowsClockwise, Shield, Sword, Lightning, Sparkle,
+  Warning, CaretDown, CaretUp, ArrowsClockwise, Shield, MagnifyingGlass, Lightning, Sparkle,
 } from "@phosphor-icons/react";
 
 /**
@@ -32,7 +32,7 @@ const SEVERITY_BG = {
 
 const SEAT_ICON = {
   strategist: Sparkle,
-  adversary: Sword,
+  adversary: MagnifyingGlass,
   governor: Shield,
   execution_judge: Lightning,
 };
