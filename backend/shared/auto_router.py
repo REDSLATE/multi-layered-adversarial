@@ -482,18 +482,34 @@ async def _post_submit_side_effects(receipt: dict, intent: dict) -> None:
 
 
 async def _sweep_seat_mismatched_intents() -> int:
-    """Doctrine (2026-02-18, limbo cleanup): intents POSTed when the
-    brain did NOT hold the executor seat will FOREVER fail gate 3
-    (`executor_seat_check`) because `holds_executor_seat` is frozen
-    at post-time on the intent doc. The legacy auto-router scan only
-    picked up `holds_executor_seat=True` intents, so these silently
-    accumulated as `gate_state=pending` with no progress reporting
-    and no terminal disposition.
+    """Doctrine (2026-05-31, position-model alignment): an intent's
+    `holds_executor_seat=False` flag means "the brain that POSTED this
+    intent did not hold the executor seat at post-time". Under the
+    position-model doctrine (2026-05-28), that's NO LONGER a terminal
+    state — authority lives in the seat, not the brain, so whichever
+    brain CURRENTLY holds the lane's executor seat can route this
+    intent. The `executor_seat_check` gate has already been relaxed to
+    reflect this.
 
-    This sweep flips ALL such intents to `gate_state=blocked` with a
-    typed reason so the operator queue tells the truth. No broker
-    action is taken — these intents were never eligible to fire.
+    The OLD sweep would mark every such intent `gate_state=blocked`
+    on a 30-second tick — a silent garbage collector that killed
+    intents the gate would have passed. That's the actual "line to
+    execute trades is broken" symptom the operator surfaced.
+
+    The NEW sweep is consistent with the position-model gate:
+      - If the lane has a current executor-seat holder → leave the
+        intent pending; the auto-router will pick it up.
+      - If the lane has NO current executor-seat holder → block it
+        with a typed reason ("no seat-holder for lane=X") so the
+        operator queue stays honest. Operator can re-seat and the
+        next post will succeed; existing blocked intents stay blocked
+        for audit clarity rather than silently flipping back.
+
+    This is symmetric with the `_evaluate_gates::executor_seat_check`
+    branch logic — same question, same answer.
     """
+    from shared.executor_seat import get_seat_holder, seats_with_execute  # noqa: WPS433
+
     q = {
         "gate_state": "pending",
         "executed": {"$ne": True},
@@ -503,11 +519,37 @@ async def _sweep_seat_mismatched_intents() -> int:
     now = _now_iso()
     candidates = await db[SHARED_INTENTS].find(
         q, {"_id": 0, "intent_id": 1, "stack": 1, "symbol": 1,
-            "action": 1, "executor_holder_at_post": 1},
+            "action": 1, "lane": 1, "executor_holder_at_post": 1},
     ).limit(500).to_list(500)
     if not candidates:
         return 0
+
+    # Cache per-lane seat-occupancy across the candidate sweep so we
+    # don't hammer the seat collection for every intent in a batch.
+    lane_has_holder: dict[str, bool] = {}
+
+    async def _lane_has_seat(lane: str) -> bool:
+        if lane in lane_has_holder:
+            return lane_has_holder[lane]
+        eligible = seats_with_execute(lane)
+        for seat_name in eligible:
+            if await get_seat_holder(seat_name):
+                lane_has_holder[lane] = True
+                return True
+        lane_has_holder[lane] = False
+        return False
+
+    blocked_count = 0
     for it in candidates:
+        lane = (it.get("lane") or "").lower()
+        if await _lane_has_seat(lane):
+            # Position-model: someone holds the seat → intent is
+            # eligible to fire under the relaxed gate. Leave it
+            # pending; _tick() will pick it up on the next pass.
+            continue
+        # No holder anywhere → terminal block with a clear, lane-aware
+        # reason. Different reason text than the old brain-coupled
+        # message so audits show the doctrine change.
         await _persist_blocked_intent(
             it["intent_id"], 0.0, {
                 "verdict": "blocked",
@@ -515,17 +557,23 @@ async def _sweep_seat_mismatched_intents() -> int:
                     "name": "executor_seat_check",
                     "passed": False,
                     "reason": (
-                        f"intent posted when seat held by "
-                        f"{it.get('executor_holder_at_post')!r}, not "
-                        f"{it.get('stack')!r} — terminal, swept by "
-                        f"auto_router seat-mismatch cleanup at {now}"
+                        f"no current executor-seat holder for lane="
+                        f"{lane or 'unknown'!r}; intent posted by "
+                        f"{it.get('stack')!r} when seat was held by "
+                        f"{it.get('executor_holder_at_post')!r} — "
+                        f"swept by auto_router at {now}"
                     ),
                 }],
                 "risk_multiplier": 0.0,
             },
         )
-    logger.info("auto_router: swept %d seat-mismatched limbo intents", len(candidates))
-    return len(candidates)
+        blocked_count += 1
+    if blocked_count:
+        logger.info(
+            "auto_router: swept %d seat-mismatched limbo intents (no current holder)",
+            blocked_count,
+        )
+    return blocked_count
 
 
 async def _tick() -> list[dict]:
@@ -534,21 +582,68 @@ async def _tick() -> list[dict]:
     Also runs the seat-mismatch sweep at most once per tick so the
     legacy limbo queue drains over time without flooding mongo on
     every cycle.
+
+    Position-model pickup (2026-05-31): the query no longer filters on
+    `holds_executor_seat=True` (the brain-coupled "did the poster hold
+    the seat at post-time" flag). Instead, eligibility is checked
+    PER-INTENT against the current seat-holder for the intent's lane —
+    same question the gate chain now asks. This means an intent posted
+    by REDEYE while Alpha held the equity executor seat IS eligible to
+    fire as long as some brain currently holds an equity executor seat,
+    regardless of who that brain is.
     """
+    from shared.executor_seat import get_seat_holder, seats_with_execute  # noqa: WPS433
+
     # Drain seat-mismatch limbo first (cheap when empty).
     await _sweep_seat_mismatched_intents()
     q = {
         "executed": {"$ne": True},
         "action": {"$in": ["BUY", "SELL", "SHORT", "COVER"]},
         "symbol": {"$ne": None},
-        "holds_executor_seat": True,
         # Honest queue: don't re-process intents already terminally
         # blocked by an earlier tick. Without this, the auto_router
         # would keep retrying gate-failed intents forever (the noise
         # the operator saw in the TRAINING feed).
         "gate_state": {"$nin": ["blocked", "no_trade", "advisory_only"]},
     }
-    intents = await db[SHARED_INTENTS].find(q, {"_id": 0}).sort("created_at", 1).to_list(AUTO_ROUTER_MAX_PER_TICK)
+    # Pull a larger sample than AUTO_ROUTER_MAX_PER_TICK so the
+    # per-intent position-model filter can drop ineligible ones and
+    # still leave us with up-to-MAX_PER_TICK eligible candidates.
+    sample = await (
+        db[SHARED_INTENTS]
+        .find(q, {"_id": 0})
+        .sort("created_at", 1)
+        .to_list(AUTO_ROUTER_MAX_PER_TICK * 4)
+    )
+    if not sample:
+        return []
+
+    # Per-lane seat-occupancy cache for the duration of this tick.
+    lane_has_holder: dict[str, bool] = {}
+
+    async def _lane_eligible(lane: str) -> bool:
+        if lane in lane_has_holder:
+            return lane_has_holder[lane]
+        eligible = seats_with_execute(lane)
+        for seat_name in eligible:
+            if await get_seat_holder(seat_name):
+                lane_has_holder[lane] = True
+                return True
+        lane_has_holder[lane] = False
+        return False
+
+    intents: list[dict] = []
+    for it in sample:
+        if len(intents) >= AUTO_ROUTER_MAX_PER_TICK:
+            break
+        lane = (it.get("lane") or "").lower()
+        if not await _lane_eligible(lane):
+            # No current seat-holder for this lane — gate would fail
+            # `executor_seat_check` anyway. Skip silently; the sweep
+            # has already terminally-blocked these.
+            continue
+        intents.append(it)
+
     if not intents:
         return []
     results = []

@@ -1,3 +1,60 @@
+## 2026-05-31 (pass #37) — Auto-router position-model alignment (the actual "no line to execute" fix)
+
+### Operator finding
+After multiple passes targeting upstream surfaces (gate chain, quorum, etc.), the operator surfaced the still-broken path: intents passing MC's gates were not reaching the broker. The line existed in code (`broker_router.route_order`, `auto_router._tick`) but a specific GC + pickup filter combo was severing it for cross-brain intents.
+
+### Root cause (code receipts, not memory)
+Two surfaces in `shared/auto_router.py` were still brain-coupled even after the 2026-05-28 position-model gate fix:
+
+1. **`_tick()` pickup query (line 592)** filtered intents on `holds_executor_seat=True` — the post-time flag indicating the POSTER held the seat when they emitted the intent. So REDEYE's crypto BUYs (posted while Alpha held the equity executor seat) were never picked up by the auto-router, even though the gate would now pass them.
+
+2. **`_sweep_seat_mismatched_intents()` (line 484)** ran every 30s and actively destroyed intents where `holds_executor_seat=False`, stamping them `gate_state=blocked` with the legacy brain-coupled reason "intent posted when seat held by X, not Y — terminal". A silent garbage collector that killed intents the position-model gate would have passed. **This is the actual mechanism that severed the line.**
+
+Both surfaces asked the wrong (brain-coupled) question. The gate now asks "does ANY brain currently hold the executor seat for this lane?" — these two surfaces still asked "did the POSTER hold the seat at post-time?"
+
+### Shipped
+
+1. **`_sweep_seat_mismatched_intents()` rewrite** (`shared/auto_router.py:478-577`): now position-model. Iterates pending cross-brain intents; for each, checks via `get_seat_holder` + `seats_with_execute` whether ANY brain currently holds an execute-capable seat for the intent's lane. If yes → leaves the intent pending. If no holder anywhere → terminally blocks with a typed lane-aware reason ("no current executor-seat holder for lane=X"). Per-lane occupancy cached for the sweep duration to avoid hammering the seat collection.
+
+2. **`_tick()` pickup query relaxation** (`shared/auto_router.py:579-665`): removed the `holds_executor_seat=True` filter from the mongo query. Replaced with a per-intent position-model eligibility check using the same `get_seat_holder` + `seats_with_execute` logic. Samples up to 4× the per-tick max so the in-memory filter can drop ineligible intents and still leave us with up-to-MAX_PER_TICK eligible ones.
+
+3. **New endpoint** `POST /api/admin/intents/resurrect-position-model-victims` (`shared/intents.py:1402+`): operator-only one-shot to flip intents wrongly terminated by the OLD sweep back to `gate_state=pending` so they get re-evaluated under the position-model gate. Idempotent: only resurrects intents whose latest gate-result row carries the legacy marker "swept by auto_router seat-mismatch cleanup". `dry_run=true` by default — returns counts without mutating.
+
+4. **4 new tests** in `tests/test_auto_router_position_model.py`:
+   - Sweep LEAVES a cross-brain intent pending when the lane has a current holder (doctrine-critical: the case that was broken).
+   - Sweep TERMINALLY BLOCKS when the lane has no holder anywhere (the gate would fail it too).
+   - Block reason names the new doctrine ("no current executor-seat holder for lane=X"), not the old brain-coupled phrasing.
+   - Already-executed intents are never re-swept (belt-and-braces).
+
+### Verified
+- All 4 sweep tests pass on preview.
+- Live endpoint `POST /api/admin/intents/resurrect-position-model-victims?dry_run=true&limit=50` on preview: found 50 candidates, all dry-run-resurrectable. Reports zero false positives (`skipped_blocked_by_other_reason: 0`, `no_longer_blocked: 0`).
+- Lint clean on `auto_router.py` and `intents.py`.
+
+### Operator workflow on prod after redeploy
+
+```bash
+# 1. Preview how many intents the OLD sweep wrongly killed:
+curl -X POST "https://mission.risedual.ai/api/admin/intents/resurrect-position-model-victims?dry_run=true&limit=1000" \
+  -H "Authorization: Bearer $TOKEN" | jq .
+
+# 2. If the count looks right, flip them back to pending:
+curl -X POST "https://mission.risedual.ai/api/admin/intents/resurrect-position-model-victims?dry_run=false&limit=1000" \
+  -H "Authorization: Bearer $TOKEN" | jq .
+
+# 3. The next auto-router tick (every AUTO_ROUTER_INTERVAL_SEC seconds)
+#    will re-run the position-model gate chain on each resurrected
+#    intent and route the ones that pass to the broker.
+```
+
+### What this does NOT change
+- Patent J REJECT label still keeps low-quality intents from auto-routing (doctrine quality is its own knob — pass #36 demoted the redundant `execution_judge` chip but didn't change the doctrine threshold).
+- Lane execution toggles still need to be enabled on prod for the auto-router to actually fire vs observe. If `lane_execution_toggles` for equity / crypto are not flipped, the auto-router stays in observation mode.
+- `may_execute=False` is still pinned at the intent ingest validator — Doctrine (c) is intact. The execution wire mints authority via receipts inside `broker_router.route_order`, never as a brain-set field.
+
+---
+
+
 ## 2026-05-31 (pass #36) — execution_judge demoted to advisory-only `setup_quality_summary`
 
 ### Operator finding

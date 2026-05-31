@@ -41,6 +41,7 @@ from auth import get_current_user
 from db import db
 from namespaces import (
     RUNTIMES,
+    SHARED_GATE_RESULTS,
     SHARED_INTENTS,
 )
 from runtime_auth import verify_runtime_token
@@ -1398,3 +1399,107 @@ async def list_doctrine_sidecars(
         "as_of": _now_iso(),
     }
 
+
+
+# ─── Position-model resurrection (2026-05-31) ─────────────────────────
+# Operator-only one-shot to clean up the audit damage from the OLD
+# brain-coupled sweep. The pre-fix auto-router would terminally block
+# every intent where the poster did not hold the executor seat at
+# post-time, even when a different brain now holds the seat (which is
+# perfectly valid under the position-model gate).
+#
+# This endpoint finds those intents — `gate_state=blocked` AND only
+# failing gate is `executor_seat_check` with the legacy brain-coupled
+# reason — and flips them back to `gate_state=pending` so the next
+# auto-router tick can re-evaluate them under the new doctrine.
+#
+# Idempotent: if the intent has a NEW failing gate row (different
+# `kind` than the legacy sweep), it stays blocked.
+
+@router.post("/admin/intents/resurrect-position-model-victims")
+async def resurrect_position_model_victims(
+    dry_run: bool = Query(default=True, description="set false to actually mutate"),
+    limit: int = Query(default=500, ge=1, le=5000),
+    _user: dict = Depends(get_current_user),
+):
+    """Operator one-shot. Restores intents wrongly terminated by the
+    pre-position-model auto-router sweep so they can be re-evaluated.
+
+    Returns counts only; rows are not echoed (could be hundreds).
+    """
+    # Match: blocked, has at least one auto-router-sweep gate row with
+    # the legacy reason. The legacy text includes "swept by auto_router
+    # seat-mismatch cleanup" — that's our distinguishing marker.
+    legacy_marker = "swept by auto_router seat-mismatch cleanup"
+
+    # Find candidate intents via the gate-results audit row.
+    legacy_rows = (
+        await db[SHARED_GATE_RESULTS]
+        .find(
+            {
+                "kind": "auto_router_blocked",
+                "gates.reason": {"$regex": legacy_marker},
+            },
+            {"_id": 0, "intent_id": 1},
+        )
+        .to_list(limit)
+    )
+    candidate_ids = list({r["intent_id"] for r in legacy_rows if r.get("intent_id")})
+
+    resurrected = 0
+    skipped_still_blocked = 0
+    not_blocked_anymore = 0
+    for iid in candidate_ids:
+        intent = await db[SHARED_INTENTS].find_one(
+            {"intent_id": iid},
+            {"_id": 0, "intent_id": 1, "gate_state": 1, "executed": 1},
+        )
+        if not intent or intent.get("executed"):
+            continue
+        if intent.get("gate_state") != "blocked":
+            not_blocked_anymore += 1
+            continue
+        # Confirm the LATEST gate-result row for this intent is the legacy
+        # one (not a fresh block with a different reason that would still
+        # apply). If it has a newer non-legacy block, leave it alone.
+        latest = await db[SHARED_GATE_RESULTS].find_one(
+            {"intent_id": iid},
+            {"_id": 0, "gates": 1, "kind": 1, "ts": 1},
+            sort=[("ts", -1)],
+        )
+        if not latest:
+            continue
+        gates = latest.get("gates") or []
+        is_legacy = any(
+            (g.get("reason") or "").find(legacy_marker) >= 0 and g.get("passed") is False
+            for g in gates
+        )
+        if not is_legacy:
+            skipped_still_blocked += 1
+            continue
+        if not dry_run:
+            await db[SHARED_INTENTS].update_one(
+                {"intent_id": iid},
+                {
+                    "$set": {
+                        "gate_state": "pending",
+                        "resurrected_by": "position_model_cleanup",
+                        "resurrected_at": _now_iso(),
+                    },
+                    "$unset": {"last_block_reason": ""},
+                },
+            )
+        resurrected += 1
+
+    return {
+        "dry_run": dry_run,
+        "candidates_found": len(candidate_ids),
+        "resurrected": resurrected,
+        "skipped_blocked_by_other_reason": skipped_still_blocked,
+        "no_longer_blocked": not_blocked_anymore,
+        "next_step": (
+            "Set dry_run=false to actually flip the intents back to pending. "
+            "The next auto-router tick will re-run the gate chain under the "
+            "current position-model doctrine."
+        ),
+    }
