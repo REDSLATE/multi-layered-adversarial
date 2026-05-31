@@ -43,6 +43,37 @@ def _token() -> str:
 PT = _token()
 
 
+@pytest.fixture(autouse=True)
+def _wipe_rate_limit_state_before_each_test():
+    """Public rate-limiter is backed by Mongo (`public_rate_limits`
+    collection). Without this autouse wipe, test order matters and
+    earlier tests' 30+ requests/min cause later tests to land 429
+    instead of their expected status. The fixture wipes the collection
+    before EVERY test in this module so each test starts at zero."""
+    import asyncio
+    from motor.motor_asyncio import AsyncIOMotorClient
+    mongo_url = os.environ.get("MONGO_URL")
+    db_name = os.environ.get("DB_NAME")
+    if mongo_url and db_name:
+        async def _wipe():
+            client = AsyncIOMotorClient(mongo_url)
+            try:
+                await client[db_name].public_rate_limits.delete_many({})
+            finally:
+                client.close()
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Inside an async test runner; schedule + wait.
+                future = asyncio.run_coroutine_threadsafe(_wipe(), loop)
+                future.result(timeout=5)
+            else:
+                loop.run_until_complete(_wipe())
+        except Exception:  # noqa: BLE001 — fail-open per rate_limit doctrine
+            pass
+    yield
+
+
 def _hdr(tier: str = "free") -> dict:
     return {
         "X-RiseDual-Token": PT,

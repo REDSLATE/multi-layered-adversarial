@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import time
 
+import pytest
 import requests
 
 
@@ -36,6 +37,35 @@ def _token() -> str:
 
 
 PT = _token()
+
+
+@pytest.fixture(autouse=True)
+def _wipe_rate_limit_state():
+    """Other test modules (test_public_phase2) fill the Mongo-backed
+    per-minute counter with their warmups. Without this autouse wipe,
+    these rate-limit tests inherit a bucket already past the free cap
+    and 429 instead of 200. Wipe before each test → deterministic."""
+    import asyncio
+    from motor.motor_asyncio import AsyncIOMotorClient
+    mongo_url = os.environ.get("MONGO_URL")
+    db_name = os.environ.get("DB_NAME")
+    if mongo_url and db_name:
+        async def _wipe():
+            client = AsyncIOMotorClient(mongo_url)
+            try:
+                await client[db_name].public_rate_limits.delete_many({})
+            finally:
+                client.close()
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(_wipe(), loop)
+                future.result(timeout=5)
+            else:
+                loop.run_until_complete(_wipe())
+        except Exception:  # noqa: BLE001 — fail-open
+            pass
+    yield
 
 
 def _hdr(tier: str = "free") -> dict:

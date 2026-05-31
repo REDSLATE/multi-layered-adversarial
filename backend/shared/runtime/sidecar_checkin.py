@@ -43,7 +43,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Path, Request
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from auth import get_current_user
 from db import db
@@ -134,11 +134,33 @@ def _validate_stamp_dict(stamp_dict: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class CheckinRequest(BaseModel):
+    """Sidecar check-in body.
+
+    Doctrine (2026-05-31 — tolerant alias added):
+      Brains MAY send either `stamp` (legacy, the original MC contract)
+      OR `identity` (new v1 identity spec exposed in
+      `memory/mc_identity_v1.py`) as the top-level body key. The
+      payload shape and field names are identical inside; only the
+      wrapper-key differs. MC normalizes both to `stamp` on receipt.
+
+      Why both: Chevelle / RedEye sidecars adopted the v1 spec name
+      (`identity`) before MC's POST endpoint caught up, and were
+      silently 422'd. Accept both → no silent failures while the
+      v1 rollout completes. Drop `identity` alias once all brains
+      have settled on a single name (operator pin).
+    """
+    # Stored field is `stamp`; alias accepts `identity` from v1 sidecars.
+    # No default — field is required. Pydantic returns 422 if neither key
+    # appears in the body.
     stamp: Dict[str, Any] = Field(
         ...,
-        description="Sidecar's RuntimeStamp (output of "
-        "`shared/runtime/platform_survival.py:RuntimeStamp.current(...)` "
-        "serialized via dataclasses.asdict).",
+        validation_alias=AliasChoices("stamp", "identity"),
+        description=(
+            "Sidecar's RuntimeStamp (output of "
+            "`shared/runtime/platform_survival.py:RuntimeStamp.current(...)` "
+            "serialized via dataclasses.asdict). Accepted under either "
+            "`stamp` (legacy) or `identity` (v1 spec) key."
+        ),
     )
 
 
