@@ -177,8 +177,12 @@ def _row_to_bar(row: dict[str, Any], bar_date: date) -> Optional[dict[str, Any]]
     symbol = (row.get("T") or "").upper().strip()
     if not symbol or len(symbol) > 16:
         return None
-    o, h, l, c, v = row.get("o"), row.get("h"), row.get("l"), row.get("c"), row.get("v")
-    if None in (o, h, l, c):
+    o = row.get("o")
+    hi = row.get("h")
+    lo = row.get("l")
+    c = row.get("c")
+    v = row.get("v")
+    if None in (o, hi, lo, c):
         return None
     # Polygon `t` is end-of-day epoch-ms. Use the trading-day's UTC
     # midnight as the canonical bar timestamp (matches the existing
@@ -191,7 +195,7 @@ def _row_to_bar(row: dict[str, Any], bar_date: date) -> Optional[dict[str, Any]]
         "symbol": symbol,
         "tf": DEFAULT_TF,
         "ts": ts_iso,
-        "o": float(o), "h": float(h), "l": float(l), "c": float(c),
+        "o": float(o), "h": float(hi), "l": float(lo), "c": float(c),
         "v": float(v or 0.0),
         "vwap": row.get("vw"),
         "trades": row.get("n"),
@@ -279,19 +283,24 @@ def _safe_to_pull(now_et: datetime, close_buffer_min: int) -> Optional[date]:
     Rules:
       - If today is a NYSE trading day AND wall-clock is past
         16:00 ET + buffer: pull TODAY's grouped daily.
-      - Otherwise: pull the previous trading day's data (operator
-        booted MC after market close, or it's the weekend).
-      - In all cases, never pull a NON-trading day's date — Polygon
-        returns empty for those.
+      - Otherwise: walk backward from today to the most-recent
+        trading day strictly BEFORE today and pull that.
+      - Never pulls a NON-trading day's date — Polygon returns
+        empty for those.
     """
-    # Compute the trading day we want.
+    from datetime import timedelta
     today = now_et.date()
     minutes = now_et.hour * 60 + now_et.minute
     close_minutes = 16 * 60 + close_buffer_min
     if is_trading_day(today) and minutes >= close_minutes:
         return today
-    # Walk back to the previous trading day.
-    return market_day_today()  # already handles weekend / holiday rollback
+    # Walk back to the previous trading day strictly before today.
+    cursor = today - timedelta(days=1)
+    while not is_trading_day(cursor):
+        cursor -= timedelta(days=1)
+        if (today - cursor).days > 60:  # pragma: no cover — safety stop
+            return None
+    return cursor
 
 
 async def _tick(api_key: str, close_buffer_min: int) -> dict[str, Any]:

@@ -120,6 +120,11 @@ holidays are skipped. The previous **5 trading days** are retained
 (rolling). On the next `open` capture each day, rows older than the
 5-day window are wiped.
 
+**Bar sources:**
+- `intraday` (5m) block → `finnhub_equity` feeder (intraday OHLCV polled every 5 minutes during market hours).
+- `daily` (1d) block → `polygon` feeder (entire US equity market pulled in one grouped-daily call ~30 min after close).
+- Per-block `bar_source` echoes which feeder served that row's bar; nulls land as `bar_source: null`.
+
 ```
 # Which labels have been captured today?
 GET /api/admin/market-data/daily-snapshots/labels

@@ -162,7 +162,9 @@ async def test_capture_uses_bars_when_present(fresh_test_db):
             })
 
     summary = await capture_snapshot(
-        "midday", universe=("NVDA",), market_day=date(2026, 5, 28), db=proxy,
+        "midday", universe=("NVDA",), market_day=date(2026, 5, 28),
+        intraday_source="finnhub_equity", daily_source="finnhub_equity",
+        db=proxy,
     )
     assert summary["intraday_rows_with_price"] == 1
     assert summary["daily_rows_with_price"] == 1
@@ -215,6 +217,55 @@ async def test_capture_handles_asymmetric_coverage(fresh_test_db):
     assert row["intraday"]["price"] == 200.5
     assert row["daily"]["price"] is None
     assert row["daily"]["price_reason"] == "no_bars_for_symbol"
+
+
+@pytest.mark.asyncio
+async def test_capture_uses_per_tf_sources(fresh_test_db):
+    """Intraday block should pick the 5m bar from finnhub_equity;
+    daily block should pick the 1d bar from polygon. Proves the
+    per-timeframe source split works."""
+    from shared.snapshots.service import capture_snapshot
+    from namespaces import DAILY_MARKET_SNAPSHOTS, SHARED_OHLCV_BARS
+
+    real_db, tag = fresh_test_db
+    proxy = _make_test_db_proxy(real_db, tag)
+
+    # Seed: finnhub 5m bars + polygon 1d bars.
+    for i in range(1, 8):
+        await proxy[SHARED_OHLCV_BARS].insert_one({
+            "source": "finnhub_equity", "symbol": "NVDA", "tf": "5m",
+            "ts": f"2026-05-2{i}T13:0{i}:00+00:00",
+            "o": 200.0, "h": 201.0, "l": 199.5, "c": 200.5, "v": 50_000,
+        })
+        await proxy[SHARED_OHLCV_BARS].insert_one({
+            "source": "polygon", "symbol": "NVDA", "tf": "1d",
+            "ts": f"2026-05-2{i}T00:00:00+00:00",
+            "o": 210.0 + i, "h": 215.0 + i, "l": 209.0 + i,
+            "c": 211.0 + i, "v": 1_000_000 + i * 10_000,
+        })
+
+    summary = await capture_snapshot(
+        "close",
+        universe=("NVDA",),
+        intraday_source="finnhub_equity",
+        daily_source="polygon",
+        market_day=date(2026, 5, 28),
+        db=proxy,
+    )
+    assert summary["intraday_rows_with_price"] == 1
+    assert summary["daily_rows_with_price"] == 1
+    assert summary["intraday_source"] == "finnhub_equity"
+    assert summary["daily_source"] == "polygon"
+
+    row = await proxy[DAILY_MARKET_SNAPSHOTS].find_one(
+        {"market_day": "2026-05-28", "label": "close", "symbol": "NVDA"},
+        {"_id": 0},
+    )
+    assert row["intraday"]["bar_source"] == "finnhub_equity"
+    assert row["intraday"]["price"] == 200.5
+    assert row["daily"]["bar_source"] == "polygon"
+    # Most-recent daily bar is i=7 → close=218.0
+    assert row["daily"]["price"] == 218.0
 
 
 @pytest.mark.asyncio

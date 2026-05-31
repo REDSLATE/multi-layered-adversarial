@@ -67,11 +67,20 @@ SNAPSHOT_TIMES_ET: dict[str, tuple[int, int]] = {
     "close":  (16, 5),
 }
 
-# Preferred bar source. The Finnhub equity feeder writes here on
-# every poll. If the operator changes feeders, this env-var lets the
-# worker follow without code changes.
+# Preferred bar source per timeframe. The Finnhub feeder writes
+# `tf=5m` for intraday; the Polygon feeder writes `tf=1d` for daily.
+# If the operator changes feeders, these env vars let the worker
+# follow without code changes. The `_latest_bar_for()` helper falls
+# back to ANY other source if the preferred one has no row.
+DEFAULT_INTRADAY_SOURCE: str = os.environ.get(
+    "MC_SNAPSHOT_INTRADAY_SOURCE", "finnhub_equity"
+)
+DEFAULT_DAILY_SOURCE: str = os.environ.get(
+    "MC_SNAPSHOT_DAILY_SOURCE", "polygon"
+)
+# Back-compat: single-source env var that overrides both when set.
 DEFAULT_SNAPSHOT_SOURCE: str = os.environ.get(
-    "MC_SNAPSHOT_BAR_SOURCE", "finnhub_equity"
+    "MC_SNAPSHOT_BAR_SOURCE", ""
 )
 
 # Two timeframes captured per row. Must match the values the Finnhub
@@ -189,7 +198,8 @@ async def _tf_block(
 
 async def _build_one(
     symbol: str,
-    source: str,
+    intraday_source: str,
+    daily_source: str,
     intraday_tf: str,
     daily_tf: str,
     db,
@@ -201,8 +211,8 @@ async def _build_one(
     sym = symbol.upper()
     try:
         intraday, daily = await asyncio.gather(
-            _tf_block(sym, source, intraday_tf, db),
-            _tf_block(sym, source, daily_tf, db),
+            _tf_block(sym, intraday_source, intraday_tf, db),
+            _tf_block(sym, daily_source, daily_tf, db),
         )
         return {"symbol": sym, "intraday": intraday, "daily": daily}
     except Exception as exc:  # noqa: BLE001 — never let one symbol kill capture
@@ -234,7 +244,9 @@ async def capture_snapshot(
     label: str,
     *,
     universe: Optional[Iterable[str]] = None,
-    source: str = DEFAULT_SNAPSHOT_SOURCE,
+    source: Optional[str] = None,
+    intraday_source: Optional[str] = None,
+    daily_source: Optional[str] = None,
     intraday_tf: str = INTRADAY_TIMEFRAME,
     daily_tf: str = DAILY_TIMEFRAME,
     market_day: Optional[date] = None,
@@ -246,7 +258,13 @@ async def capture_snapshot(
     Args:
         label: one of `SNAPSHOT_LABELS` (open|midday|close).
         universe: iterable of tickers (defaults to S&P 500).
-        source: preferred bar source.
+        source: legacy single-source override (applies to both
+                timeframes). If set, takes precedence over the
+                per-tf sources. Useful in tests.
+        intraday_source: preferred source for the 5m block (defaults
+                to `MC_SNAPSHOT_INTRADAY_SOURCE` env or `finnhub_equity`).
+        daily_source: preferred source for the 1d block (defaults
+                to `MC_SNAPSHOT_DAILY_SOURCE` env or `polygon`).
         intraday_tf: timeframe for the intraday block (default 5m).
         daily_tf: timeframe for the daily block (default 1d).
         market_day: NYSE trading day this capture represents (default
@@ -267,6 +285,23 @@ async def capture_snapshot(
     if universe is None:
         universe = SP500_TICKERS
 
+    # Resolve per-tf sources with precedence:
+    #   explicit `source=` arg → both
+    #   explicit per-tf arg → that tf
+    #   env-configured default → fallback
+    eff_intraday_source = (
+        source
+        or intraday_source
+        or DEFAULT_SNAPSHOT_SOURCE
+        or DEFAULT_INTRADAY_SOURCE
+    )
+    eff_daily_source = (
+        source
+        or daily_source
+        or DEFAULT_SNAPSHOT_SOURCE
+        or DEFAULT_DAILY_SOURCE
+    )
+
     symbols = [s.upper() for s in universe]
     md_str = market_day.isoformat()
     captured_at = _now_iso()
@@ -275,7 +310,10 @@ async def capture_snapshot(
 
     async def _bounded(sym: str):
         async with sem:
-            return await _build_one(sym, source, intraday_tf, daily_tf, db)
+            return await _build_one(
+                sym, eff_intraday_source, eff_daily_source,
+                intraday_tf, daily_tf, db,
+            )
 
     rows = await asyncio.gather(*(_bounded(s) for s in symbols))
 
@@ -290,7 +328,8 @@ async def capture_snapshot(
             "market_day": md_str,
             "label": label,
             "captured_at": captured_at,
-            "source": source,
+            "intraday_source": eff_intraday_source,
+            "daily_source": eff_daily_source,
             "intraday_tf": intraday_tf,
             "daily_tf": daily_tf,
             "symbol": row["symbol"],
@@ -313,21 +352,24 @@ async def capture_snapshot(
         "captured_at": captured_at,
         "universe_size": len(symbols),
         "intraday_tf": intraday_tf,
+        "intraday_source": eff_intraday_source,
         "intraday_rows_with_price": intraday_with_price,
         "intraday_rows_missing_price": len(symbols) - intraday_with_price,
         "daily_tf": daily_tf,
+        "daily_source": eff_daily_source,
         "daily_rows_with_price": daily_with_price,
         "daily_rows_missing_price": len(symbols) - daily_with_price,
-        "source": source,
     }
     await db[DAILY_SNAPSHOT_CAPTURE_LOG].insert_one(dict(summary))
     logger.info(
         "daily_snapshot capture label=%s market_day=%s "
-        "intraday_with_price=%d daily_with_price=%d source=%s "
+        "intraday_with_price=%d daily_with_price=%d "
+        "intraday_source=%s daily_source=%s "
         "intraday_tf=%s daily_tf=%s",
         label, md_str,
         intraday_with_price, daily_with_price,
-        source, intraday_tf, daily_tf,
+        eff_intraday_source, eff_daily_source,
+        intraday_tf, daily_tf,
     )
     return summary
 
@@ -398,6 +440,8 @@ __all__ = (
     "SNAPSHOT_TIMES_ET",
     "SNAPSHOT_RETENTION_TRADING_DAYS",
     "DEFAULT_SNAPSHOT_SOURCE",
+    "DEFAULT_INTRADAY_SOURCE",
+    "DEFAULT_DAILY_SOURCE",
     "INTRADAY_TIMEFRAME",
     "DAILY_TIMEFRAME",
     "capture_snapshot",

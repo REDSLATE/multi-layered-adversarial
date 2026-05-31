@@ -1,3 +1,26 @@
+## 2026-05-31 (pass #40) — Polygon (Massive) daily equity feeder live
+
+### Operator ask
+"Build the Polygon feeder so daily snapshots actually populate." Public.com may return ~June 4 (information-only) — Polygon fills the gap now and stays as a redundant data source after.
+
+### Shipped
+1. **`backend/shared/feeders/polygon_equity.py`** — async worker mirroring the Finnhub feeder pattern, pulls **grouped-daily aggregates** (entire US equity market in one HTTP call, ~12k rows). Writes to `shared_ohlcv_bars` with `source: "polygon"`, `tf: "1d"`. Idempotent on `(source, symbol, tf, ts)`. Honors NYSE calendar — no pulls on weekends/holidays; waits 30 min after close (configurable) so Polygon's grouped data has finalized.
+2. **`server.py` lifespan wiring** — Polygon worker boots alongside Finnhub. Boots into `already_pulled` shortcut if a recent day's bars exist (skip threshold = 5k rows).
+3. **Per-tf source split in `capture_snapshot`** — separate `intraday_source` (default `finnhub_equity`) and `daily_source` (default `polygon`) so each timeframe block picks its own preferred feeder. Env vars: `MC_SNAPSHOT_INTRADAY_SOURCE`, `MC_SNAPSHOT_DAILY_SOURCE`. Captured-log audit + per-row docs both record the resolved source per timeframe.
+4. **+10 new Polygon feeder tests** (shape conversion, schedule logic, idempotent pull, fetch-failure handling) and **+1 new snapshot test** (`test_capture_uses_per_tf_sources` proving the split actually picks the right feeder per block).
+5. **Brain doc** updated with the per-tf source pin.
+
+### Verified
+- **26/26 tests pass** across `test_polygon_equity_feeder.py` (10) and `test_daily_market_snapshots.py` (16).
+- Backend rebooted clean; first Polygon tick pulled **8,870 daily bars** for 2026-05-29 in ~1.5s.
+- After capture: **484 of 502 S&P-500 daily blocks** populated with real Polygon OHLCV (NVDA: O=214.575, H=217.86, L=211.13, C=211.14, V=289.4M). 18 misses = symbols Polygon didn't have grouped-daily rows for that day (delisted/fresh, audited as `no_bars_for_symbol`).
+- `bar_source` per block correctly echoes `polygon` for daily, `finnhub_equity` for intraday.
+
+### Doctrine pin
+- **Evidence only.** The Polygon feeder writes bars into MC's federation; it never carries execution authority. No `may_execute` in any ingest path.
+- **Information-only on Public.com when it returns.** Per operator (2026-05-31), Public will be wired as a data feeder, not a broker. The Public daily feeder will be additive — same pattern, `source: "public"`, can run alongside Polygon for redundant coverage of equity + new crypto coverage.
+
+
 ## 2026-05-31 (pass #39) — Daily Snapshots: dual-timeframe OHLCV (5m + 1d)
 
 ### Operator follow-up

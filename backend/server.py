@@ -113,6 +113,10 @@ from shared.feeders.finnhub_equity import (
     start_worker_if_enabled as start_finnhub_worker,
     stop_worker as stop_finnhub_worker,
 )
+from shared.feeders.polygon_equity import (
+    start_worker_if_enabled as start_polygon_worker,
+    stop_worker as stop_polygon_worker,
+)
 from shared.alt_data.sec_edgar import (
     start_worker_if_enabled as start_sec_edgar_worker,
     stop_worker as stop_sec_edgar_worker,
@@ -274,6 +278,7 @@ async def lifespan(app: FastAPI):
     # produce one feeder_health_audit row and the worker idles.
     try:
         start_finnhub_worker()
+        start_polygon_worker()
         start_sec_edgar_worker()
         start_fred_worker()
     except Exception as e:  # noqa: BLE001
@@ -344,6 +349,7 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await stop_finnhub_worker()
+        await stop_polygon_worker()
         await stop_sec_edgar_worker()
         await stop_fred_worker()
     except Exception:  # noqa: BLE001

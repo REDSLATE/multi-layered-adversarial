@@ -1,3 +1,22 @@
+# ✅ 2026-05-31 — Polygon daily equity feeder LIVE
+
+The daily snapshot system's `daily` block is now backed by Polygon's
+grouped-daily aggregates (one HTTP call covers the entire US equity market).
+First pull on preview: **8,870 bars from May 29**. Daily snapshot capture:
+**484/502 S&P-500 symbols populated with real OHLCV** (NVDA: O=214.575,
+H=217.86, L=211.13, C=211.14, V=289.4M).
+
+Per-tf source split: `intraday`=Finnhub 5m, `daily`=Polygon 1d. Both feeders
+coexist; per-block `bar_source` echoes which feeder served the row.
+
+**Public.com daily feeder is the next planned data source** when account
+returns (~June 4). Will run alongside Polygon as redundant equity coverage
++ first crypto daily coverage. Information-only per operator pin — Public
+will NOT be wired as a broker.
+
+---
+
+
 # ✅ 2026-05-31 — Daily Market Snapshots subsystem shipped
 
 Three frozen, point-in-time captures of the full S&P-500 (502 symbols) per
