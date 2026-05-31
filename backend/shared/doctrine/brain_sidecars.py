@@ -42,8 +42,11 @@ DOCTRINE_VERSION = "small_account_sidecar_v1"
 
 # role → roster seat name (equity lane). Crypto twin overrides this.
 EQUITY_SEAT_MAP = {
-    "strategist": "decider",
-    "adversary": "opponent",
+    # Canonical 8-seat IP (2026-05-27 doctrine refresh). `decider` →
+    # `strategist`, `opponent` → `auditor`. Labels reflect canonical
+    # seats so the doctrine packet matches what the live roster stores.
+    "strategist": "strategist",
+    "adversary": "auditor",
     "governor": "governor",
     "execution_judge": "executor",
 }
@@ -65,8 +68,8 @@ def build_all_brain_doctrine_packets(
     labels = set(base.labels)
     holders = seat_holders or {}
 
-    strategist = _build_strategist(base, labels, holders.get("decider"))
-    adversary = _build_adversary(base, labels, holders.get("opponent"))
+    strategist = _build_strategist(base, labels, holders.get("strategist"))
+    adversary = _build_adversary(base, labels, holders.get("auditor"))
     governor = _build_governor(base, labels, holders.get("governor"), snapshot)
     execution_judge = _build_execution_judge(
         base, labels, holders.get("executor"),

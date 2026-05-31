@@ -152,8 +152,8 @@ def test_redeye_objections_on_bad_setup():
 
 def test_crypto_packet_records_seat_holders():
     holders = {
-        "crypto_decider": "alpha",
-        "crypto_opponent": "redeye",
+        "crypto_strategist": "alpha",
+        "crypto_auditor": "redeye",
         "crypto_governor": "chevelle",
         "crypto": "redeye",   # crypto executor seat
     }
@@ -162,8 +162,9 @@ def test_crypto_packet_records_seat_holders():
         seat_holders=holders,
     )
     assert packet["seats"]["strategist"]["holder"] == "alpha"
-    assert packet["seats"]["strategist"]["seat"] == "crypto_decider"
+    assert packet["seats"]["strategist"]["seat"] == "crypto_strategist"
     assert packet["seats"]["adversary"]["holder"] == "redeye"
+    assert packet["seats"]["adversary"]["seat"] == "crypto_auditor"
     assert packet["seats"]["governor"]["holder"] == "chevelle"
     assert packet["seats"]["execution_judge"]["holder"] == "redeye"
     assert packet["seats"]["execution_judge"]["seat"] == "crypto"
@@ -173,8 +174,8 @@ def test_brain_can_hold_seats_in_both_lanes_simultaneously():
     """Doctrine: brains can occupy multiple seats ACROSS lanes. Verify
     the same brain can show up as a holder in both an equity packet
     and a crypto packet built from the same roster state."""
-    eq_holders = {"decider": "alpha", "executor": "alpha"}
-    crypto_holders = {"crypto_decider": "alpha", "crypto": "alpha"}
+    eq_holders = {"strategist": "alpha", "executor": "alpha"}
+    crypto_holders = {"crypto_strategist": "alpha", "crypto": "alpha"}
 
     eq = build_lane_doctrine_packet(
         {"lane": "equity", "symbol": "NVDA",

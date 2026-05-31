@@ -148,8 +148,8 @@ def test_packet_top_level_shape():
 def test_each_seat_has_seat_and_holder_fields():
     packet = build_all_brain_doctrine_packets(_good_snapshot())
     expected_seats = {
-        "strategist": "decider",
-        "adversary": "opponent",
+        "strategist": "strategist",
+        "adversary": "auditor",
         "governor": "governor",
         "execution_judge": "executor",
     }
@@ -161,7 +161,7 @@ def test_each_seat_has_seat_and_holder_fields():
 
 
 def test_packet_records_holder_when_provided():
-    holders = {"decider": "alpha", "opponent": "redeye", "governor": "chevelle", "executor": "redeye"}
+    holders = {"strategist": "alpha", "auditor": "redeye", "governor": "chevelle", "executor": "redeye"}
     packet = build_all_brain_doctrine_packets(_good_snapshot(), seat_holders=holders)
     assert packet["seats"]["strategist"]["holder"] == "alpha"
     assert packet["seats"]["adversary"]["holder"] == "redeye"

@@ -229,7 +229,14 @@ async def fetch_seat_holders(lane: str) -> Dict[str, Optional[str]]:
     r = await get_roster()
     assignments = (r or {}).get("assignments") or {}
     if lane_norm == "equity":
-        keys = ("decider", "opponent", "governor", "executor")
+        # Canonical equity seats (2026-05-27 doctrine): `decider` →
+        # `strategist`, `opponent` → `auditor`. Roster `get_roster`
+        # already rewrites legacy keys to canonical, so read canonical.
+        keys = ("strategist", "auditor", "governor", "executor")
     else:
-        keys = ("crypto_decider", "crypto_opponent", "crypto_governor", "crypto")
+        # Canonical crypto seats (2026-05-31 8-seat doctrine):
+        # `crypto_decider` → `crypto_strategist`, `crypto_opponent` →
+        # `crypto_auditor`. Roster keys are canonical; legacy keys
+        # already migrated away in `get_roster`.
+        keys = ("crypto_strategist", "crypto_auditor", "crypto_governor", "crypto")
     return {k: assignments.get(k) for k in keys}

@@ -4,8 +4,8 @@ Twin of `shared.doctrine.brain_sidecars` for the crypto lane, with the
 same role-flavored shape:
 
     seats:
-        strategist       → roster seat "crypto_decider"
-        adversary        → roster seat "crypto_opponent"
+        strategist       → roster seat "crypto_strategist"
+        adversary        → roster seat "crypto_auditor"
         governor         → roster seat "crypto_governor"
         execution_judge  → roster seat "crypto" (= crypto executor)
 
@@ -26,8 +26,13 @@ from shared.crypto.doctrine.crypto_labels import label_crypto_snapshot
 
 
 CRYPTO_SEAT_MAP = {
-    "strategist": "crypto_decider",
-    "adversary": "crypto_opponent",
+    # Canonical 8-seat IP (2026-05-31 doctrine refresh). The legacy
+    # `crypto_decider` / `crypto_opponent` names have been merged into
+    # `crypto_strategist` / `crypto_auditor` respectively; this map
+    # always names the canonical seat so the doctrine packet matches
+    # what the live roster stores.
+    "strategist": "crypto_strategist",
+    "adversary": "crypto_auditor",
     "governor": "crypto_governor",
     "execution_judge": "crypto",
 }

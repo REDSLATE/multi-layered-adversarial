@@ -1,3 +1,33 @@
+## 2026-02-17 (pass #46) — Doctrine packet purged of legacy seat names; UI surfaces real block reason; operator-typed notional
+
+### Operator pin
+The doctrine sidecar UI was showing `crypto_decider` and `crypto_opponent` as seat names with `holder: vacant`. Those seats were renamed in the 2026-05-31 8-seat IP refresh; the roster has been storing canonical names (`crypto_strategist`, `crypto_auditor`) but the doctrine packet builders + `fetch_seat_holders` were still asking for the legacy keys → permanent "vacant" labels. Fixed.
+
+### Shipped
+1. **`shared/doctrine/lane_doctrine_router.py::fetch_seat_holders`**: now reads canonical roster keys.
+   - Equity: `strategist`, `auditor`, `governor`, `executor` (was `decider`, `opponent`, ...).
+   - Crypto: `crypto_strategist`, `crypto_auditor`, `crypto_governor`, `crypto` (was `crypto_decider`, `crypto_opponent`, ...).
+2. **`shared/crypto/doctrine/crypto_brain_sidecars.py::CRYPTO_SEAT_MAP`**:
+   - `strategist → crypto_strategist`, `adversary → crypto_auditor` (was `crypto_decider`, `crypto_opponent`).
+3. **`shared/doctrine/brain_sidecars.py::EQUITY_SEAT_MAP`**:
+   - `strategist → strategist`, `adversary → auditor` (was `decider`, `opponent`).
+   - Holder lookups in `build_all_brain_doctrine_packets` updated to read canonical keys.
+4. **Frontend `pages/Intents.jsx::runSubmit`** (preview only, prod redeploy required):
+   - Operator-typed notional prompt before broker route. Defaults to lane per-order cap, refuses any value > cap.
+5. **Frontend `pages/Intents.jsx` submit-error render** (preview only, prod redeploy required):
+   - Renders `blocked_by` + `reason` + per-failing-gate list when `/execution/submit` 403s. Replaces the previous bare "HTTP 403" string.
+
+### Verified
+- 112/112 tests green across `test_doctrine_sidecars`, `test_crypto_doctrine_sidecar`, `test_promotion_gate`, `test_single_sign_promotion`, `test_dual_sign_promotion`, `test_roster`, `test_seat_policy_and_auto`, `test_opponent_auditor_merge`.
+- Backend hot-reloaded, `/api/health` ok.
+- Updated tests `test_crypto_packet_records_seat_holders`, `test_brain_can_hold_seats_in_both_lanes_simultaneously`, `test_each_seat_has_seat_and_holder_fields`, `test_packet_records_holder_when_provided` to assert canonical seat names.
+
+### Known carryover (NOT touched this pass)
+- `test_doctrine_intent_attachment::test_equity_with_empty_snapshot_still_returns_packet` still asserts the pre-doctrine-c `governor_action == "block"`. Chevelle no longer hard-blocks (modulate-only under doctrine-c). Test is in the legacy drift backlog per operator directive (delete-obsolete-shape).
+
+---
+
+
 ## 2026-02-17 (pass #45) — Cosigner removed; /propose auto-elevates on Patent J pass
 
 ### Operator pin
