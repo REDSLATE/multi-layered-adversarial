@@ -53,7 +53,11 @@ from shared.intents import router as intents_router
 from shared.executor_seat import router as executor_router
 from shared.auditor_seat import router as auditor_router
 from shared.seat_nudges import router as seat_nudges_router
-from shared.broker.alpaca_routes import router as alpaca_router
+from shared.broker.alpaca_routes import (
+    router as alpaca_router,
+    start_pinger_if_needed as start_alpaca_pinger_if_needed,
+    stop_pinger as stop_alpaca_pinger,
+)
 from shared.decisions_feed import router as decisions_router
 from shared.doctrine_routes import router as doctrine_router
 from shared.execution import router as execution_router
@@ -197,6 +201,10 @@ async def lifespan(app: FastAPI):
     if alpaca_doc:
         start_auto_router_if_enabled()
         logger.info("Auto-router started")
+        # Symmetric to Kraken's poller: keeps `last_ping_at` fresh so the
+        # operator's broker-health tile never sees the 17h-staleness
+        # incident again (2026-05-30). Safe no-op when creds missing.
+        start_alpaca_pinger_if_needed()
     # Public-API rate-limit collection — TTL index for buckets.
     await _rate_limit_ensure_ttl()
     # Public news + dark-pool refreshers — fail-soft proxies to base44.
@@ -297,6 +305,7 @@ async def lifespan(app: FastAPI):
         logger.warning("patterns_universe seed failed: %s", e)
     yield
     await stop_poller()
+    await stop_alpaca_pinger()
     await stop_tickler()
     await stop_public_refresher()
     await stop_auto_router()

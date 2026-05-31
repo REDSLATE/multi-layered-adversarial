@@ -10,6 +10,10 @@ Pattern mirrors `shared/kraken_routes.py`:
 """
 from __future__ import annotations
 
+import asyncio
+import logging
+import os
+from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -258,3 +262,119 @@ async def audit_log(limit: int = 50, _user: dict = Depends(get_current_user)):
         .to_list(min(limit, 500))
     )
     return {"items": rows, "count": len(rows)}
+
+
+# ──────────────────── auto-pinger task (2026-05-30) ─────────────────────
+# Doctrine: MC owns Alpaca credentials (same pattern as Kraken — both
+# brokers' keys live in MC, not in the brains). Operator's runtime
+# dashboard reads `last_ping_at` to answer "is the broker telemetry
+# fresh?". Kraken's poller refreshes this naturally every 60s as a
+# side-effect of pulling OHLCV; Alpaca had NO equivalent — staleness
+# climbed to 17h on prod before the operator noticed.
+#
+# This loop is the symmetric Alpaca pinger: every PING_INTERVAL_SEC it
+# calls `adapter.ping()` and updates `last_ping_at` / `last_ping_ok` /
+# `last_equity_snapshot` on the singleton doc. Same fields the manual
+# POST /api/admin/alpaca/test refreshes — operator clicks now become
+# unnecessary for liveness.
+#
+# Fail-soft: if Alpaca is down, the loop logs and continues; the next
+# successful tick clears the stamp.
+
+logger = logging.getLogger("risedual.alpaca_pinger")
+
+_PINGER_TASK: asyncio.Task | None = None
+_PINGER_LAST_TICK: dict = {"ts": None, "ok": None, "error": None, "equity": None}
+PING_INTERVAL_SEC = int(os.environ.get("ALPACA_PING_INTERVAL_SEC", "120"))
+
+
+async def _pinger_tick() -> None:
+    """Single ping iteration. No-op when credentials are missing."""
+    adapter = await get_alpaca_adapter()
+    if not adapter:
+        _PINGER_LAST_TICK.update({
+            "ts": _now_iso(), "ok": None, "error": "no_credentials", "equity": None,
+        })
+        return
+    try:
+        ping = await adapter.ping()
+    except Exception as e:  # noqa: BLE001
+        await db[ALPACA_CREDENTIALS].update_one(
+            {"_id": _SINGLETON_ID},
+            {"$set": {
+                "last_ping_at": _now_iso(),
+                "last_ping_ok": False,
+                "last_ping_error": str(e),
+            }},
+        )
+        _PINGER_LAST_TICK.update({
+            "ts": _now_iso(), "ok": False, "error": str(e), "equity": None,
+        })
+        return
+    await db[ALPACA_CREDENTIALS].update_one(
+        {"_id": _SINGLETON_ID},
+        {"$set": {
+            "last_ping_at": _now_iso(),
+            "last_ping_ok": True,
+            "last_equity_snapshot": ping.get("equity"),
+            "account_number": ping.get("account_number"),
+            "last_ping_error": None,
+        }},
+    )
+    _PINGER_LAST_TICK.update({
+        "ts": _now_iso(),
+        "ok": True,
+        "error": None,
+        "equity": ping.get("equity"),
+    })
+
+
+async def _pinger_loop() -> None:
+    """Long-running task. Sleeps `PING_INTERVAL_SEC` between ticks.
+
+    Loop-level exceptions are swallowed so a single Alpaca outage
+    doesn't kill the loop — the next tick will retry.
+    """
+    while True:
+        try:
+            await _pinger_tick()
+        except Exception as e:  # noqa: BLE001
+            _PINGER_LAST_TICK["error"] = f"loop: {e}"
+            logger.warning("alpaca pinger loop tick failed: %s", e)
+        await asyncio.sleep(max(PING_INTERVAL_SEC, 30))
+
+
+def start_pinger_if_needed() -> None:
+    """Idempotent — re-call is a no-op while the task is alive.
+
+    Same contract as Kraken's `start_poller_if_needed`.
+    """
+    global _PINGER_TASK
+    if _PINGER_TASK and not _PINGER_TASK.done():
+        return
+    _PINGER_TASK = asyncio.create_task(_pinger_loop(), name="alpaca-auto-pinger")
+    logger.info("alpaca auto-pinger STARTED — every %ss", PING_INTERVAL_SEC)
+
+
+async def stop_pinger() -> None:
+    global _PINGER_TASK
+    if _PINGER_TASK and not _PINGER_TASK.done():
+        _PINGER_TASK.cancel()
+        with suppress(asyncio.CancelledError):
+            await _PINGER_TASK
+    _PINGER_TASK = None
+
+
+@router.get("/pinger/status")
+async def pinger_status(_user: dict = Depends(get_current_user)):
+    """Operator-visible: when did the pinger last tick + with what result.
+
+    Distinct from the broker's `last_ping_at` (which any operator click
+    on /test also touches). This surface tells you the AUTO-pinger itself
+    is healthy — same role as Kraken's `_POLLER_LAST_TICK` surface.
+    """
+    return {
+        "interval_sec": PING_INTERVAL_SEC,
+        "task_alive": _PINGER_TASK is not None and not _PINGER_TASK.done(),
+        "last_tick": dict(_PINGER_LAST_TICK),
+    }

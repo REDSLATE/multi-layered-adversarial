@@ -1,3 +1,37 @@
+## 2026-05-30 (pass #35) — Alpaca auto-pinger (close the 17h staleness gap)
+
+### Operator finding
+On prod, broker telemetry showed `ALPACA LAST PING 17h ago` (red ✗) while Kraken showed `LAST POLL 22s ago` (green). Investigation revealed MC has NO auto-pinger for Alpaca — `last_ping_at` was only updated when somebody (operator or a brain) called `POST /api/admin/alpaca/test` manually. Kraken's poller refreshes the equivalent stamp naturally every 60s as a side-effect of its OHLCV pull loop. Alpha agent (correctly) flagged this as an MC-side issue; the doctrine point: both brokers' credentials live in MC, so both should have symmetric liveness loops.
+
+This is also the same disease as RedEye's 7-hour gap from earlier this session — a missing scheduler, not a broken worker.
+
+### Shipped
+1. **`shared/broker/alpaca_routes.py`** — added auto-pinger task. Mirrors Kraken's poller pattern (`_pinger_tick`, `_pinger_loop`, `start_pinger_if_needed`, `stop_pinger`). Every `ALPACA_PING_INTERVAL_SEC` (default 120s, configurable via env) calls `adapter.ping()` and refreshes the same fields the manual `/test` endpoint touches: `last_ping_at`, `last_ping_ok`, `last_equity_snapshot`, `last_ping_error`.
+   - Fail-soft: Alpaca outage → stamps `last_ping_ok=False` + error, loop continues to next tick.
+   - No-op when credentials are missing (preview state) — side surface reports `no_credentials` so operators can distinguish "broker down" from "broker not connected".
+
+2. **`shared/broker/alpaca_routes.py::GET /pinger/status`** — operator-visible health surface (`task_alive`, `interval_sec`, `last_tick`). Distinct from `/status` (which surfaces the broker's own `last_ping_at`); this answers "is the auto-pinger itself healthy" — same role as Kraken's `_POLLER_LAST_TICK`.
+
+3. **`server.py`** — boot wires `start_alpaca_pinger_if_needed()` after `start_auto_router_if_enabled()`. Shutdown calls `stop_alpaca_pinger()` alongside the other lifecycle teardowns. Safe no-op when creds missing.
+
+4. **`tests/test_alpaca_pinger.py`** — 5 tests:
+   - Tick refreshes `last_ping_at`, `last_ping_ok=True`, equity snapshot, clears error on success.
+   - Tick stamps `last_ping_ok=False` + error on Alpaca failure WITHOUT raising (loop survival).
+   - Tick no-ops when credentials missing (no exception, side stamp = `no_credentials`).
+   - `start_pinger_if_needed` is idempotent (no double-spawn on lifespan reloads).
+   - Loop swallows tick exceptions and continues iterating.
+
+### Verified live (preview)
+- Boot log: `risedual.alpaca_pinger - INFO - alpaca auto-pinger STARTED — every 120s`
+- `GET /api/admin/alpaca/pinger/status` → `{task_alive: true, last_tick: {error: "no_credentials"}}`
+- On prod (with creds connected), `last_ping_at` will refresh every ≤120s automatically.
+
+### What this is NOT
+This pass deliberately does NOT address Alpha's separate "should crypto trades flow through MC for audit lineage" question. That's a doctrine call (crypto authority model), not a plumbing bug. Pending operator steer.
+
+---
+
+
 ## 2026-05-30 (pass #34) — Brain status tile surfaces RedEye's new check-in identity fields
 
 ### Operator directive
