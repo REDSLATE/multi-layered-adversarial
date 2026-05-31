@@ -1,3 +1,46 @@
+## 2026-05-31 (pass #36) — execution_judge demoted to advisory-only `setup_quality_summary`
+
+### Operator finding
+The operator queried "where did `execution_judge` come from? It wasn't in my original design." Git archaeology found it was introduced 2026-05-17 by a prior agent (`commit 2273373`) as part of the Patent J doctrine sidecar — a role labeled "execution_judge" was attached to the doctrine packet alongside strategist/adversary/governor. It was NEVER in the operator's 4-seat doctrine (Strategist · Governor · Auditor · Executor) and was NEVER registered in `seat_policy.required_seats()` — yet the UI rendered it as a peer chip, visually implying execution authority.
+
+Receipts of harmlessness: code audit confirms NO gate, NO auto-router decision, and NO broker call reads `execution_judge.execution_ready`. The scorecard reads it for analytics correlation only (does ready=True correlate with wins?). So the demotion is a pure UI + role-label change with zero behavioral risk.
+
+### Shipped (Option B — rename + visual demotion)
+
+1. **`shared/crypto/doctrine/crypto_brain_sidecars.py`**:
+   - Renamed `_build_execution_judge` → `_build_setup_quality_summary` (legacy symbol kept as an alias for callers).
+   - Role label changed: `"role": "execution_judge"` → `"role": "setup_quality_summary"`.
+   - Added `"advisory_only": True` and `"blocks_execution": False` to the dict.
+   - New canonical field `summary_ok` (was `execution_ready`); legacy `execution_ready` kept as deprecated alias for scorecard backward-compat.
+   - `may_execute: False` + `may_create_direction: False` preserved (doctrine invariants on the role).
+
+2. **`shared/doctrine/strategy_doctrines.py`** (equity gap-and-go + micro-pullback): same demotion on the equity packet — role label flipped, advisory pins added, packet KEY `"execution_judge"` retained so the scorecard's audit-row joins still work.
+
+3. **`frontend/src/components/DoctrineStrip.jsx`** — visual demotion:
+   - Removed `execution_judge` from the 4-role peer-chip array; strip now renders 3 real seats only.
+   - New `SetupQualityBadge` component renders an inline neutral badge alongside the DOCTRINE pill: `setup ok` / `setup: <check_name>` / `setup: N checks failed`. Neutral grey color (never green/red authority colors).
+   - New `SetupQualityDetail` component renders the per-check breakdown in the expandable details panel with an "ADVISORY ONLY · does not gate execution" footer banner.
+   - Stale `seatHeadline(execution_judge, …)` switch branch reduced to a defensive fallback ("advisory") in case any caller still passes the legacy role string.
+
+4. **`tests/test_execution_judge_demotion_lock.py`** — new doctrine-lock with 5 pins so a future agent cannot silently re-promote:
+   - `execution_judge` MUST NOT be in `required_seats()`.
+   - Crypto packet's `role` MUST be `"setup_quality_summary"` with `advisory_only=True, blocks_execution=False`.
+   - Both equity packets (gap-and-go + micro-pullback) MUST same.
+   - `execution_ready` alias retained for scorecard backward-compat (`summary_ok` and `execution_ready` always agree).
+
+5. **`tests/test_strategy_doctrines.py::test_strategy_packet_uses_same_role_keyed_shape`** — updated to assert the new role-label contract while still pinning the demoted role's authority invariants.
+
+### Verified
+- 42 doctrine-related tests pass (12 new demotion + judge-surfacing tests, plus the existing strategy/crypto/sidecar suites).
+- Live UI screenshot at `/admin/intents`: three real seat chips, neutral inline `SETUP: N CHECKS FAILED` badge, no `EXECUTION JUDGE` peer chip. Detail-card expansion preserved.
+- 4 pre-existing failures (`test_doctrine_intent_attachment`, `test_doctrine_outcome_join_and_scorecard`) are P3-backlog drift unrelated to this pass — confirmed by stash+rerun on `main`.
+
+### Doctrine result
+The operator's original 4-seat doctrine is restored visually. Patent J's quality verdict is still computed and audited — it's just no longer dressed as a fifth seat.
+
+---
+
+
 ## 2026-05-30 (pass #35) — Alpaca auto-pinger (close the 17h staleness gap)
 
 ### Operator finding

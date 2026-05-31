@@ -329,7 +329,15 @@ def _packet(*, doctrine_version, base, seat_holders, strategist, adversary, gove
                 **governor,
             },
             "execution_judge": {
-                "role": "execution_judge",
+                # Doctrine demotion (2026-05-31): renamed `role` to
+                # `setup_quality_summary` to clarify this is ADVISORY
+                # ONLY — does not gate execution. Kept under the
+                # legacy `"execution_judge"` key in the packet so
+                # historical audit-row joins (scorecard) keep working.
+                # No MC gate or auto-router decision reads this.
+                "role": "setup_quality_summary",
+                "advisory_only": True,
+                "blocks_execution": False,
                 "seat": EQUITY_SEAT_MAP["execution_judge"],
                 "holder": holders.get(EQUITY_SEAT_MAP["execution_judge"]),
                 "may_execute": False,

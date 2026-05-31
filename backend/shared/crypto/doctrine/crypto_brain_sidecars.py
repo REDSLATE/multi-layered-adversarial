@@ -162,7 +162,19 @@ def _build_governor(base, labels, holder, snapshot):
     }
 
 
-def _build_execution_judge(base, labels, holder, snapshot):
+def _build_setup_quality_summary(base, labels, holder, snapshot):
+    """Crypto setup-quality summary — ADVISORY ONLY (2026-05-31).
+
+    Previously named `execution_judge`; renamed to make clear this is
+    a Patent J quality summary, not authority. It does NOT gate trades:
+    no MC gate, no auto-router decision, and no broker call reads this.
+    It is rendered as a small badge under the DOCTRINE strip so the
+    operator can see why a setup was scored REJECT without drilling
+    into raw labels.
+
+    The four real seats (strategist · governor · auditor · executor)
+    remain unchanged. This is doctrine output, not a seat.
+    """
     execution_checks = {
         "has_existing_intent": bool(snapshot.get("existing_intent")),
         "spread_ok": "WIDE_SPREAD" not in labels,
@@ -170,31 +182,47 @@ def _build_execution_judge(base, labels, holder, snapshot):
         "quality_ok": base.quality in {"A_QUALITY", "B_QUALITY"},
         "score_ok": base.score >= 0.60,
     }
-    execution_ready = (
+    summary_ok = (
         bool(snapshot.get("existing_intent")) and base.score >= 0.60
     )
-    # Surface WHICH checks failed (2026-05-31). Previously the judge
-    # returned a single boolean; now we name the failing keys so the
-    # operator/brain can fix the gap (a missing field vs a quality
-    # threshold vs a missing intent are all very different fixes).
     failed_checks = [k for k, v in execution_checks.items() if not v]
     return {
-        "role": "execution_judge",
+        "role": "setup_quality_summary",
+        "advisory_only": True,
+        "blocks_execution": False,
+        # Legacy seat field kept so the doctrine packet schema stays
+        # backward-compatible with historical audit rows for the
+        # scorecard's correlation joins. Operator should treat
+        # `role: "setup_quality_summary"` as authoritative going
+        # forward; the `seat` field is no longer a real seat.
         "seat": CRYPTO_SEAT_MAP["execution_judge"],
         "holder": holder,
-        "execution_ready": execution_ready,
+        "summary_ok": summary_ok,
+        # Deprecated alias retained for the scorecard's outcome-join
+        # over historical intent rows. Not used by any gate or router.
+        "execution_ready": summary_ok,
         "execution_checks": execution_checks,
         "failed_checks": failed_checks,
         "not_ready_reason": (
             None
-            if execution_ready
+            if summary_ok
             else "; ".join(failed_checks) or "no_failing_check_recorded"
         ),
-        "lesson": "Only execute after independent direction exists and crypto liquidity + spread + quality are acceptable.",
+        "lesson": "Setup-quality summary. Doctrine labels and Patent J score together. ADVISORY ONLY — does not gate execution.",
+        # Authority invariants (preserved from the legacy role). The
+        # demoted role STILL cannot execute or create direction — these
+        # pins are doctrine, not implementation detail. Keep them.
         "may_execute": False,
         "may_create_direction": False,
         "requires_existing_trade_intent": True,
     }
+
+
+# Backward-compat alias — internal callers in `lane_doctrine_router`
+# still expect the old symbol name. Removing it would require a
+# coordinated edit across all callers (and the test fixtures). The
+# alias is one line, the cost of removal is not worth it today.
+_build_execution_judge = _build_setup_quality_summary
 
 
 # ─── pure-math helpers (no DB, no async, no lane crosstalk) ──────────

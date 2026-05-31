@@ -184,7 +184,14 @@ def test_pullback_on_leading_gapper_still_scores():
 
 def test_strategy_packet_uses_same_role_keyed_shape():
     """Existing audit / scorecard / auto-retire layers expect the same
-    seat shape as the generic doctrine. Both strategies must comply."""
+    packet shape as the generic doctrine. Both strategies must comply.
+
+    Note (2026-05-31 demotion): the packet KEY for the demoted
+    advisory role remains `execution_judge` (scorecard backward-compat)
+    but its `role` label is now `setup_quality_summary`. Other roles
+    keep `role == key`.
+    """
+    real_seat_roles = ("strategist", "adversary", "governor")
     for strategy in ("gap_and_go", "micro_pullback"):
         snap_builder = (
             _good_gap_and_go_snapshot if strategy == "gap_and_go"
@@ -193,9 +200,17 @@ def test_strategy_packet_uses_same_role_keyed_shape():
         packet = build_strategy_packet(strategy, snap_builder(strategy=strategy))
         assert packet["event_type"] == "BRAIN_DOCTRINE_SIDECAR_PACKET"
         assert packet["lane"] == "equity"
-        for role in ("strategist", "adversary", "governor", "execution_judge"):
+        for role in real_seat_roles:
             seat = packet["seats"][role]
             assert seat["role"] == role
             assert seat["may_execute"] is False
             assert "seat" in seat
             assert "holder" in seat
+        # Demoted advisory role — key kept, role label demoted.
+        ej = packet["seats"]["execution_judge"]
+        assert ej["role"] == "setup_quality_summary"
+        assert ej["advisory_only"] is True
+        assert ej["blocks_execution"] is False
+        assert ej["may_execute"] is False
+        assert "seat" in ej
+        assert "holder" in ej

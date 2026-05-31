@@ -35,15 +35,21 @@ const SEAT_ICON = {
   strategist: Sparkle,
   adversary: Sword,
   governor: Shield,
-  execution_judge: Lightning,
 };
 
 const SEAT_LABEL = {
   strategist: "Strategist",
   adversary: "Adversary",
   governor: "Governor",
-  execution_judge: "Execution Judge",
 };
+
+// The four-seat strip renders ONLY the real seats now. `execution_judge`
+// was a doctrine-output label masquerading as a seat (2026-05-31
+// demotion). Its data is still shipped in the packet under
+// `seats.execution_judge` (key kept for scorecard backward-compat),
+// but it's rendered as an inline Setup-Quality badge under the DOCTRINE
+// pill — never as a peer chip — to stop it visually implying authority.
+const REAL_SEATS = ["strategist", "adversary", "governor"];
 
 function fmtNum(v, digits = 2) {
   if (v === null || v === undefined || Number.isNaN(Number(v))) return "—";
@@ -102,21 +108,10 @@ function seatHeadline(role, seat) {
     };
   }
   if (role === "execution_judge") {
-    const ready = !!seat.execution_ready;
-    const failed = (seat.failed_checks && Array.isArray(seat.failed_checks))
-      ? seat.failed_checks
-      : Object.entries(seat.execution_checks || {})
-          .filter(([, v]) => v === false || v === null || v === undefined)
-          .map(([k]) => k);
-    return {
-      text: ready
-        ? "READY"
-        : failed.length === 1
-          ? `not ready · ${failed[0]}`
-          : `not ready · ${failed.length} checks failed`,
-      color: ready ? "#10B981" : "#F59E0B",
-      flagged: !ready,
-    };
+    // No longer rendered as a peer seat chip (2026-05-31 demotion).
+    // Kept here only as a defensive fallback in case any caller still
+    // passes the legacy role string.
+    return { text: "advisory", color: "#A1A1AA", flagged: false };
   }
   return { text: "—", color: "#A1A1AA", flagged: false };
 }
@@ -233,6 +228,91 @@ function SeatDetailCard({ role, seat }) {
   );
 }
 
+// ───────────────────────── Setup-Quality badge ──────────────────────
+// Renders the (demoted, advisory-only) setup-quality summary as a
+// small inline badge alongside the DOCTRINE quality pill. NEVER renders
+// as a peer seat chip — that's the visual lie this demotion fixes.
+function SetupQualityBadge({ seat, testid }) {
+  const ok = !!(seat?.summary_ok ?? seat?.execution_ready);
+  const failed = (seat?.failed_checks && Array.isArray(seat.failed_checks))
+    ? seat.failed_checks
+    : Object.entries(seat?.execution_checks || {})
+        .filter(([, v]) => v === false || v === null || v === undefined)
+        .map(([k]) => k);
+  const text = ok
+    ? "setup ok"
+    : failed.length === 1
+      ? `setup: ${failed[0]}`
+      : `setup: ${failed.length} checks failed`;
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 border font-mono text-[10px] uppercase tracking-wider"
+      style={{
+        borderColor: ok ? "#10B981" : "#A1A1AA",
+        color: ok ? "#10B981" : "#A1A1AA",
+        background: "transparent",
+      }}
+      title="Setup-quality summary · ADVISORY ONLY · does not gate execution"
+      data-testid={testid}
+    >
+      {text}
+    </span>
+  );
+}
+
+function SetupQualityDetail({ seat, testid }) {
+  if (!seat) return null;
+  const checks = seat.execution_checks || {};
+  const entries = Object.entries(checks);
+  return (
+    <div
+      className="border border-rd-border bg-rd-bg2 p-3 md:col-span-2"
+      data-testid={testid}
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <Lightning size={11} weight="bold" className="text-rd-dim" />
+        <span className="text-[10px] uppercase tracking-widest text-rd-dim">
+          Setup Quality
+        </span>
+        <span className="text-[10px] font-mono text-rd-muted italic ml-auto">
+          ADVISORY ONLY · does not gate execution
+        </span>
+      </div>
+      {entries.length > 0 ? (
+        <ul className="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-1">
+          {entries.map(([k, v]) => (
+            <li
+              key={k}
+              className="text-[11px] font-mono flex items-center gap-1.5"
+            >
+              <span
+                style={{
+                  color: v ? "#10B981" : "#A1A1AA",
+                  fontWeight: 700,
+                }}
+              >
+                {v ? "✓" : "✗"}
+              </span>
+              <span className="text-rd-text">{k.replaceAll("_", " ")}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="text-[11px] font-mono text-rd-dim italic">
+          no checks recorded
+        </div>
+      )}
+      {seat.lesson && (
+        <div className="text-[10px] font-mono text-rd-dim italic leading-relaxed mt-2 pt-2 border-t border-rd-border">
+          {seat.lesson}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+
 export default function DoctrineStrip({ packet, intentId }) {
   const [open, setOpen] = useState(false);
   if (!packet || packet.error) {
@@ -290,7 +370,7 @@ export default function DoctrineStrip({ packet, intentId }) {
           </span>
         )}
         <div className="flex flex-wrap gap-1.5 ml-1">
-          {["strategist", "adversary", "governor", "execution_judge"].map((role) => (
+          {REAL_SEATS.map((role) => (
             <SeatChip
               key={role}
               role={role}
@@ -299,6 +379,16 @@ export default function DoctrineStrip({ packet, intentId }) {
             />
           ))}
         </div>
+        {/* Setup-quality summary — ADVISORY ONLY (demoted from a peer
+            seat 2026-05-31). Rendered as a small inline badge so it
+            never visually implies authority. The detail card below
+            still shows the per-check breakdown for transparency. */}
+        {seats.execution_judge && (
+          <SetupQualityBadge
+            seat={seats.execution_judge}
+            testid={`doctrine-setup-quality-${intentId}`}
+          />
+        )}
         <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-rd-dim">
           {open ? "hide" : "details"}
           {open ? (
@@ -314,9 +404,15 @@ export default function DoctrineStrip({ packet, intentId }) {
           className="px-3 pb-3 pt-1 grid grid-cols-1 md:grid-cols-2 gap-3"
           data-testid={`doctrine-detail-${intentId}`}
         >
-          {["strategist", "adversary", "governor", "execution_judge"].map((role) => (
+          {REAL_SEATS.map((role) => (
             <SeatDetailCard key={role} role={role} seat={seats[role]} />
           ))}
+          {seats.execution_judge && (
+            <SetupQualityDetail
+              seat={seats.execution_judge}
+              testid={`doctrine-setup-quality-detail-${intentId}`}
+            />
+          )}
           {(base.reasons || []).length > 0 && (
             <div className="md:col-span-2 border border-rd-border bg-rd-bg2 p-3" data-testid={`doctrine-reasons-${intentId}`}>
               <div className="text-[10px] uppercase tracking-widest text-rd-dim mb-1.5">
