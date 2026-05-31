@@ -1,3 +1,19 @@
+# ✅ 2026-05-31 — Finnhub LIVE + 10yr S&P-500 historical backfill COMPLETE
+
+**1,234,440 daily candles across all 502 S&P-500 symbols, 10 years deep.**
+NVDA verified: 2016-06-03 ($1.16) → 2026-05-29 ($211.15). Zero failures.
+~10 min wall time at 55 rpm (Finnhub basic-tier ceiling = 60 rpm).
+
+- Live Finnhub poller running every 5 min (currently 8 patterns_universe seed symbols — expand to S&P 500 in next pass).
+- Operator backfill endpoints: `POST /api/admin/feeders/finnhub/backfill/symbol`, `POST /universe`, `GET /universe/{job_id}`, `POST .../cancel`.
+- Bulk-write persistence keeps API responsive (auth latency 378ms during backfill).
+- Doctrine: `source: "finnhub_equity"`, `ingested_via: "finnhub_backfill"` on every row.
+
+**Brain training substrate is now live** — brains can pull a decade of OHLCV per S&P symbol via existing `/api/admin/market-data/daily-snapshots/history/{symbol}` (capped at 5 days for snapshot retention) OR direct query against `shared_ohlcv_bars`.
+
+---
+
+
 # ✅ 2026-05-31 — Polygon daily equity feeder LIVE
 
 The daily snapshot system's `daily` block is now backed by Polygon's

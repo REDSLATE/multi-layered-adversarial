@@ -469,6 +469,8 @@ api_router.include_router(opinion_silence_watchdog_router)
 api_router.include_router(brain_health_router)
 api_router.include_router(market_data_snapshot_router)
 api_router.include_router(daily_snapshots_router)
+from routes.finnhub_backfill import router as finnhub_backfill_router
+api_router.include_router(finnhub_backfill_router)
 api_router.include_router(brain_runtime_router)
 api_router.include_router(shelly_router)
 api_router.include_router(brain_memory_ingest_router)

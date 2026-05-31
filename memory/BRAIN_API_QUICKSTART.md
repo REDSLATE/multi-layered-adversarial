@@ -121,9 +121,28 @@ holidays are skipped. The previous **5 trading days** are retained
 5-day window are wiped.
 
 **Bar sources:**
-- `intraday` (5m) block → `finnhub_equity` feeder (intraday OHLCV polled every 5 minutes during market hours).
-- `daily` (1d) block → `polygon` feeder (entire US equity market pulled in one grouped-daily call ~30 min after close).
+- **`intraday` (5m) block** → `finnhub_equity` feeder (intraday OHLCV polled every 5 minutes during market hours).
+- **`daily` (1d) block** → `polygon` feeder (entire US equity market pulled in one grouped-daily call ~30 min after close).
+- **Historical backfill** → Finnhub backfill endpoints below (10 years of daily bars per symbol).
 - Per-block `bar_source` echoes which feeder served that row's bar; nulls land as `bar_source: null`.
+
+### Operator backfill endpoints (JWT only)
+
+```
+# Backfill ONE symbol (blocking, ~1s per symbol for daily/10yr)
+POST /api/admin/feeders/finnhub/backfill/symbol?symbol=NVDA&resolution=D&lookback_years=10
+
+# Backfill the WHOLE S&P 500 universe (background job; rpm-throttled)
+POST /api/admin/feeders/finnhub/backfill/universe?resolution=D&lookback_years=10&rpm=55
+
+# Poll progress
+GET  /api/admin/feeders/finnhub/backfill/universe/{job_id}
+
+# Cancel a running job
+POST /api/admin/feeders/finnhub/backfill/universe/{job_id}/cancel
+```
+
+`resolution` matches Finnhub's: `1` | `5` | `15` | `60` | `240` | `D`. Daily over 10 years = ~2,500 candles per symbol returned in one call. Throttle defaults to 50 rpm (Finnhub's basic plan ceiling is 60/min — leave headroom for the live worker).
 
 ```
 # Which labels have been captured today?

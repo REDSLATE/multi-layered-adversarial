@@ -1,3 +1,30 @@
+## 2026-05-31 (pass #41) — Finnhub LIVE + 10yr historical backfill
+
+### Operator action
+Provided Finnhub API key with basic-tier access (60 rpm, 10 years of `/stock/candle` history). Earlier "access denied" was misread on my part — the key works.
+
+### Shipped
+1. **`FINNHUB_API_KEY` + `FINNHUB_ENABLED=true`** in `backend/.env`. Live poller now ticks every 5 min, fetches 5m bars for `patterns_universe` symbols (currently 8 seed symbols; should be expanded to S&P 500 — see backlog).
+2. **`backend/routes/finnhub_backfill.py`** — operator-only historical backfill endpoints:
+   - `POST /api/admin/feeders/finnhub/backfill/symbol` — single-symbol (blocking, ~1s for daily/10yr)
+   - `POST /api/admin/feeders/finnhub/backfill/universe` — full S&P-500 (background job, rpm-throttled)
+   - `GET /api/admin/feeders/finnhub/backfill/universe/{job_id}` — progress poll
+   - `POST .../cancel` — cancel a running job
+3. **Bulk-write persistence** — single `bulk_write` per symbol instead of per-bar `update_one`. ~5x faster, doesn't block the event loop. Other endpoints (auth, snapshots) stay responsive (380ms auth during backfill).
+4. **Rate-limit fingerprinted**: Finnhub returned `x-ratelimit-limit: 60` headers — confirmed basic-tier ceiling. Default backfill rpm bumped to 50 (was 30), leaves 10/min headroom for live worker.
+5. **+5 backfill tests** (happy path, no_data, fetch_failed, bad-resolution, idempotency). All pass.
+6. **Brain doc + test_credentials.md updated** with key + backfill endpoints.
+
+### Verified end-to-end
+- Single-symbol NVDA daily 10yr backfill: **2,511 candles, 2016-06-03 ($1.16) → 2026-05-29 ($211.15)**, 1.2s wall time.
+- **Full S&P-500 universe backfill: COMPLETE — 1,234,440 daily bars across 502 symbols, 0 failures, ~10 min wall time at 55 rpm.**
+- Auth latency during backfill: **378ms** (was timing out before bulk-write fix).
+- Sample range confirmed: NVDA oldest 2016-06-03 (close=$1.162), newest 2026-05-29 (close=$211.15).
+
+### Doctrine pin
+- Backfill writes to `shared_ohlcv_bars` with `source: "finnhub_equity"`, `ingested_via: "finnhub_backfill"` (distinguishable from live-polled bars). No execution authority anywhere in this path.
+
+
 ## 2026-05-31 (pass #40) — Polygon (Massive) daily equity feeder live
 
 ### Operator ask
