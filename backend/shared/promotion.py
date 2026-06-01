@@ -32,7 +32,7 @@ from namespaces import (
     SHARED_PROMOTION_PROPOSALS, SHARED_RECEIPTS, SHARED_MEMORY,
     SHARED_HEARTBEATS, RUNTIMES, AUTHORITY_LADDER, AUTHORITY_LEVEL,
     DEFAULT_AUTHORITY, GOVERNOR_STATE, PROMOTION_THRESHOLDS,
-    REQUIRE_COUNTERSIGN,
+    REQUIRE_COUNTERSIGN, PATENT_SUSPENSION_ACTIVE,
     is_on_ladder, next_authority,
 )
 
@@ -127,15 +127,33 @@ async def evaluate_readiness(runtime: str, target_authority: str, artifact: dict
     add("heartbeat_recent", hb_age_seconds is not None and hb_age_seconds <= T["heartbeat_max_age_seconds"], hb_age_seconds, f"<= {T['heartbeat_max_age_seconds']}s")
 
     all_pass = all(c["pass"] for c in checks)
+
+    # Patent suspension (2026-02-17 operator directive). The 8-check Patent J
+    # gate cascaded after the crash and locked every brain out of execution.
+    # Operator suspended the readiness verdict but the checks still RUN above
+    # so the operator can see WHICH checks would have failed under doctrine.
+    # Only the FINAL `passed` is forced True. Flip
+    # `namespaces.PATENT_SUSPENSION_ACTIVE = False` to re-engage.
+    suspended = bool(PATENT_SUSPENSION_ACTIVE) and not all_pass
+    if suspended:
+        effective_pass = True
+    else:
+        effective_pass = all_pass
+
     return {
         "runtime": runtime,
         "target_authority": target_authority,
         "evaluated_at": _iso(now),
-        "passed": all_pass,
+        "passed": effective_pass,
+        "doctrine_passed": all_pass,  # what doctrine WOULD have said
+        "suspended": suspended,
         "checks": checks,
         "artifact_id": (artifact or {}).get("artifact_id"),
         "thresholds": T,
         "note": (
+            "Patent J readiness SUSPENDED — operator directive 2026-02-17. "
+            "Checks above are advisory only; verdict force-passed."
+            if suspended else
             "Patent J readiness gate. PASS still requires operator countersign "
             "to elevate authority — the gate alone never promotes."
         ),

@@ -339,6 +339,31 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
     for c in cap_evals:
         gates.append({"name": c.name, "passed": c.passed, "reason": c.reason})
 
+    # Patent suspension (2026-02-17 operator directive). The Patent-stack
+    # restrictions cascaded after the crash and locked every brain out of
+    # execution. Operator suspended every non-seat gate. The gates still
+    # RUN above so the audit trail records what WOULD have failed under
+    # doctrine, but their verdicts are force-passed here and tagged
+    # `suspended: true`. Seat-layer gates (executor_seat_check,
+    # schema_invariants, action_routable, live_trading_disabled) are NEVER
+    # forced — they remain authoritative. See `namespaces.SEAT_LAYER_GATES`.
+    from namespaces import (  # noqa: WPS433
+        PATENT_SUSPENSION_ACTIVE,
+        SEAT_LAYER_GATES,
+    )
+    if PATENT_SUSPENSION_ACTIVE:
+        for g in gates:
+            if g["name"] in SEAT_LAYER_GATES:
+                continue
+            if g.get("passed") is False:
+                g["suspended"] = True
+                g["doctrine_reason"] = g.get("reason")
+                g["reason"] = (
+                    f"[SUSPENDED — Patent-stack restrictions lifted by "
+                    f"operator] {g.get('reason')}"
+                )
+                g["passed"] = True
+
     verdict = "would_pass" if all(g["passed"] for g in gates) else "would_block"
 
     # MC Shelly — one row per gate, tagged with intent context. Lets

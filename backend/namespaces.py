@@ -649,6 +649,31 @@ PROMOTION_THRESHOLDS = {
 # and /propose will fall back to the pending-then-countersign flow.
 REQUIRE_COUNTERSIGN = False
 
+# ─── Patent suspension (2026-02-17 operator directive) ──────────────────────
+# Cascading post-crash, the Patent-stack restrictions (J readiness, G
+# artifact, broker safety lanes, RoadGuard, R:R floor, exposure caps, council
+# verdict) were keeping every brain locked out of execution. The operator
+# explicitly suspended every non-seat restriction. SEAT POLICY remains the
+# sole gate of authority — every other gate becomes advisory: it still RUNS
+# (so the operator sees what would have failed under doctrine) but its
+# verdict no longer blocks the chain.
+#
+# Flip back to False to re-engage the full doctrine stack. The audit trail
+# still records every gate's would-have-been verdict, and Patent J's
+# evaluate_readiness still returns its 8-check breakdown — only the FINAL
+# passed verdict is forced True while this flag is on.
+PATENT_SUSPENSION_ACTIVE = True
+
+# Gates that always evaluate authoritatively (the seat layer + schema/shape
+# sanity that aren't policy restrictions at all). Everything not in this
+# set is force-passed when PATENT_SUSPENSION_ACTIVE is True.
+SEAT_LAYER_GATES = frozenset({
+    "schema_invariants",       # value-shape pin, not a restriction
+    "action_routable",         # HOLD isn't an order, can't route literally
+    "executor_seat_check",     # THE seat function
+    "live_trading_disabled",   # already a passthrough no-op
+})
+
 # Heartbeat staleness threshold for the dashboard alert. A runtime is "stale"
 # if its last_seen is older than this. Tuned so a single missed heartbeat
 # (45s loop) is forgiven, but two consecutive misses raise the alarm.

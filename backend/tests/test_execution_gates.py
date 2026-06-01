@@ -98,25 +98,31 @@ async def test_gate_chain_passes_when_everything_aligned():
 
 @pytest.mark.asyncio
 async def test_gate_chain_blocks_when_broker_disconnected():
+    """Patent-suspension (2026-02-17): broker_connected is suspended.
+    The gate still RUNS and records the doctrine_reason but is force-
+    passed with `suspended=True`. Seat policy is the only authoritative
+    gate while the suspension flag is active."""
     intent = _intent()
     with _enter_all(_patches(holder="camaro", broker_connected=False, daily_spend=0.0)):
         res = await _evaluate_gates(intent, order_notional_usd=10.0)
-    assert res["verdict"] == "would_block"
     bg = next(g for g in res["gates"] if g["name"] == "broker_connected")
-    assert bg["passed"] is False
+    assert bg["passed"] is True, "broker_connected must be suspended under PATENT_SUSPENSION_ACTIVE"
+    assert bg.get("suspended") is True
+    assert bg.get("doctrine_reason"), "doctrine_reason should preserve what would have blocked"
 
 
 @pytest.mark.asyncio
 async def test_gate_chain_blocks_when_daily_cap_would_be_breached():
-    """Daily cap is $1M (paper-permissive); the test spends 99.999% of it
-    so a $10k incremental order pushes past the ceiling."""
+    """Patent-suspension (2026-02-17): cap_per_day is suspended.
+    The cap still RUNS and surfaces the doctrine_reason but never
+    blocks. Operator accepted the risk of suspending exposure caps."""
     intent = _intent()
     near_cap = caps_mod.CAP_PER_DAY_USD - 100.0
     with _enter_all(_patches(holder="camaro", broker_connected=True, daily_spend=near_cap)):
         res = await _evaluate_gates(intent, order_notional_usd=10_000.0)
     daily = next(g for g in res["gates"] if g["name"] == "cap_per_day")
-    assert daily["passed"] is False
-    assert res["verdict"] == "would_block"
+    assert daily["passed"] is True, "cap_per_day must be suspended under PATENT_SUSPENSION_ACTIVE"
+    assert daily.get("suspended") is True
 
 
 @pytest.mark.asyncio

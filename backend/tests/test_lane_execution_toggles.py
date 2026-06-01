@@ -191,8 +191,12 @@ async def test_gate_chain_blocks_when_lane_execution_off():
     }
     result = await _evaluate_gates(sim_intent, 10.0)
     gate = next(g for g in result["gates"] if g["name"] == "lane_execution_enabled")
-    assert gate["passed"] is False
-    assert "NOT enabled" in gate["reason"] or "not enabled" in gate["reason"].lower()
+    # Patent-suspension (2026-02-17): lane_execution_enabled is suspended.
+    # Gate still runs and records what would have happened under doctrine
+    # via `suspended` + `doctrine_reason`, but force-passed.
+    assert gate["passed"] is True
+    assert gate.get("suspended") is True
+    assert "NOT enabled" in gate.get("doctrine_reason", "") or "not enabled" in gate.get("doctrine_reason", "").lower()
 
 
 @pytest.mark.tripwire

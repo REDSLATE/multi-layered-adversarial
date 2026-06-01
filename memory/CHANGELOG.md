@@ -1,3 +1,60 @@
+## 2026-02-17 (pass #49) — PATENT SUSPENSION: only seat policy gates execution
+
+### Operator pin
+Cascading post-crash, the Patent-stack restrictions (J readiness, broker
+lanes, RoadGuard, R:R, exposure caps, council verdict, confidence floors)
+were locking every brain out of execution. Operator directive: suspend
+every non-seat restriction. Seat policy remains the sole authoritative gate.
+
+### Shipped
+1. **`namespaces.py`**:
+   - New `PATENT_SUSPENSION_ACTIVE = True` master flag.
+   - New `SEAT_LAYER_GATES` frozenset — the gates that stay authoritative:
+     `schema_invariants`, `action_routable`, `executor_seat_check`,
+     `live_trading_disabled`. Everything else is force-passed while the
+     master flag is on.
+2. **`shared/execution.py::_evaluate_gates`** — after every gate runs,
+   any gate not in `SEAT_LAYER_GATES` with `passed=False` is mutated to:
+   - `passed: True`
+   - `suspended: True`
+   - `doctrine_reason: <original reason>`
+   - `reason: "[SUSPENDED — Patent-stack restrictions lifted by operator] <original>"`
+   The verdict is then computed off the rewritten chain. Audit trail of
+   what doctrine WOULD have said is preserved on every gate row.
+3. **`shared/promotion.py::evaluate_readiness`** — final `passed` is forced
+   True under suspension. The 8 checks still run and surface in the
+   response; new `suspended: bool` + `doctrine_passed: bool` fields expose
+   what Patent J would have said.
+4. **Tests updated**:
+   - `test_gate_chain_blocks_when_broker_disconnected` → now asserts
+     `passed=True, suspended=True, doctrine_reason preserved`.
+   - `test_gate_chain_blocks_when_daily_cap_would_be_breached` → same
+     suspension contract.
+   - `test_gate_chain_blocks_when_lane_execution_off` → same.
+
+### Verified
+- 96/96 tests green across execution/promotion/lane/seat/rr/roster suites.
+- Live `_evaluate_gates` run on a crypto BUY intent shows expected pattern:
+  only `executor_seat_check` blocks (seat vacant in preview), every other
+  non-seat gate force-passes with `[SUSPENDED]` tag + preserved
+  doctrine_reason.
+- Lint clean.
+
+### Reverting
+Set `namespaces.PATENT_SUSPENSION_ACTIVE = False` and redeploy. Every gate
+becomes authoritative again. No code changes required — the audit trail
+of `suspended:true` rows lets the operator see what was let through
+during the suspension window.
+
+### Doctrine pin (preserved through suspension)
+- Seat policy (who can execute what lane) — STILL AUTHORITATIVE.
+- Schema invariants (`may_execute=False`, `requires_gate_pass=True`) —
+  STILL AUTHORITATIVE (value-shape pin, not a restriction).
+- `action_routable` — STILL AUTHORITATIVE (HOLDs literally aren't orders).
+
+---
+
+
 ## 2026-02-17 (pass #48) — Seat registry drift banner on Intents page
 
 ### Shipped
