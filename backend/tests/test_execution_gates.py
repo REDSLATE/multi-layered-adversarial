@@ -45,13 +45,16 @@ def _intent(stack="camaro", action="BUY", holds=True, posted_under=None, lane="e
     }
 
 
-def _patches(*, holder, broker_connected, daily_spend, lane="equity"):
+def _patches(*, holder, broker_connected, daily_spend, lane="equity", lane_enabled=True):
     """Canonical patch set for the gate chain.
 
     The position-model lookup queries `seats_with_execute(lane)` to find
     eligible seats, then iterates calling `get_seat_holder(seat)`. Patch
     BOTH so the test controls who's "currently in the seat" without
     touching the live DB.
+
+    `lane_enabled` (default True) patches the lane-execution toggle so
+    tests don't need to seed the `shared_lane_execution_toggles` doc.
     """
     eligible_seats = ["executor"] if lane == "equity" else ["crypto"]
 
@@ -65,6 +68,7 @@ def _patches(*, holder, broker_connected, daily_spend, lane="equity"):
         patch("shared.execution.get_alpaca_adapter", new=broker_mock),
         patch("shared.exposure_caps.get_alpaca_adapter", new=AsyncMock(return_value=None)),
         patch("shared.exposure_caps.daily_spend_usd", new=AsyncMock(return_value=daily_spend)),
+        patch("shared.lane_execution.is_lane_execution_enabled", new=AsyncMock(return_value=lane_enabled)),
     ]
 
 

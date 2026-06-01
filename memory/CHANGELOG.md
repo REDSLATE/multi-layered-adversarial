@@ -1,3 +1,52 @@
+## 2026-02-17 (pass #51) — Aggressive auto-router config + lane toggle is now master kill
+
+### Operator pin
+"Let it rip" config. Auto-router fires brain BUY/SELL intents through the
+broker without operator approval. Lane toggle in the UI is the master kill
+switch; everything else stays suspended.
+
+### Shipped
+1. **`namespaces.py::SEAT_LAYER_GATES`** — added `lane_execution_enabled`.
+   This gate is now AUTHORITATIVE again (no longer in the suspension list).
+   With every other patent suspended, the lane toggle is the operator's
+   only "stop trading NOW" surface; it must block.
+2. **`shared/auto_router.py`**:
+   - `AUTO_ROUTER_NOTIONAL_USD` default: $100 → **$10**.
+   - `RISEDUAL_EXEC_CONFIDENCE_FLOOR` default: 0.35 → **0.30**.
+   Both still env-overridable. Production picks up the new defaults
+   without an .env change.
+
+### Net behaviour
+- A brain emits `action=BUY action=SELL` with `confidence ≥ 0.30` → the
+  next 30-second auto-router tick picks it up.
+- Gate chain runs: seat check + lane toggle + action_routable +
+  schema_invariants. Every other patent gate runs advisory-only (still
+  surfaces what it would have blocked, but force-passes).
+- If seat is held and lane is enabled, intent goes to the broker for
+  $10. No operator click.
+- Operator hits the lane toggle in UI → `lane_execution_enabled` blocks
+  → auto-router skips that lane until re-enabled.
+
+### Tests
+- `test_lane_execution_toggles::test_gate_chain_blocks_when_lane_execution_off`
+  reverted to asserting the gate BLOCKS (no longer suspended).
+- `test_execution_gates._patches` extended with `lane_enabled` flag
+  (default True) so happy-path tests don't have to seed
+  `shared_lane_execution_toggles`.
+- 56/56 tests green across `test_execution_gates`,
+  `test_lane_execution_toggles`, `test_auto_router_helpers`,
+  `test_promotion_gate`.
+
+### Operator quick-ref
+- Stop ALL trading instantly: turn off BOTH lane toggles in the UI.
+- Resume: turn them back on; next 30s tick re-engages.
+- Change order size globally: set `AUTO_ROUTER_NOTIONAL_USD` env var.
+- Per-intent override: brain can stamp `requested_notional_usd` on the
+  intent and the auto-router will use that (clamped by sizing gate).
+
+---
+
+
 ## 2026-02-17 (pass #50) — Operator-Inject button + opponent label cleanup
 
 ### Shipped

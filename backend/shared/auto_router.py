@@ -46,7 +46,11 @@ logger = logging.getLogger("auto_router")
 # Loop tunables — env-driven so we can poke them without redeploys.
 AUTO_ROUTER_ENABLED = os.environ.get("AUTO_ROUTER_ENABLED", "true").lower() == "true"
 AUTO_ROUTER_INTERVAL_SEC = int(os.environ.get("AUTO_ROUTER_INTERVAL_SEC", "30"))
-AUTO_ROUTER_NOTIONAL_USD = float(os.environ.get("AUTO_ROUTER_NOTIONAL_USD", "100"))
+# 2026-02-17 (pass #51, operator "let it rip" config): default lowered
+# from $100 → $10. First-light autonomous trades are tiny so a bad
+# signal costs lunch, not rent. Operator can lift via env var or by
+# stamping `requested_notional_usd` on the intent itself.
+AUTO_ROUTER_NOTIONAL_USD = float(os.environ.get("AUTO_ROUTER_NOTIONAL_USD", "10"))
 AUTO_ROUTER_MAX_PER_TICK = int(os.environ.get("AUTO_ROUTER_MAX_PER_TICK", "5"))
 AUTO_ROUTER_EMAIL = "auto-router@mission-control"
 
@@ -80,14 +84,13 @@ async def _route_one(intent: dict) -> dict:
     # Lane-specific exec floor: crypto 0.30, equity 0.30 (operator
     # spec). Adjust here if you want different floors per lane.
     intent_lane = str(intent.get("lane") or "").lower()
-    # 2026-05-24 (operator decision): Lifted from 0.30 → 0.35 to keep
-    # weak opinions in shadow until the new outcome data (from the
-    # max_hold_time lift) proves they deserve broker eligibility.
-    # Observation receipts continue to record at OBSERVATION_MIN_CONFIDENCE
-    # (0.30) — that's shadow-only logging, not order routing.
-    # Doctrine: longer hold = outcome learning; this floor = aggression
-    # change. Re-evaluate after 1 week of resolved-outcome data.
-    min_exec_conf = float(os.environ.get("RISEDUAL_EXEC_CONFIDENCE_FLOOR", "0.35"))
+    # 2026-02-17 (pass #51, operator "let it rip" config): floor
+    # lowered from 0.35 → 0.30. Lets the auto-router fire on more
+    # mid-conviction signals while patents are suspended. Shadow-
+    # learning floor (observation receipts) is still 0.30, so this
+    # change effectively merges the two; the lane toggle is the
+    # operator's master kill if signals get noisy.
+    min_exec_conf = float(os.environ.get("RISEDUAL_EXEC_CONFIDENCE_FLOOR", "0.30"))
     classification = classify_brain_intent(intent, min_exec_conf=min_exec_conf)
     if classification.advisory_only:
         # Ladder doctrine (2026-02-18): before classifying as pure

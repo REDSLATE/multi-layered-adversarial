@@ -672,6 +672,14 @@ SEAT_LAYER_GATES = frozenset({
     "action_routable",         # HOLD isn't an order, can't route literally
     "executor_seat_check",     # THE seat function
     "live_trading_disabled",   # already a passthrough no-op
+    # 2026-02-17 (pass #51): the operator's lane toggle is the master
+    # kill switch for autonomous trading. With every other patent
+    # suspended, this is the last remaining "I want to stop trading
+    # NOW" surface. Pulled OUT of the suspension list so the operator
+    # can disable a lane (or all lanes) from the UI and the auto-router
+    # will respect it. Suspending all other doctrine is fine; suspending
+    # the master kill is not.
+    "lane_execution_enabled",
 })
 
 # Heartbeat staleness threshold for the dashboard alert. A runtime is "stale"
