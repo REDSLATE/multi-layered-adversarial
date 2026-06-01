@@ -72,23 +72,40 @@ async def get_executor_holder() -> Optional[str]:
 
 async def get_seat_holder(seat: str) -> Optional[str]:
     """Return the brain currently holding `seat` (e.g. 'executor',
-    'crypto'), or None if the seat is empty. Reads from the multi-seat
-    roster. Falls back to the legacy executor_seat doc for back-compat
-    with the original single-seat 'executor' registry."""
+    'crypto'), or None if the seat is empty.
+
+    Precedence (2026-02-17 doctrine refresh):
+        1. Multi-seat roster `shared_brain_roster.assignments` — the
+           UI Quick Seat Switches and `/admin/roster/assign` write
+           here. This is the operator's source of truth.
+        2. Legacy `shared_executor_seat` doc — fallback ONLY if the
+           roster has no assignment for `executor`. Preserves the
+           original rotation surface for back-compat with any code
+           path that still calls `POST /api/executor/rotate`.
+
+    Before this refresh, precedence was reversed (legacy doc won) and
+    a stale `shared_executor_seat` row from a pre-QSS rotation could
+    silently override the operator's live Quick Seat Switches choice
+    — causing executor_seat_check to block intents under a holder the
+    operator no longer thought was in the seat. See
+    `/api/admin/seat-registry/diagnose` for live drift detection.
+    """
     if not seat:
         return None
     seat_l = seat.lower()
-    # Legacy single-seat executor doc takes precedence if it has a
-    # rotation entry — preserves the audited rotation history.
+    # Roster wins. Read the multi-seat assignment first.
+    from shared.roster import get_roster  # noqa: WPS433
+    r = await get_roster()
+    assigned = (r.get("assignments") or {}).get(seat_l)
+    if assigned in RUNTIMES:
+        return assigned
+    # Fallback: legacy `shared_executor_seat` doc only if asked about
+    # the equity executor AND the roster has no assignment for it.
     if seat_l == "executor":
         h = await get_executor_holder()
         if h:
             return h
-    # Multi-seat roster (decider, governor, advisor, opponent, crypto…).
-    from shared.roster import get_roster  # noqa: WPS433
-    r = await get_roster()
-    assigned = (r.get("assignments") or {}).get(seat_l)
-    return assigned if assigned in RUNTIMES else None
+    return None
 
 
 def seats_with_execute(lane: Optional[str]) -> list[str]:

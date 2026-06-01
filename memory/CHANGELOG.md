@@ -1,3 +1,42 @@
+## 2026-02-17 (pass #47) — Seat registry precedence flip + diagnostic endpoint
+
+### Operator pin
+The execution gate was silently reading from a stale `shared_executor_seat`
+doc (last touched 2026-05-19) instead of the live roster updated via the
+Quick Seat Switches UI. That made `executor_seat_check` block intents
+under a holder the operator no longer thought was in the seat.
+
+### Shipped
+1. **`shared/executor_seat.py::get_seat_holder` — precedence flipped**:
+   - Reads multi-seat roster FIRST.
+   - Falls back to legacy `shared_executor_seat` doc ONLY if the roster
+     has no assignment for `executor`.
+   - Other seats (governor, auditor, crypto*) were already roster-only.
+   - QSS UI is now the unambiguous source of truth.
+2. **New `GET /api/admin/seat-registry/diagnose`** (read-only):
+   - Returns roster assignments + legacy doc + per-seat gate view + drift
+     detection + per-lane "would_route_pass" summary.
+   - One JSON answers "is the gate seeing the right holder?" without
+     reading code or two collections.
+   - Mounted at `routes/seat_registry_diagnose.py`.
+
+### Verified
+- Preview gate now sees `alpha` for executor (roster), no longer
+  `camaro` (legacy doc from 2026-05-19).
+- 142/143 tests pass across roster/seat/promotion/lane/doctrine suites.
+  The 1 failure (`test_gate_chain_passes_when_everything_aligned`) is
+  pre-existing lane-toggle fixture drift, unrelated to this change.
+- Lint clean on touched files.
+
+### Known issue surfaced by diagnose (NOT a bug — operator action)
+- Crypto executor seat (`crypto`) is vacant in the preview roster.
+  Quick Seat Switches has no assignment. Diagnostic correctly reports
+  `would_route_pass: false` for crypto lane. Operator must assign on
+  prod's QSS panel before any crypto intent will route.
+
+---
+
+
 ## 2026-02-17 (pass #46) — Doctrine packet purged of legacy seat names; UI surfaces real block reason; operator-typed notional
 
 ### Operator pin
