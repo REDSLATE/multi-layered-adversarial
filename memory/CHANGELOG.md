@@ -1,3 +1,31 @@
+## 2026-02-17 (pass #48) — Seat registry drift banner on Intents page
+
+### Shipped
+1. **`frontend/src/components/SeatRegistryDriftBanner.jsx`** — read-only,
+   polls `/admin/seat-registry/diagnose` every 30s. Renders nothing when
+   the registry is healthy (no drift + every lane has a holder). Renders
+   a red banner at the top of the Intents page when:
+   - The roster and the legacy `shared_executor_seat` doc disagree
+     (per `diagnose.drift`), OR
+   - Any lane reports `would_route_pass: false` (vacant executor seat).
+2. **`pages/Intents.jsx`** — mounted the banner directly under the page
+   header so it's the first thing visible.
+
+### Verified
+- Lint clean on `SeatRegistryDriftBanner.jsx` + `pages/Intents.jsx`.
+- Frontend + backend supervisor running.
+- Banner copy includes the canonical fix path: "Source of truth: Quick
+  Seat Switches. Click a brain pill on the Seats panel to assign."
+
+### What it solves
+The operator no longer needs to know `/admin/seat-registry/diagnose`
+exists. The page screams when the registry is split-brain or a lane
+is unstaffed. Catches drift in ≤30s instead of accumulating days of
+executor_seat_check blocks.
+
+---
+
+
 ## 2026-02-17 (pass #47) — Seat registry precedence flip + diagnostic endpoint
 
 ### Operator pin

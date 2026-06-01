@@ -9,6 +9,7 @@ import DoctrineStrip from "@/components/DoctrineStrip";
 import AutoRetireStrip from "@/components/AutoRetireStrip";
 import DoctrineHealthPanel from "@/components/DoctrineHealthPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
+import SeatRegistryDriftBanner from "@/components/SeatRegistryDriftBanner";
 import { toast } from "sonner";
 import {
   Lightning, ArrowsClockwise, Funnel, Pulse,
@@ -567,6 +568,14 @@ export default function Intents() {
         }
         testid="intents-header"
       />
+
+      {/* ─── Seat registry drift banner (2026-02-17, pass #48) ───
+          Surfaces any roster ↔ legacy executor_seat mismatch (or a
+          vacant execute-seat in any lane) so the operator sees the
+          desync immediately — instead of days of executor_seat_check
+          blocks piling up under a stale legacy holder. Read-only;
+          polls /admin/seat-registry/diagnose every 30s. */}
+      <SeatRegistryDriftBanner />
 
       {/* ─── Seat Roster strip (2026-05-27, pass #15) ───
           All four seats per lane in one view + freshness of each
