@@ -57,7 +57,7 @@ export default function Login() {
             { k: "ALPHA", proj: "RISEDUAL-AI-2", c: "#3B82F6" },
             { k: "CAMARO", proj: "RD4_0421", c: "#F59E0B" },
             { k: "CHEVELLE", proj: "2.1-APP", c: "#10B981" },
-            { k: "REDEYE", proj: "OPPONENT", c: "#06B6D4" },
+            { k: "REDEYE", proj: "AUDITOR", c: "#06B6D4" },
           ].map((r) => (
             <div key={r.k} className="bg-rd-bg2 p-4">
               <div className="h-1 w-full mb-3" style={{ background: r.c }} />

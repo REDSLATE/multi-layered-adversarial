@@ -242,11 +242,9 @@ export default function Overview() {
             </div>
             <ul className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-1 text-xs font-mono text-rd-muted">
               <li><span className="text-rd-text">EXECUTOR</span> — routes broker orders. Required for quorum. Any eligible brain.</li>
-              <li><span className="text-rd-text">DECIDER</span> — forms the trust / reduce / veto / observation call on each intent.</li>
+              <li><span className="text-rd-text">STRATEGIST</span> — forms the trust / reduce / veto / observation call on each intent (conviction signal).</li>
               <li><span className="text-rd-text">GOVERNOR</span> — memory firewall, readiness, calibration, promotion control.</li>
-              <li><span className="text-rd-text">ADVISOR</span> — neutral counsel. Off-ladder.</li>
-              <li><span className="text-rd-text">OPPONENT</span> — argues the contrary case. Off-ladder.</li>
-              <li><span className="text-rd-text">AUDITOR</span> — post-trade review. Scores doctrine, never decides.</li>
+              <li><span className="text-rd-text">AUDITOR</span> — post-trade review + contrary case. Scores doctrine, never decides.</li>
             </ul>
             <div className="text-[10px] text-rd-dim uppercase tracking-widest mt-4">
               Performance attaches to (lane, seat, doctrine_version) — never to a brain. Promotions and retirements target the seat doctrine. Holders rotate.

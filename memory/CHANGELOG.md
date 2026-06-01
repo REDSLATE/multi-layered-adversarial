@@ -1,3 +1,46 @@
+## 2026-02-17 (pass #50) — Operator-Inject button + opponent label cleanup
+
+### Shipped
+1. **`frontend/src/components/OperatorInjectIntent.jsx`** — new admin
+   modal trigger in the Intents page header (`ENTER MISSION CONTROL` →
+   Intents → top-right `OPERATOR INJECT` pill). Replaces the
+   browser-console workaround. Workflow:
+     - Pick lane (crypto/equity)
+     - Auto-resolves the current executor-seat holder from
+       `/admin/seat-registry/diagnose` (RedEye for crypto, Alpha for
+       equity in your prod state).
+     - Pick symbol (with preset chips: ETH/BTC/SOL/LINK or SPY/QQQ/...).
+     - Pick BUY/SELL.
+     - Type the notional `$`.
+     - Type confirm phrase `operator dip-buy` to enable fire.
+     - One button fires both `POST /intents` (under the seat holder) and
+       `POST /execution/submit` (with operator notional).
+     - Result panel shows order status, broker_id, txid, fill price OR
+       the failing gate with per-gate reasons.
+2. **`pages/Intents.jsx`** — header wired with `<OperatorInjectIntent />`.
+3. **`pages/Login.jsx`** — REDEYE label `OPPONENT` → `AUDITOR`.
+4. **`pages/Overview.jsx`** — seat enumeration list updated to the
+   canonical 4 seats (EXECUTOR, STRATEGIST, GOVERNOR, AUDITOR). Removed
+   the obsolete DECIDER/ADVISOR/OPPONENT bullets.
+
+### Verified
+- Lint clean across all 4 touched files.
+- Component renders a pill button when closed, modal when opened, with
+  confirm-phrase guard preventing accidental fire.
+
+### Not touched (intentional, separate concern)
+- Marketing landing page (`risedual/pages/Landing.jsx`) still uses the
+  word "Opponent" — that's a public-facing positioning doc, separate
+  from MC operator surface.
+- `RosterPanel.jsx` / `ParadoxRosterPanel.jsx` still reference the
+  `opponent` schema key (intentional — backend schema key is still
+  `adversary`/`opponent` for audit continuity; only user-facing labels
+  flip to "Auditor"). Will need a follow-up sweep if you want the
+  Paradox roster panel's UI text changed too.
+
+---
+
+
 ## 2026-02-17 (pass #49) — PATENT SUSPENSION: only seat policy gates execution
 
 ### Operator pin

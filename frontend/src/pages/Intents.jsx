@@ -10,6 +10,7 @@ import AutoRetireStrip from "@/components/AutoRetireStrip";
 import DoctrineHealthPanel from "@/components/DoctrineHealthPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import SeatRegistryDriftBanner from "@/components/SeatRegistryDriftBanner";
+import OperatorInjectIntent from "@/components/OperatorInjectIntent";
 import { toast } from "sonner";
 import {
   Lightning, ArrowsClockwise, Funnel, Pulse,
@@ -542,6 +543,7 @@ export default function Intents() {
         sub="Intent envelopes emitted by the four brains. Every intent is a candidate; MC's gate chain decides if it lives. Schema pins may_execute=false and requires_gate_pass=true — brains cannot route an order through this surface."
         right={
           <div className="flex items-center gap-2">
+            <OperatorInjectIntent onSubmitted={load} />
             <button
               onClick={() => setAutoRefresh((v) => !v)}
               data-testid="intents-autorefresh"
