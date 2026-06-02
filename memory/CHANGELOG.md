@@ -1,3 +1,62 @@
+## 2026-02-17 (pass #52) — AI autonomy pipeline (advisory side-band)
+
+### Operator pin
+A read-only side-band of the LLM stack. Trains and grades local/self-
+trained candidate models against the commercial primary, but the
+authority firewall (`test_ai_autonomy_no_execution_imports.py`) refuses
+any import of execution, RoadGuard, or a broker adapter. The whole
+package is ADVISORY_ONLY by construction.
+
+### Shipped — `shared/ai_autonomy/`
+1. **`promotion_gate.py`** — pure eval-math, no I/O.
+   - `EvalResult` dataclass.
+   - `can_promote_to_advisor` (eval≥100, agreement≥0.80, safety==0, hallucination≤0.05).
+   - `can_promote_to_primary` (eval≥500, agreement≥0.85, win_rate≥0.52, safety==0, hallucination≤0.03).
+   - `PromotionState` enum: OFFLINE / SHADOW / ADVISOR / PRIMARY / ROLLBACK.
+2. **`dataset_builder.py::build_training_jsonl`** — reads `llm_calls`
+   filtered by role + grade≥min_grade, writes JSONL training corpus.
+   Excludes `_id` (BSON pin), UTC-aware timestamps.
+3. **`shadow_compare.py::shadow_compare`** — runs primary (`anthropic`)
+   AND candidate (`local`) for the same prompt via
+   `llm_kernel.call(provider_override=...)`. Both responses logged in
+   `llm_calls` with `comparison_lane` metadata.
+4. **`checkpoint_registry.py`** — `register_checkpoint`,
+   `set_checkpoint_state` over `ai_checkpoints`. UTC-aware. Insert
+   never returns the mutated input dict.
+5. **`autonomy_loop.py::evaluate_candidate_model`** — aggregates
+   `llm_eval_runs` for (role, model_id) and writes a
+   `KEEP_SHADOW / PROMOTE_TO_ADVISOR / PROMOTE_TO_PRIMARY` recommendation
+   row to `ai_promotion_recommendations`. Never transitions state.
+6. **`__init__.py`** — public surface re-export.
+
+### Authority firewall test
+- `tests/test_ai_autonomy_no_execution_imports.py` — scans every `*.py`
+  under `shared/ai_autonomy/` and FAILS if it contains any of:
+  `shared.execution`, `shared.broker_router`, `roadguard`, `alpaca`,
+  `kraken`, `submit_order`, `place_order`. Case-insensitive.
+
+### Promotion-gate tests
+- 6 truth-table tests covering both rungs, safety zero-tolerance,
+  sample-size floor, coin-flip rejection, and the advisor-vs-primary
+  hallucination delta. **7/7 tests passing.**
+
+### Routing already wired
+The "local/self_trained PRIMARY beats anthropic" semantics requested
+in the scaffold's bash block are already implemented by
+`shared/llm/routing_policy.py::choose_model` — it walks `PROVIDER_PRIORITY`
+(local first, then self_trained, then external) and picks the first
+provider that is both `is_ready()` AND promoted to ADVISOR/PRIMARY. The
+operator transitions the promotion via `set_checkpoint_state` → which
+the kernel reads through `llm_provider_state`. No router change needed.
+
+### Verified
+- All ai_autonomy modules lint clean.
+- `import shared.ai_autonomy` succeeds at backend boot.
+- Backend `/api/health` ok.
+
+---
+
+
 ## 2026-02-17 (pass #51) — Aggressive auto-router config + lane toggle is now master kill
 
 ### Operator pin
