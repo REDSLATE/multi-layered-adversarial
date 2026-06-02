@@ -1,3 +1,69 @@
+## 2026-02-17 (pass #55) — Auto-grader: closes the LLM training feedback loop
+
+### Operator pin
+Until something writes `grade: 1` to `llm_calls` rows, the RISE AI
+training corpora stay empty. The auto-grader is the missing piece —
+a rubric LLM that scores REASONING QUALITY (not market outcome) on a
+two-line output, with a defensive parser that refuses to write a
+silent default when the grader response is malformed.
+
+### Shipped
+1. **`shared/rise_ai/auto_grader.py`**:
+   - `compose_grading_prompt(role, prompt, response)` — pure function.
+   - `parse_grade(text)` — defensive regex parser; returns None on
+     malformed output (row stays ungraded for retry, never silently
+     writes a wrong grade).
+   - `grade_one(db, call_id)` — idempotent single-row grader. Skips
+     already-graded rows, the grader's own role, and empty rows
+     (auto-marks empty rows as grade=0).
+   - `grade_batch(db, limit=50)` — bounded batch grader. Never exceeds
+     `limit` rubric LLM calls per invocation.
+   - `RUBRIC` — explicit reasoning-quality rubric, pins that the
+     grader is not measuring trade profitability.
+   - `TRAINABLE_ROLES` — 8 canonical seats + 3 legacy aliases. The
+     grader's own role (`auto_grader`) is EXCLUDED from grading
+     targets (no infinite loop, never appears in training corpora).
+2. **`scripts/run_auto_grader.py`** — cron-friendly operator one-shot.
+   `AUTO_GRADER_LIMIT` env var controls batch size.
+3. **`routes/rise_ai_admin.py`**:
+   - `POST /api/admin/rise-ai/auto-grade?limit=N` — fire a grading
+     batch (cost-bounded, max 500).
+   - `GET /api/admin/rise-ai/grading-stats` — dashboard tile data:
+     total/ungraded/g1/g0 counts + per-role ungraded breakdown.
+   - Both endpoints mounted on `server.py`.
+4. **`tests/test_ai_autonomy_no_execution_imports.py` upgraded**:
+   - Substring-search replaced with AST-based import walk.
+   - The crude string match was failing on legitimate doctrine prompts
+     (e.g. "Kraken readiness" in the crypto-executor focus list,
+     "RoadGuard" in the auto-grader rubric). An AST walk only flags
+     ACTUAL imports.
+   - Guards both `shared/ai_autonomy/` and `shared/rise_ai/`.
+5. **`tests/test_auto_grader.py`** — 9 parser/filter tests covering
+   happy path, case insensitivity, preamble tolerance, unparseable
+   rejection, missing-reason placeholder, forbidden-role exclusion,
+   and trainable-role canonical-seat coverage.
+
+### Verified
+- 27/27 RISE AI + AI-autonomy tests green (8 new auto-grader tests
+  + upgraded firewall + existing surface).
+- 67/67 trading-path tests green — nothing disturbed.
+- Lint clean across new files.
+- Live `GET /api/admin/rise-ai/grading-stats` confirmed:
+  25 total / 25 ungraded / per-role: public_narrator=20, auditor=3,
+  strategist=1, opponent=1.
+
+### Operator usage
+- **One-shot grade:** `POST /api/admin/rise-ai/auto-grade?limit=50`.
+- **Dashboard:** `GET /api/admin/rise-ai/grading-stats`.
+- **Cron:** `python -m scripts.run_auto_grader` (with optional
+  `AUTO_GRADER_LIMIT` env). Safe to run on a schedule — bounded by
+  `limit` so each run has a known cost ceiling.
+- **After grading:** re-run `python -m scripts.rise_ai_bootstrap`.
+  Datasets pick up newly-graded rows automatically.
+
+---
+
+
 ## 2026-02-17 (pass #54) — RISE AI refactored seat-keyed (was brain-keyed)
 
 ### Operator pin

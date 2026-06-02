@@ -20,11 +20,25 @@ from .role_profiles import (
     model_for_role,
     profile_for,
 )
+from .auto_grader import (
+    AUTO_GRADER_ROLE,
+    TRAINABLE_ROLES,
+    compose_grading_prompt,
+    grade_batch,
+    grade_one,
+    parse_grade,
+)
 
 __all__ = [
+    "AUTO_GRADER_ROLE",
     "GENERAL_PROFILE",
     "RISE_AI_ROLE_PROFILES",
+    "TRAINABLE_ROLES",
+    "compose_grading_prompt",
     "compose_role_aligned_prompt",
+    "grade_batch",
+    "grade_one",
     "model_for_role",
+    "parse_grade",
     "profile_for",
 ]
