@@ -10,6 +10,7 @@ import BrainHealthTile from "@/components/BrainHealthTile";
 import LaneExecutionTogglesPanel from "@/components/LaneExecutionTogglesPanel";
 import PromotionArtifactPanel from "@/components/PromotionArtifactPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
+import BrainDeepDiagnoseCard from "@/components/BrainDeepDiagnoseCard";
 
 const BRAINS_FOR_FILTER = ["all", "alpha", "camaro", "chevelle", "redeye"];
 const KIND_LABEL = {
@@ -387,6 +388,8 @@ export default function Diagnostics() {
         sub="System health, MongoDB connectivity, and per-runtime liveness signals."
         testid="diagnostics-header"
       />
+
+      <BrainDeepDiagnoseCard />
 
       {err && <div className="border border-rd-danger text-rd-danger px-3 py-2 mb-4 text-xs font-mono">{err}</div>}
       {!data && <LoadingRow />}
