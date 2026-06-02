@@ -524,7 +524,7 @@ export default function Diagnostics() {
                         {tier === "dead" && (
                           <span
                             className="ml-2 text-[10px] text-rd-danger"
-                            title="≥110s since last ping — possible hang or slow LLM call. MC-URL config check lives in the Sidecar check-ins panel below."
+                            title="≥300s since last ping — possible hang or slow LLM call. MC-URL config check lives in the Sidecar check-ins panel below."
                           >
                             · possible hang
                           </span>

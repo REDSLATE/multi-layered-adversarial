@@ -30,17 +30,23 @@ from shared.diagnostics import _heartbeat_tier
 def test_heartbeat_tier_returns_only_liveness_bands():
     """The function MUST return ONLY {ok, stale, dead, unknown}. The
     legacy `preview_drift` / `drift` tiers must not return — they
-    leaked URL inference into a pure-age check."""
+    leaked URL inference into a pure-age check.
+
+    Bands (2026-02-19 tuning — see namespaces.py):
+      ok    < HEARTBEAT_OK_BELOW_SECONDS (120s)
+      stale < HEARTBEAT_PREVIEW_DRIFT_SECONDS (300s)
+      dead  ≥ HEARTBEAT_PREVIEW_DRIFT_SECONDS (300s)
+    """
     assert _heartbeat_tier(None) == "unknown"
     assert _heartbeat_tier(0) == "ok"
     assert _heartbeat_tier(10) == "ok"
-    # Just under the stale threshold (HEARTBEAT_OK_BELOW_SECONDS is 60).
-    assert _heartbeat_tier(59) == "ok"
-    # Past `ok` but under the dead threshold (110).
-    assert _heartbeat_tier(60) == "stale"
-    assert _heartbeat_tier(109) == "stale"
+    # Just under the stale threshold (HEARTBEAT_OK_BELOW_SECONDS is 120).
+    assert _heartbeat_tier(119) == "ok"
+    # Past `ok` but under the dead threshold (300).
+    assert _heartbeat_tier(120) == "stale"
+    assert _heartbeat_tier(299) == "stale"
     # Past the dead threshold.
-    assert _heartbeat_tier(110) == "dead"
+    assert _heartbeat_tier(300) == "dead"
     assert _heartbeat_tier(660) == "dead"
     assert _heartbeat_tier(99_999) == "dead"
 

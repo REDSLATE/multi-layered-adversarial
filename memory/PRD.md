@@ -1,3 +1,70 @@
+# Mission Control — PRD (latest pass on top)
+
+## 🆕 2026-02-19 — Heartbeat side-effect + STALE/DEAD band re-tuning (P0)
+
+### Problem
+User observed brains "fading" on the Diagnostics page: every cycle
+their badge oscillated LIVE → STALE → LIVE despite the sidecars being
+healthy, and REDEYE specifically showed DEAD with `last receipt 3d ago`
+even though the Sidecar Imposter Scan showed 21 clean check-ins/hour
+for the same brain.
+
+### Root cause
+Two independent architectural issues:
+1. MC has three independent "alive" signals stored in three different
+   collections (`shared_heartbeats`, `sovereign_state`, `sidecar_checkins`).
+   A successful POST to `/api/admin/runtime/sidecar-checkin/{brain}`
+   did NOT bump `shared_heartbeats`, so brains whose sidecars hit
+   only that endpoint appeared DEAD on the runtime liveness table.
+2. STALE/DEAD bands (60s / 110s) were tighter than the brain ping
+   cadence (60-90s), causing harmless oscillation.
+
+### Fix (shipped this pass)
+- Side-effect: sidecar-checkin now upserts `shared_heartbeats`
+  (best-effort; identity-record is still canonical).
+- Bands raised:
+  - `HEARTBEAT_OK_BELOW_SECONDS`: 60 → 120
+  - `HEARTBEAT_PREVIEW_DRIFT_SECONDS`: 110 → 300
+  - `HEARTBEAT_STALE_AFTER_SECONDS`: 90 → 240
+- All downstream classifiers (`/heartbeat-status/`, `/admin/sidecar-diagnostics`,
+  `/admin/brain/emission-diagnose/`) updated to match.
+- Frontend tooltip text updated.
+
+### Verified
+- Live curl on REDEYE: `connected: dead → partial` from a single
+  sidecar check-in. `heartbeat_age_seconds: null → 0.0`.
+- 17/17 sidecar-checkin + drift-tier tests green.
+- Screenshot of Diagnostics page renders cleanly with REDEYE in
+  the new STALE band (191s) instead of DEAD.
+
+### Outstanding (P0 follow-up — option D, not yet acted)
+**RedEye sovereign silence** — RedEye's `sovereign_state.updated_at`
+froze on 2026-05-31 14:16 UTC (~3 days ago). Its sidecar pod is
+demonstrably alive (21 fresh identity check-ins/hour), but the
+sovereign-tick task has stopped writing. No fresh
+`sovereign_contribution_attempts` rows from RedEye on prod since
+that timestamp. Operator action: call
+`GET /api/admin/sovereign/contribution-health?window=200` on prod.
+If RedEye shows `health: no_data` with stale `latest_ts`, it means
+RedEye has stopped CALLING the endpoint entirely (not being
+rejected) → brain-side issue (restart pod or sovereign-tick task).
+If it shows `rejected_422` rolling in, the brain is fighting an
+MC contract change.
+
+### Files touched
+- `backend/namespaces.py` (band constants)
+- `backend/shared/runtime/sidecar_checkin.py` (heartbeat side-effect)
+- `backend/shared/heartbeat_ping.py` (band sync)
+- `backend/routes/sidecar_diagnostics.py` (band sync)
+- `backend/routes/brain_emission_diagnose.py` (band sync)
+- `frontend/src/pages/Diagnostics.jsx` (tooltip text)
+- `backend/tests/test_drift_and_governor_exclusion.py` (assertions)
+- `backend/tests/test_sidecar_checkin.py` (new side-effect test)
+- `memory/CHANGELOG.md` (entry)
+
+---
+
+
 # ✅ 2026-05-31 — Canonical 8-seat IP doctrine ENFORCED
 
 The IP boundary is now code-pinned: `shared/seat_policy.py::CANONICAL_SEATS`

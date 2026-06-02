@@ -228,3 +228,50 @@ def test_post_then_get_reflects_latest_stamp(auth_client, base_url):
     assert body["checkin_count"] >= 1
     assert body["stamp"]["env_name"] == "prod"
     assert body["stamp"]["mc_url"].startswith("https://mission.risedual.ai")
+
+
+
+# ───── Heartbeat side-effect — 2026-02-19 ─────────────────────────────
+# A successful sidecar check-in is unambiguous proof of life. The
+# handler MUST also bump `shared_heartbeats.last_seen` so the LivePulse
+# LIVE/STALE/DEAD badge stays in sync with the Sidecar Imposter Scan.
+# Before this side-effect, brains whose sidecars hit ONLY the
+# check-in endpoint (and not /heartbeat-ping) appeared DEAD on the
+# runtime table despite their pod being healthy — the REDEYE silence
+# pattern observed on 2026-06-02.
+
+
+def test_post_sidecar_checkin_also_bumps_heartbeat(auth_client, base_url):
+    """A successful sidecar check-in must refresh
+    /api/heartbeat-status/{brain} immediately. Read via the public
+    heartbeat-status endpoint (no auth) so the test pins the
+    operator-visible behavior, not the storage detail.
+    """
+    tok = _alpha_token()
+    if not tok:
+        return
+
+    # Fire a clean prod check-in.
+    r = requests.post(
+        f"{base_url}/api/admin/runtime/sidecar-checkin/alpha",
+        json={"stamp": _prod_stamp()},
+        headers={"X-Runtime-Token": tok},
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+
+    # Read heartbeat-status. Heartbeat age must be < a few seconds —
+    # i.e., the check-in just bumped it.
+    r = requests.get(
+        f"{base_url}/api/heartbeat-status/alpha",
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    hb_age = body.get("heartbeat_age_seconds")
+    assert hb_age is not None, body
+    assert hb_age < 30, (
+        f"sidecar-checkin did not refresh heartbeat row "
+        f"(heartbeat_age_seconds={hb_age!r}); the LIVE/STALE/DEAD "
+        f"badge will stay stuck on a check-in-only brain"
+    )

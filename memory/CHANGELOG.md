@@ -1,3 +1,77 @@
+## 2026-02-19 — Heartbeat side-effect on sidecar check-in + raised STALE/DEAD bands
+
+### Operator pin
+RedEye was showing DEAD on the runtime liveness table while the
+Sidecar Imposter Scan showed 21 clean check-ins/hour for it. The
+two widgets read from different collections (`shared_heartbeats` vs
+`sidecar_checkins`) and never crossed — so a brain whose sidecar
+only POSTed to `/sidecar-checkin/{brain}` would appear dead even
+when alive. Separately, the STALE/DEAD bands (60s/110s) were
+aggressive enough that brains with normal 60-90s ping cadence
+oscillated LIVE → STALE → LIVE on every cycle.
+
+### Shipped
+1. **`shared/runtime/sidecar_checkin.py`** — after a successful
+   sidecar check-in upsert, also bump `shared_heartbeats.last_seen`
+   for the brain. Best-effort (try/except, swallows errors —
+   identity-record is the canonical contract, heartbeat is a
+   side-effect). Carries `detail.source = "sidecar_checkin"` so the
+   operator can see WHERE the bump came from.
+2. **`namespaces.py`** — heartbeat band re-tuning (visibility only,
+   never affects authority/routing):
+   - `HEARTBEAT_OK_BELOW_SECONDS`: 60 → 120
+   - `HEARTBEAT_PREVIEW_DRIFT_SECONDS`: 110 → 300
+   - `HEARTBEAT_STALE_AFTER_SECONDS`: 90 → 240
+   Two full ~60-90s ping cycles fit comfortably inside `ok` before
+   the badge slips to STALE.
+3. **`shared/heartbeat_ping.py`** — `hb_fresh` threshold raised 90 →
+   300 to keep `/heartbeat-status/{brain}` in sync with the new
+   bands (otherwise its `connected/partial/stale/dead` classifier
+   would disagree with the Diagnostics table).
+4. **`routes/sidecar_diagnostics.py`** — `HB_FRESH_SEC` raised
+   90.0 → 300.0 for the same reason.
+5. **`routes/brain_emission_diagnose.py`** — `heartbeat_fresh`
+   threshold raised 120 → 300.
+6. **`frontend/src/pages/Diagnostics.jsx`** — DEAD-tier tooltip
+   text updated from "≥110s" → "≥300s".
+7. **`tests/test_drift_and_governor_exclusion.py`** — band assertions
+   updated to the new 120s/300s thresholds (preserving the doctrine
+   tripwire that `preview_drift` must never return).
+8. **`tests/test_sidecar_checkin.py`** — new test
+   `test_post_sidecar_checkin_also_bumps_heartbeat` pins the
+   side-effect: POST check-in then GET `/heartbeat-status/{brain}`
+   must show `heartbeat_age_seconds < 30`.
+
+### Verified
+- Curl round-trip on REDEYE: status went `connected: dead`
+  (`heartbeat_age_seconds: null`, last_seen 3d ago) → `connected:
+  partial` (`heartbeat_age_seconds: 0.0`, last_seen now) from a
+  single sidecar check-in.
+- Diagnostics page screenshot: REDEYE now shows STALE 191s
+  (correctly in the new band — would have been DEAD under the old
+  bands).
+- 17/17 focused tests green (`test_sidecar_checkin.py` +
+  `test_drift_and_governor_exclusion.py`).
+- Pre-existing flake in `test_heartbeat_status::test_never_connected_state`
+  reproduces on stashed (pre-change) code → confirmed unrelated to
+  this pass.
+
+### Diagnostic finding — RedEye sovereign silence
+RedEye's `sovereign_state.updated_at` froze on 2026-05-31 14:16 UTC
+(~3 days ago). The sidecar identity check-in path is still alive
+(21 fresh check-ins/hour observed on prod), but the brain's
+sovereign-tick loop has stopped writing. Suspected: brain-side
+task crash inside the sidecar pod (identity-checkin daemon runs
+in a separate task that survived). Recommended operator action:
+call `GET /api/admin/sovereign/contribution-health?window=200` on
+prod — this endpoint already exists and returns per-brain
+pushed_200/rejected_422/error split + latest_outcome + top
+empty_fields. If RedEye shows `health: no_data` with `latest_ts`
+of 2026-05-31, the brain has stopped CALLING the endpoint entirely
+(not getting rejected) — fix is brain-side (restart RedEye's pod
+or its sovereign-tick task).
+
+
 ## 2026-02-17 (pass #58) — Sidecar imposter scan endpoint + UI tile
 
 ### Operator pin

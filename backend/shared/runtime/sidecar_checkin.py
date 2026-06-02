@@ -47,7 +47,7 @@ from pydantic import AliasChoices, BaseModel, Field
 
 from auth import get_current_user
 from db import db
-from namespaces import DISCUSSION_PARTICIPANTS, SIDECAR_CHECKINS
+from namespaces import DISCUSSION_PARTICIPANTS, SHARED_HEARTBEATS, SIDECAR_CHECKINS
 from shared.runtime.platform_survival import RuntimeStamp, policy_hash
 
 
@@ -286,6 +286,42 @@ async def post_sidecar_checkin(
         },
         upsert=True,
     )
+
+    # 2026-02-19 — heartbeat side-effect.
+    # A sidecar check-in is unambiguous proof of life: a real process
+    # successfully authenticated with the per-brain token and posted
+    # its identity. Bump `shared_heartbeats.last_seen` so the
+    # LivePulse / Diagnostics LIVE/STALE/DEAD badge stays in sync
+    # with the Sidecar Imposter Scan. Before this side-effect, brains
+    # whose sidecars hit ONLY `/sidecar-checkin/{brain}` (and not
+    # `/heartbeat-ping/{brain}`) appeared DEAD on the runtime table
+    # even though their pod was healthy — the REDEYE silence pattern.
+    #
+    # Doctrine: best-effort. Failure here MUST NOT block the check-in
+    # response (which is the canonical identity-record path). Wrapped
+    # in try/except like the audit log above.
+    try:
+        await db[SHARED_HEARTBEATS].update_one(
+            {"runtime": brain},
+            {
+                "$set": {
+                    "runtime": brain,
+                    "status": "ok",
+                    "last_seen": now_iso,
+                    "detail": {
+                        "source": "sidecar_checkin",
+                        "via": "sidecar identity check-in (auto-bumped)",
+                        "verdict": verdict,
+                        "source_ip": source_ip,
+                    },
+                },
+                "$setOnInsert": {"first_seen_at": now_iso},
+                "$inc": {"heartbeat_count": 1},
+            },
+            upsert=True,
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
     note = {
         "prod": f"{brain} recorded as PROD sidecar; policy hash matches MC.",

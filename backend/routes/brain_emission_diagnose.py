@@ -133,7 +133,7 @@ async def _heartbeat_status(brain: str) -> dict:
 
     # Multi-signal liveness.
     signals = {
-        "heartbeat_fresh": hb_age is not None and hb_age < 120,
+        "heartbeat_fresh": hb_age is not None and hb_age < 300,
         "sovereign_fresh": sv_age is not None and sv_age < 300,
         "intent_recent": intents_1h > 0,
         "opinion_recent": opinions_1h > 0,

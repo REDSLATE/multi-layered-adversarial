@@ -168,7 +168,7 @@ async def heartbeat_status(brain: str):
     sv_first_seen = (sv or {}).get("first_seen_at")
     sv_count = (sv or {}).get("contribution_count")
 
-    hb_fresh = hb_age is not None and hb_age < 90
+    hb_fresh = hb_age is not None and hb_age < 300
     sv_fresh = sv_age is not None and sv_age < 300       # ≤ 5 min
     sv_stale_band = sv_age is not None and sv_age < 1800  # ≤ 30 min
 

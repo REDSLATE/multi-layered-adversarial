@@ -683,12 +683,16 @@ SEAT_LAYER_GATES = frozenset({
 })
 
 # Heartbeat staleness threshold for the dashboard alert. A runtime is "stale"
-# if its last_seen is older than this. Tuned so a single missed heartbeat
-# (45s loop) is forgiven, but two consecutive misses raise the alarm.
+# if its last_seen is older than this.
+#
+# 2026-02-19 — bands re-tuned. Old values (60s/90s/110s) were aggressive
+# enough that brains with normal 60-90s ping cadence oscillated LIVE → STALE
+# → LIVE every cycle, producing operator "fade" complaints despite healthy
+# sidecars. New bands give two full cycles of grace before STALE/DEAD fires.
 # Visibility-only — does NOT change authority, broker behavior, or receipt enforcement.
-HEARTBEAT_STALE_AFTER_SECONDS = 90
+HEARTBEAT_STALE_AFTER_SECONDS = 240
 
-# Operator three-tier heartbeat doctrine (2026-02-15). Visibility only.
+# Operator three-tier heartbeat doctrine (2026-02-19). Visibility only.
 #   < HEARTBEAT_OK_BELOW_SECONDS         → 🟢 healthy
 #   ≥ HEARTBEAT_OK_BELOW_SECONDS and
 #     < HEARTBEAT_PREVIEW_DRIFT_SECONDS  → 🟡 drift (could be cycle blip)
@@ -696,8 +700,8 @@ HEARTBEAT_STALE_AFTER_SECONDS = 90
 #                                          certainly hitting the preview URL
 #                                          instead of prod (operator rule).
 # The dashboard surfaces these so an operator can spot URL drift fast.
-HEARTBEAT_OK_BELOW_SECONDS = 60
-HEARTBEAT_PREVIEW_DRIFT_SECONDS = 110
+HEARTBEAT_OK_BELOW_SECONDS = 120
+HEARTBEAT_PREVIEW_DRIFT_SECONDS = 300
 
 
 def runtime_can_execute_state(authority_state: str) -> bool:

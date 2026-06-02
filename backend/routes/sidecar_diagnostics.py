@@ -49,7 +49,9 @@ router = APIRouter(tags=["admin", "sidecar-diagnostics"])
 # Liveness bands matching the existing LivePulse classifier in
 # `shared/heartbeat_ping.py` so the operator sees the same vocabulary
 # everywhere. Heartbeat-only and sovereign-only thresholds:
-HB_FRESH_SEC = 90.0       # heartbeat fresher than this ⇒ pod alive
+HB_FRESH_SEC = 300.0      # heartbeat fresher than this ⇒ pod alive
+                          # (2026-02-19: raised from 90s to 300s — see
+                          # namespaces.HEARTBEAT_OK_BELOW_SECONDS for rationale)
 SV_FRESH_SEC = 300.0      # sovereign contribution fresher than this ⇒ "connected"
 SV_STALE_SEC = 1800.0     # 30 min — still recoverable, no banner yet
 
