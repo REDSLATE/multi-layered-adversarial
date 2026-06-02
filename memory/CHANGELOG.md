@@ -1,3 +1,88 @@
+## 2026-02-17 (pass #57) — Shelly Bus: brain → MC memory proposals (network)
+
+### Operator pin
+Brain Shellys = collectors + local recall. MC-Shelly = canonical
+storage hub + verifier. Brains DO NOT self-certify truth — they
+submit memory proposals over HTTP, MC scores trust, MC decides
+canonicalization.
+
+### Shipped
+1. **`shared/shelly_bus/__init__.py`** — `ShellyMemoryProposal`
+   dataclass (frozen), authority pins (PROPOSAL/REVIEW/CANONICAL).
+2. **`shared/shelly_bus/mc_shelly_ingest.py`** — `POST /api/mc-shelly/memory/propose`:
+   - Auth: `X-Runtime-Token` per brain (matches
+     `{BRAIN}_INGEST_TOKEN` env, same scheme as every other brain
+     endpoint). Cross-impersonation blocked (Camaro token can't post
+     as Alpha).
+   - Tampered-authority defense: brain MUST stamp
+     `MEMORY_PROPOSAL_ONLY`; anything else → 400.
+   - Trust scoring (env-tunable):
+     - verified_outcomes match → 0.90 (VERIFIED)
+     - ≥ N other brains agree   → 0.80 (CONVERGED)
+     - otherwise                → 0.35 (UNVERIFIED)
+   - `trust_score >= MIN_CANONICAL_TRUST` (default 0.75) →
+     translates to `ShellyMemoryEvent` and ingests via
+     `MCShelly.ingest_rollup` so the row joins existing canonical
+     `shelly_mc_shared_memory`.
+   - Below threshold → parked in `shelly_memory_proposals` for
+     operator review / later auto-converge.
+   - `GET /api/mc-shelly/memory/proposals/summary` — count by status.
+3. **`shared/shelly_bus/brain_shelly_client.py`** — thin httpx
+   `BrainShellyClient` for brain pods. Construction enforces
+   `mc_url` + `runtime_token`. Has `propose_memory` (single) and
+   `propose_many` (capped concurrency).
+
+### Doctrine pins preserved
+- Authority re-stamped at MC boundary (REVIEW → CANONICAL or
+  PROPOSAL_ONLY); brain's claimed authority NEVER leaks through.
+- Tampered authority rejected with 400 (loud, not silent rewrite).
+- Trust scoring is purely advisory until it crosses the canonical
+  threshold; below threshold rows are stored as proposals only.
+- Endpoint mounted at `/api/mc-shelly/...` per integration spec.
+
+### Verified
+- 7/7 new bus tests green (auth, cross-impersonation, tampered
+  authority, unverified pen storage, two-brain convergence
+  canonicalization, summary endpoint, client construction guards).
+- 97/97 broader tests green (trading + memory + autonomy + bus).
+- Backend hot-reloaded; `/api/health` ok.
+
+### Env tunables
+```
+SHELLY_BUS_MIN_CANONICAL_TRUST  0.75
+SHELLY_BUS_VERIFIED_TRUST       0.90
+SHELLY_BUS_CONVERGED_TRUST      0.80
+SHELLY_BUS_UNVERIFIED_TRUST     0.35
+SHELLY_BUS_MIN_CONVERGENCE      2
+```
+
+### Brain pod integration
+Each brain pod:
+```python
+from shared.shelly_bus import ShellyMemoryProposal
+from shared.shelly_bus.brain_shelly_client import BrainShellyClient
+
+shelly = BrainShellyClient(
+    mc_url=os.environ["MC_URL"],
+    runtime_token=os.environ["MY_INGEST_TOKEN"],
+)
+
+await shelly.propose_memory(ShellyMemoryProposal(
+    source_brain="camaro",
+    lane="crypto",
+    symbol="BTC/USD",
+    event_type="market_pattern",
+    text="BTC compression with rising volume looked similar to prior breakout setups.",
+    confidence=0.67,
+    regime="compression",
+    outcome="pending",
+    source_id=decision_id,
+))
+```
+
+---
+
+
 ## 2026-02-17 (pass #56) — MC-Shelly L3 + L6 + Brain MEMORY.md
 
 ### Operator pin
