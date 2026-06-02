@@ -11,6 +11,7 @@ import LaneExecutionTogglesPanel from "@/components/LaneExecutionTogglesPanel";
 import PromotionArtifactPanel from "@/components/PromotionArtifactPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import BrainDeepDiagnoseCard from "@/components/BrainDeepDiagnoseCard";
+import ImposterScanCard from "@/components/ImposterScanCard";
 
 const BRAINS_FOR_FILTER = ["all", "alpha", "camaro", "chevelle", "redeye"];
 const KIND_LABEL = {
@@ -390,6 +391,8 @@ export default function Diagnostics() {
       />
 
       <BrainDeepDiagnoseCard />
+
+      <ImposterScanCard />
 
       {err && <div className="border border-rd-danger text-rd-danger px-3 py-2 mb-4 text-xs font-mono">{err}</div>}
       {!data && <LoadingRow />}

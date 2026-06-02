@@ -1,3 +1,54 @@
+## 2026-02-17 (pass #58) — Sidecar imposter scan endpoint + UI tile
+
+### Operator pin
+The `sidecar_checkin_audit` collection has been collecting append-only
+identity rows for every brain check-in since pass #47, but nothing
+read them. This pass adds a query that surfaces ANY runtime that has
+shown TWO+ distinct identities in a recent window. RedEye-side spec
+calls this "the imposter signal."
+
+### Shipped
+1. **`routes/sidecar_imposter_scan.py`** — `GET /api/admin/runtime/sidecar-imposter-scan?window_hours=N`:
+   - Bounded window 1-168h.
+   - Per-runtime aggregate of distinct
+     `(env_name, pip_freeze_sha256, source_ip, git_sha, process_identity)`
+     in the audit log.
+   - Flags `imposter_suspected=true` when:
+     - `env_name` diverges (preview-pod claiming prod, etc.)
+     - `pip_freeze_sha256` diverges (different bundle)
+     - `process_identity (pid, hostname)` diverges (duplicate pods)
+     - runtime is UNKNOWN (not in DISCUSSION_PARTICIPANTS)
+   - `MULTIPLE_GIT_SHAS` is flagged but NOT marked imposter (legitimate
+     during a deploy rollover window).
+2. **`frontend/src/components/ImposterScanCard.jsx`** — Diagnostics
+   page tile. Window selector (1h / 6h / 24h / 72h / 168h), per-runtime
+   row with reasons and counts, top banner green/red. Read-only.
+
+### Verified
+- Endpoint returns clean shape on preview (no audit rows yet because
+  preview brains aren't pinging — expected).
+- 93/93 tests green across trading-path + memory layers + bus +
+  autonomy + RISE AI.
+- Lint clean on both new files.
+
+### Doctrine pins preserved
+- Endpoint is READ-ONLY. Flags only. Never restarts a pod or
+  modifies the audit log.
+- Audit log itself is still append-only (one row per POST).
+- `env_name`, `pip_freeze_sha256`, `local_execution_authority`,
+  `broker_mode` validations on the WRITE path remain authoritative
+  (rejecting a malformed stamp at ingest is doctrine; this scan is
+  the operator's view on top of those rejections).
+
+### Net surface
+- **Write path:** `POST /api/admin/runtime/sidecar-checkin/{brain}`
+  validates every stamp and audits one row per POST. Doctrine pin.
+- **Read path:** `GET /api/admin/runtime/sidecar-imposter-scan` flags
+  any runtime with divergent identities. Operator surface.
+
+---
+
+
 ## 2026-02-17 (pass #57) — Shelly Bus: brain → MC memory proposals (network)
 
 ### Operator pin
