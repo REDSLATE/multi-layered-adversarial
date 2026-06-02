@@ -1,3 +1,64 @@
+## 2026-02-17 (pass #56) — MC-Shelly L3 + L6 + Brain MEMORY.md
+
+### Operator pin
+Three of the four missing layers from the 6-layer end-goal land here.
+L5 (Qdrant) parked per operator until the cluster exists.
+
+### Shipped — `shelly/verified_facts.py` (L3 + L6)
+1. **L3 Verified Fact Memory**:
+   - New collection `shelly_verified_facts`.
+   - `certify_one(event_hash, via, operator, note)` — operator or auto
+     promotion, idempotent on event_hash.
+   - `auto_certify_scan(limit)` — scans shared memory; promotes any
+     event_hash that has converged across ≥ 3 brains AND has ≥ 1
+     resolved outcome. Bounded by `limit`.
+   - `verified_facts_summary()` — dashboard tile data.
+2. **L6 RISEDUAL Wiki**:
+   - New collection `risedual_wiki`.
+   - `curate_wiki_run(limit)` — groups verified facts by
+     `(symbol, direction)`, summarizes (win/loss/flat, avg pnl, top
+     features, brains seen, avg confidence) into one wiki row per
+     topic. Idempotent upsert.
+   - `wiki_summary()` and `wiki_lookup(symbol, direction)`.
+
+### Shipped — `shelly/memory_profile.py` (Brain MEMORY.md)
+- `render_brain_memory_md(brain, recent_limit)` — pure-read renderer
+  that pulls a LocalShelly's state and emits markdown: totals,
+  win/loss/flat, top symbols, direction mix, top features, MC + RG
+  status seen, recent events table.
+
+### Shipped — `routes/shelly_admin_extension.py`
+Mounted at `/api/admin/shelly/*`:
+- `POST /verified-facts/certify` (operator countersign)
+- `POST /verified-facts/auto-scan` (bounded auto-promotion)
+- `GET  /verified-facts/summary`
+- `POST /wiki/curate`
+- `GET  /wiki/summary`
+- `GET  /wiki/lookup?symbol=...[&direction=BUY]`
+- `GET  /memory-md/{brain}?recent_limit=N` — plain text/markdown
+- `GET  /memory-md?recent_limit=N` — all four brains concatenated
+
+### Authority pin (preserved)
+Every new surface stamps `authority: memory_reasoning_only`. No new
+execution path. Verified-fact verdicts are PROVENANCE, not PERMISSION
+— a brain still has to clear the full gate chain (seat policy etc.)
+to trade.
+
+### Verified
+- 11/11 new Shelly extension tests green (live Mongo path:
+  seed → certify → auto-scan → curate → wiki_lookup → MEMORY.md).
+- 67/67 trading-path tests green — untouched.
+- Live preview API hits return real data:
+  - `verified-facts/summary`: 1 auto_convergence fact present.
+  - `wiki/summary`: 1 wiki entry present.
+  - `memory-md/alpha`: rendered markdown with totals + table.
+
+### Holds
+- L5 Qdrant vector recall — parked. Needs a cluster URL.
+
+---
+
+
 ## 2026-02-17 (pass #55) — Auto-grader: closes the LLM training feedback loop
 
 ### Operator pin
