@@ -92,11 +92,30 @@ class UniverseSymbolIn(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=32)
     note: Optional[str] = Field(None, max_length=500)
     active: bool = True
+    lane: str = Field(
+        default="equity",
+        description=(
+            "Which lane this symbol belongs to. Brains may only "
+            "propose intents for symbols in their lane's universe. "
+            "Defaults to 'equity' for backward compat — every legacy "
+            "row without a `lane` field is treated as equity."
+        ),
+    )
 
     @field_validator("symbol")
     @classmethod
     def _upper(cls, v: str) -> str:
         return v.upper().strip()
+
+    @field_validator("lane")
+    @classmethod
+    def _lane_canonical(cls, v: str) -> str:
+        v2 = (v or "").lower().strip()
+        if v2 not in ("equity", "crypto"):
+            raise ValueError(
+                f"lane must be 'equity' or 'crypto', got {v!r}"
+            )
+        return v2
 
 
 @router.get("/admin/patterns/universe")
@@ -129,6 +148,7 @@ async def universe_add(
         "symbol": body.symbol,
         "note": body.note,
         "active": body.active,
+        "lane": body.lane,
         "added_by": user.get("email") or "operator",
         "updated_at": _now_iso(),
     }

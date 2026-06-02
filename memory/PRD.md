@@ -1,5 +1,51 @@
 # Mission Control — PRD (latest pass on top)
 
+## 🆕 2026-02-19 (pass #2) — Symbol-in-universe gate + brain-callable universe endpoint (P0)
+
+### Problem
+Operator confirmed Camaro has never emitted a crypto intent on prod
+(`GET /api/admin/intents?stack=camaro&lane=crypto` returns empty).
+Camaro holds the `crypto_strategist` seat but its strategist loop
+is hardcoded to scan equity tickers only. MC had no central
+authority over which symbols any brain was allowed to propose
+against — each brain self-determined.
+
+### Doctrine fix
+Make MC's `patterns_universe` collection the canonical source of
+truth for tradeable symbols. Brains MUST consult MC's universe
+(via the new `/admin/runtime/{brain}/universe` endpoint) and MC's
+gate chain REJECTS any intent whose symbol isn't in the universe.
+Enforcement + reference client → brains comply or trade nothing.
+
+### Shipped
+- New gate `symbol_in_universe` in `shared/execution.py` (5c)
+- Lane field on `patterns_universe` rows; backward-compat default = equity
+- Boot-time seed for crypto majors (BTC/ETH/SOL/XRP USD)
+- Brain-callable `GET /api/admin/runtime/{brain}/universe` (dual auth,
+  seat-filtered)
+- Reference brain client `/app/memory/brain_universe_client_reference.py`
+- 7 new tests pinning the contract
+
+### Outstanding (P0 follow-up, brain-team work)
+Each brain team must drop the reference client into their brain's
+repo and wire it into the strategist loop. Until then, MC's new
+gate will reject any off-universe intent, which is the forcing
+function for compliance.
+
+### Files touched
+- `backend/shared/execution.py` (+gate 5c)
+- `backend/routes/data_stack_admin.py` (lane field on schema)
+- `backend/server.py` (extended boot seed)
+- `backend/routes/brain_runtime.py` (+/{brain}/universe endpoint)
+- `backend/tests/test_symbol_in_universe_gate.py` (new, 7 tests)
+- `memory/brain_universe_client_reference.py` (new, brain-side reference)
+- `memory/CHANGELOG.md` (entry)
+
+---
+
+
+# Mission Control — PRD (latest pass on top)
+
 ## 🆕 2026-02-19 — Heartbeat side-effect + STALE/DEAD band re-tuning (P0)
 
 ### Problem

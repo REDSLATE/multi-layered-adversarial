@@ -199,6 +199,68 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
         "reason": broker_reason,
     })
 
+    # ─── 5c. Symbol-in-universe (2026-02-19) ─────────────────────────
+    # Canonical boundary: every intent's symbol MUST be in MC's
+    # `patterns_universe`, with a `lane` that matches the intent's
+    # lane. Doctrine (c): MC verifies boundaries, brains propose.
+    # This gate gives MC the lever to control WHAT brains are allowed
+    # to propose without modifying any brain code — a single operator
+    # curl adds or removes a tradeable symbol fleet-wide.
+    #
+    # Backward-compat: any row in `patterns_universe` without a `lane`
+    # field is treated as equity (matches the legacy semantic). The
+    # boot-seed in server.py backfills `lane` onto pre-existing rows
+    # so this is a one-deploy migration with no operator action.
+    from namespaces import PATTERNS_UNIVERSE  # noqa: WPS433
+    intent_symbol = (intent.get("symbol") or "").upper().strip()
+    intent_lane_for_universe = (intent_lane or "").lower().strip()
+    universe_row = await db[PATTERNS_UNIVERSE].find_one(
+        {"symbol": intent_symbol, "active": {"$ne": False}},
+        {"_id": 0, "symbol": 1, "lane": 1, "active": 1},
+    )
+    if not universe_row:
+        univ_pass = False
+        univ_reason = (
+            f"symbol {intent_symbol!r} is not in MC's active "
+            f"`patterns_universe`. Add via "
+            f"`POST /api/admin/patterns/universe` "
+            f'{{\"symbol\":\"{intent_symbol}\",\"lane\":'
+            f'\"{intent_lane_for_universe or "equity"}\"}} '
+            f"before this intent can route."
+        )
+    else:
+        row_lane = (universe_row.get("lane") or "equity").lower().strip()
+        if not intent_lane_for_universe:
+            # Legacy lane-untagged intent. Accept against any
+            # universe lane to preserve the equity-bootstrap path —
+            # the `broker_connected` gate above already forces
+            # Alpaca for these.
+            univ_pass = True
+            univ_reason = (
+                f"symbol {intent_symbol!r} in universe "
+                f"(lane={row_lane!r}); intent has no lane tag — "
+                f"legacy fallback accepted"
+            )
+        elif row_lane == intent_lane_for_universe:
+            univ_pass = True
+            univ_reason = (
+                f"symbol {intent_symbol!r} in universe with "
+                f"lane={row_lane!r}, matches intent lane"
+            )
+        else:
+            univ_pass = False
+            univ_reason = (
+                f"symbol {intent_symbol!r} is in universe but "
+                f"lane mismatch — universe says {row_lane!r}, "
+                f"intent says {intent_lane_for_universe!r}. "
+                f"Re-tag the symbol or the intent."
+            )
+    gates.append({
+        "name": "symbol_in_universe",
+        "passed": univ_pass,
+        "reason": univ_reason,
+    })
+
     # ─── 5b. Lane execution toggle (2026-02-18) ──────────────────────
     # Operator-owned kill switch. Decoupled from broker credential
     # state. Default OFF — execution must be explicitly enabled per

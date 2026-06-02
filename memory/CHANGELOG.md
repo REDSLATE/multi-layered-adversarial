@@ -1,3 +1,107 @@
+## 2026-02-19 (pass #2) — Symbol-in-universe gate + brain-callable universe endpoint
+
+### Operator pin
+Camaro has been emitting equity-only intents despite holding the
+crypto-strategist seat. Root cause confirmed via prod query:
+`GET /api/admin/intents?stack=camaro&lane=crypto` returned empty —
+Camaro has never proposed a crypto trade. This pass closes the
+underlying architectural gap: MC had no central control of what
+symbols brains were allowed to propose against. Brains used their
+own hardcoded universes, drifting silently.
+
+### Doctrine (c) pin
+MC verifies boundaries, brains propose, MC routes. Adding
+"symbol-in-universe" to the gate chain plugs the last big un-MC'd
+boundary. A brain can now hard-code whatever it wants — its
+off-universe intents will be rejected at MC's gate chain with
+`symbol_in_universe: passed=False`. One operator curl can add or
+remove a tradeable symbol fleet-wide.
+
+### Shipped
+1. **`shared/execution.py`** — new `symbol_in_universe` gate
+   (gate 5c, between `broker_connected` and `lane_execution_enabled`).
+   Looks up `intent.symbol` in `patterns_universe` with `active:
+   {$ne: false}`. Enforces:
+   - Off-universe symbol → `passed=False`, reason names the symbol +
+     gives the curl command to add it.
+   - Wrong-lane (symbol exists but tagged equity, intent is crypto) →
+     `passed=False`.
+   - Lane-untagged intent (legacy) → accepted against any universe
+     lane (preserves equity-bootstrap path; broker_connected gate
+     above forces correct broker).
+   - Match → `passed=True`.
+2. **`routes/data_stack_admin.py`** — `UniverseSymbolIn` schema
+   extended with `lane: str = "equity"` field; rejects any value
+   outside `{equity, crypto}` with 422. POST writes `lane` onto the
+   row.
+3. **`server.py`** — boot seed extended:
+   - Existing 8 equity tickers get `$set: {lane: "equity"}` (idempotent
+     backfill on any pre-existing rows).
+   - New crypto seed: `BTC/USD`, `ETH/USD`, `SOL/USD`, `XRP/USD` with
+     `lane=crypto`. Same `$setOnInsert` pattern so reseeding doesn't
+     reset operator-edited rows.
+4. **`routes/brain_runtime.py`** — new
+   `GET /api/admin/runtime/{brain}/universe` endpoint:
+   - Dual auth (operator JWT OR `X-Brain-Id` + `X-Runtime-Token`).
+   - Brain-auth enforces brain-id-matches-path (no cross-brain peek).
+   - Filters universe by the brain's currently-held seats →
+     resolved lanes.
+   - Returns `{symbols: [{symbol, lane}], lanes: [...], count, served_at}`.
+   - Backward-compat: rows without `lane` are treated as equity.
+5. **`memory/brain_universe_client_reference.py`** — drop-in Python
+   client brain teams copy into their repo. Async, lane-filtered
+   query API, in-memory cache with `MAX_CACHE_AGE_SEC = 6h` safe-mode
+   fallback, `/status` snapshot for operator visibility. Documents
+   the doctrine: "only valid reason to skip MC is a failure code."
+6. **`tests/test_symbol_in_universe_gate.py`** — 7 tests:
+   - Source tripwires (gate exists in chain, endpoint exists).
+   - Behavioral: crypto pairs seed on boot.
+   - Universe endpoint shape, unknown-brain 404, invalid lane 422.
+
+### Verified
+- Boot log: `patterns_universe seeded (8 equity + 4 crypto)`.
+- `GET /api/admin/patterns/universe` shows all 12 rows with explicit
+  `lane` field.
+- `GET /api/admin/runtime/alpha/universe` returns 8 equity symbols
+  filtered to alpha's seat (executor → equity lane).
+- POST with `lane: "metals"` → 422.
+- 24/24 focused tests green (7 new + 17 prior heartbeat tests).
+
+### Rollout for brain teams
+The MC side is live. Brain teams need to:
+1. Copy `/app/memory/brain_universe_client_reference.py` into their
+   brain repo as `brain_universe_client.py`.
+2. In their strategist init: instantiate `BrainUniverseClient(...)`,
+   call `await client.start()`.
+3. Replace any hardcoded symbol list with `client.allowed_symbols(lane=...)`.
+4. When emitting intent, set `lane` to match the symbol's lane from
+   the client.
+5. Deploy.
+
+Until they do this, MC's new gate will REJECT off-universe intents.
+For Camaro specifically, this means equity intents will keep failing
+gates until Camaro's strategist learns to query
+`/admin/runtime/camaro/universe` and see crypto pairs in its
+candidate set.
+
+### Operator one-curl examples
+```bash
+# Add a symbol fleet-wide
+curl -X POST $MC/api/admin/patterns/universe \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"symbol":"COIN","lane":"equity","note":"crypto proxy"}'
+
+# Soft-deactivate (no longer tradeable, audit row preserved)
+curl -X DELETE $MC/api/admin/patterns/universe/HOTH \
+  -H "Authorization: Bearer $TOKEN"
+
+# Brain-side view (what camaro is allowed to propose right now)
+curl $MC/api/admin/runtime/camaro/universe \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+
 ## 2026-02-19 — Heartbeat side-effect on sidecar check-in + raised STALE/DEAD bands
 
 ### Operator pin

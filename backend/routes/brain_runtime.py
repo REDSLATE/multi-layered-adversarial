@@ -379,3 +379,123 @@ async def get_proxy_audit(
         "filter_brain": brain,
         "doctrine": "operator_read_only",
     }
+
+
+
+# ──────────────────────── /admin/runtime/{brain}/universe ────────────────────────
+# Brain-callable view of MC's `patterns_universe`, lane-filtered by
+# the brain's currently-held seats. Brains use this as the canonical
+# source of "what symbols may I propose?" Doctrine (c) — MC verifies
+# boundaries, brains propose within them.
+
+
+@router.get("/{brain}/universe")
+async def get_brain_universe(
+    brain: str = Path(..., description="brain id"),
+    x_brain_id: Optional[str] = Header(default=None, alias="X-Brain-Id"),
+    x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
+    operator_user: Optional[dict] = Depends(_maybe_user),
+) -> Dict[str, Any]:
+    """Return the symbols a given brain is allowed to propose intents
+    on, lane-filtered by the brain's currently-held seats.
+
+    Auth: dual — operator JWT OR (X-Brain-Id + X-Runtime-Token). If
+    brain-auth, the path `{brain}` MUST match the authenticated
+    brain — a brain cannot peek at another brain's universe.
+
+    Response shape:
+        {
+          "brain": "camaro",
+          "lanes": ["equity", "crypto"],
+          "symbols": [
+            {"symbol": "BTC/USD", "lane": "crypto"},
+            {"symbol": "NVDA",    "lane": "equity"},
+            ...
+          ],
+          "count": int,
+          "served_at": iso8601,
+          "doctrine": "operator_read_only_universe_view",
+        }
+
+    Brains MUST cache this response locally and use it as the ONLY
+    source of tradeable symbols for their strategist loop. On a 5xx
+    or timeout, fall back to last-known-good cache. On 200, replace
+    the cache. The MC-side `symbol_in_universe` gate will reject any
+    intent whose symbol is not in this response — guaranteeing that
+    a brain which drifts from this universe sees its intents
+    silently fail at MC's gate chain rather than reach the broker.
+    """
+    principal = await _dual_auth(x_brain_id, x_runtime_token, operator_user)
+
+    brain = (brain or "").lower().strip()
+    if brain not in KNOWN_BRAINS:
+        raise HTTPException(status_code=404, detail=f"unknown brain {brain!r}")
+
+    # Brain auth: enforce that the path `{brain}` matches the
+    # authenticated brain. No cross-brain peeking.
+    if principal.startswith("brain:"):
+        auth_brain = principal.split(":", 1)[1]
+        if auth_brain != brain:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"brain {auth_brain!r} cannot read universe for "
+                    f"brain {brain!r}; pull your own URL"
+                ),
+            )
+
+    # Resolve the brain's seats to a set of allowed lanes.
+    snap = await get_roster()
+    assignments: Dict[str, Optional[str]] = (snap or {}).get("assignments") or {}
+    brain_lanes: set[str] = set()
+    for seat, occupant in assignments.items():
+        if occupant != brain:
+            continue
+        brain_lanes.add(_lane_of_role(seat))
+
+    if not brain_lanes:
+        # Brain holds no seats. Return an empty universe rather than
+        # 4xx — an unseated brain is a normal state during operator
+        # rotation; it just means "you have nothing to propose
+        # right now." Strategist loop should idle.
+        return {
+            "brain": brain,
+            "lanes": [],
+            "symbols": [],
+            "count": 0,
+            "served_at": _now().isoformat(),
+            "served_to": principal,
+            "doctrine": "operator_read_only_universe_view",
+            "note": "brain holds no seats — empty universe is intentional",
+        }
+
+    # Query patterns_universe for the brain's lanes. Active rows only.
+    # Backward-compat: rows without a `lane` field are treated as
+    # equity (the legacy seed semantic).
+    from namespaces import PATTERNS_UNIVERSE  # noqa: WPS433
+    or_clauses: list[dict] = []
+    if "equity" in brain_lanes:
+        or_clauses.append({"lane": "equity"})
+        or_clauses.append({"lane": {"$exists": False}})
+    if "crypto" in brain_lanes:
+        or_clauses.append({"lane": "crypto"})
+    cursor = db[PATTERNS_UNIVERSE].find(
+        {"active": {"$ne": False}, "$or": or_clauses},
+        {"_id": 0, "symbol": 1, "lane": 1},
+    ).sort("symbol", 1)
+    symbols: list[dict] = []
+    async for row in cursor:
+        symbols.append({
+            "symbol": row.get("symbol"),
+            "lane": (row.get("lane") or "equity"),
+        })
+
+    return {
+        "brain": brain,
+        "lanes": sorted(brain_lanes),
+        "symbols": symbols,
+        "count": len(symbols),
+        "served_at": _now().isoformat(),
+        "served_to": principal,
+        "doctrine": "operator_read_only_universe_view",
+    }

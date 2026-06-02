@@ -301,24 +301,57 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("opinion_silence_worker start failed: %s", e)
     # Seed the initial patterns_universe watchlist (idempotent).
+    # 2026-02-19: extended with `lane` field so the canonical
+    # `symbol_in_universe` gate (shared/execution.py) can refuse
+    # off-universe AND wrong-lane intents. Equity tickers tagged
+    # `lane=equity`; the four Kraken-tracked majors are auto-seeded
+    # with `lane=crypto` so Camaro/Chevelle/etc. have a canonical
+    # crypto universe to propose against without an operator curl.
     try:
         from db import db as _db
         from namespaces import PATTERNS_UNIVERSE
-        seed_symbols = [
+        equity_seed = [
             "AAPL", "MSFT", "NVDA", "TSLA", "AMD", "HOTH", "AMC", "GME",
         ]
-        for sym in seed_symbols:
+        crypto_seed = [
+            "BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD",
+        ]
+        for sym in equity_seed:
             await _db[PATTERNS_UNIVERSE].update_one(
                 {"symbol": sym},
-                {"$setOnInsert": {
-                    "symbol": sym, "active": True,
-                    "added_by": "seed",
-                    "added_at": "seed",
-                    "note": "Phase 1 seed",
-                }},
+                {
+                    "$setOnInsert": {
+                        "symbol": sym,
+                        "active": True,
+                        "added_by": "seed",
+                        "added_at": "seed",
+                        "note": "Phase 1 seed",
+                    },
+                    # Idempotent: backfill `lane` onto any pre-existing
+                    # rows without it. Legacy rows are equity.
+                    "$set": {"lane": "equity"},
+                },
                 upsert=True,
             )
-        logger.info("patterns_universe seeded (%d symbols)", len(seed_symbols))
+        for sym in crypto_seed:
+            await _db[PATTERNS_UNIVERSE].update_one(
+                {"symbol": sym},
+                {
+                    "$setOnInsert": {
+                        "symbol": sym,
+                        "active": True,
+                        "added_by": "seed",
+                        "added_at": "seed",
+                        "note": "Crypto majors (auto-seed 2026-02-19)",
+                    },
+                    "$set": {"lane": "crypto"},
+                },
+                upsert=True,
+            )
+        logger.info(
+            "patterns_universe seeded (%d equity + %d crypto)",
+            len(equity_seed), len(crypto_seed),
+        )
     except Exception as e:  # noqa: BLE001
         logger.warning("patterns_universe seed failed: %s", e)
     # Daily market snapshots — three S&P-500-wide point-in-time
