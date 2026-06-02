@@ -1,3 +1,56 @@
+## 2026-02-17 (pass #54) — RISE AI refactored seat-keyed (was brain-keyed)
+
+### Operator pin
+The `llm_calls` ledger is keyed by SEAT, not BRAIN. Filtering by brain
+name returned 0 rows every time — datasets were always empty. The
+8-seat IP also makes the seat the unit of authority and promotion, so
+training and checkpoint identity must live on the seat. Brain rotations
+no longer break training continuity.
+
+### Shipped
+1. **`shared/rise_ai/role_profiles.py`** — fully rewritten:
+   - 8 canonical seat profiles (equity: strategist/auditor/governor/executor;
+     crypto: crypto_strategist/crypto_auditor/crypto_governor/crypto).
+   - Crypto profiles carry crypto-flavored focus (funding rate,
+     liquidation cascade, stablecoin depeg, Kraken readiness, etc.).
+   - Legacy alias map: `decider → strategist`, `opponent/advisor →
+     auditor`, `crypto_decider → crypto_strategist`, `crypto_opponent
+     → crypto_auditor`, `crypto_executor → crypto`. Resolved before
+     lookup so older callers don't silently get GENERAL_PROFILE.
+2. **`scripts/rise_ai_bootstrap.py`** — refactored:
+   - Iterates the 8 seats (replaces `BRAINS` tuple).
+   - Deprecates legacy brain-keyed checkpoints
+     (`rise-ai-{alpha|camaro|chevelle|redeye}-qwen3-8b-v1` →
+     `state=DEPRECATED`) on first run. Idempotent.
+3. **`tests/test_rise_ai_surface.py`** — rewritten:
+   - 9 tests covering all 8 seats, legacy alias resolution, lane
+     isolation (crypto seats must carry crypto-flavored focus),
+     model_id slugs, prompt composition.
+
+### Verified
+- 17/17 RISE AI surface tests green.
+- 56/56 trading-path tests green (execution / lane / promotion /
+  auto-router). Nothing disturbed.
+- Live preview DB state after bootstrap:
+  - 8 seat-keyed checkpoints at state=SHADOW.
+  - 4 legacy brain-keyed checkpoints at state=DEPRECATED.
+- Confirmed: 0/25 `llm_calls` rows are graded today → datasets
+  correctly stay at 0 rows. Doctrine pin: un-graded calls aren't
+  training data. Operator needs to grade (or wire an auto-grader)
+  before corpora will grow.
+
+### Next operator action to unlock training data flow
+Either manual-grade a sample of `llm_calls`:
+```
+db.llm_calls.update_one({"call_id": "..."}, {"$set": {"grade": 1}})
+```
+or wire an auto-grader job that scores recent calls via a rubric LLM
+and writes `grade: 1` for positives. The bootstrap script can be
+re-run any time afterward — `register_checkpoint` is idempotent.
+
+---
+
+
 ## 2026-02-17 (pass #53) — RISE AI role profiles + prompt composer + bootstrap
 
 ### Consolidated from operator scaffold
