@@ -1,3 +1,66 @@
+## 2026-02-17 (pass #53) — RISE AI role profiles + prompt composer + bootstrap
+
+### Consolidated from operator scaffold
+The scaffold proposed three new modules. After auditing the existing
+codebase (`shared/llm/routing_policy.py::ROLE_OVERRIDES`,
+`shared/llm/kernel.py::_default_system`) we kept two ideas and
+discarded the duplicates:
+
+- KEPT: `shared/rise_ai/role_profiles.py` — net-new per-brain
+  `focus`/`forbidden`/`model_id` registry. Nothing else has this.
+- DISCARDED: standalone `model_router.py` — would duplicate a single
+  dict lookup. Folded `model_for_role()` into `role_profiles.py`.
+- RE-SHAPED: `_compose_prompt` — extracted as the free function
+  `compose_role_aligned_prompt(...)` in `shared/rise_ai/prompt_composer.py`
+  so every brain pod imports the SAME canonical implementation. MC's
+  own `_default_system` (kernel.py) stays untouched — it's the
+  fallback for external Anthropic/OpenAI/Gemini calls.
+
+### Shipped — `shared/rise_ai/`
+1. **`role_profiles.py`**:
+   - `RISE_AI_ROLE_PROFILES` dict for alpha/camaro/chevelle/redeye.
+   - `GENERAL_PROFILE` fallback (no crashes on typo brain names).
+   - `profile_for(role)` graceful-fallback lookup.
+   - `model_for_role(role)` checkpoint id helper.
+2. **`prompt_composer.py::compose_role_aligned_prompt`** — single
+   source of truth for the role-aligned brain-prompt scaffold. Pins
+   `authority: REASONING_ONLY` in every output, embeds the role's
+   focus + forbidden lists, accepts optional memory/market/doctrine
+   contexts.
+3. **`__init__.py`** — public surface re-export.
+
+### Shipped — `scripts/rise_ai_bootstrap.py`
+One-shot operator action that for each brain:
+1. Builds `/app/backend/datasets/rise_ai/{brain}.jsonl` from
+   graded `llm_calls` rows (`build_training_jsonl`).
+2. Registers a SHADOW-state checkpoint with the canonical model_id
+   (`register_checkpoint`) — idempotent by `model_id`.
+
+Path bug from operator scaffold fixed (`from app.backend.db import db`
+→ `from db import db`).
+
+### Verified
+- 15/15 RISE AI surface tests green.
+- 67/67 trading-path tests green (execution gates / lane toggles /
+  promotion gate / auto-router / seat policy) — nothing disturbed.
+- Bootstrap script ran end-to-end against live preview DB:
+  4 checkpoints registered at SHADOW, idempotent re-run skips
+  existing rows. 0 dataset rows expected on preview (no llm_calls
+  history); prod will accumulate as brains run.
+- Lint clean across new files.
+
+### What this unlocks
+Each brain now has a canonical checkpoint identity
+(`rise-ai-{brain}-qwen3-8b-v1`) in `ai_checkpoints` at SHADOW state.
+External trainer pulls the per-brain dataset, fine-tunes, and the
+result lands at the corresponding model_id. Operator transitions
+SHADOW → ADVISOR → PRIMARY via `set_checkpoint_state` based on
+`evaluate_candidate_model` recommendations. Routing already honors
+this (priority walk in `routing_policy.py`).
+
+---
+
+
 ## 2026-02-17 (pass #52) — AI autonomy pipeline (advisory side-band)
 
 ### Operator pin
