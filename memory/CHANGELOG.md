@@ -1,3 +1,83 @@
+## 2026-02-20 (pass #2) — Sidecar check-in `loop_status` extension
+
+### Cross-team coordination
+The RedEye brain team's agent flagged a real semantic gap on MC:
+sidecar identity check-ins were firing cleanly (19/hr, prod-verdict,
+clean imposter scan) while sovereign contributions had been silent
+for 3 days. The Diagnostics dashboard simultaneously showed
+"LIVE 11s" (heartbeat) and "last receipt 3d ago" (sovereign) —
+two contradictory truths.
+
+Both signals are correct as far as they go; they measure different
+loops. The brain team proposed enriching the sidecar check-in
+payload with last-activity timestamps so MC can notarize all of
+the brain's internal loops on every check-in, surfacing the
+inconsistency in one glance.
+
+### Doctrine pin
+The brain attests to its own internal loop freshness on every
+check-in. MC notarizes the attestation and derives an operator-
+facing `loop_health` band. Backward-compat: brains that don't
+ship the extension keep working; their `loop_health` defaults
+to `unknown`.
+
+### Shipped
+1. **`shared/runtime/sidecar_checkin.py`** — new `LoopStatus`
+   Pydantic schema with six optional fields:
+   `last_decision_log_at`, `last_opinion_at`, `last_intent_at`,
+   `last_sovereign_contribution_at`, `tick_loop_healthy`,
+   `tick_loop_last_error`. All ISO 8601 UTC; `tick_loop_last_error`
+   capped at 1000 chars.
+2. **`CheckinRequest`** extended with `loop_status: Optional[LoopStatus]`.
+   Existing brains keep working with no change.
+3. **POST handler** persists `loop_status` (raw) and `loop_health`
+   (derived band) into `sidecar_checkins.{runtime}`.
+4. **`_loop_health_from(...)`** band derivation helper:
+   - `unknown` — no block, empty block, or no sovereign timestamp
+     yet (silence is not implicit failure)
+   - `green` — sovereign < 1h, `tick_loop_healthy != False`
+   - `amber` — sovereign 1h-6h
+   - `red` — `tick_loop_healthy: false`, sovereign > 6h, or
+     malformed timestamp
+5. **`routes/brain_emission_diagnose.py`** — sidecar_checkin block
+   now surfaces `loop_status` (raw) and `loop_health` (band)
+   alongside the existing identity verdict.
+6. **`tests/test_sidecar_loop_status.py`** — 5 tests:
+   - Source tripwires (schema field, persistence, diagnose surface)
+   - Unit: band derivation across 6 documented cases
+   - Behavioral: round-trip POST → diagnose with both `green` and
+     `unknown` paths
+
+### Verified
+- Live curl: POSTed fresh+healthy loop_status → MC returned
+  `ok: True verdict: prod` → emission-diagnose returned
+  `loop_health: green` with all 4 timestamps intact.
+- 29 passed / 2 skipped (Alpha token unset in this env so
+  end-to-end POST tests skip gracefully).
+
+### Brain team contract handoff
+```json
+POST /api/admin/runtime/sidecar-checkin/{brain}
+Header: X-Runtime-Token: <per-brain token>
+Body:
+{
+  "stamp": { ... existing fields, unchanged ... },
+  "loop_status": {
+    "last_decision_log_at":             "2026-06-03T03:42:11Z",
+    "last_opinion_at":                  "2026-06-03T03:42:08Z",
+    "last_intent_at":                   "2026-06-03T02:14:00Z",
+    "last_sovereign_contribution_at":   "2026-05-30T12:27:18Z",
+    "tick_loop_healthy":                true,
+    "tick_loop_last_error":             null
+  }
+}
+```
+
+Brain teams may opt in incrementally — ship `loop_status` with
+just `tick_loop_healthy` first, then add timestamps as they wire
+each loop's instrumentation.
+
+
 ## 2026-02-20 — Boot-time legacy doc reconcile + crypto universe expansion + no-op-assign wipe
 
 ### Problems caught from production

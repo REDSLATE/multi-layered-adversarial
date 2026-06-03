@@ -61,6 +61,53 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _loop_health_from(
+    loop_status: Optional[Dict[str, Any]], now: datetime,
+) -> str:
+    """Derive a single operator-facing `loop_health` band from the
+    brain's self-reported `loop_status` block.
+
+    Bands:
+      green   — brain reports `tick_loop_healthy != False` AND its
+                latest sovereign contribution is < 1h old. Confident
+                "everything is firing."
+      red     — brain says `tick_loop_healthy: false` (explicit
+                wedged signal) OR `last_sovereign_contribution_at`
+                is > 6h old (the REDEYE 3-day silence pattern).
+      amber   — has a sovereign timestamp 1h-6h ago. Worth a glance.
+      unknown — brain didn't ship the block, shipped an empty block,
+                or shipped without populating `last_sovereign_
+                contribution_at`. Treat as "no opinion" not as
+                "negative" — silence is not implicit failure.
+    """
+    if not loop_status:
+        return "unknown"
+
+    # Explicit negative signal — brain self-attests wedged.
+    if loop_status.get("tick_loop_healthy") is False:
+        return "red"
+
+    sov_iso = loop_status.get("last_sovereign_contribution_at")
+    if not sov_iso:
+        # No timestamp yet → unknown. The brain may not have ticked
+        # since boot; that's not "red" yet.
+        return "unknown"
+
+    try:
+        sov_dt = datetime.fromisoformat(sov_iso.replace("Z", "+00:00"))
+        age = (now - sov_dt).total_seconds()
+    except Exception:  # noqa: BLE001
+        # Malformed → red. The brain attempted to attest but corrupted
+        # its own signal; safer to surface red than swallow it.
+        return "red"
+
+    if age < 3600:        # < 1h
+        return "green"
+    if age < 21_600:      # < 6h
+        return "amber"
+    return "red"
+
+
 def _now_iso() -> str:
     return _now().isoformat()
 
@@ -133,6 +180,72 @@ def _validate_stamp_dict(stamp_dict: Dict[str, Any]) -> Dict[str, Any]:
 # ────────────────────── Schemas ───────────────────────────────────────
 
 
+class LoopStatus(BaseModel):
+    """Brain-side liveness signals beyond the heartbeat.
+
+    Doctrine (2026-02-20 — brain-team coordination):
+      The sidecar identity check-in proves the pod is alive. But a
+      brain can have a healthy sidecar AND a dead decision/contribution
+      loop (the REDEYE pattern observed 2026-05-30 → 2026-06-02:
+      19 check-ins/hr clean, sovereign contributions silent 3 days).
+
+      `loop_status` lets the brain attest to its OWN internal task
+      health on every check-in. MC notarizes the timestamps and
+      surfaces them on the Diagnostics page so an operator can spot
+      "sidecar alive but decision loop wedged" in one glance.
+
+      All fields are optional. A brain that doesn't ship the upgrade
+      yet sends no `loop_status`; MC defaults its `loop_health` to
+      `unknown` for that brain. Backward-compatible — existing brains
+      keep working with no change.
+    """
+    last_decision_log_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "ISO 8601 UTC. When did this brain last write to its "
+            "decision_log? Fresh (<1h) = strategist loop is ticking."
+        ),
+    )
+    last_opinion_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "ISO 8601 UTC. Last successful POST to /api/opinions. "
+            "Fresh = opinion loop alive."
+        ),
+    )
+    last_intent_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "ISO 8601 UTC. Last successful intent envelope emit. "
+            "Fresh = brain is actively proposing trades."
+        ),
+    )
+    last_sovereign_contribution_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "ISO 8601 UTC. Last successful sovereign-tick POST to "
+            "/api/admin/sovereign/contribute. The REDEYE 3-day "
+            "silence stamp lives here."
+        ),
+    )
+    tick_loop_healthy: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Brain's self-assessment: is its main decision/tick loop "
+            "currently healthy? `false` is louder than a stale "
+            "timestamp — the brain KNOWS it's wedged."
+        ),
+    )
+    tick_loop_last_error: Optional[str] = Field(
+        default=None,
+        max_length=1000,
+        description=(
+            "If `tick_loop_healthy=false`, a short human-readable "
+            "explanation. Truncated to 1000 chars at MC's boundary."
+        ),
+    )
+
+
 class CheckinRequest(BaseModel):
     """Sidecar check-in body.
 
@@ -148,6 +261,13 @@ class CheckinRequest(BaseModel):
       silently 422'd. Accept both → no silent failures while the
       v1 rollout completes. Drop `identity` alias once all brains
       have settled on a single name (operator pin).
+
+    Doctrine (2026-02-20 — `loop_status` extension):
+      Brains MAY include an optional `loop_status` block carrying
+      last-activity timestamps for their internal loops. See
+      `LoopStatus` for the schema. Surfaces on the Diagnostics page
+      so "sidecar alive but decision loop wedged" patterns surface
+      in one glance instead of requiring two queries.
     """
     # Stored field is `stamp`; alias accepts `identity` from v1 sidecars.
     # No default — field is required. Pydantic returns 422 if neither key
@@ -160,6 +280,15 @@ class CheckinRequest(BaseModel):
             "`shared/runtime/platform_survival.py:RuntimeStamp.current(...)` "
             "serialized via dataclasses.asdict). Accepted under either "
             "`stamp` (legacy) or `identity` (v1 spec) key."
+        ),
+    )
+    loop_status: Optional[LoopStatus] = Field(
+        default=None,
+        description=(
+            "Optional brain-side liveness signals. See `LoopStatus`. "
+            "Existing brains can ignore this field; brains that adopt "
+            "it get fresh decision/opinion/intent/sovereign timestamps "
+            "surfaced on the Diagnostics page."
         ),
     )
 
@@ -264,6 +393,16 @@ async def post_sidecar_checkin(
     # Upsert. We keep `first_seen_at` and `checkin_count` ourselves
     # (atomic $inc + $setOnInsert) so the panel can show uptime &
     # how chatty each sidecar is.
+    #
+    # 2026-02-20: also persist the optional `loop_status` block and
+    # the derived `loop_health` band. Brain teams that ship the
+    # `loop_status` extension get fresh decision/opinion/intent/
+    # sovereign timestamps on the operator dashboard. Brains that
+    # don't ship it get `loop_health: "unknown"` — graceful default.
+    loop_status_dict: Optional[Dict[str, Any]] = (
+        body.loop_status.model_dump() if body.loop_status else None
+    )
+    loop_health = _loop_health_from(loop_status_dict, _now())
     await db[SIDECAR_CHECKINS].update_one(
         {"runtime": brain},
         {
@@ -280,6 +419,8 @@ async def post_sidecar_checkin(
                 "mc_policy_hash": mc_hash,
                 "last_checkin_at": now_iso,
                 "last_source_ip": source_ip,
+                "loop_status": loop_status_dict,
+                "loop_health": loop_health,
             },
             "$setOnInsert": {"first_checkin_at": now_iso},
             "$inc": {"checkin_count": 1},

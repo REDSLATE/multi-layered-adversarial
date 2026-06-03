@@ -186,6 +186,14 @@ async def _sidecar_checkin_status(brain: str) -> dict:
         "checkin_age_seconds": _age_seconds(doc.get("last_checkin_at")),
         "policy_hash_match": doc.get("policy_hash_match"),
         "errors": (doc.get("validation") or {}).get("errors", []),
+        # 2026-02-20 — brain-side internal-loop liveness (optional).
+        # Brains that ship the `loop_status` extension to their
+        # sidecar check-in payload get fresh decision / opinion /
+        # intent / sovereign timestamps surfaced here. Brains that
+        # haven't shipped it yet → loop_status is None, loop_health
+        # is "unknown" (graceful default; not a failure signal).
+        "loop_status": doc.get("loop_status"),
+        "loop_health": doc.get("loop_health") or "unknown",
     }
 
 
