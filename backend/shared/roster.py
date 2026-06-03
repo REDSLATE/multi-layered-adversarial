@@ -57,7 +57,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from auth import get_current_user
 from db import db
-from namespaces import BRAIN_ELIGIBILITY, BRAIN_ROSTER, DISCUSSION_PARTICIPANTS, ROSTER_AUDIT_LOG
+from namespaces import BRAIN_ELIGIBILITY, BRAIN_ROSTER, DISCUSSION_PARTICIPANTS, ROSTER_AUDIT_LOG, SHARED_EXECUTOR_SEAT
 
 
 ROLES: tuple[str, ...] = (
@@ -399,6 +399,45 @@ def _lane_of_role(role: str) -> str:
     return "crypto" if role in CRYPTO_LANE_ROLES else "equity"
 
 
+async def _wipe_legacy_executor_doc(actor: str, reason: str) -> None:
+    """Auto-wipe the legacy `shared_executor_seat` document whenever
+    the roster's `executor` seat is reassigned.
+
+    Why this exists (2026-02-19 doctrine cleanup):
+      MC used to keep two storage locations for the equity executor —
+      the new roster (`shared_brain_roster.assignments.executor`) and
+      the legacy single-row doc (`shared_executor_seat`). After the
+      2026-02-17 fix the gate prefers roster, but the legacy doc kept
+      its old value until manually cleared, which lit up the
+      "SEAT REGISTRY DRIFT DETECTED" banner on the Intents page
+      after every roster assignment.
+
+      Clearing the legacy doc on every roster write makes the roster
+      the single source of truth. `shared_executor_seat.get_seat_holder`
+      falls through to the roster when the legacy doc holder is None.
+      No downstream behavior change — the gate already prefers roster.
+    """
+    try:
+        await db[SHARED_EXECUTOR_SEAT].update_one(
+            {"_id": "executor"},
+            {
+                "$set": {
+                    "holder": None,
+                    "since": None,
+                    "assigned_by": actor,
+                    "reason": f"auto-cleared by roster write ({reason})",
+                    "auto_cleared_at": _now_iso(),
+                },
+            },
+            upsert=True,
+        )
+    except Exception:  # noqa: BLE001
+        # Best-effort. The gate already prefers roster, so even if this
+        # write fails the seat-registry-diagnose banner will be the
+        # only victim — never a real authority drift.
+        pass
+
+
 @router.post("/assign")
 async def assign(body: AssignIn, user: dict = Depends(get_current_user)):
     # Legacy role names (`decider`, `crypto_decider`) are rewritten to
@@ -449,6 +488,17 @@ async def assign(body: AssignIn, user: dict = Depends(get_current_user)):
         "after": new_assignments,
         "seat_epoch": new_epoch,
     })
+    # Doctrine cleanup: if this assignment touched the equity executor
+    # seat (either directly or as a same-lane vacate side-effect),
+    # also clear the legacy `shared_executor_seat` doc so the
+    # diagnose banner stays silent and the roster is single-source.
+    if (
+        target_role == "executor"
+        or prev.get("executor") != new_assignments.get("executor")
+    ):
+        await _wipe_legacy_executor_doc(
+            actor, reason=f"roster assign {target_role}={body.brain}",
+        )
     return await get_current(user)
 
 
@@ -491,6 +541,11 @@ async def swap(body: SwapIn, user: dict = Depends(get_current_user)):
         "after": new_assignments,
         "seat_epoch": new_epoch,
     })
+    if (role_a == "executor" or role_b == "executor"
+            or prev.get("executor") != new_assignments.get("executor")):
+        await _wipe_legacy_executor_doc(
+            actor, reason=f"roster swap {role_a}<->{role_b}",
+        )
     return await get_current(user)
 
 
@@ -515,6 +570,7 @@ async def reset_defaults(user: dict = Depends(get_current_user)):
     await _audit("reset", actor, {
         "before": prev, "after": DEFAULT_ASSIGNMENTS, "seat_epoch": new_epoch,
     })
+    await _wipe_legacy_executor_doc(actor, reason="roster reset to defaults")
     return await get_current(user)
 
 

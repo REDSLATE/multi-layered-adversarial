@@ -1,3 +1,61 @@
+## 2026-02-19 (pass #3) — Legacy executor doc auto-wipe on roster writes
+
+### Problem
+Operator screenshot: "SEAT REGISTRY DRIFT DETECTED — seat executor —
+roster says redeye, legacy doc says alpha, gate sees redeye" banner
+firing on the Intents page after every Quick Seat Switch. The
+gate was correct (reads from roster, prefers redeye), but the
+legacy `shared_executor_seat` doc held the stale `alpha` value
+from a pre-QSS rotation. Two storage locations, no auto-sync,
+operator had to manually `POST /api/executor/rotate` after every
+roster change to silence the banner.
+
+### Doctrine pin
+The roster (`shared_brain_roster.assignments`) is the single source
+of truth for seat ownership. The legacy doc is fallback-only. The
+gate already prefers roster. Now the legacy doc auto-clears any
+time the roster writes the executor seat — drift can't accumulate.
+
+### Shipped
+1. **`shared/roster.py`** — new `_wipe_legacy_executor_doc(actor,
+   reason)` helper. Writes `holder=null, since=null, reason=
+   "auto-cleared by roster write (...)"` to
+   `shared_executor_seat`. Best-effort (try/except) so a write
+   failure can't block the roster assignment.
+2. **`shared/roster.py`** — three call sites added:
+   - `/assign` — fires when `target_role == "executor"` OR when
+     the same-lane vacate side-effect changes the executor holder.
+   - `/swap` — fires when either swapped role is `executor` OR
+     when the executor holder changes.
+   - `/reset` — always fires (reset writes a full default roster).
+3. **`tests/test_legacy_executor_auto_wipe.py`** — 2 tests:
+   - Source tripwire: helper exists + wired into 3 paths (4 occurrences total).
+   - Behavioral: seed legacy doc to `alpha` → roster-assign executor
+     to `redeye` → assert legacy doc is now `null`.
+
+### Verified
+- Live curl: seeded legacy doc to `alpha`, ran
+  `/api/admin/roster/assign role=executor brain=redeye`, then
+  `/api/admin/seat-registry/diagnose` returned
+  `legacy_executor_seat_doc.holder = null`, `reason = "auto-cleared
+  by roster write (roster assign executor=redeye)"`,
+  `gate_view.executor.source = "roster"`.
+- 26/26 focused tests green (2 new + 24 prior across all today's
+  passes: heartbeat + universe + auto-wipe).
+
+### Operator effect
+After this is deployed to prod:
+- The "SEAT REGISTRY DRIFT DETECTED" banner will never fire from
+  roster-assign / swap / reset writes again.
+- Operator can use Quick Seat Switches freely — no manual
+  `/api/executor/rotate` follow-up needed.
+- The legacy `shared_executor_seat` collection still exists for
+  back-compat with any callers that still POST to
+  `/api/executor/rotate` directly. Those callers continue to work
+  but their writes will be overwritten the next time the roster
+  is touched. Doctrine-clean: roster wins, every time.
+
+
 ## 2026-02-19 (pass #2) — Symbol-in-universe gate + brain-callable universe endpoint
 
 ### Operator pin
