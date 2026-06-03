@@ -1,3 +1,67 @@
+## 2026-02-20 (pass #4) — Heartbeat reconciler worker
+
+### Problem
+Operator screenshot 2026-06-03 showed REDEYE simultaneously:
+  - SIDECAR IMPOSTER SCAN: 19 check-ins in last 1h, all clean prod
+  - HEARTBEAT STATUS: DEAD 375s
+Most likely cause: REDEYE pod genuinely went silent in the last
+few minutes (the 19 check-ins happened earlier in the hour window).
+But there's a real durability gap that could cause an identical
+symptom on another brain: the per-request heartbeat side-effect
+in `shared/runtime/sidecar_checkin.py` is wrapped in try/except,
+so a transient Mongo write blip silently swallows the heartbeat
+bump while the `sidecar_checkin_audit` row above DID persist.
+
+### Doctrine pin
+Belt-and-suspenders: per-request side-effect remains the canonical
+fast path. A background reconciler closes the durability gap by
+deriving `shared_heartbeats.last_seen` from `sidecar_checkin_audit`
+on a 60s tick. Advisory observability only — never reassigns a
+seat, never gates execution, never overwrites a fresher heartbeat.
+
+### Shipped
+1. **`shared/runtime/heartbeat_reconciler.py`** — new worker module
+   mirroring the `opinion_silence_worker` pattern:
+   - `perform_reconcile(max_age_sec)` — pure function-of-DB-state, callable from worker loop OR an admin endpoint
+   - For each brain in DISCUSSION_PARTICIPANTS: find latest
+     `sidecar_checkin_audit.ts`, compare to current heartbeat,
+     upsert if audit is strictly newer
+   - Refuses to bump from audit rows older than `max_age_sec`
+     (default 30 min) — no "rewrite history" failure mode
+   - Bumped rows carry `detail.source = "heartbeat_reconciler"`
+     so operators can tell reconciled bumps from real pings
+   - Config: `HEARTBEAT_RECONCILER_ENABLED` (true), `TICK_SEC`
+     (60s), `MAX_AGE_S` (1800s)
+2. **`routes/heartbeat_reconciler_admin.py`** — operator endpoints:
+   - `POST /api/admin/heartbeat-reconcile/run` — manual trigger,
+     returns the same summary the worker logs
+   - `GET /api/admin/heartbeat-reconcile/status` — config view
+3. **`server.py`** — starts the worker on boot, wires the admin router
+4. **`tests/test_heartbeat_reconciler.py`** — 7 tests:
+   - Source tripwires (helper exists + wired into boot + admin router included)
+   - Behavioral: bumps when audit newer, refuses ancient audit
+     rows, no-op when heartbeat already fresh, lists no-audit brains
+   - End-to-end: admin endpoints return correct shape
+
+### Verified
+- Boot log: `heartbeat_reconciler started: tick=60s max_age=1800s`
+- `GET /admin/heartbeat-reconcile/status` returns enabled=true
+- `POST /admin/heartbeat-reconcile/run` returns full summary with
+  bumped/no_change/skipped_stale/no_audit breakdowns
+- 31/31 focused tests green (7 new + 24 prior across the day)
+
+### Operator effect on prod after deploy
+- Within 60s of any sidecar check-in that lands but fails its
+  heartbeat side-effect, the reconciler will retroactively bump
+  the heartbeat row. The LIVE/STALE/DEAD badge can't drift out
+  of sync with the Imposter Scan for more than 60s now.
+- A brain that genuinely goes silent (the most likely REDEYE
+  cause) will still correctly age out to DEAD — reconciler only
+  refreshes when the audit log proves the pod is alive.
+- Manual `POST /admin/heartbeat-reconcile/run` available for
+  post-deploy investigation.
+
+
 ## 2026-02-20 (pass #3) — `last_ohlcv_push_success_at` + OHLCV 422 diagnostic
 
 ### Cross-team coordination (REDEYE → MC)

@@ -98,6 +98,7 @@ from routes.sidecar_diagnostics import router as sidecar_diagnostics_router
 from routes.data_stack_admin import router as data_stack_admin_router
 from routes.market_data_keys import router as market_data_keys_router
 from routes.opinion_silence_watchdog import router as opinion_silence_watchdog_router
+from routes.heartbeat_reconciler_admin import router as heartbeat_reconciler_admin_router
 from routes.brain_health import router as brain_health_router
 from routes.market_data_snapshot import router as market_data_snapshot_router
 from routes.brain_runtime import router as brain_runtime_router
@@ -300,6 +301,21 @@ async def lifespan(app: FastAPI):
         logger.info("Opinion-silent watchdog started")
     except Exception as e:  # noqa: BLE001
         logger.warning("opinion_silence_worker start failed: %s", e)
+
+    # 2026-02-20 — Heartbeat reconciler.
+    # Periodically derives `shared_heartbeats.last_seen` from
+    # `sidecar_checkin_audit` so the LIVE/STALE/DEAD badge can't
+    # drift out of sync with the imposter scan even when the
+    # per-request side-effect in sidecar_checkin.py silently
+    # fails (e.g., transient Mongo write blip).
+    try:
+        from shared.runtime.heartbeat_reconciler import (
+            start_worker as _start_heartbeat_reconciler,
+        )
+        _start_heartbeat_reconciler()
+        logger.info("Heartbeat reconciler started")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("heartbeat_reconciler start failed: %s", e)
     # Seed the initial patterns_universe watchlist (idempotent).
     # 2026-02-19: extended with `lane` field so the canonical
     # `symbol_in_universe` gate (shared/execution.py) can refuse
@@ -572,6 +588,7 @@ api_router.include_router(sidecar_diagnostics_router)
 api_router.include_router(data_stack_admin_router)
 api_router.include_router(market_data_keys_router)
 api_router.include_router(opinion_silence_watchdog_router)
+api_router.include_router(heartbeat_reconciler_admin_router)
 api_router.include_router(brain_health_router)
 api_router.include_router(market_data_snapshot_router)
 api_router.include_router(daily_snapshots_router)
