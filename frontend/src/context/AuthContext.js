@@ -107,10 +107,22 @@ export function AuthProvider({ children }) {
       setUser(data.user);
       return { ok: true };
     } catch (e) {
-      return {
-        ok: false,
-        error: formatApiErrorDetail(e?.response?.data?.detail) || e.message,
-      };
+      // Distinguish three failure modes so the operator sees the
+      // ACTUAL cause, not a generic "Something went wrong":
+      //   1. Server responded with a body (e.g. 401 + detail) → show detail
+      //   2. Request reached fetch but failed (network / CORS) → show e.message
+      //   3. Truly unknown → final fallback
+      const detail = e?.response?.data?.detail;
+      let msg;
+      if (detail != null) {
+        msg = formatApiErrorDetail(detail);
+      } else if (typeof e?.message === "string" && e.message.trim()) {
+        // Network-class error. fetch threw, no response body.
+        msg = `Cannot reach Mission Control: ${e.message}`;
+      } else {
+        msg = "Login failed. Please try again.";
+      }
+      return { ok: false, error: msg };
     }
   }, []);
 
