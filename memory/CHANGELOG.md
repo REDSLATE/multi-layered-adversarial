@@ -1,3 +1,59 @@
+## 2026-02-20 — Boot-time legacy doc reconcile + crypto universe expansion + no-op-assign wipe
+
+### Problems caught from production
+1. **Drift banner persisted after deploy** — the auto-wipe shipped
+   yesterday only fires on roster WRITES, not on boot. A deploy
+   into prod where the legacy `shared_executor_seat` doc already
+   held a stale value kept the banner firing until the operator
+   manually triggered a write.
+2. **No-op roster writes skipped the wipe** — clicking the same
+   brain pill on Quick Seat Switches (operator's intuitive "refresh
+   state" gesture) hit the `new_assignments == prev` early return,
+   never reaching the auto-wipe call site. Operator's escape hatch
+   didn't work.
+3. **Universe gate rejected real crypto signal** — Alpha (now in
+   crypto_strategist seat) was producing decision logs across 5
+   crypto pairs (AVAX, LINK, ADA, BNB, XRP), but only XRP was in
+   the seeded universe. The other 4 would have been rejected at
+   the gate the moment Alpha tried to emit a routable intent.
+
+### Shipped
+1. **`server.py` boot reconcile**: on app startup, compare
+   `shared_brain_roster.assignments.executor` with
+   `shared_executor_seat.holder`. If they disagree and the roster
+   has a non-null executor, clear the legacy doc. Logs the action
+   so an operator can see what happened. Idempotent (re-running is
+   a no-op).
+2. **`server.py` crypto seed extended**: added `AVAX/USD`,
+   `LINK/USD`, `ADA/USD`, `BNB/USD` to the boot seed alongside
+   the original 4 majors. `$setOnInsert` semantics — won't
+   overwrite operator-edited rows.
+3. **`shared/roster.py` no-op-aware wipe**: when `/assign` hits
+   the `new_assignments == prev` early return AND `target_role ==
+   "executor"`, still fire `_wipe_legacy_executor_doc`. This makes
+   the "click the same pill again" operator escape hatch actually
+   work.
+
+### Verified
+- Restart with seeded stale `alpha` legacy doc → boot reconcile
+  logged `cleared legacy shared_executor_seat (was 'alpha',
+  roster.executor='redeye')`.
+- Restart with consistent doc → boot reconcile logged
+  `legacy executor doc consistent with roster — no wipe needed`.
+- `patterns_universe seeded (8 equity + 8 crypto)` — all four new
+  pairs present.
+- 26/26 tests green (including the previously-failing
+  re-assign-same-brain wipe test).
+
+### Operator effect on next prod deploy
+- The drift banner will clear automatically at boot.
+- No manual `/api/executor/rotate` curl needed post-deploy.
+- AVAX/LINK/ADA/BNB intents from Alpha will route normally
+  (assuming gate-chain passes and Kraken accepts them).
+- Operator's "click the same pill" muscle memory now works as
+  expected.
+
+
 ## 2026-02-19 (pass #3) — Legacy executor doc auto-wipe on roster writes
 
 ### Problem

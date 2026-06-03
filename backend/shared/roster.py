@@ -466,7 +466,19 @@ async def assign(body: AssignIn, user: dict = Depends(get_current_user)):
     new_assignments[target_role] = body.brain
 
     if new_assignments == prev:
-        # No-op; don't audit-log a non-change.
+        # No-op assignment — don't audit-log it. BUT: if the operator
+        # is touching the executor seat (even idempotently, e.g.
+        # clicking the same brain pill on Quick Seat Switches to
+        # refresh state), still fire the legacy-doc auto-wipe.
+        # That click is the operator's explicit "make this the
+        # truth right now" signal, and they often use it specifically
+        # to clear the SEAT REGISTRY DRIFT banner.
+        if target_role == "executor":
+            actor_noop = user.get("email") or "operator"
+            await _wipe_legacy_executor_doc(
+                actor_noop,
+                reason=f"roster assign (no-op refresh) executor={body.brain}",
+            )
         return await get_current(user)
 
     actor = user.get("email") or "operator"

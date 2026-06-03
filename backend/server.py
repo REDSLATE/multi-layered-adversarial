@@ -314,7 +314,15 @@ async def lifespan(app: FastAPI):
             "AAPL", "MSFT", "NVDA", "TSLA", "AMD", "HOTH", "AMC", "GME",
         ]
         crypto_seed = [
+            # Kraken-tracked majors (Phase 1)
             "BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD",
+            # Phase 2 expansion (2026-02-20) — added because Alpha
+            # (crypto_strategist) was actively producing decision logs
+            # on these pairs but the universe gate would reject any
+            # routable intent. Operator confirmed Kraken has liquidity
+            # on all four. Adding here makes the next deploy
+            # automatically tradeable on these pairs.
+            "AVAX/USD", "LINK/USD", "ADA/USD", "BNB/USD",
         ]
         for sym in equity_seed:
             await _db[PATTERNS_UNIVERSE].update_one(
@@ -354,6 +362,66 @@ async def lifespan(app: FastAPI):
         )
     except Exception as e:  # noqa: BLE001
         logger.warning("patterns_universe seed failed: %s", e)
+
+    # ─── Boot-time legacy executor doc reconciliation ──────────────
+    # 2026-02-20: companion to the auto-wipe-on-write helper in
+    # `shared/roster.py`. Without this boot reconciliation, a deploy
+    # that ships into prod with the legacy `shared_executor_seat`
+    # doc already holding a stale value (e.g. 'alpha' from a
+    # pre-QSS rotation) will keep the "SEAT REGISTRY DRIFT DETECTED"
+    # banner firing on the Intents page until the operator does
+    # SOMETHING that triggers a roster write.
+    #
+    # Doctrine: if the roster currently has an executor assignment,
+    # the roster is authoritative — auto-clear the legacy doc on
+    # boot so the diagnose surface is consistent without operator
+    # intervention. If the roster's executor is null/None, leave
+    # the legacy doc alone (legacy path still works as a fallback
+    # for any caller that still uses /api/executor/rotate).
+    try:
+        from db import db as _db2
+        from namespaces import BRAIN_ROSTER, SHARED_EXECUTOR_SEAT
+        roster_doc = await _db2[BRAIN_ROSTER].find_one(
+            {"_id": "current"},
+            {"_id": 0, "assignments": 1},
+        )
+        roster_executor = ((roster_doc or {}).get("assignments") or {}).get("executor")
+        legacy_doc = await _db2[SHARED_EXECUTOR_SEAT].find_one(
+            {"_id": "executor"},
+            {"_id": 0, "holder": 1},
+        )
+        legacy_holder = (legacy_doc or {}).get("holder")
+        if roster_executor and legacy_holder and roster_executor != legacy_holder:
+            await _db2[SHARED_EXECUTOR_SEAT].update_one(
+                {"_id": "executor"},
+                {"$set": {
+                    "holder": None,
+                    "since": None,
+                    "assigned_by": "boot_reconcile",
+                    "reason": (
+                        f"auto-cleared at boot: roster.executor="
+                        f"{roster_executor!r} but legacy doc held "
+                        f"{legacy_holder!r}; roster is authoritative"
+                    ),
+                    "auto_cleared_at": __import__("datetime").datetime.now(
+                        __import__("datetime").timezone.utc,
+                    ).isoformat(),
+                }},
+                upsert=True,
+            )
+            logger.info(
+                "boot reconcile: cleared legacy shared_executor_seat "
+                "(was %r, roster.executor=%r)",
+                legacy_holder, roster_executor,
+            )
+        else:
+            logger.info(
+                "boot reconcile: legacy executor doc consistent with "
+                "roster (roster=%r, legacy=%r) — no wipe needed",
+                roster_executor, legacy_holder,
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("legacy executor doc boot reconcile failed: %s", e)
     # Daily market snapshots — three S&P-500-wide point-in-time
     # captures per NYSE trading day (09:35 / 12:30 / 16:05 ET).
     # Doctrine: derived evidence only; never hits broker quotes.
