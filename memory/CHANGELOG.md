@@ -1,3 +1,42 @@
+## 2026-02-20 (pass #5) — Feeder auth 401 error-message upgrade
+
+### Problem
+REDEYE's agent took a multi-step round-trip ("is this token wrong?
+is the source wrong? do I need a separate REDEYE_FEEDER_TOKEN?")
+to land on the actual answer: the OHLCV endpoint auth is
+source-keyed (`source: "kraken_pro"` → `KRAKEN_FEEDER_TOKEN`),
+not brain-keyed. The bare `"invalid feeder token"` 401 gave them
+nothing to work with.
+
+### Shipped
+`shared/technicals.py:_verify_feeder` rewritten with informative
+error messages that name the expected `env_key`:
+
+- **400 (unknown source)**: lists allowed sources
+- **401 (missing token)**: `"missing X-Feeder-Token header (source='kraken_pro' expects env_key='KRAKEN_FEEDER_TOKEN')"`
+- **401 (wrong token)**: `"invalid feeder token (source='kraken_pro' expects env_key='KRAKEN_FEEDER_TOKEN'; compare your X-Feeder-Token against the MC deploy's 'KRAKEN_FEEDER_TOKEN' env var)"`
+- **503 (env var unset on MC)**: `"feeder token for source='kraken_pro' is not configured on MC (env_key='KRAKEN_FEEDER_TOKEN' is empty/missing on this deploy)"`
+
+The `env_key` NAME is public info (anyone reading the source code
+sees it in the FEEDERS dict). The token VALUE is never echoed —
+not from MC's env, not from the caller's header. Tests pin both
+properties.
+
+### Verified
+- Live curl: posting wrong token now returns the full informative
+  message above.
+- 5 new tests in `test_feeder_auth_errors.py` pin all four error
+  paths AND the no-token-value-echo invariant.
+- 27 passed / 2 skipped across affected suites.
+
+### Doctrine note for the operator
+The token VALUE is still secret and lives in MC's env vars per
+deploy. The operator (or platform admin) is the only party that
+should have it. The error message tells callers EXACTLY which env
+key to look up — but they have to find the value themselves via
+their hosting platform's secrets management.
+
+
 ## 2026-02-20 (pass #4) — Heartbeat reconciler worker
 
 ### Problem

@@ -75,6 +75,17 @@ def _now_iso() -> str:
 
 
 def _verify_feeder(source: str, token: str | None) -> None:
+    """Authenticate an OHLCV push.
+
+    Doctrine (2026-02-20 — error-message upgrade):
+      The 401 used to be a bare `"invalid feeder token"` which left
+      callers guessing whether the problem was the source, the env
+      var name, the token value, or all three. The REDEYE 2026-06-03
+      round-trip took ~30 min because of this. Now the 401 names
+      the env_key (PUBLIC info — derivable from FEEDERS in this file)
+      so the caller knows EXACTLY which env var the token is being
+      compared against. Token VALUE is never echoed.
+    """
     if source not in FEEDERS:
         raise HTTPException(
             status_code=400,
@@ -85,10 +96,30 @@ def _verify_feeder(source: str, token: str | None) -> None:
     if not expected:
         raise HTTPException(
             status_code=503,
-            detail=f"feeder token for {source} is not configured",
+            detail=(
+                f"feeder token for source={source!r} is not configured "
+                f"on MC (env_key={env_key!r} is empty/missing on this "
+                f"deploy)"
+            ),
         )
-    if not token or token != expected:
-        raise HTTPException(status_code=401, detail="invalid feeder token")
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                f"missing X-Feeder-Token header "
+                f"(source={source!r} expects env_key={env_key!r})"
+            ),
+        )
+    if token != expected:
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                f"invalid feeder token "
+                f"(source={source!r} expects env_key={env_key!r}; "
+                f"compare your X-Feeder-Token against the MC deploy's "
+                f"{env_key!r} env var)"
+            ),
+        )
 
 
 # ──────────────────────── ingest ────────────────────────
