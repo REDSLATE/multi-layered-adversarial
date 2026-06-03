@@ -228,6 +228,17 @@ class LoopStatus(BaseModel):
             "silence stamp lives here."
         ),
     )
+    last_ohlcv_push_success_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "ISO 8601 UTC. Last successful 2xx response from "
+            "/api/ingest/ohlcv or /api/ingest/ohlcv/batch. Lets the "
+            "operator dashboard distinguish 'brain is alive but the "
+            "OHLCV pipeline is silently 4xx-ing' from 'brain is "
+            "wedged.' Surfaces analogously to "
+            "`last_sovereign_contribution_at`."
+        ),
+    )
     tick_loop_healthy: Optional[bool] = Field(
         default=None,
         description=(

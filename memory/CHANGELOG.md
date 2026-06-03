@@ -1,3 +1,52 @@
+## 2026-02-20 (pass #3) — `last_ohlcv_push_success_at` + OHLCV 422 diagnostic
+
+### Cross-team coordination (REDEYE → MC)
+REDEYE's agent reported their OHLCV pushes were returning 422 across
+7/7 symbols with the diagnosis "MC validator expects top-level
+body.ts but REDEYE batches ts inside each bars[*]." Asked MC to fix
+the validator OR REDEYE would flatten to 1-bar/POST.
+
+### Reproducible finding
+Live preview reproduction showed the diagnosis was wrong-shaped.
+MC's actual schema (`shared/technicals.py:131-133`):
+
+```python
+class OHLCVBatchIn(BaseModel):
+    bars: list[OHLCVBarIn] = Field(..., min_length=1, max_length=2000)
+```
+
+— accepts the exact wire shape REDEYE described. Posting the batch
+envelope to `/api/ingest/ohlcv/batch` returns 200 + persists bars.
+The 422 with `loc: ["body","ts"]` is what Pydantic returns when
+you POST the batch envelope to the **single-bar URL**
+`/api/ingest/ohlcv` (no `/batch` suffix). 8 errors are returned,
+of which `body.ts` is the 4th; the brain agent fixated on that one
+without noticing the other 7 (body.source, body.symbol, body.tf,
+body.o, body.h, body.l, body.c) all required at top-level too.
+
+**Root cause: REDEYE is POSTing to the single-bar URL with batch
+envelopes. Fix is REDEYE-side: change URL to `/api/ingest/ohlcv/batch`.**
+
+Full diagnostic + paste-ready response written to
+`/app/memory/MC_RESPONSE_TO_REDEYE_OHLCV_422.md`.
+
+### Shipped (parallel field per their proposal)
+- **`LoopStatus.last_ohlcv_push_success_at`** added as optional ISO
+  8601 field. Brains populate it whenever an OHLCV push returns
+  2xx. MC dashboard will surface "sidecar healthy, sovereign
+  healthy, OHLCV silent" patterns at a glance, closing the same
+  failure-mode that REDEYE's 422 storm exposed.
+- Backward-compat (defaults to None). Existing brains keep working.
+- 15 tests still green (no test changes needed — the new field is
+  passed through `model_dump()` and persisted automatically).
+
+### Operator next step
+Forward `/app/memory/MC_RESPONSE_TO_REDEYE_OHLCV_422.md` to REDEYE
+team. If they confirm Option 1 (URL fix), zero MC changes needed.
+If they're already on `/batch` and still 422, paste the full curl
+reproduction back so MC can chase a possible deploy mismatch.
+
+
 ## 2026-02-20 (pass #2) — Sidecar check-in `loop_status` extension
 
 ### Cross-team coordination
