@@ -1,3 +1,77 @@
+## 2026-02-20 (pass #6) — Composite per-loop liveness
+
+### Problem (operator-caught)
+Operator screenshots showed REDEYE marked `DEAD 308s` by the
+heartbeat-driven badge while a different panel showed RedEye
+actively passing gate checks 45s ago. The badge was lying because
+it collapsed all signals into one heartbeat-driven status, hiding
+the real failure mode: one loop in the brain can die while others
+stay healthy. The operator named the fix exactly right —
+"composite liveness, not brain-level liveness."
+
+### Doctrine pin (2026-02-20)
+MC's brain status is now a composite of independent loop signals:
+  - heartbeat_loop   — shared_heartbeats.last_seen
+  - checkin_loop     — sidecar_checkin_audit.ts
+  - engine_loop      — shared_intents.ingest_ts (any action)
+  - directional_loop — shared_intents (BUY/SELL/SHORT/COVER only)
+  - sovereign_loop   — sovereign_state.{brain}.updated_at
+  - opinion_loop     — shared_brain_opinions count
+
+Each loop gets its own band (live/stale/dead/never).
+Overall verdict respects "engine alive = brain alive":
+  LIVE          — heartbeat fresh
+  LIVE_DEGRADED — heartbeat stale/dead BUT engine OR directional fresh
+                  (the REDEYE pattern — no longer DEAD)
+  LIVE_IDLE     — heartbeat fresh, but quiet on engine + directional
+  STALE         — heartbeat stale, no engine signal
+  DEAD          — heartbeat dead AND engine stale AND no directional
+  NEVER         — brain never contacted MC
+
+Reason chips for the UI to render as badges:
+  STALE_HEARTBEAT, DEAD_HEARTBEAT, STALE_SOVEREIGN,
+  STALE_OPINION, ENGINE_ACTIVE.
+
+### Shipped
+1. **`routes/brain_emission_diagnose.py`** — new `_composite_liveness`
+   helper. Pure function of the signals MC already collects. Zero
+   new collections, zero new writes.
+2. **`_diagnose_one`** now returns `composite_liveness` block alongside
+   the existing `heartbeat`, `sidecar_checkin`, `roster`, `emission`.
+3. **`tests/test_composite_liveness.py`** — 8 tests:
+   - Source tripwire (helper exists + all 6 loops + all 6 verdicts)
+   - Six verdict-derivation cases pinned (incl. the exact REDEYE
+     symptom: heartbeat dead + engine fresh ⇒ LIVE_DEGRADED + ENGINE_ACTIVE)
+   - End-to-end endpoint shape
+
+### Verified
+- Live curl against all 4 brains on preview shows the new
+  `composite_liveness` block with per-loop bands rendered.
+- Preview correctly shows DEAD/NEVER for all (MC_EMIT_ENABLED=false
+  is intentional in preview) — proving the helper distinguishes the
+  bands cleanly. The real impact lands on prod after redeploy.
+- 54/54 focused tests green (8 new + 46 prior across the day's
+  passes).
+
+### Operator impact on prod after redeploy
+- The Diagnostics dashboard can now render per-loop chips (e.g.
+  "REDEYE · LIVE_DEGRADED · STALE_HEARTBEAT · STALE_SOVEREIGN ·
+  ENGINE_ACTIVE") instead of one misleading "DEAD" badge.
+- The repeated up/down/up confusion stops — the badge no longer
+  flips between LIVE and DEAD on heartbeat oscillation if the
+  engine is firing.
+- The exact failed loop is surfaced as a chip, so the next debug
+  step is one click away ("STALE_SOVEREIGN → go look at sovereign
+  contributions").
+
+### Frontend follow-up
+This pass updates only the backend. The Diagnostics page's badge
+currently reads `heartbeat_age_seconds` to decide LIVE/STALE/DEAD;
+that path can keep working as the fallback. A follow-up pass should
+update `pages/Diagnostics.jsx` to read `composite_liveness.overall`
++ `composite_liveness.chips` and render the chip array.
+
+
 ## 2026-02-20 (pass #5) — Feeder auth 401 error-message upgrade
 
 ### Problem

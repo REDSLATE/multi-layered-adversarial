@@ -99,6 +99,7 @@ from routes.data_stack_admin import router as data_stack_admin_router
 from routes.market_data_keys import router as market_data_keys_router
 from routes.opinion_silence_watchdog import router as opinion_silence_watchdog_router
 from routes.heartbeat_reconciler_admin import router as heartbeat_reconciler_admin_router
+from routes.brain_outages import router as brain_outages_router
 from routes.brain_health import router as brain_health_router
 from routes.market_data_snapshot import router as market_data_snapshot_router
 from routes.brain_runtime import router as brain_runtime_router
@@ -589,6 +590,7 @@ api_router.include_router(data_stack_admin_router)
 api_router.include_router(market_data_keys_router)
 api_router.include_router(opinion_silence_watchdog_router)
 api_router.include_router(heartbeat_reconciler_admin_router)
+api_router.include_router(brain_outages_router)
 api_router.include_router(brain_health_router)
 api_router.include_router(market_data_snapshot_router)
 api_router.include_router(daily_snapshots_router)

@@ -368,6 +368,9 @@ async def _diagnose_one(brain: str, hours: int) -> dict:
         roster=roster,
         emission=emission,
     )
+    composite = _composite_liveness(
+        heartbeat=heartbeat, checkin=checkin, emission=emission,
+    )
     # Operator-readable summary line — one sentence the UI can render
     # next to the brain name.
     summary = _summarize(brain, silent_reasons, emission, roster)
@@ -376,10 +379,146 @@ async def _diagnose_one(brain: str, hours: int) -> dict:
         "checked_at": _now_iso(),
         "summary": summary,
         "silent_reasons": silent_reasons,
+        "composite_liveness": composite,
         "heartbeat": heartbeat,
         "sidecar_checkin": checkin,
         "roster": roster,
         "emission": emission,
+    }
+
+
+def _composite_liveness(
+    *, heartbeat: dict, checkin: dict, emission: dict,
+) -> dict:
+    """Derive a composite per-loop liveness band from the signals MC
+    already collects. Closes the "REDEYE DEAD by heartbeat but
+    passing gate checks 45s ago" contradiction the operator caught
+    on 2026-06-03.
+
+    Doctrine pin (2026-02-20):
+      MC's old badge collapsed every signal into one heartbeat-driven
+      status. That hid the real failure: ONE loop in the brain can
+      die while others stay healthy. Composite liveness reports each
+      loop independently and derives an overall band that respects
+      "engine still firing" as proof of life even if heartbeat is
+      stale.
+
+    Loops surfaced:
+      heartbeat_loop  — last `shared_heartbeats.last_seen`
+      checkin_loop    — last `sidecar_checkin_audit.ts`
+      engine_loop     — last `shared_intents.ingest_ts` (any action)
+      directional     — last `shared_intents` with BUY/SELL/SHORT/COVER
+      sovereign_loop  — last `sovereign_state.{brain}.updated_at`
+                        (read via _heartbeat_status → sovereign_age)
+      opinion_loop    — opinion counts already in heartbeat dict
+
+    Bands per loop:
+      live     — age < 120s
+      stale    — 120s ≤ age < 300s
+      dead     — age ≥ 300s
+      never    — no signal ever observed
+
+    Overall band (operator-facing):
+      LIVE              — heartbeat live
+      LIVE_DEGRADED     — heartbeat stale/dead BUT engine OR directional fresh
+      LIVE_IDLE         — heartbeat live, but no engine in last 1h
+      STALE             — heartbeat stale, no engine signal
+      DEAD              — heartbeat dead AND engine stale AND no directional in 1h
+      NEVER             — brain never contacted MC
+    """
+    def _band(age_sec):
+        if age_sec is None:
+            return "never"
+        if age_sec < 120:
+            return "live"
+        if age_sec < 300:
+            return "stale"
+        return "dead"
+
+    hb_age = heartbeat.get("heartbeat_age_seconds")
+    checkin_age = checkin.get("checkin_age_seconds")
+    sov_age = heartbeat.get("contribution_age_seconds")
+    latest_emission = emission.get("latest_emission") or {}
+    engine_age = _age_seconds(latest_emission.get("ingest_ts"))
+    directional_age = emission.get("latest_directional_age_seconds")
+
+    opinions_1h = heartbeat.get("opinions_last_hour") or 0
+
+    loops = {
+        "heartbeat_loop": {
+            "age_seconds": hb_age,
+            "band": _band(hb_age),
+            "source": "shared_heartbeats.last_seen",
+        },
+        "checkin_loop": {
+            "age_seconds": checkin_age,
+            "band": _band(checkin_age),
+            "source": "sidecar_checkin_audit.ts",
+        },
+        "engine_loop": {
+            "age_seconds": engine_age,
+            "band": _band(engine_age),
+            "source": "shared_intents.ingest_ts (any action)",
+        },
+        "directional_loop": {
+            "age_seconds": directional_age,
+            "band": _band(directional_age),
+            "source": "shared_intents.ingest_ts (BUY/SELL/SHORT/COVER)",
+        },
+        "sovereign_loop": {
+            "age_seconds": sov_age,
+            "band": _band(sov_age),
+            "source": "sovereign_state.{brain}.updated_at",
+        },
+        "opinion_loop": {
+            "count_last_1h": opinions_1h,
+            "band": "live" if opinions_1h > 0 else "dead",
+            "source": "shared_brain_opinions in last 1h",
+        },
+    }
+
+    # Composite verdict.
+    hb_band = loops["heartbeat_loop"]["band"]
+    engine_band = loops["engine_loop"]["band"]
+    directional_band = loops["directional_loop"]["band"]
+
+    if hb_band == "never" and engine_band == "never":
+        overall = "NEVER"
+    elif hb_band == "live":
+        # Heartbeat fresh. If engine has been quiet > 1h, that's LIVE_IDLE.
+        if engine_age is not None and engine_age > 3600 and (
+            directional_age is None or directional_age > 3600
+        ):
+            overall = "LIVE_IDLE"
+        else:
+            overall = "LIVE"
+    elif engine_band in ("live", "stale") or directional_band in ("live", "stale"):
+        # Heartbeat slipping but engine is still firing — the exact
+        # case operator caught with REDEYE. NOT DEAD.
+        overall = "LIVE_DEGRADED"
+    elif hb_band == "stale":
+        overall = "STALE"
+    else:
+        overall = "DEAD"
+
+    # Reason chips — granular flags the UI can render as badges.
+    chips: list[str] = [overall]
+    if hb_band == "stale":
+        chips.append("STALE_HEARTBEAT")
+    if hb_band == "dead":
+        chips.append("DEAD_HEARTBEAT")
+    if loops["sovereign_loop"]["band"] in ("stale", "dead"):
+        chips.append("STALE_SOVEREIGN")
+    if loops["opinion_loop"]["band"] == "dead":
+        chips.append("STALE_OPINION")
+    if engine_band == "live" or directional_band == "live":
+        chips.append("ENGINE_ACTIVE")
+
+    return {
+        "overall": overall,
+        "chips": chips,
+        "loops": loops,
+        "doctrine": "advisory_observability_only",
     }
 
 
