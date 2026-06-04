@@ -1,3 +1,50 @@
+## 2026-02-20 (pass #7) — CompositeLivenessCard frontend follow-up
+
+### Problem
+Operator confirmed the backend `composite_liveness` block ships
+cleanly but the dashboard's old runtime table still rendered a
+single heartbeat-driven badge. The "DEAD by heartbeat / passing
+gate checks 45s ago" contradiction stays visually invisible until
+the frontend reads the new field.
+
+### Shipped
+1. **`frontend/src/components/CompositeLivenessCard.jsx`** — new
+   React card. Fans out `/admin/brain/emission-diagnose/{brain}`
+   for all 4 brains in parallel, renders:
+   - Per-brain column with overall band (LIVE / LIVE_DEGRADED /
+     LIVE_IDLE / STALE / DEAD / NEVER) in a large badge
+   - Reason-chip array (STALE_HEARTBEAT, DEAD_HEARTBEAT,
+     STALE_SOVEREIGN, STALE_OPINION, ENGINE_ACTIVE)
+   - Per-loop rows for all 6 loops (heartbeat / checkin / engine /
+     directional / sovereign / opinion) with band + age
+   - Auto-refreshes every 10 seconds
+   - `data-testid` attributes on every operator-relevant element
+2. **`frontend/src/pages/Diagnostics.jsx`** — slotted the new card
+   directly above the legacy runtime table, wrapped in the standard
+   `PanelErrorBoundary`. The legacy table still renders below so
+   an operator with stale muscle memory has a fallback during
+   rollout.
+
+### Verified
+- Live screenshot on preview shows the card rendering for all 4
+  brains with chips, per-loop bands, and live refresh.
+- Preview's `MC_EMIT_ENABLED=false` correctly produces DEAD/NEVER
+  for every brain, proving the chip+band rendering works across
+  every verdict band. Real impact lands on prod after redeploy.
+- Lint clean on both files.
+
+### Operator effect after prod redeploy
+- The repeated "DEAD ↔ LIVE" flip-flop on Chevelle/RedEye should
+  stop being misleading. The card honors "engine alive = brain
+  alive" via the LIVE_DEGRADED verdict.
+- Per-loop bands let an operator see WHICH loop is wedged in one
+  glance — no more "is it a heartbeat issue or a sovereign issue?"
+  curl rounds.
+- Existing legacy table remains visible below; can be removed in
+  a follow-up pass once the operator confirms the new card meets
+  every diagnostic need.
+
+
 ## 2026-02-20 (pass #6) — Composite per-loop liveness
 
 ### Problem (operator-caught)

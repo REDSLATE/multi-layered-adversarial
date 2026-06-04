@@ -12,6 +12,7 @@ import PromotionArtifactPanel from "@/components/PromotionArtifactPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import BrainDeepDiagnoseCard from "@/components/BrainDeepDiagnoseCard";
 import ImposterScanCard from "@/components/ImposterScanCard";
+import CompositeLivenessCard from "@/components/CompositeLivenessCard";
 
 const BRAINS_FOR_FILTER = ["all", "alpha", "camaro", "chevelle", "redeye"];
 const KIND_LABEL = {
@@ -448,6 +449,16 @@ export default function Diagnostics() {
               <div className="font-mono text-sm text-rd-text">{fmtTime(data.now)}</div>
             </Card>
           </div>
+
+          {/* Per-loop liveness card. Composite verdict from
+              /api/admin/brain/emission-diagnose/{brain} replaces the
+              old whole-brain heartbeat badge. Renders right above
+              the legacy runtimes table so an operator can see the
+              richer per-loop story at a glance and fall back to
+              the legacy table if needed during rollout. */}
+          <PanelErrorBoundary panelName="CompositeLivenessCard">
+            <CompositeLivenessCard />
+          </PanelErrorBoundary>
 
           <Card className="p-0 overflow-hidden" testid="diag-runtimes">
             {/* Top-of-table banner — STALE HEARTBEAT signal (no longer
