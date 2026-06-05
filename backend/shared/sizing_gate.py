@@ -16,6 +16,22 @@ Doctrine pin (2026-05-26, operator-locked):
     Per-lane configuration so the operator can run, e.g., $5 crypto
     while equity stays at $100 paper. All env-driven.
 
+Doctrine pin (2026-02-17, Phase 4 ENGAGED):
+    The ladder stage (per brain × lane) is now AUTHORITATIVE for
+    sizing/routing. `evaluate_sizing_with_ladder()` reads the stage
+    and:
+        observation_only  → route="observe"     (no broker; write obs receipt)
+        micro_paper       → route="paper"       (paper fire @ MICRO_PAPER_USD)
+        micro_live        → route="live_micro"  (live fire @ MICRO_LIVE cap)
+        normal_live       → route="live_normal" (full lane-cap sizing)
+
+    The ladder cap participates in the "smallest-wins" comparison
+    alongside `lane_cap` and `micro_live`. This means promoting a
+    brain to `micro_paper` no longer requires the brain to also stop
+    self-zeroing — MC's gate clamps to $10/order regardless of what
+    the brain claimed it wanted to risk. The brain becomes a SIGNAL
+    SOURCE; MC owns capital deployment.
+
 Provenance: every clamped order carries `sizing_provenance` on its
 receipt so the operator can trace exactly which rail bound the size.
 """
@@ -64,6 +80,25 @@ MICRO_LIVE_EQUITY_CAP_USD: float = _env_float(
     "MICRO_LIVE_EQUITY_CAP_USD", MICRO_LIVE_DEFAULT_CAP_USD,
 )
 
+# ─── Phase 4 ladder caps ───
+# Per-rung notional defaults. Operator can tighten via env at any time.
+LADDER_MICRO_PAPER_USD: float = _env_float("LADDER_MICRO_PAPER_USD", 10.0)
+LADDER_MICRO_LIVE_USD: float = _env_float("LADDER_MICRO_LIVE_USD", 5.0)
+
+
+# Routing tags carried on the receipt so the learning ladder can count
+# fills per-stage (see `learning_ladder._paper_progress`).
+ROUTE_OBSERVE = "observe"
+ROUTE_PAPER = "paper"
+ROUTE_LIVE_MICRO = "live_micro"
+ROUTE_LIVE_NORMAL = "live_normal"
+
+EXECUTION_MODE_FOR_ROUTE = {
+    ROUTE_PAPER: "ladder_paper",
+    ROUTE_LIVE_MICRO: "ladder_live_micro",
+    ROUTE_LIVE_NORMAL: "live",
+}
+
 
 @dataclass
 class SizingDecision:
@@ -71,11 +106,16 @@ class SizingDecision:
     requested_usd: float
     final_usd: float
     was_clamped: bool
-    binding_rail: str   # "lane_cap" | "micro_live" | "none"
+    binding_rail: str   # "lane_cap" | "micro_live" | "ladder" | "none"
     micro_live_enabled: bool
     lane_cap_usd: float
     micro_live_cap_usd: Optional[float]
     lane: Optional[str]
+    # ── Phase 4 ladder fields ──
+    stage: Optional[str] = None
+    route: Optional[str] = None
+    ladder_cap_usd: Optional[float] = None
+    execution_mode: Optional[str] = None
 
 
 def _micro_live_cap_for(lane: Optional[str]) -> float:
@@ -87,6 +127,30 @@ def _micro_live_cap_for(lane: Optional[str]) -> float:
     return MICRO_LIVE_DEFAULT_CAP_USD
 
 
+def _ladder_cap_and_route(stage: str) -> tuple[Optional[float], str]:
+    """Translate a ladder stage into (notional_cap, route).
+
+    `observation_only` has no broker fill — the caller short-circuits
+    on `route="observe"` and writes an observation receipt instead.
+    `normal_live` returns None so the lane-cap rail is the only
+    binding constraint (no ladder clamp added at the top rung).
+    """
+    if stage == "observation_only":
+        # Cap of 0 forces final_usd → 0 if anyone walks past the
+        # short-circuit; defense in depth.
+        return 0.0, ROUTE_OBSERVE
+    if stage == "micro_paper":
+        return LADDER_MICRO_PAPER_USD, ROUTE_PAPER
+    if stage == "micro_live":
+        return LADDER_MICRO_LIVE_USD, ROUTE_LIVE_MICRO
+    if stage == "normal_live":
+        return None, ROUTE_LIVE_NORMAL
+    # Unknown stage → fail-closed to observe so a typo doesn't accidentally
+    # leak real-money fills.
+    logger.warning("sizing_gate: unknown ladder stage %r — failing closed to observe", stage)
+    return 0.0, ROUTE_OBSERVE
+
+
 def evaluate_sizing(
     requested_usd: float, lane: Optional[str],
 ) -> SizingDecision:
@@ -94,6 +158,10 @@ def evaluate_sizing(
 
     Doctrine: never trusts the requested amount. Always evaluates both
     rails. Returns full provenance so receipts carry the audit trail.
+
+    LEGACY entry point — used by the manual /execution/submit path
+    which doesn't know the calling brain. For ladder-aware sizing the
+    auto_router uses `evaluate_sizing_with_ladder()` instead.
     """
     # Fail-closed on garbage input.
     try:
@@ -137,11 +205,117 @@ def evaluate_sizing(
     )
 
 
+async def evaluate_sizing_with_ladder(
+    requested_usd: float, brain: str, lane: Optional[str],
+) -> SizingDecision:
+    """Phase 4: ladder-aware sizing.
+
+    Looks up the (brain, lane) ladder stage and folds it into the
+    "smallest-wins" cap comparison. Returns SizingDecision with
+    `stage`, `route`, `ladder_cap_usd`, `execution_mode` populated.
+
+    Doctrine: the LADDER is authoritative. If the brain is at
+    `observation_only`, this returns `route=observe` and the caller
+    MUST NOT submit to the broker — write an observation receipt
+    instead. At all other stages the ladder cap participates in the
+    smallest-wins comparison alongside lane_cap and micro_live.
+    """
+    # Inline import to avoid a top-level cycle:
+    # learning_ladder → namespaces → routes → sizing_gate.
+    from shared.learning_ladder import get_stage  # noqa: WPS433
+
+    try:
+        req = float(requested_usd)
+    except (TypeError, ValueError):
+        req = 0.0
+
+    # Default stage if the lookup fails (Mongo unreachable, unknown
+    # brain): fail-closed to observation_only so misconfiguration
+    # never accidentally fires real money.
+    try:
+        stage_doc = await get_stage(brain, lane or "")
+        stage = stage_doc.get("stage", "observation_only")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "evaluate_sizing_with_ladder: stage lookup failed for %s/%s: %s — "
+            "failing closed to observation_only",
+            brain, lane, e,
+        )
+        stage = "observation_only"
+
+    ladder_cap, route = _ladder_cap_and_route(stage)
+    execution_mode = EXECUTION_MODE_FOR_ROUTE.get(route)
+
+    # observation_only short-circuit: don't bother running the rest of
+    # the cap comparison; route=observe means the caller skips broker.
+    if route == ROUTE_OBSERVE:
+        return SizingDecision(
+            requested_usd=req,
+            final_usd=0.0,
+            was_clamped=True,
+            binding_rail="ladder_observation",
+            micro_live_enabled=MICRO_LIVE_ENABLED,
+            lane_cap_usd=cap_for_lane(lane),
+            micro_live_cap_usd=(_micro_live_cap_for(lane) if MICRO_LIVE_ENABLED else None),
+            lane=lane,
+            stage=stage,
+            route=route,
+            ladder_cap_usd=0.0,
+            execution_mode=execution_mode,
+        )
+
+    if req <= 0:
+        return SizingDecision(
+            requested_usd=req, final_usd=0.0, was_clamped=True,
+            binding_rail="invalid_input",
+            micro_live_enabled=MICRO_LIVE_ENABLED,
+            lane_cap_usd=cap_for_lane(lane),
+            micro_live_cap_usd=(_micro_live_cap_for(lane) if MICRO_LIVE_ENABLED else None),
+            lane=lane,
+            stage=stage, route=route, ladder_cap_usd=ladder_cap,
+            execution_mode=execution_mode,
+        )
+
+    lane_cap = cap_for_lane(lane)
+    candidates: list[tuple[str, float]] = [("lane_cap", lane_cap)]
+    if MICRO_LIVE_ENABLED:
+        candidates.append(("micro_live", _micro_live_cap_for(lane)))
+    if ladder_cap is not None:
+        candidates.append(("ladder", ladder_cap))
+
+    # Smallest-wins. Note: at micro_paper / micro_live the ladder cap
+    # is typically the smallest, so it dominates — exactly the
+    # operator's "ladder is authoritative" pin.
+    binding_rail = "none"
+    final = req
+    for name, cap in candidates:
+        if cap < final:
+            final = cap
+            binding_rail = name
+
+    was_clamped = (final < req)
+    return SizingDecision(
+        requested_usd=req,
+        final_usd=final,
+        was_clamped=was_clamped,
+        binding_rail=binding_rail,
+        micro_live_enabled=MICRO_LIVE_ENABLED,
+        lane_cap_usd=lane_cap,
+        micro_live_cap_usd=(_micro_live_cap_for(lane) if MICRO_LIVE_ENABLED else None),
+        lane=lane,
+        stage=stage,
+        route=route,
+        ladder_cap_usd=ladder_cap,
+        execution_mode=execution_mode,
+    )
+
+
 def reload_env() -> None:
     """Re-read env vars. Used by tests + the kill-switch reload path
     so tightening micro_live mid-session doesn't require a redeploy."""
     global MICRO_LIVE_ENABLED, MICRO_LIVE_DEFAULT_CAP_USD
     global MICRO_LIVE_CRYPTO_CAP_USD, MICRO_LIVE_EQUITY_CAP_USD
+    global LADDER_MICRO_PAPER_USD, LADDER_MICRO_LIVE_USD
     MICRO_LIVE_ENABLED = _env_bool("MICRO_LIVE_ENABLED", False)
     MICRO_LIVE_DEFAULT_CAP_USD = _env_float("MICRO_LIVE_DEFAULT_CAP_USD", 5.0)
     MICRO_LIVE_CRYPTO_CAP_USD = _env_float(
@@ -150,3 +324,5 @@ def reload_env() -> None:
     MICRO_LIVE_EQUITY_CAP_USD = _env_float(
         "MICRO_LIVE_EQUITY_CAP_USD", MICRO_LIVE_DEFAULT_CAP_USD,
     )
+    LADDER_MICRO_PAPER_USD = _env_float("LADDER_MICRO_PAPER_USD", 10.0)
+    LADDER_MICRO_LIVE_USD = _env_float("LADDER_MICRO_LIVE_USD", 5.0)

@@ -1,5 +1,91 @@
 # Mission Control — PRD (latest pass on top)
 
+## 🆕 2026-02-17 — Phase 4 ENGAGED: ladder stage drives sizing + routing (P0)
+
+### Problem (operator report from Prod)
+> "This is blocking the trades and showing shadow intents. Alpha is
+> quiet because it does have its shadow set up like the others.
+> It's shadow isn't blocking Alpha's intents, it's running them."
+
+Root cause: the auto-router's "honest hold" shadow path was gated
+on the brain's self-declared `evidence.size_multiplier=0` /
+`would_trade_without_gates=false` flags. Alpha never self-zeroed,
+so its intents bypassed the shadow path and fired through;
+Camaro / Chevelle / REDEYE consistently self-zeroed, so 100% of
+their directional intents got shunted into `observation_receipts`
+and zero real fills ever happened. The `learning_ladder` collection
+tracked the four stages (observation_only → micro_paper → micro_live
+→ normal_live) but the doctrine note literally said "Phase 4 will
+add the sizing gate that READS this state and clamps notional —
+until Phase 4 ships, the ladder state is observed but not yet
+enforced". The brains were stuck because Phase 4 never shipped.
+
+### Doctrine fix — Phase 4 ENGAGED
+The LADDER stage (per brain × lane) is now AUTHORITATIVE for
+sizing + routing. The brain becomes a SIGNAL SOURCE; MC owns
+capital deployment.
+
+| stage              | route        | final notional                | execution_mode      |
+|--------------------|--------------|-------------------------------|---------------------|
+| `observation_only` | observe      | $0 (no broker fill)           | None (obs receipt)  |
+| `micro_paper`      | paper        | `LADDER_MICRO_PAPER_USD` ($10)| `ladder_paper`      |
+| `micro_live`       | live_micro   | `LADDER_MICRO_LIVE_USD` ($5)  | `ladder_live_micro` |
+| `normal_live`      | live_normal  | requested (lane-cap bound)    | `live`              |
+
+The ladder cap participates in the existing "smallest-wins" cap
+comparison alongside `lane_cap` and the operator `micro_live` rail
+— so a brain promoted to `micro_paper` fires at the ladder's $10
+cap regardless of what it self-declared.
+
+### Shipped
+- `shared/sizing_gate.py`: new `evaluate_sizing_with_ladder(req,
+  brain, lane)` returning ladder stage + route + ladder_cap_usd +
+  execution_mode. Legacy `evaluate_sizing()` preserved for the
+  manual `/execution/submit` path.
+- `shared/auto_router.py`: ladder-first routing. At
+  observation_only, ANY directional intent (sized or self-zeroed)
+  becomes an observation receipt — no broker fill, no Alpha-vs-
+  others asymmetry. At micro_paper+, brain self-zeroing is
+  IGNORED and the intent fires at the stage cap.
+- Receipt provenance: `sizing_provenance.{stage,route,
+  ladder_cap_usd,execution_mode}` + top-level `execution_mode` so
+  `learning_ladder._paper_progress` can count fills with a simple
+  filter.
+- `shared/learning_ladder.py`: doctrine note updated; docstring
+  pinned to "Phase 4 ENGAGED".
+- New env knobs (operator-tightenable without redeploy):
+  `LADDER_MICRO_PAPER_USD` (default $10),
+  `LADDER_MICRO_LIVE_USD` (default $5).
+- 5 new tests pinning all 4 ladder rungs +backward-compat
+  (`tests/test_phase_4_ladder_engaged.py`).
+- Full suite: 1680/1681 passing (the 1 remaining failure is a
+  pre-existing order-dependent network blip, NOT introduced by
+  Phase 4).
+
+### Operator action items (Prod)
+1. Decide per (brain, lane) which rung to start at. Default is
+   `observation_only` — no fills until you promote.
+2. Promote via `POST /api/admin/learning-ladder/promote`
+   `{"brain": "...", "lane": "...", "reason": "..."}`. Audit-
+   logged.
+3. Optional env override on Prod:
+   - `LADDER_MICRO_PAPER_USD=10`
+   - `LADDER_MICRO_LIVE_USD=5`
+4. After redeploy, watch for `execution_mode=ladder_paper`
+   receipts to start landing. The unlock counter will tick
+   automatically (50 fills + 0.30 expectancy_R → auto-promotable
+   to micro_live).
+
+### Files touched
+- `backend/shared/sizing_gate.py` (+ladder-aware evaluator,
+  ROUTE_*/EXECUTION_MODE_FOR_ROUTE constants)
+- `backend/shared/auto_router.py` (ladder-first fork in
+  `_route_one`, receipt stamping)
+- `backend/shared/learning_ladder.py` (doctrine note + counter
+  docstring)
+- `backend/tests/test_phase_4_ladder_engaged.py` (new, 5 tests)
+
+
 ## 🆕 2026-02-17 — Pytest legacy-backlog cluster cleared (P2)
 
 ### Problem

@@ -24,9 +24,12 @@ all changes audit-logged):
         operator decision only (live-money progression must be
         deliberate; no automatic promotion).
 
-This module is a COUNTER + STATE TRACKER. Phase 4 will add the
-sizing gate that READS this state and clamps notional. Until Phase 4
-ships, the ladder state is observed but not yet enforced.
+This module is a COUNTER + STATE TRACKER + Phase 4 AUTHORITY.
+Phase 4 ENGAGED (2026-02-17): the sizing gate
+(`shared/sizing_gate.evaluate_sizing_with_ladder`) reads this state
+and clamps notional + routes (observe → paper → live_micro →
+live_normal). The auto-router consults the sizing gate BEFORE the
+advisory_only classifier so the ladder owns capital deployment.
 """
 from __future__ import annotations
 
@@ -169,8 +172,13 @@ async def _paper_progress(brain: str, lane: str) -> dict:
     """Micro-paper fills + R-expectancy for this (brain, lane).
     Reads `execution_receipts` filtered to ladder-paper mode.
 
-    Phase 4 will tag receipts `execution_mode="ladder_paper"`. Until
-    then this count is 0 for everyone."""
+    Phase 4 will tag receipts `execution_mode="ladder_paper"`.
+
+    2026-02-17: Phase 4 IS NOW ENGAGED. Receipts written by the
+    auto-router at stage=micro_paper carry
+    `execution_mode="ladder_paper"` (via sizing_gate). This counter
+    now ticks as soon as the operator promotes a (brain, lane) to
+    micro_paper and the first signal fires."""
     q = {
         "brain": brain, "lane": lane,
         "execution_mode": "ladder_paper",
@@ -250,11 +258,15 @@ async def list_ladder(_user: dict = Depends(get_current_user)):  # noqa: B008
             "paper_unlock_count": PAPER_UNLOCK_COUNT,
             "paper_unlock_expectancy_R": PAPER_UNLOCK_EXPECTANCY_R,
             "note": (
-                "Phase 3 tracks promotion progress per (brain, lane). "
-                "Phase 4 will add the sizing gate that READS this state "
-                "and clamps notional. Until Phase 4, stage is observed "
-                "but not enforced in the gate chain. Operator may "
-                "manually promote/demote; all transitions audit-logged."
+                "Phase 4 ENGAGED (2026-02-17). The ladder stage now "
+                "drives sizing + routing via "
+                "shared.sizing_gate.evaluate_sizing_with_ladder. "
+                "Stage observation_only → observation receipt only "
+                "(no broker fill, even if the brain sized > 0); "
+                "micro_paper → paper fire @ LADDER_MICRO_PAPER_USD; "
+                "micro_live → live fire @ LADDER_MICRO_LIVE_USD; "
+                "normal_live → full sizing. Promotions are deliberate; "
+                "all transitions audit-logged."
             ),
         },
     }

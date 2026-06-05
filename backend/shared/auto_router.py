@@ -73,6 +73,39 @@ async def _route_one(intent: dict) -> dict:
     intent_id = intent["intent_id"]
     notional_raw = float(intent.get("requested_notional_usd") or AUTO_ROUTER_NOTIONAL_USD)
 
+    # ── Phase 4 (2026-02-17): LADDER-FIRST routing ────────────────────
+    # The ladder stage (per brain × lane) is now AUTHORITATIVE. We
+    # resolve it BEFORE the advisory_only classifier so a brain's
+    # self-zero claim no longer gets to bypass the shadow path
+    # asymmetrically. Doctrine: brains are signal sources; MC owns
+    # capital deployment.
+    #
+    # Old behavior (Phase 3 / "observation observed but not enforced"):
+    #   - brain emits `size_multiplier=0` → observation_receipt only
+    #   - brain emits `size_multiplier>0` → broker fill
+    #   This created the Alpha-vs-others split the operator hit on
+    #   prod: Alpha never self-zeroed so its intents fired through
+    #   while Camaro/Chevelle/REDEYE intents got permanently shadowed.
+    #
+    # New behavior (Phase 4 ENGAGED):
+    #   stage = observation_only → observation_receipt, no broker fill
+    #                              (regardless of self-zero)
+    #   stage = micro_paper      → broker fill @ LADDER_MICRO_PAPER_USD,
+    #                              receipt tagged execution_mode=ladder_paper
+    #   stage = micro_live       → broker fill @ LADDER_MICRO_LIVE_USD,
+    #                              receipt tagged execution_mode=ladder_live_micro
+    #   stage = normal_live      → full sizing path
+    #
+    # Stage promotions happen via /api/admin/learning-ladder/promote
+    # (auto-eligible at 100 obs / 0.55 win-rate; 50 paper / 0.30 R).
+    intent_lane = str(intent.get("lane") or "").lower()
+    brain = str(intent.get("stack") or "").lower()
+    from shared.sizing_gate import (  # noqa: WPS433
+        ROUTE_OBSERVE,
+        evaluate_sizing_with_ladder,
+    )
+    sizing = await evaluate_sizing_with_ladder(notional_raw, brain, intent_lane)
+
     # Phase 0: MC classifier — "is this even an executable candidate?"
     # Sidecars speak in their own shape (BUY/SELL/HOLD, opinions,
     # authority calls). MC owns the classification. HOLD, missing
@@ -83,7 +116,6 @@ async def _route_one(intent: dict) -> dict:
     #
     # Lane-specific exec floor: crypto 0.30, equity 0.30 (operator
     # spec). Adjust here if you want different floors per lane.
-    intent_lane = str(intent.get("lane") or "").lower()
     # 2026-02-17 (pass #51, operator "let it rip" config): floor
     # lowered from 0.35 → 0.30. Lets the auto-router fire on more
     # mid-conviction signals while patents are suspended. Shadow-
@@ -92,31 +124,60 @@ async def _route_one(intent: dict) -> dict:
     # operator's master kill if signals get noisy.
     min_exec_conf = float(os.environ.get("RISEDUAL_EXEC_CONFIDENCE_FLOOR", "0.30"))
     classification = classify_brain_intent(intent, min_exec_conf=min_exec_conf)
-    if classification.advisory_only:
-        # Ladder doctrine (2026-02-18): before classifying as pure
-        # advisory_only, check if this is a graded "honest hold"
-        # observation. If the brain emitted a directional label with
-        # conviction but self-zeroed size, we want this in the
-        # learning queue, not the silent advisory bucket.
+
+    # Phase 4 ladder-first shadow gate: if the brain is at
+    # observation_only, write an observation receipt for any
+    # directional candidate (even those the brain didn't self-zero)
+    # and skip the broker. This is the doctrinal "stage is authority"
+    # pin: MC won't fire real fills until the operator promotes.
+    if sizing.route == ROUTE_OBSERVE:
+        if not classification.advisory_only:
+            # The brain sent a sized directional intent but the
+            # ladder still owns the route. Build an observation
+            # receipt from the SIZED intent so the operator can still
+            # grade the brain's call. We synthesize the "honest hold"
+            # shape by zeroing the size on the fly.
+            shadowed = dict(intent)
+            evidence = dict(intent.get("evidence") or {})
+            evidence["size_multiplier"] = 0
+            evidence["would_trade_without_gates"] = False
+            evidence["ladder_shadowed"] = True
+            shadowed["evidence"] = evidence
+        else:
+            shadowed = intent
         from shared.observation_receipts import (  # noqa: WPS433
-            maybe_write_observation_receipt,
+            build_observation_receipt,
         )
-        obs = await maybe_write_observation_receipt(intent)
-        if obs is not None:
-            logger.info(
-                "auto_router observation_receipt intent=%s brain=%s "
-                "lane=%s symbol=%s side=%s — graded learning sample",
-                intent_id, classification.brain, intent_lane,
-                classification.symbol, obs["side"],
-            )
-            await _persist_advisory_classification(intent_id, intent, classification)
-            return {
-                "intent_id": intent_id,
-                "verdict": "observation_receipt",
-                "reason": "honest_hold_graded_for_learning",
-                "execution_ready": False,
-                "observation_receipt": True,
-            }
+        obs = build_observation_receipt(shadowed)
+        obs["candidate_reason"] = (
+            "ladder_observation_only_stage"
+            if not classification.advisory_only
+            else "honest_hold_eligible_for_grading"
+        )
+        try:
+            await db["observation_receipts"].insert_one(dict(obs))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("auto_router observation insert failed intent=%s: %s",
+                           intent_id, e)
+        logger.info(
+            "auto_router LADDER_OBSERVE intent=%s brain=%s lane=%s stage=%s — "
+            "shadowed (no broker fill)", intent_id, brain, intent_lane, sizing.stage,
+        )
+        await _persist_advisory_classification(intent_id, intent, classification)
+        return {
+            "intent_id": intent_id,
+            "verdict": "observation_receipt",
+            "reason": f"ladder_stage:{sizing.stage}",
+            "execution_ready": False,
+            "observation_receipt": True,
+            "stage": sizing.stage,
+            "route": sizing.route,
+        }
+
+    if classification.advisory_only:
+        # Stage is above observation_only but the intent itself is
+        # non-directional (HOLD / missing fields). Still classify
+        # advisory; no broker, no observation receipt.
         logger.info(
             "auto_router skip intent=%s brain=%s lane=%s symbol=%s "
             "advisory_only reason=%s",
@@ -138,16 +199,20 @@ async def _route_one(intent: dict) -> dict:
     # decision so receipts carry the audit trail. When MICRO_LIVE is
     # enabled the cap is typically $5/order — small enough that a
     # brain mistake costs lunch, not rent.
-    from shared.sizing_gate import evaluate_sizing  # noqa: WPS433
-    sizing = evaluate_sizing(notional_raw, intent.get("lane"))
+    #
+    # Phase 4 ENGAGED (2026-02-17): `sizing` was computed up top via
+    # evaluate_sizing_with_ladder so the ladder cap is already
+    # folded in. We just unpack final_usd here.
     notional = sizing.final_usd
     if sizing.was_clamped:
         logger.info(
             "auto_router sizing intent=%s lane=%s req $%.2f → final $%.2f rail=%s "
-            "lane_cap=$%.2f micro_live=$%s",
+            "lane_cap=$%.2f micro_live=$%s ladder=$%s stage=%s route=%s",
             intent_id, intent.get("lane"), sizing.requested_usd, sizing.final_usd,
             sizing.binding_rail, sizing.lane_cap_usd,
             f"{sizing.micro_live_cap_usd:.2f}" if sizing.micro_live_cap_usd else "off",
+            f"{sizing.ladder_cap_usd:.2f}" if sizing.ladder_cap_usd is not None else "none",
+            sizing.stage, sizing.route,
         )
     if notional <= 0:
         await _persist_no_trade(intent_id, intent, f"sizing_gate_zero:{sizing.binding_rail}")
@@ -189,7 +254,7 @@ async def _route_one(intent: dict) -> dict:
         effective_notional=effective, requested_notional=notional,
         risk_multiplier=risk_multiplier, gates=result["gates"], now_iso=now,
     )
-    # Stamp sizing provenance — micro_live audit trail.
+    # Stamp sizing provenance — micro_live + Phase 4 ladder audit trail.
     receipt["sizing_provenance"] = {
         "requested_usd": sizing.requested_usd,
         "final_usd": sizing.final_usd,
@@ -198,7 +263,20 @@ async def _route_one(intent: dict) -> dict:
         "micro_live_enabled": sizing.micro_live_enabled,
         "lane_cap_usd": sizing.lane_cap_usd,
         "micro_live_cap_usd": sizing.micro_live_cap_usd,
+        # Phase 4 ladder fields (2026-02-17). `execution_mode` is
+        # ALSO copied to the top-level receipt below so
+        # `learning_ladder._paper_progress` can count fills with a
+        # simple {"execution_mode": "ladder_paper"} filter.
+        "stage": sizing.stage,
+        "route": sizing.route,
+        "ladder_cap_usd": sizing.ladder_cap_usd,
+        "execution_mode": sizing.execution_mode,
     }
+    # Phase 4: top-level tag so the ladder unlock counter (and any
+    # other downstream slicer) can filter without digging into the
+    # provenance sub-doc.
+    if sizing.execution_mode:
+        receipt["execution_mode"] = sizing.execution_mode
     await _persist_executed_intent(intent_id, receipt, order, effective, notional, risk_multiplier, result["gates"], now)
 
     # Phase 6: audit + post-submit side effects (live position open, VRL).
