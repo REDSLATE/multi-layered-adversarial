@@ -13,8 +13,34 @@ from httpx import ASGITransport, AsyncClient
 
 # Ingest tokens must exist BEFORE importing the app — runtime_auth
 # looks them up by env var.
-for brain in ("ALPHA", "CAMARO", "CHEVELLE", "REDEYE"):
-    os.environ.setdefault(f"{brain}_INGEST_TOKEN", f"test-{brain.lower()}-token")
+#
+# Test-isolation fix (2026-02-17): previously we used
+# `os.environ.setdefault(...)` with a FAKE value at module-import time.
+# Because module-level setdefault leaks across the whole pytest
+# session (no monkeypatch teardown), every downstream test that read
+# `<BRAIN>_INGEST_TOKEN` from os.environ ended up sending the fake
+# value to the live backend → 401s in test_paradox_wake / test_sidecar_checkin.
+#
+# Source the real token from /app/backend/.env first; only fall back to
+# the fake when the .env doesn't have it (genuine CI-without-env case).
+def _seed_real_tokens():
+    real: dict[str, str] = {}
+    try:
+        with open("/app/backend/.env") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                real[k.strip()] = v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    for brain in ("ALPHA", "CAMARO", "CHEVELLE", "REDEYE"):
+        key = f"{brain}_INGEST_TOKEN"
+        if not os.environ.get(key):
+            os.environ[key] = real.get(key) or f"test-{brain.lower()}-token"
+
+_seed_real_tokens()
 
 # Loosen the canonicalization threshold for tests so we can demonstrate
 # both rejected and accepted paths without seeding outcomes.

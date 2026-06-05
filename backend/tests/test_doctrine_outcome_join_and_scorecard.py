@@ -140,7 +140,11 @@ async def test_scorecard_quality_bands_aggregate():
 
     try:
         await db[DOCTRINE_SIDECARS].insert_many([r.copy() for r in rows])
-        res = await doctrine_scorecard(lane=lane, stack=None, min_samples_per_band=1, _user={})
+        # 2026-02-17 (rev2): `stack` removed from scorecard signature —
+        # doctrine canonicalized scoring axes onto seat, not brain.
+        # `doctrine_version=None` passed explicitly to avoid the
+        # FastAPI Query() default leaking into a direct invocation.
+        res = await doctrine_scorecard(lane=lane, doctrine_version=None, min_samples_per_band=1, _user={})
     finally:
         await db[DOCTRINE_SIDECARS].delete_many({"lane": lane})
 
@@ -172,7 +176,7 @@ async def test_scorecard_promotion_blocked_below_min_samples():
     )
     try:
         await db[DOCTRINE_SIDECARS].insert_one(row.copy())
-        res = await doctrine_scorecard(lane=lane, stack=None, min_samples_per_band=1, _user={})
+        res = await doctrine_scorecard(lane=lane, doctrine_version=None, min_samples_per_band=1, _user={})
     finally:
         await db[DOCTRINE_SIDECARS].delete_many({"lane": lane})
 
@@ -211,7 +215,7 @@ async def test_scorecard_per_seat_loss_rates():
 
     try:
         await db[DOCTRINE_SIDECARS].insert_many([r.copy() for r in rows])
-        res = await doctrine_scorecard(lane=lane, stack=None, min_samples_per_band=1, _user={})
+        res = await doctrine_scorecard(lane=lane, doctrine_version=None, min_samples_per_band=1, _user={})
     finally:
         await db[DOCTRINE_SIDECARS].delete_many({"lane": lane})
 

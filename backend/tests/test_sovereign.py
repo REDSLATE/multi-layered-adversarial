@@ -121,13 +121,21 @@ class TestContributionHappyPath:
 
 class TestDoctrineRejections:
     def test_live_trading_enabled_true_rejected(self):
+        # 2026-02-17 (Doctrine c defang): `live_trading_enabled` is a
+        # DECLARATION, not authority. MC observes; the execution gate
+        # decides. Endpoint now accepts the snapshot (200). `may_execute`
+        # is owned by the seat policy, not by this declaration.
         r = _post_contribution("alpha", live_trading_enabled=True)
-        assert r.status_code == 422
+        assert r.status_code == 200, r.text
+        # The declaration round-trips into the contribution record.
+        assert r.json()["live_trading_enabled"] is True
 
     def test_prd_with_training_signal_rejected(self):
+        # Same Doctrine (c) defang as above. PRD+training_signal is
+        # logged, but it does not grant authority.
         r = _post_contribution("alpha", mode="PRD", training_signal=True)
-        assert r.status_code == 422
-        assert "PRD" in r.text or "training_signal" in r.text
+        assert r.status_code == 200, r.text
+        assert r.json()["mode"] == "PRD"
 
     def test_invalid_mode_rejected(self):
         r = _post_contribution("alpha", mode="LIVE")

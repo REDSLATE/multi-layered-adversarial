@@ -306,10 +306,14 @@ class TestIngestAndRead:
 
     def test_symbols_endpoint_includes_recent_ingest(self):
         sym = f"UNI{int(time.time()) % 100000}"
+        # Use a recent timestamp so the row lands in the top 2000 of the
+        # `last_bar_ts DESC` sort. Pre-2026 timestamps were pushed past
+        # the cap by the ongoing Finnhub 5m firehose.
+        recent_ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         r = requests.post(
             f"{BASE_URL}/api/ingest/ohlcv",
             headers={"X-Feeder-Token": TOS_TOKEN, "Content-Type": "application/json"},
-            json=_bar(sym, "2025-07-01T00:00:00+00:00", 1.0, source="thinkorswim"),
+            json=_bar(sym, recent_ts, 1.0, source="thinkorswim"),
             timeout=20,
         )
         assert r.status_code == 200

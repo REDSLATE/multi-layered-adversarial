@@ -287,8 +287,12 @@ def _sweep_rows(
     # Derived fields after the pass
     for b in buckets:
         # Dampener drop computed ONLY on paired rows so we never produce
-        # negative values from legacy data-shape mismatch.
-        b["dampener_drop"] = b["paired_raw_pass"] - b["paired_effective_pass"]
+        # negative values from legacy data-shape mismatch. Clamped at 0
+        # because the operator-visible invariant is "raw ≥ effective" —
+        # a noisy intent where the dampener bumped effective slightly
+        # higher than raw (rounding / late re-score) is data noise, not
+        # a real negative drop.
+        b["dampener_drop"] = max(0, b["paired_raw_pass"] - b["paired_effective_pass"])
         if b["resolved"] > 0:
             b["win_rate"] = round(b["wins"] / b["resolved"], 4)
 

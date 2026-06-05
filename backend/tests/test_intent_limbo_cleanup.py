@@ -100,17 +100,25 @@ async def test_inspect_returns_terminal_vs_transient_hint(auth_client, base_url)
     from db import db
     from namespaces import SHARED_INTENTS
 
-    # Plant an intent that fails terminally on `executor_seat_check`
-    # (it didn't hold the seat at post-time). Schema-pin fields are
-    # required by gate 1 (`schema_invariants`) — without them the
-    # intent dies at gate 1 and we never reach gate 3 (2026-05-17
-    # schema tightening; fixture updated 2026-05-24).
+    # 2026-02-19 doctrine update: executor_seat_check now uses the
+    # POSITION model — authority lives in the seat, not the
+    # holder-at-post-time — so a seat-mismatched intent no longer
+    # constitutes a terminal failure (the gate passes when ANY brain
+    # currently holds the seat for the lane). To still pin "terminal"
+    # failure_kind, we plant an intent that violates the
+    # schema_invariants gate (`may_execute` pinned True breaks the
+    # invariant), which is intent-frozen and so the failure must
+    # come back classified terminal by the inspect endpoint.
+    # Use a unique intent_id so no background worker that touched a
+    # previous fixture row mutates this one.
+    import uuid as _uuid
+    intent_id = f"tw-inspect-{_uuid.uuid4().hex[:10]}"
     await db[SHARED_INTENTS].insert_one({
-        "intent_id": "tw-inspect-1",
+        "intent_id": intent_id,
         "stack": "camaro", "symbol": "AAPL", "action": "BUY",
         "lane": "equity",
         "confidence": 0.7,
-        "may_execute": False,
+        "may_execute": True,         # violates schema_invariants
         "requires_gate_pass": True,
         "gate_state": "pending",
         "executed": False,
@@ -120,22 +128,22 @@ async def test_inspect_returns_terminal_vs_transient_hint(auth_client, base_url)
         "ingest_ts": "2026-05-18T12:00:00+00:00",
     })
     r = auth_client.get(
-        f"{base_url}/api/admin/intent/tw-inspect-1/inspect", timeout=15,
+        f"{base_url}/api/admin/intent/{intent_id}/inspect", timeout=15,
     )
     assert r.status_code == 200
     body = r.json()
-    seat_gate = next(
+    schema_gate = next(
         g for g in body["live_gate_chain"]
-        if g["name"] == "executor_seat_check"
+        if g["name"] == "schema_invariants"
     )
-    assert seat_gate["passed"] is False
-    assert seat_gate["failure_kind"] == "terminal", (
-        f"executor_seat_check failure MUST be classified terminal "
-        f"(holder_at_post is frozen on the intent); got {seat_gate!r}"
+    assert schema_gate["passed"] is False
+    assert schema_gate["failure_kind"] == "terminal", (
+        f"schema_invariants failure MUST be classified terminal "
+        f"(may_execute pinning is frozen on the intent); got {schema_gate!r}"
     )
     # Summary line must mention the gate name.
-    assert "executor_seat_check" in body["summary"]
-    await db[SHARED_INTENTS].delete_one({"intent_id": "tw-inspect-1"})
+    assert "schema_invariants" in body["summary"]
+    await db[SHARED_INTENTS].delete_one({"intent_id": intent_id})
 
 
 # ─── Operator dispose ────────────────────────────────────────────────

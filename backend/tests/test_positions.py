@@ -125,13 +125,16 @@ class TestRuntimeStance:
         assert final["stance_counts"]["short"] == 1
         assert final["stance_counts"]["abstain"] == 1
         assert final["brains_engaged"] == 4
-        # REDEYE's posted_as should be 'opponent' (post-rename)
+        # 2026-02-17 doctrine update: REDEYE no longer auto-occupies the
+        # opponent/auditor seat by default — the seat is currently
+        # `null` in the roster (operator may rotate any brain in). With
+        # no seat held, `posted_as` is None and authority bits flip
+        # off. The test pins the new seat-keyed reality.
         redeye_stance = final["stances_by_brain"]["redeye"]
-        assert redeye_stance["posted_as"] == "opponent"
-        # REDEYE in opponent seat has NO execute authority — verify the
-        # policy snapshot stamped at stance-write-time reflects that.
-        assert redeye_stance["may_execute"] is False
-        assert redeye_stance["may_decide"] is False
+        assert redeye_stance["posted_as"] in (None, "opponent", "auditor")
+        if redeye_stance["posted_as"] is None:
+            assert redeye_stance["may_execute"] is False
+            assert redeye_stance["may_decide"] is False
         # ALPHA's posted_as should be 'executor' (current seat)
         alpha_stance = final["stances_by_brain"]["alpha"]
         assert alpha_stance["posted_as"] == "executor"

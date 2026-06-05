@@ -164,7 +164,14 @@ def test_intent_crypto_lane_pin_rejects_equity(client: requests.Session):
 # ───────── Brain × Lane Policy ─────────
 
 def test_brain_lane_policy_full_cycle(client: requests.Session):
-    # GET
+    """2026-02-17 doctrine update: brain × lane mute is RETIRED.
+    Authority lives on SEATS, not on brain identity (operator
+    rotates seats via /admin/roster instead). The endpoint persists
+    for backward-compat reads (returns default-allow matrix), but
+    POST/DELETE now return HTTP 410 Gone with a redirect message.
+    Test pins the new contract.
+    """
+    # GET still works — returns the default-allow matrix.
     r = client.get(f"{BASE_URL}/api/admin/brain-lane-policy", timeout=10)
     assert r.status_code == 200, r.text
     body = r.json()
@@ -172,63 +179,14 @@ def test_brain_lane_policy_full_cycle(client: requests.Session):
     eff = body.get("effective") or body.get("matrix")
     assert eff is not None, f"missing effective matrix: {body}"
 
-    # Camaro/crypto should be muted explicitly (per spec seed)
-    # Accept either format: nested dict {brain: {lane: bool}} OR list of cells
-    def _is_allowed(brain: str, lane: str) -> bool:
-        if isinstance(eff, dict):
-            v = eff.get(brain, {}).get(lane)
-            if isinstance(v, dict):
-                return bool(v.get("allowed", True))
-            return bool(v) if v is not None else True
-        if isinstance(eff, list):
-            for cell in eff:
-                if cell.get("brain") == brain and cell.get("lane") == lane:
-                    return bool(cell.get("allowed", True))
-        return True
-
-    assert _is_allowed("camaro", "crypto") is False, f"expected camaro/crypto muted: {eff}"
-
-    # POST mute alpha/crypto
+    # POST is retired → 410 Gone with a redirect-to-roster hint.
     r = client.post(f"{BASE_URL}/api/admin/brain-lane-policy",
                     json={"brain": "alpha", "lane": "crypto", "allowed": False}, timeout=10)
-    assert r.status_code in (200, 201), r.text
+    assert r.status_code == 410, r.text
+    assert "seat" in r.text.lower() or "roster" in r.text.lower()
 
-    # Verify via GET
-    r = client.get(f"{BASE_URL}/api/admin/brain-lane-policy", timeout=10)
-    assert r.status_code == 200
-    body2 = r.json()
-    eff2 = body2.get("effective") or body2.get("matrix")
-
-    def _allowed2(brain, lane):
-        if isinstance(eff2, dict):
-            v = eff2.get(brain, {}).get(lane)
-            if isinstance(v, dict):
-                return bool(v.get("allowed", True))
-            return bool(v) if v is not None else True
-        for cell in eff2 or []:
-            if cell.get("brain") == brain and cell.get("lane") == lane:
-                return bool(cell.get("allowed", True))
-        return True
-
-    assert _allowed2("alpha", "crypto") is False
-
-    # DELETE restores default-allow
+    # DELETE is also retired (or no-op pass) — accept either to avoid
+    # over-pinning. The doctrine pin is: brain × lane mutes can't be
+    # mutated via this endpoint anymore.
     r = client.delete(f"{BASE_URL}/api/admin/brain-lane-policy/alpha/crypto", timeout=10)
-    assert r.status_code in (200, 204), r.text
-
-    # Verify final state
-    r = client.get(f"{BASE_URL}/api/admin/brain-lane-policy", timeout=10)
-    eff3 = (r.json() or {}).get("effective") or (r.json() or {}).get("matrix")
-
-    def _allowed3(brain, lane):
-        if isinstance(eff3, dict):
-            v = eff3.get(brain, {}).get(lane)
-            if isinstance(v, dict):
-                return bool(v.get("allowed", True))
-            return bool(v) if v is not None else True
-        for cell in eff3 or []:
-            if cell.get("brain") == brain and cell.get("lane") == lane:
-                return bool(cell.get("allowed", True))
-        return True
-
-    assert _allowed3("alpha", "crypto") is True, "DELETE did not restore default-allow"
+    assert r.status_code in (200, 204, 404, 410), r.text

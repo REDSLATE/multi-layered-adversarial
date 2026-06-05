@@ -74,6 +74,12 @@ class _FakeCollection:
     def find(self, *a, **kw):
         return _FakeCursor(self._rows)
 
+    async def find_one(self, *a, **kw):
+        # `_fetch_latest_bar` reads the most recent bar via find_one
+        # with sort. The order of `_rows` here is already latest-first
+        # (see `_bars()`), so returning the head is correct.
+        return self._rows[0] if self._rows else None
+
 
 class _FakeDB:
     def __init__(self, rows):

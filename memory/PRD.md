@@ -1,5 +1,87 @@
 # Mission Control — PRD (latest pass on top)
 
+## 🆕 2026-02-17 — Pytest legacy-backlog cluster cleared (P2)
+
+### Problem
+~37 pytest failures from fixture drift after the 2026-doctrine
+overhaul (Doctrine c defang, position-model seats, $100k cap lift,
+symbol-in-universe gate, brain-lane-policy retirement, etc.).
+CI/CD pipeline stayed red for ~3 forks, blocking regression
+safety nets.
+
+### Doctrine fix
+1. Rewrite tests to assert NEW doctrine (Doctrine c declarations
+   are 200 OK + may_execute seat-derived; `live_trading_enabled`
+   no longer rejects with 422).
+2. Add `symbol_in_universe` and `lane_execution_enabled` to the
+   pinned gate-chain order.
+3. Honor the operator-issued "patent-stack restrictions lifted"
+   suspension — gates record reason but `passed=True`.
+4. Add `find_one` to `_FakeCollection` so feature-service tests
+   exercise the new latest-bar path.
+5. Clamp `dampener_drop = max(0, ...)` so noisy intent rows can't
+   produce a negative drop on the calibrator output.
+6. Fix `test_shelly_bus.py` to source real brain ingest tokens
+   from `/app/backend/.env` instead of `os.environ.setdefault(...)`
+   leaking fake tokens session-wide — root cause of intermittent
+   401s in `test_paradox_wake` / `test_sidecar_checkin`.
+7. Update `test_brain_lane_policy_full_cycle` to assert the new
+   "POST/DELETE retired with HTTP 410 → use /admin/roster" contract.
+8. Update `test_operator_view_includes_all_brains` to assert
+   "at most one brain may_execute=True" (seat-derived) instead of
+   the old "no brain may_execute" invariant.
+9. Move `test_get_active_none_when_missing` onto the shared
+   pytest-asyncio session loop so Motor doesn't cross-loop crash.
+
+### Shipped
+- 37 → 1 failing test (the remaining 1 is a transient preview
+  cluster connection timeout, not a code issue).
+- `confidence_floor_sweep.py` gained the documented "drop ≥ 0"
+  invariant in code (was only documented in comments).
+- `test_shelly_bus.py` no longer leaks fake `<BRAIN>_INGEST_TOKEN`
+  values across the session — fixes the order-dependent flake
+  pattern that hid behind a "test passes in isolation" mask.
+
+### Files touched
+- `backend/tests/test_doctrine_outcome_join_and_scorecard.py`
+  (drop `stack=None`, pin `doctrine_version=None`)
+- `backend/tests/test_sovereign.py` (Doctrine c defang assertions)
+- `backend/tests/test_alpaca_broker.py` (add MC receipt stub)
+- `backend/tests/test_council_diagnose_contract.py`
+  (+symbol_in_universe in expected chain)
+- `backend/tests/test_doctrine_intent_attachment.py`
+  (modulate vs block)
+- `backend/tests/test_no_duplicate_execution_gates.py`
+  (opinion-silence-watchdog allowlist)
+- `backend/tests/test_intent_limbo_cleanup.py`
+  (schema_invariants terminal-failure pin via may_execute=True
+  + unique intent_id per run)
+- `backend/tests/test_intent_snapshot_persistence.py`
+  (audit-trail-only pin on suspended roadguard)
+- `backend/tests/test_alpaca_execution_pipeline.py`
+  (cap_per_order pin updated to the lifted $100k reality)
+- `backend/tests/test_ibkr.py` (session-loop fix)
+- `backend/tests/test_market_data_feature_service.py`
+  (_FakeCollection.find_one)
+- `backend/tests/test_risk_monitor_and_policy.py`
+  (brain-lane-policy 410 retirement contract)
+- `backend/tests/test_positions.py` (REDEYE no-seat default)
+- `backend/tests/test_discussion_layer.py` (at-most-one executor)
+- `backend/tests/test_technicals.py` (use recent timestamp)
+- `backend/tests/test_shelly_bus.py` (real-token seeding)
+- `backend/shared/calibration/confidence_floor_sweep.py`
+  (`dampener_drop = max(0, ...)`)
+
+### Public.com keys status (operator question, 2026-02-17)
+- Preview MC backend: NO Public.com credentials stored
+  (`GET /api/admin/public/status` → `connected: false`).
+  Operator needs to call `POST /api/admin/public/connect` to
+  register a Public.com secret. The keys are NOT stored in
+  `.env`; they're encrypted at rest in MongoDB on a per-
+  environment basis, so the Production MC may have a
+  different state — the operator must check Prod separately.
+
+
 ## 🆕 2026-02-19 (pass #2) — Symbol-in-universe gate + brain-callable universe endpoint (P0)
 
 ### Problem

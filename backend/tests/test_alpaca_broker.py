@@ -76,22 +76,35 @@ def test_ping_returns_account_dict():
 
 
 def test_submit_market_order_requires_exactly_one_of_qty_notional():
+    # MC receipt stub satisfies the post-2026-05-23 bypass-block guard
+    # so the test can exercise the qty/notional XOR validation it cares
+    # about.
+    fake_receipt = {
+        "signature": "fake-sig-for-unit-test",
+        "mc_policy_hash": "fake-hash",
+        "issued_at_ms": 1,
+    }
     with patch("shared.broker.alpaca.TradingClient") as TC:
         TC.return_value = MagicMock()
         adapter = AlpacaPaperAdapter("PKabc", "secretdef")
         with pytest.raises(ValueError):
-            asyncio.run(adapter.submit_market_order("AAPL", side="BUY"))  # neither
+            asyncio.run(adapter.submit_market_order("AAPL", side="BUY", mc_receipt=fake_receipt))  # neither
         with pytest.raises(ValueError):
-            asyncio.run(adapter.submit_market_order("AAPL", qty=1, notional=10, side="BUY"))  # both
+            asyncio.run(adapter.submit_market_order("AAPL", qty=1, notional=10, side="BUY", mc_receipt=fake_receipt))  # both
 
 
 def test_submit_market_order_uses_notional_when_supplied():
+    fake_receipt = {
+        "signature": "fake-sig-for-unit-test",
+        "mc_policy_hash": "fake-hash",
+        "issued_at_ms": 1,
+    }
     with patch("shared.broker.alpaca.TradingClient") as TC:
         client = MagicMock()
         client.submit_order.return_value = _mock_order(symbol="TSLA", side=SimpleNamespace(value="buy"))
         TC.return_value = client
         adapter = AlpacaPaperAdapter("PKabc", "secretdef")
-        out = asyncio.run(adapter.submit_market_order("tsla", notional=10.0, side="BUY"))
+        out = asyncio.run(adapter.submit_market_order("tsla", notional=10.0, side="BUY", mc_receipt=fake_receipt))
         assert out["symbol"] == "TSLA"
         called_with = client.submit_order.call_args.args[0]
         assert getattr(called_with, "notional", None) == 10.0

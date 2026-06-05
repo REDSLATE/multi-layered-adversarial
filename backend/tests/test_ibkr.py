@@ -54,36 +54,20 @@ def _disconnect(tok: str) -> None:
 # ───────────────── unit ─────────────────
 
 class TestActiveResolver:
-    def test_get_active_none_when_missing(self):
-        """shared.ibkr.get_active returns None when nothing is stored."""
-        import asyncio
-        from pathlib import Path
+    async def test_get_active_none_when_missing(self):
+        """shared.ibkr.get_active returns None when nothing is stored.
 
-        env_path = Path("/app/backend/.env")
-        env: dict[str, str] = {}
-        for raw in env_path.read_text().splitlines():
-            line = raw.strip()
-            if "=" in line and not line.startswith("#"):
-                k, v = line.split("=", 1)
-                env[k.strip()] = v.strip().strip('"').strip("'")
-        os.environ.setdefault("MONGO_URL", env["MONGO_URL"])
-        os.environ.setdefault("DB_NAME", env["DB_NAME"])
-
-        from motor.motor_asyncio import AsyncIOMotorClient
-        client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-        seed_db = client[os.environ["DB_NAME"]]
-
-        async def _check():
-            await seed_db["ibkr_credentials"].delete_one({"_id": "singleton"})
-            from shared.ibkr import get_active
-            assert await get_active() is None
-
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(_check())
-        finally:
-            client.close()
-            loop.close()
+        Uses the existing pytest-asyncio session loop so the shared
+        Motor client in `db.py` (bound at import-time to that same
+        loop) is reachable. The previous implementation spun up a
+        fresh `asyncio.new_event_loop()` and crashed with
+        "Future attached to a different loop" whenever any other
+        async test had already touched the shared client first.
+        """
+        from db import db
+        from shared.ibkr import get_active
+        await db["ibkr_credentials"].delete_one({"_id": "singleton"})
+        assert await get_active() is None
 
 
 # ───────────────── API surface ─────────────────

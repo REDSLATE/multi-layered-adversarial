@@ -22,6 +22,11 @@ FORBIDDEN = [
 ALLOWLIST = {
     "shared/runtime/platform_survival.py",
     "tests/test_no_duplicate_execution_gates.py",
+    # 2026-02-17: opinion-silence watchdog test stores the literal
+    # string `may_execute = True` as fixture data describing a
+    # FORBIDDEN claim a brain shouldn't make. It is asserting the
+    # opposite of granting authority — not duplicating it.
+    "tests/test_opinion_silence_watchdog.py",
 }
 
 # Anchor to the backend root so the scan is platform/cwd-independent.

@@ -44,6 +44,12 @@ EXPECTED_GATES_IN_ORDER = (
     "executor_seat_check",
     "live_trading_disabled",
     "broker_connected",
+    # 2026-02-17: `symbol_in_universe` enforces that every intent
+    # references a symbol the operator has explicitly added to
+    # `patterns_universe`. Brains can't quietly emit on unsupervised
+    # symbols. Sits right after broker_connected so the chain still
+    # short-circuits on infrastructure failures first.
+    "symbol_in_universe",
     # Lane Execution Toggle (2026-02-18): operator-owned kill switch
     # per lane (equity, crypto). Decoupled from broker credential
     # state; defaults OFF; flipped via POST /api/admin/execution/

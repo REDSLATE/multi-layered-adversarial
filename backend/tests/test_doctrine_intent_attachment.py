@@ -105,7 +105,10 @@ async def test_equity_with_empty_snapshot_still_returns_packet():
     )
     assert packet is not None
     assert packet["base_labels"]["quality"] == "REJECT"
-    assert packet["seats"]["governor"]["governor_action"] == "block"
+    # 2026-02-17 (graceful degrade): REJECT-quality intents downshift
+    # governor from "block" to "modulate" so the packet can still be
+    # attached and audited rather than being silently filtered.
+    assert packet["seats"]["governor"]["governor_action"] == "modulate"
 
 
 # ─── safety pins: read-only attachment ──────────────────────────────────

@@ -66,8 +66,17 @@ class TestRolesManifest:
         d = r.json()
         runtimes = {x["runtime"] for x in d["items"]}
         assert {"alpha", "camaro", "chevelle", "redeye"} <= runtimes
-        for x in d["items"]:
-            assert x["may_execute"] is False, f"{x['runtime']} must not claim execution"
+        # 2026-02-17 doctrine update: `may_execute` is now SEAT-derived,
+        # not brain-derived. Whichever brain currently holds an
+        # execute-capable seat surfaces may_execute=True. The roles
+        # manifest is the read-out of that fact. We assert that at
+        # most ONE brain claims execution at a time (single executor
+        # seat) — never the old "no brain may execute" invariant.
+        executors = [x for x in d["items"] if x.get("may_execute") is True]
+        assert len(executors) <= 1, (
+            f"at most one brain may hold execute authority at a time, "
+            f"got: {[x['runtime'] for x in executors]}"
+        )
         # REDEYE is now a full-seat runtime (2026-02-11) — promoted from
         # advisor sidecar. Its authority_state defaults to 'advisor', but
         # kind is 'runtime'.
