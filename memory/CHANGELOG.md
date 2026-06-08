@@ -1,3 +1,87 @@
+## 2026-02-XX (this session, pass 3) — Brain identity stamp: canonical hash + fail-closed defaults
+
+### Problem
+Operator showed a screenshot from `mission.risedual.ai` where all 4
+brains' check-ins displayed `ENV_NAME=preview`,
+`MC_URL=https://multi-brain-backbone.emergent.host`,
+`DB_NAME=multi-brain-backbone-test_database`, and a **HASH MISMATCH**
+badge on every row. Two root causes:
+
+1. `_checkin_stamp` in `external/brains/runner.py` hardcoded
+   `"policy_hash": "neutral-template"` (a literal string) — that
+   value could NEVER match MC's `sha256(canonical_policy_dict)`,
+   so HASH MISMATCH fired on every check-in by construction.
+2. The stamp sourced env identity from `BRAIN_ENV_NAME` (default
+   `"prod"`) and `BRAIN_ADVERTISED_MC_URL` (default
+   `https://mission.risedual.ai`). Defaults POSED as prod when the
+   env var was missing — dangerous, since an unconfigured pod
+   silently advertised "I'm prod" to the prod-readiness gate.
+
+### Shipped
+1. **`_checkin_stamp` now uses the canonical `policy_hash()`** from
+   `shared.runtime.platform_survival` — the SAME SHA256 MC computes
+   when validating. Matches by construction unless the doctrine
+   dict actually diverges.
+2. **Identity sourcing reordered + fail-closed defaults:**
+   - `env_name`: `RISEDUAL_ENV` → `ENV` → `BRAIN_ENV_NAME` → `"unknown"`
+   - `mc_url`: `RISEDUAL_MC_URL` → `BRAIN_ADVERTISED_MC_URL` → `""`
+   - `git_sha`: `RISEDUAL_GIT_SHA` → `GIT_SHA` → platform-specific
+     SHA vars → `BRAIN_GIT_SHA` → `"unknown"`
+   - `db_name`: `RISEDUAL_DB_NAME` → `DB_NAME` → `""`
+   - `broker_mode`: `RISEDUAL_BROKER_MODE` clamped to
+     `{paper, live, dry_run}`; default `paper`
+   - `platform`: `RISEDUAL_PLATFORM` → `PLATFORM` → `"emergent"`
+   - `app_name`: `RISEDUAL_APP_NAME` → `"risedual"`
+   - `sidecar_version`: `RISEDUAL_SIDECAR_VERSION` →
+     `BRAIN_SIDECAR_VERSION` → `"neutral-camino-v1"`
+3. **Identity startup log** — one line per process boot showing
+   exactly what every check-in will stamp:
+   `neutral_brain identity env_name=<v> mc_url=<v> db_name=<v>
+    broker_mode=<v> git_sha=<v> — operator: this is what every
+    brain check-in will stamp. If env_name != 'prod' or
+    mc_url != 'https://mission.risedual.ai' on prod, set
+    RISEDUAL_ENV / RISEDUAL_MC_URL in the prod deploy.`
+   Operator can `tail -f` once after deploy to confirm.
+4. **`tests/test_neutral_brain_identity_stamp.py`** — 13 tripwires
+   covering: canonical hash match, RISEDUAL_* canonical source,
+   legacy var fallback, fail-closed defaults, broker-mode clamp,
+   full prod stamp passes validator, default stamp FAILS validator.
+
+### Verified live (preview)
+Latest `/api/admin/runtime/sidecar-checkin/alpha` shows:
+```
+policy_hash_match: true
+mc_policy_hash:    2ac7d02164886f5c9c4a6339a605bf7be87b2bf2b532ea08681b5c29a6dcea25
+stamp.policy_hash: 2ac7d02164886f5c9c4a6339a605bf7be87b2bf2b532ea08681b5c29a6dcea25  ✓
+stamp.env_name:    preview      (correct for preview)
+stamp.mc_url:      https://multi-brain-backbone.preview.emergentagent.com   (correct)
+errors:            [ENV_NOT_PROD, MC_URL_NOT_PROD, UNKNOWN_GIT_SHA]   (correct for preview — these should ONLY clear on prod)
+```
+HASH MISMATCH is GONE. The remaining errors are honest signals
+that this is a preview pod.
+
+### Operator action — prod deploy needs these env vars
+```
+RISEDUAL_ENV=prod
+RISEDUAL_MC_URL=https://mission.risedual.ai
+RISEDUAL_DB_NAME=<prod database name (not "test_database")>
+RISEDUAL_GIT_SHA=<actual commit SHA>
+RISEDUAL_BROKER_MODE=paper          # or live / dry_run
+RISEDUAL_PLATFORM=emergent
+```
+Once set + redeploy, the prod dashboard's identity check-in panel
+will flip from `0 prod · 4 preview` to `4 prod · 0 preview`, all
+"HASH MISMATCH" badges disappear, and the brain tiles drop their
+`DEGRADED · no upstream` chips.
+
+### Regression
+76/76 tests pass across the regression cluster
+(identity + sovereign + brain_runtime + alpha_vantage +
+brain_emission_diagnose + sovereign_audit).
+
+---
+
+
 ## 2026-02-XX (this session, pass 2) — Permanent brains: stripped dead external-sidecar proxy
 
 ### Problem

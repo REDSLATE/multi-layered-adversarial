@@ -103,28 +103,135 @@ FALLBACK_BY_LANE = {
 }
 
 
-def _checkin_stamp(brain_id: str, display_name: str) -> dict:
-    env_name = os.environ.get("BRAIN_ENV_NAME", "prod")
-    mc_url = os.environ.get(
-        "BRAIN_ADVERTISED_MC_URL", "https://mission.risedual.ai",
+def _env(name: str, default: str = "") -> str:
+    """Trimmed env reader. Empty string == "not set"."""
+    return os.environ.get(name, default).strip()
+
+
+def _identity_env_name() -> str:
+    """Environment label (prod / preview / staging / unknown).
+
+    Source-of-truth order:
+      1. RISEDUAL_ENV   — canonical (same var MC's platform_survival reads).
+      2. ENV            — generic fallback for older containers.
+      3. BRAIN_ENV_NAME — legacy var from the external-sidecar era.
+      4. "unknown"      — fails closed. MC will flag ENV_NOT_PROD and
+                          the operator sees an honest "this brain
+                          doesn't know what env it's in" verdict
+                          instead of a false "prod" stamp.
+    """
+    return (
+        _env("RISEDUAL_ENV")
+        or _env("ENV")
+        or _env("BRAIN_ENV_NAME")
+        or "unknown"
     )
+
+
+def _identity_mc_url() -> str:
+    """The MC URL the brain advertises in its check-in.
+
+    Source-of-truth order:
+      1. RISEDUAL_MC_URL          — canonical.
+      2. BRAIN_ADVERTISED_MC_URL  — legacy.
+      3. ""                       — fails closed (MC flags MC_URL_NOT_PROD).
+    """
+    return _env("RISEDUAL_MC_URL") or _env("BRAIN_ADVERTISED_MC_URL")
+
+
+def _identity_git_sha() -> str:
+    return (
+        _env("RISEDUAL_GIT_SHA")
+        or _env("GIT_SHA")
+        or _env("VERCEL_GIT_COMMIT_SHA")
+        or _env("RAILWAY_GIT_COMMIT_SHA")
+        or _env("BRAIN_GIT_SHA")
+        or "unknown"
+    )
+
+
+def _identity_broker_mode() -> str:
+    """One of `paper | live | dry_run`. MC's validator rejects anything
+    else with BAD_BROKER_MODE. Default `paper` — safe for any env."""
+    raw = _env("RISEDUAL_BROKER_MODE") or "paper"
+    return raw if raw in ("paper", "live", "dry_run") else "paper"
+
+
+def _checkin_stamp(brain_id: str, display_name: str) -> dict:
+    """Build the brain's identity stamp the way MC's
+    `validate_for_prod_sidecar` expects it. The `policy_hash` is
+    computed by the SAME `policy_hash()` MC validates against, so
+    the HASH_MISMATCH badge will only fire when code/doctrine
+    actually drifts — never as a self-inflicted off-by-name bug.
+    """
+    # Late import: `shared.runtime.platform_survival` lives in the
+    # backend tree; `external.brains.runner` lives outside. Defer so
+    # this module stays import-safe in tooling that doesn't have
+    # `/app/backend` on the path yet.
+    try:
+        import sys as _sys
+        if "/app/backend" not in _sys.path:
+            _sys.path.insert(0, "/app/backend")
+        from shared.runtime.platform_survival import (  # type: ignore
+            policy_hash as _canonical_policy_hash,
+        )
+        policy_hash_val = _canonical_policy_hash()
+    except Exception:  # noqa: BLE001
+        # If platform_survival can't be reached, fall through with an
+        # empty hash. MC's policy_hash_match will be False — visible
+        # as HASH MISMATCH — which is the honest signal that the
+        # brain's runtime can't see MC's doctrine module.
+        policy_hash_val = ""
+
     return {
         "stamp": {
-            "app_name": "risedual",
-            "env_name": env_name,
-            "git_sha": os.environ.get("BRAIN_GIT_SHA", "neutral-camino-v1"),
-            "platform": "emergent",
-            "mc_url": mc_url,
-            "db_name": os.environ.get("DB_NAME", ""),
-            "broker_mode": "paper",
+            "app_name": _env("RISEDUAL_APP_NAME") or "risedual",
+            "env_name": _identity_env_name(),
+            "git_sha": _identity_git_sha(),
+            "platform": _env("RISEDUAL_PLATFORM") or _env("PLATFORM") or "emergent",
+            "mc_url": _identity_mc_url(),
+            "db_name": _env("RISEDUAL_DB_NAME") or _env("DB_NAME") or "",
+            "broker_mode": _identity_broker_mode(),
             "sidecar_room": brain_id,
-            "sidecar_version": "neutral-camino-v1",
-            "policy_hash": "neutral-template",
+            "sidecar_version": (
+                _env("RISEDUAL_SIDECAR_VERSION")
+                or _env("BRAIN_SIDECAR_VERSION")
+                or "neutral-camino-v1"
+            ),
+            # CANONICAL policy hash — same SHA256 MC computes. Matches
+            # by construction unless someone forks the doctrine dict
+            # in platform_survival.policy_hash().
+            "policy_hash": policy_hash_val,
             "local_execution_authority": False,
             "display_name": display_name,
             "timestamp_ms": int(time.time() * 1000),
         }
     }
+
+
+def _log_identity_once() -> None:
+    """Emit a single supervisor-log line per process showing exactly
+    what identity the brains will report in their check-ins. Makes
+    the "wait, why is prod saying preview?" class of bugs obvious in
+    one `tail -f` of the backend logs.
+
+    Doctrine: this log is descriptive evidence only. It does NOT
+    mutate or validate anything — the operator reads it once at
+    startup to confirm prod is configured as prod.
+    """
+    env_name = _identity_env_name()
+    mc_url = _identity_mc_url() or "<unset>"
+    db_name = _env("RISEDUAL_DB_NAME") or _env("DB_NAME") or "<unset>"
+    broker = _identity_broker_mode()
+    sha = _identity_git_sha()
+    logger.info(
+        "neutral_brain identity env_name=%s mc_url=%s db_name=%s "
+        "broker_mode=%s git_sha=%s — operator: this is what every "
+        "brain check-in will stamp. If env_name != 'prod' or "
+        "mc_url != 'https://mission.risedual.ai' on prod, set "
+        "RISEDUAL_ENV / RISEDUAL_MC_URL in the prod deploy.",
+        env_name, mc_url, db_name, broker, sha,
+    )
 
 
 def _build_snapshot(
@@ -599,6 +706,10 @@ async def start_neutral_brains() -> None:
     if _RUNNERS:
         logger.info("neutral_brains already started — skipping")
         return
+    # Emit the identity log ONCE per process start so the operator
+    # can confirm prod is configured as prod (or spot the misconfig
+    # immediately if env_name="preview" on the prod deploy).
+    _log_identity_once()
     for brain_id, display_name, token_env in BRAIN_ROSTER:
         token = os.environ.get(token_env, "")
         if not token:
