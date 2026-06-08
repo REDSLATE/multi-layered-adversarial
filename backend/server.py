@@ -150,6 +150,7 @@ from routes.storage_rollup import router as storage_rollup_router
 from routes.trading_controls import router as trading_controls_router
 from routes.runtime_token_health import router as runtime_token_health_router
 from routes.alpha_vantage_admin import router as alpha_vantage_admin_router
+from routes.broker_lane_admin import router as broker_lane_admin_router
 
 
 
@@ -695,6 +696,7 @@ api_router.include_router(storage_rollup_router)
 api_router.include_router(trading_controls_router)
 api_router.include_router(runtime_token_health_router)
 api_router.include_router(alpha_vantage_admin_router)
+api_router.include_router(broker_lane_admin_router)
 
 app.include_router(api_router)
 

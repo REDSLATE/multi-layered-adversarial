@@ -66,6 +66,18 @@ SYMBOL_METADATA = "symbol_metadata"          # per-symbol float, market cap, sec
 PATTERNS_UNIVERSE = "patterns_universe"      # operator-managed watchlist
 FEEDER_HEALTH_AUDIT = "feeder_health_audit"  # per-feeder 429/error rolling log
 
+# 2026-02-XX. Operator-controlled lane on/off toggles. Each row is
+# `{_id: <lane>, enabled: bool, updated_at, updated_by}`. The broker
+# router calls `is_lane_enabled(lane)` before any credential lookup —
+# disabled lane = NO_TRADE for that lane, independent of broker
+# credentials. Audit-logged.
+#
+# Doctrine pin: lanes default to ENABLED when no row exists. The
+# operator MUST explicitly disable a lane to turn it off; we never
+# silently shut a lane down by code change.
+BROKER_LANE_TOGGLES = "broker_lane_toggles"
+BROKER_LANE_AUDIT_LOG = "broker_lane_audit_log"
+
 # Alpha Vantage daily cache (2026-02-XX). Free tier = 25 calls/day.
 # We cache by `(symbol, function, date_utc)` so repeat reads within
 # the same UTC day reuse the cached payload, preserving the 25/day

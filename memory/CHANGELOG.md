@@ -1,3 +1,44 @@
+## 2026-02-XX (this session, pass 4) — Public.com wired live, Kraken pending, lane toggle shipped
+
+### Shipped
+1. **Public.com credentials connected** — operator's API secret stored Fernet-encrypted in `public_credentials`, access-token refresher running, account pinned to `5LG34065` (LEVEL_2 cash brokerage). Live API probe (`/portfolio/v2`) returns real positions.
+2. **`execution_enabled=true`** flipped on Public.com via the audit-gated `/admin/public/execution` endpoint (confirmation phrase enforced).
+3. **Funding state diagnosed**: $2,500 sits in the operator's HIGH_YIELD wallet (`5OT26003`), not the BROKERAGE account. HIGH_YIELD is `RESTRICTED_NO_TRADING`. Operator must move funds inside Public's UI before any equity order can fill.
+4. **Operator lane toggle** (`/app/backend/routes/broker_lane_admin.py`):
+   - `GET /api/admin/broker/lanes` — current per-lane enabled state
+   - `POST /api/admin/broker/lanes/{lane}/toggle` — flip with confirm phrase
+   - `GET /api/admin/broker/lanes/audit` — full toggle history
+   - Confirm phrases: `"I authorize equity trading"` / `"Disable equity trading"`
+   - Defaults: lanes ENABLED. Operator must explicitly disable.
+   - **Wired into `broker_router.route_order`** at step 1b (BEFORE credentials probe) — disabled lane returns `BrokerRouteBlocked` with NO_TRADE.
+   - **Fail-open** on Mongo blip: a toggle-lookup error logs warning and falls through to downstream gates (ladder, credentials, MC receipt). Lane toggle is operator override, not the safety default.
+5. **New collections**: `broker_lane_toggles` (one row per lane), `broker_lane_audit_log` (append-only).
+6. **9 unit tests** in `test_broker_lane_toggle.py`: defaults, explicit enable/disable, independence between lanes, KNOWN_LANES matches the broker registry, route_order blocks when disabled, route_order allows other lane when one is off, fail-open on lookup error.
+
+### Verified live (preview)
+- `GET /admin/broker/lanes` → equity + crypto both `enabled=true` by default
+- `POST .../equity/toggle {enabled: false, confirm: "Disable equity trading"}` → flip persisted + audit row
+- `POST .../equity/toggle {enabled: true, confirm: "I authorize equity trading"}` → flip back + audit row
+- Audit log returns chronological history with actor email
+
+### Doctrine
+Lane toggle is the COARSEST gate — orthogonal to:
+- `RISEDUAL_EQUITY_BROKER` (which broker for equity: Public vs Alpaca)
+- Public/Kraken `execution_enabled` flags (per-broker kill switches)
+- Learning-ladder stage (per-brain-per-lane)
+
+Operator flips equity off → all 4 brains' equity intents NO_TRADE, ignoring everything below.
+
+### Pending operator action
+- **Public**: Move $2,500 from HIGH_YIELD (`5OT26003`) → BROKERAGE (`5LG34065`) in Public's app to unlock equity buying power.
+- **Kraken**: Send API key + base64 private_key to wire crypto. Required scopes: Query Funds, Query Orders, Create/Modify/Cancel Orders. **NO Withdraw Funds scope.**
+
+### Regression
+50/50 tests pass in the broker_lane + brain_runtime + sovereign + identity + AV cluster.
+
+---
+
+
 ## 2026-02-XX (this session, pass 3) — Brain identity stamp: canonical hash + fail-closed defaults
 
 ### Problem

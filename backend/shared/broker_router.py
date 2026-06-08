@@ -301,6 +301,31 @@ async def route_order(
             f"intent {intent_id} has no resolvable canonical asset: {e}"
         ) from e
 
+    # 1b. Operator lane toggle — runtime on/off switch per lane. Set
+    #     via POST /admin/broker/lanes/{lane}/toggle. Defaults to
+    #     enabled when no row exists; explicitly disabling a lane
+    #     turns off ALL trades in that lane, ignoring broker creds
+    #     and per-brain ladder stage. Runs BEFORE we touch any
+    #     credentials so we never even probe Public/Kraken when the
+    #     operator has flipped a lane off.
+    try:
+        from routes.broker_lane_admin import is_lane_enabled  # noqa: WPS433
+        if not await is_lane_enabled(asset.lane):
+            raise BrokerRouteBlocked(
+                f"lane {asset.lane!r} is disabled by operator toggle; NO_TRADE"
+            )
+    except BrokerRouteBlocked:
+        raise
+    except Exception as exc:  # noqa: BLE001 — fail open on toggle lookup errors
+        # We DELIBERATELY fail-open here: a Mongo blip on the toggle
+        # collection must NOT kill all trading. The downstream
+        # ladder/credentials/execution gates remain. Log loudly so
+        # the operator sees it.
+        logger.warning(
+            "broker lane toggle lookup failed lane=%s err=%s — failing open",
+            asset.lane, exc,
+        )
+
     # 2. Pick broker by lane.
     try:
         broker_name = broker_for_lane(asset.lane)
