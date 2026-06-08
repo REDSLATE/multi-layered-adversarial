@@ -448,6 +448,20 @@ async def lifespan(app: FastAPI):
         logger.info("daily_snapshot worker started")
     except Exception as e:  # noqa: BLE001
         logger.warning("daily_snapshot worker start failed: %s", e)
+    # 2026-06-07 — Neutral brain stand-ins (Camino/Barracuda/Hellcat/GTO).
+    # Stand-ins until the real per-brain wild_adaptive_core_v2 modules
+    # are migrated to this stack. Gated by NEUTRAL_BRAINS_ENABLED
+    # (default off); when on, 4 in-process asyncio tasks post intents
+    # to MC over loopback so the fade class is structurally
+    # impossible. The brains hold NO seat — operator-rotatable
+    # seat policy still owns authority.
+    try:
+        import sys as _sys
+        _sys.path.insert(0, "/app")
+        from external.brains.runner import start_neutral_brains
+        await start_neutral_brains()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("neutral_brains start failed: %s", e)
     yield
     await stop_poller()
     await stop_alpaca_pinger()
@@ -461,6 +475,11 @@ async def lifespan(app: FastAPI):
     await stop_orphan_watchdog()
     await stop_paradox_coordinator()
     await stop_observation_resolver()
+    try:
+        from external.brains.runner import stop_neutral_brains
+        await stop_neutral_brains()
+    except Exception:  # noqa: BLE001
+        pass
     try:
         await stop_daily_snapshot_worker()
     except Exception:  # noqa: BLE001
@@ -490,6 +509,34 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="RISEDUAL Mission Control", lifespan=lifespan)
 
 api_router = APIRouter(prefix="/api")
+
+
+@api_router.get("/admin/neutral-brains/status")
+async def neutral_brains_status():
+    """Health-check the 4 in-process neutral brain runners.
+
+    Returns the BRAIN_ROSTER (so the dashboard knows which slot maps
+    to which car-name) and live stats (tick/intent/checkin counts).
+    Empty `runners` list = NEUTRAL_BRAINS_ENABLED is false.
+
+    Public read-only — no secrets exposed (tokens never returned).
+    """
+    try:
+        import sys as _sys
+        _sys.path.insert(0, "/app")
+        from external.brains.runner import (
+            BRAIN_ROSTER, is_enabled, runtime_stats,
+        )
+        return {
+            "enabled": is_enabled(),
+            "roster": [
+                {"brain_id": b, "display_name": d, "token_env": t}
+                for b, d, t in BRAIN_ROSTER
+            ],
+            "runners": runtime_stats(),
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"enabled": False, "error": str(e), "runners": []}
 
 
 @api_router.get("/")
