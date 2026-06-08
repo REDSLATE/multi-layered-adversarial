@@ -66,6 +66,18 @@ SYMBOL_METADATA = "symbol_metadata"          # per-symbol float, market cap, sec
 PATTERNS_UNIVERSE = "patterns_universe"      # operator-managed watchlist
 FEEDER_HEALTH_AUDIT = "feeder_health_audit"  # per-feeder 429/error rolling log
 
+# Alpha Vantage daily cache (2026-02-XX). Free tier = 25 calls/day.
+# We cache by `(symbol, function, date_utc)` so repeat reads within
+# the same UTC day reuse the cached payload, preserving the 25/day
+# quota. Stale rows are pruned by the feeder on next miss. Doctrine
+# pin: DESCRIPTIVE EVIDENCE ONLY — never an authority path.
+ALPHA_VANTAGE_CACHE = "alpha_vantage_cache"
+# Quota-usage counter doc — one row per UTC day. The feeder
+# increments on every miss-fetch and refuses to call the AV API
+# when today's count reaches the configured cap, returning a soft
+# error so callers degrade gracefully instead of hammering the API.
+ALPHA_VANTAGE_QUOTA = "alpha_vantage_quota"
+
 # Daily Market Snapshots (2026-06-XX) — three frozen, point-in-time
 # views of the S&P-500 equity universe per trading day. Captured at
 # 09:35 / 12:30 / 16:05 ET. Doctrine: DERIVED EVIDENCE ONLY. Brains

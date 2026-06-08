@@ -1,3 +1,66 @@
+## 2026-02-XX (this session) — Sovereign loop + Alpha Vantage cache for the 4 permanent brains
+
+### Confirmation
+The 4 neutral brains (Camino / Barracuda / Hellcat / GTO) are
+**permanent**, not stand-ins. Treating them as first-class.
+
+### Shipped
+1. **`/app/external/brains/runner.py`** — added a 60s `_sovereign_loop`
+   alongside the existing intent + checkin loops. Each brain now POSTs
+   a substantive contribution (weights snapshot, rolling 20-decision
+   tape, notes with tick/intent/last-action telemetry, mode=PRD)
+   to `/api/runtime-discussion/sovereign/contribution` every minute.
+   Cold-start delay of 8s + jitter so the first POST has at least one
+   intent on the tape. Cadence tunable via
+   `NEUTRAL_BRAIN_SOVEREIGN_SEC` (default 60).
+2. **Rolling tape on every posted intent.** The runner now records
+   the brain's last 25 POSTed decisions (`symbol/action/confidence/
+   notional`) and ships the tail-20 in every sovereign contribution
+   so MC's audit log carries real signal (not skeleton rows).
+3. **`/api/admin/neutral-brains/status`** — added `sovereign_count`
+   to the per-runner stats so the operator dashboard can show how
+   many contributions each brain has posted since boot.
+4. **`/app/backend/shared/feeders/alpha_vantage.py`** — new
+   cached feeder for Alpha Vantage. Free-tier 25 calls/UTC-day cap.
+   Cache row per `(symbol, function, date_utc)`; cache hits cost
+   zero quota. AV rate-limit body (`Note` field) and explicit
+   `Error Message` body are handled; rate-limit body pins the local
+   counter to cap so we don't burn more quota in a hot loop.
+   `force_refresh=True` bypasses cache. Background cache prune drops
+   rows older than `ALPHA_VANTAGE_CACHE_RETENTION` (default 7d).
+5. **`/api/admin/alpha-vantage/quota`**, **`/cache`**, **`/fetch`** —
+   operator endpoints in `routes/alpha_vantage_admin.py`. Quota
+   exposes used/cap/remaining/first/last; fetch is a manual probe
+   that runs through the same cache+quota path every consumer uses.
+6. **`namespaces.py`** — registered `ALPHA_VANTAGE_CACHE` and
+   `ALPHA_VANTAGE_QUOTA` collections with doctrine pin.
+
+### Verified
+- 40 parallel `/api/auth/login` + 40 parallel `/api/health` calls
+  all return 200, peak ~6s. The bcrypt `asyncio.to_thread` fix is
+  confirmed protecting the event loop. (P0 — login 520 fix.)
+- `GET /api/admin/brain/emission-diagnose/{brain}` for all 4 brains:
+  `overall=LIVE` with `sovereign_loop: live` (was stale/dead before).
+- `GET /api/admin/sovereign/state` shows fresh `updated_at` and
+  substantive `notes`/`weights`/`recent_outcomes` for each brain.
+- 5/5 new unit tests `test_neutral_brain_sovereign_loop.py` pass.
+- 10/10 new unit tests `test_alpha_vantage_feeder.py` pass (cache
+  hit, miss-with-quota-inc, quota exhausted, AV rate-limit body,
+  AV error message, force-refresh, env-driven cap, prune, etc.).
+- Full sovereign + brain_emission_diagnose suite: 50/50 green.
+
+### Operator notes
+- **Prod redeploy required** to pick up the bcrypt event-loop fix on
+  `mission.risedual.ai`. Preview already has it.
+- To lift the AV daily cap after upgrading tiers, set
+  `ALPHA_VANTAGE_DAILY_CAP=<n>` in `backend/.env`. No code change.
+- Consumers that want AV data MUST call
+  `shared.feeders.alpha_vantage.get_payload(symbol, function)` —
+  this is the SOLE egress to alphavantage.co.
+
+---
+
+
 ## 2026-02-20 (pass #7) — CompositeLivenessCard frontend follow-up
 
 ### Problem

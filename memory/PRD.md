@@ -1,5 +1,42 @@
 # Mission Control — PRD (latest pass on top)
 
+## 🆕 2026-02-XX — Permanent neutral brains + Alpha Vantage cache
+
+### Confirmation from operator
+The 4 neutral brains (Camino / Barracuda / Hellcat / GTO) running
+in-process inside MC's lifespan are **permanent** — not stand-ins
+for a future migration. Treating them as the production decision
+cores.
+
+### Shipped this pass
+1. **Sovereign contribution loop** wired for the 4 brains
+   (`/app/external/brains/runner.py`). 60s cadence, substantive
+   payload (weights + rolling 20-decision tape + telemetry notes)
+   → `/api/runtime-discussion/sovereign/contribution`. Confirmed
+   `composite_liveness.sovereign_loop=live` for all 4 brains.
+2. **`sovereign_count`** added to `/api/admin/neutral-brains/status`
+   so the dashboard can show operator-visible counters.
+3. **Alpha Vantage cached feeder**
+   (`/app/backend/shared/feeders/alpha_vantage.py`). Free-tier 25
+   calls/UTC-day cap respected via per-day Mongo counter + per-
+   `(symbol, function, date)` cache row. Operator endpoints under
+   `/api/admin/alpha-vantage/{quota,cache,fetch}`. Configurable cap
+   via `ALPHA_VANTAGE_DAILY_CAP`.
+4. **Login event-loop fix verified** — `auth.py`'s
+   `asyncio.to_thread(bcrypt.checkpw)` confirmed protecting the
+   loop under 40 parallel logins. Prod redeploy required to ship.
+
+### Backlog (P1/P2)
+- Intent summary endpoint `GET /api/admin/runtime/{brain}/intent-summary` (P2)
+- SSE stream `/api/mc-connection/stream` for live dashboard updates (P2)
+- Frontend Pulse review-queue UI for Governance Reviewer (P2)
+- Reddit (JSON format) + Zillow (403) scraper fixes; Quiver 500 upstream (P2)
+- Wire the AV feeder into a brain feature (currently the feeder exists
+  but no consumer is calling it — operator decision on what AV data
+  the brains should ingest)
+
+
+
 ## 🆕 2026-02-17 — Phase 4 ENGAGED: ladder stage drives sizing + routing (P0)
 
 ### Problem (operator report from Prod)
