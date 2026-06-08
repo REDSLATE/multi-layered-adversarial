@@ -3,19 +3,28 @@ import pytest
 import pytest_asyncio  # noqa: F401 — ensures the plugin is loaded
 import requests
 
-# Seed DB connection env vars BEFORE any test module imports `db` /
-# `namespaces` / `shared.*` (those read env at import time and KeyError
-# if MONGO_URL isn't set). The backend .env is the source of truth.
-if not os.environ.get("MONGO_URL"):
-    be_env = "/app/backend/.env"
-    if os.path.exists(be_env):
-        with open(be_env) as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("MONGO_URL=") and "MONGO_URL" not in os.environ:
-                    os.environ["MONGO_URL"] = line.split("=", 1)[1].strip().strip('"').strip("'")
-                elif line.startswith("DB_NAME=") and "DB_NAME" not in os.environ:
-                    os.environ["DB_NAME"] = line.split("=", 1)[1].strip().strip('"').strip("'")
+# Seed env vars BEFORE any test module imports `shared.*` modules
+# that read env at import time. The backend .env is the source of
+# truth for everything; tests share that view so any env-tuned
+# value (caps, ladder, neutral-brain flags) matches the live
+# backend the tests are HTTP-poking.
+#
+# 2026-06-07: expanded from MONGO_URL/DB_NAME only to "all keys".
+# Triggered by the $500 live-pilot cap tightening — without
+# /app/backend/.env loaded fully, exposure_caps.py defaulted to the
+# pre-pilot $100k constants in the test process while the backend
+# saw the env-overridden $25, breaking the parity assertion.
+_be_env = "/app/backend/.env"
+if os.path.exists(_be_env):
+    with open(_be_env) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _k, _v = _line.split("=", 1)
+            _k = _k.strip()
+            if _k and _k not in os.environ:
+                os.environ[_k] = _v.strip().strip('"').strip("'")
 os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
 os.environ.setdefault("DB_NAME", "test_database")
 

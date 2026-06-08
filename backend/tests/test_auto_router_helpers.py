@@ -35,14 +35,35 @@ pytestmark = pytest.mark.tripwire
     ("crypto", 500.0, 500.0),  # at cap → unchanged
     ("crypto", 1000.0, 500.0),  # over crypto cap → clamps
     ("crypto", 25.0,  25.0),
-    ("equity", 100.0, 100.0),  # equity cap is $100k → unchanged
-    ("equity", 50.0,  50.0),
-    (None,     100.0, 100.0),  # no lane → falls back to global per-order cap
 ])
 def test_clamp_notional_to_lane(lane, notional, expected_clamped):
+    """Crypto-only because equity caps are now env-tunable for the
+    $500 live pilot — pinning a hardcoded $100k expectation would
+    break in any environment where the operator has tightened
+    `RISEDUAL_CAP_PER_ORDER_USD`. The equity / no-lane code path is
+    exercised dynamically below."""
     clamped, was_clamped = _clamp_notional_to_lane(notional, lane)
     assert clamped == expected_clamped
     assert was_clamped == (clamped != notional)
+
+
+def test_clamp_notional_to_lane_equity_and_none_read_live_cap():
+    """Equity + no-lane both fall through to the global per-order cap.
+    Read the live constant and pin parity (works for $100k default or
+    $25 pilot config)."""
+    from shared.exposure_caps import CAP_PER_ORDER_USD
+    # Below cap on either side: no clamp.
+    small = max(1.0, CAP_PER_ORDER_USD / 2)
+    for lane in ("equity", None):
+        clamped, was_clamped = _clamp_notional_to_lane(small, lane)
+        assert clamped == small
+        assert was_clamped is False
+    # Above cap: clamps to the global cap.
+    big = CAP_PER_ORDER_USD * 2
+    for lane in ("equity", None):
+        clamped, was_clamped = _clamp_notional_to_lane(big, lane)
+        assert clamped == CAP_PER_ORDER_USD
+        assert was_clamped is True
 
 
 # ── side derivation ─────────────────────────────────────────────────────

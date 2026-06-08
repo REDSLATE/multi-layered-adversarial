@@ -30,24 +30,56 @@ pytestmark = pytest.mark.asyncio
 
 
 def _reset_env(**overrides):
+    """Reset sizing-gate env vars to the operator's `.env` config
+    (NOT to "unset" — popping would leak into other tests by erasing
+    the operator-pilot config). Then apply per-test overrides and
+    reload the gate module so it picks the new values up.
+    """
+    backend_env_path = "/app/backend/.env"
+    pilot_values: dict[str, str] = {}
+    try:
+        with open(backend_env_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                if k in (
+                    "MICRO_LIVE_ENABLED", "MICRO_LIVE_DEFAULT_CAP_USD",
+                    "MICRO_LIVE_CRYPTO_CAP_USD", "MICRO_LIVE_EQUITY_CAP_USD",
+                ):
+                    pilot_values[k] = v.strip().strip('"').strip("'")
+    except OSError:
+        pass
     for k in (
         "MICRO_LIVE_ENABLED", "MICRO_LIVE_DEFAULT_CAP_USD",
         "MICRO_LIVE_CRYPTO_CAP_USD", "MICRO_LIVE_EQUITY_CAP_USD",
     ):
-        os.environ.pop(k, None)
+        if k in pilot_values:
+            os.environ[k] = pilot_values[k]
+        else:
+            os.environ.pop(k, None)
     for k, v in overrides.items():
         os.environ[k] = str(v)
     sizing_gate.reload_env()
 
 
 def test_micro_live_off_only_lane_cap_binds():
-    _reset_env()
+    _reset_env(MICRO_LIVE_ENABLED="false")
     d = evaluate_sizing(100.0, "equity")
     assert d.micro_live_enabled is False
-    # equity lane cap is $100k — $100 request is under it.
-    assert d.final_usd == 100.0
-    assert d.was_clamped is False
-    assert d.binding_rail == "none"
+    # equity lane cap = global `cap_per_order_usd` (env-tunable).
+    # 2026-06-07: $500 live pilot tightened the global cap from
+    # $100k → $25 via `RISEDUAL_CAP_PER_ORDER_USD`. Read live so the
+    # test tracks the operator's pilot config rather than re-pinning
+    # a stale constant.
+    from shared.exposure_caps import cap_for_lane
+    lane_cap = cap_for_lane("equity")
+    expected = min(100.0, lane_cap)
+    assert d.final_usd == expected
+    assert d.was_clamped is (100.0 > lane_cap)
+    assert d.binding_rail in ("none", "lane_cap")
     _reset_env()
 
 
@@ -66,11 +98,18 @@ def test_micro_live_crypto_specific_cap():
         MICRO_LIVE_ENABLED="true",
         MICRO_LIVE_DEFAULT_CAP_USD="100",
         MICRO_LIVE_CRYPTO_CAP_USD="5",
+        # Also override equity so the pilot's .env value can't leak
+        # in and skew the assertion.
+        MICRO_LIVE_EQUITY_CAP_USD="100",
     )
     d_crypto = evaluate_sizing(1000.0, "crypto")
     d_equity = evaluate_sizing(1000.0, "equity")
     assert d_crypto.final_usd == 5.0
-    assert d_equity.final_usd == 100.0
+    # equity micro_live cap = 100; gets compared against the lane cap
+    # (env-tunable). 2026-06-07 pilot tightened lane cap to $25 so
+    # $25 binds before $100.
+    from shared.exposure_caps import cap_for_lane
+    assert d_equity.final_usd == min(100.0, cap_for_lane("equity"))
     _reset_env()
 
 
@@ -87,8 +126,15 @@ def test_micro_live_smaller_than_lane_cap_wins():
 
 def test_micro_live_larger_than_lane_cap_lane_wins():
     """Doctrine: tighter rail wins. micro_live=$5000 vs crypto lane
-    cap $500 → lane_cap binds."""
-    _reset_env(MICRO_LIVE_ENABLED="true", MICRO_LIVE_DEFAULT_CAP_USD="5000")
+    cap $500 → lane_cap binds. EQUITY-specific override set to a high
+    value too so the pilot's `.env` MICRO_LIVE_CRYPTO_CAP_USD=$5 can't
+    leak in."""
+    _reset_env(
+        MICRO_LIVE_ENABLED="true",
+        MICRO_LIVE_DEFAULT_CAP_USD="5000",
+        MICRO_LIVE_CRYPTO_CAP_USD="5000",
+        MICRO_LIVE_EQUITY_CAP_USD="5000",
+    )
     d = evaluate_sizing(10_000.0, "crypto")
     assert d.binding_rail == "lane_cap"
     assert d.final_usd == d.lane_cap_usd

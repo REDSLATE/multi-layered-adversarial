@@ -28,22 +28,58 @@ from shared.broker.alpaca_routes import get_alpaca_adapter
 from shared.crypto.exposure_caps import CRYPTO_PER_ORDER_USD as _CRYPTO_PER_ORDER_USD
 
 
-# Paper-trading rails. Change here = redeploy.
+import os
+
+
+def _env_float(key: str, default: float) -> float:
+    raw = os.environ.get(key)
+    if raw in (None, ""):
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+# Paper-trading rails. Change here = redeploy — OR set the env override
+# below for live-pilot tightening without a redeploy.
 #
 # 2026-05-14: Caps lifted for paper-trading rollout. Operator confirmed
 # the brains should trade freely on paper. The cap STRUCTURE stays in
-# place so it can be tightened the day we move toward live trading —
-# we just set the ceilings high enough that they don't block in paper.
-CAP_PER_ORDER_USD: float = 100_000.0
-CAP_PER_DAY_USD: float = 1_000_000.0
-CAP_OPEN_NOTIONAL_USD: float = 1_000_000.0
+# place so it can be tightened the day we move toward live trading.
+#
+# 2026-06-07 (live $500 pilot): env overrides added so the operator
+# can ratchet caps DOWN live without touching code:
+#   RISEDUAL_CAP_PER_ORDER_USD   — single-order ceiling
+#   RISEDUAL_CAP_PER_DAY_USD     — rolling-24h spend ceiling
+#   RISEDUAL_CAP_OPEN_NOTIONAL_USD — total open notional ceiling
+#   RISEDUAL_CAP_PER_ORDER_EQUITY_USD — per-lane override (equity)
+#   RISEDUAL_CAP_PER_ORDER_CRYPTO_USD — per-lane override (crypto)
+# Doctrine: env can only TIGHTEN, never loosen — but enforcement of
+# that invariant is operator discipline, not code. Pick low values.
+CAP_PER_ORDER_USD: float = _env_float("RISEDUAL_CAP_PER_ORDER_USD", 100_000.0)
+CAP_PER_DAY_USD: float = _env_float("RISEDUAL_CAP_PER_DAY_USD", 1_000_000.0)
+CAP_OPEN_NOTIONAL_USD: float = _env_float("RISEDUAL_CAP_OPEN_NOTIONAL_USD", 1_000_000.0)
 
 # Per-lane override. Set entries to None for "use the global cap".
 # These overrides apply to the per-order cap only — day/open caps
 # still use the globals above.
+#
+# Doctrine pin (2026-06-07): only ADD a lane to this dict when the
+# operator explicitly sets `RISEDUAL_CAP_PER_ORDER_<LANE>_USD`. The
+# gate-chain emits a gate named `cap_per_order_<lane>` ONLY when the
+# lane appears here, otherwise the canonical `cap_per_order` gate
+# applies. Implicitly mirroring the global cap into every lane
+# would rename gates for tests + dashboards.
 CAP_PER_ORDER_BY_LANE: dict[str, float] = {
-    "crypto": _CRYPTO_PER_ORDER_USD,
+    "crypto": _env_float(
+        "RISEDUAL_CAP_PER_ORDER_CRYPTO_USD", _CRYPTO_PER_ORDER_USD,
+    ),
 }
+if os.environ.get("RISEDUAL_CAP_PER_ORDER_EQUITY_USD"):
+    CAP_PER_ORDER_BY_LANE["equity"] = _env_float(
+        "RISEDUAL_CAP_PER_ORDER_EQUITY_USD", CAP_PER_ORDER_USD,
+    )
 
 
 class CapExceeded(Exception):
