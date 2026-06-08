@@ -62,15 +62,76 @@ logger = logging.getLogger("risedual.broker_router")
 # loader. Stubs return None — that's NO_TRADE territory by design.
 
 async def _get_public_adapter():
-    return None  # not yet wired
+    """Build a `PublicAdapter` from the operator-stored credentials.
+
+    Returns None when:
+      * no credentials stored (operator hasn't run /admin/public/connect)
+      * no account_id pinned (operator must pick one when ≥2 accounts exist)
+      * execution_enabled=False on the stored credential singleton
+        (operator-level kill switch — distinct from MC's gate chain)
+
+    All None-returns route equity orders to the Alpaca fallback —
+    crypto is unaffected because it routes to Kraken via a different
+    loader. Doctrine pin (operator, 2026-06-07): NEVER let Public's
+    misconfiguration close equity trading; Alpaca remains the
+    fallback path until Public is verified live for a week.
+    """
+    try:
+        from shared.public import get_active, _stored_doc  # noqa: WPS433
+        from shared.broker.public import PublicAdapter  # noqa: WPS433
+    except Exception as e:  # noqa: BLE001
+        logger.warning("PublicAdapter import failed: %s", e)
+        return None
+    try:
+        doc = await _stored_doc()
+        if not doc:
+            return None
+        if not doc.get("execution_enabled"):
+            # Operator-side kill switch is OFF — fall through to Alpaca.
+            return None
+        active = await get_active()
+        if not active or not active.get("account_id"):
+            return None
+        return PublicAdapter(
+            base_url=active["base_url"],
+            access_token=active["access_token"],
+            account_id=active["account_id"],
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("PublicAdapter load failed: %s", e)
+        return None
 
 
 async def _get_ibkr_adapter():
     return None  # not yet wired
 
 
+async def _get_equity_adapter():
+    """Equity-lane preference resolver.
+
+    The operator-level pref (`RISEDUAL_EQUITY_BROKER`) decides:
+      * `public`       → use Public only (no fallback). NO_TRADE if down.
+      * `alpaca_paper` → use Alpaca only (legacy behavior).
+      * `auto` (default) → Public first; Alpaca on fallback.
+
+    Doctrine: in `auto` mode, equity trading NEVER closes just because
+    Public hiccups. Crypto routing is independent and unaffected.
+    """
+    from shared.broker_symbol_resolver import equity_broker_preference  # noqa: WPS433
+    pref = equity_broker_preference()
+    if pref == "public":
+        return await _get_public_adapter()
+    if pref == "alpaca_paper":
+        return await get_alpaca_adapter()
+    # auto
+    pub = await _get_public_adapter()
+    if pub is not None:
+        return pub
+    return await get_alpaca_adapter()
+
+
 ADAPTER_LOADERS = {
-    "alpaca_paper": get_alpaca_adapter,
+    "alpaca_paper": _get_equity_adapter,
     "kraken": get_kraken_adapter,
     "public": _get_public_adapter,
     "ibkr": _get_ibkr_adapter,

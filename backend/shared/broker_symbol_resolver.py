@@ -21,6 +21,7 @@ Canonical format:
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
@@ -145,8 +146,24 @@ BROKER_SYMBOL_MAP: dict[str, dict[str, Any]] = {
     # raise BrokerSymbolUnresolved. Add entries as those integrations
     # come online.
     "public": {
-        # Public.com — equity broker; crypto on Public maps differently.
-        # Day-1: NO mappings; resolver returns NO_TRADE for anything.
+        # Public.com — equity broker. Symbols are bare tickers (same
+        # shape as Alpaca). Populated 2026-06-07 with the Day-1 equity
+        # universe so equity routing through Public works for every
+        # ticker MC's `patterns_universe` watches. Crypto on Public
+        # maps differently — left blank intentionally so equity
+        # crypto-collisions can't resolve here.
+        "EQ:AAPL":  "AAPL",
+        "EQ:MSFT":  "MSFT",
+        "EQ:GOOGL": "GOOGL",
+        "EQ:NVDA":  "NVDA",
+        "EQ:AMZN":  "AMZN",
+        "EQ:TSLA":  "TSLA",
+        "EQ:META":  "META",
+        "EQ:NFLX":  "NFLX",
+        "EQ:AMD":   "AMD",
+        "EQ:AMC":   "AMC",
+        "EQ:GME":   "GME",
+        "EQ:HOTH":  "HOTH",
     },
     "ibkr": {
         # IBKR uses a richer contract object, not a string. Each value
@@ -183,12 +200,33 @@ def resolve_broker_symbol(asset: AssetKey, broker: str) -> Any:
 # ───────────────────────── lane → broker registry ─────────────────────
 #
 # Day-1 live routing: equities → Alpaca paper, crypto → Kraken live.
-# When you wire IBKR/Public, update this dict. Lane mismatch = NO_TRADE.
+# 2026-06-07: equity lane now PREFERS Public.com when Public credentials
+# are stored. The registry holds the DEFAULT broker; the actual loader
+# (`broker_router.ADAPTER_LOADERS["alpaca_paper"]`) is augmented with a
+# Public-first preference so flipping Public on doesn't require an
+# operator to edit this dict. Doctrine pin: NEVER change the default
+# fallback without an operator note — losing the Alpaca fallback closes
+# equity trading entirely if Public ever drops credentials.
 
 LANE_BROKER_REGISTRY: dict[LaneT, str] = {
     "equity": "alpaca_paper",
     "crypto": "kraken",
 }
+
+
+def equity_broker_preference() -> str:
+    """Operator-controlled equity-broker preference. Env-driven so the
+    operator can flip from Alpaca → Public (or back) without a deploy.
+
+    Resolves to one of {"public", "alpaca_paper"}. The router calls
+    `broker_for_lane("equity")` for the SLOT name; the actual loader
+    that gets picked is decided in `broker_router._equity_loader()`,
+    which reads THIS preference to choose between Public and Alpaca.
+    """
+    val = (os.environ.get("RISEDUAL_EQUITY_BROKER") or "auto").strip().lower()
+    if val in {"public", "alpaca_paper", "alpaca"}:
+        return "alpaca_paper" if val == "alpaca" else val
+    return "auto"  # auto: prefer Public when connected, else Alpaca
 
 
 class LaneRoutingError(Exception):
