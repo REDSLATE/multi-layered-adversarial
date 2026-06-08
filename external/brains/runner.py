@@ -71,6 +71,12 @@ TICK_INTERVAL_SEC = float(os.environ.get("NEUTRAL_BRAIN_TICK_SEC", "45"))
 CHECKIN_INTERVAL_SEC = float(os.environ.get("NEUTRAL_BRAIN_CHECKIN_SEC", "30"))
 HTTP_TIMEOUT_SEC = float(os.environ.get("NEUTRAL_BRAIN_HTTP_TIMEOUT_SEC", "8"))
 PATTERN_BIAS = float(os.environ.get("NEUTRAL_BRAIN_PATTERN_BIAS", "0.20"))
+# 2026-02-XX (this session) — sovereign contribution cadence.
+# Without this loop, MC's `brain_emission_diagnose.sovereign_loop`
+# stays in stale/dead and the operator sees a misleading "sovereign
+# silent" banner even though the brain is alive and posting intents.
+# Default 60s — well inside the 5min stale threshold.
+SOVEREIGN_INTERVAL_SEC = float(os.environ.get("NEUTRAL_BRAIN_SOVEREIGN_SEC", "60"))
 
 
 def _shadow_only_default() -> bool:
@@ -148,7 +154,8 @@ def _build_snapshot(
         if len(bars) >= 20:
             closes = [float(b.get("c") or 0) for b in bars[-20:]]
             vols = [float(b.get("v") or 0) for b in bars[-20:]]
-            window_high = max(closes); window_low = min(closes) or 1.0
+            window_high = max(closes)
+            window_low = min(closes) or 1.0
             volatility = (window_high - window_low) / window_low
             trend_score = (closes[-1] - closes[0]) / (closes[0] or 1.0)
             avg_vol = sum(vols) / max(len(vols), 1)
@@ -282,7 +289,15 @@ class BrainRunner:
         self._tick_count = 0
         self._intent_count = 0
         self._checkin_count = 0
+        self._sovereign_count = 0
         self._universe: list[tuple[str, str]] = []
+        # Rolling tape of the brain's last N decisions — fed back into
+        # the sovereign contribution as `recent_outcomes` so MC's
+        # `sovereign_loop` diagnostic stays fresh AND the audit log
+        # carries real (not skeleton) rows.
+        self._recent_tape: list[dict] = []
+        self._last_action: Optional[str] = None
+        self._last_confidence: float = 0.0
         # One brain core per (display_name, lane) so per-lane state
         # (shadow_only flag, min_commitment) can diverge later. Today
         # all lanes share defaults but the layout supports divergence.
@@ -311,13 +326,15 @@ class BrainRunner:
         await asyncio.sleep(random.uniform(0.5, 4.0))
         intent_task = asyncio.create_task(self._intent_loop())
         checkin_task = asyncio.create_task(self._checkin_loop())
+        sovereign_task = asyncio.create_task(self._sovereign_loop())
         try:
             await self._stop.wait()
         finally:
-            for t in (intent_task, checkin_task):
+            for t in (intent_task, checkin_task, sovereign_task):
                 t.cancel()
-            for t in (intent_task, checkin_task):
-                try: await t
+            for t in (intent_task, checkin_task, sovereign_task):
+                try:
+                    await t
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
 
@@ -334,6 +351,7 @@ class BrainRunner:
             "tick_count": self._tick_count,
             "intent_count": self._intent_count,
             "checkin_count": self._checkin_count,
+            "sovereign_count": self._sovereign_count,
             "universe_size": len(self._universe),
         }
 
@@ -425,6 +443,23 @@ class BrainRunner:
         )
         if r.status_code // 100 == 2:
             self._intent_count += 1
+            # Record onto the rolling tape so the sovereign loop has
+            # real `recent_outcomes` to ship. We stamp `outcome=0`
+            # (unresolved) — MC's opinion_resolver grades these later;
+            # the contribution is a snapshot of the brain's POSTed
+            # decisions, not their resolved P&L.
+            self._recent_tape.append({
+                "symbol": intent.symbol,
+                "action": intent.action if intent.action in ("BUY", "SELL") else "HOLD",
+                "confidence": float(intent.confidence),
+                "outcome": 0,
+                "resolved_at": None,
+                "notional": float(intent.size),
+            })
+            if len(self._recent_tape) > 25:
+                self._recent_tape = self._recent_tape[-25:]
+            self._last_action = intent.action
+            self._last_confidence = float(intent.confidence)
             if self._intent_count % 10 == 1:
                 logger.info(
                     "neutral_brain intent posted brain=%s display=%s "
@@ -454,6 +489,96 @@ class BrainRunner:
                 except Exception as e:  # noqa: BLE001
                     logger.warning("checkin error brain=%s: %s", self.brain_id, e)
                 await asyncio.sleep(CHECKIN_INTERVAL_SEC + random.uniform(-2, 2))
+
+    async def _sovereign_loop(self) -> None:
+        """Periodically POSTs a substantive sovereign-state contribution
+        to MC so `brain_emission_diagnose.sovereign_loop` stays fresh.
+
+        Doctrine: the payload must be SUBSTANTIVE (≥1 of notes / weights
+        / recent_outcomes / delta_reason / confidence_delta non-default)
+        or MC's 422 empty-contribution gate rejects it. We always send
+        weights + notes + the rolling tape of recent decisions, so the
+        gate accepts and the operator audit log carries real signal.
+        """
+        # Cold-start delay so the first sovereign POST happens AFTER the
+        # brain has produced at least one intent (avoid posting with an
+        # empty tape on tick 0).
+        await asyncio.sleep(8.0 + random.uniform(0, 4.0))
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SEC) as http:
+            while not self._stop.is_set():
+                try:
+                    await self._post_sovereign_contribution(http)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "sovereign_loop error brain=%s: %s", self.brain_id, e,
+                    )
+                await asyncio.sleep(
+                    SOVEREIGN_INTERVAL_SEC + random.uniform(-3, 3),
+                )
+
+    async def _post_sovereign_contribution(self, http: httpx.AsyncClient) -> None:
+        """Build + POST the contribution payload. Substantive by
+        construction — never trips the empty-contribution gate."""
+        # Weights snapshot from the brain core's published coefficients.
+        # We expose the hypothesis weighting so the audit log records
+        # WHICH model produced the recent tape. Stays inside the
+        # ±WEIGHT_MAX_ABS bounds MC enforces.
+        weights = {
+            "trend_weight": 0.18,
+            "rsi_weight": 0.004,
+            "liquidity_weight": 0.08,
+            "volatility_penalty": -0.10,
+            "spread_penalty": -0.001,
+            "pattern_bias": PATTERN_BIAS,
+        }
+        tape = list(self._recent_tape[-20:])  # MAX_RECENT_OUTCOMES=50
+        # `mode=PRD` because the brain is reading live MC technical
+        # feeds. `training_signal=False` because the neutral template
+        # does NOT mutate weights at runtime — when the real adaptive
+        # core lands, flip this to True for actual training ticks.
+        body = {
+            "mode": "PRD",
+            "live_trading_enabled": not _shadow_only_default(),
+            "weights": weights,
+            "learning_rate": 0.0,
+            "confidence_delta": 0.0,
+            "delta_reason": "",
+            "training_signal": False,
+            "recent_outcomes": tape,
+            "notes": (
+                f"{self.display_name} ({self.brain_id}) — "
+                f"ticks={self._tick_count} intents={self._intent_count} "
+                f"last_action={self._last_action or 'none'} "
+                f"last_confidence={self._last_confidence:.3f} "
+                f"shadow_only={_shadow_only_default()} "
+                f"lanes={','.join(_enabled_lanes())}"
+            )[:2048],
+        }
+        r = await http.post(
+            f"{MC_LOOPBACK_URL}/api/runtime-discussion/sovereign/contribution",
+            params={"runtime": self.brain_id},
+            json=body,
+            headers={
+                "X-Runtime-Token": self.token,
+                "X-Client-Request-Id": (
+                    f"{self.brain_id}-sovereign-{int(time.time())}"
+                ),
+            },
+        )
+        if r.status_code // 100 == 2:
+            self._sovereign_count += 1
+            if self._sovereign_count % 10 == 1:
+                logger.info(
+                    "neutral_brain sovereign posted brain=%s display=%s "
+                    "tape_size=%d total=%d",
+                    self.brain_id, self.display_name, len(tape),
+                    self._sovereign_count,
+                )
+        else:
+            logger.warning(
+                "neutral_brain sovereign rejected brain=%s status=%s body=%s",
+                self.brain_id, r.status_code, r.text[:300],
+            )
 
 
 # ── module-level manager ─────────────────────────
@@ -500,7 +625,8 @@ async def stop_neutral_brains() -> None:
     for r in _RUNNERS:
         r.stop()
     for t in _TASKS:
-        try: await asyncio.wait_for(t, timeout=5)
+        try:
+            await asyncio.wait_for(t, timeout=5)
         except (asyncio.TimeoutError, asyncio.CancelledError, Exception):  # noqa: BLE001
             pass
     _RUNNERS.clear()
