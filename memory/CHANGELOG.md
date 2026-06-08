@@ -1,3 +1,82 @@
+## 2026-02-XX (this session, pass 2) — Permanent brains: stripped dead external-sidecar proxy
+
+### Problem
+Operator reported: "A lot of those routes were used for the brains
+no longer connected. It was to try and keep them connected but
+failed more than succeeded." The `/api/admin/runtime/{brain}/status`
+endpoint still proxied to external URLs configured via `{BRAIN}_STATUS_URL`
+env vars. With those vars unset (and unable to be set — the external
+sidecars are gone), every dashboard poll returned
+`no_upstream_configured` and the BrainProxiedStatusTile rendered a
+"MC could not fetch / set {BRAIN}_STATUS_URL" call-to-action. The
+operator saw the brains as disconnected even though they're running
+in-process.
+
+### Shipped
+1. **`/app/backend/routes/brain_runtime.py`** — full rewrite. Removed:
+   - `_fetch_upstream` (httpx call to external sidecars)
+   - `_upstream_url_for` + the `{BRAIN}_STATUS_URL` env-var contract
+   - `_PROXY_CACHE` + `_cache_get/_cache_set` (TTL cache for the proxy)
+   - `_write_proxy_audit` + `BRAIN_STATUS_PROXY_AUDIT` collection writes
+   - `POST /admin/runtime/{brain}/status/refresh` (cache-bust for the dead proxy)
+   - `GET /admin/runtime/status-proxy-audit` (forensics for the dead proxy)
+   - `PROXY_TIMEOUT_S`, `PROXY_CACHE_TTL_S` env config
+   The file shrank from 689 → 384 lines. Three live endpoints remain:
+   `roster`, `{brain}/status` (in-process), `{brain}/universe`.
+2. **`get_brain_status`** now serves directly from the in-process
+   composer (`_build_in_process_status`). The response wrapper still
+   uses the same shape (`brain, ok, _proxied_from, payload`) so the
+   frontend tile is unchanged on success — only `_proxied_from` is
+   pinned to `"in_process"` and the doctrine field reads
+   `"in_process_runtime_status"`.
+3. **`_build_in_process_status`** — composes status from:
+   - `shared_heartbeats` (last_seen via the heartbeat reconciler)
+   - `sovereign_state` (last contribution, mode, live_trading)
+   - `shared_intents` (count_24h, count_1h, by-action breakdown,
+     filtered on `stack` field — same as sidecar_diagnostics)
+   - `shared.roster.get_roster()` (lane-resolved seats_held)
+   - In-process `BrainRunner.stats` (tick/intent/checkin/sovereign counters)
+   Payload sections (`identity`, `seats`, `heartbeat`, `intents`,
+   `in_process_runner`) match what BrainProxiedStatusTile already
+   renders.
+4. **`/app/frontend/src/components/BrainProxiedStatusTile.jsx`** —
+   removed the `useState`/`useCallback` force-refresh logic, the
+   "↻ force-refresh" button, the "↻ retry" button, and the
+   misleading `Set {BRAIN}_STATUS_URL ... redeploy MC` instructional
+   text. The success-path renderer is preserved. Error path now
+   shows a minimal "check backend logs for in_process_status_build_failed"
+   banner (no dead-end CTA).
+5. **`/app/backend/tests/test_brain_runtime.py`** — full rewrite.
+   13 tripwires covering: roster lean-payload, brain-can't-peek,
+   status endpoint operator-only, in-process marker, never-500,
+   payload sections match the tile, **no httpx / no
+   external-sidecar symbols reintroduced**, universe dual-auth +
+   brain-pinned, broker keys never served, roster read-only,
+   governor exclusivity isolation, exact router path inventory
+   (live = 3 endpoints; dead = absent).
+
+### Verified
+- All 4 brains via `/api/admin/runtime/{brain}/status` return
+  `ok=true, _proxied_from=in_process` with `heartbeat.alive=true`,
+  `intents.last_24h > 350`, `intents.last_1h ≈ 90`. Heartbeats
+  fresh (<25s) for every brain.
+- Dead endpoints return 404:
+  `POST /api/admin/runtime/alpha/status/refresh` → 404
+  `GET /api/admin/runtime/status-proxy-audit` → 404
+- 63/63 tests pass in the regression cluster (brain_runtime,
+  neutral_brain_sovereign_loop, alpha_vantage_feeder, sovereign,
+  brain_emission_diagnose, sovereign_audit).
+
+### Doctrine pin
+If external sidecars ever need to come back (they won't — the
+brains are permanent), restore from git history. Do NOT bolt a
+"future-proof" proxy onto `brain_runtime.py` — the tripwire
+`test_status_endpoint_does_not_reach_for_external_sidecars` will
+fail at the next test run.
+
+---
+
+
 ## 2026-02-XX (this session) — Sovereign loop + Alpha Vantage cache for the 4 permanent brains
 
 ### Confirmation

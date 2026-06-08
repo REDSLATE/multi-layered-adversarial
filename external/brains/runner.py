@@ -635,3 +635,17 @@ async def stop_neutral_brains() -> None:
 
 def runtime_stats() -> list[dict]:
     return [r.stats for r in _RUNNERS]
+
+
+def runner_for(brain_id: str) -> Optional["BrainRunner"]:
+    """Return the live in-process runner for a given brain_id, or
+    None if neutral brains are disabled / this brain isn't running
+    in-process. MC's `/admin/runtime/{brain}/status` proxy uses this
+    to synthesize a status payload from local state instead of
+    hitting a (now-defunct) external sidecar URL.
+    """
+    bid = (brain_id or "").lower().strip()
+    for r in _RUNNERS:
+        if r.brain_id == bid:
+            return r
+    return None

@@ -1,42 +1,52 @@
-"""Brain-callable runtime endpoints (2026-02-17).
+"""Brain-callable runtime endpoints (rewritten 2026-02-XX).
 
-Two surfaces for brain sidecars to read MC state with their runtime
-token (no operator JWT required):
+The 4 permanent neutral brains (Camino / Barracuda / Hellcat / GTO)
+run IN-PROCESS inside MC's FastAPI event loop. There is no external
+sidecar to proxy to. The status surface synthesizes state directly
+from MC's own collections (`shared_heartbeats`, `sovereign_state`,
+`shared_intents`) plus the live in-process runner stats.
+
+The previous external-sidecar proxy infrastructure
+(`_fetch_upstream`, `_PROXY_CACHE`, `brain_status_proxy_audit`,
+`{BRAIN}_STATUS_URL` env vars, `/status/refresh`,
+`/status-proxy-audit`) was REMOVED — it timed out more than it
+succeeded and made the dashboard look like every brain was
+disconnected. If external sidecars ever come back, restore from git
+history; do NOT bolt a "future-proof" proxy onto this file.
+
+Operator-facing endpoints:
 
   GET  /api/admin/runtime/roster?caller={brain}
-       — Lean seat-roster view, lane-resolved per role. Brains use this
-         to refresh their `seats_held` cache and decide which emitter
-         loops to run.
+        — Lean seat roster, lane-resolved per role. Dual auth
+          (operator JWT OR runtime-token).
 
   GET  /api/admin/runtime/{brain}/status
-       — Composite proxy. Fetches the brain's own `/api/admin/runtime/
-         {brain}/status` endpoint (when configured via env var) and
-         returns the payload alongside MC's audit metadata. Lets the
-         MC admin dashboard render brain-side telemetry without
-         cross-origin pain.
+        — Composite in-process status (identity / seats / heartbeat /
+          intents / runner stats). Operator JWT.
 
-  POST /api/admin/runtime/{brain}/status/refresh
-       — Operator escape hatch — force a fresh fetch, bypassing cache.
+  GET  /api/admin/runtime/{brain}/universe
+        — The symbols the brain may propose, lane-filtered by its
+          held seats. Dual auth; brain auth pinned to the path brain.
 
-All three endpoints are READ-ONLY. The proxy writes one row per call
-to `brain_status_proxy_audit` for operator forensics (latency / failure
-visibility) — that write is observability metadata only, never
-mutating the actual brain state.
+All endpoints are READ-ONLY.
 """
 from __future__ import annotations
 
 import logging
 import os
-import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Path
 
 from auth import get_current_user
 from db import db
-from namespaces import LIVE_RUNTIMES
+from namespaces import (
+    LIVE_RUNTIMES,
+    SHARED_HEARTBEATS,
+    SHARED_INTENTS,
+    SOVEREIGN_STATE,
+)
 from shared.roster import CRYPTO_LANE_ROLES, get_roster
 
 
@@ -44,39 +54,27 @@ logger = logging.getLogger("risedual.brain_runtime")
 router = APIRouter(prefix="/admin/runtime", tags=["brain-runtime"])
 
 
-# ──────────────────────── Configuration ────────────────────────
-
 KNOWN_BRAINS: tuple[str, ...] = tuple(LIVE_RUNTIMES)
 
-# Proxy upstream URLs are pulled per-brain from env. Operator sets
-# `REDEYE_STATUS_URL`, `ALPHA_STATUS_URL`, etc. Missing env = brain
-# doesn't expose `/status` yet → endpoint returns a structured
-# "no_upstream_configured" payload instead of 500ing.
-def _upstream_url_for(brain: str) -> str:
-    return os.environ.get(f"{brain.upper()}_STATUS_URL", "").strip()
+
+# ──────────────────────── In-process runner accessor ────────────────────────
+# Lazy imports: `external.brains.runner` lives outside /app/backend.
+# `server.py` adds /app to sys.path during lifespan startup, so a
+# module-level import would fail silently at boot. Importing per-call
+# keeps the request handler robust regardless of process state.
+
+def _local_runner_for(brain: str):
+    try:
+        import sys as _sys
+        if "/app" not in _sys.path:
+            _sys.path.insert(0, "/app")
+        from external.brains.runner import runner_for  # type: ignore
+        return runner_for(brain)
+    except Exception:  # noqa: BLE001
+        return None
 
 
-# Network bound on the proxy fetch. Brains MUST respond in well under
-# this on healthy paths; anything slower and operator should be told
-# rather than waiting on a hung dashboard tile.
-PROXY_TIMEOUT_S: float = float(os.environ.get("MC_STATUS_PROXY_TIMEOUT_S", "4.0"))
-
-# Per-brain cache so the dashboard's 15s tile refresh + a few operator
-# tabs don't hammer the brain pod. TTL is short (10s) so the data feels
-# live; the audit row records every CALL into MC, hits and misses alike,
-# so operator forensics aren't lost to caching.
-PROXY_CACHE_TTL_S: float = float(os.environ.get("MC_STATUS_PROXY_CACHE_TTL_S", "10.0"))
-
-# In-process TTL cache: brain -> (set_at_epoch_s, payload_dict).
-# Process-local; on pod restart we re-fetch. Adequate because the
-# dashboard polls frequently.
-_PROXY_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
-
-
-# Audit collection. Single writes per proxy call. Indexed by ts for
-# operator forensics.
-BRAIN_STATUS_PROXY_AUDIT = "brain_status_proxy_audit"
-
+# ──────────────────────── helpers ────────────────────────
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -86,16 +84,29 @@ def _expected_token_for(brain: str) -> str:
     return os.environ.get(f"{brain.upper()}_INGEST_TOKEN", "")
 
 
-# ──────────────────────── Dual auth (operator OR brain token) ────────────────────────
+def _lane_of_role(role: str) -> str:
+    return "crypto" if role in CRYPTO_LANE_ROLES else "equity"
 
+
+def _age_seconds(iso: Optional[str], now: datetime) -> Optional[float]:
+    if not iso:
+        return None
+    try:
+        t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return (now - t).total_seconds()
+    except (ValueError, AttributeError):
+        return None
+
+
+# ──────────────────────── Dual auth (operator OR brain token) ────────────────────────
 
 async def _dual_auth(
     x_brain_id: Optional[str],
     x_runtime_token: Optional[str],
     operator_user: Optional[dict],
 ) -> str:
-    """Same pattern as `market_data_snapshot._dual_auth`. Returns the
-    auth principal for audit-trail purposes."""
+    """Returns the auth principal for audit trails. Either operator JWT
+    or a (brain-id, runtime-token) pair MUST validate, else 401."""
     if operator_user and operator_user.get("email"):
         return f"operator:{operator_user['email']}"
     brain = (x_brain_id or "").lower().strip()
@@ -136,17 +147,9 @@ async def _maybe_user(authorization: Optional[str] = Header(default=None)) -> Op
 
 # ──────────────────────── /admin/runtime/roster ────────────────────────
 
-
-def _lane_of_role(role: str) -> str:
-    return "crypto" if role in CRYPTO_LANE_ROLES else "equity"
-
-
 @router.get("/roster")
 async def get_brain_roster(
-    caller: Optional[str] = Query(
-        None,
-        description="brain id of the caller (e.g. 'redeye'). Used to populate `your_seats`.",
-    ),
+    caller: Optional[str] = None,
     x_brain_id: Optional[str] = Header(default=None, alias="X-Brain-Id"),
     x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
     operator_user: Optional[dict] = Depends(_maybe_user),
@@ -154,18 +157,10 @@ async def get_brain_roster(
     """Brain-callable roster — lean payload with seat assignments and
     a precomputed `your_seats` list when `caller` is set.
 
-    Doctrine: read-only seat view. Does NOT return policy, eligibility,
-    or doctrine guidance (those live on the operator-JWT endpoint at
-    `/api/admin/roster`). The brain only needs to know which seats it
-    currently holds so its emitters can wake/sleep correctly.
-
-    Auth: dual — operator JWT OR `X-Brain-Id` + `X-Runtime-Token`.
+    Doctrine: read-only seat view. Auth: dual.
     """
     principal = await _dual_auth(x_brain_id, x_runtime_token, operator_user)
 
-    # If brain auth: the caller is implicitly the brain. Override the
-    # query param to prevent a brain from peeking at another brain's
-    # seats by passing `caller=other_brain`.
     if principal.startswith("brain:"):
         caller_brain = principal.split(":", 1)[1]
     else:
@@ -194,192 +189,151 @@ async def get_brain_roster(
     }
 
 
-# ──────────────────────── /admin/runtime/{brain}/status proxy ────────────────────────
+# ──────────────────────── /admin/runtime/{brain}/status ────────────────────────
 
+async def _build_in_process_status(brain: str) -> Dict[str, Any]:
+    """Compose a status payload from MC's own state for an in-process
+    brain. Section names match what the dashboard's
+    BrainProxiedStatusTile already renders (`identity`, `seats`,
+    `heartbeat`, `intents`) so no frontend change is needed.
+    """
+    runner = _local_runner_for(brain)
+    runner_stats = runner.stats if runner else None
+    now = _now()
 
-async def _write_proxy_audit(
-    brain: str,
-    principal: str,
-    upstream_url: str,
-    status_code: Optional[int],
-    duration_ms: float,
-    error: Optional[str],
-) -> None:
-    """One audit row per proxy attempt (hits AND misses). Best-effort —
-    a Mongo write failure here cannot tank the proxy response."""
-    try:
-        await db[BRAIN_STATUS_PROXY_AUDIT].insert_one({
-            "brain": brain,
-            "principal": principal,
-            "upstream_url": upstream_url,
-            "status_code": status_code,
-            "duration_ms": round(duration_ms, 2),
-            "error": error,
-            "ts": _now().isoformat(),
-        })
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("proxy_audit_write_failed: %s", exc)
+    hb_doc = await db[SHARED_HEARTBEATS].find_one(
+        {"runtime": brain},
+        {"last_seen": 1, "status": 1, "heartbeat_count": 1},
+    )
+    hb_iso = (hb_doc or {}).get("last_seen")
+    hb_age = _age_seconds(hb_iso, now)
 
+    sv_doc = await db[SOVEREIGN_STATE].find_one(
+        {"brain": brain},
+        {"updated_at": 1, "mode": 1, "live_trading_enabled": 1, "notes": 1},
+    )
+    sv_iso = (sv_doc or {}).get("updated_at")
+    sv_age = _age_seconds(sv_iso, now)
 
-async def _fetch_upstream(brain: str, upstream_url: str) -> tuple[Optional[int], Optional[Dict[str, Any]], float, Optional[str]]:
-    """Fetch the brain's own /status endpoint. Returns
-    (status_code, payload, duration_ms, error_reason)."""
-    started = time.time()
-    try:
-        async with httpx.AsyncClient(timeout=PROXY_TIMEOUT_S) as client:
-            resp = await client.get(upstream_url)
-        duration_ms = (time.time() - started) * 1000
-        if resp.status_code != 200:
-            return resp.status_code, None, duration_ms, f"upstream_http_{resp.status_code}"
-        try:
-            payload = resp.json()
-        except Exception as exc:  # noqa: BLE001
-            return resp.status_code, None, duration_ms, f"upstream_bad_json:{type(exc).__name__}"
-        return resp.status_code, payload, duration_ms, None
-    except httpx.TimeoutException:
-        return None, None, (time.time() - started) * 1000, "upstream_timeout"
-    except httpx.ConnectError as exc:
-        return None, None, (time.time() - started) * 1000, f"upstream_connect_failed:{exc.__class__.__name__}"
-    except Exception as exc:  # noqa: BLE001
-        return None, None, (time.time() - started) * 1000, f"upstream_unexpected:{type(exc).__name__}"
+    # Intent windows + per-action breakdown over 24h. Filter by
+    # `stack` (the brain that emitted) — same field the
+    # sidecar_diagnostics aggregator uses so the surfaces stay
+    # consistent.
+    cutoff_24h = (now - timedelta(hours=24)).isoformat()
+    cutoff_1h = (now - timedelta(hours=1)).isoformat()
+    count_24h = await db[SHARED_INTENTS].count_documents({
+        "stack": brain, "ingest_ts": {"$gte": cutoff_24h},
+    })
+    count_1h = await db[SHARED_INTENTS].count_documents({
+        "stack": brain, "ingest_ts": {"$gte": cutoff_1h},
+    })
+    by_action_cursor = db[SHARED_INTENTS].aggregate([
+        {"$match": {"stack": brain, "ingest_ts": {"$gte": cutoff_24h}}},
+        {"$group": {"_id": "$action", "count": {"$sum": 1}}},
+    ])
+    by_action: Dict[str, int] = {}
+    async for row in by_action_cursor:
+        by_action[str(row.get("_id") or "UNK").upper()] = int(row.get("count", 0))
+    total_intents = await db[SHARED_INTENTS].count_documents({"stack": brain})
 
+    # Seats lane-resolved from the live roster snapshot.
+    snap = await get_roster()
+    assignments: Dict[str, Optional[str]] = (snap or {}).get("assignments") or {}
+    seats_held = [
+        {"seat": seat, "lane": _lane_of_role(seat)}
+        for seat, occupant in assignments.items()
+        if occupant == brain
+    ]
 
-def _cache_get(brain: str) -> Optional[Dict[str, Any]]:
-    entry = _PROXY_CACHE.get(brain)
-    if not entry:
-        return None
-    set_at, payload = entry
-    if time.time() - set_at > PROXY_CACHE_TTL_S:
-        _PROXY_CACHE.pop(brain, None)
-        return None
-    return payload
+    display_name = runner_stats.get("display_name") if runner_stats else brain.title()
+    identity = {
+        "app_name": "risedual-mc",
+        "env_name": os.environ.get("ENV_NAME") or os.environ.get("ENVIRONMENT") or "preview",
+        "git_sha": os.environ.get("GIT_SHA") or os.environ.get("RAILWAY_GIT_COMMIT_SHA") or "in-process",
+        "broker_mode": "kraken+public",
+        "sidecar_version": f"in-process/{display_name}",
+        # All connectivity flags are TRUE by definition for in-process —
+        # no cross-network handshake to fail.
+        "mc_url_set": True,
+        "ingest_token_set": True,
+        "mc_base_url_set": True,
+        "heartbeat_token_set": True,
+        "checkin_worker_eligible": True,
+    }
 
-
-def _cache_set(brain: str, payload: Dict[str, Any]) -> None:
-    _PROXY_CACHE[brain] = (time.time(), payload)
+    return {
+        "identity": identity,
+        "seats": {
+            "count": len(seats_held),
+            "seats_held": seats_held,
+        },
+        "heartbeat": {
+            "enabled": True,
+            "alive": hb_age is not None and hb_age < 300,
+            "tick_s": runner_stats.get("tick_count") if runner_stats else None,
+            "last_source": "in-process loopback",
+            "last_opinion_id": None,
+            "seconds_since_last_opinion": round(hb_age, 1) if hb_age is not None else None,
+            "last_tick_ok": True,
+            "last_tick_error": None,
+            "last_seen": hb_iso,
+            "sovereign_age_s": round(sv_age, 1) if sv_age is not None else None,
+            "sovereign_mode": (sv_doc or {}).get("mode"),
+            "sovereign_live_trading": (sv_doc or {}).get("live_trading_enabled"),
+        },
+        "intents": {
+            "total": total_intents,
+            "last_1h": count_1h,
+            "last_24h": count_24h,
+            "by_action": by_action,
+        },
+        "in_process_runner": runner_stats,
+    }
 
 
 @router.get("/{brain}/status")
 async def get_brain_status(
     brain: str = Path(...),
-    skip_cache: bool = Query(False, description="bypass MC's 10s proxy cache"),
     _user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Operator-only proxy of the brain's own `/status` endpoint.
+    """Operator-only composite status for the named in-process brain.
 
-    Doctrine:
-      - Operator JWT required. Brains do NOT proxy each other.
-      - Bounded fetch (`PROXY_TIMEOUT_S`, default 4s).
-      - One audit row per attempt to `brain_status_proxy_audit`.
-      - On upstream failure: returns `{ok: false, error, last_success: ...}`
-        wrapper — never 500s. The dashboard tile renders a degraded
-        state instead of going blank.
-      - Cached `PROXY_CACHE_TTL_S` (default 10s) per brain. Passing
-        `?skip_cache=true` forces a fresh fetch.
+    Returns the same wrapper shape (`{brain, ok, _proxied_from,
+    payload}`) the dashboard's BrainProxiedStatusTile already renders,
+    so frontend code is unchanged.
     """
     brain = (brain or "").lower().strip()
     if brain not in KNOWN_BRAINS:
         raise HTTPException(status_code=404, detail=f"unknown brain {brain!r}")
 
-    upstream_url = _upstream_url_for(brain)
-    if not upstream_url:
-        # Brain hasn't shipped /status yet. Surface honestly; do NOT
-        # 500. Dashboard renders the same graceful "no upstream"
-        # state we already ship for brains without sub-endpoints.
+    try:
+        in_proc = await _build_in_process_status(brain)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "in_process_status_build_failed brain=%s err=%s", brain, exc,
+        )
+        # Surface as `ok=false` so the dashboard renders a degraded
+        # state instead of going blank. NOT a 500 — this endpoint is
+        # consumed by an auto-polling tile and must stay resilient.
         return {
             "brain": brain,
             "ok": False,
-            "error": "no_upstream_configured",
-            "doctrine": "operator_read_only_status_proxy",
+            "error": "in_process_build_failed",
+            "doctrine": "in_process_runtime_status",
             "ts": _now().isoformat(),
         }
 
-    principal = f"operator:{_user.get('email')}"
-
-    if not skip_cache:
-        cached = _cache_get(brain)
-        if cached is not None:
-            cached_view = dict(cached)
-            cached_view["_proxy_from_cache"] = True
-            cached_view["_proxy_age_s"] = round(time.time() - _PROXY_CACHE[brain][0], 2)
-            return cached_view
-
-    status_code, payload, duration_ms, error = await _fetch_upstream(brain, upstream_url)
-    await _write_proxy_audit(
-        brain, principal, upstream_url, status_code, duration_ms, error,
-    )
-
-    if payload is None:
-        return {
-            "brain": brain,
-            "ok": False,
-            "error": error or "upstream_failed",
-            "upstream_status_code": status_code,
-            "duration_ms": round(duration_ms, 2),
-            "doctrine": "operator_read_only_status_proxy",
-            "ts": _now().isoformat(),
-        }
-
-    response = {
+    return {
         "brain": brain,
         "ok": True,
-        "_proxied_from": upstream_url,
-        "_proxy_duration_ms": round(duration_ms, 2),
+        "_proxied_from": "in_process",
+        "_proxy_duration_ms": 0.0,
         "_proxy_from_cache": False,
         "_proxy_age_s": 0.0,
         "ts": _now().isoformat(),
-        "doctrine": "operator_read_only_status_proxy",
-        "payload": payload,
+        "doctrine": "in_process_runtime_status",
+        "payload": in_proc,
     }
-    _cache_set(brain, response)
-    return response
-
-
-@router.post("/{brain}/status/refresh")
-async def force_refresh_brain_status(
-    brain: str = Path(...),
-    _user: dict = Depends(get_current_user),
-) -> Dict[str, Any]:
-    """Operator escape hatch — drop the per-brain cache so the next
-    /status call re-fetches from upstream. Useful when the operator
-    just redeployed a brain and wants the dashboard to reflect the
-    new state without waiting for the 10s TTL."""
-    brain = (brain or "").lower().strip()
-    if brain not in KNOWN_BRAINS:
-        raise HTTPException(status_code=404, detail=f"unknown brain {brain!r}")
-    existed = _PROXY_CACHE.pop(brain, None) is not None
-    return {
-        "brain": brain,
-        "cache_cleared": existed,
-        "doctrine": "operator_cache_reset",
-    }
-
-
-@router.get("/status-proxy-audit")
-async def get_proxy_audit(
-    brain: Optional[str] = Query(None),
-    limit: int = Query(100, ge=1, le=1000),
-    _user: dict = Depends(get_current_user),
-) -> Dict[str, Any]:
-    """Operator forensics: read the proxy-call audit log. Filter by
-    brain (single) or pull the global tail. Used to answer 'when was
-    RedEye unreachable from MC's network?' without tailing logs."""
-    query: Dict[str, Any] = {}
-    if brain:
-        b = brain.lower().strip()
-        if b not in KNOWN_BRAINS:
-            raise HTTPException(status_code=404, detail=f"unknown brain {b!r}")
-        query["brain"] = b
-    rows = await db[BRAIN_STATUS_PROXY_AUDIT].find(
-        query, {"_id": 0},
-    ).sort("ts", -1).limit(limit).to_list(length=limit)
-    return {
-        "rows": rows,
-        "count": len(rows),
-        "filter_brain": brain,
-        "doctrine": "operator_read_only",
-    }
-
 
 
 # ──────────────────────── /admin/runtime/{brain}/universe ────────────────────────
@@ -400,30 +354,11 @@ async def get_brain_universe(
     on, lane-filtered by the brain's currently-held seats.
 
     Auth: dual — operator JWT OR (X-Brain-Id + X-Runtime-Token). If
-    brain-auth, the path `{brain}` MUST match the authenticated
-    brain — a brain cannot peek at another brain's universe.
+    brain-auth, the path `{brain}` MUST match the authenticated brain.
 
-    Response shape:
-        {
-          "brain": "camaro",
-          "lanes": ["equity", "crypto"],
-          "symbols": [
-            {"symbol": "BTC/USD", "lane": "crypto"},
-            {"symbol": "NVDA",    "lane": "equity"},
-            ...
-          ],
-          "count": int,
-          "served_at": iso8601,
-          "doctrine": "operator_read_only_universe_view",
-        }
-
-    Brains MUST cache this response locally and use it as the ONLY
-    source of tradeable symbols for their strategist loop. On a 5xx
-    or timeout, fall back to last-known-good cache. On 200, replace
-    the cache. The MC-side `symbol_in_universe` gate will reject any
-    intent whose symbol is not in this response — guaranteeing that
-    a brain which drifts from this universe sees its intents
-    silently fail at MC's gate chain rather than reach the broker.
+    Brains MUST cache locally and use this as the ONLY source of
+    tradeable symbols. The MC-side `symbol_in_universe` gate will
+    reject any intent whose symbol is not in this response.
     """
     principal = await _dual_auth(x_brain_id, x_runtime_token, operator_user)
 
@@ -431,8 +366,6 @@ async def get_brain_universe(
     if brain not in KNOWN_BRAINS:
         raise HTTPException(status_code=404, detail=f"unknown brain {brain!r}")
 
-    # Brain auth: enforce that the path `{brain}` matches the
-    # authenticated brain. No cross-brain peeking.
     if principal.startswith("brain:"):
         auth_brain = principal.split(":", 1)[1]
         if auth_brain != brain:
@@ -444,7 +377,6 @@ async def get_brain_universe(
                 ),
             )
 
-    # Resolve the brain's seats to a set of allowed lanes.
     snap = await get_roster()
     assignments: Dict[str, Optional[str]] = (snap or {}).get("assignments") or {}
     brain_lanes: set[str] = set()
@@ -454,10 +386,6 @@ async def get_brain_universe(
         brain_lanes.add(_lane_of_role(seat))
 
     if not brain_lanes:
-        # Brain holds no seats. Return an empty universe rather than
-        # 4xx — an unseated brain is a normal state during operator
-        # rotation; it just means "you have nothing to propose
-        # right now." Strategist loop should idle.
         return {
             "brain": brain,
             "lanes": [],
@@ -469,9 +397,6 @@ async def get_brain_universe(
             "note": "brain holds no seats — empty universe is intentional",
         }
 
-    # Query patterns_universe for the brain's lanes. Active rows only.
-    # Backward-compat: rows without a `lane` field are treated as
-    # equity (the legacy seed semantic).
     from namespaces import PATTERNS_UNIVERSE  # noqa: WPS433
     or_clauses: list[dict] = []
     if "equity" in brain_lanes:

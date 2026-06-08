@@ -1,24 +1,26 @@
-import React, { useCallback, useState } from "react";
-import { api, relTime } from "@/lib/api";
+import React from "react";
 import { Card } from "@/components/ui-bits";
 
 /**
- * BrainProxiedStatusTile — renders the brain's own `/api/admin/runtime/
- * {brain}/status` payload, proxied through MC.
+ * BrainProxiedStatusTile — renders the brain's status payload as
+ * served by MC's in-process status endpoint at
+ * `/api/admin/runtime/{brain}/status`.
  *
- * The wrapper shape we receive from `/api/admin/runtime/{brain}/status`:
+ * The 4 permanent brains (Camino / Barracuda / Hellcat / GTO) run
+ * in-process inside MC's FastAPI event loop. The old external-
+ * sidecar proxy (with its "MC could not fetch" error path and
+ * force-refresh button) was REMOVED — the brains are MC. The tile
+ * now only renders the success path.
+ *
+ * Wrapper shape:
  *   { brain, ok, ts, doctrine,
- *     _proxied_from?, _proxy_duration_ms?, _proxy_age_s?,
- *     _proxy_from_cache?, payload? }
- *   OR  { brain, ok: false, error, upstream_status_code? }
+ *     _proxied_from: "in_process",
+ *     _proxy_duration_ms, _proxy_age_s, _proxy_from_cache,
+ *     payload }
  *
- * The brain-side `payload` (RedEye's spec) has 8 flat sections:
- *   identity · seats · heartbeat · governor_emitter · data_keys ·
- *   neuro_engine · intents · (per-brain extras)
- *
- * We render each present section as a separate sub-card. Missing
- * sections silently no-op — different brains expose different
- * subsets; the tile must handle partial payloads without crashing.
+ * `payload` sections: identity · seats · heartbeat · intents ·
+ *   in_process_runner. Missing sections silently no-op so partial
+ *   payloads (e.g., a brain with no seats) render cleanly.
  */
 
 function Dot({ color, size = 8 }) {
@@ -62,81 +64,43 @@ function Section({ title, children, testid }) {
 }
 
 export default function BrainProxiedStatusTile({ brain, proxied }) {
-  const [refreshing, setRefreshing] = useState(false);
-  const [forceRefreshErr, setForceRefreshErr] = useState("");
-
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
-    setForceRefreshErr("");
-    try {
-      await api.post(`/admin/runtime/${brain}/status/refresh`);
-      // Soft reload — easier than threading a refresh callback up.
-      window.location.reload();
-    } catch (e) {
-      setForceRefreshErr(e?.response?.data?.detail || e.message);
-      setRefreshing(false);
-    }
-  }, [brain]);
-
   if (!proxied) {
     return null;
   }
 
-  // Wrapper-level failure (no_upstream_configured / upstream_timeout / etc.)
+  // In-process build error — render a small honest banner. NOT a
+  // call-to-action to "set BRAIN_STATUS_URL" anymore (that path is
+  // dead). If the in-process build is failing, the operator should
+  // check backend logs, not configure an env var.
   if (proxied.ok === false) {
     return (
-      <Card testid={`brain-status-proxy-${brain}-error`} className="mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <div>
-            <div className="label-eyebrow">Brain telemetry · MC proxy</div>
-            <div className="font-mono text-sm text-rd-warn flex items-center gap-2 mt-1">
-              <Dot color="#F59E0B" />
-              {proxied.error || "upstream_unavailable"}
-            </div>
+      <Card testid={`brain-status-${brain}-error`} className="mb-6">
+        <div className="mb-2">
+          <div className="label-eyebrow">Brain telemetry · in-process</div>
+          <div className="font-mono text-sm text-rd-warn flex items-center gap-2 mt-1">
+            <Dot color="#F59E0B" />
+            {proxied.error || "build_failed"}
           </div>
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="text-[10px] font-mono uppercase tracking-widest border border-rd-border text-rd-warn hover:text-rd-text px-2 py-1"
-            data-testid={`brain-status-proxy-${brain}-retry`}
-          >
-            {refreshing ? "..." : "↻ retry"}
-          </button>
         </div>
         <div className="text-[11px] text-rd-muted font-mono leading-relaxed">
-          MC could not fetch <span className="text-rd-text">{brain}</span>'s{" "}
-          <code>/status</code> endpoint.{" "}
-          {proxied.error === "no_upstream_configured" && (
-            <>
-              Set <code>{brain.toUpperCase()}_STATUS_URL</code> in MC's env to
-              the brain's runtime-status endpoint (e.g.{" "}
-              <code>https://{brain}.risedual.ai/api/admin/runtime/{brain}/status</code>),
-              then redeploy MC.
-            </>
-          )}
-          {proxied.upstream_status_code && (
-            <> Upstream HTTP {proxied.upstream_status_code}.</>
-          )}
-          {proxied.duration_ms != null && (
-            <> Attempt took {Math.round(proxied.duration_ms)}ms.</>
-          )}
+          MC could not build the in-process status payload for{" "}
+          <span className="text-rd-text">{brain}</span>. Check the
+          backend logs for{" "}
+          <code>in_process_status_build_failed brain={brain}</code>.
         </div>
-        {forceRefreshErr && (
-          <div className="text-xs text-red-400 font-mono mt-2">{forceRefreshErr}</div>
-        )}
       </Card>
     );
   }
 
   // Success path — render whatever sections the brain provided.
   const p = proxied.payload || {};
-  const cacheBadge = proxied._proxy_from_cache ? (
-    <span className="text-[10px] font-mono uppercase tracking-widest text-rd-dim ml-2">
-      cached {proxied._proxy_age_s?.toFixed?.(1) ?? "?"}s
-    </span>
-  ) : (
-    <span className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 ml-2">
-      fresh
+  const fromInProcess = proxied._proxied_from === "in_process";
+  const sourceBadge = (
+    <span
+      className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 ml-2"
+      data-testid={`brain-status-${brain}-source`}
+    >
+      {fromInProcess ? "in-process" : "fresh"}
     </span>
   );
 
@@ -144,27 +108,16 @@ export default function BrainProxiedStatusTile({ brain, proxied }) {
     <Card testid={`brain-status-proxy-${brain}`} className="mb-6">
       <div className="flex items-start justify-between mb-3">
         <div>
-          <div className="label-eyebrow">Brain telemetry · MC proxy</div>
+          <div className="label-eyebrow">Brain telemetry · in-process</div>
           <div className="font-mono text-sm mt-1 flex items-center gap-2">
             <Dot color="#10B981" />
             <span className="text-rd-text">{brain}</span>
-            {cacheBadge}
-            <span className="text-[10px] font-mono text-rd-dim ml-2">
-              · {Math.round(proxied._proxy_duration_ms || 0)}ms upstream
-            </span>
+            {sourceBadge}
           </div>
-          <div className="text-[10px] text-rd-dim font-mono mt-1 truncate max-w-[50ch]" title={proxied._proxied_from}>
-            ↗ {proxied._proxied_from}
+          <div className="text-[10px] text-rd-dim font-mono mt-1 truncate max-w-[50ch]">
+            ↗ {proxied._proxied_from || "in_process"}
           </div>
         </div>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="text-[10px] font-mono uppercase tracking-widest border border-rd-border text-rd-warn hover:text-rd-text px-2 py-1"
-          data-testid={`brain-status-proxy-${brain}-refresh`}
-        >
-          {refreshing ? "..." : "↻ force-refresh"}
-        </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
