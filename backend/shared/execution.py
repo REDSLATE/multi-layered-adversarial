@@ -22,6 +22,7 @@ from auth import get_current_user
 from db import db
 from namespaces import (
     EXECUTION_RECEIPTS,
+    PATTERNS_UNIVERSE,
     SHARED_GATE_RESULTS,
     SHARED_INTENTS,
     SHARED_RECEIPTS,
@@ -1021,9 +1022,24 @@ async def execution_diagnose(
     if lane_l not in ("equity", "crypto"):
         raise HTTPException(status_code=400, detail=f"lane must be equity|crypto, got {lane!r}")
 
-    # Symbol pick — first one the user has caps for. Crypto: BTC/USD;
-    # equity: SPY. Either works as a probe.
-    sample_symbol = "BTC/USD" if lane_l == "crypto" else "SPY"
+    # Symbol pick — sample from MC's active `patterns_universe` so
+    # the synthetic always uses a symbol that's actually in scope.
+    # Falls back to a sensible default if the universe is empty
+    # (cold-start). Previously hard-coded to "SPY" / "BTC/USD",
+    # which made the diagnose card render "LIVE TRADE: BLOCKED"
+    # on equity forever because SPY isn't in the operator's
+    # watchlist — confusing the operator into thinking the broker
+    # was down. Now: pick the first active universe symbol for the
+    # lane so the synthetic reads READY when MC is healthy.
+    universe_pick = await db[PATTERNS_UNIVERSE].find_one(
+        {"lane": lane_l, "active": {"$ne": False}},
+        {"_id": 0, "symbol": 1},
+        sort=[("symbol", 1)],
+    )
+    if universe_pick and universe_pick.get("symbol"):
+        sample_symbol = universe_pick["symbol"]
+    else:
+        sample_symbol = "BTC/USD" if lane_l == "crypto" else "AAPL"
 
     # Find current executor seat holder for this lane (so the synthetic
     # intent's `stack` matches whoever owns the seat — otherwise the
