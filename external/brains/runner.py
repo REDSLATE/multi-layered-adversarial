@@ -315,6 +315,42 @@ def _log_identity_once() -> None:
     )
 
 
+async def _resolve_position_context(lane: str, symbol: str) -> Optional[dict]:
+    """Lookup the current broker position context for (lane, symbol)
+    and return the dict the brain core injects into its decision.
+
+    Doctrine pin (operator directive, 2026-06-XX): the brain must
+    think in trade transitions, not just BUY/SELL. This helper is
+    the bridge — it imports MC's `shared.position_context` in-process
+    (no HTTP) and asks for the FLAT-or-live context for the symbol.
+
+    Returns None only if MC isn't importable at all (e.g. the brain
+    runner is being unit-tested standalone). On any other error,
+    `position_context.get_position_context` returns a FLAT context
+    itself — we never raise into the decision loop.
+    """
+    try:
+        import sys as _sys
+        if "/app/backend" not in _sys.path:
+            _sys.path.insert(0, "/app/backend")
+        from shared.position_context import get_position_context  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "position_context unavailable lane=%s sym=%s err=%s — "
+            "brain will run with legacy BUY/SELL-only thinking",
+            lane, symbol, exc,
+        )
+        return None
+    try:
+        return await get_position_context(symbol, lane)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "position_context lookup failed lane=%s sym=%s err=%s",
+            lane, symbol, exc,
+        )
+        return None
+
+
 def _build_snapshot(
     symbol: str, lane: str, technical: Optional[dict],
 ) -> tuple[dict, float]:
@@ -424,6 +460,22 @@ def _apply_pattern_bias(intent: BrainIntent, setup_score: float) -> BrainIntent:
         intent.action = "BUY"
         intent.confidence = round(lifted_buy, 4)
         intent.reasoning.append("pattern_bias: action promoted to BUY")
+        # Doctrine pin (operator directive, 2026-06-XX): if we mutate
+        # the brain's action after evaluate(), we MUST re-derive the
+        # transition layer so BUY against an existing SHORT still
+        # surfaces as transition_intent=CLOSE (cover), NOT HOLD.
+        # Without this re-derivation, the dashboard would show
+        # `action=BUY, transition_intent=HOLD` — exactly the kind of
+        # silent mistranslation that caused the AAPL misread.
+        from .brain_core import NeutralAdversarialBrain  # noqa: WPS433
+        ti, te, oa = NeutralAdversarialBrain._derive_transition(
+            "BUY",
+            intent.current_side or "FLAT",
+            float(intent.signed_qty or 0.0),
+        )
+        intent.transition_intent = ti
+        intent.target_exposure = te
+        intent.order_action = oa
     return intent
 
 
@@ -454,6 +506,20 @@ def _intent_to_mc_payload(intent: BrainIntent) -> dict:
             "display_name": intent.display_name,
             "setup_score": intent.snapshot.get("setup_score", 0.0),
             "pattern": intent.snapshot.get("pattern"),
+            # ── Trade-transition layer (operator directive, 2026-06-XX) ──
+            # The brain now thinks in side-aware transitions, not just
+            # broker BUY/SELL verbs. These four fields make the
+            # transition explicit on every intent so the operator and
+            # the audit log can see what the brain MEANT — e.g. BUY
+            # against an existing SHORT is `transition_intent=CLOSE,
+            # target_exposure=FLAT`, NOT `OPEN_LONG`. None when the
+            # brain ran with no position_context (legacy fallback).
+            "current_side": intent.current_side,
+            "signed_qty": intent.signed_qty,
+            "target_exposure": intent.target_exposure,
+            "transition_intent": intent.transition_intent,
+            "order_action": intent.order_action,
+            "position_context": intent.snapshot.get("position_context"),
         },
     }
 
@@ -718,8 +784,16 @@ class BrainRunner:
     ) -> None:
         technical = await self._fetch_technical(http, symbol)
         snapshot, setup_score = _build_snapshot(symbol, lane, technical)
+        # ── Inject position_context BEFORE the brain decides
+        #    (operator directive, 2026-06-XX). Without this, the
+        #    brain has no inventory awareness and a BUY against an
+        #    existing SHORT looks identical to OPEN_LONG — exactly
+        #    the AAPL misread pattern.
+        position_ctx = await _resolve_position_context(lane, symbol)
+        if position_ctx is not None:
+            snapshot["position_context"] = position_ctx
         core = self._cores[lane]
-        intent = core.evaluate(symbol, snapshot)
+        intent = core.evaluate(symbol, snapshot, position_context=position_ctx)
         intent.lane = lane
         intent = _apply_pattern_bias(intent, setup_score)
 

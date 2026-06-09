@@ -1,3 +1,76 @@
+## 2026-06-09 (pass 6) — trade-transition layer wired into brain decisions
+
+### Operator directive (verbatim, pinned)
+"Stop feeding the brains only `action = BUY/SELL`. Start feeding
+them `position_side` (LONG/SHORT/FLAT), `intent_type` (OPEN/ADD/
+REDUCE/CLOSE/FLIP), `exposure_direction` (LONG_BIAS/SHORT_BIAS/
+NEUTRAL). The brain should not think in just buy/sell — it should
+think in trade transitions."
+
+### Files touched
+- **Appended** to `backend/shared/position_model.py`:
+  - `classify_trade_transition(action, signed_qty, order_qty)` —
+    the operator-pinned 10-state classifier (OPEN_LONG, ADD_LONG,
+    REDUCE_LONG, CLOSE_LONG, OPEN_SHORT, ADD_SHORT, REDUCE_SHORT,
+    CLOSE_SHORT, FLIP_LONG_TO_SHORT, FLIP_SHORT_TO_LONG, HOLD).
+  - `normalize_position(raw)` — canonicalizes any broker shape
+    into `{symbol, side, qty_abs, signed_qty, market_value,
+    avg_entry_price, unrealized_pl}` with `signed_qty` as the
+    single source of truth.
+  - `allowed_transitions_for(side)` — returns the legal-moves
+    list the brain reads off the position_context (e.g.
+    `["BUY_TO_REDUCE", "BUY_TO_CLOSE", "SELL_TO_ADD_SHORT"]`
+    when the side is SHORT).
+- **Added**: `backend/shared/position_context.py` — fetches live
+  broker positions per lane (equity → Public.com, crypto →
+  Kraken), normalizes via `normalize_position`, caches per-lane
+  for 10s, and serves `get_position_context(symbol, lane)` to
+  the brain runner. Fails closed to FLAT context (never raises
+  into the decision loop).
+- **Modified**: `external/brains/brain_core.py`:
+  - `BrainIntent` gains `current_side`, `signed_qty`,
+    `target_exposure`, `transition_intent`, `order_action`.
+  - `evaluate()` accepts an optional `position_context` and
+    surfaces it on the snapshot so reasoning carries inventory
+    state; new `_derive_transition()` static method computes
+    the 4 new fields from `(final_action, current_side)`.
+- **Modified**: `external/brains/runner.py`:
+  - `_resolve_position_context(lane, symbol)` looks up the
+    context via in-process import (no HTTP) before
+    `core.evaluate()`.
+  - `_apply_pattern_bias()` re-derives the transition fields
+    when it promotes the action to BUY — guards against the
+    dashboard showing `action=BUY, transition_intent=HOLD`.
+  - `_intent_to_mc_payload()` stamps all 5 transition fields
+    plus the raw `position_context` onto `evidence`.
+- **Added**: `backend/tests/test_trade_transition.py` — 22 tests
+  pinning the 10-state classifier, normalizer, allowed-transitions
+  table, and the brain-core integration. All 39 backend
+  position-model tests pass.
+
+### Live verification
+- 4 brains restarted clean, posting intents under the new schema.
+- Sample row: `alpha NVDA mc=BUY current_side=FLAT order_action=BUY
+  transition_intent=OPEN target_exposure=LONG` ✓
+- Live broker reads: AAPL surfaces as LONG 1.3279 (broker_live);
+  unstamped symbols return FLAT with `allowed_transitions=
+  ["BUY_TO_OPEN_LONG", "SELL_TO_OPEN_SHORT"]`.
+
+### Scope guard (operator pin)
+This pass adds the layer ABOVE execution. Live sizing gates in
+`execution.py` were NOT touched — the operator wants edge proof
+(Pass-6 replay script) before wiring the new transition fields
+into the sizing path.
+
+### Known follow-up
+- `shared/broker/public.py:259` still derives side from
+  `qty >= 0` because Public.com's portfolio endpoint returns
+  unsigned `quantity`. If Public.com ever holds a real short
+  position, the adapter must read the broker's side label
+  directly. The normalize_position layer is ready for this — it
+  honors the `side` field when present.
+
+
 ## 2026-06-09 (pass 5) — position-side model + audit observer + quick-release enforcement toggle
 
 ### Incident

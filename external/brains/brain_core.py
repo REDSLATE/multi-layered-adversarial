@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional
 import math
 import uuid
 
@@ -52,6 +52,17 @@ class BrainIntent:
     reasoning: List[str]
     snapshot: Dict[str, Any]
     memory_tags: List[str]
+    # ── Trade-transition layer (operator directive, 2026-06-XX) ──
+    # Side awareness — derived from the live broker position_context
+    # that the runner injects before evaluate(). These fields make
+    # the difference between "BUY = open long" and "BUY against an
+    # existing SHORT = cover" visible to MC and to the audit log.
+    # None when the brain ran without a position_context (legacy).
+    current_side: Optional[str] = None            # LONG | SHORT | FLAT
+    signed_qty: Optional[float] = None
+    target_exposure: Optional[str] = None         # LONG | SHORT | FLAT
+    transition_intent: Optional[str] = None       # OPEN | ADD | REDUCE | CLOSE | FLIP | HOLD
+    order_action: Optional[str] = None            # BUY | SELL (broker instruction)
 
 
 class NeutralAdversarialBrain:
@@ -81,7 +92,21 @@ class NeutralAdversarialBrain:
         self.min_gap = min_gap
         self.max_shadow_size = max_shadow_size
 
-    def evaluate(self, symbol: str, snapshot: Dict[str, Any]) -> BrainIntent:
+    def evaluate(
+        self,
+        symbol: str,
+        snapshot: Dict[str, Any],
+        position_context: Optional[Dict[str, Any]] = None,
+    ) -> BrainIntent:
+        # ── Trade-transition awareness (operator directive, 2026-06-XX) ──
+        # The runner injects a `position_context` describing the live
+        # broker position the brain is acting against. Surface it on
+        # the snapshot so reasoning carries the inventory state, and
+        # let the hypothesis builder use it as descriptive evidence.
+        ctx = position_context or snapshot.get("position_context")
+        if ctx:
+            snapshot = {**snapshot, "position_context": ctx}
+
         hypotheses = self._build_hypotheses(snapshot)
         winner, runner_up = sorted(
             hypotheses, key=lambda h: h.score, reverse=True,
@@ -91,6 +116,12 @@ class NeutralAdversarialBrain:
         reasoning: List[str] = [
             f"display_name={self.display_name} brain_id={self.brain_id} lane={self.lane}",
         ]
+        if ctx:
+            reasoning.append(
+                f"position_context: current_side={ctx.get('current_side')} "
+                f"signed_qty={ctx.get('signed_qty')} "
+                f"allowed_transitions={ctx.get('allowed_transitions')}"
+            )
         for h in hypotheses:
             reasoning.append(
                 f"{h.name}: action={h.action}, score={h.score:.3f}",
@@ -121,6 +152,22 @@ class NeutralAdversarialBrain:
             else self._size_from_confidence(final_confidence)
         )
 
+        # Derive the transition layer fields. When we have no
+        # position_context, default to FLAT — same semantics as
+        # legacy BUY/SELL-only thinking, but explicit.
+        current_side = (ctx or {}).get("current_side", "FLAT")
+        signed_qty_val = float((ctx or {}).get("signed_qty", 0.0) or 0.0)
+        transition_intent, target_exposure, order_action = self._derive_transition(
+            final_action, current_side, signed_qty_val,
+        )
+        if ctx:
+            reasoning.append(
+                f"trade_transition: order_action={order_action} "
+                f"current_side={current_side} → "
+                f"target_exposure={target_exposure} "
+                f"transition_intent={transition_intent}"
+            )
+
         return BrainIntent(
             intent_id=str(uuid.uuid4()),
             brain_id=self.brain_id,
@@ -140,7 +187,57 @@ class NeutralAdversarialBrain:
             memory_tags=self._memory_tags(
                 snapshot, final_action, final_confidence,
             ),
+            current_side=current_side,
+            signed_qty=signed_qty_val,
+            target_exposure=target_exposure,
+            transition_intent=transition_intent,
+            order_action=order_action,
         )
+
+    @staticmethod
+    def _derive_transition(
+        final_action: str, current_side: str, signed_qty: float,
+    ) -> tuple:
+        """Map (final_action, current_side) → (transition_intent,
+        target_exposure, order_action).
+
+        This is the operator-pinned vocabulary the brain MUST emit
+        alongside the legacy `action` field. The richer 10-state
+        classifier lives in `shared.position_model.classify_trade_transition`
+        — we mirror its meaning here without importing it (brain_core
+        stays a pure module so the runner can ship it standalone).
+
+        Returns:
+            (transition_intent, target_exposure, order_action)
+
+        Where:
+            transition_intent ∈ {OPEN, ADD, REDUCE, CLOSE, FLIP, HOLD}
+            target_exposure   ∈ {LONG, SHORT, FLAT}
+            order_action      ∈ {BUY, SELL, HOLD}
+        """
+        side = (current_side or "FLAT").upper()
+        act = (final_action or "HOLD").upper()
+
+        if act not in ("BUY", "SELL"):
+            return ("HOLD", side, "HOLD")
+
+        if act == "BUY":
+            if side == "FLAT":
+                return ("OPEN", "LONG", "BUY")
+            if side == "LONG":
+                return ("ADD", "LONG", "BUY")
+            # side == SHORT — BUY against a short is a cover.
+            # The brain emits CLOSE intent semantically; whether the
+            # actual order_qty equals the full short magnitude is a
+            # sizing decision the gate chain owns, not the brain.
+            return ("CLOSE", "FLAT", "BUY")
+        # act == SELL
+        if side == "FLAT":
+            return ("OPEN", "SHORT", "SELL")
+        if side == "SHORT":
+            return ("ADD", "SHORT", "SELL")
+        # side == LONG — SELL against a long is a close.
+        return ("CLOSE", "FLAT", "SELL")
 
     def _build_hypotheses(self, s: Dict[str, Any]) -> List[Hypothesis]:
         price_change = float(s.get("price_change_pct", 0.0))

@@ -247,9 +247,201 @@ def detect_misread(
     )
 
 
+# ── Operator-spec trade-transition layer (2026-06-XX) ─────────────
+#
+# Doctrine pin (operator directive, post-AAPL incident):
+#   "Stop feeding the brains only `action = BUY/SELL`. Start feeding
+#    them position_side (LONG/SHORT/FLAT), intent_type (OPEN/ADD/
+#    REDUCE/CLOSE/FLIP), exposure_direction (LONG_BIAS/SHORT_BIAS/
+#    NEUTRAL). The brain should not think in just buy/sell — it
+#    should think in trade transitions."
+#
+# The functions below are the canonical implementation the operator
+# pinned verbatim. They are intentionally a richer, more granular
+# overlay on top of the existing `classify_intent` primitive:
+#
+#   classify_intent           → 5 states: OPEN/ADD/REDUCE/CLOSE/FLIP
+#   classify_trade_transition → 10 states with side awareness:
+#       OPEN_LONG, ADD_LONG, REDUCE_LONG, CLOSE_LONG,
+#       OPEN_SHORT, ADD_SHORT, REDUCE_SHORT, CLOSE_SHORT,
+#       FLIP_LONG_TO_SHORT, FLIP_SHORT_TO_LONG, HOLD
+#
+# The richer layer is what the brain runner injects into the brain's
+# decision context. The original 5-primitive form is still used by
+# the gate chain audit / misread detector — they're complementary,
+# not redundant.
+
+# Allowed-transition table per current side — the brain reads this
+# off the position_context so it knows that, e.g., on a SHORT
+# position a BUY does NOT mean OPEN_LONG, it means REDUCE/CLOSE.
+_ALLOWED_TRANSITIONS_LONG = [
+    "SELL_TO_REDUCE",
+    "SELL_TO_CLOSE",
+    "BUY_TO_ADD_LONG",
+    "SELL_TO_FLIP_TO_SHORT",
+]
+_ALLOWED_TRANSITIONS_SHORT = [
+    "BUY_TO_REDUCE",
+    "BUY_TO_CLOSE",
+    "SELL_TO_ADD_SHORT",
+    "BUY_TO_FLIP_TO_LONG",
+]
+_ALLOWED_TRANSITIONS_FLAT = [
+    "BUY_TO_OPEN_LONG",
+    "SELL_TO_OPEN_SHORT",
+]
+
+
+def allowed_transitions_for(side: str) -> list:
+    """Return the list of legal transition labels for the given
+    current side. Side is the lowercase string (long/short/flat) the
+    brain receives in `position_context.current_side`.
+
+    The labels are intentionally human-readable verbs the brain core
+    and the operator audit log both consume verbatim. They are NOT
+    a wire schema — they are descriptive evidence injected into the
+    brain's snapshot so the brain can reason: "I'm SHORT MSFT;
+    BUY means COVER, not OPEN LONG."
+    """
+    s = (side or "").strip().lower()
+    if s == "long":
+        return list(_ALLOWED_TRANSITIONS_LONG)
+    if s == "short":
+        return list(_ALLOWED_TRANSITIONS_SHORT)
+    return list(_ALLOWED_TRANSITIONS_FLAT)
+
+
+def classify_trade_transition(action: str, signed_qty: float, order_qty: float) -> dict:
+    """Classify a (action, current signed_qty, order_qty) tuple into
+    the operator-pinned 10-state transition vocabulary.
+
+    Args:
+        action:     "BUY" | "SELL" (case-insensitive). "HOLD" returns
+                    intent_type="HOLD" with no side change.
+        signed_qty: Current broker position. > 0 = LONG, < 0 = SHORT,
+                    0 = FLAT.
+        order_qty:  Magnitude (positive) the brain intends to transact.
+
+    Returns:
+        dict with: current_side, signed_qty, order_action, order_qty,
+                   intent_type.
+
+    Doctrine pin: this is the exact function-body the operator
+    posted in the directive. Do not refactor without operator
+    approval — the brains, the audit log, and the
+    position_misread_audit module all key off these intent_type
+    strings verbatim.
+    """
+    action = (action or "").upper()
+
+    if signed_qty > 0:
+        side = "LONG"
+    elif signed_qty < 0:
+        side = "SHORT"
+    else:
+        side = "FLAT"
+
+    abs_pos = abs(float(signed_qty))
+    q = float(order_qty)
+
+    if action == "BUY":
+        if side == "FLAT":
+            intent = "OPEN_LONG"
+        elif side == "LONG":
+            intent = "ADD_LONG"
+        elif q < abs_pos:
+            intent = "REDUCE_SHORT"
+        elif q == abs_pos:
+            intent = "CLOSE_SHORT"
+        else:
+            intent = "FLIP_SHORT_TO_LONG"
+    elif action == "SELL":
+        if side == "FLAT":
+            intent = "OPEN_SHORT"
+        elif side == "SHORT":
+            intent = "ADD_SHORT"
+        elif q < abs_pos:
+            intent = "REDUCE_LONG"
+        elif q == abs_pos:
+            intent = "CLOSE_LONG"
+        else:
+            intent = "FLIP_LONG_TO_SHORT"
+    else:
+        intent = "HOLD"
+
+    return {
+        "current_side": side,
+        "signed_qty": float(signed_qty),
+        "order_action": action,
+        "order_qty": q,
+        "intent_type": intent,
+    }
+
+
+def normalize_position(raw: dict) -> dict:
+    """Normalize a broker position dict into the operator-canonical
+    shape every layer of MC consumes downstream.
+
+    Inputs accepted (any of):
+      qty           — float, signed OR unsigned magnitude
+      side / quantitySide — one of {LONG, SHORT, SELL_SHORT, BUY, SELL}
+      market_value, avg_entry_price, unrealized_pl — passed through
+      symbol        — required
+
+    Output shape:
+      {
+        "symbol":           str,
+        "side":             "LONG" | "SHORT" | "FLAT",
+        "qty_abs":          float,
+        "signed_qty":       float,   ← source of truth for everything
+        "market_value":     float|None,
+        "avg_entry_price":  float|None,
+        "unrealized_pl":    float|None,
+      }
+
+    Doctrine: `signed_qty` is the SINGLE source of truth across MC.
+    Any caller that uses `qty_abs` or `side` without consulting
+    `signed_qty` is wrong by construction — the AAPL misread
+    happened because the broker reported `qty=100, side="long"` and
+    the routing layer never noticed the broker's `side` was just a
+    label, not a sign on the magnitude.
+    """
+    qty = float(raw.get("qty", 0) or 0)
+    side_raw = str(raw.get("side") or raw.get("quantitySide") or "").upper().strip()
+
+    if side_raw in {"SHORT", "SELL_SHORT", "SELL"}:
+        signed_qty = -abs(qty)
+    elif side_raw in {"LONG", "BUY"}:
+        signed_qty = abs(qty)
+    else:
+        # No side label at all — trust whatever sign was on `qty`.
+        # If broker reported unsigned 100 with no side, we treat
+        # that as FLAT-uncertain rather than guess long.
+        signed_qty = qty
+
+    if signed_qty > 0:
+        side = "LONG"
+    elif signed_qty < 0:
+        side = "SHORT"
+    else:
+        side = "FLAT"
+
+    return {
+        "symbol": raw.get("symbol", ""),
+        "side": side,
+        "qty_abs": abs(signed_qty),
+        "signed_qty": float(signed_qty),
+        "market_value": raw.get("market_value"),
+        "avg_entry_price": raw.get("avg_entry_price"),
+        "unrealized_pl": raw.get("unrealized_pl"),
+    }
+
+
 __all__ = [
     "PositionSide", "IntentType", "PositionState",
     "PositionMisread", "MISREAD_COLLECTION",
     "classify_intent", "detect_misread",
+    "classify_trade_transition", "normalize_position",
+    "allowed_transitions_for",
     "ACTION_BUY", "ACTION_SELL", "ACTION_SHORT", "ACTION_COVER",
 ]

@@ -1,5 +1,60 @@
 # Mission Control — PRD (latest pass on top)
 
+## 🆕 2026-06-09 (pass 6) — trade-transition layer wired into brain decisions
+
+### Operator directive (verbatim, pinned)
+> *"Stop feeding the brains only `action = BUY/SELL`. Start feeding
+> them position_side (LONG/SHORT/FLAT), intent_type (OPEN/ADD/
+> REDUCE/CLOSE/FLIP), exposure_direction (LONG_BIAS/SHORT_BIAS/
+> NEUTRAL). The brain should not think in just buy/sell — it
+> should think in trade transitions."*
+
+### What changed
+- `backend/shared/position_model.py` now exports
+  `classify_trade_transition()`, `normalize_position()`,
+  `allowed_transitions_for()` — the operator-pinned classifier
+  with the full 10-state vocabulary (OPEN_LONG, ADD_LONG,
+  REDUCE_LONG, CLOSE_LONG, OPEN_SHORT, ADD_SHORT, REDUCE_SHORT,
+  CLOSE_SHORT, FLIP_LONG_TO_SHORT, FLIP_SHORT_TO_LONG, HOLD).
+- `backend/shared/position_context.py` (new) — pulls live broker
+  positions per lane, normalizes, caches 10s, exposes
+  `get_position_context(symbol, lane)`.
+- `external/brains/brain_core.py` — `BrainIntent` carries the new
+  schema (`current_side`, `signed_qty`, `target_exposure`,
+  `transition_intent`, `order_action`); `evaluate()` consumes
+  `position_context`.
+- `external/brains/runner.py` — fetches `position_context` before
+  each `core.evaluate()` call; `_apply_pattern_bias` re-derives
+  transition fields on promotion; MC payload stamps all 5 new
+  fields plus the raw `position_context` as evidence.
+- `backend/tests/test_trade_transition.py` — 22 tests, all pass.
+
+### Live verification (post-restart)
+- Brains posting under new schema: e.g. `alpha NVDA mc=BUY
+  current_side=FLAT order_action=BUY transition_intent=OPEN
+  target_exposure=LONG`.
+- Broker reality check: AAPL=LONG 1.3279 surfaces correctly
+  (source=`broker_live`). FLAT symbols receive
+  `allowed_transitions=["BUY_TO_OPEN_LONG", "SELL_TO_OPEN_SHORT"]`.
+
+### Doctrine (this pass)
+- This layer is **READ-ONLY enrichment** of the brain's input and
+  audit-only stamping on the output. **Live sizing gates in
+  `execution.py` are NOT touched** — operator wants edge proof
+  (Pass-6 replay script) before wiring the transition fields into
+  sizing.
+- `signed_qty` is the single source of truth across MC. Any code
+  using `qty_abs`/`side` without consulting `signed_qty` is wrong
+  by construction.
+
+### Known follow-up
+- `shared/broker/public.py:259` derives side from `qty >= 0`. If
+  Public.com ever holds a real short, the adapter must read the
+  broker's side label directly. `normalize_position` is ready —
+  it honors `side` when present.
+
+
+
 ## 🆕 2026-06-09 (pass 5) — position-side model + audit observer + quick-release enforcement toggle
 
 ### Incident that drove this pass
