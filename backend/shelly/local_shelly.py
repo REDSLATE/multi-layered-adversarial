@@ -36,12 +36,26 @@ LOCAL_LOSS_RATE_WARN_THRESHOLD = 0.60
 class LocalShelly:
     """One per brain. Reads/writes the brain's own collections only.
 
-    Brain names are normalized to lowercase to match the canonical
-    brain identity used everywhere else in the codebase
-    (alpha / camaro / chevelle / redeye)."""
+    Brain names are normalized through `shared.brain_identity` so a
+    caller passing a display name ("Barracuda") or a casing variant
+    ("CAMARO") still lands in the same canonical Mongo collections
+    (`shelly_camaro_memories`, etc.) as a caller passing the
+    canonical ID. Prevents the silent-collection-fragmentation bug
+    where a display-name leak forks brain memory into an orphan
+    collection."""
 
     def __init__(self, brain_name: str):
-        self.brain_name = brain_name.lower()
+        from shared.brain_identity import normalize_brain_id  # noqa: WPS433
+        normalized = normalize_brain_id(brain_name)
+        # Edge case: test fixtures (e.g. `LocalShelly("twembed")` for
+        # embedding tests) use non-canonical names on purpose. We
+        # preserve the original lowercase for those — the production
+        # invariant is "every CANONICAL brain lands on the canonical
+        # collection", not "every name must be canonical".
+        if normalized != "unknown":
+            self.brain_name = normalized
+        else:
+            self.brain_name = (brain_name or "").strip().lower()
         self.memories_coll_name = f"shelly_{self.brain_name}_memories"
         self.receipts_coll_name = f"shelly_{self.brain_name}_reasoning_receipts"
 
