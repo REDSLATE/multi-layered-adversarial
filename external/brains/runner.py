@@ -43,6 +43,7 @@ import asyncio
 import logging
 import os
 import random
+import socket
 import time
 from typing import Optional
 
@@ -117,6 +118,26 @@ BRAIN_ROSTER = [
 
 # ── Tick + cadence settings ──
 MC_LOOPBACK_URL = "http://127.0.0.1:8001"
+
+# Origin discriminator (2026-02-XX). Both preview and prod pods share
+# the same .env and therefore both stamp `env_name=prod`. To keep the
+# intent stream attributable to its actual source pod, we ALSO stamp
+# the hostname (auto-differs per container) and an explicit
+# `runtime_origin` label sourced from RISEDUAL_RUNTIME_ORIGIN (which
+# CAN be set per-deployment in Emergent's per-environment env panel
+# if/when the operator gets access).
+#
+# Default fallback: socket.gethostname() — guaranteed unique per pod.
+# This means preview-pod intents and prod-pod intents are filterable
+# in shared_intents even when env_name is identical.
+try:
+    _POD_HOSTNAME = socket.gethostname() or "unknown"
+except Exception:  # noqa: BLE001
+    _POD_HOSTNAME = "unknown"
+RUNTIME_ORIGIN = (
+    os.environ.get("RISEDUAL_RUNTIME_ORIGIN", "").strip()
+    or _POD_HOSTNAME
+)
 TICK_INTERVAL_SEC = float(os.environ.get("NEUTRAL_BRAIN_TICK_SEC", "45"))
 CHECKIN_INTERVAL_SEC = float(os.environ.get("NEUTRAL_BRAIN_CHECKIN_SEC", "30"))
 HTTP_TIMEOUT_SEC = float(os.environ.get("NEUTRAL_BRAIN_HTTP_TIMEOUT_SEC", "8"))
@@ -625,6 +646,14 @@ class BrainRunner:
             get_personality(self.brain_id).get("risk_mode", "balanced")
         )
         payload["evidence"]["display_name_emit"] = self.display_name
+        # Pod-level discriminator so preview vs prod intents are
+        # filterable even when env_name is identical. See module-
+        # level `RUNTIME_ORIGIN` doctrine comment.
+        payload["evidence"]["runtime_origin"] = RUNTIME_ORIGIN
+        payload["evidence"]["pod_hostname"] = _POD_HOSTNAME
+        payload["evidence"]["env_name_emit"] = os.environ.get(
+            "RISEDUAL_ENV", os.environ.get("ENV", "unknown"),
+        )
 
         r = await http.post(
             f"{MC_LOOPBACK_URL}/api/intents",
