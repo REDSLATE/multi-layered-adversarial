@@ -1,5 +1,96 @@
 # Mission Control — PRD (latest pass on top)
 
+## 🆕 2026-06-09 — LIVE TRADING ENGAGED · ladder retired · brain labels finalized · Public.com card
+
+### Operator decision
+> "I'm fine with real orders, I just had a month without any trades.
+>  I need them to trade now. … I just want them trading crypto and equity.
+>  I think a month of intents makes up more than enough reason for the
+>  ladder to go away."
+
+After ~1 month of `observation_only` intents proving brain coherence,
+operator authorized full live trading on **all 4 brains × both lanes**.
+Per-order / per-day / open-notional caps in `.env` now serve as the sole
+binding risk control.
+
+### Final live state on PROD (`mission.risedual.ai`)
+```
+🔴 LIVE  alpha    (Camino)    × equity  → normal_live
+🔴 LIVE  alpha    (Camino)    × crypto  → normal_live
+🔴 LIVE  camaro   (Barracuda) × equity  → normal_live
+🔴 LIVE  camaro   (Barracuda) × crypto  → normal_live
+🔴 LIVE  chevelle (Hellcat)   × equity  → normal_live
+🔴 LIVE  chevelle (Hellcat)   × crypto  → normal_live
+🔴 LIVE  redeye   (GTO)       × equity  → normal_live
+🔴 LIVE  redeye   (GTO)       × crypto  → normal_live
+```
+24 ladder transitions audit-logged with operator reason on each row.
+
+### Broker gates
+- **Public.com**: connected (account `5LG34065`), `execution_enabled=True`
+- **Kraken**:    connected, `execution_enabled=True`
+
+### Risk envelope (active)
+- `RISEDUAL_CAP_PER_ORDER_USD`     = `$25`
+- `RISEDUAL_CAP_PER_DAY_USD`       = `$50`
+- `RISEDUAL_CAP_OPEN_NOTIONAL_USD` = `$200`
+
+These caps are read on every order attempt and survive every ladder
+stage — a runaway brain cannot blow through $50/day or $200 open
+exposure across the fleet.
+
+### Shipped this session
+1. **Equity broker card replaced** — `<AlpacaConnect />` swapped to
+   `<PublicConnect />` on the Intents page Equity Lane. New full-card
+   layout with stat strip (Account / Secret / Today $ / Open Notional /
+   Token Refresh) mirroring the Kraken Crypto Lane tile. Connect form
+   takes secret + optional account_id + base_url + token TTL; modal
+   exposes test / refresh-token / disconnect / execution toggle
+   (typed-phrase confirmation required).
+2. **Brain display labels finalized.** Internal slot IDs unchanged
+   (`alpha / camaro / chevelle / redeye` — Mongo primary keys). All
+   user-facing surfaces render: `Camino / Barracuda / Hellcat / GTO`.
+   Updated: `external/brains/personality.py`, `runner.py`, `brain_core.py`
+   (`CaminoAdversarialBrain` → `NeutralAdversarialBrain`),
+   `frontend/src/lib/api.js` (`RUNTIME_META`), `backend/.env`
+   (`RISEDUAL_GIT_SHA="neutral-v3"`), test docstrings.
+   Risk-profile multipliers preserved verbatim
+   (Camino ×1.00 / Barracuda ×1.15 / Hellcat ×1.30 / GTO ×0.85).
+3. **Live Routes page** — new `/admin/learning-ladder` admin page
+   (`frontend/src/pages/LearningLadder.jsx`) with toggle-style UI:
+   4 brains × 2 lanes grid, 4 stage buttons each, reason-required
+   modal on every change, 30-row audit history table. Backed by new
+   `POST /api/admin/learning-ladder/set` endpoint allowing direct
+   jump to any rung. Nav entry: "Live Routes" under Trading.
+4. **AAPL "phantom order" closed as real.** Operator's screenshot
+   confirmed a real 0.0333 share AAPL fill via "Individual API"
+   actor — a previous-session test invocation. Repo re-audited:
+   no current code path can call `PublicAdapter.submit_market_order`
+   or `route_order` from outside the production gate.
+
+### Production deployment note
+Preview and production use **separate MongoDB instances** for the
+`learning_ladder` collection (handoff note about "shared Mongo" was
+incomplete — credentials collections ARE shared but per-env state
+collections are NOT). For the new Public.com card UI and Live Routes
+UI to appear on `mission.risedual.ai`, operator must use **Save to
+GitHub** → trigger production redeploy. Trading is already live
+without redeploy (used prod's `/promote` endpoint 24× this turn).
+
+### Backlog after this milestone (P1/P2)
+- Live order watch: tail first round of Public.com / Kraken fills,
+  attach to `shared_intents` row, surface on Intents page.
+- Intent summary endpoint `GET /api/admin/runtime/{brain}/intent-summary` (P2)
+- SSE stream `/api/mc-connection/stream` for live dashboard updates (P2)
+- Frontend Pulse review-queue UI for Governance Reviewer (P2)
+- Reddit + Zillow + Quiver scraper fixes (P2)
+- Belt-and-suspenders env kill switch `RISEDUAL_BROKER_LIVE_ARMED`
+  (operator-deferred this session — caps deemed sufficient)
+- Forensics dump of historical AAPL test order's `public_audit_log`
+  row + linked `shared_intent` (operator-deferred this session)
+
+---
+
 ## 🆕 2026-02-XX — Permanent neutral brains + Alpha Vantage cache
 
 ### Confirmation from operator

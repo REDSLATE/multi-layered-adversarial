@@ -1,4 +1,138 @@
-## 2026-02-XX (this session, pass 6) — Imposter scan env filter + opinion loop
+## 2026-06-09 — LIVE TRADING ENGAGED (ladder retired) + Public.com card + brain rename + Live Routes UI
+
+### Operator instruction (verbatim)
+> "I'm fine with real orders, I just had a month without any trades.
+>  I need them to trade now. ... I just want them trading crypto and
+>  equity. I think a month of intents makes up more than enough reason
+>  for the ladder to go away."
+
+### What shipped
+
+**1. Ladder gate retired on PROD** — all 8 (brain, lane) combinations
+flipped from `observation_only` → `normal_live` via the existing
+`POST /api/admin/learning-ladder/promote` endpoint (3 calls per row,
+24 total). Verified:
+```
+alpha     equity  normal_live      camaro    equity  normal_live
+alpha     crypto  normal_live      camaro    crypto  normal_live
+chevelle  equity  normal_live      redeye    equity  normal_live
+chevelle  crypto  normal_live      redeye    crypto  normal_live
+```
+Each transition audit-logged with reason
+`"operator decision 2026-06-09: ladder gate retired after 1 month of
+observation_only intents. Per-order/per-day/open-notional caps now
+serve as the binding risk control."`
+
+**2. Equity broker card** — `AlpacaConnect` → `PublicConnect` on
+`pages/Intents.jsx` Equity Lane section. New full-card layout
+(`components/PublicConnect.jsx`) with the stat strip mirroring the
+Kraken Crypto Lane tile: Account / Secret / Today $ / Open Notional /
+Token Refresh. Connect form takes secret + optional account_id +
+base_url + token_validity_minutes. ConnectedView surfaces test /
+refresh-token / disconnect / execution-toggle. Execution toggle still
+requires typed-phrase confirmation
+(`I authorize execution on Public`).
+
+**3. Brain display labels — back to Camino / Barracuda / Hellcat / GTO.**
+Earlier in the session the operator-facing labels were briefly flipped
+to Alpha/Camaro/Chevelle/Redeye (an inversion mistake on my part);
+operator corrected: *"You have them backwards. Camino Barracuda Hellcat
+and GTO are the new names."* Internal slot IDs remain
+`alpha / camaro / chevelle / redeye` (Mongo primary keys — not
+renamed, would require migration). Files updated to render the brand
+labels everywhere:
+- `external/brains/personality.py` — `BRAIN_PERSONALITIES` re-keyed
+  to display Camino/Barracuda/Hellcat/GTO via `display_name` field
+- `external/brains/runner.py` — `BRAIN_ROSTER` display column reverted
+- `external/brains/brain_core.py` — class renamed
+  `CaminoAdversarialBrain` → `NeutralAdversarialBrain` (already done
+  in the rename direction; kept that way since the class no longer
+  pretends to be one specific brand)
+- `frontend/src/lib/api.js` — `RUNTIME_META` labels:
+  `CAMINO / BARRACUDA / HELLCAT / GTO`; `roleTitle` field too
+- `backend/.env` — `RISEDUAL_GIT_SHA="neutral-v3"` (version stamp
+  rolled forward through both flips)
+- Docstrings in `backend/routes/brain_runtime.py`, `backend/server.py`,
+  `frontend/src/components/BrainProxiedStatusTile.jsx`
+- `backend/tests/test_skills_and_personality.py` test using the new
+  keys (the test was the only functional consumer of the legacy
+  string keys; everything else was metadata).
+
+Risk-profile multipliers preserved verbatim:
+| Display   | Slot     | Mult  | Mode          |
+|-----------|----------|-------|---------------|
+| Camino    | alpha    | ×1.00 | balanced      |
+| Barracuda | camaro   | ×1.15 | opportunistic |
+| Hellcat   | chevelle | ×1.30 | aggressive    |
+| GTO       | redeye   | ×0.85 | disciplined   |
+
+61/61 backend tests pass post-rename.
+
+**4. Live Routes admin page** — `frontend/src/pages/LearningLadder.jsx`,
+mounted at `/admin/learning-ladder`, added to sidebar under Trading
+as "Live Routes". Toggle-style grid:
+- 4 brain cards × 2 lanes each (equity + crypto)
+- Each lane row has 4 stage buttons (OBS / PAPER / LIVE / FULL)
+- Clicking a non-current stage opens a modal that requires a
+  reason (audit-logged) and shows a per-direction safety panel
+  (live-execution warning when going up, safety-demote panel when
+  going down)
+- History card below lists the last 30 transitions with from-stage,
+  to-stage, actor, reason
+- Stage legend at the top of the page explains each rung
+
+Backed by new endpoint:
+- `POST /api/admin/learning-ladder/set` — direct stage selection
+  (any rung from any rung) with audit row. Distinct from `/promote`
+  and `/demote` which only step one rung. All 3 funnel through the
+  same `_set_stage` write path so history reads uniformly.
+
+**5. Confirmed prod & preview have separate Mongo DBs** for the
+`learning_ladder` collection. The handoff's "shared Mongo" note was
+not universally true. `public_credentials` and `kraken_credentials`
+ARE shared (both envs see the same Public.com account 5LG34065 and
+the same Kraken keys), but state collections like `learning_ladder`
+are per-env. The Live Routes UI in preview won't reflect prod
+ladder state until prod redeployed; ladder mutations against the
+preview backend won't change prod brain routing.
+
+**6. AAPL "phantom order" investigation — closed as real.** Operator
+screenshot of Public.com Order History showed a real 0.0333 share
+AAPL market buy via "Individual API" actor on Jun 09 02:09 AM —
+the byproduct of a test/script run during the previous session.
+Audit confirmed: no test, script, or repo path currently calls
+`PublicAdapter.submit_market_order`, `route_order`, or
+`/api/admin/public/order` outside the production gate path. So the
+correction the previous agent applied appears solid — but the
+historical fill DID happen.
+
+### Files added or modified
+- **Added**: `frontend/src/pages/LearningLadder.jsx`
+- **Added**: `POST /api/admin/learning-ladder/set` (in
+  `backend/shared/learning_ladder.py`)
+- **Modified**: `frontend/src/App.js` (route),
+  `frontend/src/components/Layout.jsx` (nav entry),
+  `frontend/src/lib/api.js` (RUNTIME_META labels),
+  `frontend/src/components/PublicConnect.jsx` (full card rewrite),
+  `frontend/src/pages/Intents.jsx` (Alpaca → Public swap),
+  `external/brains/personality.py`, `runner.py`, `brain_core.py`,
+  `backend/.env`, `backend/routes/brain_runtime.py`,
+  `backend/server.py`,
+  `frontend/src/components/BrainProxiedStatusTile.jsx`,
+  `backend/tests/test_skills_and_personality.py`.
+
+### Production deployment status
+Trading is live on prod **right now** — broker gates were already
+open and the ladder was just flipped via prod's existing API. The
+new UI surfaces (Public.com card on Intents, Live Routes page,
+brand labels everywhere) require a **Save to GitHub → prod
+redeploy** to land on `mission.risedual.ai`. Until then, prod
+still shows the old Alpaca card / Alpha-Camaro-Chevelle-Redeye
+labels in its UI — but the brains underneath are firing under the
+new rules.
+
+---
+
 
 ### Issue 1 — opinion loop dead
 Operator screenshot showed `opinion: DEAD 0/1h`, `STALE_OPINION` badge
