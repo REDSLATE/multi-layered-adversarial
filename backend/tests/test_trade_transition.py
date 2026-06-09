@@ -21,6 +21,8 @@ from shared.position_model import (  # noqa: E402
     classify_trade_transition,
     normalize_position,
     allowed_transitions_for,
+    classify_position_evolution,
+    classify_risk_transition,
 )
 
 
@@ -231,3 +233,244 @@ def test_brain_core_evaluate_with_flat_context_falls_back_to_open():
     elif intent.order_action == "SELL":
         assert intent.transition_intent == "OPEN"
         assert intent.target_exposure == "SHORT"
+
+
+# ── classify_position_evolution: SCALE_IN / SCALE_OUT ─────────────
+
+
+def test_high_conviction_add_long_becomes_scale_in():
+    """The mental shift: ADD with conviction is SCALE_IN (planned),
+    not a reactive ADD. Operator's spec, 2026-06-XX."""
+    evo = classify_position_evolution("ADD", "LONG", confidence=0.72)
+    assert evo == "SCALE_IN"
+
+
+def test_low_conviction_add_long_stays_add():
+    evo = classify_position_evolution("ADD", "LONG", confidence=0.50)
+    assert evo == "ADD"
+
+
+def test_add_short_stays_add_not_scale_in():
+    """Operator's scoped vocabulary keeps SHORT-side ADD plain;
+    SCALE_IN is LONG-only in this pass."""
+    evo = classify_position_evolution("ADD", "SHORT", confidence=0.90)
+    assert evo == "ADD"
+
+
+def test_high_conviction_reduce_long_becomes_scale_out():
+    """SCALE_OUT = locking in gains. SELL on a LONG with conviction
+    is the PM's "take some off the table" verb, not a panic-trim."""
+    evo = classify_position_evolution("REDUCE", "LONG", confidence=0.62)
+    assert evo == "SCALE_OUT"
+
+
+def test_low_conviction_reduce_long_stays_reduce():
+    evo = classify_position_evolution("REDUCE", "LONG", confidence=0.40)
+    assert evo == "REDUCE"
+
+
+# ── classify_position_evolution: PARTIAL_COVER / FULL_COVER ───────
+
+
+def test_reduce_short_is_partial_cover():
+    """Any REDUCE on a SHORT is, by definition, a PARTIAL_COVER —
+    the brain isn't taking the whole short off."""
+    evo = classify_position_evolution("REDUCE", "SHORT", confidence=0.50)
+    assert evo == "PARTIAL_COVER"
+
+
+def test_high_conviction_close_short_is_full_cover():
+    """CLOSE on a SHORT with high conviction = FULL_COVER. This is
+    exactly the AAPL-incident-fix verb the operator wanted visible —
+    so the dashboard can see 'the brain wanted the whole short
+    flattened', not just 'the brain emitted BUY.'"""
+    evo = classify_position_evolution("CLOSE", "SHORT", confidence=0.85)
+    assert evo == "FULL_COVER"
+
+
+def test_low_conviction_close_short_downgrades_to_partial_cover():
+    """If the brain emits CLOSE but its confidence is weak, the
+    portfolio reading is closer to PARTIAL_COVER — the brain is
+    hedging its bet."""
+    evo = classify_position_evolution("CLOSE", "SHORT", confidence=0.55)
+    assert evo == "PARTIAL_COVER"
+
+
+def test_close_long_stays_close():
+    """Operator did not introduce a partial-close-for-long verb in
+    this pass — SCALE_OUT covers the partial case, CLOSE means flat."""
+    evo = classify_position_evolution("CLOSE", "LONG", confidence=0.85)
+    assert evo == "CLOSE"
+
+
+# ── classify_position_evolution: pass-throughs ────────────────────
+
+
+def test_open_passes_through():
+    assert classify_position_evolution("OPEN", "FLAT", confidence=0.9) == "OPEN"
+
+
+def test_flip_passes_through():
+    assert classify_position_evolution("FLIP", "LONG", confidence=0.9) == "FLIP"
+
+
+def test_hold_passes_through():
+    assert classify_position_evolution("HOLD", "FLAT", confidence=0.9) == "HOLD"
+
+
+# ── classify_risk_transition ──────────────────────────────────────
+
+
+def test_risk_off_when_de_risking_in_volatile_regime():
+    """De-risking action under a stressed regime = RISK_OFF.
+    Operator framing: 'triggered by volatility, news shock,
+    liquidity stress.'"""
+    rt = classify_risk_transition("volatile", "SCALE_OUT")
+    assert rt == "RISK_OFF"
+
+
+def test_risk_off_on_partial_cover_in_crisis():
+    rt = classify_risk_transition("crisis", "PARTIAL_COVER")
+    assert rt == "RISK_OFF"
+
+
+def test_risk_on_when_adding_in_calm_regime():
+    """RISK_ON = adding exposure in favorable conditions."""
+    rt = classify_risk_transition("calm", "SCALE_IN")
+    assert rt == "RISK_ON"
+
+
+def test_risk_on_when_opening_in_bullish_regime():
+    rt = classify_risk_transition("bullish", "OPEN")
+    assert rt == "RISK_ON"
+
+
+def test_neutral_when_de_risking_in_calm_regime():
+    """Reducing a LONG in a CALM regime is just risk management,
+    not a regime-level RISK_OFF event."""
+    rt = classify_risk_transition("calm", "SCALE_OUT")
+    assert rt == "NEUTRAL"
+
+
+def test_neutral_when_adding_in_volatile_regime():
+    """Adding exposure in a stressed regime is NOT RISK_ON —
+    that would invert the doctrine. NEUTRAL is the honest label."""
+    rt = classify_risk_transition("volatile", "SCALE_IN")
+    assert rt == "NEUTRAL"
+
+
+def test_flip_in_stressed_regime_is_risk_off():
+    """Flipping exposure under stress is a regime-level
+    de-risk because the brain is rotating away from its prior
+    bias under unfavorable conditions."""
+    rt = classify_risk_transition("stressed", "FLIP")
+    assert rt == "RISK_OFF"
+
+
+def test_unknown_regime_returns_neutral():
+    rt = classify_risk_transition("", "SCALE_IN")
+    assert rt == "NEUTRAL"
+
+
+# ── Brain-core integration: portfolio-manager layer on intents ────
+
+
+def test_brain_intent_stamps_scale_in_on_high_conviction_long_add():
+    """End-to-end: brain ticked against an existing LONG position
+    with strong signal MUST emit position_evolution=SCALE_IN, NOT
+    plain ADD. This is the PM mental shift made visible to the
+    operator and the audit log."""
+    sys.path.insert(0, "/app/external")
+    from brains.brain_core import NeutralAdversarialBrain
+
+    brain = NeutralAdversarialBrain(
+        brain_id="alpha", display_name="Camino",
+        lane="equity", shadow_only=True, min_commitment=0.0, min_gap=0.0,
+    )
+    snapshot = {
+        "symbol": "AAPL", "price": 195.0, "price_change_pct": 5.0,
+        "volume_change_pct": 200.0, "rsi": 35.0, "spread_bps": 1.0,
+        "volatility": 0.05, "trend_score": 0.95, "liquidity_score": 1.0,
+        "market_regime": "calm", "setup_score": 0.9,
+    }
+    ctx = {
+        "symbol": "AAPL", "lane": "equity",
+        "current_side": "LONG", "signed_qty": 50,
+        "allowed_transitions": ["SELL_TO_REDUCE", "SELL_TO_CLOSE", "BUY_TO_ADD_LONG"],
+    }
+    intent = brain.evaluate("AAPL", snapshot, position_context=ctx)
+    # With this snapshot the brain should produce a very high
+    # confidence BUY. That, against a LONG, must be SCALE_IN.
+    if intent.order_action == "BUY":
+        assert intent.transition_intent == "ADD"
+        assert intent.position_evolution in ("SCALE_IN", "ADD")
+        # Confidence threshold is 0.65 — if confidence cleared it,
+        # the verb MUST be SCALE_IN.
+        if intent.confidence >= 0.65:
+            assert intent.position_evolution == "SCALE_IN"
+        # In a CALM regime, SCALE_IN lifts to RISK_ON.
+        if intent.position_evolution == "SCALE_IN":
+            assert intent.risk_transition == "RISK_ON"
+
+
+def test_brain_intent_stamps_full_cover_on_high_conviction_buy_against_short():
+    """The AAPL-incident-shape end-to-end: brain emits BUY against a
+    SHORT with strong conviction. Must stamp position_evolution=
+    FULL_COVER (not OPEN_LONG, not even plain CLOSE — the operator
+    wants the PM-grade verb visible)."""
+    sys.path.insert(0, "/app/external")
+    from brains.brain_core import NeutralAdversarialBrain
+
+    brain = NeutralAdversarialBrain(
+        brain_id="alpha", display_name="Camino",
+        lane="equity", shadow_only=True, min_commitment=0.0, min_gap=0.0,
+    )
+    snapshot = {
+        "symbol": "AAPL", "price": 195.0, "price_change_pct": 5.0,
+        "volume_change_pct": 200.0, "rsi": 30.0, "spread_bps": 1.0,
+        "volatility": 0.05, "trend_score": 0.95, "liquidity_score": 1.0,
+        "market_regime": "calm", "setup_score": 0.9,
+    }
+    ctx = {
+        "symbol": "AAPL", "lane": "equity",
+        "current_side": "SHORT", "signed_qty": -100,
+        "allowed_transitions": ["BUY_TO_REDUCE", "BUY_TO_CLOSE", "SELL_TO_ADD_SHORT"],
+    }
+    intent = brain.evaluate("AAPL", snapshot, position_context=ctx)
+    if intent.order_action == "BUY":
+        assert intent.transition_intent == "CLOSE"
+        # FULL vs PARTIAL is gated by FULL_COVER_CONF_FLOOR=0.78.
+        if intent.confidence >= 0.78:
+            assert intent.position_evolution == "FULL_COVER"
+        else:
+            assert intent.position_evolution == "PARTIAL_COVER"
+
+
+def test_brain_intent_emits_risk_off_when_reducing_in_volatile_regime():
+    sys.path.insert(0, "/app/external")
+    from brains.brain_core import NeutralAdversarialBrain
+
+    brain = NeutralAdversarialBrain(
+        brain_id="alpha", display_name="Camino",
+        lane="equity", shadow_only=True, min_commitment=0.0, min_gap=0.0,
+    )
+    # Snapshot tuned for a SELL win and `volatile` regime — i.e. the
+    # brain is trimming a long under stress.
+    snapshot = {
+        "symbol": "AAPL", "price": 195.0, "price_change_pct": -5.0,
+        "volume_change_pct": 200.0, "rsi": 80.0, "spread_bps": 1.0,
+        "volatility": 0.6, "trend_score": -0.9, "liquidity_score": 1.0,
+        "market_regime": "volatile", "setup_score": 0.0,
+    }
+    ctx = {
+        "symbol": "AAPL", "lane": "equity",
+        "current_side": "LONG", "signed_qty": 50,
+        "allowed_transitions": ["SELL_TO_REDUCE", "SELL_TO_CLOSE", "BUY_TO_ADD_LONG"],
+    }
+    intent = brain.evaluate("AAPL", snapshot, position_context=ctx)
+    if intent.order_action == "SELL":
+        # Either SCALE_OUT (conviction ≥ 0.55) or CLOSE — both
+        # de-risking verbs — in a volatile regime, both lift to
+        # RISK_OFF.
+        assert intent.position_evolution in ("SCALE_OUT", "REDUCE", "CLOSE")
+        assert intent.risk_transition == "RISK_OFF"

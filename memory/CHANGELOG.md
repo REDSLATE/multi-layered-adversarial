@@ -1,3 +1,62 @@
+## 2026-06-09 (pass 7) — portfolio-manager vocabulary on brain intents
+
+### Operator directive (verbatim, pinned)
+> *"Teach them more transitions. Once they stop thinking in BUY/SELL
+> and start thinking in state transitions, the brains can learn much
+> richer behavior. The big mental shift is from 'what should I buy
+> or sell?' to 'how should this position evolve?'"*
+
+### Scope locked for this pass
+OPEN / ADD / REDUCE / CLOSE / FLIP (already shipped pass-6) +
+**SCALE_IN / SCALE_OUT / PARTIAL_COVER / FULL_COVER** +
+**RISK_ON / RISK_OFF / NEUTRAL**.
+
+Deferred per operator's "not all at once" — ROLL_FORWARD/UP/DOWN,
+ROTATE_SECTOR, ENABLE_HEDGE/REMOVE_HEDGE, ENTER_TREND/EXIT_TREND,
+ACCUMULATE/ATTACK/DEFEND/EXIT.
+
+### What changed
+- **`backend/shared/position_model.py`** — two new pure classifiers:
+  - `classify_position_evolution(transition_intent, current_side,
+    confidence, ...)` returns OPEN | ADD | REDUCE | CLOSE | FLIP |
+    HOLD | **SCALE_IN | SCALE_OUT | PARTIAL_COVER | FULL_COVER**.
+    Conviction-driven: ADD on LONG with `confidence ≥ 0.65` =
+    SCALE_IN (planned); REDUCE on LONG with `≥ 0.55` = SCALE_OUT
+    (lock-in gains); CLOSE on SHORT with `≥ 0.78` = FULL_COVER, else
+    PARTIAL_COVER.
+  - `classify_risk_transition(market_regime, position_evolution)`
+    returns RISK_ON | RISK_OFF | NEUTRAL. De-risking under a
+    stressed regime → RISK_OFF; risk-adding under a calm/bullish
+    regime → RISK_ON; everything else NEUTRAL.
+- **`external/brains/brain_core.py`** — `BrainIntent` gains
+  `position_evolution` and `risk_transition`. `evaluate()` derives
+  both via new `_derive_evolution()` static method (mirrors the
+  position_model logic so brain_core stays standalone).
+- **`external/brains/runner.py`** — MC payload evidence stamps both
+  new fields. `_apply_pattern_bias` re-derives them on action
+  promotion so the dashboard never shows stale verbs.
+- **`backend/tests/test_trade_transition.py`** — extended from 22 →
+  **45 tests**, all pass. Covers conviction thresholds, regime
+  combinations, FLIP-under-stress, and brain-core end-to-end.
+
+### Live verification (post-restart)
+- 19 fresh intents stamped under the new schema.
+- NVDA OPENs across all 4 brains: `position_evolution=OPEN
+  risk_transition=RISK_ON` (favorable conditions, opening
+  exposure).
+- ETH/USD HOLDs: `position_evolution=HOLD risk_transition=NEUTRAL`.
+- Position context still working: AAPL surfaces as LONG 1.3279
+  (broker_live); brain will stamp SCALE_IN/SCALE_OUT/CLOSE on next
+  AAPL tick.
+
+### Doctrine (this pass)
+- The mental shift: brains now reason about position evolution and
+  portfolio risk, not just order direction.
+- These are still **read-only stamps** — live execution sizing is
+  untouched. The new verbs ride as evidence so the operator can
+  see what the brain MEANT before any gate decisions consume them.
+
+
 ## 2026-06-09 (pass 6) — trade-transition layer wired into brain decisions
 
 ### Operator directive (verbatim, pinned)

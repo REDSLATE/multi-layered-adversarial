@@ -443,5 +443,188 @@ __all__ = [
     "classify_intent", "detect_misread",
     "classify_trade_transition", "normalize_position",
     "allowed_transitions_for",
+    "classify_position_evolution", "classify_risk_transition",
     "ACTION_BUY", "ACTION_SELL", "ACTION_SHORT", "ACTION_COVER",
 ]
+
+
+# ── Portfolio-manager-grade vocabulary (operator directive, 2026-06-XX) ──
+#
+# Doctrine pin (verbatim):
+#   "Once they stop thinking in BUY/SELL and start thinking in state
+#    transitions, the brains can learn much richer behavior … the big
+#    mental shift is from 'what should I buy or sell?' to 'how should
+#    this position evolve?'"
+#
+# The base 10-state vocabulary (classify_trade_transition) is the
+# wire-level grammar. The functions below sit ABOVE that as the
+# portfolio-manager layer. They take the primitive transition_intent
+# and refine it using confidence (planned vs reactive), order
+# magnitude (partial vs full), and market regime (RISK_ON / RISK_OFF).
+#
+# Operator's scoped vocabulary for THIS pass (90% of real PM behavior):
+#   Position evolution :  OPEN  ADD  REDUCE  CLOSE  FLIP
+#                         SCALE_IN  SCALE_OUT
+#                         PARTIAL_COVER  FULL_COVER
+#                         HOLD
+#   Risk transition    :  RISK_ON  RISK_OFF  NEUTRAL
+#
+# Reserved for later (operator explicitly deferred):
+#   ROLL_FORWARD / ROLL_UP / ROLL_DOWN (options)
+#   ROTATE_SECTOR (portfolio)
+#   ENABLE_HEDGE / REMOVE_HEDGE (portfolio)
+#   ENTER_TREND / EXIT_TREND (regime)
+#   OBSERVE / ACCUMULATE / ATTACK / DEFEND / EXIT (market awareness)
+#
+# Thresholds below are operator-tunable but live as named constants
+# so the audit log can pin "this brain emitted SCALE_IN because
+# confidence=0.72 >= SCALE_IN_CONFIDENCE_FLOOR".
+
+# Confidence floor above which a BUY into an existing LONG is a
+# planned SCALE_IN rather than a reactive ADD. Operator's framing:
+# "SCALE_IN is different from a normal ADD because it's planned."
+# We encode "planned" as "brain committed enough that the action is
+# a deliberate increment, not a momentum reaction."
+SCALE_IN_CONFIDENCE_FLOOR = 0.65
+
+# Confidence floor above which a SELL into an existing LONG is a
+# planned SCALE_OUT (lock in gains) rather than a reactive REDUCE.
+SCALE_OUT_CONFIDENCE_FLOOR = 0.55
+
+# Confidence floor above which a BUY against a SHORT is a full
+# FULL_COVER rather than a PARTIAL_COVER. Confidence here is a
+# proxy for "the brain wants the whole short off" — the actual
+# order quantity is sized by the gate chain, not the brain.
+FULL_COVER_CONFIDENCE_FLOOR = 0.78
+
+# Regimes that put us in defensive posture. Any de-risking action
+# (REDUCE / CLOSE / SCALE_OUT / PARTIAL_COVER) under one of these
+# regimes lifts the intent to RISK_OFF. Any risk-adding action
+# (OPEN / ADD / SCALE_IN) under a CALM/BULLISH regime lifts to
+# RISK_ON. Doctrine: brains report the RISK transition; the gate
+# chain decides whether to honor it.
+RISK_OFF_REGIMES = frozenset({"volatile", "crisis", "stressed", "risk_off"})
+RISK_ON_REGIMES = frozenset({"calm", "bullish", "trend", "risk_on"})
+
+
+def classify_position_evolution(
+    transition_intent: str,
+    current_side: str,
+    confidence: float = 0.0,
+    order_qty: float = 0.0,
+    abs_position_qty: float = 0.0,
+) -> str:
+    """Refine the base 10-state transition into the portfolio-manager
+    vocabulary the operator pinned (2026-06-XX).
+
+    Args:
+        transition_intent:  One of the 6-state primitives the brain
+                            already emits — OPEN / ADD / REDUCE /
+                            CLOSE / FLIP / HOLD.
+        current_side:       LONG / SHORT / FLAT.
+        confidence:         Brain confidence ∈ [0, 1]. High =
+                            "planned move", low = "reactive nudge".
+        order_qty:          Brain's intended size (magnitude). Used
+                            only for PARTIAL vs FULL cover when the
+                            primitive can't tell.
+        abs_position_qty:   |signed_qty| of current position.
+
+    Returns:
+        One of:  OPEN  ADD  REDUCE  CLOSE  FLIP  HOLD
+                 SCALE_IN  SCALE_OUT
+                 PARTIAL_COVER  FULL_COVER
+
+    Doctrine pin:
+        SCALE_IN  ≠ ADD       (planned vs reactive)
+        SCALE_OUT ≠ REDUCE    (lock-in-gains vs panic-trim)
+        PARTIAL_COVER ≠ FULL_COVER (taking some off vs flat)
+
+        FLIP and HOLD are passed through unchanged — they have no
+        refined form in the operator's spec.
+    """
+    side = (current_side or "FLAT").upper()
+    base = (transition_intent or "HOLD").upper()
+    c = float(confidence or 0.0)
+
+    if base in ("HOLD", "FLIP", "OPEN"):
+        return base
+
+    if base == "ADD":
+        # ADD only happens on the matching side (LONG+BUY or
+        # SHORT+SELL). High-confidence ADD on a LONG = SCALE_IN
+        # (planned increment). For SHORT, the operator-pinned
+        # vocabulary keeps "ADD_SHORT" plain — there's no
+        # SCALE_IN_SHORT in the scoped list — so SHORT stays ADD.
+        if side == "LONG" and c >= SCALE_IN_CONFIDENCE_FLOOR:
+            return "SCALE_IN"
+        return "ADD"
+
+    if base == "REDUCE":
+        # REDUCE on a LONG with enough conviction = SCALE_OUT
+        # (lock-in-gains). REDUCE on a SHORT is a partial cover.
+        if side == "LONG":
+            if c >= SCALE_OUT_CONFIDENCE_FLOOR:
+                return "SCALE_OUT"
+            return "REDUCE"
+        if side == "SHORT":
+            # Order qty < abs(position) is, by definition of REDUCE,
+            # already true here. Operator's PARTIAL_COVER is exactly
+            # this. We keep the label distinct from PLAIN REDUCE so
+            # the audit log can show "the brain wanted SOME of the
+            # short off, not all."
+            return "PARTIAL_COVER"
+        return "REDUCE"
+
+    if base == "CLOSE":
+        # CLOSE on a SHORT = FULL_COVER. Use confidence to confirm —
+        # if the brain isn't committed, downgrade to PARTIAL_COVER.
+        if side == "SHORT":
+            if c >= FULL_COVER_CONFIDENCE_FLOOR:
+                return "FULL_COVER"
+            # Low-commitment CLOSE on a short is closer to a partial
+            # cover semantically — the brain is hedging its bet.
+            return "PARTIAL_COVER"
+        # CLOSE on a LONG stays CLOSE (operator did not introduce a
+        # PARTIAL_CLOSE for longs — SCALE_OUT covers the partial
+        # case, CLOSE means flatten).
+        return "CLOSE"
+
+    return base
+
+
+def classify_risk_transition(
+    market_regime: str,
+    position_evolution: str,
+) -> str:
+    """Lift a per-symbol evolution into a portfolio risk verb.
+
+    Operator framing:
+        RISK_OFF → triggered by volatility, news shock, liquidity stress.
+        RISK_ON  → triggered by favorable conditions.
+
+    We honour that doctrine using two inputs the brain already has:
+        market_regime    — what the snapshot says about conditions
+        position_evolution — whether the brain is adding or trimming risk
+
+    Returns: RISK_ON | RISK_OFF | NEUTRAL
+
+    NEUTRAL is the honest default — most ticks are not regime-
+    crossing events. We never label every ADD/REDUCE as a risk
+    transition; only the ones happening in a regime that makes the
+    direction meaningful at the portfolio level.
+    """
+    regime = (market_regime or "").lower().strip()
+    evo = (position_evolution or "").upper()
+
+    de_risk_evos = {"REDUCE", "CLOSE", "SCALE_OUT", "PARTIAL_COVER", "FULL_COVER"}
+    add_risk_evos = {"OPEN", "ADD", "SCALE_IN"}
+
+    if regime in RISK_OFF_REGIMES and evo in de_risk_evos:
+        return "RISK_OFF"
+    if regime in RISK_ON_REGIMES and evo in add_risk_evos:
+        return "RISK_ON"
+    # FLIP into either direction in a stressed regime is genuinely a
+    # risk transition — the brain is rotating exposure under stress.
+    if regime in RISK_OFF_REGIMES and evo == "FLIP":
+        return "RISK_OFF"
+    return "NEUTRAL"

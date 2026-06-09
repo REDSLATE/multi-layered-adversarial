@@ -476,6 +476,18 @@ def _apply_pattern_bias(intent: BrainIntent, setup_score: float) -> BrainIntent:
         intent.transition_intent = ti
         intent.target_exposure = te
         intent.order_action = oa
+        # Re-derive the portfolio-manager layer on promotion too,
+        # otherwise SCALE_IN / PARTIAL_COVER / RISK_ON markers would
+        # be stale relative to the new BUY action.
+        evo, risk = NeutralAdversarialBrain._derive_evolution(
+            ti,
+            intent.current_side or "FLAT",
+            float(intent.confidence),
+            float(abs(intent.signed_qty or 0.0)),
+            (intent.snapshot or {}).get("market_regime", ""),
+        )
+        intent.position_evolution = evo
+        intent.risk_transition = risk
     return intent
 
 
@@ -519,6 +531,8 @@ def _intent_to_mc_payload(intent: BrainIntent) -> dict:
             "target_exposure": intent.target_exposure,
             "transition_intent": intent.transition_intent,
             "order_action": intent.order_action,
+            "position_evolution": intent.position_evolution,
+            "risk_transition": intent.risk_transition,
             "position_context": intent.snapshot.get("position_context"),
         },
     }

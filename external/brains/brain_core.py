@@ -63,6 +63,14 @@ class BrainIntent:
     target_exposure: Optional[str] = None         # LONG | SHORT | FLAT
     transition_intent: Optional[str] = None       # OPEN | ADD | REDUCE | CLOSE | FLIP | HOLD
     order_action: Optional[str] = None            # BUY | SELL (broker instruction)
+    # Portfolio-manager-grade layer (operator directive, 2026-06-XX
+    # follow-up). `position_evolution` refines `transition_intent`
+    # with SCALE_IN / SCALE_OUT / PARTIAL_COVER / FULL_COVER when the
+    # brain's confidence + position context make the move meaningful
+    # at the PM level. `risk_transition` lifts the per-symbol verb to
+    # a portfolio risk verb (RISK_ON / RISK_OFF / NEUTRAL).
+    position_evolution: Optional[str] = None
+    risk_transition: Optional[str] = None
 
 
 class NeutralAdversarialBrain:
@@ -160,12 +168,24 @@ class NeutralAdversarialBrain:
         transition_intent, target_exposure, order_action = self._derive_transition(
             final_action, current_side, signed_qty_val,
         )
+        # Portfolio-manager layer — refine the primitive into the
+        # SCALE_IN / SCALE_OUT / PARTIAL_COVER / FULL_COVER vocabulary
+        # using brain confidence + position context. Computed even
+        # when ctx is None (defaults to FLAT → OPEN passes through).
+        position_evolution, risk_transition = self._derive_evolution(
+            transition_intent, current_side,
+            float(final_confidence),
+            float(abs(signed_qty_val)),
+            snapshot.get("market_regime", ""),
+        )
         if ctx:
             reasoning.append(
                 f"trade_transition: order_action={order_action} "
                 f"current_side={current_side} → "
                 f"target_exposure={target_exposure} "
-                f"transition_intent={transition_intent}"
+                f"transition_intent={transition_intent} "
+                f"position_evolution={position_evolution} "
+                f"risk_transition={risk_transition}"
             )
 
         return BrainIntent(
@@ -192,6 +212,8 @@ class NeutralAdversarialBrain:
             target_exposure=target_exposure,
             transition_intent=transition_intent,
             order_action=order_action,
+            position_evolution=position_evolution,
+            risk_transition=risk_transition,
         )
 
     @staticmethod
@@ -238,6 +260,89 @@ class NeutralAdversarialBrain:
             return ("ADD", "SHORT", "SELL")
         # side == LONG — SELL against a long is a close.
         return ("CLOSE", "FLAT", "SELL")
+
+    # ── Portfolio-manager-grade refinement (2026-06-XX) ─────────
+    # Thresholds mirrored from shared.position_model so brain_core
+    # stays a pure standalone module (the brain runner can ship
+    # without importing MC's shared lib at decision time).
+    SCALE_IN_CONF_FLOOR = 0.65
+    SCALE_OUT_CONF_FLOOR = 0.55
+    FULL_COVER_CONF_FLOOR = 0.78
+    _RISK_OFF_REGIMES = ("volatile", "crisis", "stressed", "risk_off")
+    _RISK_ON_REGIMES = ("calm", "bullish", "trend", "risk_on")
+
+    @staticmethod
+    def _derive_evolution(
+        transition_intent: str,
+        current_side: str,
+        confidence: float,
+        abs_position_qty: float,
+        market_regime: str,
+    ) -> tuple:
+        """Lift the primitive transition into the portfolio-manager
+        vocabulary and the portfolio-level risk verb.
+
+        Returns:
+            (position_evolution, risk_transition)
+
+        Where:
+            position_evolution ∈ {OPEN, ADD, REDUCE, CLOSE, FLIP,
+                                  HOLD, SCALE_IN, SCALE_OUT,
+                                  PARTIAL_COVER, FULL_COVER}
+            risk_transition    ∈ {RISK_ON, RISK_OFF, NEUTRAL}
+
+        Doctrine pin:
+            SCALE_IN  is a planned ADD (conviction-driven).
+            SCALE_OUT is a planned REDUCE on a LONG (lock-in gains).
+            PARTIAL_COVER is a REDUCE on a SHORT (taking some off).
+            FULL_COVER  is a CLOSE on a SHORT (full flat).
+
+        Reasoning is mirrored in `shared.position_model.
+        classify_position_evolution` so the audit log and the brain
+        always agree on the verb.
+        """
+        side = (current_side or "FLAT").upper()
+        base = (transition_intent or "HOLD").upper()
+        c = float(confidence or 0.0)
+        regime = (market_regime or "").lower().strip()
+
+        # Primitives that pass through unchanged.
+        if base in ("HOLD", "FLIP", "OPEN"):
+            evo = base
+        elif base == "ADD":
+            evo = ("SCALE_IN" if (side == "LONG" and
+                                  c >= NeutralAdversarialBrain.SCALE_IN_CONF_FLOOR)
+                   else "ADD")
+        elif base == "REDUCE":
+            if side == "LONG":
+                evo = ("SCALE_OUT" if c >= NeutralAdversarialBrain.SCALE_OUT_CONF_FLOOR
+                       else "REDUCE")
+            elif side == "SHORT":
+                evo = "PARTIAL_COVER"
+            else:
+                evo = "REDUCE"
+        elif base == "CLOSE":
+            if side == "SHORT":
+                evo = ("FULL_COVER" if c >= NeutralAdversarialBrain.FULL_COVER_CONF_FLOOR
+                       else "PARTIAL_COVER")
+            else:
+                evo = "CLOSE"
+        else:
+            evo = base
+
+        # Risk-transition lift.
+        de_risk = {"REDUCE", "CLOSE", "SCALE_OUT", "PARTIAL_COVER", "FULL_COVER"}
+        add_risk = {"OPEN", "ADD", "SCALE_IN"}
+        if regime in NeutralAdversarialBrain._RISK_OFF_REGIMES and evo in de_risk:
+            risk = "RISK_OFF"
+        elif regime in NeutralAdversarialBrain._RISK_ON_REGIMES and evo in add_risk:
+            risk = "RISK_ON"
+        elif regime in NeutralAdversarialBrain._RISK_OFF_REGIMES and evo == "FLIP":
+            risk = "RISK_OFF"
+        else:
+            risk = "NEUTRAL"
+
+        return (evo, risk)
 
     def _build_hypotheses(self, s: Dict[str, Any]) -> List[Hypothesis]:
         price_change = float(s.get("price_change_pct", 0.0))

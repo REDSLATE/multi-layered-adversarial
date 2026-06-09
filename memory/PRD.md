@@ -1,5 +1,39 @@
 # Mission Control — PRD (latest pass on top)
 
+## 🆕 2026-06-09 (pass 7) — portfolio-manager vocabulary on brain intents
+
+### Operator directive (verbatim)
+> *"Teach them more transitions. The big mental shift is from
+> 'what should I buy or sell?' to 'how should this position evolve?'"*
+
+### Vocabulary scope (locked for this pass)
+- **Position evolution**: OPEN, ADD, REDUCE, CLOSE, FLIP, HOLD,
+  **SCALE_IN, SCALE_OUT, PARTIAL_COVER, FULL_COVER**.
+- **Risk transition**: RISK_ON, RISK_OFF, NEUTRAL.
+
+### Thresholds (operator-tunable, pinned in code)
+- `SCALE_IN_CONFIDENCE_FLOOR  = 0.65` (planned LONG ADD)
+- `SCALE_OUT_CONFIDENCE_FLOOR = 0.55` (lock-in-gains LONG REDUCE)
+- `FULL_COVER_CONFIDENCE_FLOOR = 0.78` (full SHORT close)
+- `RISK_OFF_REGIMES = {volatile, crisis, stressed, risk_off}`
+- `RISK_ON_REGIMES = {calm, bullish, trend, risk_on}`
+
+### Files
+- `backend/shared/position_model.py` — `classify_position_evolution`,
+  `classify_risk_transition`.
+- `external/brains/brain_core.py` — `BrainIntent.position_evolution`
+  & `.risk_transition`; `_derive_evolution()`.
+- `external/brains/runner.py` — payload evidence + pattern-bias
+  re-derivation.
+- `backend/tests/test_trade_transition.py` — 45 tests passing.
+
+### Deferred to later passes
+ROLL_FORWARD / ROLL_UP / ROLL_DOWN (options) ·
+ROTATE_SECTOR · ENABLE_HEDGE / REMOVE_HEDGE ·
+ENTER_TREND / EXIT_TREND · ACCUMULATE / ATTACK / DEFEND / EXIT.
+
+
+
 ## 🆕 2026-06-09 (pass 6) — trade-transition layer wired into brain decisions
 
 ### Operator directive (verbatim, pinned)
