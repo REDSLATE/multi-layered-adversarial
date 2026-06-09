@@ -1087,19 +1087,34 @@ async def execution_diagnose(
         broker_status["adapter_loaded"] = adapter is not None
         broker_status["adapter_name"] = getattr(adapter, "name", None)
     else:
-        adapter = await get_alpaca_adapter()
+        # Equity lane → Public.com (Alpaca was retired 2026-06-XX;
+        # references to alpaca_credentials / get_alpaca_adapter here
+        # used to make the diagnose UI render "EQUITY · ALPACA · NOT
+        # LOADED" forever even though the brain runtime had moved on
+        # to Public.com. Now keys off `public_credentials` and uses
+        # the same lane-adapter pattern the crypto branch does.)
+        adapter = await _adapter_for_lane("equity")
         broker_status["adapter_loaded"] = adapter is not None
         broker_status["adapter_name"] = getattr(adapter, "name", None)
-        # Alpaca status doc preview (no secrets).
-        doc = await db["alpaca_credentials"].find_one(
+        # Public.com status doc preview (no secrets).
+        doc = await db["public_credentials"].find_one(
             {"_id": "singleton"},
-            {"_id": 0, "execution_enabled": 1, "paper": 1, "key_id_preview": 1, "updated_at": 1},
+            {
+                "_id": 0, "execution_enabled": 1, "account_id": 1,
+                "secret_preview": 1, "base_url": 1,
+                "access_token_expires_at": 1, "updated_at": 1,
+            },
         )
-        broker_status["alpaca_credentials"] = doc
+        broker_status["public_credentials"] = doc
         broker_status["remediation"] = (
-            "POST {key_id, secret_key, paper} to /api/admin/alpaca/connect "
-            "if alpaca_credentials is None or execution_enabled=False."
-        ) if not doc or not doc.get("execution_enabled") else "alpaca connection live"
+            "POST {secret} to /api/admin/public/connect "
+            "if public_credentials is None, then flip "
+            "execution_enabled=True with the typed-phrase confirmation."
+        ) if not doc or not doc.get("execution_enabled") else (
+            "public.com connection live — if orders still fail, "
+            "check that the access token hasn't expired (see "
+            "access_token_expires_at) and the account has buying power."
+        )
 
     first_block = next((g for g in gate_result["gates"] if not g["passed"]), None)
 

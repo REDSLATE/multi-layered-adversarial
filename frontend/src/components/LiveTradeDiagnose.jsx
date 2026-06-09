@@ -58,14 +58,14 @@ function LaneCard({ lane, notional }) {
 
   const broker = data?.broker || {};
   const kraken = broker.kraken_credentials;
-  const alpaca = broker.alpaca_credentials;
+  const publicCreds = broker.public_credentials;
   const verdictColor = data?.verdict === "would_pass" ? "#10B981" : "#DC2626";
 
   return (
     <Card testid={`live-trade-diagnose-${lane}`}>
       <div className="flex items-center justify-between mb-3">
         <div>
-          <div className="label-eyebrow text-rd-dim">{lane === "crypto" ? "Crypto · Kraken" : "Equity · Alpaca"}</div>
+          <div className="label-eyebrow text-rd-dim">{lane === "crypto" ? "Crypto · Kraken" : "Equity · Public.com"}</div>
           <div className="font-display text-lg font-black tracking-tight uppercase">
             Live trade: {data?.verdict === "would_pass" ? "READY" : "BLOCKED"}
           </div>
@@ -130,14 +130,14 @@ function LaneCard({ lane, notional }) {
                 <span className="text-rd-dim">FIX:</span> {broker.remediation}
               </div>
             )}
-            {alpaca !== undefined && (
+            {publicCreds !== undefined && (
               <div className="mt-2 text-[10px] font-mono">
-                <span className="text-rd-dim">alpaca singleton: </span>
-                {alpaca === null ? (
+                <span className="text-rd-dim">public.com singleton: </span>
+                {publicCreds === null ? (
                   <Badge color="#F59E0B">NOT CONNECTED</Badge>
                 ) : (
                   <span className="text-rd-text">
-                    paper={String(alpaca.paper)} exec={String(alpaca.execution_enabled)}
+                    acct={publicCreds.account_id || "—"} exec={String(publicCreds.execution_enabled)}
                   </span>
                 )}
               </div>
