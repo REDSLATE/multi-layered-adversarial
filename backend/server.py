@@ -152,6 +152,7 @@ from routes.runtime_token_health import router as runtime_token_health_router
 from routes.alpha_vantage_admin import router as alpha_vantage_admin_router
 from routes.broker_lane_admin import router as broker_lane_admin_router
 from routes.auto_router_admin import router as auto_router_admin_router
+from routes.position_misread_admin import router as position_misread_admin_router
 from routes.intent_origin import router as intent_origin_router
 
 
@@ -676,6 +677,7 @@ api_router.include_router(lane_execution_router)
 api_router.include_router(observation_receipts_router)
 api_router.include_router(learning_ladder_router)
 api_router.include_router(auto_router_admin_router)
+api_router.include_router(position_misread_admin_router)
 api_router.include_router(intent_inspect_router)
 
 api_router.include_router(coordinator_router)
