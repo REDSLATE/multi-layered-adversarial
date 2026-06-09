@@ -6,7 +6,7 @@ import { Card } from "@/components/ui-bits";
  * served by MC's in-process status endpoint at
  * `/api/admin/runtime/{brain}/status`.
  *
- * The 4 permanent brains (Camino / Barracuda / Hellcat / GTO) run
+ * The 4 permanent brains (Alpha / Camaro / Chevelle / Redeye) run
  * in-process inside MC's FastAPI event loop. The old external-
  * sidecar proxy (with its "MC could not fetch" error path and
  * force-refresh button) was REMOVED — the brains are MC. The tile

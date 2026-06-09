@@ -451,7 +451,7 @@ async def lifespan(app: FastAPI):
         logger.info("daily_snapshot worker started")
     except Exception as e:  # noqa: BLE001
         logger.warning("daily_snapshot worker start failed: %s", e)
-    # 2026-06-07 — Neutral brain stand-ins (Camino/Barracuda/Hellcat/GTO).
+    # 2026-06-07 — Neutral brain stand-ins (Alpha/Camaro/Chevelle/Redeye).
     # Stand-ins until the real per-brain wild_adaptive_core_v2 modules
     # are migrated to this stack. Gated by NEUTRAL_BRAINS_ENABLED
     # (default off); when on, 4 in-process asyncio tasks post intents

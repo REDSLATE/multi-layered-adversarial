@@ -1,4 +1,4 @@
-"""Neutral adversarial brain core (Camino template).
+"""Neutral adversarial brain core.
 
 Position-neutral by design: this module emits ranked action
 hypotheses {BUY, SELL, HOLD, OBSERVE} for a given (symbol,
@@ -10,8 +10,10 @@ how the brain's output is treated — never the brain's identity.
 This is the stand-in template the operator is running until the
 real per-brain wild_adaptive_core_v2 modules are migrated to this
 stack. Each running sidecar instantiates one of these with a
-distinct `brain_id` (one of MC's 4 internal slot names) and a
-distinct `display_name` (Camino / Barracuda / Hellcat / GTO).
+distinct `brain_id` and `display_name`. The canonical IDs used
+across the whole stack are: alpha, camaro, chevelle, redeye.
+The legacy car-template labels (Camino/Barracuda/Hellcat/GTO)
+were retired 2026-06-XX in favour of those canonical names.
 """
 from __future__ import annotations
 
@@ -52,7 +54,7 @@ class BrainIntent:
     memory_tags: List[str]
 
 
-class CaminoAdversarialBrain:
+class NeutralAdversarialBrain:
     """Position-neutral adversarial decision brain.
 
     The brain only ranks action hypotheses. It does NOT know which

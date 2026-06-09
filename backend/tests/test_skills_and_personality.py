@@ -96,13 +96,13 @@ def test_apply_personality_unknown_brain_is_neutral():
 
 
 def test_all_four_brains_have_distinct_personalities():
-    """Camino / Barracuda / Hellcat / GTO MUST have different
+    """Alpha / Camaro / Chevelle / Redeye MUST have different
     confidence multipliers — that's the whole point of personalities.
     A regression that makes them identical would erase brain-level
     differentiation."""
     mults = {
         b: BRAIN_PERSONALITIES[b]["confidence_mult"]
-        for b in ("camino", "barracuda", "hellcat", "gto")
+        for b in ("alpha", "camaro", "chevelle", "redeye")
     }
     assert len(set(mults.values())) == 4, (
         f"brain multipliers should be distinct, got {mults}"

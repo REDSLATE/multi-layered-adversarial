@@ -2,8 +2,8 @@
 
 Doctrine: brain personalities are CONFIDENCE MODULATORS only. They
 shape the rate at which a given brain's intents trip the learning
-ladder's promotion threshold — opportunistic brains (Barracuda) get
-to micro_live faster on a strong signal; disciplined brains (GTO)
+ladder's promotion threshold — opportunistic brains (Camaro) get
+to micro_live faster on a strong signal; disciplined brains (Redeye)
 require more evidence. They DO NOT modify action (BUY/SELL/HOLD)
 and they DO NOT add any gate on top of MC.
 
@@ -16,57 +16,45 @@ Every restriction lives in MC's existing layer:
 
 The personality multiplier just shapes how loud the brain's "this
 is a strong read" signal is — not whether the trade happens.
+
+2026-06-XX: Retired legacy display labels (Camino/Barracuda/Hellcat/GTO).
+This module now keys directly on the canonical brain IDs the rest
+of the stack already uses (alpha, camaro, chevelle, redeye). The
+risk-profile *multipliers* are preserved verbatim — we only dropped
+the label layer.
 """
 from __future__ import annotations
 
 
 BRAIN_PERSONALITIES: dict[str, dict[str, object]] = {
-    "camino": {
-        "display_name": "Camino",
+    "alpha": {
+        "display_name": "Alpha",
         "confidence_mult": 1.00,
         "risk_mode": "balanced",
     },
-    "barracuda": {
-        "display_name": "Barracuda",
+    "camaro": {
+        "display_name": "Camaro",
         "confidence_mult": 1.15,
         "risk_mode": "opportunistic",
     },
-    "hellcat": {
-        "display_name": "Hellcat",
+    "chevelle": {
+        "display_name": "Chevelle",
         "confidence_mult": 1.30,
         "risk_mode": "aggressive",
     },
-    "gto": {
-        "display_name": "GTO",
+    "redeye": {
+        "display_name": "Redeye",
         "confidence_mult": 0.85,
         "risk_mode": "disciplined",
     },
 }
 
 
-# We pin the brain_id → personality mapping with the same keys MC
-# uses internally. Camino runs as `alpha`, Barracuda as `camaro`,
-# etc. (legacy holdover from the external-sidecar era — the
-# operator-facing display name is the one in the table above).
-_BRAIN_ID_TO_PERSONALITY = {
-    "alpha": "camino",
-    "camaro": "barracuda",
-    "chevelle": "hellcat",
-    "redeye": "gto",
-    # Also accept the display names directly so callers don't have
-    # to remember the mapping.
-    "camino": "camino",
-    "barracuda": "barracuda",
-    "hellcat": "hellcat",
-    "gto": "gto",
-}
-
-
 def get_personality(brain: str) -> dict[str, object]:
-    """Resolve a brain identifier (brain_id OR display name) to its
-    personality config. Unknown brains return the neutral default."""
-    key = _BRAIN_ID_TO_PERSONALITY.get((brain or "").lower())
-    return BRAIN_PERSONALITIES.get(key or "", {
+    """Resolve a brain identifier to its personality config. Unknown
+    brains return the neutral default (balanced, ×1.00)."""
+    key = (brain or "").lower()
+    return BRAIN_PERSONALITIES.get(key, {
         "display_name": brain,
         "confidence_mult": 1.00,
         "risk_mode": "balanced",

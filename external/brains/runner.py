@@ -10,7 +10,7 @@ Each `BrainRunner` instance:
   4. Synthesizes the brain's snapshot from the technical response
      (real bid/ask/spread when available; falls back to deterministic
      stubs only on cold-start).
-  5. Asks `CaminoAdversarialBrain.evaluate` for a ranked verdict —
+  5. Asks `NeutralAdversarialBrain.evaluate` for a ranked verdict —
      the BUY hypothesis is biased UP by setup_score when the pattern
      is hot. The pattern is descriptive evidence, NOT a gate.
   6. POSTs to `/api/intents` over loopback.
@@ -49,7 +49,7 @@ from typing import Optional
 
 import httpx
 
-from .brain_core import BrainIntent, CaminoAdversarialBrain
+from .brain_core import BrainIntent, NeutralAdversarialBrain
 from .personality import apply_personality_confidence, get_personality
 
 
@@ -106,13 +106,14 @@ def _select_skills_for(lane: str, symbol: str, action: str, snapshot: dict) -> t
 
 
 # ── Brain identity map. INTERNAL slot ids match MC's existing 4
-# runtime slots (no test churn); DISPLAY NAME is the car-name the
-# operator wants surfaced in the dashboard.
+# runtime slots; display names now match those canonical IDs
+# 1:1 — legacy car-template labels (Camino/Barracuda/Hellcat/GTO)
+# were retired 2026-06-XX.
 BRAIN_ROSTER = [
-    ("alpha",    "Camino",    "ALPHA_INGEST_TOKEN"),
-    ("camaro",   "Barracuda", "CAMARO_INGEST_TOKEN"),
-    ("chevelle", "Hellcat",   "CHEVELLE_INGEST_TOKEN"),
-    ("redeye",   "GTO",       "REDEYE_INGEST_TOKEN"),
+    ("alpha",    "Alpha",    "ALPHA_INGEST_TOKEN"),
+    ("camaro",   "Camaro",   "CAMARO_INGEST_TOKEN"),
+    ("chevelle", "Chevelle", "CHEVELLE_INGEST_TOKEN"),
+    ("redeye",   "Redeye",   "REDEYE_INGEST_TOKEN"),
 ]
 
 
@@ -267,7 +268,7 @@ def _checkin_stamp(brain_id: str, display_name: str) -> dict:
             "sidecar_version": (
                 _env("RISEDUAL_SIDECAR_VERSION")
                 or _env("BRAIN_SIDECAR_VERSION")
-                or "neutral-camino-v1"
+                or "neutral-v2"
             ),
             # CANONICAL policy hash — same SHA256 MC computes. Matches
             # by construction unless someone forks the doctrine dict
@@ -438,7 +439,7 @@ def _intent_to_mc_payload(intent: BrainIntent) -> dict:
                 bool(intent.size > 0) and not intent.shadow_only
             ),
             "shadow_only": intent.shadow_only,
-            "neutral_template_version": "camino-v1",
+            "neutral_template_version": "neutral-v2",
             "memory_tags": intent.memory_tags,
             "hypothesis_scores": intent.hypothesis_scores,
             "display_name": intent.display_name,
@@ -481,13 +482,13 @@ class BrainRunner:
         # all lanes share defaults but the layout supports divergence.
         shadow_only = _shadow_only_default()
         self._cores = {
-            "crypto": CaminoAdversarialBrain(
+            "crypto": NeutralAdversarialBrain(
                 brain_id=brain_id, display_name=display_name,
                 lane="crypto", shadow_only=shadow_only,
                 min_commitment=0.58, min_gap=0.06,
                 max_shadow_size=1.0 if not shadow_only else 0.0,
             ),
-            "equity": CaminoAdversarialBrain(
+            "equity": NeutralAdversarialBrain(
                 brain_id=brain_id, display_name=display_name,
                 lane="equity", shadow_only=shadow_only,
                 min_commitment=0.58, min_gap=0.06,

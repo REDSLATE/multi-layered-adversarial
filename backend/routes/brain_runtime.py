@@ -1,6 +1,6 @@
 """Brain-callable runtime endpoints (rewritten 2026-02-XX).
 
-The 4 permanent neutral brains (Camino / Barracuda / Hellcat / GTO)
+The 4 permanent neutral brains (Alpha / Camaro / Chevelle / Redeye)
 run IN-PROCESS inside MC's FastAPI event loop. There is no external
 sidecar to proxy to. The status surface synthesizes state directly
 from MC's own collections (`shared_heartbeats`, `sovereign_state`,
