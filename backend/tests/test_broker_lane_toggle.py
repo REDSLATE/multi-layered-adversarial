@@ -124,13 +124,25 @@ async def test_route_order_blocks_when_lane_disabled(monkeypatch):
 @pytest.mark.asyncio
 async def test_route_order_allows_other_lane_when_one_disabled(monkeypatch):
     """Disabling equity must NOT block crypto. Independence is the
-    contract."""
+    contract.
+
+    SAFETY: every broker loader is monkeypatched to a no-op so this
+    test can NEVER fire a real order — credentials and execution
+    gates being open is no longer an attack vector for tests.
+    """
     from shared.broker_router import route_order, BrokerRouteBlocked
     from shared import broker_router as br
 
     await db[BROKER_LANE_TOGGLES].insert_one({
         "_id": "equity", "enabled": False,
     })
+
+    async def _stub_adapter():
+        return None  # no adapter → router raises BrokerRouteBlocked downstream
+    monkeypatch.setattr(br, "_get_public_adapter", _stub_adapter)
+    monkeypatch.setattr(br, "_get_equity_adapter", _stub_adapter)
+    monkeypatch.setattr(br, "get_kraken_adapter", _stub_adapter)
+    monkeypatch.setattr(br, "get_alpaca_adapter", _stub_adapter)
 
     intent = {
         "intent_id": "test-crypto-allowed",
@@ -139,11 +151,6 @@ async def test_route_order_allows_other_lane_when_one_disabled(monkeypatch):
         "confidence": 0.7,
         "stack": "redeye",
     }
-    # The crypto intent must NOT be rejected with a lane-disabled
-    # message. ANY other downstream exception (live broker rejection
-    # for insufficient funds, missing creds in CI, etc.) is fine —
-    # it proves the lane toggle path treated equity/crypto
-    # independently as designed.
     try:
         await route_order(intent, notional_usd=10.0)
     except BrokerRouteBlocked as e:
@@ -156,13 +163,28 @@ async def test_route_order_allows_other_lane_when_one_disabled(monkeypatch):
 async def test_route_order_fails_open_on_toggle_lookup_error(monkeypatch):
     """If the toggle collection is unreachable (Mongo blip), the
     router must NOT block all trading — it should fall through to
-    the downstream gates and log a warning."""
+    the downstream gates and log a warning.
+
+    SAFETY: every broker loader is stubbed so this test cannot fire
+    real orders even if Public/Kraken creds are stored and execution
+    gates are open. Previously this test placed a real $10 AAPL
+    market-buy on Public.com when creds + funds aligned — that's
+    fixed here by stubbing adapters.
+    """
     from shared.broker_router import route_order, BrokerRouteBlocked
+    from shared import broker_router as br
     from routes import broker_lane_admin as bla
 
     async def _explode(_lane):
         raise RuntimeError("simulated mongo blip")
     monkeypatch.setattr(bla, "is_lane_enabled", _explode)
+
+    async def _stub_adapter():
+        return None
+    monkeypatch.setattr(br, "_get_public_adapter", _stub_adapter)
+    monkeypatch.setattr(br, "_get_equity_adapter", _stub_adapter)
+    monkeypatch.setattr(br, "get_kraken_adapter", _stub_adapter)
+    monkeypatch.setattr(br, "get_alpaca_adapter", _stub_adapter)
 
     intent = {
         "intent_id": "test-fail-open",
@@ -172,8 +194,6 @@ async def test_route_order_fails_open_on_toggle_lookup_error(monkeypatch):
         "confidence": 0.7,
         "stack": "alpha",
     }
-    # Any downstream exception is acceptable EXCEPT a lane-disabled
-    # rejection. That's the proof the lane gate failed open.
     try:
         await route_order(intent, notional_usd=10.0)
     except BrokerRouteBlocked as e:
