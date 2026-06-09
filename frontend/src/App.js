@@ -13,6 +13,7 @@ import Artifacts from "@/pages/Artifacts";
 import Diagnostics from "@/pages/Diagnostics";
 import Flags from "@/pages/Flags";
 import Promotion from "@/pages/Promotion";
+import LearningLadder from "@/pages/LearningLadder";
 import RecentIngests from "@/pages/RecentIngests";
 import RuntimeDetail from "@/pages/RuntimeDetail";
 import BrainConsole from "@/pages/BrainConsole";
@@ -126,6 +127,7 @@ function App() {
             <Route path="diagnostics" element={<Diagnostics />} />
             <Route path="flags" element={<Flags />} />
             <Route path="promotion" element={<Promotion />} />
+            <Route path="learning-ladder" element={<LearningLadder />} />
             <Route path="recent" element={<RecentIngests />} />
             <Route path="runtime/:runtime" element={<RuntimeDetail />} />
             <Route path="brain/:brain" element={<BrainConsole />} />

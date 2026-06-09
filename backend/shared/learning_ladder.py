@@ -320,6 +320,47 @@ async def demote_stage(
             "state": new_state}
 
 
+class StageSetIn(BaseModel):
+    """Direct stage selection — operator picks any rung (jump or drop).
+
+    Distinct from promote/demote, which step exactly one rung. This
+    endpoint lets the UI render a toggle and let the operator pick
+    e.g. `observation_only → micro_live` in a single click without
+    chaining two promote calls. Every transition is still audit-
+    logged with the operator's reason; no upgrade is silent.
+    """
+    brain: str = Field(...)
+    lane: Literal["equity", "crypto"]
+    stage: Literal["observation_only", "micro_paper", "micro_live", "normal_live"]
+    reason: str = Field("operator_action", max_length=500)
+
+
+@router.post("/set")
+async def set_stage_route(
+    body: StageSetIn,
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Operator-direct stage selection. Jumps or drops to ANY rung.
+
+    Same write path as promote/demote (audit row + state upsert),
+    so the history view shows every transition uniformly regardless
+    of whether it came from /promote, /demote, or /set.
+    """
+    if body.brain not in RUNTIMES:
+        raise HTTPException(status_code=400, detail=f"unknown brain {body.brain!r}")
+    state = await get_stage(body.brain, body.lane)
+    cur = state["stage"]
+    if cur == body.stage:
+        return {"ok": True, "previous": cur, "current": cur,
+                "noop": True, "state": state}
+    actor = user.get("email") or "operator"
+    new_state = await _set_stage(
+        body.brain, body.lane, body.stage, actor, body.reason,
+    )
+    return {"ok": True, "previous": cur, "current": body.stage,
+            "noop": False, "state": new_state}
+
+
 @router.get("/history")
 async def ladder_history(
     limit: int = 100,
