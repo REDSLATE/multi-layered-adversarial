@@ -12,19 +12,27 @@ import { Detective, ArrowsClockwise, Warning, CheckCircle } from "@phosphor-icon
  * Read-only. The endpoint never acts on the result.
  */
 const WINDOW_OPTIONS = [1, 6, 24, 72, 168];
+// 2026-02-XX: preview + prod share Mongo, so both pods' check-ins
+// land in the same audit. Default to `prod` on the prod dashboard
+// so legitimate preview check-ins don't trip imposter flags.
+// Toggle to `all` to debug cross-environment confusion.
+const ENV_OPTIONS = ["prod", "preview", "all"];
 
 
 export default function ImposterScanCard() {
   const [windowHours, setWindowHours] = useState(24);
+  const [envFilter, setEnvFilter] = useState("prod");
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const load = async (hrs) => {
+  const load = async (hrs, env) => {
     setBusy(true);
     setErr("");
     try {
-      const r = await api.get(`/admin/runtime/sidecar-imposter-scan?window_hours=${hrs}`);
+      const r = await api.get(
+        `/admin/runtime/sidecar-imposter-scan?window_hours=${hrs}&env=${env}`,
+      );
       setData(r.data);
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
@@ -34,7 +42,10 @@ export default function ImposterScanCard() {
     }
   };
 
-  useEffect(() => { load(windowHours); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load(windowHours, envFilter);
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div
@@ -46,33 +57,54 @@ export default function ImposterScanCard() {
           <Detective size={14} weight="bold" />
           <span className="label-eyebrow text-rd-warning">Sidecar imposter scan</span>
         </div>
-        <div className="flex items-center gap-1">
-          <span className="text-[10px] text-rd-dim mr-1">window:</span>
-          {WINDOW_OPTIONS.map((h) => (
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-rd-dim mr-1">env:</span>
+            {ENV_OPTIONS.map((e) => (
+              <button
+                key={e}
+                onClick={() => { setEnvFilter(e); load(windowHours, e); }}
+                disabled={busy}
+                data-testid={`imposter-scan-env-${e}`}
+                className={
+                  "px-2 py-0.5 text-[10px] uppercase border " +
+                  (envFilter === e
+                    ? "border-rd-warning text-rd-warning"
+                    : "border-rd-border text-rd-dim hover:text-rd-text")
+                }
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-rd-dim mr-1">window:</span>
+            {WINDOW_OPTIONS.map((h) => (
+              <button
+                key={h}
+                onClick={() => { setWindowHours(h); load(h, envFilter); }}
+                disabled={busy}
+                data-testid={`imposter-scan-window-${h}`}
+                className={
+                  "px-2 py-0.5 text-[10px] uppercase border " +
+                  (windowHours === h
+                    ? "border-rd-warning text-rd-warning"
+                    : "border-rd-border text-rd-dim hover:text-rd-text hover:border-rd-text")
+                }
+              >
+                {h}h
+              </button>
+            ))}
             <button
-              key={h}
-              onClick={() => { setWindowHours(h); load(h); }}
+              onClick={() => load(windowHours, envFilter)}
               disabled={busy}
-              data-testid={`imposter-scan-window-${h}`}
-              className={
-                "px-2 py-0.5 text-[10px] uppercase border " +
-                (windowHours === h
-                  ? "border-rd-warning text-rd-warning"
-                  : "border-rd-border text-rd-dim hover:text-rd-text hover:border-rd-text")
-              }
+              data-testid="imposter-scan-refresh"
+              className="ml-2 text-rd-dim hover:text-rd-text"
+              title="refresh"
             >
-              {h}h
+              <ArrowsClockwise size={12} weight="bold" className={busy ? "animate-spin" : ""} />
             </button>
-          ))}
-          <button
-            onClick={() => load(windowHours)}
-            disabled={busy}
-            data-testid="imposter-scan-refresh"
-            className="ml-2 text-rd-dim hover:text-rd-text"
-            title="refresh"
-          >
-            <ArrowsClockwise size={12} weight="bold" className={busy ? "animate-spin" : ""} />
-          </button>
+          </div>
         </div>
       </div>
 

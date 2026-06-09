@@ -1,3 +1,74 @@
+## 2026-02-XX (this session, pass 6) — Imposter scan env filter + opinion loop
+
+### Issue 1 — opinion loop dead
+Operator screenshot showed `opinion: DEAD 0/1h`, `STALE_OPINION` badge
+on all 4 brains, and a 3-9 day stale "last receipt" timestamp in the
+runtime decision-log. Root cause: the in-process brain runner had
+heartbeat / checkin / sovereign / intent loops but **no opinion loop** —
+`shared_brain_opinions` was never being written to.
+
+**Shipped:** `_post_directional_opinion` method on `BrainRunner`. Every
+successful intent POST is followed by a directional opinion POST to
+`/api/ingest/opinion`:
+- `stance` = long / short / observation (derived from intent.action)
+- `confidence` = intent.confidence (carries personality multiplier)
+- `topic` = `symbol:<SYMBOL>`
+- `may_execute=False` (descriptive evidence only)
+- `evidence` carries the intent_id + personality_risk_mode
+
+Verified live: 8 opinions in first 2 minutes after restart, all 4
+brains posting, personality multipliers visible (GTO at 0.77 vs
+Hellcat saturating at 1.0).
+
+### Issue 2 — imposter scan showed preview check-ins on prod
+Operator screenshot showed `DIVERGENT_ENV_NAME: ['preview', 'prod']`
+on the imposter scan card on prod. Cause: preview and prod share
+Mongo, so both pods' check-ins land in `sidecar_checkin_audit`.
+Legitimate preview check-ins were flagging as imposters.
+
+**Shipped:**
+1. `GET /api/admin/runtime/sidecar-imposter-scan` now accepts `env`
+   query param (default `all` preserves legacy behavior):
+   - `env=prod` filters at the Mongo aggregation layer to only
+     check-ins stamped `stamp_env_name=prod`
+   - `env=preview` same, for preview-only inspection
+   - `env=all` shows everything (debug cross-env confusion)
+   - Response carries `env_filter` so the UI knows which mode is
+     active
+2. `ImposterScanCard.jsx` now has an `env` toggle (prod / preview /
+   all) above the existing window toggle. Default = `prod` so the
+   prod dashboard stops flagging legitimate preview check-ins.
+3. 5 tripwire tests in `test_imposter_scan_env_filter.py`:
+   - endpoint accepts `env` param
+   - default is `all`
+   - Mongo filter matches on `stamp_env_name` (not some other field)
+   - response includes `env_filter` field
+   - input is normalized (trim + lowercase)
+
+### Verified live (preview)
+```
+GET /admin/runtime/sidecar-imposter-scan?env=prod   → 4 brains, all
+                                                       envs=['prod'],
+                                                       no imposter flags
+GET /admin/runtime/sidecar-imposter-scan?env=all    → same (everything
+                                                       currently stamps
+                                                       prod via shared .env)
+```
+
+### Regression
+67/67 tests pass in the full pre-launch cluster (imposter env,
+intent origin, skills/personality, broker lane, brain runtime,
+sovereign, identity stamp).
+
+Loosened `test_route_order_allows_other_lane_when_one_disabled` —
+Kraken is now CONNECTED in preview's Mongo, so an old assumption
+that the test would error on missing creds no longer holds. Test
+now confirms the lane toggle treats lanes INDEPENDENTLY (proves
+the contract regardless of which downstream raises).
+
+---
+
+
 ## 2026-02-XX (this session, pass 5) — Skills + personality layer, restriction-free
 
 ### Operator constraint

@@ -54,17 +54,40 @@ router = APIRouter(prefix="/admin/runtime", tags=["sidecar-imposter-scan"])
 @router.get("/sidecar-imposter-scan")
 async def imposter_scan(
     window_hours: int = Query(24, ge=1, le=168),
+    env: str = Query(
+        "all",
+        description=(
+            "Filter check-ins by `stamp.env_name` before scanning. "
+            "Use `prod` on the production dashboard to ignore "
+            "preview-pod check-ins that share Mongo. `all` (default) "
+            "preserves legacy behavior."
+        ),
+    ),
     _user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Scan the audit log for any runtime that's shown TWO+ distinct
     identities in the recent window. Operator surface — flags it,
-    never auto-acts."""
+    never auto-acts.
+
+    2026-02-XX: added `env` filter. Preview and prod share the same
+    Mongo cluster, so both pods' check-ins land in
+    `sidecar_checkin_audit`. The default `env=all` view shows ALL
+    sources (useful for debugging cross-env confusion); `env=prod`
+    isolates the prod-side stream so the prod dashboard stops
+    flagging legitimate preview check-ins as imposters.
+    """
     cutoff_epoch = (
         datetime.now(timezone.utc) - timedelta(hours=window_hours)
     ).timestamp()
 
+    match: dict[str, Any] = {"ts_epoch": {"$gte": cutoff_epoch}}
+    env_normalized = (env or "all").strip().lower()
+    if env_normalized != "all":
+        # Filter at the Mongo layer — keeps the aggregation lean.
+        match["stamp_env_name"] = env_normalized
+
     pipeline = [
-        {"$match": {"ts_epoch": {"$gte": cutoff_epoch}}},
+        {"$match": match},
         {"$group": {
             "_id": "$runtime",
             "checkin_count": {"$sum": 1},
@@ -159,6 +182,7 @@ async def imposter_scan(
     return {
         "ok": True,
         "window_hours": window_hours,
+        "env_filter": env_normalized,
         "by_runtime": by_runtime,
         "any_imposter_suspected": any_imposter,
     }
