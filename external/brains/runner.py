@@ -49,9 +49,59 @@ from typing import Optional
 import httpx
 
 from .brain_core import BrainIntent, CaminoAdversarialBrain
+from .personality import apply_personality_confidence, get_personality
 
 
 logger = logging.getLogger("risedual.neutral_brains")
+
+
+# Skills layer — lazy module-level instance. Skills live at
+# /app/external/skills/skill_pack/<name>/SKILL.md. Operator can
+# hot-edit any SKILL.md and the next selection pass picks it up
+# (selector re-reads from disk each call).
+_SKILL_SELECTOR = None
+
+
+def _skill_selector():
+    """Lazy accessor for the skill selector — defers import so a
+    misconfigured skill_pack can't kill the runner at boot."""
+    global _SKILL_SELECTOR
+    if _SKILL_SELECTOR is None:
+        try:
+            import sys as _sys
+            if "/app" not in _sys.path:
+                _sys.path.insert(0, "/app")
+            from external.skills.selector import SkillSelector  # type: ignore
+            _SKILL_SELECTOR = SkillSelector()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "skill selector unavailable err=%s — intents will post "
+                "without skill enrichment (safe fallback)", exc,
+            )
+            _SKILL_SELECTOR = False  # sentinel
+    return _SKILL_SELECTOR or None
+
+
+def _select_skills_for(lane: str, symbol: str, action: str, snapshot: dict) -> tuple[list[str], dict]:
+    """Run skill selection for the current intent context and return
+    (skill_names, skill_evidence). On failure returns empty + safe
+    defaults — skill selection is enrichment, never a gate."""
+    selector = _skill_selector()
+    if not selector:
+        return [], {"selector_available": False}
+    try:
+        task = f"{action} {lane} {symbol}"
+        picks = selector.select(task=task, snapshot=snapshot, limit=3)
+        names = [s.name for s in picks]
+        return names, {
+            "selector_available": True,
+            "task": task,
+            "skills_considered": [s.name for s in picks],
+            "tags_per_skill": {s.name: s.tags for s in picks},
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("skill selection failed err=%s — falling back", exc)
+        return [], {"selector_available": False, "error": str(exc)}
 
 
 # ── Brain identity map. INTERNAL slot ids match MC's existing 4
@@ -542,7 +592,40 @@ class BrainRunner:
         intent = core.evaluate(symbol, snapshot)
         intent.lane = lane
         intent = _apply_pattern_bias(intent, setup_score)
+
+        # 2026-02-XX: skills + personality enrichment. The brain core
+        # produces a raw read; the skills layer surfaces lenses; the
+        # personality multiplier shapes how confidently THIS brain
+        # voices the read. ALL three contributions are recorded as
+        # evidence on the intent so the operator audit log shows
+        # exactly who touched the conviction and why.
+        #
+        # None of this is a gate — MC's lane toggles, ladder, sizing
+        # gate, exposure caps and receipt are the only restriction
+        # layer. Skills + personality only ENRICH the hypothesis.
+        skill_names, skill_evidence = _select_skills_for(
+            lane=lane, symbol=symbol, action=intent.action, snapshot=snapshot,
+        )
+        final_confidence, confidence_evidence = apply_personality_confidence(
+            brain=self.brain_id,
+            raw_confidence=intent.confidence,
+        )
+        # Substitute the enriched confidence onto the intent so the
+        # MC payload mirror at `_intent_to_mc_payload` picks it up.
+        # raw_confidence is preserved in confidence_evidence.
+        intent.confidence = final_confidence
+
         payload = _intent_to_mc_payload(intent)
+        # Layer skills + personality evidence onto the payload's
+        # `evidence` block without clobbering what the core stamped.
+        payload["evidence"]["skills_used"] = skill_names
+        payload["evidence"]["skill_evidence"] = skill_evidence
+        payload["evidence"]["confidence_evidence"] = confidence_evidence
+        payload["evidence"]["personality_risk_mode"] = (
+            get_personality(self.brain_id).get("risk_mode", "balanced")
+        )
+        payload["evidence"]["display_name_emit"] = self.display_name
+
         r = await http.post(
             f"{MC_LOOPBACK_URL}/api/intents",
             json=payload,

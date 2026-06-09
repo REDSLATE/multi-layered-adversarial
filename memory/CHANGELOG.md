@@ -1,3 +1,77 @@
+## 2026-02-XX (this session, pass 5) — Skills + personality layer, restriction-free
+
+### Operator constraint
+"Anything blocking trading is a nonstarter for me." Skills must be
+LENSES/EVIDENCE, never gates. Every restriction lives in MC's
+existing layer (lane toggles, ladder, sizing_gate, exposure caps,
+MC receipt) — the operator controls these at runtime.
+
+### Shipped
+1. **Skills package** at `/app/external/skills/`:
+   - `loader.py` — reads `SKILL.md` files with YAML frontmatter
+     (`name`, `description`, `tags`), tolerant of bad files
+     (skips with warning, never crashes runtime)
+   - `selector.py` — tag-weighted scoring (tags 3x, description 1x),
+     re-reads from disk each call so operator can hot-edit
+     skills without restart
+   - `skill_pack/`:
+     - `crypto-execution/SKILL.md` — forms BUY/SELL/HOLD hypothesis
+     - `adversarial-risk/SKILL.md` — counter-thesis as evidence
+     - `risk-perception/SKILL.md` — risk vectors as evidence
+     - `market-memory/SKILL.md` — history-informed conviction
+   - ❌ **Removed `governor-risk/SKILL.md`** at operator request.
+     Skills NEVER add gates on top of MC.
+2. **`personality.py`** with `apply_personality_confidence` returning
+   `(final, evidence)` tuple. Evidence dict:
+   ```
+   raw_confidence, personality_multiplier, personality_risk_mode,
+   adjusted_pre_clamp, final_confidence, saturated_by_clamp,
+   confidence_touched_by: ["personality.py", "math_clamp_0_1"]
+   ```
+   `saturated_by_clamp` flags honest 1.0 ceiling hits so audit shows
+   when Hellcat/Barracuda's read genuinely wanted to push past 1.0.
+3. **Personality multipliers** (operator-editable):
+   - Camino    1.00× (balanced)
+   - Barracuda 1.15× (opportunistic)
+   - Hellcat   1.30× (aggressive)
+   - GTO       0.85× (disciplined)
+   Clamp at [0.0, 1.0] is math only (valid probability range), not
+   a soft gate.
+4. **Runner integration** in `_evaluate_and_post`:
+   - Skill selector picks 3 skills based on (action, lane, symbol)
+   - Personality multiplier applied to brain core's raw confidence
+   - All three (skill names, skill evidence, confidence evidence)
+     attached to the intent's `evidence` block
+   - Intent still POSTs to MC's `/api/intents` via loopback —
+     existing gates unchanged
+5. **17 unit tests** in `test_skills_and_personality.py`:
+   - clamp bounds, all 4 personalities distinct, evidence trail
+     complete, saturation flagged honestly, unknown brain neutral
+   - skill loader reads all 4 skills, governor-risk stays deleted,
+     no HALT/force-HOLD/damp-by-X language in any skill body
+   - selector tag-weight 3x description, runner imports + wires
+
+### Verified live (preview)
+Latest intent per brain in `shared_intents`:
+```
+Camino    : conf=1.000 raw=1.0 mult=1.00 saturated=False
+Barracuda : conf=1.000 raw=1.0 mult=1.15 saturated=TRUE  ← honest ceiling
+Hellcat   : conf=1.000 raw=1.0 mult=1.30 saturated=TRUE  ← honest ceiling
+GTO       : conf=0.850 raw=1.0 mult=0.85 saturated=False ← honest dampener
+skills_used: ['crypto-execution', 'risk-perception', 'market-memory']
+```
+
+### Doctrine pinned
+- Skills enrich hypotheses; they NEVER gate.
+- Personality multiplier modulates conviction; clamp is math only.
+- Every touch on `confidence` is recorded in `confidence_evidence`.
+- The only restriction layer is MC: lane toggles, ladder,
+  sizing_gate, exposure caps, MC receipt. Operator controls each
+  at runtime.
+
+---
+
+
 ## 2026-02-XX (this session, pass 4) — Public.com wired live, Kraken pending, lane toggle shipped
 
 ### Shipped

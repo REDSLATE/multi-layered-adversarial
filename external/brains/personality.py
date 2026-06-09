@@ -88,4 +88,57 @@ def apply_personality(brain: str, confidence: float) -> float:
     return max(0.0, min(1.0, adjusted))
 
 
-__all__ = ["BRAIN_PERSONALITIES", "apply_personality", "get_personality"]
+def clamp_probability(value: float) -> float:
+    """Math clamp — ensures `value` is a valid probability in
+    [0.0, 1.0]. This is NOT a soft gate; it's a domain check.
+    Anything outside [0,1] is nonsense for a confidence value.
+    """
+    return max(0.0, min(1.0, float(value)))
+
+
+def apply_personality_confidence(
+    brain: str,
+    raw_confidence: float,
+) -> tuple[float, dict]:
+    """Apply the brain's personality multiplier AND return an audit
+    trail of every touch on the value.
+
+    Returns:
+        (final_confidence, evidence_dict)
+
+    The evidence dict is attached to the intent so the operator can
+    inspect — for every intent in the audit log — exactly:
+        * What raw conviction the brain core produced
+        * What multiplier the brain's personality applied
+        * What the final emitted value was
+        * Which code paths touched the value
+
+    No silent dampening: if the math clamp at 1.0 ever bites, that
+    fact is recorded on the intent. The operator sees the truth.
+    """
+    persona = get_personality(brain)
+    multiplier = float(persona.get("confidence_mult", 1.0))
+    risk_mode = persona.get("risk_mode", "balanced")
+    raw = float(raw_confidence)
+    adjusted = raw * multiplier
+    final = clamp_probability(adjusted)
+    # Was the clamp the binding constraint? Surface it as a separate
+    # boolean so audit views can flag honestly-saturated reads vs.
+    # ordinary multiplied reads.
+    saturated = adjusted != final
+    evidence = {
+        "raw_confidence": raw,
+        "personality_multiplier": multiplier,
+        "personality_risk_mode": risk_mode,
+        "adjusted_pre_clamp": adjusted,
+        "final_confidence": final,
+        "saturated_by_clamp": saturated,
+        "confidence_touched_by": ["personality.py", "math_clamp_0_1"],
+    }
+    return final, evidence
+
+
+__all__ = [
+    "BRAIN_PERSONALITIES", "apply_personality", "get_personality",
+    "clamp_probability", "apply_personality_confidence",
+]
