@@ -2,8 +2,8 @@
 
 Doctrine: brain personalities are CONFIDENCE MODULATORS only. They
 shape the rate at which a given brain's intents trip the learning
-ladder's promotion threshold — opportunistic brains (Camaro) get
-to micro_live faster on a strong signal; disciplined brains (Redeye)
+ladder's promotion threshold — opportunistic brains (Barracuda) get
+to micro_live faster on a strong signal; disciplined brains (GTO)
 require more evidence. They DO NOT modify action (BUY/SELL/HOLD)
 and they DO NOT add any gate on top of MC.
 
@@ -17,33 +17,32 @@ Every restriction lives in MC's existing layer:
 The personality multiplier just shapes how loud the brain's "this
 is a strong read" signal is — not whether the trade happens.
 
-2026-06-XX: Retired legacy display labels (Camino/Barracuda/Hellcat/GTO).
-This module now keys directly on the canonical brain IDs the rest
-of the stack already uses (alpha, camaro, chevelle, redeye). The
-risk-profile *multipliers* are preserved verbatim — we only dropped
-the label layer.
+Identity convention (2026-06-XX): internal DB / API ids are
+alpha / camaro / chevelle / redeye (slot codes — never user-
+facing). Display names are Camino / Barracuda / Hellcat / GTO
+(the operator brand names rendered everywhere in the UI).
 """
 from __future__ import annotations
 
 
 BRAIN_PERSONALITIES: dict[str, dict[str, object]] = {
     "alpha": {
-        "display_name": "Alpha",
+        "display_name": "Camino",
         "confidence_mult": 1.00,
         "risk_mode": "balanced",
     },
     "camaro": {
-        "display_name": "Camaro",
+        "display_name": "Barracuda",
         "confidence_mult": 1.15,
         "risk_mode": "opportunistic",
     },
     "chevelle": {
-        "display_name": "Chevelle",
+        "display_name": "Hellcat",
         "confidence_mult": 1.30,
         "risk_mode": "aggressive",
     },
     "redeye": {
-        "display_name": "Redeye",
+        "display_name": "GTO",
         "confidence_mult": 0.85,
         "risk_mode": "disciplined",
     },

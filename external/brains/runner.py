@@ -105,15 +105,15 @@ def _select_skills_for(lane: str, symbol: str, action: str, snapshot: dict) -> t
         return [], {"selector_available": False, "error": str(exc)}
 
 
-# ── Brain identity map. INTERNAL slot ids match MC's existing 4
-# runtime slots; display names now match those canonical IDs
-# 1:1 — legacy car-template labels (Camino/Barracuda/Hellcat/GTO)
-# were retired 2026-06-XX.
+# ── Brain identity map. INTERNAL slot ids (alpha/camaro/chevelle/
+# redeye) are the DB primary keys used across MC and never change.
+# DISPLAY NAMES are the operator-facing brand (Camino / Barracuda /
+# Hellcat / GTO) shown on every dashboard, intent card, ladder row.
 BRAIN_ROSTER = [
-    ("alpha",    "Alpha",    "ALPHA_INGEST_TOKEN"),
-    ("camaro",   "Camaro",   "CAMARO_INGEST_TOKEN"),
-    ("chevelle", "Chevelle", "CHEVELLE_INGEST_TOKEN"),
-    ("redeye",   "Redeye",   "REDEYE_INGEST_TOKEN"),
+    ("alpha",    "Camino",    "ALPHA_INGEST_TOKEN"),
+    ("camaro",   "Barracuda", "CAMARO_INGEST_TOKEN"),
+    ("chevelle", "Hellcat",   "CHEVELLE_INGEST_TOKEN"),
+    ("redeye",   "GTO",       "REDEYE_INGEST_TOKEN"),
 ]
 
 

@@ -176,16 +176,21 @@ export function formatApiErrorDetail(detail) {
 }
 
 // ─── RUNTIME_META ───
-// Doctrine pin (2026-02-17, rev3): this is BRAND metadata only —
+// Doctrine pin (2026-06-XX, rev4): this is BRAND metadata only —
 // label / color / project / training-intent description. It does
 // NOT define authority. Authority lives on SEATS (see RosterPanel
 // + ROLE_META). The `role` / `roleTagline` / `enforceFlag` fields
 // are legacy and retained ONLY so any older bundle reading them
 // doesn't blank-render. Any code that grants or denies execution
 // based on these fields is a bug and must be removed.
+//
+// Identity convention: internal DB / API keys remain
+//   alpha / camaro / chevelle / redeye  (slot codes — never user-facing)
+// Display labels are the operator brand:
+//   Camino / Barracuda / Hellcat / GTO  (rendered everywhere in the UI)
 export const RUNTIME_META = {
   alpha: {
-    label: "ALPHA",
+    label: "CAMINO",
     project: "RISEDUAL-AI-2",
     color: "#3B82F6",
     accentClass: "text-rd-alpha",
@@ -194,12 +199,12 @@ export const RUNTIME_META = {
     enforceFlag: null,
     enforceLabel: null,
     role: null,
-    roleTitle: "Alpha",
+    roleTitle: "Camino",
     roleTagline: "structured trader",
     note: "Trader-trained · structured-signal-first.",
   },
   camaro: {
-    label: "CAMARO",
+    label: "BARRACUDA",
     project: "RD4_0421",
     color: "#F59E0B",
     accentClass: "text-rd-camaro",
@@ -208,12 +213,12 @@ export const RUNTIME_META = {
     enforceFlag: null,
     enforceLabel: null,
     role: null,
-    roleTitle: "Camaro",
+    roleTitle: "Barracuda",
     roleTagline: "challenger / counterfactual",
     note: "Challenger-trained · attacks the thesis, surfaces counterfactuals.",
   },
   chevelle: {
-    label: "CHEVELLE",
+    label: "HELLCAT",
     project: "2.1-APP",
     color: "#10B981",
     accentClass: "text-rd-chevelle",
@@ -222,12 +227,12 @@ export const RUNTIME_META = {
     enforceFlag: null,
     enforceLabel: null,
     role: null,
-    roleTitle: "Chevelle",
+    roleTitle: "Hellcat",
     roleTagline: "memory + calibration",
     note: "Governor-trained · memory firewall, readiness, calibration, audit.",
   },
   redeye: {
-    label: "REDEYE",
+    label: "GTO",
     project: "REDEYE",
     color: "#DC2626",
     accentClass: "text-rd-redeye",
@@ -236,7 +241,7 @@ export const RUNTIME_META = {
     enforceFlag: null,
     enforceLabel: null,
     role: null,
-    roleTitle: "REDEYE",
+    roleTitle: "GTO",
     roleTagline: "adversarial scout",
     note: "Adversarial-trained · stamps the contrary case on every position.",
   },
