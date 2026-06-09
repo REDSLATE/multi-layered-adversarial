@@ -1,3 +1,71 @@
+## 2026-06-09 (pass 5) — position-side model + audit observer + quick-release enforcement toggle
+
+### Incident
+130 trades in 5 minutes after redeploy + master-switch flip — all
+reinforcing a LONG-side BUY bias on AAPL while the actual broker
+position was SHORT. Operator's diagnosis: signal was likely right,
+position-state reader was wrong. The brain treats BUY as "open
+long" universally; against a real short, the correct semantic is
+COVER / REDUCE (take profit).
+
+### Files added (audit-only — live trading path untouched)
+- **Added**: `backend/shared/position_model.py` —
+  `PositionSide` / `IntentType` enums, `PositionState` (signed_qty
+  source of truth), `classify_intent()` covering all 8 operator-
+  stated transitions including the AAPL fix `BUY when short → REDUCE`,
+  `detect_misread()` producing `PositionMisread` rows with
+  `missed_short_profit` flag.
+- **Added**: `backend/shared/position_misread_audit.py` —
+  `audit_one_intent()` writes misread rows to
+  `shared_position_misreads`, all exceptions swallowed
+  (fail-safe observer), `list_recent_misreads()` and
+  `misread_summary_24h()` for the UI.
+- **Added**: `backend/routes/position_misread_admin.py` — 4
+  endpoints under `/admin/position-misreads/`:
+  `recent`, `summary-24h`, `enforcement` (GET + POST). The POST
+  is the **quick-release toggle**: flip between `audit_only`,
+  `warn`, `block` with one call, takes effect on next intent,
+  no restart, fail-closed default.
+- **Added**: `backend/tests/test_position_model.py` — 17 tests
+  pinning the 8 transition rules and the AAPL replay.
+- **Modified**: `backend/server.py` — included
+  `position_misread_admin_router` next to the auto-router admin.
+
+### Verification (preview)
+- `POST /api/admin/position-misreads/enforcement {"mode":"block"}`
+  → `{"ok":true,"mode":"block","takes_effect":"immediately..."}`
+- `POST {"mode":"audit_only"}` → instant rollback, audit-logged.
+- `test_aapl_misread_2026_06_09_is_caught` PASSES: classifier on
+  the exact AAPL scenario produces
+  `correct_intent_type=REDUCE, missed_short_profit=True`.
+- 93/93 backend tests pass.
+
+### What's NOT done (deliberately, per operator directive)
+- `audit_one_intent()` is not yet wired into `auto_router._tick`.
+- Front-end card for `/recent` not built.
+- Historical 130-trade replay not run.
+
+All three are safe additions for a future pass — none change live
+behaviour, none require touching the running trading loop.
+
+### Quick-release doctrine
+> *"Place them but also with a quick release when we work out the
+> kinks."* — operator
+
+The enforcement-mode toggle lives in a Mongo doc, NOT in env. One
+POST flips it. The runtime re-reads it on every gate evaluation.
+Default `audit_only`. Read errors fail-closed to `audit_only`.
+Every flip is audit-logged with `updated_by`, `updated_at`,
+`reason`. The response includes the rollback command verbatim so
+operator never needs to look it up under pressure.
+
+### Production status
+- All pass-5 code: **preview only** until prod redeploy.
+- Live trading path unaffected — pass 5 added new modules and
+  endpoints but no call site in the existing gate chain.
+
+---
+
 ## 2026-06-09 (pass 4) — universe-public endpoint + $10/order cap + watchlist symbols live in rotation
 
 ### Bug discovered

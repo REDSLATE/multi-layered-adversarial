@@ -1,5 +1,101 @@
 # Mission Control — PRD (latest pass on top)
 
+## 🆕 2026-06-09 (pass 5) — position-side model + audit observer + quick-release enforcement toggle
+
+### Incident that drove this pass
+After redeploy + master-switch flip, the brains executed **130 trades
+in ~5 minutes**, all reinforcing a LONG-side bias on AAPL. Operator
+confirmed AAPL was actually a SHORT position at the broker. The
+brains' signal logic kept emitting BUY at high conviction, but the
+correct interpretation against a real short was **COVER / REDUCE**,
+not OPEN LONG. The signal may have been right; the position-state
+reader was missing.
+
+Operator's framing:
+> *"The signal may have been right. The position-state reader was wrong."*
+
+### What was built (audit-only — does NOT touch the live trading path)
+
+**1. Position-side model** (`backend/shared/position_model.py`):
+- `PositionSide` enum: `LONG`, `SHORT`, `FLAT`.
+- `IntentType` enum: `OPEN`, `ADD`, `REDUCE`, `CLOSE`, `FLIP`.
+- `PositionState` dataclass keyed on **`signed_qty`** as the single
+  source of truth (+10 = long 10, −10 = short 10, 0 = flat).
+- `classify_intent(action, qty, current)` returns the correct
+  `IntentType` for all 8 operator-stated transitions:
+  - SELL + flat → OPEN (short)
+  - BUY + flat → OPEN (long)
+  - SELL + long → REDUCE / CLOSE
+  - BUY + short → REDUCE / CLOSE  ← **the AAPL fix**
+  - SELL + short, BUY + long → ADD
+  - cross-zero (either direction) → FLIP
+  - qty=0 or unknown action → ValueError (fail-loud)
+- `detect_misread()` returns a `PositionMisread` audit row whenever
+  the brain's assumption disagrees with broker reality, and sets
+  `missed_short_profit=True` iff actual side was SHORT and brain
+  emitted BUY.
+
+**2. Audit observer** (`backend/shared/position_misread_audit.py`):
+- `audit_one_intent(intent, db, position_fetcher)` — fetches broker
+  position, compares with brain's assumption (currently always
+  FLAT since brains have no inventory awareness yet), writes a
+  row to `shared_position_misreads` when they diverge. All
+  exceptions swallowed so a misread audit failure can NEVER affect
+  a trade.
+- `list_recent_misreads(db, limit)` — observer feed for the UI.
+- `misread_summary_24h(db)` — verdict heuristic:
+  `0-2/day = isolated`, `20-50/day = systemic`.
+
+**3. Quick-release enforcement toggle**
+(`backend/routes/position_misread_admin.py`):
+- `GET /api/admin/position-misreads/enforcement` — current mode.
+- `POST /api/admin/position-misreads/enforcement {mode, reason}` —
+  flip between `audit_only`, `warn`, `block`. Takes effect on next
+  intent (Mongo write, no restart). Default is `audit_only` —
+  fail-closed; any read error keeps the system in observer mode.
+- Helper `is_misread_enforcement_enabled()` is the single read
+  point for the future gate when wired into `_evaluate_gates`.
+
+**4. Admin endpoints**:
+- `GET /api/admin/position-misreads/recent?limit=20` — feeds the
+  planned "last 20 misreads" UI card.
+- `GET /api/admin/position-misreads/summary-24h` — operator verdict.
+
+### Tests added
+- `backend/tests/test_position_model.py` — 17 tests. The 130-trade
+  AAPL scenario is replayed in `test_aapl_misread_2026_06_09_is_caught`
+  and confirms the classifier produces `correct_intent_type=REDUCE`
+  with `missed_short_profit=True`.
+- Total backend suite: **93/93 passing.**
+
+### Operator-set priority order (this and future passes)
+1. **Audit-only hook** — installed (this pass), but the live-flow
+   call site is NOT yet inserted. Add a single `await audit_one_intent
+   (...)` line in `auto_router._tick` wrapped in try/except.
+2. **UI card** — `/admin/position-misreads/recent` endpoint live;
+   front-end card not yet built.
+3. **Historical replay** — backfill today's 130 AAPL trades through
+   the classifier to retroactively log the misread rows. Pure
+   read-only batch job, safe to run anytime.
+
+### Doctrine pinned this pass
+> *"Don't lock this down because of a hiccup with trading. Place
+> them but also with a quick release when we work out the kinks."*
+
+Embodied as: enforcement mode `audit_only` by default, single POST
+to flip to `block`, single POST to roll back. No restart, no
+redeploy. Audit-logged on every flip. Fail-closed.
+
+### Production status at end of pass
+- All position-model code: **preview only — requires redeploy.**
+- No live execution behavior changed in this pass. Trading on prod
+  continues to use the existing gate chain unmodified.
+- After redeploy, the observer is dormant until either (a) the
+  one-line wire-up in `_tick` is added (next session), or (b) the
+  operator-managed backfill is run.
+
+---
+
 ## 🆕 2026-06-09 (pass 4) — universe-public endpoint added · $10/order cap · watchlist symbols live in brain rotation
 
 ### Discovery
