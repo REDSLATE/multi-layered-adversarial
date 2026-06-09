@@ -1,3 +1,57 @@
+## 2026-06-09 (pass 4) — universe-public endpoint + $10/order cap + watchlist symbols live in rotation
+
+### Bug discovered
+After pass-3 watchlist loading (42 symbols added to
+`patterns_universe`), preview brains were STILL only emitting on
+the hardcoded fallback symbols. Cause: `external/brains/runner.py`
+calls `GET /api/admin/patterns/universe-public` over loopback —
+but **that endpoint did not exist** (404). Brain exception handler
+swallowed the 404, fell back to `FALLBACK_BY_LANE`. Silently broken
+for as long as the brain runner has existed.
+
+### Files modified
+- **Modified**: `backend/routes/data_stack_admin.py` — added
+  `@router.get("/admin/patterns/universe-public")` returning
+  active symbols anonymously (no auth). Documented why it's safe:
+  watchlist symbols are not sensitive, and internal sidecars have
+  no operator JWT.
+- **Modified**: `backend/.env` —
+  `RISEDUAL_CAP_PER_ORDER_USD` from `"25"` to `"10"`. Aligns with
+  `AUTO_ROUTER_NOTIONAL_USD=10` default. Public.com fractional
+  shares already supported via `submit_market_order(notional=...)`.
+- **Mongo write**: preview master switch flipped True.
+
+### Verification (preview, post-fix, 3-min window)
+- AAL (American Airlines, from the watchlist) became top equity
+  setup_score — all 4 brains traded it as BUY × 4.
+- Cooldown is rotating: NVDA was top earlier, fell off after all
+  4 brains hit it, AAL took over.
+- Each brain hit 3-4 distinct symbols in 3 minutes vs 1 pre-fix.
+- Watchlist coverage: 4/14 intents on operator list (was 0).
+- `cap_per_day=$50` now BINDING — leftover $51 from pass-2 AAPL
+  burn means all new orders block at `cap_per_day` until rolling
+  24h window decays. Safety doctrine fully re-engaged.
+
+### Production status
+- Universe-public endpoint, $10 cap: **preview only** — prod still
+  missing both until redeploy.
+- Prod master switch: **OFF** (keep off until redeploy).
+- Without the universe-public endpoint, prod brains fall back to
+  the 8-symbol hardcoded list even though `patterns_universe`
+  contains 48 names (Mongo write from pass 3 IS on prod).
+
+### Recovery path
+1. Save to GitHub → trigger prod redeploy.
+2. Verify on prod:
+   `curl https://mission.risedual.ai/api/admin/patterns/universe-public`
+   should return 48 equity symbols.
+3. Re-flip master switch ON on prod via
+   `POST /api/admin/trading/toggle`.
+4. Watch first tick — should show diverse symbols across the
+   watchlist, capped at $10/order, $50/day.
+
+---
+
 ## 2026-06-09 (pass 3) — $500 AAPL incident, cap re-arm, signal-ranked selection, watchlist load, brain-identity hardening
 
 ### Incident

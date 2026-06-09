@@ -1,5 +1,82 @@
 # Mission Control — PRD (latest pass on top)
 
+## 🆕 2026-06-09 (pass 4) — universe-public endpoint added · $10/order cap · watchlist symbols live in brain rotation
+
+### Discovery
+After loading the operator's 42-symbol watchlist into
+`patterns_universe` (pass 3), brain intents in preview were STILL
+hitting only the hardcoded fallback list (AAPL, MSFT, NVDA, TSLA +
+4 cryptos). Root cause: `external/brains/runner.py::_resolve_universe`
+calls `GET /api/admin/patterns/universe-public` over loopback, but
+**that endpoint did not exist** (404). The brain's exception handler
+quietly swallowed the 404 and fell back to `FALLBACK_BY_LANE` — so
+the watchlist additions had no operational effect.
+
+This had been silently broken for as long as the brain runner code
+has existed.
+
+### Fixes
+
+**1. `/api/admin/patterns/universe-public` endpoint** added in
+`backend/routes/data_stack_admin.py`. Anonymous (no auth) read of
+active universe symbols. Brain sidecars call this over internal
+loopback at boot and every N ticks. Safe to expose without auth
+because watchlist symbols are not sensitive data.
+
+**2. Per-order cap lowered to $10** in `backend/.env`:
+`RISEDUAL_CAP_PER_ORDER_USD="10"` (was `"25"`). Aligns with
+`AUTO_ROUTER_NOTIONAL_USD = 10` default so fresh orders pass
+cap_per_order. Public.com fractional shares confirmed working
+(submit_market_order uses notional, not share count).
+
+**3. Master switch flipped ON for preview only** (prod stays OFF —
+prod still has PATENT_SUSPENSION=True and no universe-public
+endpoint). Reason logged:
+`"first tick observation 2026-06-09 (preview only, $10/order cap,
+signal-ranked + cooldown active)"`.
+
+### Verification (preview, 3-min window)
+```
+Symbols traded:  AAL (4 BUYs · from watchlist) · BTC/USD · ETH/USD · AAPL (HOLD)
+Watchlist coverage: 4/14 intents on operator list (was 0 before fix)
+Brain mix:       alpha 4 · camaro 4 · chevelle 3 · redeye 3 (even spread)
+Distinct symbols per brain: 3-4 in 3 minutes (vs. 1 before)
+```
+
+NVDA was top earlier in the same session before going on cooldown.
+AAL took over as top-ranked equity setup_score. The signal-ranked
+selection + 6-tick cooldown is working together exactly as designed.
+
+### `cap_per_day=$50` is now binding on preview
+Today's spend counter shows `$51` (carryover from the AAPL stampede
+in pass 2). All new BUYs hit `blocked: 24h spend $51 + new $X = ...
+exceeds daily cap $50` until the rolling 24h window decays. This is
+the cap doing its job — operator can verify safety by watching the
+block reason flow until the window resets (~1pm tomorrow ET).
+
+### Files modified this pass
+- **Modified**: `backend/routes/data_stack_admin.py` — added
+  `@router.get("/admin/patterns/universe-public")` (anon read).
+- **Modified**: `backend/.env` —
+  `RISEDUAL_CAP_PER_ORDER_USD="10"` (from `"25"`).
+- **Mongo write**: preview master trading switch flipped ON.
+
+### Production status at end of pass
+| Layer | Prod | Preview |
+|---|---|---|
+| Universe-public endpoint | ❌ missing | ✅ |
+| Per-order cap | $25 (defanged) | $10 (binding) |
+| Master switch | OFF (keep off until redeploy) | ON |
+| Watchlist symbols in universe DB | ✅ live (pass 3 Mongo write) | ✅ live |
+| Brains actually scanning watchlist | ❌ — endpoint missing means fallback | ✅ — AAL just traded |
+
+### To get watchlist trading live on prod
+Same as pass 3 — Save to GitHub → redeploy → re-flip master switch.
+After redeploy, prod will: (a) see the 48 watchlist symbols via the
+new endpoint, (b) rank by setup_score, (c) honor the $10/order cap.
+
+---
+
 ## 🆕 2026-06-09 (pass 3) — $500 AAPL incident · cap enforcement re-armed · signal-ranked selection · watchlist loaded · brain-identity hardening
 
 ### Incident
