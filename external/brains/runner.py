@@ -679,6 +679,26 @@ class BrainRunner:
                 self._recent_tape = self._recent_tape[-25:]
             self._last_action = intent.action
             self._last_confidence = float(intent.confidence)
+            # 2026-02-XX: ALSO post a directional opinion to the
+            # discussion layer. The composite-liveness dashboard
+            # has an `opinion_loop` that goes DEAD when no opinions
+            # are posted in the last hour — without this, the
+            # in-process brains look STALE_OPINION even though
+            # they're actively producing intents.
+            #
+            # Opinion is derived from the intent: BUY → long, SELL →
+            # short, HOLD → observation. Topic is the symbol.
+            # This is descriptive evidence, not execution authority
+            # (may_execute=False enforced by MC's schema).
+            try:
+                await self._post_directional_opinion(http, intent)
+            except Exception as exc:  # noqa: BLE001
+                # Opinion is enrichment, not a gate. Never let a
+                # failed opinion post block intent flow.
+                logger.warning(
+                    "opinion post failed brain=%s sym=%s err=%s",
+                    self.brain_id, intent.symbol, exc,
+                )
             if self._intent_count % 10 == 1:
                 logger.info(
                     "neutral_brain intent posted brain=%s display=%s "
@@ -691,6 +711,64 @@ class BrainRunner:
             logger.warning(
                 "neutral_brain intent rejected brain=%s lane=%s status=%s body=%s",
                 self.brain_id, lane, r.status_code, r.text[:300],
+            )
+
+    async def _post_directional_opinion(
+        self, http: httpx.AsyncClient, intent,
+    ) -> None:
+        """POST a directional opinion to the discussion layer for the
+        symbol the brain just emitted an intent on.
+
+        The composite-liveness dashboard reads `shared_brain_opinions`
+        to fill its `opinion_loop` band — without this post, the
+        in-process brains show STALE_OPINION even when their intent +
+        sovereign + heartbeat loops are healthy.
+
+        Mapping:
+            intent.action  → opinion.stance
+                BUY  →  long
+                SELL →  short
+                HOLD →  observation
+            intent.confidence → opinion.confidence
+            intent.symbol     → opinion.topic = f"symbol:{symbol}"
+
+        Doctrine: opinions are DESCRIPTIVE EVIDENCE. MC's schema rejects
+        any opinion with `may_execute=true`. The opinion never grants
+        the brain any new authority — it just makes the brain's voice
+        visible in the discussion layer so MC can correlate views
+        across brains and the opinion_loop stays fresh.
+        """
+        stance_map = {"BUY": "long", "SELL": "short", "HOLD": "observation"}
+        stance = stance_map.get(intent.action, "observation")
+        body = {
+            "runtime": self.brain_id,
+            "topic": f"symbol:{intent.symbol}",
+            "stance": stance,
+            "confidence": float(intent.confidence),
+            "body": (
+                f"{self.display_name} ({self.brain_id}) — {intent.action} "
+                f"on {intent.symbol} at conf {intent.confidence:.2f}. "
+                f"Derived from in-process intent {intent.intent_id}."
+            )[:6000],
+            "evidence": {
+                "intent_id": intent.intent_id,
+                "lane": intent.lane,
+                "source": "in_process_brain_runner",
+                "personality_risk_mode": (
+                    get_personality(self.brain_id).get("risk_mode")
+                ),
+            },
+            "may_execute": False,
+        }
+        r = await http.post(
+            f"{MC_LOOPBACK_URL}/api/ingest/opinion",
+            json=body,
+            headers={"X-Runtime-Token": self.token},
+        )
+        if r.status_code // 100 != 2:
+            logger.debug(
+                "opinion rejected brain=%s sym=%s status=%s body=%s",
+                self.brain_id, intent.symbol, r.status_code, r.text[:200],
             )
 
     async def _checkin_loop(self) -> None:
