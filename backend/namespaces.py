@@ -686,7 +686,15 @@ REQUIRE_COUNTERSIGN = False
 # still records every gate's would-have-been verdict, and Patent J's
 # evaluate_readiness still returns its 8-check breakdown — only the FINAL
 # passed verdict is forced True while this flag is on.
-PATENT_SUSPENSION_ACTIVE = True
+# 2026-06-09 (pass 2 — RE-ARMED after $500 AAPL safety failure):
+# Live trading went into production today. With PATENT_SUSPENSION_ACTIVE=True
+# the auto-router force-passed cap_per_order ($25), cap_per_day ($50),
+# cap_open_notional ($200), symbol_in_universe, broker_connected, and
+# every other non-seat gate. A $500 AAPL order slipped through the $25
+# cap during the first live tick. Operator stopped the master switch
+# manually. Switching this back to False so the operator's posted caps
+# actually bind. The full doctrine stack is re-engaged.
+PATENT_SUSPENSION_ACTIVE = False
 
 # Gates that always evaluate authoritatively (the seat layer + schema/shape
 # sanity that aren't policy restrictions at all). Everything not in this
