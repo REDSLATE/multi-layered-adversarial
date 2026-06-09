@@ -56,6 +56,18 @@ AUTO_ROUTER_EMAIL = "auto-router@mission-control"
 
 _TASK: Optional[asyncio.Task] = None
 
+# ── Loop heartbeat / introspection (2026-06-09) ──────────────────
+# The auto-router is the single most operationally-critical loop in
+# MC — when it's silent the entire fleet falls back to dry-runs only.
+# These module-level counters let `/api/admin/auto-router/status`
+# surface the task's liveness without restarting the pod.
+_TICK_COUNT: int = 0
+_LAST_TICK_TS: Optional[str] = None
+_LAST_TICK_RESULTS: int = 0
+_LAST_TICK_EXECUTED: int = 0
+_LAST_TICK_ERROR: Optional[str] = None
+_STARTED_AT: Optional[str] = None
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -744,18 +756,93 @@ async def _tick() -> list[dict]:
 
 
 async def _loop() -> None:
+    global _STARTED_AT, _TICK_COUNT, _LAST_TICK_TS, _LAST_TICK_RESULTS, _LAST_TICK_EXECUTED, _LAST_TICK_ERROR
+    _STARTED_AT = _now_iso()
     logger.info(
         "auto-router started: interval=%ss notional=$%s max_per_tick=%s",
         AUTO_ROUTER_INTERVAL_SEC, AUTO_ROUTER_NOTIONAL_USD, AUTO_ROUTER_MAX_PER_TICK,
     )
     while True:
         try:
-            await _tick()
+            results = await _tick()
+            _TICK_COUNT += 1
+            _LAST_TICK_TS = _now_iso()
+            _LAST_TICK_RESULTS = len(results) if results else 0
+            _LAST_TICK_EXECUTED = sum(
+                1 for r in (results or []) if r.get("verdict") == "executed"
+            )
+            _LAST_TICK_ERROR = None
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
+            _LAST_TICK_ERROR = f"{type(e).__name__}: {e}"
             logger.exception("auto-router tick failed: %s", e)
         await asyncio.sleep(AUTO_ROUTER_INTERVAL_SEC)
+
+
+def get_status() -> dict:
+    """Read-only snapshot of the auto-router task. Surfaced via
+    `GET /api/admin/auto-router/status` so the operator can answer
+    "is the loop actually running?" without restarting the pod or
+    grepping logs. Doctrine: this MUST be cheap and read-only —
+    never touch broker state from a diagnostic."""
+    task_done = bool(_TASK is None or _TASK.done())
+    task_alive = bool(_TASK is not None and not _TASK.done())
+    return {
+        "enabled_env": AUTO_ROUTER_ENABLED,
+        "task_alive": task_alive,
+        "task_done": task_done,
+        "task_exception": (
+            repr(_TASK.exception()) if (_TASK and _TASK.done() and not _TASK.cancelled())
+            else None
+        ) if _TASK and _TASK.done() else None,
+        "interval_sec": AUTO_ROUTER_INTERVAL_SEC,
+        "default_notional_usd": AUTO_ROUTER_NOTIONAL_USD,
+        "max_per_tick": AUTO_ROUTER_MAX_PER_TICK,
+        "started_at": _STARTED_AT,
+        "tick_count": _TICK_COUNT,
+        "last_tick_ts": _LAST_TICK_TS,
+        "last_tick_results": _LAST_TICK_RESULTS,
+        "last_tick_executed": _LAST_TICK_EXECUTED,
+        "last_tick_error": _LAST_TICK_ERROR,
+        "now": _now_iso(),
+        "doctrine_note": (
+            "The auto-router is the ONLY loop that turns BUY/SELL "
+            "intents into broker calls. If `task_alive=false`, no "
+            "intent will ever execute autonomously — only manual "
+            "/api/execution/submit calls work. If `task_alive=true` "
+            "but `last_tick_ts` is stale (older than ~2× interval_sec), "
+            "the tick is stuck — pod restart will recover."
+        ),
+    }
+
+
+async def force_one_tick() -> dict:
+    """Run a single _tick() out of band. Useful when the operator
+    just unblocked a gate (lane toggle, ladder, seat rotation) and
+    wants the queue drained NOW instead of waiting up to `interval_sec`.
+    Safe to call concurrently with the scheduled loop — `_tick` is
+    re-entrant against shared state."""
+    global _TICK_COUNT, _LAST_TICK_TS, _LAST_TICK_RESULTS, _LAST_TICK_EXECUTED, _LAST_TICK_ERROR
+    try:
+        results = await _tick()
+        _TICK_COUNT += 1
+        _LAST_TICK_TS = _now_iso()
+        _LAST_TICK_RESULTS = len(results) if results else 0
+        _LAST_TICK_EXECUTED = sum(
+            1 for r in (results or []) if r.get("verdict") == "executed"
+        )
+        _LAST_TICK_ERROR = None
+        return {
+            "ok": True,
+            "ts": _LAST_TICK_TS,
+            "results_count": _LAST_TICK_RESULTS,
+            "executed_count": _LAST_TICK_EXECUTED,
+            "results": results or [],
+        }
+    except Exception as e:  # noqa: BLE001
+        _LAST_TICK_ERROR = f"{type(e).__name__}: {e}"
+        return {"ok": False, "error": _LAST_TICK_ERROR}
 
 
 def start_auto_router_if_enabled() -> None:

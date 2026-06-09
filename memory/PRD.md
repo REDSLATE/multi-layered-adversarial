@@ -1,5 +1,104 @@
 # Mission Control — PRD (latest pass on top)
 
+## 🆕 2026-06-09 (pass 2) — FIRST LIVE ORDERS · 5-layer gate diagnosis
+
+### Operator observation
+> "Yeah it's hitting the account"
+
+After the earlier ladder retirement (this same day) the operator was
+still seeing intents stuck on HOLD/dry_run_passed with no broker
+activity. Walked the entire gate chain end-to-end and found a 5-layer
+disguise where each layer being opened revealed the next.
+
+### The 5 disguising layers (final order of discovery)
+1. **Learning ladder** — fixed earlier today (8× `observation_only` → `normal_live`)
+2. **Executor seat (equity)** — Barracuda held the seat but emitted
+   HOLD; only the seat-holder's BUY/SELLs can route. Operator
+   manually swapped executor↔auditor in the UI so GTO (already
+   emitting saturated BUYs) became the equity executor.
+3. **Lane execution toggle** (`/api/admin/execution/lane-toggles`) —
+   different from the broker lane toggle. Was already enabled on
+   prod (red herring on first read of `last-block-reason` — those 19
+   counts were historical, pre-flip).
+4. **Auto-router asyncio task** — added a new
+   `GET /api/admin/auto-router/status` endpoint to confirm liveness.
+   Result: `task_alive=True, tick_count=N, interval=30s` — loop was
+   running fine. NOT the bottleneck.
+5. **🎯 Master trading kill switch**
+   (`/api/admin/trading/toggle`) — **`first_boot_default_disabled`**.
+   This is the absolute final gate inside `auto_router._route_one`
+   (Phase 1b). It defaults OFF on pod boot and had never been
+   flipped True since the pod was deployed. Every gate above it
+   passing didn't matter — `is_trading_enabled()` returned False
+   and the router persisted `no_trade: trading_controls_disabled`
+   on every intent it picked up.
+
+   Flipped ON on both environments with reason
+   *"operator green-light 2026-06-09: live pilot, ladder + lane +
+   seat all open"*.
+
+### Result
+First confirmed live broker call landed in the Public.com audit log
+within 60s of the master-switch flip. Operator confirmed: *"Yeah
+it's hitting the account."*
+
+### Shipped this pass (preview-only — requires redeploy for prod)
+- `GET /api/admin/auto-router/status` — task liveness + tick
+  heartbeat (started_at, tick_count, last_tick_ts, last_tick_results,
+  last_tick_executed, last_tick_error, task_exception).
+  Instrumented `auto_router._loop()` with module-level counters
+  that don't allocate per-intent. Cheap to poll.
+- `POST /api/admin/auto-router/force-tick` — drain the queue once
+  immediately (out-of-band tick), useful right after the operator
+  unblocks a gate. Same gate chain, no force-trade semantic.
+- Both endpoints in new `backend/routes/auto_router_admin.py`,
+  mounted into `api_router` next to the learning_ladder routes.
+
+### Operational doctrine after this pass
+The complete chain that must be GREEN for a brain BUY/SELL to fire:
+
+1. Brain emits intent with `action ∈ {BUY,SELL,SHORT,COVER}` and
+   non-empty `symbol`.
+2. `gate_state` must NOT be in `{blocked, no_trade, advisory_only}`.
+3. Learning ladder for `(brain, lane)` must be **above
+   `observation_only`** (one of `micro_paper`, `micro_live`,
+   `normal_live`).
+4. **Executor seat for the lane** must be filled with SOME brain
+   (position-model: any seat-holder works, not bound to who posted
+   the intent).
+5. **Lane execution toggle** (`/api/admin/execution/lane-toggles`)
+   must be True for the lane.
+6. **Master trading switch** (`/api/admin/trading/toggle`) must
+   be True.
+7. Auto-router task must be alive (`/api/admin/auto-router/status`
+   shows `task_alive=True`).
+8. `AUTO_ROUTER_ENABLED` env not set to false (defaults true).
+9. Broker (`Public.com` for equity, `Kraken` for crypto) must be
+   `connected=True, execution_enabled=True`.
+10. Intent symbol must be in `patterns_universe` for the lane.
+11. RoadGuard spread floor: equity ≤ 50bps, crypto ≤ 200bps.
+12. Risk caps not exceeded: `RISEDUAL_CAP_PER_ORDER_USD = $25`,
+    `RISEDUAL_CAP_PER_DAY_USD = $50`,
+    `RISEDUAL_CAP_OPEN_NOTIONAL_USD = $200`.
+
+All 12 must be GREEN. Any one of them red = `no_trade` and the
+intent stays at `dry_run_passed` forever (no retry — operator must
+unblock then call `/api/admin/auto-router/force-tick` or wait for
+the next scheduled 30s tick).
+
+### Why the master switch is separate from the lane toggle
+- **Lane toggle** = "I'm allowing routing on equity / crypto"
+  (per-lane operator authorization).
+- **Master switch** = "I want autonomous trading to happen at all
+  right now" (one-button fleet-wide kill).
+
+The master switch is the operator's "stop everything immediately"
+button. Decoupled so that flipping it OFF doesn't require touching
+any per-lane state and flipping it back ON doesn't risk forgetting
+a lane toggle.
+
+---
+
 ## 🆕 2026-06-09 — LIVE TRADING ENGAGED · ladder retired · brain labels finalized · Public.com card
 
 ### Operator decision

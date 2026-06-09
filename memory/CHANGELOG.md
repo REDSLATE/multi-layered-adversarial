@@ -1,3 +1,79 @@
+## 2026-06-09 (pass 2) — FIRST LIVE ORDERS HIT PUBLIC.COM · 5-layer gate diagnosis
+
+### Operator confirmation (verbatim)
+> "Yeah it's hitting the account"
+
+### The 5 disguising layers
+After flipping the learning ladder to `normal_live` (earlier this
+day) the operator still saw no broker activity — only `dry_run_passed`
+intents piling up. Walked the gate chain end-to-end and found that
+each unblocked layer revealed the next:
+
+1. **Learning ladder** — fixed earlier today (24 transitions).
+2. **Executor seat (equity)** — Barracuda held it but only emitted
+   HOLD. Position-model authority: only the *current* seat-holder's
+   BUYs can route. Operator swapped executor↔auditor in the UI so
+   GTO (already saturating BUYs on TSLA, MSFT) took the equity seat.
+3. **Lane execution toggle** — already enabled, not the bottleneck.
+4. **Auto-router asyncio task** — built a new status endpoint to
+   confirm; task was alive & ticking every 30s.
+5. **🎯 Master trading kill switch** (`/api/admin/trading/toggle`).
+   Default state on pod first-boot is `enabled=False` (fail-closed
+   safety). Never flipped on. Auto-router's Phase 1b check called
+   `is_trading_enabled()` → False → persisted
+   `no_trade: trading_controls_disabled` on every intent.
+
+   Flipped True on both prod and preview at 14:32 UTC with reason
+   *"operator green-light 2026-06-09: live pilot, ladder + lane +
+   seat all open"*. First Public.com order landed within 60s.
+
+### Files added this pass
+- **Added**: `backend/routes/auto_router_admin.py` with two endpoints:
+  - `GET /api/admin/auto-router/status` — task liveness + tick
+    heartbeat counters. Cheap to poll, safe for the UI status strip.
+  - `POST /api/admin/auto-router/force-tick` — drain queue
+    immediately after unblocking a gate, no 30s wait.
+- **Modified**: `backend/shared/auto_router.py` — added 6 module-level
+  counters (`_STARTED_AT`, `_TICK_COUNT`, `_LAST_TICK_TS`,
+  `_LAST_TICK_RESULTS`, `_LAST_TICK_EXECUTED`, `_LAST_TICK_ERROR`)
+  populated by `_loop()` and exposed via `get_status()` /
+  `force_one_tick()`. Module-level so reads cost nothing.
+- **Modified**: `backend/server.py` — included `auto_router_admin_router`.
+
+### Operational doctrine — the 12-point liveness chain
+Every condition must be GREEN for autonomous order routing:
+
+1. Brain emits `BUY/SELL/SHORT/COVER` intent with non-empty symbol
+2. `gate_state` NOT in `{blocked, no_trade, advisory_only}`
+3. Learning ladder `(brain, lane)` above `observation_only`
+4. Executor seat for the lane filled (any brain)
+5. Lane execution toggle = True
+6. **Master trading switch = True**
+7. Auto-router asyncio task = alive
+8. `AUTO_ROUTER_ENABLED` env != false
+9. Broker (Public/Kraken) connected + execution_enabled
+10. Symbol in `patterns_universe` for the lane
+11. RoadGuard spread floor: equity ≤ 50bps, crypto ≤ 200bps
+12. Risk caps: per-order $25, per-day $50, open notional $200
+
+### Master switch vs. lane toggle (the operator-facing distinction)
+- Lane toggle = "I'm allowing routing on equity / crypto" (per-lane)
+- Master switch = "I want autonomous trading happening RIGHT NOW"
+  (single fleet-wide stop button)
+
+Decoupled so flipping the master OFF requires no per-lane mutation
+and flipping it back ON can't accidentally leave a lane disabled.
+
+### Production deployment note
+- Master switch flip (Mongo write) is **already live on prod** — no
+  redeploy needed. Trades are firing.
+- New `auto-router/status` and `auto-router/force-tick` endpoints
+  are **preview-only** until prod is redeployed (Save to GitHub →
+  prod redeploy pipeline). On prod today, the auto-router status is
+  visible only via logs.
+
+---
+
 ## 2026-06-09 — LIVE TRADING ENGAGED (ladder retired) + Public.com card + brain rename + Live Routes UI
 
 ### Operator instruction (verbatim)
