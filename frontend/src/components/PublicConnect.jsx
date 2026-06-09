@@ -12,24 +12,57 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { KeyholeIcon, ShieldCheck, Warning, Trash, ArrowsClockwise, Lightning } from "@phosphor-icons/react";
+import {
+  KeyholeIcon, ShieldCheck, Warning, Trash, ArrowsClockwise, Lightning, Plug, Pulse,
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 /**
- * Public.com connection panel — long-lived SECRET → short-lived
- * ACCESS_TOKEN. Background refresher rolls the token before expiry so
- * operator-issued calls never wait on the exchange. Doctrine: trade
- * endpoints remain unwired in Phase 1; execution defaults off.
+ * Public.com connection panel — replaces the legacy Alpaca tile on the
+ * Equity Lane. Long-lived SECRET stored encrypted at rest; short-lived
+ * ACCESS TOKEN refreshed in the background. Doctrine: execution stays
+ * OFF by default — operator must explicitly toggle with typed-phrase
+ * confirmation. Keys NEVER round-trip back to the browser plaintext.
  */
-export default function PublicConnect() {
+function fmtUSD(v) {
+  if (v == null) return "—";
+  const n = Number(v);
+  if (isNaN(n)) return "—";
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function relTime(iso) {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return "—";
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 60) return `${Math.floor(s)}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+function shortenId(id) {
+  if (!id) return null;
+  if (id.length <= 14) return id;
+  return `${id.slice(0, 6)}…${id.slice(-4)}`;
+}
+
+export default function PublicConnect({ onChange }) {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState(null);
+  const [caps, setCaps] = useState(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
 
   const refresh = useCallback(async () => {
     try {
-      const { data } = await api.get("/admin/public/status");
-      setStatus(data);
+      const [s, c] = await Promise.all([
+        api.get("/admin/public/status"),
+        api.get("/execution/caps").catch(() => ({ data: null })),
+      ]);
+      setStatus(s.data);
+      setCaps(c.data);
+      onChange?.(s.data);
     } catch (e) {
       if (e?.response?.status !== 404) {
         toast.error(e?.response?.data?.detail || e.message);
@@ -37,27 +70,74 @@ export default function PublicConnect() {
     } finally {
       setLoadingStatus(false);
     }
-  }, []);
+  }, [onChange]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 20000);
+    return () => clearInterval(t);
+  }, [refresh]);
 
   const connected = status?.connected;
+
   return (
-    <>
-      <div className="flex items-baseline gap-2" data-testid="public-connect-block">
+    <Card className="mb-4" testid="public-tile">
+      <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
+        <div className="flex items-baseline gap-2">
+          <Plug size={13} weight="bold" className="text-rd-text" />
+          <span className="label-eyebrow">Broker · Public.com</span>
+          {connected ? (
+            <Badge color="#22C55E" testid="public-badge-connected">CONNECTED</Badge>
+          ) : (
+            <Badge color="#A1A1AA" testid="public-badge-disconnected">NOT CONNECTED</Badge>
+          )}
+          {connected && (
+            <Badge color={status.execution_enabled ? "#F59E0B" : "#22C55E"}>
+              {status.execution_enabled ? "EXEC ENABLED" : "READ-ONLY"}
+            </Badge>
+          )}
+        </div>
         <Button
           size="sm"
           variant={connected ? "secondary" : "default"}
           onClick={() => setOpen(true)}
           data-testid="public-connect-trigger"
         >
-          {connected ? "Manage Public" : "Connect Public.com"}
+          <KeyholeIcon size={12} weight="bold" className="mr-1" />
+          {connected ? "Manage Public" : "Connect Public"}
         </Button>
-        {connected && (
-          <Badge color={status.execution_enabled ? "#F59E0B" : "#22C55E"}>
-            {status.execution_enabled ? "EXEC ENABLED" : "READ-ONLY"}
-          </Badge>
-        )}
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-[11px] font-mono">
+        <Stat
+          label="Account"
+          value={shortenId(status?.account_id) || "—"}
+          testid="public-stat-acct"
+        />
+        <Stat
+          label="Secret"
+          value={status?.secret_preview || "—"}
+          testid="public-stat-secret"
+        />
+        <Stat
+          label="Today $"
+          value={`${fmtUSD(caps?.today?.spent_usd)} / ${fmtUSD(caps?.caps?.per_day_usd)}`}
+          testid="public-stat-today"
+        />
+        <Stat
+          label="Open Notional"
+          value={`${fmtUSD(caps?.open?.open_notional_usd)} / ${fmtUSD(caps?.caps?.open_notional_usd)}`}
+          testid="public-stat-open"
+        />
+        <Stat
+          label="Token Refresh"
+          value={
+            status?.access_token_refreshed_at
+              ? relTime(status.access_token_refreshed_at)
+              : "—"
+          }
+          testid="public-stat-token"
+        />
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -69,9 +149,9 @@ export default function PublicConnect() {
             </DialogTitle>
             <DialogDescription className="text-rd-dim text-[11px] font-mono">
               Long-lived SECRET stored encrypted at rest; short-lived
-              ACCESS TOKEN refreshed in the background. READ-ONLY by
-              default; execution stays schema-pinned off until explicitly
-              authorized.
+              ACCESS TOKEN refreshed in the background. Default permission
+              is READ-ONLY — execution stays schema-pinned off until
+              explicitly authorized.
             </DialogDescription>
           </DialogHeader>
 
@@ -82,31 +162,43 @@ export default function PublicConnect() {
           )}
         </DialogContent>
       </Dialog>
-    </>
+    </Card>
+  );
+}
+
+function Stat({ label, value, testid }) {
+  return (
+    <div data-testid={testid}>
+      <div className="text-[10px] uppercase tracking-widest text-rd-dim">{label}</div>
+      <div className="text-rd-text truncate" title={value || "—"}>{value || "—"}</div>
+    </div>
   );
 }
 
 function ConnectForm({ onSaved }) {
   const [secret, setSecret] = useState("");
-  const [accountId, setAccountId] = useState("");
   const [baseUrl, setBaseUrl] = useState("https://api.public.com");
-  const [validity, setValidity] = useState(1440);
+  const [accountId, setAccountId] = useState("");
+  const [tokenMinutes, setTokenMinutes] = useState(60);
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState("");
 
   const submit = async () => {
     setErr("");
-    if (!secret.trim()) { setErr("secret required"); return; }
+    if (!secret.trim() || secret.trim().length < 20) {
+      setErr("paste your full Public.com API secret (≥ 20 chars)");
+      return;
+    }
     setSubmitting(true);
     try {
       await api.post("/admin/public/connect", {
         secret: secret.trim(),
-        account_id: accountId.trim() || null,
         base_url: baseUrl.trim(),
-        token_validity_minutes: parseInt(validity, 10) || 1440,
+        account_id: accountId.trim() || undefined,
+        token_validity_minutes: Number(tokenMinutes) || 60,
       });
-      toast.success("Public.com connected — token refresher running");
-      setSecret(""); setAccountId("");
+      toast.success("Public connected — token cached, refresher running");
+      setSecret("");
       onSaved?.();
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
@@ -120,17 +212,17 @@ function ConnectForm({ onSaved }) {
       <div className="border border-rd-warning/40 bg-rd-warning/5 px-3 py-2 text-[11px] font-mono text-rd-warning flex gap-2">
         <Warning size={14} weight="bold" />
         <div>
-          Generate a secret key at{" "}
-          <span className="text-rd-text">public.com/settings/security/api</span>.
-          Public has no PDT restrictions on cash accounts — this slot is
-          a candidate executor venue once Phase 2 ships. Trade endpoints
-          are NOT wired yet.
+          Get your secret at{" "}
+          <span className="text-rd-text">
+            public.com → Settings → Security → API
+          </span>. Copy with no trailing whitespace. Legacy Alpaca keys
+          are unrelated and have been removed from MC.
         </div>
       </div>
 
       <div>
         <Label htmlFor="public-secret" className="text-[10px] uppercase tracking-widest text-rd-dim">
-          secret key
+          API Secret
         </Label>
         <Input
           id="public-secret"
@@ -145,63 +237,67 @@ function ConnectForm({ onSaved }) {
         />
       </div>
 
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <Label htmlFor="public-account-id" className="text-[10px] uppercase tracking-widest text-rd-dim">
+            Account ID <span className="text-rd-dim">(optional)</span>
+          </Label>
+          <Input
+            id="public-account-id"
+            data-testid="public-account-id-input"
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="auto-picked when single account"
+            className="font-mono text-xs bg-rd-bg3 border-rd-border"
+          />
+        </div>
+        <div>
+          <Label htmlFor="public-token-mins" className="text-[10px] uppercase tracking-widest text-rd-dim">
+            Token TTL (minutes)
+          </Label>
+          <Input
+            id="public-token-mins"
+            data-testid="public-token-mins-input"
+            type="number"
+            value={tokenMinutes}
+            onChange={(e) => setTokenMinutes(e.target.value)}
+            min={5}
+            max={10080}
+            className="font-mono text-xs bg-rd-bg3 border-rd-border"
+          />
+        </div>
+      </div>
+
       <div>
-        <Label htmlFor="public-account" className="text-[10px] uppercase tracking-widest text-rd-dim">
-          account_id <span className="text-rd-muted">· optional, auto-detected when only one account</span>
+        <Label htmlFor="public-base-url" className="text-[10px] uppercase tracking-widest text-rd-dim">
+          Base URL
         </Label>
         <Input
-          id="public-account"
-          data-testid="public-account-input"
-          value={accountId}
-          onChange={(e) => setAccountId(e.target.value)}
+          id="public-base-url"
+          data-testid="public-base-url-input"
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
           autoComplete="off"
           spellCheck={false}
-          placeholder="e.g. ABC123 — only needed for multi-account setups"
           className="font-mono text-xs bg-rd-bg3 border-rd-border"
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <Label htmlFor="public-base" className="text-[10px] uppercase tracking-widest text-rd-dim">
-            base_url
-          </Label>
-          <Input
-            id="public-base"
-            data-testid="public-base-input"
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            autoComplete="off"
-            spellCheck={false}
-            className="font-mono text-xs bg-rd-bg3 border-rd-border"
-          />
-        </div>
-        <div>
-          <Label htmlFor="public-validity" className="text-[10px] uppercase tracking-widest text-rd-dim">
-            token validity (minutes)
-          </Label>
-          <Input
-            id="public-validity"
-            data-testid="public-validity-input"
-            type="number"
-            min="5"
-            max="10080"
-            value={validity}
-            onChange={(e) => setValidity(e.target.value)}
-            className="font-mono text-xs bg-rd-bg3 border-rd-border"
-          />
-        </div>
-      </div>
-
       {err && (
-        <div className="border border-rd-danger text-rd-danger px-3 py-2 text-[11px] font-mono">
+        <div
+          className="border border-rd-danger text-rd-danger px-3 py-2 text-[11px] font-mono"
+          data-testid="public-connect-error"
+        >
           {err}
         </div>
       )}
 
       <DialogFooter className="flex items-center justify-between gap-2">
         <span className="text-[10px] text-rd-dim font-mono">
-          We exchange the secret for an access token + probe accounts before persisting.
+          We exchange the secret for an access token to confirm the
+          key is alive, then start the auto-refresher.
         </span>
         <Button
           onClick={submit}
@@ -219,14 +315,12 @@ function ConnectForm({ onSaved }) {
 function ConnectedView({ status, onChange, onClose }) {
   const [busy, setBusy] = useState("");
   const [showExecToggle, setShowExecToggle] = useState(false);
-  const [portfolio, setPortfolio] = useState(null);
 
   const action = async (label, fn) => {
     setBusy(label);
     try {
-      const r = await fn();
+      await fn();
       toast.success(`${label} OK`);
-      if (label === "Load portfolio") setPortfolio(r?.data);
       await onChange();
     } catch (e) {
       toast.error(e?.response?.data?.detail || e.message);
@@ -235,92 +329,50 @@ function ConnectedView({ status, onChange, onClose }) {
     }
   };
 
-  const expiry = status.access_token_expires_at
-    ? new Date(status.access_token_expires_at)
-    : null;
-  const expiryMinutes = expiry
-    ? Math.max(0, Math.round((expiry - new Date()) / 60000))
-    : null;
-
   return (
     <div className="space-y-3 text-sm">
       <div className="grid grid-cols-2 gap-3 text-[11px] font-mono">
-        <KV label="Base URL" value={status.base_url} />
         <KV label="Secret" value={status.secret_preview} />
-        <KV label="Account" value={status.account_id} />
+        <KV label="Account" value={shortenId(status.account_id)} />
+        <KV label="Base URL" value={status.base_url} />
         <KV label="Connected by" value={status.connected_by} />
+        <KV
+          label="Token refreshed"
+          value={status.access_token_refreshed_at
+            ? new Date(status.access_token_refreshed_at).toLocaleString()
+            : "—"}
+        />
+        <KV
+          label="Token expires"
+          value={status.access_token_expires_at
+            ? new Date(status.access_token_expires_at).toLocaleString()
+            : "—"}
+        />
       </div>
 
-      <Card className="p-3 text-[11px] font-mono">
-        <div className="text-[10px] uppercase tracking-widest text-rd-dim mb-2 flex items-baseline gap-2">
-          <ShieldCheck size={11} weight="bold" />
-          Access token
-        </div>
-        <div>
-          Validity: <span className="text-rd-text">{status.token_validity_minutes}m</span>
-          {expiry && (
-            <>
-              {" · "}
-              expires in{" "}
-              <span className={expiryMinutes < 10 ? "text-rd-warning" : "text-rd-text"}>
-                {expiryMinutes}m
-              </span>
-              {" "}
-              <span className="text-rd-dim">({expiry.toLocaleTimeString()})</span>
-            </>
-          )}
-        </div>
-        <div className="mt-1">
-          Refresher:{" "}
-          <Badge color={status.refresher_running ? "#22C55E" : "#A1A1AA"}>
-            {status.refresher_running ? "RUNNING" : "IDLE"}
-          </Badge>
-          {status.last_refresh?.ts && (
-            <span className="ml-2 text-rd-dim">
-              last refresh {new Date(status.last_refresh.ts).toLocaleTimeString()} ·
-              {status.last_refresh.ok ? " ok" : " FAIL"}
-            </span>
-          )}
-        </div>
-        {status.last_refresh?.error && (
-          <div className="text-rd-danger mt-1">refresh error: {status.last_refresh.error}</div>
-        )}
-      </Card>
-
-      {(status.accounts || []).length > 0 && (
+      {status.accounts && status.accounts.length > 1 && (
         <Card className="p-3 text-[11px] font-mono">
           <div className="text-[10px] uppercase tracking-widest text-rd-dim mb-2">
             Detected accounts
           </div>
-          <div className="space-y-0.5">
+          <ul className="space-y-1">
             {status.accounts.map((a) => (
-              <div key={a.id} className="flex items-baseline gap-2">
+              <li
+                key={a.id}
+                className="flex items-baseline gap-2"
+                data-testid={`public-acct-${a.id}`}
+              >
                 <Badge color={a.id === status.account_id ? "#22C55E" : "#A1A1AA"}>
                   {a.id === status.account_id ? "ACTIVE" : "—"}
                 </Badge>
                 <span className="text-rd-text">{a.id}</span>
-                {a.type && <span className="text-rd-dim">· {a.type}</span>}
-                {a.brokerage_type && <span className="text-rd-dim">· {a.brokerage_type}</span>}
-                {a.options_level && a.options_level !== "NONE" && (
-                  <span className="text-rd-dim">· opt {a.options_level}</span>
-                )}
-                {a.permissions && (
-                  <span className="text-rd-dim ml-auto">{a.permissions}</span>
-                )}
-              </div>
+                {a.type && <span className="text-rd-dim ml-2">{a.type}</span>}
+              </li>
             ))}
+          </ul>
+          <div className="text-[10px] text-rd-dim mt-2">
+            To switch active account, reconnect with the new Account ID.
           </div>
-        </Card>
-      )}
-
-      {portfolio && (
-        <Card className="p-3 text-[11px] font-mono">
-          <div className="text-[10px] uppercase tracking-widest text-rd-dim mb-2">
-            Portfolio (account {portfolio.account_id})
-          </div>
-          <pre className="text-rd-text text-[10px] whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
-            {JSON.stringify(portfolio.portfolio, null, 2).slice(0, 1500)}
-          </pre>
         </Card>
       )}
 
@@ -332,7 +384,7 @@ function ConnectedView({ status, onChange, onClose }) {
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-[11px] font-mono">
             {status.execution_enabled ? (
-              <span className="text-rd-warning">ENABLED — trade endpoints unlocked for future use</span>
+              <span className="text-rd-warning">ENABLED — equity orders will hit Public</span>
             ) : (
               <span className="text-rd-text">DISABLED · doctrine default</span>
             )}
@@ -362,7 +414,12 @@ function ConnectedView({ status, onChange, onClose }) {
           disabled={busy !== ""}
           data-testid="public-test-btn"
         >
-          {busy === "Test" ? "…" : "Test auth"}
+          {busy === "Test" ? "…" : (
+            <>
+              <Pulse size={12} weight="bold" className="mr-1" />
+              Test connection
+            </>
+          )}
         </Button>
         <Button
           variant="outline"
@@ -371,17 +428,12 @@ function ConnectedView({ status, onChange, onClose }) {
           disabled={busy !== ""}
           data-testid="public-refresh-btn"
         >
-          <ArrowsClockwise size={12} weight="bold" className="mr-1" />
-          {busy === "Refresh token" ? "…" : "Refresh token"}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => action("Load portfolio", () => api.get("/admin/public/portfolio"))}
-          disabled={busy !== "" || !status.account_id}
-          data-testid="public-portfolio-btn"
-        >
-          {busy === "Load portfolio" ? "…" : "Load portfolio"}
+          {busy === "Refresh token" ? "…" : (
+            <>
+              <ArrowsClockwise size={12} weight="bold" className="mr-1" />
+              Refresh token
+            </>
+          )}
         </Button>
         <Button
           variant="destructive"
@@ -410,7 +462,10 @@ function ExecutionToggle({ currentlyEnabled, onDone }) {
   const submit = async () => {
     setSubmitting(true);
     try {
-      await api.post("/admin/public/execution", { enabled: newState, confirm: phrase });
+      await api.post("/admin/public/execution", {
+        enabled: newState,
+        confirm: phrase,
+      });
       toast.success(`Execution ${newState ? "ENABLED" : "DISABLED"}`);
       onDone();
     } catch (e) {
@@ -420,30 +475,57 @@ function ExecutionToggle({ currentlyEnabled, onDone }) {
     }
   };
 
+  const matched = phrase === expectedPhrase;
+
   return (
     <div className="mt-3 border-t border-rd-border pt-3 space-y-2">
       <div className="text-[11px] font-mono text-rd-dim">
-        Type the literal phrase below to confirm flipping execution {newState ? "ON" : "OFF"}:
+        Confirmation required. Type exactly:
       </div>
-      <code className="block text-[11px] font-mono text-rd-text bg-rd-bg3 px-2 py-1 border border-rd-border">
-        {expectedPhrase}
-      </code>
+      <div className="flex items-stretch gap-2">
+        <div
+          className="flex-1 text-[11px] font-mono text-rd-dim bg-transparent px-2 py-1.5 border border-dashed border-rd-border select-all"
+          data-testid="public-exec-required-phrase"
+        >
+          <span className="text-[9px] uppercase tracking-widest mr-2 text-rd-muted">required phrase</span>
+          <span className="text-rd-text">{expectedPhrase}</span>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => setPhrase(expectedPhrase)}
+          data-testid="public-exec-fill-phrase"
+        >
+          fill
+        </Button>
+      </div>
       <Input
         value={phrase}
         onChange={(e) => setPhrase(e.target.value)}
         autoComplete="off"
         spellCheck={false}
+        placeholder={`Paste: "${expectedPhrase}"`}
         className="font-mono text-xs bg-rd-bg3 border-rd-border"
         data-testid="public-exec-confirm-input"
       />
+      {!matched && phrase.length > 0 && (
+        <div className="text-[10px] font-mono text-rd-warning">
+          Phrase doesn&apos;t match yet — must be exactly: {expectedPhrase}
+        </div>
+      )}
       <Button
         size="sm"
         onClick={submit}
-        disabled={submitting || phrase !== expectedPhrase}
+        disabled={submitting || !matched}
         data-testid="public-exec-confirm-btn"
         variant={newState ? "destructive" : "default"}
       >
-        {submitting ? "…" : (newState ? "ENABLE EXECUTION" : "DISABLE EXECUTION")}
+        {submitting
+          ? "…"
+          : matched
+          ? (newState ? "ENABLE EXECUTION" : "DISABLE EXECUTION")
+          : (newState ? "ENABLE (phrase required)" : "DISABLE (phrase required)")}
       </Button>
     </div>
   );
@@ -453,7 +535,7 @@ function KV({ label, value }) {
   return (
     <div>
       <div className="text-[10px] uppercase tracking-widest text-rd-dim">{label}</div>
-      <div className="text-rd-text">{value || "—"}</div>
+      <div className="text-rd-text truncate" title={value || "—"}>{value || "—"}</div>
     </div>
   );
 }

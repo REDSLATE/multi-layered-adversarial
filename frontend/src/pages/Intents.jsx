@@ -3,7 +3,7 @@ import { api, RUNTIME_META, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 import SeatRosterStrip from "@/components/SeatRosterStrip";
 import QuickSeatSwitches from "@/components/QuickSeatSwitches";
-import AlpacaConnect from "@/components/AlpacaConnect";
+import PublicConnect from "@/components/PublicConnect";
 import KrakenBrokerTile from "@/components/KrakenBrokerTile";
 import DoctrineStrip from "@/components/DoctrineStrip";
 import AutoRetireStrip from "@/components/AutoRetireStrip";
@@ -613,10 +613,10 @@ export default function Intents() {
       <SectionDivider
         title="Equity Lane"
         icon={Buildings}
-        sub="Alpaca-routed equity execution. Seat assignment lives in Quick Seat Switches above."
+        sub="Public.com-routed equity execution. Seat assignment lives in Quick Seat Switches above."
         testid="intents-section-equity"
       />
-      <AlpacaConnect />
+      <PublicConnect />
 
       <SectionDivider
         title="Crypto Lane"
