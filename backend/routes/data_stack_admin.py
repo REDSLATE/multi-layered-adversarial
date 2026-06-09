@@ -138,6 +138,34 @@ async def universe_list(
     }
 
 
+@router.get("/admin/patterns/universe-public")
+async def universe_public():
+    """Anonymous read of the active watchlist.
+
+    Brain sidecars in this pod hit this endpoint over loopback at
+    boot and every N ticks. They need it to be auth-free because
+    they don't carry an operator JWT — they're internal processes,
+    not human requests.
+
+    Discovery story: pre-2026-06-09 this endpoint was being CALLED
+    by `external/brains/runner.py::_resolve_universe` but did not
+    actually exist (404). The brain's exception handler quietly
+    swallowed the 404 and fell back to a hardcoded 8-symbol list,
+    which is why operator-curated watchlist additions had no effect
+    on what brains scanned. Adding this endpoint closes that gap.
+
+    Returns only `(symbol, lane, active)` fields — no audit metadata
+    or operator email. Safe to expose unauthenticated because the
+    universe list is not sensitive (it's the same names the operator
+    sees on the front-end watchlist).
+    """
+    rows = await db[PATTERNS_UNIVERSE].find(
+        {"active": {"$ne": False}},
+        {"_id": 0, "symbol": 1, "lane": 1, "active": 1},
+    ).sort("symbol", 1).to_list(1000)
+    return {"items": rows, "count": len(rows)}
+
+
 @router.post("/admin/patterns/universe")
 async def universe_add(
     body: UniverseSymbolIn,
