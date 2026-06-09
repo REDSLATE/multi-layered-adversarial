@@ -1,3 +1,91 @@
+## 2026-06-09 (pass 3) — $500 AAPL incident, cap re-arm, signal-ranked selection, watchlist load, brain-identity hardening
+
+### Incident
+6+ AAPL BUYs fired in 10 minutes after the master switch opened
+(pass 2). Position went 0.65 → 1.33 shares, $192 → $388 (~15.5% of
+portfolio in one ticker). Operator killed master switch manually.
+
+### Root causes (compounding)
+1. `PATENT_SUSPENSION_ACTIVE = True` in `backend/namespaces.py` was
+   force-passing every non-seat gate that failed (caps, universe,
+   roadguard). Dating from a 2026-02-17 deadlock-recovery directive
+   that was never turned off.
+2. Alphabetical round-robin symbol selection in
+   `external/brains/runner.py::_intent_loop` —
+   `universe[(tick-1) % len]` → all 4 brains hit `symbol[0]` (AAPL)
+   on tick 1 → 4 simultaneous BUYs queued.
+3. No inventory awareness in the brain emit logic — same AAPL BUY
+   re-emitted every cycle regardless of position held.
+
+### Files modified / added
+- **Modified**: `backend/namespaces.py` —
+  `PATENT_SUSPENSION_ACTIVE = False` with a multi-line comment
+  explaining the live-trading recovery.
+- **Modified**: `external/brains/runner.py`:
+  - Added `INTENT_COOLDOWN_TICKS` env constant (default 6).
+  - Added per-instance `_last_emit_tick` dict.
+  - Rewrote `_intent_loop` symbol pick from modulo round-robin to
+    signal-ranked + cooldown-aware. Falls back to least-recently-
+    emitted if all on cooldown (never silent).
+  - Added `_rank_universe(http)` — concurrent score fetch for all
+    universe symbols, returns descending sorted list.
+  - Added `_score_one(http, lane, symbol)` — reads
+    `signals.setup_score` directly (NOT through `_build_snapshot`
+    whose cold-start branch zeroed scores).
+- **Modified**: `backend/shelly/local_shelly.py` — normalises
+  `brain_name` through `shared.brain_identity.normalize_brain_id`
+  so display names land on canonical Mongo collections. Preserves
+  non-canonical test fixture names for back-compat.
+- **Added**: `backend/shared/brain_identity.py` — `VALID_BRAIN_IDS`,
+  `DISPLAY_TO_ID`, `normalize_brain_id`, `is_known_brain`,
+  `UNKNOWN_BRAIN` sentinel. Doctrine pinned in docstring.
+- **Added**: `backend/tests/test_signal_ranked_symbol_selection.py`
+  (5 tests).
+- **Added**: `backend/tests/test_brain_identity_normalization.py`
+  (29 tests).
+- **Mongo writes (live on prod)**: 42 new symbols in
+  `patterns_universe` (operator watchlist add-only —
+  `AAL, ABNB, AEO, AEP, AFG, AII, AMH, AMZN, AOUT, APH, AVAH, AWK,
+  AXP, BA, BABA, BBCP, BLSH, BTDR, CBLS, CELH, ECL, FB, FDG, GLD,
+  GOOG, GROY, ITA, KEY, MSFY, NFLX, NXTT, ORCL, PFE, PLD, SHOP,
+  TEVA, TGT, UBER, WM, WMT` plus 2 idempotent updates to MSFT and
+  NVDA). Universe is now 48 active equity symbols.
+- **Mongo write (live on prod)**: master trading switch flipped
+  False with reason *"emergency: $500 AAPL slipped through $25 cap
+  because PATENT_SUSPENSION_ACTIVE force-passes caps. Need prod
+  redeploy with PATENT_SUSPENSION_ACTIVE=False before re-enabling."*
+
+### Verification (preview)
+- 76/76 backend tests pass.
+- Live preview symbol distribution post-fix:
+  `NVDA 12 · ETH/USD 9 · SOL/USD 4 · ADA/USD 4 · BTC/USD 1 · AAPL 1`
+  (vs the pre-fix all-AAPL pattern).
+- Brain distribution even: `redeye 8, alpha 8, camaro 7, chevelle 8`.
+- Synthetic $500 equity diagnose blocks at 3 caps simultaneously.
+
+### Doctrine pin added: brain-identity layer
+After this pass, anywhere in the codebase that turns a brain
+reference into a routing decision, DB collection name, or seat
+lookup MUST funnel through `shared.brain_identity.normalize_brain_id`.
+
+> *"Display names = UI only. Canonical IDs = routing/execution
+> only. Roles = seat logic only."* — operator, 2026-06-09
+
+Audit found ONE real surface (`LocalShelly.__init__`) that
+previously accepted any string. Now safe. The choke point exists
+so future code paths can't reintroduce the silent-fragmentation
+class of bug.
+
+### Production status at end of pass
+- Mongo state (universe, master switch off): **live on prod**.
+- Code fixes (cap enforcement, ranking + cooldown, brain-identity,
+  auto-router status endpoints, force-tick): **preview only**;
+  prod still defanged on caps and still has alphabetical selection
+  until **Save to GitHub → redeploy** lands.
+- DO NOT re-enable the master switch on prod until redeploy.
+
+---
+
 ## 2026-06-09 (pass 2) — FIRST LIVE ORDERS HIT PUBLIC.COM · 5-layer gate diagnosis
 
 ### Operator confirmation (verbatim)

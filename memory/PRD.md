@@ -1,5 +1,142 @@
 # Mission Control — PRD (latest pass on top)
 
+## 🆕 2026-06-09 (pass 3) — $500 AAPL incident · cap enforcement re-armed · signal-ranked selection · watchlist loaded · brain-identity hardening
+
+### Incident
+After the master switch flipped on (pass 2), the brain fleet executed
+**6+ AAPL BUYs in 10 minutes**, deploying ~$197 of buying power into
+a single ticker:
+```
+9:42 ET  AAPL 0.6528 sh · $191.77 · 7.67% of portfolio
+9:52 ET  AAPL 1.3279 sh · $388.42 · 15.54% of portfolio · BP $110
+```
+Operator killed the master switch when they saw it happening.
+
+### Root causes (three compounding)
+1. **`PATENT_SUSPENSION_ACTIVE = True`** in `backend/namespaces.py`
+   was force-passing every non-seat gate that failed — including
+   `cap_per_order=$25`, `cap_per_day=$50`, `cap_open_notional=$200`,
+   `symbol_in_universe`, `roadguard_spread_floor`. Gates LOGGED what
+   would have blocked but stamped `passed=True` with a
+   `[SUSPENDED]` tag. Dates from 2026-02-17 operator directive when
+   the system was deadlocked; **was never turned back off when live
+   trading went on**.
+2. **Alphabetical round-robin symbol selection** in
+   `external/brains/runner.py::_intent_loop` —
+   `universe[(tick-1) % len]` meant all 4 brains hit `symbol[0]`
+   (AAPL) on their first tick → 4 simultaneous BUYs on the same
+   ticker → that queue head drained first when the master switch
+   opened.
+3. **No inventory awareness in brains** — each brain re-emitted BUY
+   AAPL every time it cycled back to AAPL, regardless of position
+   size already held. Combined with #1 and #2, this is a 6×
+   amplification.
+
+### Fixes shipped this pass (preview-only — requires redeploy for prod)
+
+**1. Cap-bypass closed.** `PATENT_SUSPENSION_ACTIVE = False` in
+`backend/namespaces.py`. Verified on preview: a synthetic $500
+equity diagnose now hard-blocks at `cap_per_order` ($25),
+`cap_per_day` ($50), AND `cap_open_notional` ($200) simultaneously.
+Doctrine stack fully re-engaged.
+
+**2. Signal-ranked symbol selection.** Replaced the alphabetical
+modulo loop in `external/brains/runner.py::_intent_loop` with:
+   - Per-tick: score every symbol's `setup_score` (`_rank_universe`).
+   - Sort descending, pick head.
+   - Skip any symbol whose last emit was within
+     `INTENT_COOLDOWN_TICKS` (default 6 ≈ 4.5 min @ 45s tick),
+     fall through to next in ranking.
+   - If everything's on cooldown: pick least-recently-emitted so the
+     brain never goes silent (we owe MC at least one OBSERVE for
+     audit continuity).
+   - Universe refresh purges cooldown entries for dropped symbols.
+
+   New env knobs: `NEUTRAL_BRAIN_COOLDOWN_TICKS` (default 6).
+   Module-level helper: `_rank_universe`, `_score_one` — both
+   tested in isolation.
+
+   Live preview proof: symbol distribution post-fix went from
+   *"all AAPL"* to `NVDA 12 · ETH/USD 9 · SOL/USD 4 · ADA/USD 4 · BTC/USD 1 · AAPL 1`,
+   brain distribution evenly spread (`redeye 8, alpha 8, camaro 7,
+   chevelle 8`).
+
+**3. Operator watchlist loaded into universe.** 42 new symbols added
+to `patterns_universe` on both preview and prod (add-only — kept the
+original 8). Active equity universe is now 48 symbols spanning the
+operator's actual holdings + watchlist (`AAL, ABNB, AEO, AEP, AFG,
+AII, AMH, AMZN, AOUT, APH, AVAH, AWK, AXP, BA, BABA, BBCP, BLSH,
+BTDR, CBLS, CELH, ECL, FB, FDG, GLD, GOOG, GROY, ITA, KEY, MSFY,
+NFLX, NXTT, ORCL, PFE, PLD, SHOP, TEVA, TGT, UBER, WM, WMT` added;
+`AAPL, AMC, AMD, GME, HOTH, MSFT, NVDA, TSLA` preserved). This was
+a Mongo write — **already live on prod**.
+
+**4. Brain-identity normalization (`shared/brain_identity.py`).**
+After the rename event, operator flagged the risk of name-coupling
+bugs — display-name-as-routing-key, display-name-as-collection-name.
+Audit found one real surface (`LocalShelly.__init__` accepted any
+string and used it as a Mongo collection suffix). Fix:
+
+   - New `backend/shared/brain_identity.py`:
+       - `VALID_BRAIN_IDS = {"alpha","camaro","chevelle","redeye"}`
+       - `DISPLAY_TO_ID` covers brand names (Camino/Barracuda/
+         Hellcat/GTO), legacy slot labels (Alpha/Camaro/Chevelle/
+         RedEye), and every casing variant.
+       - `normalize_brain_id(value) → canonical_id | "unknown"` —
+         fail-closed; never silently substitutes a default brain.
+       - `is_known_brain(value)` sugar.
+   - `LocalShelly.__init__` now funnels through `normalize_brain_id`
+     so a caller passing `"Barracuda"` lands in
+     `shelly_camaro_memories`, not `shelly_barracuda_memories`.
+     Non-canonical test fixture names (e.g. `"twembed"`) are
+     preserved for back-compat.
+
+   The doctrine is pinned in the module docstring:
+   *"Display names = UI only. Canonical IDs = routing/execution
+   only. Roles = seat logic only."*
+
+### Tests added this pass
+- `backend/tests/test_signal_ranked_symbol_selection.py` (5 tests):
+  ranking by setup_score, cooldown blocks repeats, cooldown releases
+  after window, universe refresh purges cooldowns, score failures
+  degrade-don't-drop.
+- `backend/tests/test_brain_identity_normalization.py` (29 tests):
+  canonical pass-through (×4), uppercase canonical (×4), brand names
+  (×4), casing variants (×7), legacy slot labels (×4), unknown
+  inputs (×8 — must return `"unknown"`, never default), DISPLAY_TO_ID
+  integrity (×2), is_known_brain consistency, LocalShelly
+  normalization integration (×2).
+
+**Total backend suite: 76/76 passing.**
+
+### Production state at end of pass
+| Layer | Prod | Preview |
+|---|---|---|
+| Master trading switch | **❌ OFF** (audit-logged "emergency: $500 AAPL slipped through $25 cap") | ❌ OFF (mirror) |
+| `PATENT_SUSPENSION_ACTIVE` | **True** (still defanged — needs redeploy) | False ✅ |
+| Watchlist symbols (48) | ✅ live (Mongo write) | ✅ live |
+| Signal-ranked selection + cooldown | not yet (code) | ✅ live |
+| Brain-identity normalization | not yet (code) | ✅ live |
+| New `/admin/auto-router/status` and `/force-tick` endpoints | not yet (code) | ✅ live |
+
+### To go back live on prod
+1. **Save to GitHub → trigger prod redeploy.** This is the only way
+   to land `PATENT_SUSPENSION_ACTIVE=False`, the signal-ranked loop,
+   the cooldown, and the brain-identity layer on `mission.risedual.ai`.
+2. After redeploy lands, verify with
+   `curl https://mission.risedual.ai/api/admin/auto-router/status` —
+   should return 200 (404 means redeploy didn't take).
+3. Optionally manually unwind the orphan 1.33 AAPL position in the
+   Public.com app if you don't want to hold it.
+4. **Then** flip master switch ON via the existing
+   `POST /api/admin/trading/toggle`.
+
+When all four are GREEN, the next tick should pull a *NVDA / GOOG /
+MSFT / ORCL / etc.* mix sorted by setup_score, capped at $25/order
+and $50/day, no symbol dogpiled.
+
+---
+
 ## 🆕 2026-06-09 (pass 2) — FIRST LIVE ORDERS · 5-layer gate diagnosis
 
 ### Operator observation
