@@ -140,6 +140,15 @@ RUNTIME_ORIGIN = (
     or _POD_HOSTNAME
 )
 TICK_INTERVAL_SEC = float(os.environ.get("NEUTRAL_BRAIN_TICK_SEC", "45"))
+
+# Anti-drumbeat: don't re-emit an intent for the same (lane, symbol)
+# within this many ticks of the last emit. With TICK_INTERVAL_SEC=45
+# the default 6-tick cooldown is ~4.5 minutes — long enough that a
+# brain can't fire 6 BUYs on AAPL in 10 minutes (the 2026-06-09
+# saturation incident), short enough that strong setups don't get
+# starved. The brain still EVALUATES every symbol every tick (for
+# ranking) — it just won't POST a new intent for one it just hit.
+INTENT_COOLDOWN_TICKS = int(os.environ.get("NEUTRAL_BRAIN_COOLDOWN_TICKS", "6"))
 CHECKIN_INTERVAL_SEC = float(os.environ.get("NEUTRAL_BRAIN_CHECKIN_SEC", "30"))
 HTTP_TIMEOUT_SEC = float(os.environ.get("NEUTRAL_BRAIN_HTTP_TIMEOUT_SEC", "8"))
 PATTERN_BIAS = float(os.environ.get("NEUTRAL_BRAIN_PATTERN_BIAS", "0.20"))
@@ -470,6 +479,12 @@ class BrainRunner:
         self._checkin_count = 0
         self._sovereign_count = 0
         self._universe: list[tuple[str, str]] = []
+        # Anti-drumbeat cooldown. Records the last tick at which the
+        # brain emitted an intent for each (lane, symbol). The intent
+        # loop refuses to re-pick a symbol whose last-emit tick is
+        # within `INTENT_COOLDOWN_TICKS` of the current tick. Reset
+        # whenever the universe refreshes (new symbols start cold).
+        self._last_emit_tick: dict[tuple[str, str], int] = {}
         # Rolling tape of the brain's last N decisions — fed back into
         # the sovereign contribution as `recent_outcomes` so MC's
         # `sovereign_loop` diagnostic stays fresh AND the audit log
@@ -590,20 +605,113 @@ class BrainRunner:
                 self._tick_count += 1
                 if self._tick_count % refresh_every == 0:
                     self._universe = await self._resolve_universe(http)
+                    # Universe refresh wipes the cooldown so newly-added
+                    # symbols aren't held back and dropped symbols don't
+                    # leak stale state.
+                    self._last_emit_tick = {
+                        k: v for k, v in self._last_emit_tick.items()
+                        if k in self._universe
+                    }
                 if not self._universe:
                     await asyncio.sleep(TICK_INTERVAL_SEC)
                     continue
-                lane, symbol = self._universe[
-                    (self._tick_count - 1) % len(self._universe)
-                ]
+
+                # ── Signal-ranked symbol selection (2026-06-09 fix) ──
+                # Prior version: `self._universe[(tick-1) % len]` —
+                # pure alphabetical round-robin. That caused the AAPL
+                # saturation: all 4 brains hit symbol[0] on tick 1,
+                # queueing 4 simultaneous BUYs on the same ticker.
+                # Now: score every symbol's setup_score this tick,
+                # rank desc, skip anything within INTENT_COOLDOWN_TICKS
+                # of its last emit, and post on the head.
+                ranked = await self._rank_universe(http)
+                pick: Optional[tuple[str, str, float]] = None
+                for lane, symbol, score in ranked:
+                    key = (lane, symbol)
+                    last = self._last_emit_tick.get(key, -10**9)
+                    if (self._tick_count - last) < INTENT_COOLDOWN_TICKS:
+                        continue
+                    pick = (lane, symbol, score)
+                    break
+                # If every symbol is on cooldown (rare — every name
+                # was hit within COOLDOWN window), fall back to the
+                # least-recently-emitted symbol so the brain never
+                # goes fully silent. We owe MC at least an OBSERVE.
+                if pick is None and ranked:
+                    lane, symbol, score = min(
+                        ranked,
+                        key=lambda r: self._last_emit_tick.get((r[0], r[1]), -10**9),
+                    )
+                    pick = (lane, symbol, score)
+                if pick is None:
+                    await asyncio.sleep(TICK_INTERVAL_SEC)
+                    continue
+                lane, symbol, score = pick
                 try:
                     await self._evaluate_and_post(http, lane, symbol)
+                    self._last_emit_tick[(lane, symbol)] = self._tick_count
                 except Exception as e:  # noqa: BLE001
                     logger.warning(
                         "intent_loop error brain=%s sym=%s: %s",
                         self.brain_id, symbol, e,
                     )
                 await asyncio.sleep(TICK_INTERVAL_SEC + random.uniform(-3, 3))
+
+    async def _rank_universe(
+        self, http: httpx.AsyncClient,
+    ) -> list[tuple[str, str, float]]:
+        """Score every (lane, symbol) in the brain's universe this
+        tick and return them sorted descending by setup_score.
+
+        Doctrine: the brain's universe traversal is now DATA-DRIVEN
+        instead of alphabetical. Replaces the legacy modulo round-
+        robin that caused the 2026-06-09 AAPL saturation incident
+        (4 brains × tick #1 all picked symbol[0]). Setup score is
+        the [0, 1] pattern composite already computed in
+        `_build_snapshot` — same code the brain core later consumes,
+        so the ranking and the eventual emit are using the same
+        signal lens.
+
+        Fetches all snapshots concurrently. The MC technical endpoint
+        reads from cached bars (no live broker call) so the load is
+        bounded — universe-size × 4 brains every ~40s.
+        """
+        tasks = [self._score_one(http, lane, sym) for (lane, sym) in self._universe]
+        scores = await asyncio.gather(*tasks, return_exceptions=True)
+        rows: list[tuple[str, str, float]] = []
+        for (lane, symbol), score in zip(self._universe, scores):
+            if isinstance(score, Exception):
+                # Score failures degrade to 0 — symbol stays in pool
+                # but ranks at the bottom. We never DROP a symbol on
+                # transient API error; we just deprioritise it for
+                # this tick.
+                rows.append((lane, symbol, 0.0))
+                continue
+            rows.append((lane, symbol, float(score)))
+        rows.sort(key=lambda r: r[2], reverse=True)
+        return rows
+
+    async def _score_one(
+        self, http: httpx.AsyncClient, lane: str, symbol: str,
+    ) -> float:
+        """Pull the technical for one (lane, symbol) and return its
+        setup_score. Pure scoring — does not post an intent, does
+        not touch the brain core. Cheap (cached MC endpoint).
+
+        Reads `signals.setup_score` directly off the technical payload
+        instead of going through `_build_snapshot`, because the
+        cold-start branch of `_build_snapshot` zeros out setup_score
+        when bars are absent — which would flatten ranking when MC
+        has no bars cached yet for a symbol.
+        """
+        technical = await self._fetch_technical(http, symbol)
+        if not technical:
+            return 0.0
+        signals = technical.get("signals") or technical.get("pattern_signals") or {}
+        try:
+            return float(signals.get("setup_score") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
 
     async def _evaluate_and_post(
         self, http: httpx.AsyncClient, lane: str, symbol: str,
