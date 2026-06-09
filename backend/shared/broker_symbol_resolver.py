@@ -199,14 +199,11 @@ def resolve_broker_symbol(asset: AssetKey, broker: str) -> Any:
 
 # ───────────────────────── lane → broker registry ─────────────────────
 #
-# Day-1 live routing: equities → Alpaca paper, crypto → Kraken live.
-# 2026-06-07: equity lane now PREFERS Public.com when Public credentials
-# are stored. The registry holds the DEFAULT broker; the actual loader
-# (`broker_router.ADAPTER_LOADERS["alpaca_paper"]`) is augmented with a
-# Public-first preference so flipping Public on doesn't require an
-# operator to edit this dict. Doctrine pin: NEVER change the default
-# fallback without an operator note — losing the Alpaca fallback closes
-# equity trading entirely if Public ever drops credentials.
+# 2026-02-XX: Operator decision — Alpaca paper is REMOVED from the
+# equity path. Public.com is the sole equity broker. The registry
+# entry below stays as `alpaca_paper` (legacy slot name; many tests
+# and call sites reference it) but the actual loader resolves to
+# Public via `broker_router._get_equity_adapter`. No Alpaca fallback.
 
 LANE_BROKER_REGISTRY: dict[LaneT, str] = {
     "equity": "alpaca_paper",
@@ -215,18 +212,25 @@ LANE_BROKER_REGISTRY: dict[LaneT, str] = {
 
 
 def equity_broker_preference() -> str:
-    """Operator-controlled equity-broker preference. Env-driven so the
-    operator can flip from Alpaca → Public (or back) without a deploy.
+    """Operator-controlled equity-broker preference.
 
-    Resolves to one of {"public", "alpaca_paper"}. The router calls
-    `broker_for_lane("equity")` for the SLOT name; the actual loader
-    that gets picked is decided in `broker_router._equity_loader()`,
-    which reads THIS preference to choose between Public and Alpaca.
+    Legal values (2026-02-XX onward):
+        - "public" (default + only supported value)
+
+    Anything else falls back to "public". The previous `auto` and
+    `alpaca_paper` modes were removed when the operator chose to
+    drop Alpaca entirely — Public.com is now the only equity broker
+    in the system. If Public is unavailable (no creds / API down)
+    the broker_router fails-closed with NO_TRADE; it does NOT
+    silently route to Alpaca anymore.
     """
-    val = (os.environ.get("RISEDUAL_EQUITY_BROKER") or "auto").strip().lower()
-    if val in {"public", "alpaca_paper", "alpaca"}:
-        return "alpaca_paper" if val == "alpaca" else val
-    return "auto"  # auto: prefer Public when connected, else Alpaca
+    val = (os.environ.get("RISEDUAL_EQUITY_BROKER") or "public").strip().lower()
+    if val != "public":
+        # Operator typo or stale env var — log-worthy but harmless.
+        # Forcing `public` here is intentional: equity ALWAYS goes
+        # to Public when this preference function is consulted.
+        return "public"
+    return "public"
 
 
 class LaneRoutingError(Exception):

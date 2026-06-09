@@ -107,27 +107,20 @@ async def _get_ibkr_adapter():
 
 
 async def _get_equity_adapter():
-    """Equity-lane preference resolver.
+    """Equity-lane adapter resolver.
 
-    The operator-level pref (`RISEDUAL_EQUITY_BROKER`) decides:
-      * `public`       → use Public only (no fallback). NO_TRADE if down.
-      * `alpaca_paper` → use Alpaca only (legacy behavior).
-      * `auto` (default) → Public first; Alpaca on fallback.
+    2026-02-XX: Public.com is the SOLE equity broker. The previous
+    `auto` mode (Public first, Alpaca fallback) and the
+    `alpaca_paper`-direct mode were both removed at operator request.
 
-    Doctrine: in `auto` mode, equity trading NEVER closes just because
-    Public hiccups. Crypto routing is independent and unaffected.
+    Doctrine: if Public is unavailable (no creds / probe failed /
+    API down), this returns None. The broker_router then raises
+    `BrokerRouteBlocked` and the intent NO_TRADEs. We do NOT silently
+    route equity to Alpaca anymore — the operator has chosen Public
+    as the only equity broker, and a silent fallback would violate
+    that choice.
     """
-    from shared.broker_symbol_resolver import equity_broker_preference  # noqa: WPS433
-    pref = equity_broker_preference()
-    if pref == "public":
-        return await _get_public_adapter()
-    if pref == "alpaca_paper":
-        return await get_alpaca_adapter()
-    # auto
-    pub = await _get_public_adapter()
-    if pub is not None:
-        return pub
-    return await get_alpaca_adapter()
+    return await _get_public_adapter()
 
 
 ADAPTER_LOADERS = {
