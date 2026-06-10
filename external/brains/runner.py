@@ -315,6 +315,48 @@ def _log_identity_once() -> None:
     )
 
 
+async def _resolve_seat(brain_id: str) -> Optional[str]:
+    """Lookup the seat this brain holds right now.
+
+    Doctrine pin (operator directive, 2026-06-XX): seat is runtime
+    job assignment — strategist / executor / governor / auditor —
+    and is INTENTIONALLY decoupled from brain_id and doctrine.
+    Camino can be executor today and auditor tomorrow without
+    changing how she thinks.
+
+    Returns None if MC's seat registry isn't importable (e.g. the
+    brain runner is being unit-tested standalone). On any other
+    failure, `get_current_seat` returns the default seat itself —
+    we never raise into the decision loop.
+    """
+    try:
+        import sys as _sys
+        if "/app/backend" not in _sys.path:
+            _sys.path.insert(0, "/app/backend")
+        from shared.brain_seats import get_current_seat  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "brain_seats unavailable brain=%s err=%s — "
+            "intent will be unseated", brain_id, exc,
+        )
+        return None
+    # The seat registry indexes by canonical brain_id (camino/
+    # barracuda/...). Translate from the runner's legacy stack code
+    # if needed.
+    try:
+        from shared.brain_doctrine import STACK_TO_BRAIN_ID  # type: ignore
+        bid = STACK_TO_BRAIN_ID.get(brain_id.lower(), brain_id.lower())
+    except Exception:
+        bid = brain_id.lower()
+    try:
+        return await get_current_seat(bid)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "seat lookup failed brain=%s err=%s", brain_id, exc,
+        )
+        return None
+
+
 async def _resolve_position_context(lane: str, symbol: str) -> Optional[dict]:
     """Lookup the current broker position context for (lane, symbol)
     and return the dict the brain core injects into its decision.
@@ -491,6 +533,147 @@ def _apply_pattern_bias(intent: BrainIntent, setup_score: float) -> BrainIntent:
     return intent
 
 
+def _granular_transition(intent: "BrainIntent") -> Optional[str]:
+    """Expand the brain's 6-state `transition_intent` primitive
+    (OPEN/ADD/REDUCE/CLOSE/FLIP/HOLD) into the 10-state granular
+    form the legacy wrappers expect (OPEN_LONG, ADD_LONG, ...).
+
+    Doctrine pin (operator directive, 2026-06-XX): the legacy
+    wrappers were written against the granular vocabulary. The new
+    brain core emits the primitive. This helper bridges the two so
+    `legacy_brain_wrappers.py` can stay verbatim per the operator's
+    copy-paste contract.
+    """
+    side = (intent.current_side or "FLAT").upper()
+    target = (intent.target_exposure or "FLAT").upper()
+    prim = (intent.transition_intent or "HOLD").upper()
+    if prim == "OPEN":
+        if target == "LONG":
+            return "OPEN_LONG"
+        if target == "SHORT":
+            return "OPEN_SHORT"
+        return "OPEN"
+    if prim == "ADD":
+        if side == "LONG":
+            return "ADD_LONG"
+        if side == "SHORT":
+            return "ADD_SHORT"
+        return "ADD"
+    if prim == "REDUCE":
+        if side == "LONG":
+            return "REDUCE_LONG"
+        if side == "SHORT":
+            return "REDUCE_SHORT"
+        return "REDUCE"
+    if prim == "CLOSE":
+        if side == "LONG":
+            return "CLOSE_LONG"
+        if side == "SHORT":
+            return "CLOSE_SHORT"
+        return "CLOSE"
+    if prim == "FLIP":
+        if side == "LONG" and target == "SHORT":
+            return "FLIP_LONG_TO_SHORT"
+        if side == "SHORT" and target == "LONG":
+            return "FLIP_SHORT_TO_LONG"
+        return "FLIP"
+    return prim
+
+
+def _apply_legacy_wrapper_to_intent(intent: BrainIntent) -> BrainIntent:
+    """Run the canonical brain's legacy wrapper (if any) and merge
+    the wrapper's mutations back into the BrainIntent.
+
+    Doctrine pin (operator directive, 2026-06-XX): wrappers attach
+    OLD-personality instincts on top of the NEW doctrine engine.
+    Camino keeps Alpha's executor discipline. Hellcat keeps
+    Chevelle's governor temperament. Barracuda and GTO run pure.
+    A wrapper NEVER flips action, NEVER creates a trade from HOLD,
+    NEVER forces a seat — it only modulates confidence, size_bias,
+    and warnings.
+
+    Returns the same intent object with mutations applied.
+    """
+    try:
+        import sys as _sys
+        if "/app/backend" not in _sys.path:
+            _sys.path.insert(0, "/app/backend")
+        from shared.legacy_brain_wrappers import (  # type: ignore
+            apply_legacy_wrapper, BRAIN_WRAPPER_ASSIGNMENTS,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "legacy_brain_wrappers unavailable err=%s — running unwrapped",
+            exc,
+        )
+        return intent
+
+    canonical = _canonical_brain_id(intent.brain_id)
+    if canonical not in BRAIN_WRAPPER_ASSIGNMENTS:
+        return intent  # Barracuda / GTO run pure — no wrapper.
+
+    dict_in = {
+        "brain_id": canonical,
+        "display_name": intent.display_name,
+        "action": intent.action,
+        "confidence": float(intent.confidence),
+        "size_bias": 1.0,
+        "current_side": intent.current_side,
+        "transition_intent": _granular_transition(intent),
+        "position_evolution": intent.position_evolution,
+        "risk_transition": intent.risk_transition,
+        "reasons": [],
+        "warnings": [],
+        "evidence": {},
+    }
+    try:
+        wrapped = apply_legacy_wrapper(dict_in)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "legacy wrapper failed brain=%s err=%s — keeping unwrapped",
+            canonical, exc,
+        )
+        return intent
+
+    new_conf = float(wrapped.get("confidence", intent.confidence))
+    size_bias = float(wrapped.get("size_bias", 1.0))
+    intent.confidence = round(new_conf, 4)
+    intent.size = round(float(intent.size) * size_bias, 4)
+    for r in wrapped.get("reasons", []) or []:
+        intent.reasoning.append(f"wrapper:{r}")
+    for w in wrapped.get("warnings", []) or []:
+        intent.reasoning.append(f"wrapper_warn:{w}")
+    intent.snapshot = {
+        **(intent.snapshot or {}),
+        "legacy_wrapper_meta": {
+            "wrapper": wrapped.get("wrapper"),
+            "parent_brain": wrapped.get("parent_brain"),
+            "wrapper_doctrine": wrapped.get("doctrine"),
+            "size_bias": size_bias,
+            "reasons": wrapped.get("reasons", []),
+            "warnings": wrapped.get("warnings", []),
+        },
+    }
+    return intent
+
+
+
+def _canonical_brain_id(stack_or_brain_id: str) -> str:
+    """Translate a legacy stack code (alpha/camaro/chevelle/redeye)
+    into the canonical brain_id (camino/barracuda/hellcat/gto). If
+    the input is already canonical, it passes through. Doctrine pin
+    (2026-06-XX): the wire protocol still carries `stack`, but
+    `canonical_brain_id` is the identity vocabulary going forward.
+    """
+    try:
+        from shared.brain_doctrine import STACK_TO_BRAIN_ID  # type: ignore
+        s = (stack_or_brain_id or "").lower().strip()
+        return STACK_TO_BRAIN_ID.get(s, s)
+    except Exception:  # noqa: BLE001
+        return (stack_or_brain_id or "").lower().strip()
+
+
+
 def _intent_to_mc_payload(intent: BrainIntent) -> dict:
     mc_action = "HOLD" if intent.action == "OBSERVE" else intent.action
     rationale = " | ".join(intent.reasoning)[:4000]
@@ -534,6 +717,16 @@ def _intent_to_mc_payload(intent: BrainIntent) -> dict:
             "position_evolution": intent.position_evolution,
             "risk_transition": intent.risk_transition,
             "position_context": intent.snapshot.get("position_context"),
+            # ── Doctrine + seat (operator directive, 2026-06-XX) ──
+            # `canonical_brain_id` is the new identity vocabulary
+            # (camino/barracuda/hellcat/gto) — `stack` stays as the
+            # legacy slot code (alpha/camaro/chevelle/redeye) for
+            # wire-protocol compatibility. `doctrine` is bound to
+            # the brain (immutable); `seat` is runtime-rotatable.
+            "canonical_brain_id": _canonical_brain_id(intent.brain_id),
+            "doctrine": intent.doctrine,
+            "seat": intent.seat,
+            "legacy_wrapper": (intent.snapshot or {}).get("legacy_wrapper_meta"),
         },
     }
 
@@ -576,18 +769,34 @@ class BrainRunner:
         # (shadow_only flag, min_commitment) can diverge later. Today
         # all lanes share defaults but the layout supports divergence.
         shadow_only = _shadow_only_default()
+        # ── Doctrine wiring (operator directive, 2026-06-XX) ──
+        # The brain's interpretation is bound to its identity, not
+        # its seat. Resolve the doctrine here so every lane shares
+        # the same personality. If brain_id isn't in the doctrine
+        # registry, fall back to legacy weights (no doctrine).
+        try:
+            from shared.brain_doctrine import get_doctrine  # type: ignore
+            doctrine = get_doctrine(brain_id)
+        except Exception as _doctrine_exc:  # noqa: BLE001
+            logger.warning(
+                "no doctrine for brain_id=%s; running legacy weights err=%s",
+                brain_id, _doctrine_exc,
+            )
+            doctrine = None
         self._cores = {
             "crypto": NeutralAdversarialBrain(
                 brain_id=brain_id, display_name=display_name,
                 lane="crypto", shadow_only=shadow_only,
                 min_commitment=0.58, min_gap=0.06,
                 max_shadow_size=1.0 if not shadow_only else 0.0,
+                doctrine=doctrine,
             ),
             "equity": NeutralAdversarialBrain(
                 brain_id=brain_id, display_name=display_name,
                 lane="equity", shadow_only=shadow_only,
                 min_commitment=0.58, min_gap=0.06,
                 max_shadow_size=1.0 if not shadow_only else 0.0,
+                doctrine=doctrine,
             ),
         }
 
@@ -806,10 +1015,24 @@ class BrainRunner:
         position_ctx = await _resolve_position_context(lane, symbol)
         if position_ctx is not None:
             snapshot["position_context"] = position_ctx
+        # ── Seat injection (operator directive, 2026-06-XX) ──
+        # Resolve seat per tick — operator can rotate at runtime
+        # without restarting the brain runner. Cache is 5s so this
+        # adds at most one Mongo read every few ticks.
+        current_seat = await _resolve_seat(self.brain_id)
         core = self._cores[lane]
-        intent = core.evaluate(symbol, snapshot, position_context=position_ctx)
+        intent = core.evaluate(
+            symbol, snapshot,
+            position_context=position_ctx,
+            seat=current_seat,
+        )
         intent.lane = lane
         intent = _apply_pattern_bias(intent, setup_score)
+        # ── Legacy wrapper (operator directive, 2026-06-XX) ──
+        # Layer old-personality instincts (Alpha executor / Chevelle
+        # governor) on top of the doctrine engine. Only fires for
+        # Camino and Hellcat; Barracuda and GTO pass through unchanged.
+        intent = _apply_legacy_wrapper_to_intent(intent)
 
         # 2026-02-XX: skills + personality enrichment. The brain core
         # produces a raw read; the skills layer surfaces lenses; the

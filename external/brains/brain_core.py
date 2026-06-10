@@ -53,24 +53,22 @@ class BrainIntent:
     snapshot: Dict[str, Any]
     memory_tags: List[str]
     # ── Trade-transition layer (operator directive, 2026-06-XX) ──
-    # Side awareness — derived from the live broker position_context
-    # that the runner injects before evaluate(). These fields make
-    # the difference between "BUY = open long" and "BUY against an
-    # existing SHORT = cover" visible to MC and to the audit log.
-    # None when the brain ran without a position_context (legacy).
-    current_side: Optional[str] = None            # LONG | SHORT | FLAT
+    current_side: Optional[str] = None
     signed_qty: Optional[float] = None
-    target_exposure: Optional[str] = None         # LONG | SHORT | FLAT
-    transition_intent: Optional[str] = None       # OPEN | ADD | REDUCE | CLOSE | FLIP | HOLD
-    order_action: Optional[str] = None            # BUY | SELL (broker instruction)
-    # Portfolio-manager-grade layer (operator directive, 2026-06-XX
-    # follow-up). `position_evolution` refines `transition_intent`
-    # with SCALE_IN / SCALE_OUT / PARTIAL_COVER / FULL_COVER when the
-    # brain's confidence + position context make the move meaningful
-    # at the PM level. `risk_transition` lifts the per-symbol verb to
-    # a portfolio risk verb (RISK_ON / RISK_OFF / NEUTRAL).
+    target_exposure: Optional[str] = None
+    transition_intent: Optional[str] = None
+    order_action: Optional[str] = None
     position_evolution: Optional[str] = None
     risk_transition: Optional[str] = None
+    # ── Doctrine + seat layer (operator directive, 2026-06-XX) ──
+    # `doctrine` is bound to brain_id (immutable — Camino thinks like
+    # a trend follower regardless of what job she's doing today).
+    # `seat` is the brain's current runtime job — strategist, executor,
+    # governor, or auditor — operator-rotatable without touching
+    # doctrine. The pair lets the dashboard show "Camino is auditor
+    # today" while the brain still emits trend-doctrine intents.
+    doctrine: Optional[str] = None    # trend | mean_reversion | breakout | momentum
+    seat: Optional[str] = None        # strategist | executor | governor | auditor
 
 
 class NeutralAdversarialBrain:
@@ -91,20 +89,32 @@ class NeutralAdversarialBrain:
         min_commitment: float = 0.58,
         min_gap: float = 0.06,
         max_shadow_size: float = 0.0,
+        doctrine: Optional[Any] = None,
     ):
         self.brain_id = brain_id
         self.display_name = display_name
         self.lane = lane
         self.shadow_only = shadow_only
-        self.min_commitment = min_commitment
-        self.min_gap = min_gap
+        # If a doctrine is provided, its min_confidence/min_gap
+        # override the constructor defaults — the doctrine module is
+        # the source of truth for per-brain thresholds. The legacy
+        # `min_commitment` arg stays for backward-compat with the
+        # callers that haven't been migrated yet.
+        if doctrine is not None:
+            self.min_commitment = float(doctrine.min_confidence)
+            self.min_gap = float(doctrine.min_gap)
+        else:
+            self.min_commitment = min_commitment
+            self.min_gap = min_gap
         self.max_shadow_size = max_shadow_size
+        self.doctrine = doctrine  # may be None for legacy callers
 
     def evaluate(
         self,
         symbol: str,
         snapshot: Dict[str, Any],
         position_context: Optional[Dict[str, Any]] = None,
+        seat: Optional[str] = None,
     ) -> BrainIntent:
         # ── Trade-transition awareness (operator directive, 2026-06-XX) ──
         # The runner injects a `position_context` describing the live
@@ -214,6 +224,8 @@ class NeutralAdversarialBrain:
             order_action=order_action,
             position_evolution=position_evolution,
             risk_transition=risk_transition,
+            doctrine=(self.doctrine.doctrine if self.doctrine is not None else None),
+            seat=seat,
         )
 
     @staticmethod
@@ -352,7 +364,33 @@ class NeutralAdversarialBrain:
         volatility = float(s.get("volatility", 0.0))
         trend = float(s.get("trend_score", 0.0))
         liquidity = float(s.get("liquidity_score", 0.5))
+        setup_score = float(s.get("setup_score", 0.0))
 
+        # ── Doctrine-driven scoring (operator directive, 2026-06-XX) ──
+        # Each brain decomposes the snapshot into four named signal
+        # components and weights them by its doctrine. The same
+        # snapshot now yields four DIFFERENT hypothesis rankings
+        # across the four brains — which is the point of having
+        # four brains in the first place.
+        #
+        # Signal derivations (kept simple and explicit so the
+        # interpretation can be audited):
+        #   trend_signal      — from trend_score; signed
+        #   mean_rev_signal   — from RSI extremes (overbought/oversold)
+        #   breakout_signal   — from setup_score (BASE-BREAKOUT pattern)
+        #                       blended with volume confirmation
+        #   momentum_signal   — from price_change * sign(volume_change)
+        #   risk_penalty      — from volatility + spread (illiquidity)
+        if self.doctrine is not None:
+            return self._build_hypotheses_doctrine(
+                trend=trend, rsi=rsi, setup_score=setup_score,
+                price_change=price_change, volume_change=volume_change,
+                volatility=volatility, spread_bps=spread_bps,
+                liquidity=liquidity,
+            )
+
+        # Legacy path — unchanged behavior for any caller still
+        # constructing the brain without a doctrine.
         buy_score = self._clamp(
             0.50
             + trend * 0.18
@@ -424,6 +462,115 @@ class NeutralAdversarialBrain:
                     "Observation preferred when market quality is weak.",
                     f"spread_bps={spread_bps}",
                     f"volatility={volatility}",
+                ],
+            ),
+        ]
+
+    def _build_hypotheses_doctrine(
+        self, *,
+        trend: float, rsi: float, setup_score: float,
+        price_change: float, volume_change: float,
+        volatility: float, spread_bps: float, liquidity: float,
+    ) -> List[Hypothesis]:
+        """Doctrine-weighted hypothesis builder.
+
+        Each brain interprets the SAME snapshot through its own
+        doctrine weights, so Camino (trend) and Barracuda
+        (mean_reversion) reach genuinely different conclusions on
+        the same input — that's the disagreement the gate chain
+        needs to do its job.
+        """
+        d = self.doctrine
+        # Signal decomposition — same inputs, four named axes.
+        trend_signal = trend                                    # [-1, +1]
+        mean_rev_signal = (50.0 - rsi) / 50.0                   # [-1, +1]; positive = oversold (buy mean rev)
+        breakout_signal = self._clamp(
+            setup_score + max(0.0, volume_change / 200.0),       # blend pattern + volume confirm
+            lo=0.0, hi=1.5,
+        )
+        momentum_signal = (price_change / 5.0) * (
+            1.0 if volume_change >= 0 else 0.5
+        )                                                        # ~[-1, +1] for ±5% moves
+        risk_penalty = (volatility * 0.6) + (spread_bps * 0.003)
+
+        # Doctrine-weighted composite for the BUY hypothesis. Each
+        # weight scales the signal's contribution. Doctrines that
+        # don't care about a signal don't get its volatility either.
+        buy_composite = (
+            trend_signal * d.trend_weight * 0.20
+            + mean_rev_signal * d.mean_reversion_weight * 0.18
+            + breakout_signal * d.breakout_weight * 0.20
+            + momentum_signal * d.momentum_weight * 0.20
+            - risk_penalty * d.risk_weight * 0.10
+            + liquidity * 0.05
+        )
+        sell_composite = (
+            -trend_signal * d.trend_weight * 0.20
+            - mean_rev_signal * d.mean_reversion_weight * 0.18
+            + breakout_signal * d.breakout_weight * 0.10  # breakout DOWN is still a setup
+            - momentum_signal * d.momentum_weight * 0.20
+            - risk_penalty * d.risk_weight * 0.10
+            + liquidity * 0.05
+        )
+        hold_composite = (
+            0.45
+            + volatility * 0.20
+            + spread_bps * 0.002
+            + (1.0 - liquidity) * 0.15
+            - abs(trend_signal) * d.trend_weight * 0.08
+            - abs(momentum_signal) * d.momentum_weight * 0.05
+        )
+        observe_composite = (
+            0.40
+            + spread_bps * 0.003
+            + volatility * 0.12
+            + (1.0 - liquidity) * 0.10
+        )
+
+        # Aggression scales the brain's commitment toward action
+        # hypotheses (BUY/SELL) without affecting HOLD/OBSERVE.
+        # Aggression < 1.0 dampens; > 1.0 amplifies.
+        agg = float(d.aggression)
+        buy_score = self._clamp(0.50 + buy_composite * agg)
+        sell_score = self._clamp(0.50 + sell_composite * agg)
+        hold_score = self._clamp(hold_composite)
+        observe_score = self._clamp(observe_composite)
+
+        reasons_signal = [
+            f"doctrine={d.doctrine} agg={d.aggression:.2f}",
+            f"trend_signal={trend_signal:.3f} (w={d.trend_weight:.2f})",
+            f"mean_rev_signal={mean_rev_signal:.3f} (w={d.mean_reversion_weight:.2f})",
+            f"breakout_signal={breakout_signal:.3f} (w={d.breakout_weight:.2f})",
+            f"momentum_signal={momentum_signal:.3f} (w={d.momentum_weight:.2f})",
+            f"risk_penalty={risk_penalty:.3f} (w={d.risk_weight:.2f})",
+        ]
+        return [
+            Hypothesis(
+                name="hypothesis_buy", action="BUY",
+                score=buy_score, confidence=buy_score,
+                reasons=reasons_signal + [f"buy_composite={buy_composite:.3f}"],
+            ),
+            Hypothesis(
+                name="hypothesis_sell", action="SELL",
+                score=sell_score, confidence=sell_score,
+                reasons=reasons_signal + [f"sell_composite={sell_composite:.3f}"],
+            ),
+            Hypothesis(
+                name="hypothesis_hold", action="HOLD",
+                score=hold_score, confidence=hold_score,
+                reasons=[
+                    f"volatility={volatility:.3f}",
+                    f"spread_bps={spread_bps:.1f}",
+                    f"liquidity={liquidity:.2f}",
+                ],
+            ),
+            Hypothesis(
+                name="hypothesis_observe", action="OBSERVE",
+                score=observe_score, confidence=observe_score,
+                reasons=[
+                    "Market quality is weak — observation preferred.",
+                    f"spread_bps={spread_bps:.1f}",
+                    f"volatility={volatility:.3f}",
                 ],
             ),
         ]

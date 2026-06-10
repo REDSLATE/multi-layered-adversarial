@@ -1,3 +1,78 @@
+## 2026-06-10 (pass 8) — brain decorrelation: doctrine + seat + legacy wrappers
+
+### Operator directive (verbatim, pinned)
+> *"Do not hard-lock personality to seat. brain_id = who it is,
+> doctrine = how it thinks, seat = what job it is doing today.
+> Camino can be executor today, auditor tomorrow. But Camino still
+> thinks like a trend-following brain."*
+
+### The problem this pass fixes
+On the AAPL 2026-06-09 incident, all four "sovereign" brains
+emitted BUY within 2 seconds of each other — because they were the
+same `NeutralAdversarialBrain` evaluator × 4 with different display
+names. There was nothing adversarial about it. The brains agreed by
+construction, not by independent analysis.
+
+### What changed
+1. **`backend/shared/brain_doctrine.py`** — bound interpretation to
+   identity. Four doctrines:
+   - Camino → trend (trend_weight=1.40, aggression=0.90)
+   - Barracuda → mean_reversion (mean_rev_weight=1.50)
+   - Hellcat → breakout (breakout_weight=1.60, aggression=1.15)
+   - GTO → momentum (momentum_weight=1.60, aggression=1.10)
+   Each has distinct lookbacks, confidence floors, and aggression.
+2. **`backend/shared/brain_seats.py`** — runtime seat registry
+   (`strategist`/`executor`/`governor`/`auditor`). Mongo-backed
+   override with 5s cache, default all-strategists. Seat is
+   INTENTIONALLY decoupled from brain_id.
+3. **`backend/shared/legacy_brain_wrappers.py`** — operator-pinned
+   verbatim. Two wrappers:
+   - Camino → `alpha_legacy_executor` (executor discipline,
+     position-state-unknown penalty, scale-in confirmation)
+   - Hellcat → `chevelle_legacy_governor` (RISK_OFF compression,
+     SCALE_IN size cap, flip heavy compression)
+   Barracuda and GTO run pure. Wrappers MAY NOT flip action, create
+   trades from HOLD, or force a seat.
+4. **`external/brains/brain_core.py`** — `NeutralAdversarialBrain`
+   accepts `doctrine` and uses it in `_build_hypotheses_doctrine`.
+   `BrainIntent` gains `doctrine` and `seat` fields.
+5. **`external/brains/runner.py`** — resolves doctrine per brain at
+   startup, seat per tick from registry (5s cache), runs wrapper
+   after pattern bias, stamps `canonical_brain_id` + `doctrine` +
+   `seat` + `legacy_wrapper` on MC payload evidence.
+
+### Live verification (post-restart)
+Same-second snapshot across four brains:
+```
+Camino    | trend          | BUY=0.589 SELL=0.611 | wrapper=alpha_legacy_executor
+Barracuda | mean_reversion | BUY=0.598 SELL=0.597 | wrapper=none (pure)
+Hellcat   | breakout       | BUY=0.653 SELL=0.660 | wrapper=chevelle_legacy_governor
+GTO       | momentum       | BUY=0.589 SELL=0.652 | wrapper=none (pure)
+```
+The brains are scoring differently for the first time. Hellcat is
+most aggressive, Barracuda is symmetric (classic fader behavior),
+Camino is most conservative, GTO skews to the active-momentum side.
+
+### Tests
+- `backend/tests/test_brain_doctrine.py` — 16 tests (doctrine
+  distinctness, seat-doctrine orthogonality, wrapper stamping).
+- `backend/tests/test_legacy_brain_wrappers.py` — 26 tests (action
+  never flipped, size_bias clamped, RISK_OFF compression, wrapper
+  provenance).
+- Total backend test suite: **87 passing**.
+
+### Doctrine (this pass)
+- `brain_id` is canonical identity (camino/barracuda/hellcat/gto).
+  Legacy `stack` (alpha/camaro/chevelle/redeye) stays in the wire
+  protocol but is no longer the identity vocabulary.
+- `doctrine` is bound to brain_id and IMMUTABLE.
+- `seat` is runtime-rotatable via `set_seat(brain_id, seat)` and
+  carries NO interpretation authority.
+- Legacy wrappers attach OLD-personality instincts to NEW
+  doctrine-driven brains. They modulate confidence and size_bias
+  only — they don't replace the doctrine.
+
+
 ## 2026-06-09 (pass 7) — portfolio-manager vocabulary on brain intents
 
 ### Operator directive (verbatim, pinned)
