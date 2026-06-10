@@ -97,6 +97,178 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
         ),
     })
 
+    # ─── 2b. Position-aware intent classification (2026-06-10, P2) ────
+    # Doctrine pin: the operator deferred this in 2026-06-09 while live
+    # trading was on prod. This is the integration point referenced in
+    # `shared/position_model.py` docstring. The gate compares the brain's
+    # stated `position_evolution` against the classifier's verdict using
+    # the LIVE broker position from `position_context`. Disagreement
+    # → misread row written + gate FAILS (block) when enforcement is
+    # active, else audit-only (records but passes).
+    #
+    # Enforcement is operator-controlled via
+    # `POST /api/admin/position-misreads/enforcement` (mode: block | audit_only).
+    # Default = audit_only so the system observes its own misreads
+    # before being trusted to block on them.
+    #
+    # Safety:
+    #   * If position_context can't be resolved (broker offline, no
+    #     symbol on intent, etc.) the gate PASSES with "no inventory
+    #     data" — we DON'T fail-closed because the equity bootstrap
+    #     path can run without a live adapter.
+    #   * Only routable intents reach this gate (action_routable above
+    #     would already have blocked HOLD/etc).
+    if routable:
+        from shared.position_model import (  # noqa: WPS433
+            PositionState, PositionSide, classify_intent, IntentType,
+            detect_misread, MISREAD_COLLECTION,
+        )
+        from shared.position_context import (  # noqa: WPS433
+            get_position_context,
+        )
+        from routes.position_misread_admin import (  # noqa: WPS433
+            is_misread_enforcement_enabled,
+        )
+        sym_for_pa = (intent.get("symbol") or "").strip()
+        lane_for_pa = (intent.get("lane") or "").strip()
+        intended_qty = float(intent.get("qty") or intent.get("quantity") or 0.0)
+        pa_passed = True
+        pa_reason = "no inventory data; position-aware check skipped"
+        pa_misread: Optional[dict] = None
+        try:
+            if sym_for_pa and lane_for_pa and intended_qty > 0:
+                pos_ctx = await get_position_context(sym_for_pa, lane_for_pa)
+                actual_side_str = (pos_ctx.get("current_side") or "flat").lower()
+                actual_signed = float(pos_ctx.get("signed_qty") or 0.0)
+                try:
+                    actual_side = PositionSide(actual_side_str)
+                except ValueError:
+                    actual_side = PositionSide.FLAT
+                current_state = PositionState(
+                    symbol=sym_for_pa,
+                    signed_qty=actual_signed,
+                )
+                # Authoritative classification from the broker truth.
+                truth_intent = classify_intent(action, intended_qty, current_state)
+
+                # Compare against what the brain claimed via
+                # `position_evolution`. Map evolution tags to IntentType
+                # for a like-for-like comparison.
+                claimed_evo = (intent.get("position_evolution") or "").lower().strip()
+                _EVO_TO_INTENT = {
+                    "open": IntentType.OPEN,
+                    "add": IntentType.ADD,
+                    "reduce": IntentType.REDUCE,
+                    "close": IntentType.CLOSE,
+                    "partial_cover": IntentType.REDUCE,
+                    "full_cover": IntentType.CLOSE,
+                    "scale_in": IntentType.ADD,
+                    "scale_out": IntentType.REDUCE,
+                    "flip": IntentType.FLIP,
+                }
+                claimed_intent = _EVO_TO_INTENT.get(claimed_evo)
+
+                # The brain's `current_side` was already stamped on
+                # the intent at brain-tick time. That's the "what the
+                # brain thought" half of the misread signature.
+                assumed_side_str = (
+                    intent.get("current_side")
+                    or intent.get("assumed_side")
+                    or "flat"
+                ).lower()
+                try:
+                    assumed_side = PositionSide(assumed_side_str)
+                except ValueError:
+                    assumed_side = PositionSide.FLAT
+
+                # If we have BOTH a claim and a truth, compare them.
+                # When the brain didn't carry a claim, we still write
+                # the misread row but skip the disagreement gate fail
+                # (no way to disagree with a missing claim).
+                disagrees = (
+                    claimed_intent is not None
+                    and claimed_intent != truth_intent
+                )
+
+                # ALSO compute the misread separately — `detect_misread`
+                # has stronger logic for the side-disagreement axis
+                # (the AAPL-specific case where brain thought FLAT but
+                # broker showed SHORT).
+                misread = detect_misread(
+                    emitted_action=action,
+                    assumed_side=assumed_side,
+                    actual=current_state,
+                    brain=str(intent.get("stack") or ""),
+                    lane=lane_for_pa,
+                    intended_qty=intended_qty,
+                    note=(
+                        f"intent_id={intent.get('intent_id')} "
+                        f"claimed_evo={claimed_evo or '∅'} "
+                        f"setup_score={intent.get('setup_score')}"
+                    ),
+                )
+
+                if misread is not None or disagrees:
+                    enforce = await is_misread_enforcement_enabled()
+                    if misread is not None:
+                        # Persist the misread row (fire-and-forget; never
+                        # blocks the gate decision).
+                        from db import db as _db  # noqa: WPS433
+                        try:
+                            await _db[MISREAD_COLLECTION].insert_one(
+                                misread.to_doc(),
+                            )
+                            pa_misread = misread.to_doc()
+                        except Exception:  # noqa: BLE001
+                            pass
+                    if enforce:
+                        pa_passed = False
+                        pa_reason = (
+                            f"POSITION_MISREAD — brain claimed "
+                            f"evolution={claimed_evo or '∅'} (intent="
+                            f"{claimed_intent.value if claimed_intent else '∅'}"
+                            f"), broker truth says "
+                            f"intent={truth_intent.value} (side="
+                            f"{actual_side.value}, signed_qty="
+                            f"{actual_signed:.4f}). "
+                            f"Enforcement is ACTIVE — refusing to route."
+                        )
+                    else:
+                        pa_reason = (
+                            f"position_misread_observed (audit_only) — "
+                            f"brain claimed evolution={claimed_evo or '∅'} "
+                            f"(intent="
+                            f"{claimed_intent.value if claimed_intent else '∅'}"
+                            f"), broker truth says intent="
+                            f"{truth_intent.value} (side="
+                            f"{actual_side.value}, signed_qty="
+                            f"{actual_signed:.4f}). "
+                            f"Recorded to shared_position_misreads."
+                        )
+                else:
+                    pa_reason = (
+                        f"position-aware check agrees: action={action} "
+                        f"against side={actual_side.value} "
+                        f"(signed_qty={actual_signed:.4f}) → "
+                        f"intent={truth_intent.value}"
+                    )
+        except Exception as exc:  # noqa: BLE001
+            # Position lookup itself failed — log via reason but don't
+            # block. The dedupe / sizing / cap gates still own safety.
+            pa_passed = True
+            pa_reason = (
+                f"position-aware check unavailable: {type(exc).__name__}: {exc!s} "
+                f"— passing through; other gates still authoritative"
+            )
+        gate_row = {
+            "name": "position_aware_intent_classification",
+            "passed": pa_passed,
+            "reason": pa_reason,
+        }
+        if pa_misread is not None:
+            gate_row["misread"] = pa_misread
+        gates.append(gate_row)
+
     # 3. Executor seat — POSITION model (Doctrine, 2026-05-28).
     #    Authority lives in the SEAT, not in any specific brain.
     #    Whichever brain currently holds an execute-capable seat for
@@ -397,8 +569,18 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
 
     # 6b. Hard exposure caps. Lane-aware: crypto gets the $30/order cap;
     #    equities get the lifted global cap.
+    #
+    # Doctrine pin (2026-06-10): pass `position_evolution` so
+    # `evaluate_open_notional` can correctly distinguish OPEN/ADD
+    # (grows exposure) from REDUCE/CLOSE/COVER (shrinks exposure).
+    # Before this, a BUY-to-COVER counted as opening — symmetric
+    # sign-flip bug. See `shared/exposure_caps.evaluate_open_notional`.
     side = action or ""
-    cap_evals = await evaluate_all(effective_notional, side, lane=intent.get("lane"))
+    cap_evals = await evaluate_all(
+        effective_notional, side,
+        lane=intent.get("lane"),
+        position_evolution=intent.get("position_evolution"),
+    )
     for c in cap_evals:
         gates.append({"name": c.name, "passed": c.passed, "reason": c.reason})
 
@@ -826,10 +1008,13 @@ async def execution_submit(
         },
     )
 
+    # Strip Mongo's mutated `_id` ObjectId from the response — `insert_one`
+    # added it in place to `receipt` and ObjectId isn't JSON-serializable.
+    response_receipt = {k: v for k, v in receipt.items() if k != "_id"}
     return {
         "ok": True,
         "intent_id": body.intent_id,
-        "receipt": receipt,
+        "receipt": response_receipt,
         "order": order,
         "verdict": "executed",
         "live_position": live_pos,

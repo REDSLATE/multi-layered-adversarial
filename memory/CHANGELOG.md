@@ -1,3 +1,75 @@
+## 2026-06-10 (pass 12) — P2: position-aware gate + intent summary
+
+**Position-aware intent classification gate** (`shared/execution.py`):
+- Wired the long-deferred classifier into `_evaluate_gates` between
+  `action_routable` and `executor_seat_check`
+- Operator-controlled enforcement: audit_only (default, records misread
+  row) or block (gate fails hard)
+- Excluded from patent-suspension force-pass — fires even when other
+  doctrine is suspended
+- 9 new tests covering agreement, AAPL pattern, symmetric inversion,
+  HOLD skip, qty=0 skip, lookup failure, gate chain ordering
+
+**Intent summary endpoint** (`GET /api/admin/runtime/{brain}/intent-summary`):
+- Aggregates `shared_intents` for one brain over a configurable window
+- Returns counts by action / lane / verdict / symbol + recent N
+- Reads canonical fields: `stack`, `ingest_ts`, `gate_state`
+- 5 new tests + live-verified (70 Camaro intents in last 60min)
+
+**Housekeeping**: fixed pre-existing lint warning — strip ObjectId
+`_id` from execution receipt response (was non-serializable).
+
+### Test totals
+1981 → **1995 tests, 0 failures** (+14 new)
+
+---
+
+
+## 2026-06-10 (pass 11) — Pre-existing failures fixed, P1+P2 landed
+
+### What changed
+
+**Pre-existing failures (9 → 0):**
+- `test_public_rate_limit.py` (4): smart minute-boundary wait + session reuse
+- `test_platform_survival_routes.py` (1): monkeypatch env for determinism
+- `test_execution_gates.py` (3): doctrine flip (suspension OFF) + new patch target
+- `test_signal_ranked_symbol_selection.py` (4): native async (event-loop fix)
+
+**P1 — Position context TTL:**
+- TTL 10s → 2s (`backend/shared/position_context.py`)
+- New `invalidate_for_lane()` punched by `auto_router._route_one` post-submit
+- 5 new tests
+
+**P1 — Open-notional sign-flip:**
+- `evaluate_open_notional` now accepts `position_evolution` to correctly
+  classify BUY-to-COVER (no growth) vs SELL-to-ADD-SHORT (growth)
+- Forwarded through `evaluate_all` → `execution._evaluate_gates`
+- 10 new tests covering both symmetric inversion cases
+
+**P1 — Market regime detector:**
+- New `shared/market_regime.py` with pure classifier
+  → `{calm, bull, bear, chop, volatile, crisis}`
+- Computed once per tick from `_rank_universe`'s universe scan
+  (no extra round-trips); stashed on `self._current_regime`;
+  injected into every snapshot by `_evaluate_and_post`
+- Replaces the hardcoded `"calm"` Camaro had been mis-reading for weeks
+- 14 new tests
+
+**P2 — Broker-fills TTL index:**
+- 30-day TTL (env-tunable via `BROKER_FILLS_RETENTION_SEC`)
+- Compound `(symbol, timestamp_desc)` index for dashboard queries
+- `inserted_at` now stamped as BSON Date for TTL eligibility
+- 4 new tests
+
+### Test totals
+1947 → **1981 tests, 0 failures** (+34 new tests, all 9 pre-existing fixed)
+
+### Files touched
+See PRD.md for the full list.
+
+---
+
+
 ## 2026-06-10 (pass 10) — In-flight order dedupe + broker-fills admin routes fixed
 
 ### Operator directive (carried from pass 9)

@@ -307,6 +307,22 @@ async def _route_one(intent: dict) -> dict:
         await _persist_router_error(intent_id, intent, str(e))
         return {"intent_id": intent_id, "verdict": "error", "reason": str(e)}
 
+    # Phase 4b (2026-06-10, P1): invalidate the position-context cache
+    # for this lane the instant the broker accepts the order. Doctrine:
+    # the position cache TTL is 2s (was 10s) — short enough that
+    # steady-state staleness is bounded, but the broker indexes fills
+    # in ~500ms. By punching the cache here we guarantee the NEXT
+    # brain tick on this lane re-fetches fresh broker state, closing
+    # the last remaining amnesia window. Safe failure: invalidate is
+    # a dict.pop() — can't raise.
+    try:
+        from shared.position_context import invalidate_for_lane  # noqa: WPS433
+        lane_for_cache = (intent.get("lane") or "").lower()
+        if lane_for_cache:
+            invalidate_for_lane(lane_for_cache)
+    except Exception:  # noqa: BLE001
+        pass
+
     # Phase 5: build + persist the receipt.
     now = _now_iso()
     receipt = _build_receipt(

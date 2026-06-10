@@ -1,3 +1,191 @@
+## 2026-06-10 (pass 12) — P2: Position-aware gate + Intent summary endpoint
+
+### Operator directive
+> *"P2"*
+
+### What changed
+
+#### Position-aware intent classification gate (the AAPL-pattern safety net)
+- Wired the long-deferred `position_aware_intent_classification` gate
+  into `shared/execution.py::_evaluate_gates`. Sits between
+  `action_routable` and `executor_seat_check`.
+- Uses the live broker position from `position_context.get_position_context`
+  + `position_model.classify_intent` + `position_model.detect_misread`
+  to catch the 2026-06-09 AAPL pattern: brain reads FLAT, emits BUY,
+  but the broker actually holds SHORT (the BUY is a COVER).
+- Two operator-controlled modes:
+    - `audit_only` (default) → gate PASSES but records a misread row
+      to `shared_position_misreads`.
+    - `block` → gate FAILS hard; auto-router refuses to route.
+  Mode is toggled via the existing `POST /api/admin/position-misreads/enforcement`.
+- Pulled OUT of `SEAT_LAYER_GATES` patent-suspension force-pass — the
+  whole point of this gate is to fire even when other doctrine is
+  suspended.
+- Safety: if `get_position_context` raises (broker offline, etc.) the
+  gate passes with a diagnostic reason — never fail-closed on lookup
+  failure. Dedupe + sizing + caps still own safety.
+- 9 regression tests in `tests/test_position_aware_gate.py` covering
+  agreement, AAPL pattern (both modes), symmetric inversion (SELL-to-
+  ADD-SHORT misclassified as CLOSE), HOLD skip, qty=0 skip, lookup
+  failure, ordering relative to caps.
+- Updated `tests/test_council_diagnose_contract.py::EXPECTED_GATES_IN_ORDER`
+  to pin the new gate's position in the chain.
+
+#### Intent summary endpoint
+- New `GET /api/admin/runtime/{brain}/intent-summary` route at
+  `backend/routes/intent_summary.py`.
+- Aggregates `shared_intents` for one brain over a configurable window
+  (default 60min, max 24h):
+    - `by_action` → `{BUY: n, SELL: n, ...}`
+    - `by_lane` → `{equity: n, crypto: n}`
+    - `by_verdict` → `{passed: n, blocked: n, ...}`
+    - `by_symbol` → top-15 list
+    - `recent` → last N intents verbatim (default 10, max 100)
+- Reads the canonical fields: `stack`, `ingest_ts`, `gate_state`.
+- 5 regression tests in `tests/test_intent_summary_route.py`
+  (aggregates, empty brain, window filtering, auth-required, limit cap).
+- Live verified: Camaro had 70 intents in the last 60 minutes,
+  cleanly aggregated by action/lane/verdict.
+
+#### Bonus housekeeping
+- Fixed pre-existing lint warning in `shared/execution.py:1011`: the
+  `receipt` dict was mutated by `insert_one()` to add an ObjectId
+  `_id` that isn't JSON-serializable. Strip it before returning to
+  the client.
+
+### Test totals
+1981 → **1995 tests, 0 failures** (+14 net new tests).
+
+### Files touched
+- `backend/shared/execution.py` (position-aware gate + receipt strip)
+- `backend/namespaces.py` (`SEAT_LAYER_GATES` excludes position_aware)
+- `backend/server.py` (route registration)
+- `backend/routes/intent_summary.py` (NEW)
+- `backend/tests/test_position_aware_gate.py` (NEW, 9)
+- `backend/tests/test_intent_summary_route.py` (NEW, 5)
+- `backend/tests/test_council_diagnose_contract.py` (gate chain pin)
+
+---
+
+
+## 2026-06-10 (pass 11) — Pre-existing test failures fixed + full P1 + P2 TTL
+
+### Operator directive
+> *"Always log into the PRD after every session. Fix the pre-existing
+> failures. P1 & 2"*
+
+### Pre-existing failures fixed (9 → 0)
+
+1. **`test_public_rate_limit.py`** (4 failures): old `_wait_for_next_minute()`
+   slept up to 60s and tripped pytest-timeout. Rewritten to only wait
+   when the wall-clock minute is about to roll mid-burst. Also
+   swapped the autouse Mongo wipe from async motor (fragile under
+   pytest-asyncio session-loop) to sync pymongo (bulletproof).
+   Also added `requests.Session()` reuse so 50-call HTTPS bursts
+   finish in seconds instead of half a minute.
+
+2. **`test_platform_survival_routes.py`** (1 failure): the stamp validator
+   test inherited `RISEDUAL_ENV=prod` from backend `.env`, so the
+   "unknown env" assertions no longer matched. Fixed with
+   `monkeypatch.setenv` to force the preview state regardless of host
+   env — order-independent and deterministic.
+
+3. **`test_execution_gates.py`** (3 failures): the
+   `PATENT_SUSPENSION_ACTIVE` flag was flipped from True → False on
+   2026-06-09 after the $500 AAPL safety failure, inverting the
+   contract for `broker_connected` and `cap_per_day`. The gate also
+   now uses `broker_router.adapter_for_lane()` instead of
+   `get_alpaca_adapter()` directly. Tests updated to:
+     - patch `shared.broker_router.adapter_for_lane`
+     - assert ENFORCEMENT (block) instead of SUSPENSION (force-pass)
+     - inject `snapshot.spread_bps` so the new `roadguard_spread_floor`
+       gate clears
+
+4. **`test_signal_ranked_symbol_selection.py`** (4 failures): the tests
+   called `asyncio.get_event_loop().run_until_complete(coro)` from
+   sync test bodies, which raises `RuntimeError: This event loop is
+   already running` once pytest-asyncio's session loop is up. Rewritten
+   as native async tests — fully order-independent.
+
+### P1 work landed
+
+#### Position-context TTL shortening (defense-in-depth on the AAPL fix)
+- `shared/position_context.py`: TTL 10s → 2s (the original amnesia window).
+- New `invalidate_for_lane(lane)` API — the auto-router calls it the
+  instant the broker accepts an order, guaranteeing the next brain
+  tick re-fetches fresh positions in ~50ms.
+- Wired into `auto_router._route_one` Phase 4b.
+- 5 regression tests in `tests/test_position_context_ttl.py`.
+
+#### Open-notional sign-flip bug (recurring P1, finally fixed)
+- `shared/exposure_caps.py::evaluate_open_notional`: was
+  `is_opening = side in ("BUY", "SHORT")` — wrong for BUY-to-COVER
+  (REDUCES exposure) and SELL-to-ADD-SHORT (GROWS exposure).
+- Now accepts `position_evolution` parameter sourced from
+  `position_model.classify_position_evolution`:
+    - `{open, add, flip, scale_in}` → grows open notional
+    - `{reduce, close, partial_cover, full_cover, scale_out, hold}` → no growth
+    - unknown/missing → falls back to legacy side heuristic
+- Forwarded through `evaluate_all` → called by `execution.py::_evaluate_gates`.
+- 10 regression tests in `tests/test_open_notional_sign_flip.py`
+  including the symmetric inversion case.
+
+#### Market regime detector (replaces hardcoded `"calm"`)
+- New `shared/market_regime.py`:
+  - `classify_market_regime(...)` — pure classifier returning one of
+    `{calm, bull, bear, chop, volatile, crisis}` from mean trend,
+    mean vol, and breadth.
+  - `classify_from_symbol_snapshots(...)` — derives the three
+    composite inputs from per-symbol snapshots.
+- Wired into `external/brains/runner.py::_rank_universe`: every tick's
+  universe scan now also produces a fleet-wide regime, stashed on
+  `self._current_regime`, injected into each snapshot by
+  `_evaluate_and_post`. The Camaro wrapper finally sees real signal.
+- `_score_one` upgraded to return `(setup_score, regime_input_snippet)`
+  while remaining backward-compatible with test subclasses that
+  return raw floats.
+- 14 regression tests in `tests/test_market_regime.py`.
+
+### P2 work landed
+
+#### Broker-fills TTL + compound index
+- New `_ensure_indexes()` fired at poller startup. Creates:
+    - `ttl_inserted_at` TTL index (30 days, env-tunable via
+      `BROKER_FILLS_RETENTION_SEC`) on a BSON Date field.
+    - `symbol_ts_desc` compound index for the dashboard's
+      "recent fills by symbol" query.
+- `_normalize_transaction` now stamps `inserted_at` as a `datetime`
+  (BSON Date) — required by TTL. Legacy `ingested_at` ISO string
+  preserved for human audit.
+- 4 regression tests in `tests/test_broker_fills_indexes.py`
+  (creation, idempotency, BSON-Date stamping, env-tunable TTL).
+- Manually verified: indexes created on the live `test_database`.
+
+### Test totals
+- Before pass 11: 1947 tests / 9 pre-existing failures
+- After pass 11: **1981 tests / 0 failures** (+34 new, all 9 prior fixed)
+
+### Files touched
+- `backend/tests/test_public_rate_limit.py` (timing fix + pymongo wipe)
+- `backend/tests/test_platform_survival_routes.py` (monkeypatch env)
+- `backend/tests/test_execution_gates.py` (doctrine flip + new patch target)
+- `backend/tests/test_signal_ranked_symbol_selection.py` (native async)
+- `backend/shared/position_context.py` (TTL 10s → 2s, invalidate_for_lane)
+- `backend/shared/auto_router.py` (Phase 4b cache punch)
+- `backend/shared/exposure_caps.py` (signed-aware open notional)
+- `backend/shared/execution.py` (pass position_evolution)
+- `backend/shared/market_regime.py` (NEW classifier)
+- `backend/shared/broker_fills.py` (`_ensure_indexes`, BSON-Date `inserted_at`)
+- `external/brains/runner.py` (`_rank_universe` regime fold-in,
+  `_score_one` returns tuple, `_evaluate_and_post` injects regime)
+- `backend/tests/test_position_context_ttl.py` (NEW, 5)
+- `backend/tests/test_open_notional_sign_flip.py` (NEW, 10)
+- `backend/tests/test_market_regime.py` (NEW, 14)
+- `backend/tests/test_broker_fills_indexes.py` (NEW, 4)
+
+---
+
+
 # Mission Control — PRD (latest pass on top)
 
 ## 🆕 2026-06-10 (pass 10) — In-flight order dedupe (P0 — 130-trade structural fix)

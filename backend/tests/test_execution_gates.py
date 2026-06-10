@@ -42,6 +42,11 @@ def _intent(stack="camaro", action="BUY", holds=True, posted_under=None, lane="e
         "executor_holder_at_post": (
             posted_under if posted_under is not None else (stack if holds else None)
         ),
+        # 2026-06-10: the roadguard_spread_floor gate (added 2026-05-27)
+        # requires `snapshot.spread_bps`. Provide a tight 5bps so equity
+        # intents clear the 50bps cap and crypto intents clear the 200bps
+        # cap — both well within bounds.
+        "snapshot": {"spread_bps": 5.0},
     }
 
 
@@ -55,17 +60,31 @@ def _patches(*, holder, broker_connected, daily_spend, lane="equity", lane_enabl
 
     `lane_enabled` (default True) patches the lane-execution toggle so
     tests don't need to seed the `shared_lane_execution_toggles` doc.
+
+    Doctrine (2026-06-10, post-$500-AAPL re-arm): the `broker_connected`
+    gate now uses `shared.broker_router.adapter_for_lane(lane)` when the
+    intent has a lane (which all canonical intents do). Patch THAT —
+    the legacy `get_alpaca_adapter` is only consulted for lane-less
+    intents. We keep the legacy patch too so this set works for both.
     """
     eligible_seats = ["executor"] if lane == "equity" else ["crypto"]
 
     async def _holder_lookup(seat: str):
         return holder if seat in eligible_seats else None
 
-    broker_mock = AsyncMock(return_value=object() if broker_connected else None)
+    # Minimal adapter shape — `adapter_for_lane` returns an adapter
+    # whose `.name` is read in the gate's reason string.
+    class _FakeAdapter:
+        name = "fake-broker"
+
+    fake_adapter = _FakeAdapter() if broker_connected else None
+    broker_lane_mock = AsyncMock(return_value=fake_adapter)
+    broker_legacy_mock = AsyncMock(return_value=fake_adapter)
     return [
         patch("shared.executor_seat.get_seat_holder", new=AsyncMock(side_effect=_holder_lookup)),
         patch("shared.executor_seat.seats_with_execute", new=lambda _lane: eligible_seats),
-        patch("shared.execution.get_alpaca_adapter", new=broker_mock),
+        patch("shared.broker_router.adapter_for_lane", new=broker_lane_mock),
+        patch("shared.execution.get_alpaca_adapter", new=broker_legacy_mock),
         patch("shared.exposure_caps.get_alpaca_adapter", new=AsyncMock(return_value=None)),
         patch("shared.exposure_caps.daily_spend_usd", new=AsyncMock(return_value=daily_spend)),
         patch("shared.lane_execution.is_lane_execution_enabled", new=AsyncMock(return_value=lane_enabled)),
@@ -102,31 +121,34 @@ async def test_gate_chain_passes_when_everything_aligned():
 
 @pytest.mark.asyncio
 async def test_gate_chain_blocks_when_broker_disconnected():
-    """Patent-suspension (2026-02-17): broker_connected is suspended.
-    The gate still RUNS and records the doctrine_reason but is force-
-    passed with `suspended=True`. Seat policy is the only authoritative
-    gate while the suspension flag is active."""
+    """Doctrine flip (2026-06-09, post-$500-AAPL re-arm):
+    `PATENT_SUSPENSION_ACTIVE` was set back to False after a $500
+    AAPL order slipped through the $25 cap. With suspension OFF the
+    broker_connected gate is once again authoritative — when the
+    broker is missing the gate BLOCKS, not suspends.
+    """
     intent = _intent()
     with _enter_all(_patches(holder="camaro", broker_connected=False, daily_spend=0.0)):
         res = await _evaluate_gates(intent, order_notional_usd=10.0)
     bg = next(g for g in res["gates"] if g["name"] == "broker_connected")
-    assert bg["passed"] is True, "broker_connected must be suspended under PATENT_SUSPENSION_ACTIVE"
-    assert bg.get("suspended") is True
-    assert bg.get("doctrine_reason"), "doctrine_reason should preserve what would have blocked"
+    assert bg["passed"] is False, "broker_connected must enforce now that patent-suspension is OFF"
+    assert bg.get("suspended") is not True
+    assert res["verdict"] == "would_block"
 
 
 @pytest.mark.asyncio
 async def test_gate_chain_blocks_when_daily_cap_would_be_breached():
-    """Patent-suspension (2026-02-17): cap_per_day is suspended.
-    The cap still RUNS and surfaces the doctrine_reason but never
-    blocks. Operator accepted the risk of suspending exposure caps."""
+    """Doctrine flip (2026-06-09): exposure caps are authoritative
+    again. An order that would push us past `CAP_PER_DAY_USD` must
+    BLOCK, not be force-passed."""
     intent = _intent()
     near_cap = caps_mod.CAP_PER_DAY_USD - 100.0
     with _enter_all(_patches(holder="camaro", broker_connected=True, daily_spend=near_cap)):
         res = await _evaluate_gates(intent, order_notional_usd=10_000.0)
     daily = next(g for g in res["gates"] if g["name"] == "cap_per_day")
-    assert daily["passed"] is True, "cap_per_day must be suspended under PATENT_SUSPENSION_ACTIVE"
-    assert daily.get("suspended") is True
+    assert daily["passed"] is False, "cap_per_day must enforce now that patent-suspension is OFF"
+    assert daily.get("suspended") is not True
+    assert res["verdict"] == "would_block"
 
 
 @pytest.mark.asyncio

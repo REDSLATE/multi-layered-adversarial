@@ -167,14 +167,67 @@ async def evaluate_daily(order_notional_usd: float) -> CapEvaluation:
     )
 
 
-async def evaluate_open_notional(order_notional_usd: float, side: str) -> CapEvaluation:
-    """Only BUY orders grow open notional. SELL/COVER reduce it (and we
-    don't need to gate them on this cap)."""
+async def evaluate_open_notional(
+    order_notional_usd: float,
+    side: str,
+    *,
+    position_evolution: Optional[str] = None,
+) -> CapEvaluation:
+    """Cap check on TOTAL OPEN NOTIONAL (sum of |market_value| across
+    live positions).
+
+    Doctrine pin (2026-06-10, P1 — sizing sign-flip fix):
+
+        The old logic was `is_opening = side in ("BUY", "SHORT")`.
+        That's wrong for short positions — a BUY against an existing
+        SHORT is a COVER (shrinks exposure), but the old check
+        counted it as opening and added its notional to the
+        projected total. Symmetric inversion: a SELL against an
+        existing SHORT is an ADD (grows exposure) but the old check
+        counted it as closing.
+
+        Fix: when the caller passes `position_evolution` (from
+        position_model.classify_position_evolution / brain runner),
+        use it as the source of truth for "does this trade actually
+        grow exposure?" — anything in {OPEN, ADD, FLIP, SCALE_IN}
+        grows; anything in {REDUCE, CLOSE, PARTIAL_COVER, FULL_COVER,
+        SCALE_OUT, HOLD} shrinks or holds.
+
+        Backward compatible: callers that don't pass
+        `position_evolution` get the legacy side-only heuristic
+        (still wrong for COVERs but doesn't regress the existing
+        flat-position case which dominates real-world traffic).
+    """
     current = await open_notional_usd()
-    side_u = (side or "").upper()
-    is_opening = side_u in ("BUY", "SHORT")
+
+    # Position-evolution-aware path (doctrinal source of truth).
+    if position_evolution:
+        pe = (position_evolution or "").lower().strip()
+        # Anything that grows magnitude → adds to open exposure.
+        GROWS = {"open", "add", "flip", "scale_in"}
+        # Anything that shrinks magnitude or holds → no growth.
+        SHRINKS = {
+            "reduce", "close", "partial_cover", "full_cover",
+            "scale_out", "hold",
+        }
+        if pe in GROWS:
+            is_opening = True
+        elif pe in SHRINKS:
+            is_opening = False
+        else:
+            # Unknown evolution → fall back to the side heuristic
+            # rather than guessing. Operator can audit via the gate
+            # reason string.
+            is_opening = (side or "").upper() in ("BUY", "SHORT")
+    else:
+        # Legacy heuristic (kept for callers that don't yet carry
+        # position context).
+        is_opening = (side or "").upper() in ("BUY", "SHORT")
+
     projected = current + (order_notional_usd if is_opening else 0.0)
     passed = projected <= CAP_OPEN_NOTIONAL_USD
+    grew = "grows" if is_opening else "no growth"
+    src = position_evolution or "side-only"
     return CapEvaluation(
         name="cap_open_notional",
         cap_usd=CAP_OPEN_NOTIONAL_USD,
@@ -185,19 +238,29 @@ async def evaluate_open_notional(order_notional_usd: float, side: str) -> CapEva
             f"open notional ${current:.2f}"
             + (f" + new ${order_notional_usd:.2f}" if is_opening else "")
             + f" = ${projected:.2f} ≤ cap ${CAP_OPEN_NOTIONAL_USD:.2f}"
+            + f" ({grew}; source={src})"
             if passed else
             f"open notional ${current:.2f} + new ${order_notional_usd:.2f}"
             f" = ${projected:.2f} would exceed open-notional cap ${CAP_OPEN_NOTIONAL_USD:.2f}"
+            f" ({grew}; source={src})"
         ),
     )
 
 
-async def evaluate_all(order_notional_usd: float, side: str, lane: Optional[str] = None) -> list[CapEvaluation]:
+async def evaluate_all(
+    order_notional_usd: float,
+    side: str,
+    lane: Optional[str] = None,
+    *,
+    position_evolution: Optional[str] = None,
+) -> list[CapEvaluation]:
     """Run every cap check. Returns ordered list of CapEvaluation."""
     return [
         evaluate_per_order(order_notional_usd, lane=lane),
         await evaluate_daily(order_notional_usd),
-        await evaluate_open_notional(order_notional_usd, side),
+        await evaluate_open_notional(
+            order_notional_usd, side, position_evolution=position_evolution,
+        ),
     ]
 
 

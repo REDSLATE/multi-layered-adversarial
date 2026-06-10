@@ -41,6 +41,12 @@ ADMIN_PASS = "risedual-admin-2026"
 EXPECTED_GATES_IN_ORDER = (
     "schema_invariants",
     "action_routable",
+    # 2026-06-10 (P2): position-aware intent classification — catches
+    # the AAPL misread pattern (BUY against existing SHORT) before
+    # any further gate work. Audit-only by default; block mode is
+    # operator-controlled. Sits immediately after action_routable so
+    # only routable intents reach the broker-position lookup.
+    "position_aware_intent_classification",
     "executor_seat_check",
     "live_trading_disabled",
     "broker_connected",

@@ -44,27 +44,20 @@ def _wipe_rate_limit_state():
     """Other test modules can fill the Mongo-backed per-minute counter with
     their warmups. Without this autouse wipe, these rate-limit tests inherit
     a bucket already past the free cap and 429 instead of 200. Wipe before
-    each test → deterministic."""
-    import asyncio
-    from motor.motor_asyncio import AsyncIOMotorClient
+    each test → deterministic.
+
+    Doctrine (2026-06-10): swapped from motor (async, fragile under
+    pytest-asyncio session-loop) to pymongo (sync, bulletproof).
+    """
+    import pymongo
     mongo_url = os.environ.get("MONGO_URL")
     db_name = os.environ.get("DB_NAME")
     if mongo_url and db_name:
-        async def _wipe():
-            client = AsyncIOMotorClient(mongo_url)
-            try:
-                await client[db_name].public_rate_limits.delete_many({})
-            finally:
-                client.close()
+        client = pymongo.MongoClient(mongo_url, serverSelectionTimeoutMS=2000)
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                future = asyncio.run_coroutine_threadsafe(_wipe(), loop)
-                future.result(timeout=5)
-            else:
-                loop.run_until_complete(_wipe())
-        except Exception:  # noqa: BLE001 — fail-open
-            pass
+            client[db_name].public_rate_limits.delete_many({})
+        finally:
+            client.close()
     yield
 
 
@@ -83,11 +76,19 @@ def _login() -> str:
 
 
 def _wait_for_next_minute() -> None:
-    """Block until the wall-clock minute rolls over so the bucket resets."""
-    now = int(time.time())
-    sleep_for = 61 - (now % 60)
-    if sleep_for > 0:
-        time.sleep(sleep_for)
+    """Doctrine (2026-06-10): only wait if we're too close to the
+    wall-clock minute boundary to fit a 35-call burst inside ONE
+    bucket. The rate limiter buckets per minute, so straddling a
+    boundary splits the count and lets all 35 through under the cap.
+
+    Empirical: 35 sequential HTTPS calls over a Session take ~6s on
+    this pod. We wait if fewer than 12s remain in the current minute
+    — generous safety margin for slow days. The autouse `_wipe_rate_limit_state`
+    fixture handles inter-test cleanup; this fn purely guards against
+    the minute-boundary split bug."""
+    seconds_left_in_minute = 60 - (int(time.time()) % 60)
+    if seconds_left_in_minute < 12:
+        time.sleep(seconds_left_in_minute + 0.5)
 
 
 class TestLimitsEndpoint:
@@ -133,13 +134,17 @@ class TestRateLimitEnforcement:
     def test_free_tier_429s_after_cap(self):
         _wait_for_next_minute()
         # Free cap is 30/min. Fire 35 — last 5 should be 429.
+        sess = requests.Session()
         statuses: list[int] = []
-        for _ in range(35):
-            r = requests.get(
-                f"{BASE_URL}/api/public/heatmap",
-                headers=_hdr("free"), timeout=10,
-            )
-            statuses.append(r.status_code)
+        try:
+            for _ in range(35):
+                r = sess.get(
+                    f"{BASE_URL}/api/public/heatmap",
+                    headers=_hdr("free"), timeout=10,
+                )
+                statuses.append(r.status_code)
+        finally:
+            sess.close()
         assert statuses.count(200) == 30
         assert statuses.count(429) == 5
 
@@ -161,13 +166,20 @@ class TestRateLimitEnforcement:
     def test_pro_max_unaffected_by_free_cap(self):
         _wait_for_next_minute()
         # Pro Max cap is 1200/min. 50 calls must all succeed.
+        # Doctrine (2026-06-10): use a requests.Session so the SSL
+        # handshake is reused across calls — otherwise 50 sequential
+        # HTTPS handshakes blow past pytest-timeout on the suite runner.
+        sess = requests.Session()
         statuses: list[int] = []
-        for _ in range(50):
-            r = requests.get(
-                f"{BASE_URL}/api/public/heatmap",
-                headers=_hdr("pro_max"), timeout=10,
-            )
-            statuses.append(r.status_code)
+        try:
+            for _ in range(50):
+                r = sess.get(
+                    f"{BASE_URL}/api/public/heatmap",
+                    headers=_hdr("pro_max"), timeout=10,
+                )
+                statuses.append(r.status_code)
+        finally:
+            sess.close()
         assert statuses.count(200) == 50
 
     def test_missing_token_not_rate_limited_but_still_401(self):
@@ -184,12 +196,16 @@ class TestRateLimitEnforcement:
 class TestLogged429s:
     def test_429s_visible_in_traffic_log(self):
         _wait_for_next_minute()
-        # Trip the cap.
-        for _ in range(35):
-            requests.get(
-                f"{BASE_URL}/api/public/heatmap",
-                headers=_hdr("free"), timeout=10,
-            )
+        # Trip the cap (35 calls, session-reused for speed).
+        sess = requests.Session()
+        try:
+            for _ in range(35):
+                sess.get(
+                    f"{BASE_URL}/api/public/heatmap",
+                    headers=_hdr("free"), timeout=10,
+                )
+        finally:
+            sess.close()
 
         # Give the async log task a moment to flush.
         time.sleep(1.0)

@@ -712,6 +712,13 @@ SEAT_LAYER_GATES = frozenset({
     # will respect it. Suspending all other doctrine is fine; suspending
     # the master kill is not.
     "lane_execution_enabled",
+    # 2026-06-10 (P2 follow-up to AAPL misread): position-aware
+    # classification was deferred during live trading. Now wired,
+    # AND held outside the patent-suspension force-pass. The whole
+    # POINT of this gate is to catch the AAPL pattern — silently
+    # suspending it would defeat the purpose. Operator controls
+    # enforcement separately via the misread-admin enforcement mode.
+    "position_aware_intent_classification",
 })
 
 # Heartbeat staleness threshold for the dashboard alert. A runtime is "stale"

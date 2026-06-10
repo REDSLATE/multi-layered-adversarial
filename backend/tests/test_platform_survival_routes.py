@@ -31,16 +31,23 @@ def test_validate_stamp_requires_auth(base_url):
     assert r.status_code in (401, 403)
 
 
-def test_validate_stamp_flags_unknown_env(auth_client, base_url):
+def test_validate_stamp_flags_unknown_env(auth_client, base_url, monkeypatch):
+    # Doctrine (2026-06-10): force the stamp into the "preview/unknown"
+    # shape regardless of what's in backend/.env on the host running
+    # the test. The stamp is built CLIENT-SIDE here, so monkeypatching
+    # the test process env is sufficient — the server only validates
+    # whatever stamp body we post.
+    monkeypatch.setenv("RISEDUAL_ENV", "preview")
+    monkeypatch.setenv("RISEDUAL_MC_URL", "https://preview.example.com")
     stamp = RuntimeStamp.current(sidecar_room="test-room")
-    payload = {"stamp": stamp.__dict__ if hasattr(stamp, "__dict__") else dict(stamp.__dict__)}
     # dataclass — use asdict via __dict__-like access
     from dataclasses import asdict
     payload = {"stamp": asdict(stamp)}
     r = auth_client.post(f"{base_url}/api/runtime/survival/validate-stamp", json=payload, timeout=15)
     assert r.status_code == 200
     body = r.json()
-    # Test env has env_name=unknown, mc_url empty, db_name empty → multiple errors
+    # With env_name=preview and mc_url=https://preview.example.com, the
+    # validator must flag both ENV_NOT_PROD and MC_URL_NOT_PROD.
     assert body["ok"] is False
     assert "ENV_NOT_PROD" in body["errors"]
     assert "MC_URL_NOT_PROD" in body["errors"]

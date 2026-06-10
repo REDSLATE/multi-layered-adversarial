@@ -972,6 +972,13 @@ class BrainRunner:
         so the ranking and the eventual emit are using the same
         signal lens.
 
+        Doctrine (2026-06-10, market-regime fold-in): the per-symbol
+        technical fetches done here are ALSO the source of truth for
+        this tick's market regime — same universe, same data, single
+        round-trip. We compute and stash `self._current_regime` so
+        `_evaluate_and_post` can inject it into every snapshot,
+        replacing the hardcoded `"calm"` that misled Camaro for weeks.
+
         Fetches all snapshots concurrently. The MC technical endpoint
         reads from cached bars (no live broker call) so the load is
         bounded — universe-size × 4 brains every ~40s.
@@ -979,6 +986,7 @@ class BrainRunner:
         tasks = [self._score_one(http, lane, sym) for (lane, sym) in self._universe]
         scores = await asyncio.gather(*tasks, return_exceptions=True)
         rows: list[tuple[str, str, float]] = []
+        regime_inputs: list[dict] = []
         for (lane, symbol), score in zip(self._universe, scores):
             if isinstance(score, Exception):
                 # Score failures degrade to 0 — symbol stays in pool
@@ -987,37 +995,95 @@ class BrainRunner:
                 # this tick.
                 rows.append((lane, symbol, 0.0))
                 continue
-            rows.append((lane, symbol, float(score)))
+            # _score_one returns either a float (legacy contract) or a
+            # tuple (score, regime_input_snippet). Tolerate both shapes
+            # so tests that subclass _StubRunner._fetch_technical
+            # without overriding _score_one keep working.
+            if isinstance(score, tuple) and len(score) == 2:
+                s_val, regime_input = score
+                rows.append((lane, symbol, float(s_val)))
+                if isinstance(regime_input, dict):
+                    regime_inputs.append(regime_input)
+            else:
+                rows.append((lane, symbol, float(score)))
         rows.sort(key=lambda r: r[2], reverse=True)
+        # Compute regime once per tick using the universe scan's
+        # trend/vol/price_change signals. Falls back to "calm" only
+        # when the universe is fully empty (cold start).
+        try:
+            from shared.market_regime import (  # noqa: WPS433
+                classify_from_symbol_snapshots,
+            )
+            if regime_inputs:
+                sig = classify_from_symbol_snapshots(regime_inputs)
+                self._current_regime = sig.regime
+                self._current_regime_signal = sig
+            else:
+                # Universe-scan inputs unavailable (test subclass with
+                # raw float _score_one). Don't overwrite a previously-
+                # set regime so multi-tick state survives.
+                self._current_regime = getattr(self, "_current_regime", "calm")
+        except Exception:  # noqa: BLE001
+            self._current_regime = "calm"
         return rows
 
     async def _score_one(
         self, http: httpx.AsyncClient, lane: str, symbol: str,
-    ) -> float:
+    ):
         """Pull the technical for one (lane, symbol) and return its
-        setup_score. Pure scoring — does not post an intent, does
-        not touch the brain core. Cheap (cached MC endpoint).
+        setup_score plus the regime-input snippet.
+
+        Returns:
+            (setup_score: float, regime_input: dict) where
+            `regime_input` carries `trend_score`, `volatility`, and
+            `price_change_pct` for the market-regime classifier.
 
         Reads `signals.setup_score` directly off the technical payload
         instead of going through `_build_snapshot`, because the
         cold-start branch of `_build_snapshot` zeros out setup_score
         when bars are absent — which would flatten ranking when MC
         has no bars cached yet for a symbol.
+
+        Doctrine (2026-06-10): the per-symbol fetch is the cheapest
+        regime sampling point — we already touched MC for the bars,
+        extracting trend/vol/price_change adds zero round-trips.
         """
         technical = await self._fetch_technical(http, symbol)
         if not technical:
-            return 0.0
+            return 0.0, {}
         signals = technical.get("signals") or technical.get("pattern_signals") or {}
         try:
-            return float(signals.get("setup_score") or 0.0)
+            setup = float(signals.get("setup_score") or 0.0)
         except (TypeError, ValueError):
-            return 0.0
+            setup = 0.0
+        # Build the regime input snippet defensively — every value
+        # defaults to 0 so a missing field doesn't poison the mean.
+        def _f(key: str) -> float:
+            try:
+                return float(signals.get(key) or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+        regime_input = {
+            "trend_score": _f("trend_score"),
+            "volatility": _f("volatility"),
+            "price_change_pct": _f("price_change_pct"),
+        }
+        return setup, regime_input
 
     async def _evaluate_and_post(
         self, http: httpx.AsyncClient, lane: str, symbol: str,
     ) -> None:
         technical = await self._fetch_technical(http, symbol)
         snapshot, setup_score = _build_snapshot(symbol, lane, technical)
+        # Doctrine (2026-06-10, P1): replace the hardcoded "calm"
+        # market_regime with the regime computed at the start of this
+        # tick from the universe scan (`_rank_universe`). The Camaro
+        # wrapper consumes this — without a real signal it always
+        # saw "calm" and never engaged its chop-detection / regime-
+        # continuation rewards.
+        current_regime = getattr(self, "_current_regime", None)
+        if current_regime:
+            snapshot["market_regime"] = current_regime
         # ── Inject position_context BEFORE the brain decides
         #    (operator directive, 2026-06-XX). Without this, the
         #    brain has no inventory awareness and a BUY against an

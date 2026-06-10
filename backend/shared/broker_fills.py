@@ -131,6 +131,11 @@ def _normalize_transaction(tx: dict, account_id: str) -> Optional[dict]:
         "direction": tx.get("direction"),
         "raw": tx,
         "ingested_at": datetime.now(timezone.utc).isoformat(),
+        # BSON Date (NOT ISO string) so the TTL index can age this row
+        # out — see `_ensure_indexes`. Doctrine (2026-06-10, P2):
+        # default retention is 30 days, env-tunable via
+        # `BROKER_FILLS_RETENTION_SEC`.
+        "inserted_at": datetime.now(timezone.utc),
     }
 
 
@@ -215,6 +220,55 @@ def start_broker_fills_poller() -> None:
         return
     _STOP = asyncio.Event()
     _TASK = asyncio.create_task(_poll_loop(), name="broker_fills_poller")
+    # Fire-and-forget the index ensure — bounded, idempotent, never
+    # blocks startup. Doctrine (2026-06-10, P2): we keep 30 days of
+    # broker truth (long enough for any audit/reconciliation), then
+    # let Mongo TTL prune. The poller polls every 20s — at 130 fills
+    # / 13 minutes that's ~14k/day → ~420k/month per active symbol.
+    # Without TTL the collection would grow unbounded.
+    asyncio.create_task(_ensure_indexes(), name="broker_fills_index_ensure")
+
+
+async def _ensure_indexes() -> None:
+    """Create the TTL index on `timestamp` (30 days) plus a compound
+    index on (symbol, timestamp) for the dashboard's most common
+    query shape. Idempotent — Mongo treats duplicate `create_index`
+    calls as no-ops.
+
+    The timestamp field is stored as an ISO-8601 string (see
+    `_normalize_fill`), so we use a string-based TTL is NOT
+    appropriate. Instead we set `expireAfterSeconds` against the
+    `inserted_at` field which we populate at write time. We add it
+    here too so existing data starts ageing out from the index
+    creation time onward.
+
+    Failure-tolerant: any error is logged and we move on — the
+    poller still works without an index.
+    """
+    try:
+        retention_sec = int(
+            os.environ.get("BROKER_FILLS_RETENTION_SEC", str(30 * 24 * 3600)),
+        )
+        # TTL index on a BSON Date field (`inserted_at`). String
+        # timestamps don't work with TTL — Mongo requires a Date.
+        await db[BROKER_FILLS_COLLECTION].create_index(
+            [("inserted_at", 1)],
+            expireAfterSeconds=retention_sec,
+            name="ttl_inserted_at",
+            background=True,
+        )
+        # Compound for the dashboard's "recent fills by symbol" query.
+        await db[BROKER_FILLS_COLLECTION].create_index(
+            [("symbol", 1), ("timestamp", -1)],
+            name="symbol_ts_desc",
+            background=True,
+        )
+        logger.info(
+            "broker_fills indexes ensured (TTL=%ss, compound symbol_ts_desc)",
+            retention_sec,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("broker_fills _ensure_indexes failed: %s", exc)
 
 
 async def stop_broker_fills_poller() -> None:

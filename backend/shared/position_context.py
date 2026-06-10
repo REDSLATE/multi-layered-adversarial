@@ -65,9 +65,17 @@ logger = logging.getLogger("risedual.position_context")
 # ── Snapshot cache ──────────────────────────────────────────────
 # Per-lane cache. Key = lane string ("equity" | "crypto").
 # Value = (epoch_seconds_fetched, [normalized_position_dict, ...]).
+#
+# Doctrine (2026-06-10, P1 follow-up to the 130-trade AAPL incident):
+# TTL was 10s but Public.com indexes fills in ~500ms. The 9.5s gap
+# was the amnesia window — brains saw FLAT while the broker was
+# building inventory. Shortened to 2s for steady-state cheapness and
+# wired `invalidate_for_lane()` so the auto-router can punch the cache
+# the instant it submits an order, guaranteeing the NEXT brain tick
+# sees the freshly-incurred position.
 _CACHE: dict[str, tuple[float, list[dict]]] = {}
 _CACHE_LOCK = asyncio.Lock()
-_CACHE_TTL_SEC = 10.0
+_CACHE_TTL_SEC = 2.0
 
 
 def _flat_context(symbol: str, lane: str) -> dict:
@@ -199,7 +207,21 @@ def invalidate_cache() -> None:
     _CACHE.clear()
 
 
+def invalidate_for_lane(lane: str) -> None:
+    """Doctrine (2026-06-10, post-AAPL): the auto-router calls this
+    the instant it hands an order to the broker. The next brain tick
+    on this lane re-fetches positions fresh — no 2s wait, no 10s wait,
+    no amnesia window. Cheap because the next fetch is ~50ms.
+
+    Symmetry with the in-flight order dedupe layer:
+        * auto_router submits     → invalidate_for_lane(lane)
+        * brain tick re-fetches   → sees fresh broker state on next tick
+    """
+    _CACHE.pop(lane, None)
+
+
 __all__ = [
     "get_position_context",
     "invalidate_cache",
+    "invalidate_for_lane",
 ]
