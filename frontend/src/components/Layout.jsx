@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
+import MisreadToastHost from "@/components/MisreadToastHost";
 import {
   ChartBar,
   Receipt,
@@ -234,6 +235,11 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen bg-rd-bg text-rd-text app-shell" data-testid="app-shell">
+      {/* Ephemeral position-misread toast host — mounted once at the
+          layout level so it surfaces on every admin page (the operator
+          could be looking at any tab when the next misread lands). */}
+      <MisreadToastHost />
+
       {/* MOBILE top bar — only visible < md */}
       <div className="md:hidden sticky top-0 z-30 bg-rd-bg2 border-b border-rd-border flex items-center justify-between px-3 h-12">
         <button

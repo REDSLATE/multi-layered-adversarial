@@ -1,3 +1,63 @@
+## 2026-06-10 (pass 14) — P1: Ephemeral misread toasts + MSFT live look-see
+
+### Operator directives
+> *"Real test, how does it see MSFT today?"* — answered conversationally
+> with current 5m snapshot: last $397.35, RelVol 0.95× (slightly under
+> avg), bar age ~5–6 min, news=true. No brain has emitted a working
+> MSFT intent in the last 60min — the rotation favors AAPL/NVDA/AAL on
+> equity + BTC/ETH on crypto.
+>
+> *"Continue."* — proceeded with P1 ephemeral misread toasts.
+
+### Frontend: Ephemeral position-misread toasts (P1)
+
+- New `frontend/src/components/MisreadToastHost.jsx`.
+- Mounted ONCE at the layout level (Layout.jsx) so any admin page
+  surfaces a fresh misread toast — operator could be on Discussion
+  or Promotion when the AAPL-style pattern fires next.
+- Message shape (matches the operator's spec):
+    `"Camaro just misread AAPL — assumed FLAT, broker says SHORT"`
+- TTL: 5s auto-dismiss with 200ms opacity fadeout.
+- Mouse-over pauses the dismiss timer so the operator can read it
+  through without it disappearing.
+- Stacking: newest on top, cap 4 visible (older drop silently —
+  PositionMisreadsCard is the durable record, toasts are the alarm).
+- Dedup: keyed on `(detected_at + symbol + brain)` so a stream
+  replay or React re-render can't double-pop the same toast.
+- Manual dismiss button (×) always wins.
+
+### Shared SSE singleton (refactor)
+
+- `frontend/src/hooks/useMcStream.js` refactored: a single module-level
+  EventSource is now shared across ALL consumers (Toast host + Misread
+  card + Regime Tape + Chop Gauge). Previously each `useMcStream()`
+  call opened its own EventSource → 3-4 concurrent SSE connections per
+  page. Now 1.
+- Public hook API unchanged. New imperative `subscribeMcStream()`
+  exported for side-effect consumers (the toast host) that don't need
+  the in-state event buffer.
+- First subscriber opens the stream; last unsubscriber closes it.
+
+### Backend regression test
+
+- `tests/test_mc_connection_stream.py::test_sse_position_misread_event_fires_on_new_row`
+  pins the wire contract that the toast host depends on:
+  `event: position_misread` payload includes `symbol`, `brain`,
+  `assumed_side`, `actual_side`, `emitted_action`, `missed_short_profit`.
+
+### E2E validation
+- Backend: `pytest tests/test_mc_connection_stream.py` → 7/7 green
+  (1 new + 6 existing).
+- Backend full suite (excluding SSE timing tests): 1995/1995 green.
+- Frontend: live playwright run — logged in, opened admin shell,
+  injected a fresh misread into `shared_position_misreads`, observed
+  the toast appear in the top-right corner with all expected fields:
+    `⚠ POSITION MISREAD · Camaro just misread LIVETOAST ·`
+    `ASSUMED [FLAT] · BROKER SAYS [SHORT] · emitted: BUY · missed_short`
+
+---
+
+
 ## 2026-06-10 (pass 13) — P2: SSE stream + 3 live frontend cards
 
 ### Operator directive

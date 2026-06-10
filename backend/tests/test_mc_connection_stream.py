@@ -238,3 +238,69 @@ def test_sse_intent_event_fires_on_new_row(_token):
     finally:
         db.shared_intents.delete_many({"stack": "sse_test_brain"})
         c.close()
+
+
+def test_sse_position_misread_event_fires_on_new_row(_token):
+    """Seed a synthetic position-misread into `shared_position_misreads`
+    and verify it surfaces on the SSE stream as a `position_misread`
+    event. The frontend toast host (`MisreadToastHost.jsx`) subscribes
+    to exactly this event — losing it would silently break the
+    operator's last fire-alarm against the 2026-06-09 AAPL pattern.
+    """
+    import pymongo
+    import threading
+    import time as _t
+    c = pymongo.MongoClient(os.environ["MONGO_URL"])
+    db = c[os.environ["DB_NAME"]]
+    test_symbol = f"TST{int(_t.time())}"
+    try:
+        injected = threading.Event()
+
+        def _inject():
+            _t.sleep(1.5)
+            now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            db.shared_position_misreads.insert_one({
+                "detected_at": now_iso,
+                "symbol": test_symbol,
+                "brain": "sse_test_brain",
+                "assumed_side": "flat",
+                "actual_side": "short",
+                "emitted_action": "BUY",
+                "actual_signed_qty": -10.0,
+                "missed_short_profit": True,
+            })
+            injected.set()
+
+        t = threading.Thread(target=_inject, daemon=True)
+        t.start()
+
+        with requests.get(
+            f"{BASE_URL}/api/mc-connection/stream",
+            params={"token": _token},
+            stream=True,
+            timeout=20,
+        ) as r:
+            assert r.status_code == 200
+            events = _read_sse_events(r, max_events=80, max_seconds=12)
+
+        assert injected.is_set(), "background inject thread did not run"
+        saw_misread = False
+        for name, payload in events:
+            if name == "position_misread" and payload.get("symbol") == test_symbol:
+                saw_misread = True
+                # The toast host reads these specific fields — pin
+                # the contract so future schema changes can't quietly
+                # break it.
+                assert payload.get("brain") == "sse_test_brain"
+                assert payload.get("assumed_side") == "flat"
+                assert payload.get("actual_side") == "short"
+                assert payload.get("emitted_action") == "BUY"
+                assert payload.get("missed_short_profit") is True
+                break
+        assert saw_misread, (
+            f"injected position_misread did not surface on stream; "
+            f"got events: {[n for n, _ in events]}"
+        )
+    finally:
+        db.shared_position_misreads.delete_many({"brain": "sse_test_brain"})
+        c.close()

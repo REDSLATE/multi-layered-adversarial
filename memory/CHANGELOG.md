@@ -1,3 +1,34 @@
+## 2026-06-10 (pass 14) — P1: Ephemeral misread toasts
+
+**Frontend:**
+- New `components/MisreadToastHost.jsx` mounted at Layout level —
+  surfaces a 5s ephemeral toast on every admin page when SSE delivers
+  a `position_misread` event. Shape:
+  `"Camaro just misread AAPL — assumed FLAT, broker says SHORT"`.
+- Hover pauses dismiss timer; manual × button always wins; dedup on
+  `(detected_at, symbol, brain)`; max 4 visible at once.
+- `hooks/useMcStream.js` refactored to module-level SINGLETON shared
+  across all consumers (toast host + misread card + regime tape +
+  chop gauge). Public hook API unchanged; new imperative
+  `subscribeMcStream()` for side-effect consumers.
+
+**Backend test:**
+- `test_sse_position_misread_event_fires_on_new_row` — pins the SSE
+  `position_misread` event payload contract used by the toast host.
+
+**Validation:**
+- pytest: 7/7 SSE + 1995/1995 rest = green.
+- Playwright E2E: injected misread → toast rendered correctly with
+  brain/symbol/sides/action/missed_short fields visible.
+
+**MSFT look-see (answer to operator):**
+- 5m snapshot: $397.35, RelVol 0.95×, bar age ~6min, news=true.
+- No brain has emitted a working MSFT intent in last 60min — current
+  rotation favors AAPL/NVDA/AAL + BTC/ETH.
+
+---
+
+
 ## 2026-06-10 (pass 13) — P2: SSE + live frontend cards
 
 **Backend SSE** (`/api/mc-connection/stream`):
