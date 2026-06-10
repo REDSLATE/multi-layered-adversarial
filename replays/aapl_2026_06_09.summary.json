@@ -1,0 +1,40 @@
+{
+  "date": "2026-06-09",
+  "starting_signed_qty": 0.0,
+  "ending_signed_qty_actual": -6.0,
+  "ending_signed_qty_edge": -6.0,
+  "intent_count": 721,
+  "gate_passed_count": 14,
+  "gate_blocked_count": 707,
+  "actions": {
+    "BUY": 273,
+    "HOLD": 314,
+    "SELL": 134
+  },
+  "primitives": {
+    "OPEN": 244,
+    "HOLD": 314,
+    "ADD": 48,
+    "REDUCE": 113,
+    "CLOSE": 2
+  },
+  "evolutions": {
+    "OPEN": 244,
+    "HOLD": 314,
+    "ADD": 47,
+    "PARTIAL_COVER": 113,
+    "SCALE_IN": 1,
+    "SCALE_OUT": 1,
+    "CLOSE": 1
+  },
+  "risk_transitions": {
+    "NEUTRAL": 721
+  },
+  "mistranslations": 113,
+  "missed_short_covers": 2,
+  "actual_pnl_total": 0.0,
+  "edge_pnl_total": 0.0,
+  "net_edge": 0.0,
+  "peak_burst_5min_count": 20,
+  "peak_burst_5min_window": "2026-06-09T01:36:32.549137+00:00"
+}
