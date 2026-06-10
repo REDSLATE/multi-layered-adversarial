@@ -1,3 +1,116 @@
+## 2026-06-10 (pass 16) — Webull broker route (parallel option)
+
+### Operator directive (verbatim)
+> *"Add Webull to both equity and crypto as an option to Kraken and
+> Public without erasing their keys. Wire Webull straight to live
+> trading. Very small trades like minimum $3 – $10 max, per ticker."*
+
+### Doctrine
+
+- **Webull is a PARALLEL route**, not a replacement. Kraken and
+  Public.com keys + lane-default routing are untouched.
+- **LIVE from day one.** No paper/UAT stop. Compensated by:
+  1. **`WEBULL_ARMED=true` flag** (default FALSE → fail closed)
+  2. **`$3 ≤ notional ≤ $10`** per-ticker cap (hardcoded panic
+     ceiling at $100 even if operator widens the env band)
+- **Per-intent override only.** An intent must explicitly carry
+  `broker_override: "webull"` to route via Webull. Any other value
+  is rejected at the pydantic boundary so a stale or hostile intent
+  cannot arbitrarily redirect Kraken/Public traffic.
+- **Both lanes**: Webull supports equity + crypto on the same broker;
+  the symbol map in `broker_symbol_resolver.py` carries both
+  (`EQ:AAPL → "AAPL"`, `CRYPTO:BTC-USD → "BTCUSD"`).
+- **Belt-and-braces**: the cap is checked once at the router level
+  BEFORE adapter load, and re-checked inside the adapter's
+  `submit_market_order`. A bypass in either layer still fails closed.
+
+### Gate chain (every Webull order, in order)
+
+1. `evaluate_webull_order` — router-level cap + armed gate
+2. `get_webull_adapter()` — returns None if keys missing or disarmed
+3. Existing `mc_receipt` check (MC sealed envelope)
+4. Existing exposure-cap evaluator
+5. Existing in-flight dedupe
+6. Adapter `submit_market_order` belt-and-braces re-check
+7. SDK `place_order` call
+
+### What landed
+
+**Backend:**
+- `shared/broker/webull_caps.py` — `is_webull_armed()`,
+  `webull_notional_band()`, `evaluate_webull_order()`,
+  `WebullCapBlocked` exception.
+- `shared/broker/webull.py` — `WebullAdapter` (equity + crypto),
+  `get_webull_adapter()` factory; uses official
+  `webull-openapi-python-sdk` (v2.0.10). Lazy SDK import so the
+  module loads even if the SDK is uninstalled (fail-closed).
+- `shared/broker_router.py` — `ROUTE_OVERRIDE_BROKERS = {"webull"}`,
+  honors `intent.broker_override` only for members of that set,
+  runs `evaluate_webull_order` BEFORE adapter load.
+- `shared/broker_symbol_resolver.py` — Webull symbol map (12 EQ +
+  2 crypto on day 1, can expand).
+- `shared/intents.py` — `IntentIn.broker_override: Optional[Literal["webull"]]`
+  persisted on the intent doc; runtime AND admin-proxy paths both
+  carry the field through to Mongo.
+- `backend/.env` — new vars (blank until operator rotates keys):
+  `WEBULL_APP_KEY`, `WEBULL_APP_SECRET`, `WEBULL_REGION_ID=us`,
+  `WEBULL_ENVIRONMENT=prod`, `WEBULL_ARMED=false`,
+  `WEBULL_MIN_NOTIONAL_USD=3.00`, `WEBULL_MAX_NOTIONAL_USD=10.00`.
+
+**Frontend:**
+- `OperatorInjectIntent.jsx` — new "route" row with
+  `[ default | Webull (live $3-$10) ]` buttons + amber warning
+  hint when Webull is selected.
+- The intent payload now includes `broker_override` (null by
+  default, "webull" when toggled).
+
+**Tests (62 new):**
+- `tests/test_webull_caps.py` — 21 tests pinning armed gate + band
+  invariants (defaults, env override, sanity rails, boundaries).
+- `tests/test_webull_adapter.py` — 16 tests pinning factory
+  fail-closed semantics + symbol lane classification + adapter
+  belt-and-braces gates.
+- `tests/test_broker_router_webull_override.py` — 14 tests pinning
+  override routing + cap gate + lane-default fallback.
+
+### Validation
+
+- **Wrapper/cap suite**: 51/51 green.
+- **Broker + router + symbol suite**: 159/159 green.
+- **Full backend suite**: **2063/2063 green** (was 1995, +68
+  including the 14 RedEye + 1 SSE + 51 Webull + 2 incidental).
+- **Frontend smoke**: dropdown renders, amber warning appears on
+  Webull selection, payload carries `broker_override` field.
+
+### Operator action required to GO LIVE
+
+1. **Rotate keys**: the pair the operator pasted in the 2026-06-10
+   chat is treated as compromised. Generate a fresh App Key + App
+   Secret in Webull's OpenAPI console.
+2. Paste the rotated values into `/app/backend/.env`:
+   ```
+   WEBULL_APP_KEY="<rotated app key>"
+   WEBULL_APP_SECRET="<rotated app secret>"
+   WEBULL_ARMED="true"
+   ```
+3. `sudo supervisorctl restart backend`
+4. Verify with a $3 BUY in the Operator Inject Intent panel using
+   `route: Webull` selected. Watch the broker-fills feed for the
+   live fill confirmation.
+
+### Operator-facing reference card
+
+| Knob | Default | Notes |
+|---|---|---|
+| `WEBULL_ARMED` | `false` | Master kill switch (must be `true` to fire) |
+| `WEBULL_MIN_NOTIONAL_USD` | `3.00` | Hard floor per ticker |
+| `WEBULL_MAX_NOTIONAL_USD` | `10.00` | Hard ceiling per ticker (panic ceiling: $100) |
+| `WEBULL_REGION_ID` | `us` | US region |
+| `WEBULL_ENVIRONMENT` | `prod` | Set to `uat` for sandbox host |
+
+---
+
+
 ## 2026-06-10 (pass 15) — RedEye adversary wrapper assigned to GTO
 
 ### Operator directive (verbatim)

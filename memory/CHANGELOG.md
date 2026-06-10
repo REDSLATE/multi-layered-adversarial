@@ -1,3 +1,33 @@
+## 2026-06-10 (pass 16) — Webull broker route (live, $3-$10 small pilot)
+
+**Backend:**
+- New `shared/broker/webull.py` (WebullAdapter, equity + crypto via
+  official SDK) + `shared/broker/webull_caps.py` (armed gate +
+  notional band evaluator).
+- `broker_router.py` honors `intent.broker_override = "webull"` and
+  runs the Webull cap gate BEFORE adapter load.
+- `IntentIn.broker_override: Optional[Literal["webull"]]` persisted
+  on the intent doc; null by default → lane-default routing
+  unchanged.
+- New env vars (blank/disarmed until operator rotates keys):
+  `WEBULL_APP_KEY`, `WEBULL_APP_SECRET`, `WEBULL_REGION_ID=us`,
+  `WEBULL_ENVIRONMENT=prod`, `WEBULL_ARMED=false`,
+  `WEBULL_MIN_NOTIONAL_USD=3.00`, `WEBULL_MAX_NOTIONAL_USD=10.00`.
+
+**Frontend:**
+- `OperatorInjectIntent.jsx` — new "route" dropdown row
+  ([default | Webull (live $3-$10)]) + amber armed-flag hint
+  when Webull is selected.
+
+**Tests:** 51 new (caps + adapter + override) → full suite
+**2063/2063 green** (was 1995).
+
+**Operator action: rotate the leaked keys, set `WEBULL_ARMED=true`
+in .env, restart backend.**
+
+---
+
+
 ## 2026-06-10 (pass 15) — RedEye adversary wrapper assigned to GTO
 
 **Backend:**

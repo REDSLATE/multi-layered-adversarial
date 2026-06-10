@@ -35,6 +35,8 @@ import os
 from typing import Optional
 
 from shared.broker.alpaca_routes import get_alpaca_adapter
+from shared.broker.webull import get_webull_adapter
+from shared.broker.webull_caps import WebullCapBlocked, evaluate_webull_order
 from shared.broker_freeze import BrokerFrozen, assert_not_frozen
 from shared.crypto.broker_adapter import get_kraken_adapter
 from shared.broker_symbol_resolver import (
@@ -128,7 +130,17 @@ ADAPTER_LOADERS = {
     "kraken": get_kraken_adapter,
     "public": _get_public_adapter,
     "ibkr": _get_ibkr_adapter,
+    "webull": get_webull_adapter,
 }
+
+
+# Brokers that act as a per-intent operator override across BOTH lanes.
+# Setting `intent.broker_override = "webull"` routes that single intent
+# through Webull instead of the lane's default broker. Public / Kraken
+# / Alpaca cannot be selected as overrides — they ARE the defaults for
+# their lanes; the override exists precisely to opt INTO an alternative
+# without erasing the lane-default keys.
+ROUTE_OVERRIDE_BROKERS: set[str] = {"webull"}
 
 
 class BrokerRouteBlocked(Exception):
@@ -319,11 +331,32 @@ async def route_order(
             asset.lane, exc,
         )
 
-    # 2. Pick broker by lane.
-    try:
-        broker_name = broker_for_lane(asset.lane)
-    except LaneRoutingError as e:
-        raise BrokerRouteBlocked(str(e)) from e
+    # 2. Pick broker by lane — unless the intent carries an operator
+    #    override (e.g. `broker_override="webull"`). The override is
+    #    only honored for brokers in `ROUTE_OVERRIDE_BROKERS`; anything
+    #    else falls back to the lane default so a stale or hostile
+    #    intent can't redirect to Public/Kraken/Alpaca arbitrarily.
+    override = (intent.get("broker_override") or "").strip().lower() or None
+    if override and override in ROUTE_OVERRIDE_BROKERS:
+        broker_name = override
+    else:
+        try:
+            broker_name = broker_for_lane(asset.lane)
+        except LaneRoutingError as e:
+            raise BrokerRouteBlocked(str(e)) from e
+
+    # 2b. Webull-specific pre-trade cap gate. Runs BEFORE symbol
+    #     resolution / adapter load so a refused order doesn't
+    #     consume credentials or burn an MC receipt slot. Doctrine
+    #     pin (operator, 2026-06-10): WEBULL_ARMED must be true AND
+    #     notional must satisfy $3 ≤ N ≤ $10 per ticker for the
+    #     small-pilot route. The cap evaluator carries both checks.
+    if broker_name == "webull":
+        decision = evaluate_webull_order(
+            notional_usd=notional_usd, symbol=asset.canonical,
+        )
+        if not decision.ok:
+            raise BrokerRouteBlocked(decision.reason)
 
     # 3. Translate canonical → broker-native.
     try:
@@ -358,17 +391,23 @@ async def route_order(
 
     # 6. Submit through the adapter.
     logger.info(
-        "route_order intent=%s canonical=%s lane=%s broker=%s broker_sym=%s side=%s $%.2f receipt=%s",
+        "route_order intent=%s canonical=%s lane=%s broker=%s broker_sym=%s side=%s $%.2f receipt=%s override=%s",
         intent_id, asset.canonical, asset.lane, broker_name, broker_symbol,
-        side, notional_usd, receipt_check["reason"],
+        side, notional_usd, receipt_check["reason"], override or "none",
     )
-    order = await adapter.submit_market_order(
-        symbol=broker_symbol if isinstance(broker_symbol, str) else asset.base,
-        notional=notional_usd,
-        side=side,
-        client_order_id=client_order_id,
-        mc_receipt=receipt_check.get("receipt"),
-    )
+    try:
+        order = await adapter.submit_market_order(
+            symbol=broker_symbol if isinstance(broker_symbol, str) else asset.base,
+            notional=notional_usd,
+            side=side,
+            client_order_id=client_order_id,
+            mc_receipt=receipt_check.get("receipt"),
+        )
+    except WebullCapBlocked as e:
+        # Belt-and-braces re-check inside the adapter fired. Re-raise
+        # as a clean route block so the auto-router treats it like
+        # any other NO_TRADE.
+        raise BrokerRouteBlocked(str(e)) from e
     # Stamp routing metadata so receipts can be sliced by broker / lane.
     order.setdefault("broker", broker_name)
     order["lane"] = asset.lane

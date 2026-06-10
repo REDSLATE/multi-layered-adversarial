@@ -38,6 +38,11 @@ export default function OperatorInjectIntent({ onSubmitted }) {
   const [confirm, setConfirm] = useState("");
   const [holder, setHolder] = useState(null);
   const [holderLoading, setHolderLoading] = useState(false);
+  // Broker route override (2026-06-10). null = lane default
+  // (Public.com for equity, Kraken for crypto). "webull" routes the
+  // intent through the parallel Webull adapter — capped at $3-$10
+  // per ticker by the backend's `evaluate_webull_order` gate.
+  const [brokerOverride, setBrokerOverride] = useState(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
 
@@ -87,8 +92,9 @@ export default function OperatorInjectIntent({ onSubmitted }) {
         action: side,
         lane,
         confidence: 0.9,
-        rationale: `Operator-injected ${side} · $${notional} ${symbol}`,
+        rationale: `Operator-injected ${side} · $${notional} ${symbol}${brokerOverride ? ` via ${brokerOverride}` : ""}`,
         snapshot: { spread_bps: 5.0 },
+        broker_override: brokerOverride,
       });
       const intent_id = intent.data?.intent_id;
       if (!intent_id) throw new Error("intent post returned no intent_id");
@@ -250,6 +256,48 @@ export default function OperatorInjectIntent({ onSubmitted }) {
             placeholder="10"
           />
         </div>
+
+        {/* Broker route override — opt INTO a parallel broker without
+            erasing the lane defaults. Default ("none") routes
+            equity → Public.com and crypto → Kraken as before.
+            Webull is the small-pilot route: $3-$10 per ticker, must
+            be armed with WEBULL_ARMED=true on the backend. */}
+        <div className="flex items-center gap-2">
+          <span className="text-rd-dim w-20">route</span>
+          <div className="flex gap-1">
+            {[
+              { key: null, label: "default" },
+              { key: "webull", label: "Webull (live $3-$10)" },
+            ].map(({ key, label }) => {
+              const active = brokerOverride === key;
+              return (
+                <button
+                  key={String(key)}
+                  onClick={() => setBrokerOverride(key)}
+                  data-testid={`operator-inject-broker-${key || "default"}`}
+                  className={
+                    "px-2 py-0.5 text-[11px] uppercase tracking-wider border " +
+                    (active
+                      ? "border-rd-warning text-rd-warning"
+                      : "border-rd-border text-rd-dim hover:text-rd-text")
+                  }
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {brokerOverride === "webull" && (
+          <div
+            className="pl-22 text-[10px] text-rd-warning"
+            data-testid="operator-inject-webull-hint"
+          >
+            ⚠ live Webull route · $3 ≤ notional ≤ $10 · requires
+            <code className="mx-1 text-rd-text">WEBULL_ARMED=true</code>
+            on the backend
+          </div>
+        )}
 
         {/* Confirm */}
         <div className="space-y-1">

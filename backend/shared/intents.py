@@ -276,6 +276,18 @@ class IntentIn(BaseModel):
     # `small_account_sidecar_v1`. Patent J grades each independently.
     doctrine_snapshot: Optional[dict] = Field(default=None)
 
+    # ─── Broker route override (2026-06-10, operator-pinned) ───
+    # Optional. When set to a member of `ROUTE_OVERRIDE_BROKERS`
+    # (currently just "webull"), the broker_router redirects THIS
+    # single intent through the named broker instead of the lane
+    # default (Public.com for equity, Kraken for crypto). Any other
+    # value is rejected at the pydantic boundary — the override exists
+    # to opt INTO a parallel broker, not to redirect to the lane
+    # defaults arbitrarily. See `broker_router.py` and
+    # `shared/broker/webull_caps.py` for the gate chain.
+    broker_override: Optional[Literal["webull"]] = Field(default=None)
+
+
     # SAFETY INVARIANTS — schema-pinned. Cannot be overridden by the brain.
     may_execute: bool = Field(default=False)
     requires_gate_pass: bool = Field(default=True)
@@ -954,6 +966,10 @@ async def post_intent(
         "executed": False,
         "executed_at": None,
         "execution_receipt_id": None,
+        # Broker route override (None → lane-default broker; "webull"
+        # → opts INTO the Webull parallel route, capped at $3-$10
+        # per ticker by `evaluate_webull_order` BEFORE submission).
+        "broker_override": body.broker_override,
     }
     if memory_modulator_info is not None:
         doc["memory_modulator"] = memory_modulator_info
@@ -1272,6 +1288,8 @@ async def admin_post_intent(
         "executed": False,
         "executed_at": None,
         "execution_receipt_id": None,
+        # Broker route override — same semantics as the runtime path.
+        "broker_override": body.broker_override,
     }
     # Brain-supplied modulator receipt (bounds already validated by
     # IntentIn). Persisted on the admin path the same as the runtime

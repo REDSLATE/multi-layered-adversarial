@@ -170,6 +170,30 @@ BROKER_SYMBOL_MAP: dict[str, dict[str, Any]] = {
         # here is the dict the IBKR adapter needs to construct a Contract.
         # Day-1: NO mappings; populate when IBKR comes online.
     },
+    "webull": {
+        # Webull route (2026-06-10). Equities + crypto on the SAME
+        # broker. Equity tickers are bare (same shape as Public.com).
+        # Crypto symbols are concatenated <BASE><QUOTE> with no
+        # delimiter — Webull's snapshot/order endpoints documented
+        # the BTCUSD form (no dash). Day-1 universe mirrors what the
+        # other equity/crypto brokers already carry, so an operator
+        # can divert any existing tradable to Webull without a
+        # symbol-map gap.
+        "EQ:AAPL":  "AAPL",
+        "EQ:MSFT":  "MSFT",
+        "EQ:GOOGL": "GOOGL",
+        "EQ:NVDA":  "NVDA",
+        "EQ:AMZN":  "AMZN",
+        "EQ:TSLA":  "TSLA",
+        "EQ:META":  "META",
+        "EQ:NFLX":  "NFLX",
+        "EQ:AMD":   "AMD",
+        "EQ:AMC":   "AMC",
+        "EQ:GME":   "GME",
+        "EQ:HOTH":  "HOTH",
+        "CRYPTO:BTC-USD": "BTCUSD",
+        "CRYPTO:ETH-USD": "ETHUSD",
+    },
 }
 
 
