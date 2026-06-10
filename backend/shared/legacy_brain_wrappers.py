@@ -42,6 +42,7 @@ from typing import Any, Literal
 WrapperName = Literal[
     "alpha_legacy_executor",
     "chevelle_legacy_governor",
+    "camaro_legacy_strategist",
 ]
 
 
@@ -282,15 +283,144 @@ def apply_chevelle_legacy_governor(intent: dict[str, Any]) -> dict[str, Any]:
 
     return asdict(wrapped)
 
+def apply_camaro_legacy_strategist(intent: dict[str, Any]) -> dict[str, Any]:
+    """
+    Camaro wrapper.
+
+    Purpose:
+    - live-market strategist temperament
+    - rewards clean directional tape
+    - avoids tiny BUY/SELL gaps
+    - favors continuation with position-aware transitions
+    - compresses size in chop / unclear regime
+
+    Does NOT:
+    - create trades from HOLD
+    - flip BUY/SELL
+    - force a seat
+    """
+
+    x = _base_fields(intent)
+
+    confidence = x["confidence"]
+    size_bias = x["size_bias"]
+    reasons = x["reasons"]
+    warnings = x["warnings"]
+    evidence = x["evidence"]
+
+    action = x["action"]
+    current_side = x["current_side"]
+    transition = x["transition_intent"]
+    evolution = x["position_evolution"]
+    risk_transition = x["risk_transition"]
+
+    # Optional evidence fields if your intent carries them
+    market_regime = evidence.get("market_regime") or evidence.get("snapshot", {}).get("market_regime")
+    buy_score = safe_float(evidence.get("buy_score"), 0.0)
+    sell_score = safe_float(evidence.get("sell_score"), 0.0)
+    score_gap = abs(buy_score - sell_score)
+
+    # Camaro hates indecision/chop.
+    if score_gap and score_gap < 0.035:
+        confidence -= 0.06
+        size_bias *= 0.75
+        warnings.append("CAMARO_WRAPPER_TINY_SCORE_GAP_CHOP_RISK")
+
+    # Live-market continuation bias.
+    if market_regime in {"bull", "risk_on", "calm_bull"}:
+        if action == "BUY" and transition in {"OPEN_LONG", "ADD_LONG"}:
+            confidence += 0.04
+            size_bias *= 1.05
+            reasons.append("CAMARO_WRAPPER_BULL_REGIME_LONG_CONTINUATION")
+        elif action == "SELL" and transition in {"OPEN_SHORT", "ADD_SHORT"}:
+            confidence -= 0.05
+            size_bias *= 0.80
+            warnings.append("CAMARO_WRAPPER_SHORT_AGAINST_BULL_REGIME")
+
+    if market_regime in {"bear", "risk_off", "crisis"}:
+        if action == "SELL" and transition in {"OPEN_SHORT", "ADD_SHORT"}:
+            confidence += 0.04
+            size_bias *= 1.05
+            reasons.append("CAMARO_WRAPPER_BEAR_REGIME_SHORT_CONTINUATION")
+        elif action == "BUY" and transition in {"OPEN_LONG", "ADD_LONG"}:
+            confidence -= 0.05
+            size_bias *= 0.80
+            warnings.append("CAMARO_WRAPPER_LONG_AGAINST_BEAR_REGIME")
+
+    # In chop, reduce appetite.
+    if market_regime in {"chop", "sideways", "unknown", None}:
+        if transition in {"OPEN_LONG", "OPEN_SHORT", "ADD_LONG", "ADD_SHORT"}:
+            confidence -= 0.04
+            size_bias *= 0.80
+            warnings.append("CAMARO_WRAPPER_CHOP_EXPOSURE_COMPRESSION")
+
+    # Camaro likes position management more than blind reversal.
+    if evolution in {"SCALE_OUT", "PARTIAL_COVER", "FULL_COVER"}:
+        confidence += 0.02
+        reasons.append("CAMARO_WRAPPER_POSITION_MANAGEMENT_APPROVED")
+
+    # Camaro is cautious on flips unless confidence is already high.
+    if transition in {"FLIP_LONG_TO_SHORT", "FLIP_SHORT_TO_LONG", "FLIP"}:
+        if confidence >= 0.76:
+            confidence += 0.01
+            size_bias *= 0.75
+            warnings.append("CAMARO_WRAPPER_HIGH_CONFIDENCE_FLIP_COMPRESSED")
+        else:
+            confidence -= 0.12
+            size_bias *= 0.45
+            warnings.append("CAMARO_WRAPPER_LOW_CONFIDENCE_FLIP_REJECTED_BY_TEMPERAMENT")
+
+    # If current side is known and action aligns with existing exposure, slightly reward continuation.
+    if current_side == "LONG" and transition == "ADD_LONG" and confidence >= 0.68:
+        confidence += 0.03
+        reasons.append("CAMARO_WRAPPER_LONG_CONTINUATION_CONFIRMED")
+
+    if current_side == "SHORT" and transition == "ADD_SHORT" and confidence >= 0.68:
+        confidence += 0.03
+        reasons.append("CAMARO_WRAPPER_SHORT_CONTINUATION_CONFIRMED")
+
+    if action == "HOLD":
+        size_bias = 0.0
+
+    evidence["legacy_wrapper"] = {
+        "name": "camaro_legacy_strategist",
+        "parent_brain": "camaro",
+        "effect": "live_market_tape_reading_and_continuation_bias",
+    }
+
+    wrapped = WrappedIntent(
+        brain_id=x["brain_id"],
+        display_name=x["display_name"],
+        wrapper="camaro_legacy_strategist",
+        parent_brain="camaro",
+        doctrine="live_market_strategist",
+        action=action,
+        confidence=round(clamp(confidence), 4),
+        size_bias=round(clamp(size_bias, 0.0, 2.0), 4),
+        current_side=current_side,
+        transition_intent=transition,
+        position_evolution=evolution,
+        risk_transition=risk_transition,
+        reasons=list(dict.fromkeys(reasons)),
+        warnings=list(dict.fromkeys(warnings)),
+        evidence=evidence,
+    )
+
+    return asdict(wrapped)
+
+
+
 
 WRAPPER_REGISTRY = {
     "alpha_legacy_executor": apply_alpha_legacy_executor,
     "chevelle_legacy_governor": apply_chevelle_legacy_governor,
+    "camaro_legacy_strategist": apply_camaro_legacy_strategist,
 }
 
 
 BRAIN_WRAPPER_ASSIGNMENTS = {
     "camino": "alpha_legacy_executor",
+    "barracuda": "camaro_legacy_strategist",
     "hellcat": "chevelle_legacy_governor",
 }
 

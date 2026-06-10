@@ -27,6 +27,7 @@ sys.path.insert(0, "/app/backend")
 from shared.legacy_brain_wrappers import (  # noqa: E402
     BRAIN_WRAPPER_ASSIGNMENTS,
     apply_alpha_legacy_executor,
+    apply_camaro_legacy_strategist,
     apply_chevelle_legacy_governor,
     apply_legacy_wrapper,
     clamp,
@@ -45,8 +46,11 @@ def test_hellcat_assigned_chevelle_wrapper():
     assert BRAIN_WRAPPER_ASSIGNMENTS["hellcat"] == "chevelle_legacy_governor"
 
 
-def test_barracuda_has_no_wrapper():
-    assert "barracuda" not in BRAIN_WRAPPER_ASSIGNMENTS
+def test_barracuda_assigned_camaro_wrapper():
+    """Barracuda's mean-reversion doctrine gets tape-reading
+    instinct from the Camaro wrapper — prevents pure fading from
+    fighting strong tape too aggressively."""
+    assert BRAIN_WRAPPER_ASSIGNMENTS["barracuda"] == "camaro_legacy_strategist"
 
 
 def test_gto_has_no_wrapper():
@@ -54,8 +58,9 @@ def test_gto_has_no_wrapper():
 
 
 def test_apply_legacy_wrapper_passthrough_for_unassigned():
-    """Brains without a wrapper assignment must pass through unchanged."""
-    inp = {"brain_id": "barracuda", "action": "BUY", "confidence": 0.71}
+    """Brains without a wrapper assignment must pass through unchanged.
+    GTO is the only unwrapped brain after the Camaro addition."""
+    inp = {"brain_id": "gto", "action": "BUY", "confidence": 0.71}
     out = apply_legacy_wrapper(inp)
     assert out is inp  # literally the same dict
 
@@ -267,3 +272,209 @@ def test_safe_float_handles_garbage():
     assert safe_float(None, 0.7) == 0.7
     assert safe_float("abc", 0.5) == 0.5
     assert safe_float({}, -1.0) == -1.0
+
+
+# ── Camaro strategist behavior ────────────────────────────────────
+
+
+def _barracuda_intent(**overrides):
+    base = {
+        "brain_id": "barracuda",
+        "display_name": "Barracuda",
+        "action": "BUY",
+        "confidence": 0.70,
+        "size_bias": 1.0,
+        "current_side": "FLAT",
+        "transition_intent": "OPEN_LONG",
+        "position_evolution": "OPEN",
+        "risk_transition": "NEUTRAL",
+        "reasons": [],
+        "warnings": [],
+        "evidence": {
+            "market_regime": "bull",
+            "buy_score": 0.72,
+            "sell_score": 0.55,
+        },
+    }
+    base.update(overrides)
+    return base
+
+
+def test_camaro_never_flips_action():
+    out = apply_camaro_legacy_strategist(_barracuda_intent(action="BUY"))
+    assert out["action"] == "BUY"
+    out = apply_camaro_legacy_strategist(_barracuda_intent(action="SELL"))
+    assert out["action"] == "SELL"
+
+
+def test_camaro_zeros_size_on_hold():
+    out = apply_camaro_legacy_strategist(_barracuda_intent(action="HOLD"))
+    assert out["action"] == "HOLD"
+    assert out["size_bias"] == 0.0
+
+
+def test_camaro_never_creates_trade_from_hold():
+    out = apply_camaro_legacy_strategist(_barracuda_intent(action="HOLD"))
+    assert out["action"] == "HOLD"
+
+
+def test_camaro_penalizes_tiny_score_gap_chop():
+    """Camaro hates indecision — a tiny BUY/SELL score gap triggers
+    chop warning and compresses size."""
+    out = apply_camaro_legacy_strategist(_barracuda_intent(
+        evidence={
+            "market_regime": "bull",
+            "buy_score": 0.700,
+            "sell_score": 0.690,   # gap = 0.010, under 0.035 floor
+        },
+    ))
+    assert out["size_bias"] < 1.0
+    assert any("TINY_SCORE_GAP_CHOP_RISK" in w for w in out["warnings"])
+
+
+def test_camaro_rewards_long_continuation_in_bull_regime():
+    """Bull regime + BUY OPEN_LONG → confidence lifted, size boosted."""
+    out = apply_camaro_legacy_strategist(_barracuda_intent(
+        action="BUY", transition_intent="OPEN_LONG",
+        evidence={"market_regime": "bull", "buy_score": 0.75, "sell_score": 0.50},
+    ))
+    assert out["confidence"] > 0.70
+    assert out["size_bias"] > 1.0
+    assert any("BULL_REGIME_LONG_CONTINUATION" in r for r in out["reasons"])
+
+
+def test_camaro_warns_on_short_against_bull():
+    """SELL against a bull regime — Camaro's experience says don't
+    fight the tape, even for a mean-reverter."""
+    out = apply_camaro_legacy_strategist(_barracuda_intent(
+        action="SELL", transition_intent="OPEN_SHORT",
+        current_side="FLAT",
+        evidence={"market_regime": "bull", "buy_score": 0.40, "sell_score": 0.65},
+    ))
+    assert out["confidence"] < 0.70
+    assert out["size_bias"] < 1.0
+    assert any("SHORT_AGAINST_BULL_REGIME" in w for w in out["warnings"])
+
+
+def test_camaro_rewards_short_continuation_in_bear_regime():
+    out = apply_camaro_legacy_strategist(_barracuda_intent(
+        action="SELL", transition_intent="OPEN_SHORT",
+        current_side="FLAT",
+        evidence={"market_regime": "bear", "buy_score": 0.40, "sell_score": 0.72},
+    ))
+    assert out["confidence"] > 0.70
+    assert any("BEAR_REGIME_SHORT_CONTINUATION" in r for r in out["reasons"])
+
+
+def test_camaro_warns_on_long_against_bear():
+    out = apply_camaro_legacy_strategist(_barracuda_intent(
+        action="BUY", transition_intent="OPEN_LONG",
+        evidence={"market_regime": "crisis", "buy_score": 0.72, "sell_score": 0.45},
+    ))
+    assert out["confidence"] < 0.70
+    assert any("LONG_AGAINST_BEAR_REGIME" in w for w in out["warnings"])
+
+
+def test_camaro_compresses_exposure_in_chop():
+    """Chop / sideways / unknown regime → exposure-increasing
+    transitions are compressed."""
+    for regime in ("chop", "sideways", "unknown"):
+        out = apply_camaro_legacy_strategist(_barracuda_intent(
+            transition_intent="OPEN_LONG",
+            evidence={"market_regime": regime, "buy_score": 0.70, "sell_score": 0.50},
+        ))
+        assert out["size_bias"] < 1.0, f"regime={regime} should compress"
+        assert any("CHOP_EXPOSURE_COMPRESSION" in w for w in out["warnings"])
+
+
+def test_camaro_approves_position_management():
+    """SCALE_OUT / PARTIAL_COVER / FULL_COVER → small confidence
+    lift, reason logged."""
+    out = apply_camaro_legacy_strategist(_barracuda_intent(
+        position_evolution="SCALE_OUT",
+        evidence={"market_regime": "bull", "buy_score": 0.65, "sell_score": 0.60},
+    ))
+    assert any("POSITION_MANAGEMENT_APPROVED" in r for r in out["reasons"])
+
+
+def test_camaro_rejects_low_confidence_flip_by_temperament():
+    out = apply_camaro_legacy_strategist(_barracuda_intent(
+        confidence=0.60, transition_intent="FLIP_LONG_TO_SHORT",
+    ))
+    assert out["confidence"] < 0.60
+    assert out["size_bias"] < 0.5
+    assert any(
+        "LOW_CONFIDENCE_FLIP_REJECTED_BY_TEMPERAMENT" in w
+        for w in out["warnings"]
+    )
+
+
+def test_camaro_compresses_high_confidence_flip():
+    """Even at high confidence, Camaro shrinks size on flips."""
+    out = apply_camaro_legacy_strategist(_barracuda_intent(
+        confidence=0.80, transition_intent="FLIP_SHORT_TO_LONG",
+    ))
+    # Confidence preserved or lifted; size compressed.
+    assert out["size_bias"] < 1.0
+    assert any("HIGH_CONFIDENCE_FLIP_COMPRESSED" in w for w in out["warnings"])
+
+
+def test_camaro_rewards_confirmed_long_continuation():
+    """LONG + ADD_LONG + confidence >= 0.68 → continuation reward."""
+    out = apply_camaro_legacy_strategist(_barracuda_intent(
+        confidence=0.72, current_side="LONG", transition_intent="ADD_LONG",
+        evidence={"market_regime": "bull", "buy_score": 0.72, "sell_score": 0.45},
+    ))
+    assert any("LONG_CONTINUATION_CONFIRMED" in r for r in out["reasons"])
+
+
+def test_camaro_rewards_confirmed_short_continuation():
+    out = apply_camaro_legacy_strategist(_barracuda_intent(
+        confidence=0.72, current_side="SHORT", transition_intent="ADD_SHORT",
+        action="SELL",
+        evidence={"market_regime": "bear", "buy_score": 0.40, "sell_score": 0.72},
+    ))
+    assert any("SHORT_CONTINUATION_CONFIRMED" in r for r in out["reasons"])
+
+
+def test_camaro_stamps_provenance_block():
+    out = apply_camaro_legacy_strategist(_barracuda_intent())
+    lw = out["evidence"]["legacy_wrapper"]
+    assert lw["name"] == "camaro_legacy_strategist"
+    assert lw["parent_brain"] == "camaro"
+    assert out["wrapper"] == "camaro_legacy_strategist"
+    assert out["parent_brain"] == "camaro"
+
+
+def test_camaro_clamps_confidence_and_size():
+    """Bound invariants hold for Camaro too."""
+    out = apply_camaro_legacy_strategist(_barracuda_intent(
+        confidence=5.0, size_bias=10.0,
+    ))
+    assert 0.0 <= out["confidence"] <= 1.0
+    assert 0.0 <= out["size_bias"] <= 2.0
+
+
+def test_camaro_handles_missing_market_regime_as_chop():
+    """If market_regime is missing entirely, Camaro treats it as
+    unclear and compresses exposure — fail-closed default."""
+    out = apply_camaro_legacy_strategist(_barracuda_intent(
+        transition_intent="OPEN_LONG",
+        evidence={"buy_score": 0.70, "sell_score": 0.50},  # no market_regime
+    ))
+    assert out["size_bias"] < 1.0
+    assert any("CHOP_EXPOSURE_COMPRESSION" in w for w in out["warnings"])
+
+
+def test_apply_legacy_wrapper_routes_barracuda_to_camaro():
+    """End-to-end: barracuda intent through the generic dispatcher
+    must land on the Camaro wrapper, not pass through unchanged."""
+    out = apply_legacy_wrapper({
+        "brain_id": "barracuda",
+        "action": "BUY",
+        "confidence": 0.70,
+        "current_side": "FLAT",
+        "transition_intent": "OPEN_LONG",
+        "evidence": {"market_regime": "bull", "buy_score": 0.72, "sell_score": 0.50},
+    })
+    assert out.get("wrapper") == "camaro_legacy_strategist"

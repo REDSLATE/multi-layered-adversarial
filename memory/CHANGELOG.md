@@ -1,3 +1,45 @@
+## 2026-06-10 (pass 9) — Camaro wrapper on Barracuda
+
+### Operator directive (verbatim)
+> *"A Camaro wrapper should feel like the old Camaro: older,
+> market-tested, live-market aware, but not tied to a seat. Camaro
+> wrapper = rewards clean live momentum, respects position
+> transitions, avoids weak chop, favors continuation when market
+> context agrees, penalizes overtrading when signal gap is tiny."*
+
+### What changed
+- `backend/shared/legacy_brain_wrappers.py`:
+  - Added `apply_camaro_legacy_strategist` — verbatim from operator
+    paste, plus registered in `WRAPPER_REGISTRY` and
+    `BRAIN_WRAPPER_ASSIGNMENTS["barracuda"]`.
+- `external/brains/runner.py`:
+  - Wrapper-input builder now passes `market_regime`,
+    `buy_score`, `sell_score` in `evidence` so the Camaro
+    tape-reader has the inputs it needs. Other wrappers ignore
+    these keys; carrying them is always safe.
+- `backend/tests/test_legacy_brain_wrappers.py`: 18 new Camaro
+  tests covering chop detection, regime continuation rewards,
+  fight-the-tape penalties, flip rejection, missing-regime fail-
+  closed, and dispatcher routing.
+
+### Assignment (post pass-9)
+| Brain     | Doctrine        | Wrapper                       | Temperament              |
+| --------- | --------------- | ----------------------------- | ------------------------ |
+| Camino    | trend           | alpha_legacy_executor         | executor discipline      |
+| Barracuda | mean_reversion  | **camaro_legacy_strategist**  | live-market tape reader  |
+| Hellcat   | breakout        | chevelle_legacy_governor      | risk governor            |
+| GTO       | momentum        | (none — pure adversary)       | unconstrained adversary  |
+
+### Live verification (post-restart)
+First Barracuda intent after restart fired `CAMARO_WRAPPER_TINY_SCORE_GAP_CHOP_RISK`
+when BUY=0.609 vs SELL=0.589 (gap=0.020, under the 0.035 chop floor) —
+Camaro instinct caught indecision the bare doctrine engine would
+have ignored.
+
+### Tests
+105 passing (44 wrapper + 16 doctrine + 45 transition).
+
+
 ## 2026-06-10 (pass 8) — brain decorrelation: doctrine + seat + legacy wrappers
 
 ### Operator directive (verbatim, pinned)

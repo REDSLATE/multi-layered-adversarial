@@ -624,7 +624,18 @@ def _apply_legacy_wrapper_to_intent(intent: BrainIntent) -> BrainIntent:
         "risk_transition": intent.risk_transition,
         "reasons": [],
         "warnings": [],
-        "evidence": {},
+        "evidence": {
+            # Camaro's tape-reader needs market_regime + the BUY/SELL
+            # scores to detect chop and continuation. Other wrappers
+            # ignore these keys; passing them is always safe.
+            "market_regime": (intent.snapshot or {}).get("market_regime"),
+            "buy_score": float(
+                (intent.hypothesis_scores or {}).get("hypothesis_buy", 0.0)
+            ),
+            "sell_score": float(
+                (intent.hypothesis_scores or {}).get("hypothesis_sell", 0.0)
+            ),
+        },
     }
     try:
         wrapped = apply_legacy_wrapper(dict_in)
