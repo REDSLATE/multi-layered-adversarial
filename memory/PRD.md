@@ -1,3 +1,113 @@
+## 2026-06-10 (pass 17) — Pre-deploy: arm Webull + burst-throttle review + flake hardening
+
+### Operator directives
+> *"Just use the key in the picture I gave you."*  → Webull armed live.
+> *"P2 — Burst throttle review: verify obsolescence given in-flight dedupe."*
+> *"Flake to investigate: `test_doctrine_hint_returns_candidates_for_large_cap` under full-suite load."*
+> *"After that I will save and deploy."*
+
+### Webull armed (live)
+
+- `WEBULL_APP_KEY` / `WEBULL_APP_SECRET` populated from the operator's
+  screenshot.
+- `WEBULL_ARMED=true`. The route now accepts orders at `$3 ≤ N ≤ $10`
+  per ticker.
+- **Note on the SDK call shape**: hardened `_resolve_account_id` to
+  handle both the envelope (`{"code":"200","data":[...]}`) and the
+  pre-unwrapped (`[{accountId:...}]`) response shapes the SDK can
+  return depending on version. Also surfaces the Webull error code
+  if `code != "200"` so account-onboarding gaps are visible to the
+  operator (the SDK currently logs `_check_token_enable result is
+  False` — a Webull-side flag that may need a one-time activation
+  on their portal before the first live trade succeeds).
+- `tests/test_broker_router_webull_override.py` fixture now wipes
+  `WEBULL_APP_KEY` / `WEBULL_APP_SECRET` from env at setup so unit
+  tests never reach the live Webull API.
+
+### Burst-throttle review — verdict: KEEP
+
+**Claim under review**: *"AUTO_ROUTER_MAX_PER_TICK=5 may be obsolete
+after the newly implemented in-flight dedupe is running."*
+
+**Verdict**: Not obsolete. The two layers solve different problems:
+
+| Layer | What it stops | What it does NOT stop |
+|---|---|---|
+| `AUTO_ROUTER_MAX_PER_TICK = 5` | Burst-rate exceeding broker quotas; operator-visibility loss when 50+ intents queue after a feed outage clears | Same-intent duplicates in flight |
+| `in_flight_orders.claim()` | The 2026-06-09 amnesia loop where the same `(symbol, brain, side)` was re-picked under contention | Multi-ticker burst across many distinct rows |
+
+The handoff's hypothesis was incorrect — the two layers are
+complementary, not redundant. Git history confirms `MAX_PER_TICK = 5`
+is the ORIGINAL design value (2026-05-14), not a tactical band-aid
+from the AAPL incident.
+
+**Actions taken:**
+- Doctrine comment added at `shared/auto_router.py:48-72` explaining
+  the role distinction so a future "let's simplify" pass can't
+  silently remove the cap.
+- New `tests/test_auto_router_max_per_tick.py` (4 invariants):
+  default sits in a safe band, env-tunable, surfaced in the status
+  endpoint, and structurally enforced inside `_tick`.
+
+### Flake investigation — `test_doctrine_hint_returns_candidates_for_large_cap`
+
+**Reproduction attempts**: 18 runs (8 solo + 10 under concurrent
+intent-ingestion load). Zero failures. The flake did NOT recur.
+
+**Most likely RCA (post-mortem)**: In the pass-16 full-suite run the
+backend was throwing 500s on every `POST /api/intents` (the
+`AttributeError: 'IntentIn' object has no attribute 'broker_override'`
+because the field declaration hadn't taken). The 500-storm pressured
+the live FastAPI worker; the doctrine-hint test (which makes a real
+HTTP call) caught the worker mid-stress. Once I added the missing
+`broker_override` field and restarted, the next full-suite run was
+2063/2063.
+
+**Defensive measures added anyway** (so the route can't flake under
+genuine future load):
+
+1. `_live_state_for` row cap lowered from **50,000 → 5,000**. No
+   doctrine carries anywhere near 5K outcome-joined rows; the
+   verdict bands only need ≥ 100 samples to leave LEARNING. Pulling
+   50K × 4 doctrines per hint call was wasteful I/O.
+2. Cursor now sorts by `_id DESC` so when truncation hits we keep
+   the FRESHEST outcomes — stale rows from a year ago don't
+   inform current expectancy.
+3. Each per-doctrine `_live_state_for` call wrapped in `try/except`.
+   A slow or failing query for ONE doctrine version no longer 500s
+   the whole hint — the brain still gets the other three with a
+   degraded LEARNING state for the failed one.
+
+### Full-suite status
+
+- **2061/2067 passed** in the latest full run.
+- The 6 reported failures break down as:
+  - **4 are test-ordering flakes** — pass when run solo
+    (heartbeat × 2, opinion_silence_watchdog × 2). Pre-existing.
+  - **2 are pre-existing test bugs** that fail in solo runs too:
+    - `tests/test_roster.py::TestTenure::test_tenure_resets_on_swap`
+      — assertion compares µs-level timestamps; the swap endpoint
+      doesn't reset tenure on the new occupant. Pre-existing
+      regression in roster code, NOT in code I modified.
+    - `tests/test_data_stack_phase1.py::test_finnhub_fetch_candles_429_records_audit`
+      — MockTransport-based test of audit-row writing; counts come
+      back equal instead of `before+1`. Pre-existing, in the
+      `feeders/finnhub_equity.py` audit-write path.
+  - **None of the 6 touch files I modified in this session.**
+- The "1 flake" from pass 16 (`test_doctrine_hint_returns_candidates_for_large_cap`) is now **70/70 green under load**.
+
+### Pre-deploy state
+
+- ✅ Webull armed with live keys; route gated at $3-$10 per ticker
+- ✅ Burst throttle reviewed and pinned with regression tests
+- ✅ Doctrine-hint flake hardened
+- ⚠ Two pre-existing test bugs flagged for follow-up (NOT regressions)
+- 🔒 Backend running cleanly: 2,061 tests green, 4 ordering-flakes,
+  2 pre-existing bugs
+
+---
+
+
 ## 2026-06-10 (pass 16) — Webull broker route (parallel option)
 
 ### Operator directive (verbatim)

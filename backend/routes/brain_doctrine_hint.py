@@ -86,15 +86,30 @@ def _candidate_doctrines_for(snapshot: dict) -> list[str]:
 async def _live_state_for(doctrine_version: str, lane: str) -> dict:
     """Compute live (samples, expectancy_R, max_dd_R, verdict) for a
     doctrine version. Reads `doctrine_sidecars` rows with outcome
-    joins — mirrors `promotion.promotion_status` but slimmed down."""
+    joins — mirrors `promotion.promotion_status` but slimmed down.
+
+    Defensive notes (2026-06-10):
+
+      * The row cap is 5_000 (down from 50_000). No doctrine carries
+        anywhere near 5K outcome-joined rows today, and the verdict
+        bands only need ≥ `_MIN_SAMPLES = 100` to leave LEARNING.
+        Pulling 50K per doctrine × 4 doctrines per hint call was
+        unnecessary I/O and contributed to a sporadic timeout flake
+        on `test_doctrine_hint_returns_candidates_for_large_cap`
+        observed under full-suite load on 2026-06-10.
+      * The query sorts by `_id` descending so when truncation hits
+        we keep the FRESHEST outcomes, which is what the verdict
+        bands actually need (stale rows from a year ago aren't
+        informative about current expectancy).
+    """
     rows = await db[DOCTRINE_SIDECARS].find(
         {
             "doctrine_version": doctrine_version,
             "lane": lane,
             "outcome_join": {"$exists": True},
         },
-        {"_id": 0, "outcome_join": 1},
-    ).to_list(50_000)
+        {"_id": 1, "outcome_join": 1},
+    ).sort("_id", -1).to_list(5_000)
 
     pnls = []
     for r in rows:
@@ -191,7 +206,22 @@ async def doctrine_hint(
 
     state_by_doctrine = {}
     for dv in candidates:
-        state_by_doctrine[dv] = await _live_state_for(dv, snapshot["lane"])
+        # Defense in depth (2026-06-10): wrap each per-doctrine state
+        # computation so a slow or failing query against ONE doctrine
+        # version doesn't 500 the entire hint call. The brain can
+        # still consult the others; a degraded state row is preferable
+        # to no answer at all.
+        try:
+            state_by_doctrine[dv] = await _live_state_for(dv, snapshot["lane"])
+        except Exception as e:  # noqa: BLE001
+            state_by_doctrine[dv] = {
+                "samples": 0,
+                "expectancy_R": None,
+                "max_drawdown_R": None,
+                "win_rate": None,
+                "verdict": "LEARNING",
+                "error": str(e)[:120],
+            }
 
     # The recommended semantic uses the FIRST candidate's verdict (the
     # most-specific match). A brain that disagrees with the dispatch is

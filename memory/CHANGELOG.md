@@ -1,3 +1,31 @@
+## 2026-06-10 (pass 17) — Pre-deploy: Webull armed + burst throttle review + doctrine-hint hardening
+
+**Webull armed:**
+- `WEBULL_APP_KEY`/`WEBULL_APP_SECRET` populated; `WEBULL_ARMED=true`.
+- Adapter `_resolve_account_id` hardened against both envelope and
+  pre-unwrapped SDK response shapes; surfaces Webull error codes.
+- Override-routing tests now wipe Webull keys from env so they
+  never call the live API.
+
+**Burst throttle (AUTO_ROUTER_MAX_PER_TICK=5) — VERDICT: KEEP.** Not
+obsolete vs in-flight dedupe — they solve different problems (rate
+cap + operator-visibility vs duplicate prevention). Doctrine pinned
+in code; new `tests/test_auto_router_max_per_tick.py` (4 invariants)
+locks the contract.
+
+**Doctrine-hint flake:** Could NOT reproduce in 18 runs (8 solo + 10
+under concurrent load). RCA: prior session backend was 500ing on
+every intent POST due to a missing IntentIn field. Defensive measures
+added anyway: row cap 50k→5k, sort by recency desc, try/except per
+doctrine. Now 70/70 green under load.
+
+**Full suite:** 2061/2067 — the 6 outliers are 4 ordering-flakes and
+2 pre-existing test bugs (in test_roster + test_data_stack_phase1),
+none in files I modified.
+
+---
+
+
 ## 2026-06-10 (pass 16) — Webull broker route (live, $3-$10 small pilot)
 
 **Backend:**

@@ -28,6 +28,12 @@ def _isolate_env(monkeypatch):
         "WEBULL_MIN_NOTIONAL_USD",
         "WEBULL_MAX_NOTIONAL_USD",
         "RISEDUAL_BROKER_REQUIRE_MC_RECEIPT",
+        # Force keys empty so the override-routing tests can't reach
+        # the live Webull API even when `.env` carries real
+        # credentials. Routing must be verifiable by the gate chain
+        # alone — adapter behavior is covered by test_webull_adapter.py.
+        "WEBULL_APP_KEY",
+        "WEBULL_APP_SECRET",
     ):
         monkeypatch.delenv(key, raising=False)
     # Force MC receipt enforcement OFF for these unit tests — we're

@@ -114,18 +114,43 @@ class WebullAdapter(BrokerAdapter):
         try:
             res = self._trade().account_v2.get_account_list()
             data = res.json() if hasattr(res, "json") else res
-            accounts = (data.get("data") or data.get("accounts") or [])
-            if not accounts:
-                raise RuntimeError("Webull account list empty")
-            self.account_id = str(
-                accounts[0].get("accountId")
-                or accounts[0].get("account_id")
-                or ""
-            )
-            if not self.account_id:
-                raise RuntimeError("Webull account list missing accountId")
         except Exception as e:  # noqa: BLE001
             raise RuntimeError(f"Webull resolve account_id failed: {e}") from e
+
+        # Webull's account list response can arrive in two shapes
+        # depending on SDK version:
+        #   (a) envelope:   {"code": "200", "data": [{accountId: ...}]}
+        #   (b) unwrapped:  [{"accountId": ...}]
+        # Be tolerant of both and surface the SDK error code when the
+        # envelope says the call failed.
+        accounts: list[dict] = []
+        if isinstance(data, list):
+            accounts = data
+        elif isinstance(data, dict):
+            inner = data.get("data") or data.get("accounts")
+            if isinstance(inner, list):
+                accounts = inner
+            elif isinstance(inner, dict):
+                # Some SDK builds wrap accounts inside data.data.accounts
+                nested = inner.get("accounts")
+                if isinstance(nested, list):
+                    accounts = nested
+            code = data.get("code")
+            msg = data.get("msg")
+            if code not in (None, "200", 200) and not accounts:
+                raise RuntimeError(
+                    f"Webull get_account_list returned code={code} msg={msg!r}"
+                )
+
+        if not accounts:
+            raise RuntimeError("Webull account list empty or unparseable")
+
+        first = accounts[0] if isinstance(accounts[0], dict) else {}
+        self.account_id = str(
+            first.get("accountId") or first.get("account_id") or ""
+        )
+        if not self.account_id:
+            raise RuntimeError("Webull account list missing accountId")
         return self.account_id
 
     # ── BrokerAdapter contract ────────────────────────────────────

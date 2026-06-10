@@ -51,6 +51,32 @@ AUTO_ROUTER_INTERVAL_SEC = int(os.environ.get("AUTO_ROUTER_INTERVAL_SEC", "30"))
 # signal costs lunch, not rent. Operator can lift via env var or by
 # stamping `requested_notional_usd` on the intent itself.
 AUTO_ROUTER_NOTIONAL_USD = float(os.environ.get("AUTO_ROUTER_NOTIONAL_USD", "10"))
+
+# Per-tick rate cap. Doctrine (verified 2026-06-10 against handoff
+# pass-13's "is this obsolete now that in-flight dedupe is live?"):
+#
+#   This cap is NOT obsolete and is NOT redundant with
+#   `shared/in_flight_orders.py`. They solve DIFFERENT problems:
+#
+#     * AUTO_ROUTER_MAX_PER_TICK = rate cap. With 30s ticks at 5/tick,
+#       max sustained ~10 orders/min. Protects against:
+#         - Broker rate limits (Public, Kraken, Webull each have their
+#           own quotas; bunching can trip throttles)
+#         - Sudden P&L exposure if 50 intents queue up after a feed
+#           outage clears (the burst is spread across 10 ticks)
+#         - Webull pilot constraint: at $3-$10/order, 50 simultaneous
+#           orders means $150-$500 hits the wire in 30s; spreading it
+#           gives the operator a chance to see and intervene
+#
+#     * in_flight_orders.claim() = duplicate prevention. Stops the
+#       SAME (symbol, brain, side) intent from being submitted twice
+#       while one is in flight. This is what killed the 2026-06-09
+#       amnesia loop where the router was re-picking the SAME row
+#       under contention.
+#
+#   Removing this cap on the assumption that dedupe covers it would
+#   re-expose the broker rate-limit and operator-visibility surfaces.
+#   `tests/test_auto_router_max_per_tick.py` pins the contract.
 AUTO_ROUTER_MAX_PER_TICK = int(os.environ.get("AUTO_ROUTER_MAX_PER_TICK", "5"))
 AUTO_ROUTER_EMAIL = "auto-router@mission-control"
 
