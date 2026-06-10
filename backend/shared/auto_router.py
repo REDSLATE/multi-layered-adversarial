@@ -163,53 +163,30 @@ async def _route_one(intent: dict) -> dict:
     min_exec_conf = float(os.environ.get("RISEDUAL_EXEC_CONFIDENCE_FLOOR", "0.30"))
     classification = classify_brain_intent(intent, min_exec_conf=min_exec_conf)
 
-    # Phase 4 ladder-first shadow gate: if the brain is at
-    # observation_only, write an observation receipt for any
-    # directional candidate (even those the brain didn't self-zero)
-    # and skip the broker. This is the doctrinal "stage is authority"
-    # pin: MC won't fire real fills until the operator promotes.
+    # ── LADDER GATE ELIMINATED 2026-06-10 (operator directive) ──
+    # The previous ladder-first shadow gate that lived here (Phase 4)
+    # rerouted every observation_only intent to an observation
+    # receipt and skipped the broker. Per `_ladder_cap_and_route`
+    # in `shared/sizing_gate.py`, all stages now resolve to
+    # `live_normal`, so this branch is structurally unreachable —
+    # we leave a defensive assertion-style check + a warning so any
+    # accidental regression of `sizing.route == ROUTE_OBSERVE` is
+    # surfaced loudly instead of silently shadowing trades. Other
+    # safety rails (lane toggle, broker freeze, broker caps,
+    # exposure cap, in-flight dedupe, MC receipt seal, position
+    # misread detector) stay 100% active.
     if sizing.route == ROUTE_OBSERVE:
-        if not classification.advisory_only:
-            # The brain sent a sized directional intent but the
-            # ladder still owns the route. Build an observation
-            # receipt from the SIZED intent so the operator can still
-            # grade the brain's call. We synthesize the "honest hold"
-            # shape by zeroing the size on the fly.
-            shadowed = dict(intent)
-            evidence = dict(intent.get("evidence") or {})
-            evidence["size_multiplier"] = 0
-            evidence["would_trade_without_gates"] = False
-            evidence["ladder_shadowed"] = True
-            shadowed["evidence"] = evidence
-        else:
-            shadowed = intent
-        from shared.observation_receipts import (  # noqa: WPS433
-            build_observation_receipt,
+        logger.error(
+            "auto_router LADDER_REGRESSION intent=%s brain=%s lane=%s stage=%s "
+            "— sizing returned ROUTE_OBSERVE but the ladder gate was eliminated; "
+            "this should be unreachable. NO_TRADE.",
+            intent_id, brain, intent_lane, sizing.stage,
         )
-        obs = build_observation_receipt(shadowed)
-        obs["candidate_reason"] = (
-            "ladder_observation_only_stage"
-            if not classification.advisory_only
-            else "honest_hold_eligible_for_grading"
-        )
-        try:
-            await db["observation_receipts"].insert_one(dict(obs))
-        except Exception as e:  # noqa: BLE001
-            logger.warning("auto_router observation insert failed intent=%s: %s",
-                           intent_id, e)
-        logger.info(
-            "auto_router LADDER_OBSERVE intent=%s brain=%s lane=%s stage=%s — "
-            "shadowed (no broker fill)", intent_id, brain, intent_lane, sizing.stage,
-        )
-        await _persist_advisory_classification(intent_id, intent, classification)
         return {
             "intent_id": intent_id,
-            "verdict": "observation_receipt",
-            "reason": f"ladder_stage:{sizing.stage}",
+            "verdict": "no_trade",
+            "reason": "ladder_regression_unreachable_branch",
             "execution_ready": False,
-            "observation_receipt": True,
-            "stage": sizing.stage,
-            "route": sizing.route,
         }
 
     if classification.advisory_only:

@@ -130,25 +130,30 @@ def _micro_live_cap_for(lane: Optional[str]) -> float:
 def _ladder_cap_and_route(stage: str) -> tuple[Optional[float], str]:
     """Translate a ladder stage into (notional_cap, route).
 
-    `observation_only` has no broker fill — the caller short-circuits
-    on `route="observe"` and writes an observation receipt instead.
-    `normal_live` returns None so the lane-cap rail is the only
-    binding constraint (no ladder clamp added at the top rung).
+    **2026-06-10 — LADDER GATE ELIMINATED (operator directive).**
+    The per-brain × per-lane stage no longer gates execution. Every
+    stage now resolves to `live_normal` with no ladder cap — sizing
+    is bound only by the lane cap, micro_live cap (when enabled),
+    and the broker-specific caps (Webull $3-$10, etc.).
+
+    Reasoning: in 22,757 lifetime intents, only 1 was ever executed
+    via this path because no formal promotion was ever performed.
+    The wrapped brains (Camino/Barracuda/Hellcat/GTO) inherit their
+    parents' posture; with the parents never formally promoted, the
+    ladder was permanently shadow-locking the system. The audit log,
+    `/promote`/`/demote` endpoints, and stage data model remain
+    functional for forensic / historical reference, but they are no
+    longer authoritative for routing.
+
+    Other safety rails STAY ACTIVE: lane toggle, broker freeze,
+    Webull cap, exposure cap, in-flight dedupe, MC receipt seal,
+    position-misread detector.
     """
-    if stage == "observation_only":
-        # Cap of 0 forces final_usd → 0 if anyone walks past the
-        # short-circuit; defense in depth.
-        return 0.0, ROUTE_OBSERVE
-    if stage == "micro_paper":
-        return LADDER_MICRO_PAPER_USD, ROUTE_PAPER
-    if stage == "micro_live":
-        return LADDER_MICRO_LIVE_USD, ROUTE_LIVE_MICRO
-    if stage == "normal_live":
-        return None, ROUTE_LIVE_NORMAL
-    # Unknown stage → fail-closed to observe so a typo doesn't accidentally
-    # leak real-money fills.
-    logger.warning("sizing_gate: unknown ladder stage %r — failing closed to observe", stage)
-    return 0.0, ROUTE_OBSERVE
+    # All stages → live_normal, no ladder cap. The `stage` argument
+    # is preserved on the SizingDecision so dashboards/audits can
+    # still display the historical stage even though it no longer
+    # gates anything.
+    return None, ROUTE_LIVE_NORMAL
 
 
 def evaluate_sizing(
