@@ -9,6 +9,9 @@ import RosterPanel from "@/components/ParadoxRosterPanel";
 import AssignableRosterPanel from "@/components/RosterPanel";
 import LivePositionsPanel from "@/components/LivePositionsPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
+import MarketRegimeTape from "@/components/MarketRegimeTape";
+import PositionMisreadsCard from "@/components/PositionMisreadsCard";
+import DivergenceChopGauge from "@/components/DivergenceChopGauge";
 
 export default function Overview() {
   const [overview, setOverview] = useState(null);
@@ -185,6 +188,28 @@ export default function Overview() {
                 </Card>
               );
             })}
+          </div>
+
+          {/* P2 (2026-06-10) — Live observability strip.
+              Three cards consume the new `/api/mc-connection/stream`
+              SSE feed:
+                * Market Regime Tape — current regime + transition history
+                * Position Misreads — last 20, with 24h verdict
+                * Divergence/Chop Gauge — composite of regime + hold ratio
+              All three share ONE SSE connection via `useMcStream`. */}
+          <div
+            className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 mb-6"
+            data-testid="overview-live-strip"
+          >
+            <PanelErrorBoundary>
+              <MarketRegimeTape />
+            </PanelErrorBoundary>
+            <PanelErrorBoundary>
+              <DivergenceChopGauge />
+            </PanelErrorBoundary>
+            <PanelErrorBoundary>
+              <PositionMisreadsCard />
+            </PanelErrorBoundary>
           </div>
 
           {/* Stale conflicts alert — open conflicts older than 24h.

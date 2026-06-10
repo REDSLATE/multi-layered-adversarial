@@ -1,3 +1,38 @@
+## 2026-06-10 (pass 13) — P2: SSE + live frontend cards
+
+**Backend SSE** (`/api/mc-connection/stream`):
+- Multiplexed event stream: `hello` / `intent` / `broker_fill` /
+  `position_misread` / `regime` / `heartbeat`
+- 2s polling; per-connection cursor watermarks
+- Auth via `?token=` (EventSource limitation) with Bearer fallback
+- New dep: `sse-starlette==1.8.2` (FastAPI-compatible)
+- 6 new tests including injected-intent-surfaces-on-stream
+
+**Frontend cards** on `/admin/overview`:
+- `useMcStream` shared hook — single connection for all consumers,
+  exponential backoff reconnect (1s → 30s cap)
+- `MarketRegimeTape` — current regime pill + transition history
+- `DivergenceChopGauge` — composite chop score (regime 60% +
+  hold-ratio 40%) with gradient bar
+- `PositionMisreadsCard` — last 20 misreads + 24h verdict,
+  live-merged with SSE events
+- New 3-col grid row on Overview, each card in `PanelErrorBoundary`
+
+**Bugs fixed during integration**:
+- PositionMisreadsCard expected `{rows}` but endpoint returns
+  `{items, count}`
+- Same card used wrong summary field names
+
+### Test totals
+1995 → **2001 tests, 0 failures**
+
+### Live verified
+Screenshot showed CHOP regime, 51% mixed-signal chop gauge,
+CLEAN misread verdict, all three live dots green.
+
+---
+
+
 ## 2026-06-10 (pass 12) — P2: position-aware gate + intent summary
 
 **Position-aware intent classification gate** (`shared/execution.py`):

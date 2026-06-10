@@ -1,3 +1,106 @@
+## 2026-06-10 (pass 13) — P2: SSE stream + 3 live frontend cards
+
+### Operator directive
+> *"P2: SSE stream at `/api/mc-connection/stream` for live frontend updates.
+> P2: Frontend cards — 'Market Regime Tape' + 'Last 20 Position Misreads'
+> + Divergence/chop gauge."*
+
+### Backend: `/api/mc-connection/stream`
+
+- New `backend/routes/mc_connection_stream.py` — multiplexed SSE feed.
+- Wire format: standard `text/event-stream`; events named:
+    - `hello`           — connection ack with poll_interval_sec
+    - `intent`          — new shared_intents row
+    - `broker_fill`     — new shared_broker_fills row
+    - `position_misread`— new shared_position_misreads row
+    - `regime`          — emitted only on regime CHANGE (no spam)
+    - `heartbeat`       — every 15s for proxy keepalive
+- Polling-based (NOT change-streams) for portability. 2s poll cycle;
+  per-poll row cap 100 to guard against backlog catch-up storms.
+- Auth: token via `?token=` query string (browser EventSource can't
+  set custom headers) with fallback to cookie / Authorization header
+  for curl / server-side clients.
+- Per-connection cursor watermarks — no shared state between
+  connections; concurrency-safe.
+- New dependency: `sse-starlette==1.8.2` (pinned to be compatible
+  with FastAPI 0.110's `starlette<0.38.0` constraint).
+- 6 regression tests in `tests/test_mc_connection_stream.py`:
+  auth-required, bad-token rejected, hello-first, named events
+  arrive, Bearer header works, injected intent surfaces on stream.
+
+### Frontend: 3 live cards on `/admin/overview`
+
+#### Shared SSE hook (`src/hooks/useMcStream.js`)
+- Single EventSource per page → all three cards share one connection.
+- Auto-reconnect with exponential backoff (1s → 30s cap).
+- Bucketed event log: `byType.intent`, `byType.regime`,
+  `byType.position_misread`, etc.
+- Tracks `currentRegime` separately for direct consumption.
+- Clean unmount — no leaked connections.
+
+#### MarketRegimeTape (`src/components/MarketRegimeTape.jsx`)
+- Current regime as a colored pill (bull/bear/chop/calm/volatile/crisis).
+- "Recent transitions" strip — deduped consecutive duplicates.
+- Seeded from `/api/admin/runtime/camaro/intent-summary` so the
+  current regime shows even before the first SSE regime event lands
+  (regime only fires on CHANGE).
+- Live dot indicator + connection-state copy.
+
+#### DivergenceChopGauge (`src/components/DivergenceChopGauge.jsx`)
+- Composite chop score in [0, 1]: 60% regime weight + 40% hold-ratio.
+- Gradient bar: green→amber→red.
+- Verdict copy: "edge present" / "mixed signal" / "chop risk" /
+  "deep chop · stay flat".
+- Sub-metrics: regime contribution + live hold-ratio.
+
+#### PositionMisreadsCard (`src/components/PositionMisreadsCard.jsx`)
+- Seeded from `/api/admin/position-misreads/{recent,summary-24h}`.
+- Live-merged with SSE `position_misread` events (deduped on
+  detected_at + symbol + brain).
+- 24h verdict badge (CLEAN/ISOLATED/ELEVATED/SYSTEMIC).
+- Table columns: detected (rel time), brain, symbol, action,
+  brain-thought side, broker-said side, qty, MISSED_SHORT flag.
+- Empty state messaging when zero misreads.
+
+#### Overview wire-up
+- New grid row `data-testid="overview-live-strip"` (3-col lg / 1-col
+  mobile) directly under the runtime cards.
+- Each card wrapped in `PanelErrorBoundary` so a parse error in one
+  doesn't blank the row.
+
+### Bug fixed during integration
+- `PositionMisreadsCard` rendered `merged.map is not a function` on
+  first load. Root cause: the `/recent` endpoint returns
+  `{items: [], count: N}` (not a bare array or `{rows: ...}`).
+  Fixed by reading `recent.data.items` with Array.isArray guards.
+- Same card was reading `summary.total_misreads_24h` and
+  `missed_short_profit_count`; the actual endpoint returns
+  `summary.total` and `missed_short_profit`. Fixed.
+
+### Test totals
+1995 → **2001 tests, 0 failures** (+6 new SSE tests).
+
+### Live verification
+Screenshot taken with all 4 brains active: Market Regime Tape
+showed `CHOP` with one live transition; Divergence Gauge showed
+`51% MIXED SIGNAL`; Position Misreads showed `CLEAN` verdict with
+empty state. All three cards showed green "live" dots confirming
+SSE connection.
+
+### Files touched
+- `backend/routes/mc_connection_stream.py` (NEW)
+- `backend/server.py` (route registration)
+- `backend/requirements.txt` (`sse-starlette==1.8.2`)
+- `backend/tests/test_mc_connection_stream.py` (NEW, 6 tests)
+- `frontend/src/hooks/useMcStream.js` (NEW)
+- `frontend/src/components/MarketRegimeTape.jsx` (NEW)
+- `frontend/src/components/DivergenceChopGauge.jsx` (NEW)
+- `frontend/src/components/PositionMisreadsCard.jsx` (NEW)
+- `frontend/src/pages/Overview.jsx` (3-card strip added)
+
+---
+
+
 ## 2026-06-10 (pass 12) — P2: Position-aware gate + Intent summary endpoint
 
 ### Operator directive
