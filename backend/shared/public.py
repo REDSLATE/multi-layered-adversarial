@@ -100,10 +100,11 @@ def _client(base_url: str, token: Optional[str] = None) -> httpx.AsyncClient:
 async def _request(
     base_url: str, token: Optional[str], method: str, path: str,
     json_body: Optional[dict] = None,
+    params: Optional[dict] = None,
 ) -> Any:
     async with _client(base_url, token) as c:
         try:
-            r = await c.request(method, path, json=json_body)
+            r = await c.request(method, path, json=json_body, params=params)
         except httpx.HTTPError as e:
             raise PublicError(f"transport: {e}") from e
     try:

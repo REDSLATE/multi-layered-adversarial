@@ -229,6 +229,67 @@ class PublicAdapter(BrokerAdapter):
         # back to per-order status polls.
         return []
 
+    async def list_history(
+        self,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        page_size: int = 200,
+        max_pages: int = 50,
+    ) -> list[dict]:
+        """Pull account transaction history from Public.com.
+
+        Endpoint: `GET /userapigateway/trading/{accountId}/history`
+        with query params:
+            start      — ISO timestamp (inclusive)
+            end        — ISO timestamp (exclusive)
+            pageSize   — int
+            nextToken  — pagination cursor
+
+        Returns the raw history items list. The history feed includes
+        every account event — orders, fills, deposits, dividends, etc.
+        Callers filter to what they need (`type == "ORDER"` for the
+        replay reconciler).
+
+        Doctrine pin (post-AAPL incident, 2026-06): MC's stored
+        `shared_intents` only captures what the BRAINS emitted. The
+        broker may have produced many more fills (retries, partial
+        fills, re-submissions) than MC's intent count suggests. This
+        endpoint is the only way to get the broker's ground truth
+        for the 130-fills AAPL incident — necessary for the Pass-6
+        replay script's edge proof.
+
+        Pagination: we follow `nextToken` until either it's empty or
+        we hit `max_pages` (safety bound — Public's docs don't
+        document a maximum result set per query).
+        """
+        out: list[dict] = []
+        next_token: Optional[str] = None
+        for page_idx in range(max_pages):
+            params: dict = {"pageSize": int(page_size)}
+            if start:
+                params["start"] = start
+            if end:
+                params["end"] = end
+            if next_token:
+                params["nextToken"] = next_token
+            try:
+                resp = await _request(
+                    self.base_url, self.access_token, "GET",
+                    f"/userapigateway/trading/{self.account_id}/history",
+                    params=params,
+                )
+            except PublicError as e:
+                raise RuntimeError(f"Public list_history failed: {e}") from e
+            if not isinstance(resp, dict):
+                break
+            items = resp.get("history") or resp.get("items") or resp.get("data") or []
+            if isinstance(items, list):
+                out.extend(items)
+            next_token = resp.get("nextToken") or resp.get("next_token")
+            if not next_token:
+                break
+        return out
+
     async def cancel_order(self, order_id: str) -> None:
         try:
             await _request(
