@@ -423,16 +423,31 @@ async def route_order(
 
 # ─────────────────────── adapter peek ───────────────────────
 
-async def adapter_for_lane(lane: str):
+async def adapter_for_lane(lane: str, broker_override: Optional[str] = None):
     """Convenience used by gate code that wants to know if a broker is
     even connected for a given lane WITHOUT submitting anything.
 
+    `broker_override` (2026-06-10): when supplied AND in
+    `ROUTE_OVERRIDE_BROKERS`, the lookup uses that broker instead of
+    the lane default. This mirrors the exact selection logic in
+    `route_order` so a pre-trade gate (e.g. `broker_connected` in
+    `execution._evaluate_gates`) sees the SAME broker the live path
+    will use. Without this, an intent with `broker_override="webull"`
+    would dry-run-block on the lane default's missing creds (e.g.
+    no Public.com config) even though the actual route will use
+    Webull. Any unknown / non-override broker name silently falls
+    back to the lane default — same doctrine as `route_order`.
+
     Returns the adapter (truthy) or None.
     """
-    try:
-        broker = broker_for_lane(lane)
-    except LaneRoutingError:
-        return None
+    override = (broker_override or "").strip().lower() or None
+    if override and override in ROUTE_OVERRIDE_BROKERS:
+        broker = override
+    else:
+        try:
+            broker = broker_for_lane(lane)
+        except LaneRoutingError:
+            return None
     loader = ADAPTER_LOADERS.get(broker)
     if not loader:
         return None

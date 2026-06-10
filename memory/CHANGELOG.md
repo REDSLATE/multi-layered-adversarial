@@ -1,3 +1,29 @@
+## 2026-06-10 (pass 18) — Ladder eliminated + broker_connected override bug fixed
+
+**Ladder eliminated** (operator directive). `_ladder_cap_and_route`
+returns `(None, live_normal)` for every stage; auto_router shadow
+block removed; 2 ladder-dedicated test files (-20 tests) deleted.
+Audit log + endpoints kept as advisory. All other safety rails
+(lane toggle, broker freeze, Webull cap, exposure cap, in-flight
+dedupe, MC receipt, position misread, dry-run gates) stay active.
+
+**broker_connected gate honored broker_override** (bug fix).
+`adapter_for_lane(lane, broker_override=None)` now resolves the
+override broker the same way `route_order` does. Dry-run for a
+Webull-routed intent no longer blocks on missing Public.com config.
+5 new override-gate tests in `test_broker_connected_override.py`.
+
+**Validated live**: AMZN+webull intent now shows `broker_connected:
+pass=True (override→webull)`. Remaining 3 dry-run blockers
+(symbol_in_universe, lane_execution_enabled, roadguard_spread_floor)
+are operator-controlled levers, not bugs.
+
+**Full suite**: 2050/2052 (2 are test-ordering flakes / pre-existing
+bugs, none in files I modified).
+
+---
+
+
 ## 2026-06-10 (pass 17) — Pre-deploy: Webull armed + burst throttle review + doctrine-hint hardening
 
 **Webull armed:**

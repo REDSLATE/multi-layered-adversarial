@@ -342,19 +342,39 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
         "reason": "live order routing enabled — seat policy is the authority",
     })
 
-    # 5. Broker connected — lane-aware. Equity intents need Alpaca;
-    #    crypto intents need Kraken. If lane is unknown the resolver
-    #    fails closed when routing — surfaced as a separate gate failure.
+    # 5. Broker connected — lane-aware AND override-aware (2026-06-10).
+    #    Equity intents normally need Alpaca/Public; crypto intents need
+    #    Kraken. An intent carrying `broker_override` (e.g. "webull")
+    #    routes through that broker instead — the gate MUST check the
+    #    broker the LIVE path will actually use, not just the lane
+    #    default. Before the override hand-off this gate would block
+    #    Webull-routed intents on missing Public.com config even though
+    #    the live route doesn't touch Public.
     intent_lane = intent.get("lane")
+    intent_override = (intent.get("broker_override") or "").strip().lower() or None
     if intent_lane:
         from shared.broker_router import adapter_for_lane as _adapter_for_lane  # noqa: WPS433
-        broker_for_intent = await _adapter_for_lane(intent_lane)
+        broker_for_intent = await _adapter_for_lane(intent_lane, intent_override)
         broker_connected = broker_for_intent is not None
-        broker_reason = (
-            f"broker for lane={intent_lane!r} present ({broker_for_intent.name})"
-            if broker_connected else
-            f"no broker configured / connected for lane={intent_lane!r}"
-        )
+        if broker_connected:
+            override_tag = (
+                f" (override→{intent_override})"
+                if intent_override and intent_override == broker_for_intent.name
+                else ""
+            )
+            broker_reason = (
+                f"broker for lane={intent_lane!r} present "
+                f"({broker_for_intent.name}){override_tag}"
+            )
+        else:
+            override_tag = (
+                f", override={intent_override!r}"
+                if intent_override else ""
+            )
+            broker_reason = (
+                f"no broker configured / connected for lane={intent_lane!r}"
+                f"{override_tag}"
+            )
     else:
         # Legacy intents without lane fall back to the Alpaca check —
         # this keeps the equities flow alive for any pre-canonical
