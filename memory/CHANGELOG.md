@@ -1,3 +1,28 @@
+## 2026-06-10 (pass 15) — RedEye adversary wrapper assigned to GTO
+
+**Backend:**
+- `apply_redeye_legacy_adversary()` added to `shared/legacy_brain_wrappers.py`
+  (operator paste verbatim). GTO momentum doctrine now wears RedEye's
+  adversarial instincts: challenges weak consensus, rewards short
+  pressure in risk-off/bear regimes, punishes crowded long adds
+  against bearish flow, compresses flips unless confidence ≥ 0.78.
+- `WrapperName` Literal + `WRAPPER_REGISTRY` + `BRAIN_WRAPPER_ASSIGNMENTS`
+  all updated: `"gto": "redeye_legacy_adversary"`.
+
+**Tests:**
+- 14 new RedEye behavior invariants in `tests/test_legacy_brain_wrappers.py`.
+- Removed obsolete `test_gto_has_no_wrapper` (assignment changed).
+- 61/61 wrapper tests green; full suite 2011/2012 (1 flake unrelated).
+
+**Final matrix:**
+- Camino    = trend          + Alpha executor discipline
+- Barracuda = mean reversion + Camaro tape reading
+- Hellcat   = breakout       + Chevelle risk compression
+- GTO       = momentum       + RedEye adversary / opponent
+
+---
+
+
 ## 2026-06-10 (pass 14) — P1: Ephemeral misread toasts
 
 **Frontend:**

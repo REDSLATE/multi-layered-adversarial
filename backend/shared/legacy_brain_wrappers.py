@@ -26,8 +26,14 @@ Assignment (operator-pinned):
 
     Camino    → alpha_legacy_executor       (executor discipline)
     Hellcat   → chevelle_legacy_governor    (risk compression)
-    Barracuda → no wrapper                  (pure mean-reversion)
-    GTO       → no wrapper                  (pure momentum/adversary)
+    Barracuda → camaro_legacy_strategist    (tape-reading)
+    GTO       → redeye_legacy_adversary     (adversary / opponent)
+
+Final matrix:
+    Camino    = trend          + Alpha executor discipline
+    Barracuda = mean reversion + Camaro tape reading
+    Hellcat   = breakout       + Chevelle risk compression
+    GTO       = momentum       + RedEye adversary / opponent
 
 The brain still emits its own doctrine-driven hypothesis; the
 wrapper layers in the old-personality instincts on top. Same brain
@@ -43,6 +49,7 @@ WrapperName = Literal[
     "alpha_legacy_executor",
     "chevelle_legacy_governor",
     "camaro_legacy_strategist",
+    "redeye_legacy_adversary",
 ]
 
 
@@ -411,10 +418,146 @@ def apply_camaro_legacy_strategist(intent: dict[str, Any]) -> dict[str, Any]:
 
 
 
+def apply_redeye_legacy_adversary(intent: dict[str, Any]) -> dict[str, Any]:
+    """
+    RedEye wrapper.
+
+    Purpose:
+    - adversarial/opponent temperament
+    - challenges weak consensus
+    - rewards downside / short continuation when tape supports it
+    - penalizes crowded or low-gap longs
+    - keeps GTO as the pure contrarian pressure source
+
+    Does NOT:
+    - create trades from HOLD
+    - flip BUY/SELL
+    - force a seat
+    """
+
+    x = _base_fields(intent)
+
+    confidence = x["confidence"]
+    size_bias = x["size_bias"]
+    reasons = x["reasons"]
+    warnings = x["warnings"]
+    evidence = x["evidence"]
+
+    action = x["action"]
+    current_side = x["current_side"]
+    transition = x["transition_intent"]
+    evolution = x["position_evolution"]
+    risk_transition = x["risk_transition"]
+
+    market_regime = evidence.get("market_regime") or evidence.get("snapshot", {}).get("market_regime")
+    buy_score = safe_float(evidence.get("buy_score"), 0.0)
+    sell_score = safe_float(evidence.get("sell_score"), 0.0)
+    score_gap = abs(buy_score - sell_score)
+
+    flow_imbalance = safe_float(evidence.get("flow_imbalance"), 0.0)
+    liquidity_stress = safe_float(evidence.get("liquidity_stress"), 0.0)  # noqa: F841  # reserved for future stress-band rule
+    news_zscore = safe_float(evidence.get("news_zscore"), 0.0)
+
+    # RedEye distrusts weak consensus.
+    if score_gap and score_gap < 0.04:
+        confidence -= 0.05
+        size_bias *= 0.70
+        warnings.append("REDEYE_WRAPPER_WEAK_CONSENSUS_CHALLENGED")
+
+    # RedEye is especially suspicious of longs during stress/risk-off.
+    if action == "BUY" and risk_transition == "RISK_OFF":
+        confidence -= 0.12
+        size_bias *= 0.45
+        warnings.append("REDEYE_WRAPPER_LONG_AGAINST_RISK_OFF_COMPRESSED")
+
+    # RedEye rewards short pressure in risk-off or bear regimes.
+    if action == "SELL" and transition in {"OPEN_SHORT", "ADD_SHORT"}:
+        if risk_transition == "RISK_OFF" or market_regime in {"bear", "risk_off", "crisis"}:
+            confidence += 0.06
+            size_bias *= 1.08
+            reasons.append("REDEYE_WRAPPER_SHORT_PRESSURE_CONFIRMED")
+
+    # If already short, RedEye likes continuation only when confidence is real.
+    if current_side == "SHORT" and transition == "ADD_SHORT":
+        if confidence >= 0.66:
+            confidence += 0.04
+            size_bias *= 1.05
+            reasons.append("REDEYE_WRAPPER_SHORT_CONTINUATION")
+        else:
+            confidence -= 0.04
+            size_bias *= 0.75
+            warnings.append("REDEYE_WRAPPER_WEAK_SHORT_ADD_COMPRESSED")
+
+    # RedEye warns when covering too early during downside pressure.
+    if current_side == "SHORT" and evolution in {"PARTIAL_COVER", "FULL_COVER"}:
+        if flow_imbalance < -0.25 or market_regime in {"bear", "risk_off", "crisis"}:
+            confidence -= 0.04
+            size_bias *= 0.80
+            warnings.append("REDEYE_WRAPPER_EARLY_COVER_WARNING")
+
+    # RedEye punishes long adds when flow is bearish.
+    if action == "BUY" and transition in {"OPEN_LONG", "ADD_LONG"} and flow_imbalance < -0.20:
+        confidence -= 0.08
+        size_bias *= 0.65
+        warnings.append("REDEYE_WRAPPER_BEARISH_FLOW_LONG_COMPRESSION")
+
+    # RedEye likes downside when news shock is bearish, if evidence carries sentiment.
+    sentiment_label = evidence.get("sentiment_label") or evidence.get("news_sentiment")
+    if news_zscore >= 2.5 and sentiment_label == "bearish":
+        if action == "SELL":
+            confidence += 0.04
+            reasons.append("REDEYE_WRAPPER_BEARISH_NEWS_SHOCK_SUPPORT")
+        elif action == "BUY":
+            confidence -= 0.06
+            size_bias *= 0.70
+            warnings.append("REDEYE_WRAPPER_BEARISH_NEWS_SHOCK_AGAINST_LONG")
+
+    # Flips are allowed in spirit, but RedEye still compresses unless very strong.
+    if transition in {"FLIP_LONG_TO_SHORT", "FLIP_SHORT_TO_LONG", "FLIP"}:
+        if confidence >= 0.78:
+            size_bias *= 0.75
+            reasons.append("REDEYE_WRAPPER_HIGH_CONFIDENCE_FLIP_ALLOWED_COMPRESSED")
+        else:
+            confidence -= 0.10
+            size_bias *= 0.45
+            warnings.append("REDEYE_WRAPPER_LOW_CONFIDENCE_FLIP_COMPRESSED")
+
+    if action == "HOLD":
+        size_bias = 0.0
+
+    evidence["legacy_wrapper"] = {
+        "name": "redeye_legacy_adversary",
+        "parent_brain": "redeye",
+        "effect": "adversarial_short_pressure_and_consensus_challenge",
+    }
+
+    wrapped = WrappedIntent(
+        brain_id=x["brain_id"],
+        display_name=x["display_name"],
+        wrapper="redeye_legacy_adversary",
+        parent_brain="redeye",
+        doctrine="opponent_adversary",
+        action=action,
+        confidence=round(clamp(confidence), 4),
+        size_bias=round(clamp(size_bias, 0.0, 2.0), 4),
+        current_side=current_side,
+        transition_intent=transition,
+        position_evolution=evolution,
+        risk_transition=risk_transition,
+        reasons=list(dict.fromkeys(reasons)),
+        warnings=list(dict.fromkeys(warnings)),
+        evidence=evidence,
+    )
+
+    return asdict(wrapped)
+
+
+
 WRAPPER_REGISTRY = {
     "alpha_legacy_executor": apply_alpha_legacy_executor,
     "chevelle_legacy_governor": apply_chevelle_legacy_governor,
     "camaro_legacy_strategist": apply_camaro_legacy_strategist,
+    "redeye_legacy_adversary": apply_redeye_legacy_adversary,
 }
 
 
@@ -422,6 +565,7 @@ BRAIN_WRAPPER_ASSIGNMENTS = {
     "camino": "alpha_legacy_executor",
     "barracuda": "camaro_legacy_strategist",
     "hellcat": "chevelle_legacy_governor",
+    "gto": "redeye_legacy_adversary",
 }
 
 

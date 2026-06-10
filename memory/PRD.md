@@ -1,3 +1,49 @@
+## 2026-06-10 (pass 15) — RedEye adversary wrapper assigned to GTO
+
+### Operator directive (verbatim)
+> *"For GTO, the RedEye wrapper should be a pure adversarial/opponent
+> wrapper. GTO doctrine = momentum. RedEye wrapper = challenge
+> consensus, hunt downside, punish crowded weak longs."*
+
+### Final brain × wrapper matrix (operator-pinned)
+
+| Brain | Doctrine | Wrapper | Wrapper effect |
+|---|---|---|---|
+| **Camino** (alpha)    | trend          | `alpha_legacy_executor`     | executor discipline |
+| **Barracuda** (camaro) | mean reversion | `camaro_legacy_strategist` | tape reading |
+| **Hellcat** (chevelle) | breakout       | `chevelle_legacy_governor` | risk compression |
+| **GTO** (redeye)      | momentum       | `redeye_legacy_adversary`   | adversary / opponent pressure |
+
+### What landed
+
+**`backend/shared/legacy_brain_wrappers.py`:**
+- New `apply_redeye_legacy_adversary()` (paste-verbatim from operator directive).
+- `WrapperName` Literal extended with `redeye_legacy_adversary`.
+- `WRAPPER_REGISTRY` and `BRAIN_WRAPPER_ASSIGNMENTS` register GTO → RedEye.
+
+**RedEye wrapper rules** (confidence + size_bias only; never flips action, never creates trades from HOLD, never forces a seat):
+- Score gap < 0.04 → `WEAK_CONSENSUS_CHALLENGED`
+- BUY + RISK_OFF → `LONG_AGAINST_RISK_OFF_COMPRESSED`
+- SELL OPEN/ADD_SHORT in bear/risk_off → `SHORT_PRESSURE_CONFIRMED`
+- ADD_SHORT with conf ≥ 0.66 → `SHORT_CONTINUATION` (or compressed otherwise)
+- Cover during bearish flow → `EARLY_COVER_WARNING`
+- BUY ADD/OPEN_LONG with flow ≤ -0.20 → `BEARISH_FLOW_LONG_COMPRESSION`
+- news_zscore ≥ 2.5 + bearish sentiment → SELL gets `BEARISH_NEWS_SHOCK_SUPPORT`, BUY gets `BEARISH_NEWS_SHOCK_AGAINST_LONG`
+- FLIPs compressed (allowed only at conf ≥ 0.78, still ×0.75 size)
+
+**Tests (`backend/tests/test_legacy_brain_wrappers.py`):**
+- Old `test_gto_has_no_wrapper` removed (operator changed the assignment).
+- New `test_gto_assigned_redeye_wrapper` + 13 RedEye behavior invariants covering each rule + provenance + clamps + dispatcher routing.
+- All 4 brains now carry a wrapper; the passthrough test was retargeted to an unknown brain_id.
+
+### Validation
+
+- `pytest tests/test_legacy_brain_wrappers.py` → **61/61 green** (47 → 61, +14 new tests).
+- Full backend suite: **2011/2012 passed**, 1 flake (`test_doctrine_hint_returns_candidates_for_large_cap`) which passes solo (0.59s) and has zero dependency on the wrapper layer — under-load HTTP timing flake, not a regression.
+
+---
+
+
 ## DOCTRINE — BRAIN NAMING (READ THIS FIRST)
 
 **Two name systems live in this repo. They are intentional. Do not "fix" or rename them.**

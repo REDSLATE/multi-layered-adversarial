@@ -5,13 +5,15 @@ Doctrine pin (operator directive, 2026-06-XX):
     new brain engine
         + old Alpha executor instincts on Camino
         + old Chevelle governor instincts on Hellcat
-    without locking either one into a seat
+        + old Camaro tape-reading instincts on Barracuda
+        + old RedEye adversary instincts on GTO
+    without locking any of them into a seat
 
-Assignment:
-    Camino    → alpha_legacy_executor
-    Hellcat   → chevelle_legacy_governor
-    Barracuda → no wrapper (pure mean-reversion)
-    GTO       → no wrapper (pure momentum/adversary)
+Final matrix:
+    Camino    = trend          + Alpha executor discipline
+    Barracuda = mean reversion + Camaro tape reading
+    Hellcat   = breakout       + Chevelle risk compression
+    GTO       = momentum       + RedEye adversary / opponent
 
 A wrapper MUST NEVER:
     - flip action (BUY ↔ SELL)
@@ -30,6 +32,7 @@ from shared.legacy_brain_wrappers import (  # noqa: E402
     apply_camaro_legacy_strategist,
     apply_chevelle_legacy_governor,
     apply_legacy_wrapper,
+    apply_redeye_legacy_adversary,
     clamp,
     safe_float,
 )
@@ -53,14 +56,19 @@ def test_barracuda_assigned_camaro_wrapper():
     assert BRAIN_WRAPPER_ASSIGNMENTS["barracuda"] == "camaro_legacy_strategist"
 
 
-def test_gto_has_no_wrapper():
-    assert "gto" not in BRAIN_WRAPPER_ASSIGNMENTS
+def test_gto_assigned_redeye_wrapper():
+    """GTO's momentum doctrine gets RedEye adversary instincts —
+    challenges weak consensus, rewards short pressure in risk-off,
+    punishes crowded long adds against bearish flow."""
+    assert BRAIN_WRAPPER_ASSIGNMENTS["gto"] == "redeye_legacy_adversary"
 
 
 def test_apply_legacy_wrapper_passthrough_for_unassigned():
     """Brains without a wrapper assignment must pass through unchanged.
-    GTO is the only unwrapped brain after the Camaro addition."""
-    inp = {"brain_id": "gto", "action": "BUY", "confidence": 0.71}
+    After the RedEye-adversary addition all four brains carry a
+    wrapper, so this verifies the passthrough still works for any
+    truly-unknown brain id (e.g. a future brain or a typo)."""
+    inp = {"brain_id": "no_such_brain", "action": "BUY", "confidence": 0.71}
     out = apply_legacy_wrapper(inp)
     assert out is inp  # literally the same dict
 
@@ -478,3 +486,248 @@ def test_apply_legacy_wrapper_routes_barracuda_to_camaro():
         "evidence": {"market_regime": "bull", "buy_score": 0.72, "sell_score": 0.50},
     })
     assert out.get("wrapper") == "camaro_legacy_strategist"
+
+
+# ── RedEye adversary behavior ─────────────────────────────────────
+
+
+def _gto_intent(**overrides):
+    base = {
+        "brain_id": "gto",
+        "display_name": "GTO",
+        "action": "SELL",
+        "confidence": 0.70,
+        "size_bias": 1.0,
+        "current_side": "FLAT",
+        "transition_intent": "OPEN_SHORT",
+        "position_evolution": "OPEN",
+        "risk_transition": "NEUTRAL",
+        "reasons": [],
+        "warnings": [],
+        "evidence": {
+            "market_regime": "bear",
+            "buy_score": 0.45,
+            "sell_score": 0.72,
+            "flow_imbalance": -0.30,
+            "news_zscore": 1.0,
+        },
+    }
+    base.update(overrides)
+    return base
+
+
+def test_redeye_never_flips_action():
+    """RedEye wrapper preserves BUY/SELL exactly — adversarial bias
+    lives in confidence + size, never in flipping the direction."""
+    out = apply_redeye_legacy_adversary(_gto_intent(action="BUY"))
+    assert out["action"] == "BUY"
+    out = apply_redeye_legacy_adversary(_gto_intent(action="SELL"))
+    assert out["action"] == "SELL"
+
+
+def test_redeye_zeros_size_on_hold():
+    out = apply_redeye_legacy_adversary(_gto_intent(action="HOLD"))
+    assert out["action"] == "HOLD"
+    assert out["size_bias"] == 0.0
+
+
+def test_redeye_never_creates_trade_from_hold():
+    out = apply_redeye_legacy_adversary(_gto_intent(action="HOLD"))
+    assert out["action"] == "HOLD"
+
+
+def test_redeye_challenges_weak_consensus():
+    """Score gap < 0.04 → confidence dropped, size compressed,
+    challenge warning logged. RedEye distrusts crowd indecision."""
+    out = apply_redeye_legacy_adversary(_gto_intent(
+        evidence={
+            "market_regime": "calm",
+            "buy_score": 0.700,
+            "sell_score": 0.690,  # gap = 0.010
+            "flow_imbalance": 0.0,
+            "news_zscore": 0.0,
+        },
+    ))
+    assert out["confidence"] < 0.70
+    assert out["size_bias"] < 1.0
+    assert any("WEAK_CONSENSUS_CHALLENGED" in w for w in out["warnings"])
+
+
+def test_redeye_compresses_long_against_risk_off():
+    """BUY while RISK_OFF → heavy compression. The 2026-06-09
+    AAPL-style trap pattern is exactly this: brain wants to add
+    long into a bid-failure tape."""
+    out = apply_redeye_legacy_adversary(_gto_intent(
+        action="BUY", transition_intent="OPEN_LONG",
+        risk_transition="RISK_OFF",
+        evidence={
+            "market_regime": "calm", "buy_score": 0.70, "sell_score": 0.55,
+            "flow_imbalance": 0.0, "news_zscore": 0.0,
+        },
+    ))
+    assert out["confidence"] < 0.70
+    assert out["size_bias"] <= 0.45
+    assert any("LONG_AGAINST_RISK_OFF_COMPRESSED" in w for w in out["warnings"])
+
+
+def test_redeye_rewards_short_pressure_in_bear_regime():
+    """SELL OPEN_SHORT in bear regime → confidence lifted, size
+    boosted, confirmation reason logged."""
+    out = apply_redeye_legacy_adversary(_gto_intent(
+        action="SELL", transition_intent="OPEN_SHORT",
+        evidence={
+            "market_regime": "bear", "buy_score": 0.40, "sell_score": 0.72,
+            "flow_imbalance": -0.10, "news_zscore": 0.0,
+        },
+    ))
+    assert out["confidence"] > 0.70
+    assert out["size_bias"] > 1.0
+    assert any("SHORT_PRESSURE_CONFIRMED" in r for r in out["reasons"])
+
+
+def test_redeye_rewards_short_continuation_with_real_confidence():
+    """current_side=SHORT + ADD_SHORT + confidence >= 0.66 →
+    continuation reward."""
+    out = apply_redeye_legacy_adversary(_gto_intent(
+        action="SELL", current_side="SHORT",
+        transition_intent="ADD_SHORT", confidence=0.72,
+        evidence={
+            "market_regime": "calm", "buy_score": 0.40, "sell_score": 0.72,
+            "flow_imbalance": 0.0, "news_zscore": 0.0,
+        },
+    ))
+    assert any("SHORT_CONTINUATION" in r for r in out["reasons"])
+
+
+def test_redeye_compresses_weak_short_add():
+    """current_side=SHORT + ADD_SHORT + confidence < 0.66 →
+    weak add compression."""
+    out = apply_redeye_legacy_adversary(_gto_intent(
+        action="SELL", current_side="SHORT",
+        transition_intent="ADD_SHORT", confidence=0.55,
+        evidence={
+            "market_regime": "calm", "buy_score": 0.40, "sell_score": 0.55,
+            "flow_imbalance": 0.0, "news_zscore": 0.0,
+        },
+    ))
+    assert out["confidence"] < 0.55
+    assert out["size_bias"] < 1.0
+    assert any("WEAK_SHORT_ADD_COMPRESSED" in w for w in out["warnings"])
+
+
+def test_redeye_warns_on_early_cover_during_downside():
+    """current_side=SHORT + cover during bearish flow → don't cover
+    too early, the pressure is still on."""
+    out = apply_redeye_legacy_adversary(_gto_intent(
+        action="BUY", current_side="SHORT",
+        position_evolution="PARTIAL_COVER",
+        transition_intent="REDUCE_SHORT",
+        evidence={
+            "market_regime": "bear", "buy_score": 0.40, "sell_score": 0.70,
+            "flow_imbalance": -0.40, "news_zscore": 0.0,
+        },
+    ))
+    assert any("EARLY_COVER_WARNING" in w for w in out["warnings"])
+
+
+def test_redeye_punishes_long_adds_against_bearish_flow():
+    """BUY ADD_LONG with flow_imbalance < -0.20 → compression."""
+    out = apply_redeye_legacy_adversary(_gto_intent(
+        action="BUY", current_side="LONG",
+        transition_intent="ADD_LONG",
+        evidence={
+            "market_regime": "calm", "buy_score": 0.70, "sell_score": 0.55,
+            "flow_imbalance": -0.30, "news_zscore": 0.0,
+        },
+    ))
+    assert out["confidence"] < 0.70
+    assert out["size_bias"] < 1.0
+    assert any("BEARISH_FLOW_LONG_COMPRESSION" in w for w in out["warnings"])
+
+
+def test_redeye_supports_sell_on_bearish_news_shock():
+    """High news_zscore + bearish sentiment + SELL → confidence
+    nudge, support reason logged."""
+    out = apply_redeye_legacy_adversary(_gto_intent(
+        action="SELL", transition_intent="OPEN_SHORT",
+        evidence={
+            "market_regime": "calm", "buy_score": 0.45, "sell_score": 0.70,
+            "flow_imbalance": -0.10,
+            "news_zscore": 3.0, "sentiment_label": "bearish",
+        },
+    ))
+    assert any("BEARISH_NEWS_SHOCK_SUPPORT" in r for r in out["reasons"])
+
+
+def test_redeye_compresses_buy_against_bearish_news_shock():
+    """High news_zscore + bearish sentiment + BUY → confidence
+    dropped, size compressed, warning logged."""
+    out = apply_redeye_legacy_adversary(_gto_intent(
+        action="BUY", current_side="FLAT", transition_intent="OPEN_LONG",
+        evidence={
+            "market_regime": "calm", "buy_score": 0.70, "sell_score": 0.50,
+            "flow_imbalance": 0.0,
+            "news_zscore": 3.0, "sentiment_label": "bearish",
+        },
+    ))
+    assert out["confidence"] < 0.70
+    assert out["size_bias"] < 1.0
+    assert any("BEARISH_NEWS_SHOCK_AGAINST_LONG" in w for w in out["warnings"])
+
+
+def test_redeye_compresses_low_confidence_flip():
+    out = apply_redeye_legacy_adversary(_gto_intent(
+        confidence=0.55, transition_intent="FLIP_LONG_TO_SHORT",
+    ))
+    assert out["confidence"] < 0.55
+    assert out["size_bias"] <= 0.45
+    assert any("LOW_CONFIDENCE_FLIP_COMPRESSED" in w for w in out["warnings"])
+
+
+def test_redeye_allows_high_confidence_flip_with_compression():
+    """High-conf flips are allowed but size is still trimmed —
+    RedEye is adversarial, not reckless."""
+    out = apply_redeye_legacy_adversary(_gto_intent(
+        confidence=0.82, transition_intent="FLIP_SHORT_TO_LONG",
+    ))
+    assert out["size_bias"] < 1.0
+    assert any("HIGH_CONFIDENCE_FLIP_ALLOWED_COMPRESSED" in r for r in out["reasons"])
+
+
+def test_redeye_stamps_provenance_block():
+    out = apply_redeye_legacy_adversary(_gto_intent())
+    lw = out["evidence"]["legacy_wrapper"]
+    assert lw["name"] == "redeye_legacy_adversary"
+    assert lw["parent_brain"] == "redeye"
+    assert lw["effect"] == "adversarial_short_pressure_and_consensus_challenge"
+    assert out["wrapper"] == "redeye_legacy_adversary"
+    assert out["parent_brain"] == "redeye"
+    assert out["doctrine"] == "opponent_adversary"
+
+
+def test_redeye_clamps_confidence_and_size():
+    """Bound invariants hold for RedEye too."""
+    out = apply_redeye_legacy_adversary(_gto_intent(
+        confidence=5.0, size_bias=10.0,
+    ))
+    assert 0.0 <= out["confidence"] <= 1.0
+    assert 0.0 <= out["size_bias"] <= 2.0
+
+
+def test_apply_legacy_wrapper_routes_gto_to_redeye():
+    """End-to-end: gto intent through the generic dispatcher must
+    land on the RedEye adversary wrapper, not pass through unchanged."""
+    out = apply_legacy_wrapper({
+        "brain_id": "gto",
+        "action": "SELL",
+        "confidence": 0.70,
+        "current_side": "FLAT",
+        "transition_intent": "OPEN_SHORT",
+        "evidence": {
+            "market_regime": "bear",
+            "buy_score": 0.40, "sell_score": 0.72,
+            "flow_imbalance": -0.30,
+        },
+    })
+    assert out.get("wrapper") == "redeye_legacy_adversary"
+    assert out.get("parent_brain") == "redeye"
