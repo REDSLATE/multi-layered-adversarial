@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from "react";
-import { api, fmtTime, relTime } from "@/lib/api";
+import { api, fmtTime, relTime, RUNTIME_META } from "@/lib/api";
 import { Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 import { useMcStream } from "@/hooks/useMcStream";
 
@@ -188,7 +188,15 @@ export default function PositionMisreadsCard() {
                   <td className="py-2 text-zinc-400 text-xs whitespace-nowrap">
                     <div title={r.detected_at}>{relTime(r.detected_at)}</div>
                   </td>
-                  <td className="py-2 capitalize">{r.brain || "—"}</td>
+                  <td className="py-2">
+                    {(() => {
+                      const m = RUNTIME_META[(r.brain || "").toLowerCase()];
+                      const name = m?.roleTitle || r.brain || "—";
+                      return (
+                        <span style={{ color: m?.color || undefined }}>{name}</span>
+                      );
+                    })()}
+                  </td>
                   <td className="py-2 font-mono">{r.symbol}</td>
                   <td className="py-2">
                     <Badge color="#7B5CFF">{r.emitted_action}</Badge>

@@ -1,3 +1,28 @@
+## DOCTRINE — BRAIN NAMING (READ THIS FIRST)
+
+**Two name systems live in this repo. They are intentional. Do not "fix" or rename them.**
+
+| Internal slot code (wire / DB / API / tests) | Operator-facing brand (display, toasts, sidebar, every UI surface) |
+|---|---|
+| `alpha`    | **Camino**    (blue,   `#3B82F6`) — structured trader |
+| `camaro`   | **Barracuda** (amber,  `#F59E0B`) — challenger / counterfactual |
+| `chevelle` | **Hellcat**   (green,  `#10B981`) — memory + calibration |
+| `redeye`   | **GTO**       (red,    `#DC2626`) — adversarial scout |
+
+### Rules
+- **Wire layer (Mongo `shared_intents.stack`, `shared_position_misreads.brain`, route paths `/api/admin/runtime/{slot}`, env tokens `*_INGEST_TOKEN`, ~2000 tests) MUST keep using the lowercase slot codes.** Renaming these breaks the test suite + sidecar traffic + persisted history. The slot codes exist precisely so internal plumbing stays stable while operator branding evolves.
+- **Every operator-facing render MUST use the display brand** via the existing mapper:
+  - Frontend: `RUNTIME_META[slot].roleTitle` / `.label` from `frontend/src/lib/api.js`
+  - Backend (rare): `backend/shared/brain_identity.py` `normalize_brain_id()` accepts both directions
+- If you build a new UI surface that prints a brain name, **import `RUNTIME_META` and look up the display label**. Never capitalize the raw `stack` / `brain` field.
+- The mapping is fixed: alpha↔Camino, camaro↔Barracuda, chevelle↔Hellcat, redeye↔GTO. There is no proposal to change it.
+
+### Why this exists
+Renaming the slot codes globally would require a Mongo migration of every `shared_intents` / `shared_position_misreads` / `shared_broker_fills` row, a rewrite of ~50+ test files that pin the names literally, and a coordinated cutover with the 4 sidecar brain runtimes that emit using these codes. The brand-rename happened operator-side; the wire layer was held stable on purpose for code-velocity reasons.
+
+---
+
+
 ## 2026-06-10 (pass 14) — P1: Ephemeral misread toasts + MSFT live look-see
 
 ### Operator directives

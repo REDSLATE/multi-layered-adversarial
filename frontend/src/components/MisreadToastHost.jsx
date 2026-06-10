@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { subscribeMcStream } from "@/hooks/useMcStream";
+import { RUNTIME_META } from "@/lib/api";
 
 /**
  * Ephemeral position-misread toast host (P1, 2026-06-10).
@@ -68,7 +69,15 @@ function Toast({ toast, onDismiss }) {
     };
   }, [paused, toast.id, onDismiss]);
 
-  const brainCap = (toast.brain || "").charAt(0).toUpperCase() + (toast.brain || "").slice(1);
+  const meta = RUNTIME_META[(toast.brain || "").toLowerCase()];
+  // Operator-facing brand (Camino / Barracuda / Hellcat / GTO) — never
+  // leak the internal slot code (alpha/camaro/chevelle/redeye) to the
+  // dashboard. Fall back to a capitalized raw value if an unknown
+  // brain ever appears so the toast still says something useful.
+  const brainDisplay = meta?.roleTitle
+    || ((toast.brain || "").charAt(0).toUpperCase() + (toast.brain || "").slice(1))
+    || "Brain";
+  const brainColor = meta?.color || "#EF4444";
 
   return (
     <div
@@ -91,7 +100,13 @@ function Toast({ toast, onDismiss }) {
             ⚠ Position misread
           </div>
           <div className="text-sm text-rd-text leading-snug">
-            <span className="font-display font-black">{brainCap || "Brain"}</span>
+            <span
+              className="font-display font-black"
+              style={{ color: brainColor }}
+              data-testid="misread-toast-brain"
+            >
+              {brainDisplay}
+            </span>
             <span className="text-rd-muted"> just misread </span>
             <span className="font-mono font-bold" data-testid="misread-toast-symbol">
               {toast.symbol}
