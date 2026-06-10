@@ -1,3 +1,79 @@
+## 2026-06-10 (pass 10) — In-flight order dedupe + broker-fills admin routes fixed
+
+### Operator directive (carried from pass 9)
+> *"P0 = `shared_broker_fills`, `in-flight order dedupe`."*
+
+### What changed
+- **Fixed**: `backend/routes/broker_fills_admin.py` was double-prefixed
+  (`/api/admin/broker-fills` under `api_router(prefix="/api")` →
+  `/api/api/...`). Stripped the leading `/api` so all four endpoints
+  resolve correctly:
+    - `GET /api/admin/broker-fills/summary` (130 AAPL fills verified)
+    - `GET /api/admin/broker-fills/recent`
+    - `GET /api/admin/broker-fills/pending/{symbol}`
+    - `GET /api/admin/broker-fills/in-flight` (new)
+- **New**: `backend/shared/in_flight_orders.py` — async-lock-protected
+  in-memory pending set. The auto-router CLAIMS a slot before
+  submitting to the broker and RELEASES on broker reject/error. Slots
+  age out after `IN_FLIGHT_ORDER_TTL_SEC` (default 30s).
+- **Wired**: `backend/shared/auto_router.py::_route_one` now runs the
+  two-layer dedupe BEFORE `route_order()`:
+    - Layer A: `has_pending_order(symbol)` — broker truth (Public.com
+      indexed a fill within the last 30s).
+    - Layer B: `claim_in_flight_slot(symbol)` — pre-broker-ack
+      in-memory claim.
+  Either layer firing → intent gets a typed `no_trade` ledger row
+  (`in_flight_dedupe:broker_fill_within_ttl` /
+  `in_flight_dedupe:pending_submission`) and the broker is never
+  called. Releases happen on `BrokerRouteBlocked` / generic exception
+  so a failed submission doesn't permanently lock the symbol.
+
+### Doctrine pin (the 130-trade fix)
+The 2026-06-09 AAPL incident had two causes stacked:
+1. Position context TTL (10s) > broker fill cadence (~500ms) →
+   brains saw `current_side=FLAT` every tick.
+2. No dedupe → MC submitted 130 BUYs in 13 minutes building a 1.3279
+   share long position MC didn't know it had.
+
+The dedupe layer alone is sufficient to break this loop even if (1)
+is never fixed — every brain emission after the first will be
+intercepted at the auto-router gate. Shortening the position TTL
+(P1, planned) is a defense-in-depth improvement on top of this
+structural fix.
+
+### Tests
+- `backend/tests/test_in_flight_orders.py`: 11 tests covering
+  first-claim-wins, dedupe-on-same-symbol, multi-symbol
+  independence, release-allows-reclaim, case insensitivity, empty
+  symbol rejection, TTL age-out, snapshot-excludes-expired,
+  concurrent-claim contention (50 racers, exactly 1 wins), and the
+  full 130-trade burst scenario.
+- `backend/tests/test_auto_router_dedupe_integration.py`: 2 tests
+  pinning the dedupe call-site in `_route_one` so a future refactor
+  can't accidentally remove it.
+
+### Files touched
+- `backend/routes/broker_fills_admin.py` (router prefix fix +
+  `/in-flight` endpoint)
+- `backend/shared/auto_router.py` (Phase 3b dedupe block)
+- `backend/shared/in_flight_orders.py` (NEW)
+- `backend/tests/test_in_flight_orders.py` (NEW)
+- `backend/tests/test_auto_router_dedupe_integration.py` (NEW)
+
+### Verification
+- `curl /api/admin/broker-fills/summary?minutes=1440` returns the
+  130 AAPL fills from 2026-06-09.
+- `curl /api/admin/broker-fills/in-flight` returns
+  `{count:0, ttl_seconds:30, pending:[]}`.
+- 127 directly-relevant tests pass (touched code paths). Remaining
+  pre-existing failures in `test_public_rate_limit`, `test_public`,
+  `test_signal_ranked_symbol_selection`, `test_platform_survival_routes`
+  are network/external-data-driven and unrelated to this pass
+  (confirmed by stash-and-rerun).
+
+---
+
+
 ## 2026-06-10 (pass 9) — Camaro wrapper on Barracuda
 
 ### Operator directive (verbatim)

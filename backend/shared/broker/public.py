@@ -282,7 +282,13 @@ class PublicAdapter(BrokerAdapter):
                 raise RuntimeError(f"Public list_history failed: {e}") from e
             if not isinstance(resp, dict):
                 break
-            items = resp.get("history") or resp.get("items") or resp.get("data") or []
+            items = (
+                resp.get("transactions")
+                or resp.get("history")
+                or resp.get("items")
+                or resp.get("data")
+                or []
+            )
             if isinstance(items, list):
                 out.extend(items)
             next_token = resp.get("nextToken") or resp.get("next_token")

@@ -249,13 +249,61 @@ async def _route_one(intent: dict) -> dict:
     side = _side_for_action(intent["action"])
     client_order_id = f"ar-{intent_id[:8]}-{uuid.uuid4().hex[:6]}"
 
+    # Phase 3b (2026-06-10, post-AAPL incident): IN-FLIGHT ORDER DEDUPE.
+    # The AAPL 06-09 runaway loop happened because MC submitted 130
+    # BUYs in 13 minutes — every successive auto-router tick saw the
+    # position context as FLAT because Public.com's fill index lagged
+    # the broker ack. The two-layer dedupe below closes that window:
+    #
+    #   Layer A (broker truth):  has_pending_order(symbol)
+    #     "Did Public.com index a fill within the last 30s?" — yes
+    #     means an order is already executing, refuse to send another.
+    #
+    #   Layer B (pre-ack lock):  claim_in_flight_slot(symbol)
+    #     In-memory pending set capturing the gap BEFORE Public.com
+    #     indexes the fill. Released on broker reject/error; on
+    #     success it ages out (and is shadowed by Layer A anyway).
+    #
+    # Doctrine: only 1 order per symbol can be in flight at a time.
+    # If either layer says "in flight," refuse to submit. This is
+    # the structural fix for the 130-trade amnesia loop.
+    symbol_for_dedupe = (intent.get("symbol") or "").upper()
+    if symbol_for_dedupe:
+        from shared.broker_fills import has_pending_order  # noqa: WPS433
+        from shared.in_flight_orders import (  # noqa: WPS433
+            claim_in_flight_slot,
+            release_in_flight_slot,
+        )
+        if await has_pending_order(symbol_for_dedupe):
+            reason = "in_flight_dedupe:broker_fill_within_ttl"
+            await _persist_no_trade(intent_id, intent, reason)
+            logger.info(
+                "auto_router DEDUPE_BLOCK intent=%s symbol=%s reason=%s",
+                intent_id, symbol_for_dedupe, reason,
+            )
+            return {"intent_id": intent_id, "verdict": "no_trade", "reason": reason}
+        if not await claim_in_flight_slot(symbol_for_dedupe, intent_id=intent_id):
+            reason = "in_flight_dedupe:pending_submission"
+            await _persist_no_trade(intent_id, intent, reason)
+            logger.info(
+                "auto_router DEDUPE_BLOCK intent=%s symbol=%s reason=%s",
+                intent_id, symbol_for_dedupe, reason,
+            )
+            return {"intent_id": intent_id, "verdict": "no_trade", "reason": reason}
+    else:
+        release_in_flight_slot = None  # type: ignore  # appease ruff
+
     # Phase 4: submit to broker; handle the 3 outcome branches.
     try:
         order = await route_order(intent, notional_usd=effective, client_order_id=client_order_id)
     except BrokerRouteBlocked as e:
+        if symbol_for_dedupe and release_in_flight_slot is not None:
+            await release_in_flight_slot(symbol_for_dedupe)
         await _persist_no_trade(intent_id, intent, str(e))
         return {"intent_id": intent_id, "verdict": "no_trade", "reason": str(e)}
     except Exception as e:  # noqa: BLE001
+        if symbol_for_dedupe and release_in_flight_slot is not None:
+            await release_in_flight_slot(symbol_for_dedupe)
         await _persist_router_error(intent_id, intent, str(e))
         return {"intent_id": intent_id, "verdict": "error", "reason": str(e)}
 

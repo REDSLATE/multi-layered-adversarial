@@ -152,6 +152,7 @@ from routes.runtime_token_health import router as runtime_token_health_router
 from routes.alpha_vantage_admin import router as alpha_vantage_admin_router
 from routes.broker_lane_admin import router as broker_lane_admin_router
 from routes.auto_router_admin import router as auto_router_admin_router
+from routes.broker_fills_admin import router as broker_fills_admin_router
 from routes.position_misread_admin import router as position_misread_admin_router
 from routes.intent_origin import router as intent_origin_router
 
@@ -218,6 +219,17 @@ async def lifespan(app: FastAPI):
     if public_doc:
         start_public_refresher()
         logger.info("Public.com token refresher started")
+        # ── Broker fills ingestor (operator directive, 2026-06-10) ──
+        # Polls Public's /history every 20s and upserts canonical fill
+        # rows into shared_broker_fills. Closes the AAPL-incident
+        # broker-amnesia gap — auto-router dedupe (next pass) reads
+        # from this collection to know what's in flight.
+        try:
+            from shared.broker_fills import start_broker_fills_poller
+            start_broker_fills_poller()
+            logger.info("Public.com broker_fills poller started")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("broker_fills poller start failed: %s", e)
     # Auto-router — picks up council-approved intents and submits them to
     # the broker without operator clicks. Paper trading only; gated by
     # the same gate chain as /execution/submit.
@@ -472,6 +484,11 @@ async def lifespan(app: FastAPI):
     await stop_alpaca_pinger()
     await stop_tickler()
     await stop_public_refresher()
+    try:
+        from shared.broker_fills import stop_broker_fills_poller
+        await stop_broker_fills_poller()
+    except Exception:  # noqa: BLE001
+        pass
     await stop_auto_router()
     await stop_news_refresher()
     await stop_darkpool_refresher()
@@ -677,6 +694,7 @@ api_router.include_router(lane_execution_router)
 api_router.include_router(observation_receipts_router)
 api_router.include_router(learning_ladder_router)
 api_router.include_router(auto_router_admin_router)
+api_router.include_router(broker_fills_admin_router)
 api_router.include_router(position_misread_admin_router)
 api_router.include_router(intent_inspect_router)
 

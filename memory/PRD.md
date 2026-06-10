@@ -1,5 +1,72 @@
 # Mission Control — PRD (latest pass on top)
 
+## 🆕 2026-06-10 (pass 10) — In-flight order dedupe (P0 — 130-trade structural fix)
+
+### Operator directive (verbatim, pinned)
+> *"P0 = `shared_broker_fills`, `in-flight order dedupe`."*
+
+### What changed
+- **API fix**: `broker_fills_admin` routes were double-prefixed
+  (`/api/api/admin/broker-fills/*`). Stripped the leading `/api` so
+  all admin broker-truth endpoints resolve correctly.
+- **New module**: `backend/shared/in_flight_orders.py` — in-memory,
+  async-lock-protected pending-set. Implements:
+  `claim_in_flight_slot(symbol)` / `release_in_flight_slot(symbol)`
+  / `is_in_flight(symbol)` / `snapshot()`. TTL default 30s
+  (env: `IN_FLIGHT_ORDER_TTL_SEC`).
+- **Wired into `auto_router._route_one`** (Phase 3b): the auto-router
+  runs a two-layer dedupe BEFORE every broker submission:
+    - Layer A — `broker_fills.has_pending_order(symbol)` (broker truth)
+    - Layer B — `in_flight_orders.claim_in_flight_slot(symbol)` (pre-ack lock)
+  Either firing → `verdict=no_trade` with typed reason. Releases on
+  `BrokerRouteBlocked` / generic exception so a failed submission
+  doesn't permanently lock the symbol.
+- **New endpoint**: `GET /api/admin/broker-fills/in-flight` exposes
+  the in-memory claim snapshot for dashboards.
+
+### Doctrine pin (the 130-trade fix)
+The 2026-06-09 AAPL incident had two stacked causes:
+1. Position context TTL (10s) > broker fill cadence (~500ms)  →
+   brains saw `current_side=FLAT` 130 times in 13 minutes.
+2. No dedupe → MC submitted 130 BUYs building a 1.3279 share long
+   position MC didn't know it had.
+
+The dedupe layer alone closes the loop even if cause (1) is never
+fixed — every brain emission after the first is intercepted at the
+auto-router gate before the broker is touched. The P1 TTL shortening
+is defense-in-depth on top of this structural fix.
+
+### Tests (13 new, all passing)
+- `tests/test_in_flight_orders.py` (11): first-claim-wins, dedupe,
+  multi-symbol independence, release-allows-reclaim, case insensitivity,
+  empty-symbol rejection, TTL age-out, snapshot-excludes-expired,
+  50-racer concurrent claim (exactly 1 wins), 130-trade burst.
+- `tests/test_auto_router_dedupe_integration.py` (2): pins the
+  dedupe call-site so a future refactor can't accidentally remove it.
+
+### Verification
+- `curl /api/admin/broker-fills/summary?minutes=1440` → 130 AAPL fills.
+- `curl /api/admin/broker-fills/in-flight` → `{count:0, ttl:30, pending:[]}`.
+- 127 tests pass across the touched code paths.
+
+### Files touched
+- `backend/routes/broker_fills_admin.py` (router prefix fix + new endpoint)
+- `backend/shared/auto_router.py` (Phase 3b dedupe wiring)
+- `backend/shared/in_flight_orders.py` (NEW)
+- `backend/tests/test_in_flight_orders.py` (NEW)
+- `backend/tests/test_auto_router_dedupe_integration.py` (NEW)
+
+### Status
+- ✅ P0 broker-fills 404 — fixed.
+- ✅ P0 in-flight order dedupe — landed + tested.
+- ⏳ P1 position-context TTL shortening — not started.
+- ⏳ P1 market-regime detector — not started.
+- ⏳ P1 sizing sign-flip in `shared/execution.py` — not started.
+
+---
+
+
+
 ## 🆕 2026-06-09 (pass 7) — portfolio-manager vocabulary on brain intents
 
 ### Operator directive (verbatim)
