@@ -158,6 +158,11 @@ class WebullAdapter(BrokerAdapter):
         self.account_id = account_id  # set on first account-list call
         # Lazy-loaded SDK sub-clients
         self._trade_client = None
+        # Per-symbol instrument_id + last_price + fractionable cache.
+        # Webull's place_order takes an `instrument_id` (numeric), not
+        # a ticker; the lookup is the same one used for quotes and is
+        # safe to cache for the life of the singleton.
+        self._instrument_cache: dict[str, tuple[str, float, bool]] = {}
 
     # ── SDK plumbing ──────────────────────────────────────────────
 
@@ -243,10 +248,13 @@ class WebullAdapter(BrokerAdapter):
         return {"ok": True, "account_number": account_id, "equity": 0.0}
 
     async def get_account(self) -> BrokerAccount:
+        # 2026-02-19: real SDK exposes `get_account_balance`, not
+        # `get_account_detail`. Method name corrected; response shape
+        # is the same JSON envelope.
         account_id = await self._resolve_account_id()
         try:
             res = await self._sdk_call(
-                self._trade().account_v2.get_account_detail, account_id,
+                self._trade().account_v2.get_account_balance, account_id,
             )
             data = res.json() if hasattr(res, "json") else res
         except Exception as e:  # noqa: BLE001
@@ -267,6 +275,51 @@ class WebullAdapter(BrokerAdapter):
             "paper": False,
         }
 
+    async def _resolve_instrument_id(self, symbol: str) -> tuple[str, float, bool]:
+        """Look up a Webull instrument_id + last price + fractionable flag.
+
+        2026-02-19: Webull's `place_order` takes an `instrument_id`
+        (numeric internal ID), NOT a ticker symbol. We resolve the
+        symbol via the quotes-side `get_quotes_client().instrument()`
+        helper which already runs sync — wrap in `_sdk_call` so we
+        stay off the event loop. Cached per-symbol on the singleton
+        so repeated orders for the same ticker don't re-hit the API.
+
+        Returns (instrument_id, last_price, fractionable).
+        """
+        sym_u = (symbol or "").upper().strip()
+        cached = self._instrument_cache.get(sym_u)
+        if cached is not None:
+            return cached
+
+        from shared.market_data.webull_quotes import get_quotes_client  # noqa: WPS433
+        client = get_quotes_client()
+
+        def _lookup():
+            instr = client.instrument(sym_u) or {}
+            snap = client.equity_snapshot(sym_u) or {}
+            iid = str(instr.get("instrument_id") or instr.get("instrumentId") or "")
+            price = float(snap.get("price") or snap.get("ask") or 0.0) or 0.0
+            frac = bool(instr.get("fractionable") or False)
+            return iid, price, frac
+
+        try:
+            iid, price, frac = await self._sdk_call(_lookup)
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(
+                f"Webull instrument lookup failed for {symbol!r}: {e}"
+            ) from e
+        if not iid:
+            raise RuntimeError(
+                f"Webull instrument_id not found for {symbol!r}; NO_TRADE"
+            )
+        if price <= 0.0:
+            raise RuntimeError(
+                f"Webull last-price unavailable for {symbol!r}; NO_TRADE"
+            )
+        self._instrument_cache[sym_u] = (iid, price, frac)
+        return iid, price, frac
+
     async def submit_market_order(
         self,
         symbol: str,
@@ -285,10 +338,28 @@ class WebullAdapter(BrokerAdapter):
              router; we re-check here so direct adapter callers can't
              bypass).
           3. Exactly one of (qty, notional) must be supplied.
+
+        2026-02-19 (rev 2): rewritten against the actual installed
+        Webull SDK signature. The previous implementation passed a
+        dict payload to `place_order(...)` which takes positional
+        args — the SDK raised TypeError inside the executor thread,
+        the thread wedged, the request stalled past the gateway
+        timeout and surfaced as HTTP 502 on the dashboard.
+
+        Real SDK signature:
+          place_order(account_id, qty, instrument_id, side,
+                      client_order_id, order_type,
+                      extended_hours_trading, tif, limit_price=None,
+                      stop_price=None, ...)
+
+        Webull standard API supports WHOLE-SHARE QTY only — no
+        fractional. We convert the requested notional to qty via
+        `floor(notional / last_price)` and re-validate the resulting
+        notional against the cap band so the actual dollars spent
+        still respect the operator's $3-$10 ceiling (a high-priced
+        ticker yields qty=0 → NO_TRADE).
         """
-        # Belt-and-braces re-check of the cap. The router runs
-        # `evaluate_webull_order` BEFORE calling us, but defense-in-depth
-        # means a misuse of this adapter still fails closed.
+        # Belt-and-braces re-check of the cap.
         decision = evaluate_webull_order(
             notional_usd=notional, symbol=symbol,
         )
@@ -301,8 +372,12 @@ class WebullAdapter(BrokerAdapter):
         if (qty is None) == (notional is None):
             raise ValueError("submit_market_order requires exactly one of qty/notional")
 
-        side = _norm_side(side)
+        side_str = _norm_side(side)
         order_id = client_order_id or str(uuid.uuid4())
+        # Webull's client_order_id is capped at 40 chars (per SDK
+        # docstring). UUID4 is 36 chars — fits. Truncate defensively.
+        if len(order_id) > 40:
+            order_id = order_id[:40]
         account_id = await self._resolve_account_id()
 
         lane = _lane_for_symbol(symbol)
@@ -311,53 +386,105 @@ class WebullAdapter(BrokerAdapter):
                 f"Webull adapter: no lane known for symbol {symbol!r}; NO_TRADE"
             )
 
-        # Log MC receipt provenance (signature prefix only — never the
-        # full signed blob).
+        # Resolve the instrument_id + last price (cached).
+        instrument_id, last_price, fractionable = await self._resolve_instrument_id(symbol)
+
+        # Convert notional → integer qty. Webull's place_order takes
+        # `qty: integer`; fractional is not supported via this entry
+        # point. If qty<1 the notional can't fit one share at current
+        # price — NO_TRADE with a readable reason.
+        if qty is None:
+            calc_qty = int(float(notional) // last_price) if last_price > 0 else 0
+            if calc_qty < 1:
+                raise WebullCapBlocked(
+                    f"WEBULL_QTY_BELOW_ONE — {symbol} last=${last_price:.2f} "
+                    f"× 1 = ${last_price:.2f} which exceeds notional "
+                    f"${float(notional):.2f}. Webull does not support "
+                    f"fractional shares via this adapter; pick a lower-"
+                    f"priced ticker or raise the notional cap."
+                )
+            qty_int = calc_qty
+            # Recompute effective notional and re-check the cap. The
+            # actual dollars spent at execution may exceed the
+            # requested notional because we're snapping up to a whole
+            # share — re-validate against the band so a runaway price
+            # spike can't blow past the cap.
+            effective_notional = qty_int * last_price
+            decision2 = evaluate_webull_order(
+                notional_usd=effective_notional, symbol=symbol,
+            )
+            if not decision2.ok:
+                raise WebullCapBlocked(
+                    f"{decision2.reason} (effective={effective_notional:.2f} "
+                    f"from {qty_int} × ${last_price:.2f})"
+                )
+        else:
+            qty_int = int(float(qty))
+            if qty_int < 1:
+                raise WebullCapBlocked(
+                    f"WEBULL_QTY_BELOW_ONE — qty={qty} < 1; Webull requires "
+                    f"whole shares via this adapter."
+                )
+
+        # Log MC receipt provenance (signature prefix only).
         if mc_receipt:
             sig = (mc_receipt.get("signature") or "")[:12]
             logger.info(
-                "Webull submit_market_order receipt_sig=%s symbol=%s lane=%s "
-                "side=%s qty=%s notional=%s",
-                sig, symbol, lane, side, qty, notional,
+                "Webull submit_market_order receipt_sig=%s symbol=%s "
+                "instrument_id=%s lane=%s side=%s qty=%s notional=%s "
+                "last_price=%s",
+                sig, symbol, instrument_id, lane, side_str, qty_int,
+                notional, last_price,
+            )
+        else:
+            logger.info(
+                "Webull submit_market_order symbol=%s instrument_id=%s "
+                "lane=%s side=%s qty=%s notional=%s last_price=%s",
+                symbol, instrument_id, lane, side_str, qty_int,
+                notional, last_price,
             )
 
-        # Build the SDK order payload. The exact field names follow
-        # Webull's Trading API Order schema (asset_type, symbol, side,
-        # order_type, quantity OR notional, time_in_force). Wrap in
-        # try/except so a Webull-side failure surfaces as a clean
-        # RuntimeError to the router.
-        payload: dict[str, Any] = {
-            "account_id": account_id,
-            "client_order_id": order_id,
-            "asset_type": "CRYPTO" if lane == "crypto" else "EQUITY",
-            "symbol": symbol.upper(),
-            "side": side,
-            "order_type": "MARKET",
-            "time_in_force": "DAY",
-        }
-        if notional is not None:
-            # Webull's fractional-equity path takes a notional dollar
-            # amount; for crypto it takes the same field. We surface
-            # both candidate field names so the SDK can match.
-            payload["notional"] = f"{float(notional):.2f}"
-            payload["amount"] = f"{float(notional):.2f}"
-        else:
-            payload["quantity"] = f"{float(qty):.6f}"
+        # Resolve SDK enums.
+        from webull.trade.common.order_side import OrderSide  # noqa: WPS433
+        from webull.trade.common.order_tif import OrderTIF  # noqa: WPS433
+        from webull.trade.common.order_type import OrderType  # noqa: WPS433
+
+        sdk_side = OrderSide.BUY if side_str == "BUY" else OrderSide.SELL
+        sdk_order_type = OrderType.MARKET
+        sdk_tif = OrderTIF.DAY
 
         try:
-            res = await self._sdk_call(self._trade().order.place_order, payload)
+            res = await self._sdk_call(
+                self._trade().order.place_order,
+                account_id, qty_int, instrument_id, sdk_side, order_id,
+                sdk_order_type, False, sdk_tif,
+            )
             data = res.json() if hasattr(res, "json") else res
         except Exception as e:  # noqa: BLE001
             raise RuntimeError(f"Webull submit_market_order failed: {e}") from e
 
-        body = (data or {}).get("data") or data or {}
+        # Surface SDK envelope-level errors. Webull's response wraps
+        # the result in {code, msg, data}; code "200" means accepted.
+        if isinstance(data, dict):
+            code = data.get("code")
+            if code not in (None, "200", 200):
+                raise RuntimeError(
+                    f"Webull place_order returned code={code} "
+                    f"msg={data.get('msg')!r}"
+                )
+
+        body = (data or {}).get("data") if isinstance(data, dict) else None
+        body = body if isinstance(body, dict) else (data if isinstance(data, dict) else {})
         return {
-            "order_id": str(body.get("orderId") or body.get("order_id") or order_id),
+            "order_id": str(
+                body.get("orderId") or body.get("order_id") or
+                body.get("clientOrderId") or order_id
+            ),
             "client_order_id": order_id,
             "symbol": symbol.upper(),
-            "qty": float(qty or 0),
-            "notional": float(notional) if notional is not None else None,
-            "side": side,
+            "qty": float(qty_int),
+            "notional": float(notional) if notional is not None else float(qty_int) * last_price,
+            "side": side_str,
             "type": "market",
             "limit_price": None,
             "time_in_force": "DAY",
@@ -390,10 +517,13 @@ class WebullAdapter(BrokerAdapter):
         )
 
     async def get_order(self, order_id: str) -> BrokerOrder:
+        # 2026-02-19: real SDK exposes `query_order_detail(account_id,
+        # client_order_id)`, not `get_order_detail`. Same response
+        # envelope as the legacy name.
         account_id = await self._resolve_account_id()
         try:
             res = await self._sdk_call(
-                self._trade().order.get_order_detail, account_id, order_id,
+                self._trade().order.query_order_detail, account_id, order_id,
             )
             data = res.json() if hasattr(res, "json") else res
         except Exception as e:  # noqa: BLE001
@@ -424,13 +554,16 @@ class WebullAdapter(BrokerAdapter):
         }
 
     async def list_open_orders(self) -> list[BrokerOrder]:
-        # Webull's history endpoint covers seven days; we filter to
-        # OPEN/PENDING status for the open-order view. If the SDK
-        # exposes a dedicated open-orders call it can replace this.
+        # 2026-02-19: real SDK exposes `list_open_orders(account_id)`
+        # (the account_id is required, not optional). Previously the
+        # adapter called `get_order_history(account_id)` which doesn't
+        # exist on the v1 surface — fall back to `list_today_orders`
+        # for the broadest set of currently-tracked orders, then
+        # filter to OPEN-status entries.
         try:
             account_id = await self._resolve_account_id()
             res = await self._sdk_call(
-                self._trade().order.get_order_history, account_id,
+                self._trade().order.list_today_orders, account_id,
             )
             data = res.json() if hasattr(res, "json") else res
         except Exception:  # noqa: BLE001
@@ -460,20 +593,25 @@ class WebullAdapter(BrokerAdapter):
         return out
 
     async def cancel_order(self, order_id: str) -> None:
+        # 2026-02-19: real SDK signature is
+        # `cancel_order(account_id, client_order_id)` (positional),
+        # not a dict payload.
         account_id = await self._resolve_account_id()
         try:
-            await self._sdk_call(self._trade().order.cancel_order, {
-                "account_id": account_id,
-                "order_id": order_id,
-            })
+            await self._sdk_call(
+                self._trade().order.cancel_order, account_id, order_id,
+            )
         except Exception as e:  # noqa: BLE001
             raise RuntimeError(f"Webull cancel_order failed: {e}") from e
 
     async def list_positions(self) -> list[BrokerPosition]:
+        # 2026-02-19: real SDK does not have a `position.get_positions`
+        # surface; positions are read via
+        # `account_v2.get_account_position_details(account_id)`.
         try:
             account_id = await self._resolve_account_id()
             res = await self._sdk_call(
-                self._trade().position.get_positions, account_id,
+                self._trade().account_v2.get_account_position_details, account_id,
             )
             data = res.json() if hasattr(res, "json") else res
         except Exception:  # noqa: BLE001
