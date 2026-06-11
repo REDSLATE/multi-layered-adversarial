@@ -379,6 +379,19 @@ async def lifespan(app: FastAPI):
         logger.info("Heartbeat reconciler started")
     except Exception as e:  # noqa: BLE001
         logger.warning("heartbeat_reconciler start failed: %s", e)
+    # Shadow-close cron — auto-fires `run_shadow_close` at 4:05pm ET
+    # every weekday so the LEARNING counter ticks without an operator
+    # click. Idempotent (per-ET-day + the existing `outcome_join`
+    # `$exists: false` guard) so a slow tick or repeated start_worker
+    # call can't double-attach. Disable via SHADOW_CLOSE_CRON_ENABLED=false.
+    try:
+        from shared.runtime.shadow_close_cron import (
+            start_worker as _start_shadow_close_cron,
+        )
+        _start_shadow_close_cron()
+        logger.info("Shadow-close cron started (target 16:05 ET)")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("shadow_close_cron start failed: %s", e)
     # Seed the initial patterns_universe watchlist (idempotent).
     # 2026-02-19: extended with `lane` field so the canonical
     # `symbol_in_universe` gate (shared/execution.py) can refuse
@@ -568,6 +581,16 @@ async def lifespan(app: FastAPI):
             stop_worker as _stop_opinion_silence_worker,
         )
         await _stop_opinion_silence_worker()
+    except Exception:  # noqa: BLE001
+        pass
+    # Graceful shutdown of the shadow-close cron — the lifespan
+    # context exits here; cancelling the task lets the next
+    # supervisor restart spin a fresh one.
+    try:
+        from shared.runtime.shadow_close_cron import (
+            stop_worker as _stop_shadow_close_cron,
+        )
+        await _stop_shadow_close_cron()
     except Exception:  # noqa: BLE001
         pass
     client.close()

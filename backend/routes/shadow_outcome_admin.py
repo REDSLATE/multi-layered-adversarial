@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from auth import get_current_user
 from shared.doctrine.shadow_outcome import run_shadow_close
+from shared.runtime.shadow_close_cron import status as cron_status
 
 router = APIRouter(
     prefix="/admin/outcome-join", tags=["outcome-join"],
@@ -41,3 +42,16 @@ async def shadow_close_endpoint(
     return await run_shadow_close(
         dry_run=payload.dry_run, max_rows=payload.max_rows,
     )
+
+
+@router.get("/shadow-close/cron-status")
+async def shadow_close_cron_status_endpoint(
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    """Operator-facing snapshot of the 4:05pm ET cron worker.
+
+    Returns whether the worker is enabled, alive, the target firing
+    window, when it last fired (ET date), and whether a fire would
+    happen on the next tick.
+    """
+    return cron_status()

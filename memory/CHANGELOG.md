@@ -1,3 +1,31 @@
+## 2026-02-19 (late late) — Shadow-close cron: auto-fires at 4:05pm ET every weekday
+
+Operator directive: "P1 — 4:05pm ET cron so shadow-close runs automatically at session end without manual click."
+
+**What shipped:**
+- `shared/runtime/shadow_close_cron.py` — async background worker, 60s tick. Follows the existing codebase pattern (`heartbeat_reconciler`, `orphan_watchdog`): module-level singleton task, `start_worker()`/`stop_worker()`, env-flag toggleable. Imports the shadow-close engine lazily on tick so an engine syntax error during dev can't crash the supervisor at boot.
+- Trigger: fires when ET time is in `[16:00–16:14]` AND weekday AND we haven't fired today. The 15-minute window catches any one-tick blip. `_last_fired_date` marker prevents intra-day re-fires; the underlying `outcome_join` `$exists: false` guard prevents double-attach even if the marker is lost (hot-reload, restart).
+- Skip rules: weekends (Sat/Sun in ET). US market holidays are operator-handled via `SHADOW_CLOSE_CRON_ENABLED=false` toggle (no built-in calendar — out of scope tonight).
+- Env vars (all optional with sane defaults):
+  - `SHADOW_CLOSE_CRON_ENABLED` (default true)
+  - `SHADOW_CLOSE_CRON_TICK_SEC` (default 60)
+  - `SHADOW_CLOSE_CRON_HOUR_ET` (default 16)
+  - `SHADOW_CLOSE_CRON_MIN_ET` (default 5)
+  - `SHADOW_CLOSE_CRON_WINDOW_MIN` (default 14)
+  - `SHADOW_CLOSE_CRON_MAX_ROWS` (default 2000)
+- `server.py` lifespan — start on boot, graceful cancel on shutdown.
+- `GET /api/admin/outcome-join/shadow-close/cron-status` — operator-facing snapshot (enabled, task_alive, now_et, last_fired_date_et, target_window_et, would_fire_now). Status dry-check does NOT mutate the marker so a dashboard poll can't prevent the real fire.
+
+**Live verification (just now in preview):**
+- `task_alive=true`, `now_et=18:02 ET`, target `16:00 — 16:14`, `would_fire_now=false` (correct — we're past today's window already).
+- Supervisor log: `shadow_close_cron started: tick=60s target=16:05 ET`.
+
+**Regression suite (11 new tests, all green):**
+- `tests/test_shadow_close_cron.py` — fires inside window, fires at top of hour, doesn't fire outside window, doesn't fire on weekend, idempotent within same ET day, disabled-via-env honored, status envelope keys, env override changes target hour, status dry-check is non-mutating.
+
+---
+
+
 ## 2026-02-19 (late) — Shadow-outcome engine: 0/100 LEARNING counter moved (now 1,973/100)
 
 Operator directive: "Can we have it change the number without real cash being involved? Just EOD closing tickers?"
