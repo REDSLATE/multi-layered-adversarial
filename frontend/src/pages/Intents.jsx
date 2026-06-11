@@ -6,6 +6,7 @@ import QuickSeatSwitches from "@/components/QuickSeatSwitches";
 import PublicConnect from "@/components/PublicConnect";
 import KrakenBrokerTile from "@/components/KrakenBrokerTile";
 import LaneRoutingPill from "@/components/LaneRoutingPill";
+import MasterTradingSwitch from "@/components/MasterTradingSwitch";
 import WebullEntitlementsCard from "@/components/WebullEntitlementsCard";
 import ParabolicPhaseStrip from "@/components/ParabolicPhaseStrip";
 import BrokerSelectionMenu from "@/components/BrokerSelectionMenu";
@@ -617,6 +618,14 @@ export default function Intents() {
           dedicated tiles (ExecutorSeatTile, AuditorSeatTile,
           RosterSeatTile) were removed 2026-05-27 (pass #18) per
           operator request to eliminate redundant assignment surfaces. */}
+      <SectionDivider
+        title="Master Trading Switch"
+        icon={Buildings}
+        sub="Global kill switch. When OFF, the auto-router short-circuits on every tick regardless of lane / seat / broker state. OFF is one-click; ON requires confirmation + reason."
+        testid="intents-section-master-switch"
+      />
+      <MasterTradingSwitch />
+
       <SectionDivider
         title="Equity Lane"
         icon={Buildings}
