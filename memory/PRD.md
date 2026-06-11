@@ -1,3 +1,76 @@
+## 2026-06-11 (pass 23) — Per-lane broker hamburger + Webull crypto failover
+
+### Operator directive
+> *"A hamburger menu for equity and crypto. Instead of a locked-in
+> account, I would like the option to switch between accounts. That
+> way, we can build up the trades the stack completes, especially on
+> the equity side."*
+
+### Shipped
+1. **`shared/snapshot_enrich/crypto_doctrine.py`** — Webull as the
+   hot-failover crypto data source. Mirrors the equity enricher:
+   pulls bid/ask/last/volume/high/low from `client.crypto_snapshot`,
+   stamps `primary_source: webull` + `data_council: [webull]` so the
+   crypto lane keeps producing real-data intents even when Kraken is
+   not connected.
+
+2. **`routes/broker_selection.py`** — singleton config doc with
+   `{equity: "public" | "webull", crypto: "kraken" | "webull"}`.
+   - `GET /api/admin/broker-selection` — returns current selection +
+     available options + defaults
+   - `PUT /api/admin/broker-selection {equity, crypto}` — validated,
+     persisted with `updated_at` + `updated_by`, upsert pattern.
+   - Defaults preserved: equity → Public, crypto → Kraken. Clearing
+     the singleton reverts safely.
+
+3. **Brain runner integration** — every emitted intent now reads the
+   selection and stamps `broker_override` when the operator picked a
+   non-default broker. `evidence.broker_override_source =
+   "operator_selection"` for auditability.
+
+4. **Runner crypto-lane wiring** — `_evaluate_and_post` now also
+   calls `enrich_crypto_doctrine_snapshot()` on the crypto tick so
+   Webull crypto data populates the snapshot the same way equity
+   already did.
+
+5. **`BrokerSelectionMenu.jsx`** — two per-lane dropdowns at the top
+   of the Intents page. Click a dropdown → list of valid options →
+   pick → PUT fires → toast confirms → next brain tick (~45s) carries
+   the new broker_override. Shows "default" badge when the selection
+   equals the lane default so the operator can see what's overridden.
+
+### Live verification (07:59 UTC)
+```
+crypto sidecars (after enricher landed):
+-- BTC/USD primary_source=webull council=['webull']
+           price=62649.27 gap_pct=0.044 spread_bps=200.0
+           webull_enriched=True
+
+emitted intents (after PUT {equity:webull, crypto:webull}):
+  BTC/USD broker_override=webull source=operator_selection × 3
+```
+Reset to safe defaults after smoke test — operator can flip from the
+UI at will.
+
+### Tests
+- `tests/test_broker_selection.py` — 6 new (defaults, validation,
+  singleton read with/without persisted doc, partial-fields fill-in).
+  All green.
+- `tests/test_crypto_doctrine_enricher.py` — 6 new (no-client
+  fallback, BTC/USD enrichment, canonical→Webull-pair conversion,
+  offline tag, fail-soft on exception). All green.
+- Broader regression: 53 / 53 affected suites green.
+
+### What did NOT change
+- Kraken adapter unchanged — still the default crypto execution path.
+- Public adapter unchanged — still the default equity execution path.
+- No hard blocks; operator can flip back to defaults at any time.
+- Webull broker adapter already supports crypto orders (pass 18
+  Webull integration covered both lanes via `_lane_for_symbol`).
+
+---
+
+
 ## 2026-06-11 (pass 22) — Polygon/Finnhub demoted to council-of-last-resort
 
 ### Operator directive

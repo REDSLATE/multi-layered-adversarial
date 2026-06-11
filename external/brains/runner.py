@@ -1106,6 +1106,21 @@ class BrainRunner:
                     "webull enrich skipped brain=%s sym=%s err=%s",
                     self.brain_id, symbol, exc,
                 )
+        elif lane == "crypto":
+            # Crypto enricher (2026-06-11): Webull as hot-failover for
+            # Kraken so the lane keeps producing real-data intents even
+            # when Kraken creds aren't persisted. Same fail-soft contract
+            # as the equity path.
+            try:
+                from shared.snapshot_enrich.crypto_doctrine import (  # noqa: WPS433
+                    enrich_crypto_doctrine_snapshot,
+                )
+                snapshot = await enrich_crypto_doctrine_snapshot(symbol, snapshot)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "crypto webull enrich skipped brain=%s sym=%s err=%s",
+                    self.brain_id, symbol, exc,
+                )
         # Doctrine (2026-06-10, P1): replace the hardcoded "calm"
         # market_regime with the regime computed at the start of this
         # tick from the universe scan (`_rank_universe`). The Camaro
@@ -1182,6 +1197,25 @@ class BrainRunner:
         payload["evidence"]["env_name_emit"] = os.environ.get(
             "RISEDUAL_ENV", os.environ.get("ENV", "unknown"),
         )
+
+        # Broker selection (2026-06-11): operator picks the routing
+        # broker per lane from the dashboard. Read the singleton each
+        # tick (cheap; cached). Defaults preserved — equity → Public,
+        # crypto → Kraken — so an empty singleton routes as before.
+        try:
+            from routes.broker_selection import get_current_selection  # noqa: WPS433
+            sel = await get_current_selection()
+            chosen = sel.get(lane)
+            # Only stamp broker_override when the operator picked a
+            # NON-default broker for this lane. Default selections
+            # leave the override unset → lane router uses its own
+            # default (Public for equity, Kraken for crypto).
+            from routes.broker_selection import DEFAULT  # noqa: WPS433
+            if chosen and chosen != DEFAULT.get(lane):
+                payload["broker_override"] = chosen
+                payload["evidence"]["broker_override_source"] = "operator_selection"
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("broker selection lookup skipped: %s", exc)
 
         r = await http.post(
             f"{MC_LOOPBACK_URL}/api/intents",

@@ -7,6 +7,7 @@ import PublicConnect from "@/components/PublicConnect";
 import KrakenBrokerTile from "@/components/KrakenBrokerTile";
 import WebullEntitlementsCard from "@/components/WebullEntitlementsCard";
 import ParabolicPhaseStrip from "@/components/ParabolicPhaseStrip";
+import BrokerSelectionMenu from "@/components/BrokerSelectionMenu";
 import DoctrineStrip from "@/components/DoctrineStrip";
 import AutoRetireStrip from "@/components/AutoRetireStrip";
 import DoctrineHealthPanel from "@/components/DoctrineHealthPanel";
@@ -627,6 +628,9 @@ export default function Intents() {
         testid="intents-section-crypto"
       />
       <KrakenBrokerTile />
+      <div className="mt-3">
+        <BrokerSelectionMenu />
+      </div>
       <div className="mt-3">
         <WebullEntitlementsCard />
       </div>

@@ -1,3 +1,28 @@
+## 2026-06-11 (pass 23) — Broker hamburger menu + Webull crypto failover
+
+**Operator directive:** option to switch between broker accounts per
+lane, with Webull crypto as hot-failover for Kraken.
+
+**Shipped:**
+- `shared/snapshot_enrich/crypto_doctrine.py` — Webull as hot-failover
+  crypto data source (real bid/ask/last for BTC/ETH).
+- `routes/broker_selection.py` — singleton `{equity, crypto}` config
+  with GET/PUT endpoints. Defaults: equity → public, crypto → kraken.
+- Brain runner stamps `broker_override` on emitted intents per the
+  operator's selection.
+- `BrokerSelectionMenu.jsx` — per-lane dropdowns on the Intents page.
+
+**Verified live:** PUT'ing `crypto: webull` immediately routed new
+BTC/USD intents through `broker_override: webull`. Crypto enricher
+now reports `primary_source: webull` with real $62,649 price + 200
+bps spread.
+
+**Tests:** 6 broker-selection + 6 crypto-enricher, 53 / 53 broader
+regression green.
+
+---
+
+
 ## 2026-06-11 (pass 22) — Polygon/Finnhub demoted to council-of-last-resort
 
 **Operator directive:** keep them alive but strip their authority.

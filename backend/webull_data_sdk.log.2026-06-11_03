@@ -1,0 +1,134 @@
+273353721967008 2026-06-11 02:04:12,319 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+273353721967008 2026-06-11 02:04:12,425 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+275848829530528 2026-06-11 02:04:24,189 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+275848829530528 2026-06-11 02:04:24,276 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+276611563516320 2026-06-11 02:04:56,860 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+276611563516320 2026-06-11 02:04:56,948 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+278050424943008 2026-06-11 02:05:20,038 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+278050424943008 2026-06-11 02:05:20,239 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+279285136760864 2026-06-11 02:05:36,423 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+279285136760864 2026-06-11 02:05:36,512 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+279284249588128 2026-06-11 02:05:37,019 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/option/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "AAPL",
+    "category": "US_OPTION"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-11T02:05:36Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "6e33b7dc-aac8-55ab-813f-9a1219628789",
+    "x-signature": "Zjom3hOKrwOkiyvginqUZp5ySRY=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'Unauthorized', 'message': 'Insufficient permission, please subscribe to US_OPTION quotes.', 'status': 401} ServerException:HTTP Status: 401, Code: Unauthorized, Msg: Insufficient permission, please subscribe to US_OPTION quotes., RequestID: 513ce7d5-4078-40a5-8799-a7db3c48740c
+279284249588128 2026-06-11 02:05:37,020 webull.core.client ERROR get_response exception. {
+  "error_code": "Unauthorized",
+  "error_msg": "Insufficient permission, please subscribe to US_OPTION quotes.",
+  "http_status": 401,
+  "request_id": "513ce7d5-4078-40a5-8799-a7db3c48740c"
+}
+275438895821216 2026-06-11 02:08:40,775 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+275438895821216 2026-06-11 02:08:40,882 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+279794528481696 2026-06-11 02:08:50,396 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+279794528481696 2026-06-11 02:08:50,486 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+277106625606048 2026-06-11 02:09:05,838 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+277106625606048 2026-06-11 02:09:05,926 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+279663047733664 2026-06-11 02:40:41,234 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+279663047733664 2026-06-11 02:40:41,325 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+278037484204448 2026-06-11 02:40:54,202 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+278037484204448 2026-06-11 02:40:54,333 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+274524041900448 2026-06-11 02:41:10,609 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+274524041900448 2026-06-11 02:41:10,701 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+276194809016736 2026-06-11 02:41:27,460 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+276194809016736 2026-06-11 02:41:27,550 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+277041479807392 2026-06-11 02:46:30,976 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+277041479807392 2026-06-11 02:46:31,067 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+276275196588448 2026-06-11 02:46:42,774 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+276275196588448 2026-06-11 02:46:42,865 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+280005695238560 2026-06-11 02:52:21,549 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+280005695238560 2026-06-11 02:52:21,693 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+276830128632224 2026-06-11 02:52:29,772 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+276830128632224 2026-06-11 02:52:29,861 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+278532210749856 2026-06-11 02:53:07,632 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+278532210749856 2026-06-11 02:53:07,722 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+273006618014112 2026-06-11 02:53:28,498 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+273006618014112 2026-06-11 02:53:28,583 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+281435843785120 2026-06-11 02:54:24,231 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+281435843785120 2026-06-11 02:54:24,314 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+279078921826720 2026-06-11 02:54:58,414 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+279078921826720 2026-06-11 02:54:58,502 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+275272548807072 2026-06-11 02:55:24,039 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+275272548807072 2026-06-11 02:55:24,126 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+275364236423584 2026-06-11 02:55:56,219 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+275364236423584 2026-06-11 02:55:56,308 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+280395731956128 2026-06-11 02:56:35,305 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+280395731956128 2026-06-11 02:56:35,396 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+275361493414304 2026-06-11 02:56:45,603 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+275361493414304 2026-06-11 02:56:45,686 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+281391392354720 2026-06-11 03:13:55,417 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+281391392354720 2026-06-11 03:13:55,508 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+279031870058912 2026-06-11 03:14:31,681 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+279031870058912 2026-06-11 03:14:31,770 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+272887893979552 2026-06-11 03:14:41,407 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+272887893979552 2026-06-11 03:14:41,493 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+275135319634336 2026-06-11 03:14:52,095 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+275135319634336 2026-06-11 03:14:52,187 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+275136581664800 2026-06-11 03:14:55,765 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/option/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "AAPL",
+    "category": "US_OPTION"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-11T03:14:55Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "7d1d9803-c962-5058-be14-b6088b257a4c",
+    "x-signature": "IZTL8+3YKp2ZSsvh0wQn+Tcsb5k=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'Unauthorized', 'message': 'Insufficient permission, please subscribe to US_OPTION quotes.', 'status': 401} ServerException:HTTP Status: 401, Code: Unauthorized, Msg: Insufficient permission, please subscribe to US_OPTION quotes., RequestID: dc371f76-1efa-40c8-9b90-83f971d0965c
+275136581664800 2026-06-11 03:14:55,765 webull.core.client ERROR get_response exception. {
+  "error_code": "Unauthorized",
+  "error_msg": "Insufficient permission, please subscribe to US_OPTION quotes.",
+  "http_status": 401,
+  "request_id": "dc371f76-1efa-40c8-9b90-83f971d0965c"
+}
