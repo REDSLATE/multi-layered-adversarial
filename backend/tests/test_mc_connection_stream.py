@@ -47,6 +47,12 @@ def _read_sse_events(resp, max_events: int = 5, max_seconds: float = 10.0):
     accumulate before yielding — fine for batch APIs but breaks SSE
     where each event is < 500 bytes. Streaming one byte at a time
     and splitting on `\\n` ourselves is the canonical fix.
+
+    Doctrine (2026-02-19): catch `ReadTimeout`/`TimeoutError` too —
+    on slow preview ingress the first byte can arrive late and the
+    underlying socket can raise. Return whatever we have rather than
+    propagating; the caller's tolerance-soft assertions decide whether
+    the harvest was sufficient.
     """
     import time
     events: list[tuple[str, dict]] = []
@@ -82,8 +88,15 @@ def _read_sse_events(resp, max_events: int = 5, max_seconds: float = 10.0):
                         events.append((current_event, payload))
             if len(events) >= max_events:
                 break
-    except (requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError):
-        # Stream closed mid-read — return whatever we got.
+    except (
+        requests.exceptions.ChunkedEncodingError,
+        requests.exceptions.ConnectionError,
+        requests.exceptions.ReadTimeout,
+        TimeoutError,
+        OSError,
+    ):
+        # Stream closed mid-read OR upstream went silent — return
+        # whatever we got.
         pass
     return events
 
@@ -131,6 +144,7 @@ def test_sse_hello_event_first(_token):
     assert "poll_interval_sec" in payload
 
 
+@pytest.mark.timeout(60)
 def test_sse_streams_named_events(_token):
     """A few seconds of stream output should include at least the
     `hello` event and (with 4 brains posting continuously) at least
@@ -140,21 +154,27 @@ def test_sse_streams_named_events(_token):
     observing 12s yielded only the hello event in pytest's slower
     environment (vs ~6 events in a bare python repro). Brains run
     one tick per ~45s — 20s catches at least 1 tick on average.
+
+    Doctrine (2026-02-19): bumped read window to 30s + per-test
+    pytest-timeout to 60s. The SSE server emits a heartbeat every
+    15s so the 30s window guarantees we see at least one non-hello
+    event regardless of brain-tick timing. The original 20s window
+    raced with first-byte latency on preview ingress.
     """
     with requests.get(
         f"{BASE_URL}/api/mc-connection/stream",
         params={"token": _token},
         stream=True,
-        timeout=25,
+        timeout=45,
     ) as r:
-        events = _read_sse_events(r, max_events=10, max_seconds=20)
+        events = _read_sse_events(r, max_events=10, max_seconds=30)
     names = [n for n, _ in events]
     assert "hello" in names, f"missing hello; got {names}"
-    # With 4 brains running we expect at least one intent in 20s.
-    # Soft assertion — if the brains happen to be idle, just require
-    # any non-hello event landed.
+    # With a 15s server heartbeat we expect at least one non-hello
+    # event inside a 30s window — that's the deterministic check.
+    # Brain intents are best-effort on top of that.
     assert any(n != "hello" for n in names), (
-        f"stream should produce intents/regime/heartbeat events in 20s; "
+        f"stream should produce intents/regime/heartbeat events in 30s; "
         f"got only {names}"
     )
 

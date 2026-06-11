@@ -502,6 +502,11 @@ async def list_stale_conflicts(
         description="Open conflicts older than this many hours are 'stale'.",
     ),
     limit: int = Query(200, ge=1, le=1000),
+    topic: Optional[str] = Query(
+        None,
+        description="Optional exact-match topic filter. Useful for "
+        "scoping the sweep to a specific symbol or tripwire.",
+    ),
     _user: dict = Depends(get_current_user),
 ):
     """Open conflicts that have been sitting unresolved past the threshold.
@@ -519,7 +524,9 @@ async def list_stale_conflicts(
         datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
     ).isoformat()
 
-    q = {"status": "open", "detected_at": {"$lt": cutoff}}
+    q: dict = {"status": "open", "detected_at": {"$lt": cutoff}}
+    if topic:
+        q["topic"] = topic
     items = await (
         db[SHARED_CONFLICTS]
         .find(q, {"_id": 0})

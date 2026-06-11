@@ -176,27 +176,25 @@ def test_stale_conflicts_only_includes_open_past_threshold():
     try:
         token = _login()
         r = requests.get(
-            f"{BASE_URL}/api/admin/conflicts/stale?older_than_hours=24&limit=1000",
+            f"{BASE_URL}/api/admin/conflicts/stale?older_than_hours=24&limit=1000&topic={tag}",
             headers={"Authorization": f"Bearer {token}"},
             timeout=20,
         )
         assert r.status_code == 200, r.text
         body = r.json()
-        # Filter to just this tripwire's docs so we don't depend on
-        # the DB's pre-existing conflict population (which can exceed
-        # the default 200-row limit).
-        ours = [c for c in body["items"] if c.get("topic") == tag]
+        # With the `topic` filter the endpoint only returns this tripwire's
+        # rows — no need to filter client-side, and no dependency on the
+        # DB's pre-existing conflict population fitting under the limit.
+        ours = body["items"]
         returned_ids = {c["conflict_id"] for c in ours}
         assert f"{tag}-old-open" in returned_ids
         assert f"{tag}-fresh-open" not in returned_ids
         assert f"{tag}-old-resolved" not in returned_ids
-        # by_runtime should at least include alpha + redeye (the old-open pair).
+        # by_runtime is now scoped to this topic too — alpha + redeye
+        # are the participants of the seeded old-open conflict.
         by_rt = body["by_runtime"]
-        # Note: by_runtime aggregates ALL rows returned, not just ours,
-        # so we just sanity-check the totals are sensible (>= our seeded
-        # contribution). The strict ID filtering above is the real check.
         assert isinstance(by_rt, dict)
-        assert by_rt.get("alpha", 0) >= 1
-        assert by_rt.get("redeye", 0) >= 1
+        assert by_rt.get("alpha", 0) == 1
+        assert by_rt.get("redeye", 0) == 1
     finally:
         coll.delete_many({"topic": tag})

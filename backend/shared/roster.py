@@ -754,13 +754,20 @@ async def tenure(_user: dict = Depends(get_current_user)):
     current: dict[str, Optional[str]] = roster["assignments"]
     roster_updated_at: Optional[str] = roster.get("updated_at")
 
-    # Walk the audit log oldest → newest; for every role, capture the
-    # most recent moment its current occupant entered (i.e. the latest
-    # `payload.after[role] == current_brain` event preceded by
-    # `payload.before[role] != current_brain`).
+    # Walk the audit log NEWEST → OLDEST so the most recent transition
+    # for each role is the first hit we record. We then short-circuit
+    # the inner loop as soon as we've located the latest entry-into-role
+    # event for the current occupant — that's the canonical seat-start.
+    #
+    # Doctrine fix (2026-02-19): previously this walked oldest→newest
+    # with `.to_list(2000)`. Once the audit log grew past 2000 rows the
+    # query truncated, dropping the MOST RECENT entries — which is
+    # exactly the ones we need. After a swap, the tenure endpoint
+    # returned stale `days_in_role` because the swap itself was
+    # outside the returned window.
     log = await db[ROSTER_AUDIT_LOG].find(
         {}, {"_id": 0}
-    ).sort("ts", 1).to_list(2000)
+    ).sort("ts", -1).to_list(5000)
 
     enter_ts: dict[str, Optional[str]] = {r: None for r in ROLES}
     # previous_role[brain] = the role this brain was in just before its
@@ -777,7 +784,7 @@ async def tenure(_user: dict = Depends(get_current_user)):
         # updated_at as the entry timestamp.
         entered_at = roster_updated_at
         last_role_for_brain_before_current: Optional[str] = None
-        for entry in log:
+        for entry in log:  # newest → oldest
             payload = entry.get("payload", {}) or {}
             before = payload.get("before", {}) or {}
             after = payload.get("after", {}) or {}
@@ -789,6 +796,8 @@ async def tenure(_user: dict = Depends(get_current_user)):
                     if b2 == brain and r2 != role:
                         last_role_for_brain_before_current = r2
                         break
+                # Newest-first walk → first hit is the canonical one.
+                break
         enter_ts[role] = entered_at
         if last_role_for_brain_before_current:
             previous_role_for_brain[brain] = last_role_for_brain_before_current

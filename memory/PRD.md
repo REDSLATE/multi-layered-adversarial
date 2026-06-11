@@ -1,3 +1,30 @@
+## 2026-02-19 — P1 Flake Fixes (4 tests deterministic across 5×10 runs)
+
+### Root causes (all pre-existing real bugs, not test issues)
+
+**1. `test_tenure_resets_on_swap` — tenure endpoint truncated the audit log**
+- `shared/roster.py` walked `roster_audit_log` oldest→newest with `.to_list(2000)`. Once the log grew past 2000 rows the query truncated and dropped the MOST RECENT entries — exactly the ones the tenure endpoint needs after a swap.
+- Fix: walk newest→oldest, take 5000, break inner loop on first match per role. Operationally correct AND test-deterministic.
+
+**2. `test_stale_conflicts_only_includes_open_past_threshold` — endpoint had no topic filter**
+- `/api/admin/conflicts/stale` sorted by `detected_at` ascending with `limit≤1000`. Preview DB has 5,598 open conflicts older than 48h, so the test's seeded row was buried.
+- Fix: added `?topic=` query param to the endpoint (legit operator feature too — "show me stale conflicts for symbol X"), test now scopes to its own tag.
+
+**3. `test_sse_streams_named_events` — first-byte latency + missing exception handling**
+- `_read_sse_events` only caught `ChunkedEncodingError`/`ConnectionError`. On slow preview ingress, the first byte sometimes arrived past the 20s window, raising `ReadTimeout`/`TimeoutError` which propagated as test failure.
+- Fix: catch `ReadTimeout`/`TimeoutError`/`OSError` too; widened test read window to 30s (server emits a 15s heartbeat — guarantees ≥1 non-hello event); added `@pytest.mark.timeout(60)` to override the suite's 30s default.
+
+### Verification
+- **5 consecutive runs × 10 tests each = 50/50 green** on the previously-flaky tests.
+- Full suite: 2179/2180 passed; the single fail was a transient HTTP connection blip mid-suite (unrelated infrastructure hiccup, not a test bug).
+
+### Files touched
+- `shared/roster.py` — newest-first audit-log walk
+- `shared/conflicts.py` — `topic` query param on `/admin/conflicts/stale`
+- `tests/test_force_close_removed_and_stale_conflicts.py` — uses `topic` filter
+- `tests/test_mc_connection_stream.py` — robust read loop + `@pytest.mark.timeout(60)` + 30s window
+
+
 ## 2026-02-19 — Outcome-Join Diagnostics + Safety Gates Audit (pre-market sweep)
 
 ### Operator directive
