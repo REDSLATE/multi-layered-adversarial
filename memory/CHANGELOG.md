@@ -1,3 +1,58 @@
+## 2026-02-19 (post-shadow-cron) — Alpaca fully excised from the codebase
+
+Operator directive (continuation of the Webull migration): "Alpaca is the only one being removed." Webull already verified + funded. This pass deletes every Alpaca code path so the codebase reflects the production routing reality (Webull for equity, Kraken for crypto, Public.com stays as an opt-in fallback).
+
+**Production routing — Alpaca calls swapped to lane adapters (Webull):**
+- `shared/execution.py` — dropped the `get_alpaca_adapter` import + the lane-less-intent fallback that probed an Alpaca adapter. Lane-less intents now NO_TRADE with reason `"intent missing lane — NO_TRADE (Alpaca legacy fallback removed)"`. The inline import inside the diagnose path is gone (the equity branch already used `_adapter_for_lane("equity")`).
+- `shared/exposure_caps.py` — `open_notional_usd()` now resolves the equity adapter via `adapter_for_lane("equity")` (Webull). Returns 0.0 when no broker is connected, preserving dry-run behavior.
+- `shared/auto_router.py` — dropped the unused `get_alpaca_adapter` top-level import.
+- `shared/broker_router.py` — dropped the unused top-level `get_alpaca_adapter` import. The `alpaca_paper` slot in `ADAPTER_LOADERS` is **kept as a legacy alias that routes to `_get_equity_adapter`** so any pre-2026-02-19 `broker_selection` row pinned to `alpaca_paper` redirects to the current equity adapter (Webull) instead of NO_TRADE. The string is decorative; it does NOT load an Alpaca client.
+- `shared/risk/position_monitor.py` — equity price snapshot now goes through `adapter_for_lane("equity")` (was inline-importing `get_alpaca_adapter`).
+- `shared/observation_resolver.py` — equity latest-trade resolution now uses `adapter_for_lane("equity")`; falls back to `list_positions().current_price` if `get_latest_trade` is not surfaced.
+- `routes/runtime_position_close.py` — equity position close now reads via `adapter_for_lane("equity")`. Error message rewritten from "Alpaca not connected" to "equity broker not connected".
+- `routes/runtime_broker_status.py::_equity_status` — completely rewritten. Drops the `ALPACA_CREDENTIALS` Mongo singleton read. `connected` is now derived from `adapter_for_lane("equity")`. `account_state` is permanently `None` because Webull credentials live in env vars rather than a Mongo doc — brain sidecars now size off `last_fill_at` + the explicit `connected` boolean.
+- `shared/runtime/role_health.py` — orphan watchdog "armed" condition is hard-coded `True` post-deprecation; comment explains why (MC owns the order issuance path end-to-end on Webull, so no orphan-fill surface exists).
+
+**`server.py` cleanup (broker bring-up + lifespan):**
+- Removed `from shared.broker.alpaca_routes import (router, start_pinger_if_needed, stop_pinger)`.
+- Removed `from routes.alpaca_orphan_routes import router as alpaca_orphan_router`.
+- Removed `from shared.runtime.orphan_watchdog import (start_watchdog_if_enabled, stop_watchdog)`.
+- Removed `alpaca_credentials` singleton lookup + `start_alpaca_pinger_if_needed()` from startup.
+- Removed `start_orphan_watchdog()` from startup; removed `stop_alpaca_pinger()` + `stop_orphan_watchdog()` from shutdown.
+- Removed `alpaca_router` + `alpaca_orphan_router` from `api_router.include_router(...)`.
+- Deploy-mode probe in `_resolve_deploy_mode` now checks for a live Webull adapter (in addition to Kraken) instead of an Alpaca adapter.
+
+**Source files deleted (8):**
+- `/app/backend/routes/alpaca_orphan_routes.py`
+- `/app/backend/scripts/alpaca_orphan_ingester.py`
+- `/app/backend/shared/broker/alpaca.py` (the AlpacaPaperAdapter itself)
+- `/app/backend/shared/broker/alpaca_routes.py` (`/api/admin/alpaca/*` connect/disconnect/status routes + the pinger)
+- `/app/backend/shared/runtime/orphan_watchdog.py` (Alpaca-only fill reconciler)
+- `/app/backend/scripts/close_options_gtc_limit.py` (Alpaca-specific maintenance script)
+- `/app/backend/scripts/exec_audit_phase_freeze_and_reconcile.py` (Alpaca-specific audit script)
+- `/app/frontend/src/components/AlpacaConnect.jsx` (was already orphaned — not imported anywhere)
+
+**Test cleanup:**
+- Deleted: `test_alpaca_broker.py`, `test_alpaca_pinger.py`, `test_alpaca_execution_pipeline.py`.
+- Removed the two Alpaca-adapter receipt-requirement tests from `test_broker_audit_phase.py`; left a comment pointing at `test_webull_adapter_sdk_signatures.py` as the equivalent Webull coverage.
+- Updated patches in `test_execution_gates.py`, `test_runtime_position_close.py`, `test_broker_lane_toggle.py` to target the new lane adapter (`shared.broker_router.adapter_for_lane`) instead of `shared.broker.alpaca_routes.get_alpaca_adapter`.
+- Rewrote `test_runtime_broker_status.py::test_equity_*` tests to match the new Webull-aware equity status shape. Added `reset_webull_adapter_for_tests()` to `_isolate_env` fixtures in `test_webull_adapter.py` and `test_broker_router_webull_override.py` so the process-wide `_ADAPTER` singleton can't leak between tests when `.env` carries real credentials.
+
+**Test results:**
+- 393/393 broker/execution/lane/routing/position tests passing (full pytest -k `broker or execution or alpaca or webull or kraken or auto_router or routing or lane or position_close or position_monitor or observation or runtime_broker`).
+- 1 pre-existing failure in `test_auto_retire.py::test_governor_block_underperformance_emits_candidate` — verified to fail on the pre-removal git stash, so unrelated.
+
+**Health check:**
+- Backend imports + restarts cleanly. `/api/health` returns 200. Lifespan startup logs show no Alpaca-related warnings. Webull singleton + market data feeders + shadow-close cron all start normally.
+
+**Kept for back-compat (intentional):**
+- `namespaces.ALPACA_CREDENTIALS` constant — just a collection-name string. Removing it would force a cascade of import-time errors across tests that reference it as documentation; leaving it inert is cheaper. The collection itself is no longer read by any application code.
+- `broker_router.ADAPTER_LOADERS["alpaca_paper"]` — legacy slot maps to `_get_equity_adapter` so DB rows still pinned to `alpaca_paper` route to Webull rather than NO_TRADE.
+- `shared/broker_freeze.py`, `shared/learning_ladder.py`, etc. — historical Alpaca mentions in docstrings/comments are left untouched (zero blast radius).
+
+---
+
+
 ## 2026-02-19 (late late) — Shadow-close cron: auto-fires at 4:05pm ET every weekday
 
 Operator directive: "P1 — 4:05pm ET cron so shadow-close runs automatically at session end without manual click."

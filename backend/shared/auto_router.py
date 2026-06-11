@@ -30,7 +30,6 @@ from typing import Optional
 
 from db import db
 from namespaces import EXECUTION_RECEIPTS, SHARED_GATE_RESULTS, SHARED_INTENTS
-from shared.broker.alpaca_routes import get_alpaca_adapter
 from shared.broker_router import (
     BrokerRouteBlocked,
     adapter_for_lane,

@@ -99,17 +99,25 @@ export default function WebullEntitlementsCard() {
                   data-testid={`webull-entitlement-${r.key}`}
                   className="flex items-center justify-between text-xs"
                 >
-                  <span className="opacity-80">{r.label}</span>
+                  <span className="opacity-90">{r.label}</span>
                   {live ? (
-                    <Badge className="bg-emerald-500/15 text-emerald-300 border-emerald-500/30 gap-1">
-                      <CheckCircle size={11} weight="fill" /> live
+                    /* 2026-02-19 — Brighter LIVE pill so it pops next
+                       to the EXEC ENABLED badges. The old 15% opacity
+                       background was washing out against the dark
+                       theme and the operator couldn't tell at a
+                       glance whether the entitlement was on. */
+                    <Badge
+                      data-testid={`webull-entitlement-${r.key}-live`}
+                      className="bg-emerald-400/30 text-emerald-100 border-emerald-300/60 gap-1 font-semibold shadow-[0_0_8px_rgba(16,185,129,0.35)]"
+                    >
+                      <CheckCircle size={11} weight="fill" /> LIVE
                     </Badge>
                   ) : (
                     <Badge
                       className={
                         r.critical
-                          ? "bg-rose-500/15 text-rose-300 border-rose-500/30 gap-1"
-                          : "bg-zinc-500/15 text-zinc-300 border-zinc-500/30 gap-1"
+                          ? "bg-rose-500/25 text-rose-200 border-rose-400/50 gap-1"
+                          : "bg-zinc-500/20 text-zinc-300 border-zinc-500/40 gap-1"
                       }
                     >
                       <XCircle size={11} weight="fill" />{" "}

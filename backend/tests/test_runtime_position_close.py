@@ -99,7 +99,7 @@ async def test_close_404_when_no_position(monkeypatch):
     fake_adapter.list_positions = AsyncMock(return_value=[])
 
     with patch(
-        "shared.broker.alpaca_routes.get_alpaca_adapter",
+        "shared.broker_router.adapter_for_lane",
         new=AsyncMock(return_value=fake_adapter),
     ):
         with pytest.raises(HTTPException) as exc:
@@ -116,7 +116,7 @@ async def test_close_503_when_broker_disconnected(monkeypatch):
     body = CloseIn(symbol="AAPL", lane="equity")
 
     with patch(
-        "shared.broker.alpaca_routes.get_alpaca_adapter",
+        "shared.broker_router.adapter_for_lane",
         new=AsyncMock(return_value=None),
     ):
         with pytest.raises(HTTPException) as exc:
@@ -147,7 +147,7 @@ async def test_close_long_routes_sell_through_gate_chain(monkeypatch):
         return None
 
     with patch(
-        "shared.broker.alpaca_routes.get_alpaca_adapter",
+        "shared.broker_router.adapter_for_lane",
         new=AsyncMock(return_value=fake_adapter),
     ), patch("shared.intents.post_intent", new=fake_post_intent), patch(
         "routes.runtime_position_close.db",
@@ -188,7 +188,7 @@ async def test_close_short_routes_cover_through_gate_chain(monkeypatch):
         return None
 
     with patch(
-        "shared.broker.alpaca_routes.get_alpaca_adapter",
+        "shared.broker_router.adapter_for_lane",
         new=AsyncMock(return_value=fake_adapter),
     ), patch("shared.intents.post_intent", new=fake_post_intent), patch(
         "routes.runtime_position_close.db",
@@ -220,7 +220,7 @@ async def test_partial_close_halves_qty(monkeypatch):
         return None
 
     with patch(
-        "shared.broker.alpaca_routes.get_alpaca_adapter",
+        "shared.broker_router.adapter_for_lane",
         new=AsyncMock(return_value=fake_adapter),
     ), patch("shared.intents.post_intent", new=fake_post_intent), patch(
         "routes.runtime_position_close.db",

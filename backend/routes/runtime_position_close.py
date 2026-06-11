@@ -215,12 +215,12 @@ async def _lookup_open_position(symbol: str, lane: str) -> Optional[dict]:
     """
     symbol_u = symbol.upper()
     if lane == "equity":
-        from shared.broker.alpaca_routes import get_alpaca_adapter  # noqa: WPS433
-        adapter = await get_alpaca_adapter()
+        from shared.broker_router import adapter_for_lane  # noqa: WPS433
+        adapter = await adapter_for_lane("equity")
         if not adapter:
             raise HTTPException(
                 status_code=503,
-                detail="Alpaca not connected; cannot read equity position",
+                detail="equity broker not connected; cannot read equity position",
             )
         positions = await adapter.list_positions()
         for p in positions or []:

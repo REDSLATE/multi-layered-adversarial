@@ -112,8 +112,8 @@ async def _equity_prices() -> dict[str, float]:
     any failure (the monitor will treat each position as 'no price').
     """
     try:
-        from shared.broker.alpaca_routes import get_alpaca_adapter  # noqa: WPS433
-        adapter = await get_alpaca_adapter()
+        from shared.broker_router import adapter_for_lane  # noqa: WPS433
+        adapter = await adapter_for_lane("equity")
         if adapter is None:
             return {}
         positions = await adapter.list_positions()

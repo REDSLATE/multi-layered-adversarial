@@ -1,3 +1,30 @@
+## 2026-02-19 — Alpaca fully excised (Webull-only equity routing)
+
+### Operator directive
+> "Alpaca is the only one being removed." (Webull already verified + funded last session; Public.com stays as opt-in fallback.)
+
+### Status: shipped, 393/393 broker/execution tests green
+
+### Scope
+- Production routing: 8 backend files swapped from `get_alpaca_adapter()` → `adapter_for_lane("equity")` (Webull). server.py boot path stripped of Alpaca pinger, orphan watchdog, and `/api/admin/alpaca/*` router registration.
+- Source files deleted (8): `alpaca.py`, `alpaca_routes.py`, `alpaca_orphan_routes.py`, `alpaca_orphan_ingester.py`, `orphan_watchdog.py`, `close_options_gtc_limit.py`, `exec_audit_phase_freeze_and_reconcile.py`, `frontend/src/components/AlpacaConnect.jsx`.
+- Tests deleted (3) + updated (7): all patch targets remapped to the lane adapter; equity broker-status tests rewritten for Webull's no-Mongo-singleton credential shape.
+- Back-compat preserved: `ALPACA_CREDENTIALS` namespace constant (inert string), `ADAPTER_LOADERS["alpaca_paper"]` legacy slot (now routes to Webull) — both intentional so historical DB rows + docstring references don't ImportError.
+
+### Verification
+- Backend `/api/health` → 200. Lifespan boot logs clean (no Alpaca pinger warning, no orphan watchdog init).
+- 393/393 broker/execution/lane/routing/position tests passing.
+- 1 pre-existing flaky test (`test_auto_retire.py`) unrelated to this change.
+
+### Remaining backlog
+- **P1 — Webull fractional shares** (`place_order_v2`). Now unblocked since the Webull funding state was verified last session. Requires adapter signature change + cap-gate validation.
+- **P2 — US market holiday calendar** for `shadow_close_cron.py` so it skips Sat/Sun + holidays automatically (currently operator-flag-toggled).
+- **P2 — Doctrine evidence enrichment** via StockFit 10-Q/10-K filings into the brain sidecar snapshots.
+- **P3 — Cleanup**: `broker_freeze.py` / `learning_ladder.py` / `intents.py` docstrings still mention Alpaca historically (zero blast radius — left alone for context).
+
+---
+
+
 ## 2026-02-19 — P1 Flake Fixes (4 tests deterministic across 5×10 runs)
 
 ### Root causes (all pre-existing real bugs, not test issues)

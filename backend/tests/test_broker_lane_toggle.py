@@ -142,7 +142,6 @@ async def test_route_order_allows_other_lane_when_one_disabled(monkeypatch):
     monkeypatch.setattr(br, "_get_public_adapter", _stub_adapter)
     monkeypatch.setattr(br, "_get_equity_adapter", _stub_adapter)
     monkeypatch.setattr(br, "get_kraken_adapter", _stub_adapter)
-    monkeypatch.setattr(br, "get_alpaca_adapter", _stub_adapter)
 
     intent = {
         "intent_id": "test-crypto-allowed",
@@ -184,7 +183,6 @@ async def test_route_order_fails_open_on_toggle_lookup_error(monkeypatch):
     monkeypatch.setattr(br, "_get_public_adapter", _stub_adapter)
     monkeypatch.setattr(br, "_get_equity_adapter", _stub_adapter)
     monkeypatch.setattr(br, "get_kraken_adapter", _stub_adapter)
-    monkeypatch.setattr(br, "get_alpaca_adapter", _stub_adapter)
 
     intent = {
         "intent_id": "test-fail-open",

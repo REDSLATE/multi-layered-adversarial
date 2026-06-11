@@ -16,7 +16,7 @@ import os
 import pytest
 
 from db import db
-from namespaces import ALPACA_CREDENTIALS, KRAKEN_CREDENTIALS
+from namespaces import KRAKEN_CREDENTIALS
 from routes import runtime_broker_status as mod
 from routes.runtime_broker_status import (
     _crypto_status, _equity_status, _get_lane_cached,
@@ -160,8 +160,13 @@ async def test_crypto_shape_when_disconnected():
 
 
 @pytest.mark.asyncio
-async def test_equity_shape_when_disconnected():
-    await db[ALPACA_CREDENTIALS].delete_one({"_id": "singleton"})
+async def test_equity_shape_when_disconnected(monkeypatch):
+    # No equity adapter loaded → disconnected shape.
+    async def _no_adapter(_lane):
+        return None
+    monkeypatch.setattr(
+        "shared.broker_router.adapter_for_lane", _no_adapter, raising=False,
+    )
     _reset_cache()
     status = await _equity_status()
     assert status["lane"] == "equity"
@@ -173,33 +178,30 @@ async def test_equity_shape_when_disconnected():
 
 
 @pytest.mark.asyncio
-async def test_equity_account_state_exposed_when_connected():
-    await db[ALPACA_CREDENTIALS].update_one(
-        {"_id": "singleton"},
-        {"$set": {
-            "public_key_preview": "AKxxx…1234",
-            "account_snapshot": {
-                "cash": 9876.54,
-                "buying_power": 19753.08,
-                "daytrade_buying_power": 39506.16,
-                "equity": 10500.00,
-                "pattern_day_trader": False,
-                "trading_blocked": False,
-            },
-            "execution_enabled": True,
-            "scopes": {"trade": True, "read": True},
-        }},
-        upsert=True,
+async def test_equity_status_when_connected(monkeypatch):
+    """2026-02-19 — post-Alpaca-deprecation the equity tile keys off
+    `adapter_for_lane("equity")` (Webull). The Alpaca-era
+    `account_state` block is no longer surfaced because Webull
+    credentials live in env vars rather than a Mongo singleton; the
+    brain sidecars size against `last_fill_at` + the explicit
+    `connected` boolean."""
+    class _FakeAdapter:
+        name = "webull"
+
+    async def _live_adapter(_lane):
+        return _FakeAdapter()
+
+    monkeypatch.setattr(
+        "shared.broker_router.adapter_for_lane", _live_adapter, raising=False,
     )
-    try:
-        _reset_cache()
-        status = await _equity_status()
-        assert status["connected"] is True
-        assert status["account_state"]["cash"] == 9876.54
-        assert status["account_state"]["buying_power"] == 19753.08
-        assert status["account_state"]["pattern_day_trader"] is False
-    finally:
-        await db[ALPACA_CREDENTIALS].delete_one({"_id": "singleton"})
+    _reset_cache()
+    status = await _equity_status()
+    assert status["lane"] == "equity"
+    assert status["connected"] is True
+    assert status["execution_enabled"] is True
+    assert status["account_state"] is None
+    assert "lane_execution_enabled" in status
+    assert "broker_live_order_enabled" in status
 
 
 # ─── cache behavior ──────────────────────────────────────────────────

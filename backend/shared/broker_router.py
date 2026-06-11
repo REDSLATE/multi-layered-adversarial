@@ -34,7 +34,6 @@ import logging
 import os
 from typing import Optional
 
-from shared.broker.alpaca_routes import get_alpaca_adapter
 from shared.broker.webull import get_webull_adapter
 from shared.broker.webull_caps import WebullCapBlocked, evaluate_webull_order
 from shared.broker_freeze import BrokerFrozen, assert_not_frozen
@@ -125,11 +124,15 @@ async def _get_equity_adapter():
 
 
 ADAPTER_LOADERS = {
-    "alpaca_paper": _get_equity_adapter,
     "kraken": get_kraken_adapter,
     "public": _get_public_adapter,
     "ibkr": _get_ibkr_adapter,
     "webull": get_webull_adapter,
+    # Legacy slot alias kept so any DB row still pinned to
+    # `alpaca_paper` (pre-2026-02-19 broker_selection rows) routes
+    # to the current equity adapter (Webull) instead of NO_TRADE.
+    # The constant is decorative — it does NOT load an Alpaca client.
+    "alpaca_paper": _get_equity_adapter,
 }
 
 

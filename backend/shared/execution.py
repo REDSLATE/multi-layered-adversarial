@@ -29,7 +29,6 @@ from namespaces import (
     SHARED_RECEIPTS,
     SOVEREIGN_AUDIT_LOG,
 )
-from shared.broker.alpaca_routes import get_alpaca_adapter
 # Council doctrine and helpers were extracted 2026-02-15 to
 # `shared/council.py` to keep this module under control (was 1355
 # lines). We import the helpers used by the gate chain and the
@@ -377,16 +376,12 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
                 f"{override_tag}"
             )
     else:
-        # Legacy intents without lane fall back to the Alpaca check —
-        # this keeps the equities flow alive for any pre-canonical
-        # intents already queued in the DB.
-        adapter = await get_alpaca_adapter()
-        broker_connected = adapter is not None
-        broker_reason = (
-            "Alpaca paper adapter present (legacy / lane-untagged intent)"
-            if broker_connected else
-            "lane missing AND Alpaca not connected — NO_TRADE"
-        )
+        # Lane-less intents are NO_TRADE post-Alpaca-deprecation
+        # (2026-02-19). Every intent MUST carry a lane so the router
+        # can resolve the correct broker. Pre-canonical intents
+        # without a lane fail-closed.
+        broker_connected = False
+        broker_reason = "intent missing lane — NO_TRADE (Alpaca legacy fallback removed)"
     gates.append({
         "name": "broker_connected",
         "passed": broker_connected,
@@ -1268,7 +1263,6 @@ async def execution_diagnose(
     response surfaces the FIRST blocker so the operator can act."""
     from shared.broker_router import adapter_for_lane as _adapter_for_lane  # noqa: WPS433
     from shared.crypto.kraken import get_active_keys_status  # noqa: WPS433
-    from shared.broker.alpaca_routes import get_alpaca_adapter  # noqa: WPS433
     from shared.executor_seat import get_seat_holder, seats_with_execute  # noqa: WPS433
 
     lane_l = (lane or "crypto").lower()

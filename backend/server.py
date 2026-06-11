@@ -53,11 +53,6 @@ from shared.intents import router as intents_router
 from shared.executor_seat import router as executor_router
 from shared.auditor_seat import router as auditor_router
 from shared.seat_nudges import router as seat_nudges_router
-from shared.broker.alpaca_routes import (
-    router as alpaca_router,
-    start_pinger_if_needed as start_alpaca_pinger_if_needed,
-    stop_pinger as stop_alpaca_pinger,
-)
 from shared.decisions_feed import router as decisions_router
 from shared.doctrine_routes import router as doctrine_router
 from shared.execution import router as execution_router
@@ -91,7 +86,6 @@ from shared.calibration.snapshot_completeness import router as snapshot_complete
 from routes.memory_kernel_routes import router as memory_kernel_router
 from routes.orphan_inspection_routes import router as orphan_inspection_router
 from routes.orphan_replay_routes import router as orphan_replay_router
-from routes.alpaca_orphan_routes import router as alpaca_orphan_router
 from routes.broker_freeze_routes import router as broker_freeze_router
 from routes.broker_reconcile_routes import router as broker_reconcile_router
 from routes.sidecar_diagnostics import router as sidecar_diagnostics_router
@@ -178,10 +172,6 @@ from shared.coordinator.lifespan import (
     stop_paradox_coordinator,
 )
 from shared.coordinator.user_seed import ensure_coordinator_user
-from shared.runtime.orphan_watchdog import (
-    start_watchdog_if_enabled as start_orphan_watchdog,
-    stop_watchdog as stop_orphan_watchdog,
-)
 from shared.observation_resolver import (
     start_observation_resolver,
     stop_observation_resolver,
@@ -280,12 +270,7 @@ async def lifespan(app: FastAPI):
         )
     # Keep Alpaca's pinger conditional — only matters if Alpaca creds
     # exist (zero-cost no-op otherwise).
-    alpaca_doc = await db["alpaca_credentials"].find_one({"_id": "singleton"}, {"_id": 1})
-    if alpaca_doc:
-        # Symmetric to Kraken's poller: keeps `last_ping_at` fresh so the
-        # operator's broker-health tile never sees the 17h-staleness
-        # incident again (2026-05-30). Safe no-op when creds missing.
-        start_alpaca_pinger_if_needed()
+    # 2026-02-19: Alpaca pinger removed (Alpaca broker fully deprecated).
     # Public-API rate-limit collection — TTL index for buckets.
     await _rate_limit_ensure_ttl()
     # Public news + dark-pool refreshers — fail-soft proxies to base44.
@@ -309,12 +294,11 @@ async def lifespan(app: FastAPI):
         logger.info("Position Monitor started")
     except Exception as e:  # noqa: BLE001
         logger.warning("position_monitor start failed: %s", e)
-    # Orphan watchdog — polls Alpaca for fills that lack MC receipts
-    # and auto-quarantines them as UV in the memory kernel.
-    try:
-        await start_orphan_watchdog()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("orphan_watchdog start failed: %s", e)
+    # Orphan watchdog — REMOVED 2026-02-19 along with Alpaca deprecation.
+    # The orphan-fill class only existed because pre-iter-106m Camaro
+    # bypassed MC and POSTed direct to Alpaca. With Alpaca gone and MC
+    # receipt sealing enforced on the Webull path, no orphan ingress
+    # surface remains.
     # PARADOX coordinator — in-process agent scheduler. Every agent
     # starts DISABLED; operator opts in per agent via
     # `/api/admin/coordinator/enable/{agent}`.
@@ -539,7 +523,6 @@ async def lifespan(app: FastAPI):
         logger.warning("neutral_brains start failed: %s", e)
     yield
     await stop_poller()
-    await stop_alpaca_pinger()
     await stop_tickler()
     await stop_public_refresher()
     try:
@@ -552,7 +535,6 @@ async def lifespan(app: FastAPI):
     await stop_darkpool_refresher()
     await stop_scorecard_scheduler()
     await stop_position_monitor()
-    await stop_orphan_watchdog()
     await stop_paradox_coordinator()
     await stop_observation_resolver()
     try:
@@ -659,10 +641,10 @@ async def health():
             # present + decrypt cleanly.
             from shared.crypto.broker_adapter import get_kraken_adapter  # noqa: WPS433
             kraken_adapter = await get_kraken_adapter()
-            # Equity: an Alpaca adapter loads iff credentials are saved.
-            from shared.broker.alpaca_routes import get_alpaca_adapter  # noqa: WPS433
-            alpaca_adapter = await get_alpaca_adapter()
-            if kraken_adapter is not None or alpaca_adapter is not None:
+            # Equity: Webull adapter loads iff env vars are armed.
+            from shared.broker.webull import get_webull_adapter  # noqa: WPS433
+            equity_adapter = await get_webull_adapter()
+            if kraken_adapter is not None or equity_adapter is not None:
                 derived_mode = "execution"
         except Exception:  # noqa: BLE001
             pass
@@ -701,7 +683,6 @@ api_router.include_router(intents_router)
 api_router.include_router(executor_router)
 api_router.include_router(auditor_router)
 api_router.include_router(seat_nudges_router)
-api_router.include_router(alpaca_router)
 api_router.include_router(execution_router)
 api_router.include_router(live_positions_router)
 api_router.include_router(brain_lane_policy_router)
@@ -719,7 +700,6 @@ api_router.include_router(snapshot_completeness_router)
 api_router.include_router(memory_kernel_router)
 api_router.include_router(orphan_inspection_router)
 api_router.include_router(orphan_replay_router)
-api_router.include_router(alpaca_orphan_router)
 api_router.include_router(broker_freeze_router)
 api_router.include_router(broker_reconcile_router)
 api_router.include_router(sidecar_diagnostics_router)

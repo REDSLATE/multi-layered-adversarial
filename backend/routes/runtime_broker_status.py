@@ -40,7 +40,6 @@ from fastapi import APIRouter, Header, HTTPException
 
 from db import db
 from namespaces import (
-    ALPACA_CREDENTIALS,
     DISCUSSION_PARTICIPANTS,
     EXECUTION_RECEIPTS,
     KRAKEN_CREDENTIALS,
@@ -132,50 +131,29 @@ async def _crypto_status() -> dict:
 
 
 async def _equity_status() -> dict:
-    """Alpaca lane status — derived from ALPACA_CREDENTIALS doc +
-    lane execution toggle + last fill/error."""
-    doc = await db[ALPACA_CREDENTIALS].find_one(
-        {"_id": "singleton"}, {"_id": 0},
-    ) or {}
+    """Equity lane status — derived from the active broker adapter
+    (Webull post-Alpaca-deprecation, 2026-02-19) + lane execution
+    toggle + last fill/error. The Alpaca-era `account_state` block
+    is no longer surfaced because Webull credentials live in env
+    vars, not a Mongo singleton — brains size off `last_fill_at`
+    and the explicit `connected` flag instead."""
     fills = await _last_fill_and_error("equity")
     lane_on = await is_lane_execution_enabled("equity")
-
-    if not doc:
-        return {
-            "lane": "equity",
-            "connected": False,
-            "execution_enabled": False,
-            "lane_execution_enabled": lane_on,
-            "broker_live_order_enabled": _broker_live_order_enabled(),
-            "scopes": {},
-            "account_state": None,
-            "public_key_preview": None,
-            **fills,
-        }
-
-    # Alpaca account shape includes `buying_power`, `cash`,
-    # `daytrade_buying_power`. We surface a minimal account_state
-    # snapshot so brains can size intents. Numbers come from the
-    # most-recent Alpaca account probe (cached on the credential doc).
-    snapshot = doc.get("account_snapshot") or {}
+    try:
+        from shared.broker_router import adapter_for_lane  # noqa: WPS433
+        adapter = await adapter_for_lane("equity")
+    except Exception:  # noqa: BLE001
+        adapter = None
+    connected = adapter is not None
     return {
         "lane": "equity",
-        "connected": True,
-        "execution_enabled": bool(doc.get("execution_enabled", False)),
+        "connected": connected,
+        "execution_enabled": connected,
         "lane_execution_enabled": lane_on,
         "broker_live_order_enabled": _broker_live_order_enabled(),
-        "scopes": doc.get("scopes", {}),
-        "account_state": {
-            "cash": snapshot.get("cash"),
-            "buying_power": snapshot.get("buying_power"),
-            "daytrade_buying_power": snapshot.get("daytrade_buying_power"),
-            "equity": snapshot.get("equity"),
-            "pattern_day_trader": snapshot.get("pattern_day_trader"),
-            "trading_blocked": snapshot.get("trading_blocked"),
-        },
-        "public_key_preview": doc.get("public_key_preview"),
-        "connected_at": doc.get("created_at"),
-        "updated_at": doc.get("updated_at"),
+        "scopes": {},
+        "account_state": None,
+        "public_key_preview": None,
         **fills,
     }
 

@@ -79,13 +79,10 @@ def _patches(*, holder, broker_connected, daily_spend, lane="equity", lane_enabl
 
     fake_adapter = _FakeAdapter() if broker_connected else None
     broker_lane_mock = AsyncMock(return_value=fake_adapter)
-    broker_legacy_mock = AsyncMock(return_value=fake_adapter)
     return [
         patch("shared.executor_seat.get_seat_holder", new=AsyncMock(side_effect=_holder_lookup)),
         patch("shared.executor_seat.seats_with_execute", new=lambda _lane: eligible_seats),
         patch("shared.broker_router.adapter_for_lane", new=broker_lane_mock),
-        patch("shared.execution.get_alpaca_adapter", new=broker_legacy_mock),
-        patch("shared.exposure_caps.get_alpaca_adapter", new=AsyncMock(return_value=None)),
         patch("shared.exposure_caps.daily_spend_usd", new=AsyncMock(return_value=daily_spend)),
         patch("shared.lane_execution.is_lane_execution_enabled", new=AsyncMock(return_value=lane_enabled)),
     ]

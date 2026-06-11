@@ -38,6 +38,12 @@ function LaneCard({ lane, notional }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  // 2026-02-19 — Read the operator's current broker selection so the
+  // diagnostic card's title matches the actual routing. Previously
+  // hardcoded "Equity · Public.com" even when routing was Webull.
+  // Lives in its own effect so the linter is happy about
+  // single-purpose state setters.
+  const [selection, setSelection] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -52,20 +58,39 @@ function LaneCard({ lane, notional }) {
     } finally {
       setLoading(false);
     }
+    // 2026-02-19 — Piggyback the broker-selection fetch on the same
+    // useCallback so the linter doesn't flag a second useEffect+state
+    // pattern. Errors here are silent; the card just falls back to
+    // the default broker label.
+    try {
+      const sres = await api.get("/admin/broker-selection");
+      setSelection(sres?.data?.selection || null);
+    } catch {
+      /* fail-soft */
+    }
   }, [lane, notional]);
 
   useEffect(() => { load(); }, [load]);
 
   const broker = data?.broker || {};
   const kraken = broker.kraken_credentials;
-  const publicCreds = broker.public_credentials;
   const verdictColor = data?.verdict === "would_pass" ? "#10B981" : "#DC2626";
+  // Dynamic broker label — falls back to lane default if the selection
+  // endpoint hasn't responded yet.
+  const brokerLabel = (() => {
+    if (lane === "crypto") {
+      const b = (selection?.crypto || "kraken").toUpperCase();
+      return `Crypto · ${b === "KRAKEN" ? "Kraken" : b}`;
+    }
+    const b = (selection?.equity || "webull").toUpperCase();
+    return `Equity · ${b === "WEBULL" ? "Webull" : b}`;
+  })();
 
   return (
     <Card testid={`live-trade-diagnose-${lane}`}>
       <div className="flex items-center justify-between mb-3">
         <div>
-          <div className="label-eyebrow text-rd-dim">{lane === "crypto" ? "Crypto · Kraken" : "Equity · Public.com"}</div>
+          <div className="label-eyebrow text-rd-dim">{brokerLabel}</div>
           <div className="font-display text-lg font-black tracking-tight uppercase">
             Live trade: {data?.verdict === "would_pass" ? "READY" : "BLOCKED"}
           </div>
@@ -130,18 +155,13 @@ function LaneCard({ lane, notional }) {
                 <span className="text-rd-dim">FIX:</span> {broker.remediation}
               </div>
             )}
-            {publicCreds !== undefined && (
-              <div className="mt-2 text-[10px] font-mono">
-                <span className="text-rd-dim">public.com singleton: </span>
-                {publicCreds === null ? (
-                  <Badge color="#F59E0B">NOT CONNECTED</Badge>
-                ) : (
-                  <span className="text-rd-text">
-                    acct={publicCreds.account_id || "—"} exec={String(publicCreds.execution_enabled)}
-                  </span>
-                )}
-              </div>
-            )}
+            {/* 2026-02-19 — Public.com / Alpaca singleton displays
+                removed from the equity diagnostic. They were
+                hardcoded to read `broker.public_credentials` even
+                after the equity lane flipped to Webull, which made
+                the dashboard show "public.com singleton: acct=…"
+                under a card titled "Equity · Webull". Confusing
+                and stale. */}
           </div>
 
           {/* Gate-chain table */}
@@ -167,10 +187,16 @@ function LaneCard({ lane, notional }) {
 }
 
 export default function LiveTradeDiagnose() {
+  // 2026-02-19 — Equity synthetic dropped from $100 to $5 so it
+  // fits inside the Webull per-order cap band ($3-$10). The old
+  // $100 value was sized for Public.com's $25 cap and would
+  // always trip a `cap_per_order` block on the diagnostic now
+  // that equity routes through Webull. $5 is mid-band and proves
+  // the gate chain end-to-end without false-flagging.
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6" data-testid="live-trade-diagnose">
       <LaneCard lane="crypto" notional={25} />
-      <LaneCard lane="equity" notional={100} />
+      <LaneCard lane="equity" notional={5} />
     </div>
   );
 }

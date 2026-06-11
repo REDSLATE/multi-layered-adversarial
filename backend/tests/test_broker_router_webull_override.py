@@ -13,6 +13,7 @@ sys.path.insert(0, "/app/backend")
 import pytest
 
 from shared import broker_router
+from shared.broker.webull import reset_webull_adapter_for_tests
 from shared.broker_router import (
     ADAPTER_LOADERS,
     ROUTE_OVERRIDE_BROKERS,
@@ -40,7 +41,12 @@ def _isolate_env(monkeypatch):
     # exercising the lane/override gate, not the MC seal which has
     # its own dedicated coverage.
     monkeypatch.setenv("RISEDUAL_BROKER_REQUIRE_MC_RECEIPT", "false")
+    # Reset the process-wide Webull adapter singleton so a prior test
+    # (that ran with real creds in env) can't leak a live adapter
+    # into these env-emptied tests.
+    reset_webull_adapter_for_tests()
     yield
+    reset_webull_adapter_for_tests()
 
 
 def test_webull_is_registered_in_loaders():

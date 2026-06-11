@@ -21,7 +21,6 @@ from typing import Optional
 
 from db import db
 from namespaces import EXECUTION_RECEIPTS
-from shared.broker.alpaca_routes import get_alpaca_adapter
 # Per-lane caps — each lane's per-order ceiling lives in its own
 # subpackage so a crypto-only change doesn't touch the equity tree.
 # (2026-02-16 reorg.)
@@ -116,10 +115,20 @@ async def daily_spend_usd(window_hours: int = 24) -> float:
 
 
 async def open_notional_usd() -> float:
-    """Sum of |market_value| across live positions at the broker. Returns
-    0.0 if no broker is connected (we still let the per-order/per-day
-    caps work in dry-run mode)."""
-    adapter = await get_alpaca_adapter()
+    """Sum of |market_value| across live positions at the equity broker.
+    Returns 0.0 if no broker is connected (we still let the
+    per-order/per-day caps work in dry-run mode).
+
+    2026-02-19: post-Alpaca-deprecation this routes through the lane
+    adapter (Webull). Crypto positions are sized by the crypto cap
+    stack in `shared/crypto/exposure_caps.py`; here we only count
+    equity exposure for the global open-notional ceiling.
+    """
+    try:
+        from shared.broker_router import adapter_for_lane  # noqa: WPS433
+        adapter = await adapter_for_lane("equity")
+    except Exception:  # noqa: BLE001
+        return 0.0
     if not adapter:
         return 0.0
     try:

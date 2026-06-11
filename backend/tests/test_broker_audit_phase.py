@@ -104,49 +104,10 @@ async def test_assert_not_frozen_raises_when_frozen():
 
 
 # ───────────────────────── adapter receipt requirement ─────────────────────────
-
-
-def test_alpaca_adapter_refuses_without_mc_receipt():
-    """AlpacaPaperAdapter.submit_market_order must raise BypassBlocked
-    when no mc_receipt is attached. We don't need real Alpaca creds —
-    the receipt check fires before the SDK call."""
-    from shared.broker.alpaca import AlpacaPaperAdapter, BypassBlocked
-
-    # Construct an adapter with dummy creds. The receipt check is the
-    # very first guard in submit_market_order, so we never reach the
-    # Alpaca SDK call.
-    a = AlpacaPaperAdapter(api_key="x" * 20, secret_key="y" * 20)
-
-    import asyncio as _asyncio
-    with pytest.raises(BypassBlocked):
-        _asyncio.get_event_loop().run_until_complete(
-            a.submit_market_order(
-                symbol="AAPL",
-                notional=10.0,
-                side="BUY",
-                client_order_id="tripwire-1",
-                mc_receipt=None,
-            ),
-        )
-
-
-def test_alpaca_adapter_refuses_malformed_receipt():
-    """A dict-shaped receipt missing required fields is still bypass."""
-    from shared.broker.alpaca import AlpacaPaperAdapter, BypassBlocked
-
-    a = AlpacaPaperAdapter(api_key="x" * 20, secret_key="y" * 20)
-
-    import asyncio as _asyncio
-    with pytest.raises(BypassBlocked):
-        _asyncio.get_event_loop().run_until_complete(
-            a.submit_market_order(
-                symbol="AAPL",
-                notional=10.0,
-                side="BUY",
-                client_order_id="tripwire-2",
-                mc_receipt={"some": "garbage"},
-            ),
-        )
+#
+# Alpaca adapter receipt-requirement tests were removed 2026-02-19 along
+# with the Alpaca broker. The equivalent invariant on Webull is exercised
+# by `tests/test_webull_adapter_sdk_signatures.py`.
 
 
 def test_kraken_adapter_refuses_without_mc_receipt():

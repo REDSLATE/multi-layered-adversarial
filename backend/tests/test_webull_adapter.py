@@ -24,6 +24,7 @@ from shared.broker.webull import (
     WebullAdapter,
     _lane_for_symbol,
     get_webull_adapter,
+    reset_webull_adapter_for_tests,
 )
 from shared.broker.webull_caps import WebullCapBlocked
 
@@ -40,7 +41,12 @@ def _isolate_env(monkeypatch):
         "WEBULL_MAX_NOTIONAL_USD",
     ):
         monkeypatch.delenv(key, raising=False)
+    # Reset the process-wide adapter singleton so a prior test that
+    # built one (e.g., with the real env vars loaded by python-dotenv
+    # at import time) can't leak into the env-isolated tests below.
+    reset_webull_adapter_for_tests()
     yield
+    reset_webull_adapter_for_tests()
 
 
 # ── symbol lane classification ─────────────────────────────────────

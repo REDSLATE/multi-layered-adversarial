@@ -629,11 +629,11 @@ export default function Intents() {
       <SectionDivider
         title="Equity Lane"
         icon={Buildings}
-        sub="Public.com-routed equity execution. Seat assignment lives in Quick Seat Switches above."
+        sub="Webull-routed equity execution. Public.com and Alpaca are deprecated. Seat assignment lives in Quick Seat Switches above."
         testid="intents-section-equity"
         rightSlot={<LaneRoutingPill lane="equity" />}
       />
-      <PublicConnect />
+      <WebullEntitlementsCard />
 
       <SectionDivider
         title="Crypto Lane"
@@ -645,9 +645,6 @@ export default function Intents() {
       <KrakenBrokerTile />
       <div className="mt-3">
         <BrokerSelectionMenu />
-      </div>
-      <div className="mt-3">
-        <WebullEntitlementsCard />
       </div>
       <div className="mt-3">
         <ParabolicPhaseStrip />

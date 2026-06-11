@@ -112,18 +112,18 @@ async def _fetch_price(symbol: str, lane: str) -> Optional[float]:
             return None
     # equity
     try:
-        from shared.broker.alpaca_routes import get_alpaca_adapter  # noqa: WPS433
-        adapter = await get_alpaca_adapter()
+        from shared.broker_router import adapter_for_lane  # noqa: WPS433
+        adapter = await adapter_for_lane("equity")
         if adapter is None:
             return None
-        # Alpaca SDK get_latest_trade is the lightest call.
+        # Some adapters expose `get_latest_trade`; fall back to
+        # list_positions current_price when the surface isn't available.
         try:
             trade = await adapter.get_latest_trade(symbol)
             if trade and trade.get("price"):
                 return float(trade["price"])
         except AttributeError:
             pass
-        # Fallback: list_positions has current_price for positions only.
         positions = await adapter.list_positions()
         for p in positions or []:
             if (p.get("symbol") or "").upper() == symbol.upper():
