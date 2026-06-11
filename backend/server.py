@@ -243,12 +243,28 @@ async def lifespan(app: FastAPI):
         except Exception as e:  # noqa: BLE001
             logger.warning("broker_fills poller start failed: %s", e)
     # Auto-router — picks up council-approved intents and submits them to
-    # the broker without operator clicks. Paper trading only; gated by
-    # the same gate chain as /execution/submit.
+    # the broker without operator clicks. Gated by the same gate chain
+    # as /execution/submit.
+    #
+    # Doctrine pin (2026-02-19): the legacy gate on `alpaca_credentials`
+    # was a 2025 holdover. Alpaca is no longer the active equity broker
+    # (Public.com is, with Webull as a sized-down live drop). Starting
+    # the auto-router gated on that doc meant the loop SILENTLY never
+    # ran on any prod that wasn't seeded with Alpaca creds — exactly the
+    # 30-BUY-intents-sitting-at-dry_run_passed symptom we just hit.
+    #
+    # Correct behavior: always start the auto-router if the env flag
+    # `AUTO_ROUTER_ENABLED=true`. The runtime kill switch
+    # (is_trading_enabled()) inside `_route_one` still short-circuits
+    # every tick when the operator pauses via the master switch, so
+    # this is safe.
+    start_auto_router_if_enabled()
+    logger.info("Auto-router started")
+    # Keep Alpaca's pinger conditional — only matters if Alpaca creds
+    # exist (zero-cost no-op otherwise, but the credential check is
+    # still useful diagnostic noise reduction).
     alpaca_doc = await db["alpaca_credentials"].find_one({"_id": "singleton"}, {"_id": 1})
     if alpaca_doc:
-        start_auto_router_if_enabled()
-        logger.info("Auto-router started")
         # Symmetric to Kraken's poller: keeps `last_ping_at` fresh so the
         # operator's broker-health tile never sees the 17h-staleness
         # incident again (2026-05-30). Safe no-op when creds missing.
