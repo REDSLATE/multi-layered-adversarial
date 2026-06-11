@@ -5,6 +5,7 @@ import SeatRosterStrip from "@/components/SeatRosterStrip";
 import QuickSeatSwitches from "@/components/QuickSeatSwitches";
 import PublicConnect from "@/components/PublicConnect";
 import KrakenBrokerTile from "@/components/KrakenBrokerTile";
+import WebullEntitlementsCard from "@/components/WebullEntitlementsCard";
 import DoctrineStrip from "@/components/DoctrineStrip";
 import AutoRetireStrip from "@/components/AutoRetireStrip";
 import DoctrineHealthPanel from "@/components/DoctrineHealthPanel";
@@ -625,6 +626,9 @@ export default function Intents() {
         testid="intents-section-crypto"
       />
       <KrakenBrokerTile />
+      <div className="mt-3">
+        <WebullEntitlementsCard />
+      </div>
 
       {/* Live exposure caps — fetched from /api/config/exposure-caps so
           UI never drifts from the doctrine surface. */}

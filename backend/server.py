@@ -157,6 +157,7 @@ from routes.intent_summary import router as intent_summary_router
 from routes.mc_connection_stream import router as mc_connection_stream_router
 from routes.position_misread_admin import router as position_misread_admin_router
 from routes.intent_origin import router as intent_origin_router
+from routes.webull_admin import router as webull_admin_router
 
 
 
@@ -725,6 +726,7 @@ api_router.include_router(runtime_token_health_router)
 api_router.include_router(alpha_vantage_admin_router)
 api_router.include_router(broker_lane_admin_router)
 api_router.include_router(intent_origin_router)
+api_router.include_router(webull_admin_router)
 
 app.include_router(api_router)
 

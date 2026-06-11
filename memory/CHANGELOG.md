@@ -1,3 +1,31 @@
+## 2026-06-11 — Webull → equity doctrine pipeline live
+
+**Operator directive:** Get the 5 doctrines ready for tomorrow's open.
+
+**Built:**
+- `shared/market_data/webull_quotes.py` — cached SDK wrapper
+- `shared/snapshot_enrich/equity_doctrine.py` — populates the
+  10 doctrine fields the equity strategies need from Webull data
+- `routes/webull_admin.py` — `/api/admin/webull/entitlements` +
+  `/api/admin/webull/snapshot/{symbol}` debug paths
+- `components/WebullEntitlementsCard.jsx` — live entitlement tile
+  on the Intents page (60s poll, ✅/❌ per data class)
+- Hook in `external/brains/runner.py::_evaluate_and_post` so all
+  4 brains see the enriched snapshot on every equity tick
+
+**Verified live (02:08 UTC):**
+- AAPL snapshot returns price $291.58, spread 20 bps, gap +0.35%
+- AAL → small_account_sidecar_v1, NVDA → large_cap_equity_v1
+- All 4 brains posting equity intents with `webull_enriched=True`
+- Entitlements probe shows us_stock_quotes ✅ / us_crypto ✅ /
+  us_option_quotes ❌ (OPRA $4.99/mo deferred)
+
+**Tests:** 11 new green (`test_equity_doctrine_enricher.py`) +
+128 / 128 affected Webull + doctrine suites green.
+
+---
+
+
 ## 2026-06-11 — Webull rule-based symbol expansion stabilized
 
 **Problem.** Last session shipped rule-based Webull symbol resolution

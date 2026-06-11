@@ -1,3 +1,100 @@
+## 2026-06-11 (pass 19) — Equity doctrines ready for tomorrow's open
+
+### Operator directive
+> *"Just get them where they are ready for tomorrow."* (referring to
+> the 5 doctrines stuck at LEARNING 0/100 — Small-Account Generic,
+> Gap-and-Go v1, Micro Pullback v1, Large-Cap Equity, Crypto Generic.)
+
+### Diagnosis
+All 5 doctrines had working sidecar logic but the equity ones were
+*starving for snapshot fields*. Crypto fires because Kraken streams
+OHLC. Equity sat idle: `_build_snapshot()` in the brain runner
+produces a generic trend/volatility/pattern dict but doesn't
+populate `gap_pct`, `relative_volume`, `market_cap_band`,
+`momentum_active`, `pullback_low`, etc. — the exact fields the
+doctrine scoring requires. With Webull equity quotes flipped on
+this evening, the data source is finally there.
+
+### Shipped
+1. **`shared/market_data/webull_quotes.py`** — sync REST client over
+   the Webull SDK with TTL cache (snapshot 5s, bars 30s, screener
+   60s, instrument 1h, entitlements 60s). Singleton, fail-soft.
+   Probes entitlements by hitting each gated endpoint and inferring
+   from 401 vs payload.
+
+2. **`shared/snapshot_enrich/equity_doctrine.py`** — new enricher
+   that takes the base snapshot and populates doctrine fields:
+   - `price`, `spread_bps`, `gap_pct`, `change_ratio`, `volume`
+     (Webull `market_data.get_snapshot`)
+   - `market_cap_band` (pinned mega-cap roster; default `small`)
+   - `fractionable`, `shortable`, `exchange_code`
+     (Webull `instrument.get_instrument`)
+   - `relative_volume` (Webull `screener.get_most_active`)
+   - `momentum_active`, `pullback_low`, `no_nearby_resistance`,
+     `pattern` (Webull M1 bars `market_data.get_history_bar`)
+   - `near_half_or_whole_dollar`, `hour_et` (pure derivations)
+   Fail-soft: any error returns base snapshot unchanged.
+
+3. **`external/brains/runner.py`** — call enricher right after
+   `_build_snapshot()` for equity lane only. Crypto path untouched.
+
+4. **`routes/webull_admin.py`** + **`WebullEntitlementsCard.jsx`** —
+   operator-facing entitlement status card on the Intents page.
+   Polls `/api/admin/webull/entitlements` every 60s. Shows
+   ✅ live / ❌ not subscribed per data class. Lets operator watch
+   any future subscription click-through propagate without my help.
+
+5. **`/api/admin/webull/snapshot/{symbol}`** — debug endpoint
+   returning the enriched snapshot for any ticker. Useful for
+   pre-open sanity checks.
+
+### Live verification (2026-06-11 02:08 UTC)
+| Ticker | mcb | doctrine_version | gap_pct | rvol | qual |
+|---|---|---|---|---|---|
+| AAL | small | small_account_sidecar_v1 | -4.76% | 1.44 | REJECT |
+| NVDA | mega | large_cap_equity_v1 | -3.73% | 0.90 | REJECT |
+
+All 4 brains posted NVDA equity intents at 02:05 UTC carrying the
+enriched snapshot (`webull_enriched=True`). Doctrines correctly route
+mega → large_cap_equity_v1, small → small_account_sidecar_v1.
+Current REJECTs are real (afterhours, no gappers, wide spreads) —
+tomorrow at 9:30am ET the same pipeline will see fresh gappers
+with positive gap_pct, rvol≥5x, and tight spreads, producing
+A/B quality and unblocking the trade loop.
+
+### Entitlement state (operator must NOT touch until ready)
+| Class | Status | Cost |
+|---|---|---|
+| Nasdaq Basic - Non Display (US equity L1) | ✅ Free Authorized | $0 (expires 2027-06-10) |
+| US Crypto Spot | ✅ Bundled with base | $0 |
+| OPRA Real-Time Options | ❌ Not subscribed | $4.99/mo (deferred — no options-aware brain yet) |
+| Nasdaq TotalView (L2 depth) | ❌ Not subscribed | $135/mo (defer — bad ROI at $3-$10 caps) |
+
+### Tests
+- `tests/test_equity_doctrine_enricher.py` — 11 new, all green
+- 128 / 128 of the affected doctrine + Webull suites green
+- Pre-existing 6 timing flakes unchanged (not in this pass's surface)
+
+### What did NOT change
+- Doctrine code (strategy_doctrines, base_labels, lane_doctrine_router)
+- Intent ingest path (shared/intents.py)
+- Crypto lane (Kraken-driven, untouched)
+- Webull broker adapter (still armed for $3-$10 trades only)
+- Safety gates (still all live per operator directive)
+
+### Open items for tomorrow
+- Watch the Intents page at 9:30am ET — equity intents should pour in
+  with real gap/rvol/spread numbers and quality scores moving from
+  REJECT to B/A as setups appear.
+- LEARNING 0/100 counters won't tick until intents complete the
+  full ingest → execution → outcome loop. With Webull armed at
+  $3-$10 caps, the first equity fill of the day starts moving them.
+- If you decide to subscribe OPRA ($4.99/mo), the entitlement card
+  will flip the OPRA row from ❌ to ✅ within 60s of the click.
+
+---
+
+
 ## 2026-06-11 — Webull rule-based symbol expansion: tests green
 
 ### Operator directive

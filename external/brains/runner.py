@@ -1075,6 +1075,26 @@ class BrainRunner:
     ) -> None:
         technical = await self._fetch_technical(http, symbol)
         snapshot, setup_score = _build_snapshot(symbol, lane, technical)
+        # Doctrine (2026-06-11, operator directive): Webull-side
+        # enrichment for the equity lane so the strategy doctrines
+        # (gap_and_go_v1, micro_pullback_v1, large_cap_equity_v1) see
+        # the fields they actually require — gap_pct, relative_volume,
+        # market_cap_band, momentum_active, pullback_low, pattern.
+        # Without this, the equity doctrines starve and all 4 sit at
+        # LEARNING 0/100 indefinitely. Crypto lane uses Kraken via the
+        # existing technical pipeline so we don't touch it here.
+        # Fail-soft: any error returns the base snapshot unchanged.
+        if lane == "equity":
+            try:
+                from shared.snapshot_enrich.equity_doctrine import (  # noqa: WPS433
+                    enrich_equity_doctrine_snapshot,
+                )
+                snapshot = await enrich_equity_doctrine_snapshot(symbol, snapshot)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "webull enrich skipped brain=%s sym=%s err=%s",
+                    self.brain_id, symbol, exc,
+                )
         # Doctrine (2026-06-10, P1): replace the hardcoded "calm"
         # market_regime with the regime computed at the start of this
         # tick from the universe scan (`_rank_universe`). The Camaro
