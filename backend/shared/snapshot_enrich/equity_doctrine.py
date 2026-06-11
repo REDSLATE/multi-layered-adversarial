@@ -270,6 +270,28 @@ def _enrich_sync(symbol: str, base: Dict[str, Any]) -> Dict[str, Any]:
         if pattern:
             out["pattern"] = pattern
 
+        # Parabolic-phase classification (operator directive 2026-06-11).
+        # Teaches the brains to read the PAVS-style spike-and-fade by
+        # stamping the phase + underlying velocity / VWAP-distance /
+        # RVOL-acceleration measurements. The phase translates to the
+        # existing `market_regime` slot so `base_labels.py` picks it up
+        # (and applies score deltas) without any further wiring.
+        from shared.snapshot_enrich.parabolic_phase import (  # noqa: WPS433
+            classify_parabolic_phase, regime_from_phase,
+        )
+        phase, measurements = classify_parabolic_phase(bars, current_price=price)
+        out["parabolic_phase"] = phase
+        out["velocity_1m"] = measurements["velocity_1m"]
+        out["velocity_5m"] = measurements["velocity_5m"]
+        out["vwap_distance_pct"] = measurements["vwap_distance_pct"]
+        out["rvol_acceleration"] = measurements["rvol_acceleration"]
+        out["peak_drop_pct"] = measurements["peak_drop_pct"]
+        regime = regime_from_phase(phase)
+        if regime:
+            # Override the cold-start "calm" only when phase is decisive.
+            # `unknown` / `neutral` leave the regime slot untouched.
+            out["market_regime"] = regime
+
     # Provenance — operator can filter "real_webull_data" vs cold-start
     out["webull_enriched"] = True
     out["real_market_data"] = True

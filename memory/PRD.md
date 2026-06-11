@@ -1,3 +1,91 @@
+## 2026-06-11 (pass 20) — Parabolic phase awareness: brains adapt to swings
+
+### Operator directive
+> Referencing the Warrior Trading PAVS chart (Day 3, Volatile & Hot
+> Market): *"How can we teach them to adjust to swings like the
+> candle sticks graph in the picture? … Stick with the 8% and adjust
+> to 20% when we have a stable run. Actually would like all 3 of them,
+> so long as it doesn't hinder trading."*
+
+### Shipped
+1. **`shared/snapshot_enrich/parabolic_phase.py`** — pure 4-phase
+   classifier (`accumulation | parabolic | topping | fade |
+   neutral | unknown`). Computes velocity_1m, velocity_5m,
+   vwap_distance_pct, rvol_acceleration, peak_drop_pct on Webull M1
+   bars. All thresholds env-tunable.
+
+2. **Equity enricher wiring** — stamps `parabolic_phase` +
+   measurement fields on the doctrine snapshot every tick and
+   translates phase → existing `market_regime` slot so the base-
+   labels regime logic picks it up without further wiring.
+
+3. **`base_labels.py` — continuous sizing via score deltas:**
+   - `accumulation` → +0.05 (full size, MARKET_GREEN_LIGHT bonus)
+   - `parabolic` → linear penalty: -0.10 at +8% velocity, scales to
+     -0.30 at +20%. Brain still ships intents but at progressively
+     smaller size as the move extends — exactly the "half size on
+     parabolic" Warrior playbook.
+   - `topping` → -0.25 (zero new longs; brain's regime-aware logic
+     flips to SELL bias on held positions)
+   - `fade` → -0.25 (exit-only on existing longs)
+   - **No hard blocks** — quality over quantity, sizing scales
+     continuously, brain keeps shipping.
+
+4. **Topping confirmation** — requires `TOPPING_RED_BAR_COUNT=2`
+   consecutive red bars AFTER ≥3 of the last 8 bars were green.
+   Configurable down to 1 if operator wants Ross Cameron's strict
+   first-red exit.
+
+5. **`/api/admin/parabolic/phases`** + **`ParabolicPhaseStrip.jsx`** —
+   operator-facing live map across the universe. Shows live counts
+   per phase + watchlist of parabolic/topping symbols with their
+   velocity and peak-drop measurements. Polls every 15s.
+
+### Env-tunable thresholds
+```
+PARABOLIC_5M_THRESHOLD_PCT=8.0     # graduate to 20.0 in stable mode
+PARABOLIC_VWAP_DIST_PCT=5.0
+PARABOLIC_RVOL_ACCEL=2.0
+TOPPING_RED_BAR_COUNT=2            # 1 for Ross Cameron strict mode
+FADE_DROP_FROM_PEAK_PCT=3.0
+```
+
+### Live verification (02:32 UTC)
+- AAPL classified `neutral` (correct — afterhours, velocity_5m=-0.27%,
+  rvol_acceleration=0.20)
+- 104 historical sidecars exist; new sidecars carry the parabolic
+  fields. Tomorrow at 9:30am ET when volume picks up, phases will
+  populate live across the 48-ticker universe.
+
+### Tests
+- `tests/test_parabolic_phase.py` — 10 new tests covering all 4
+  phases, env-tunable thresholds, fade-trumps-topping precedence,
+  measurement-always-populated invariant. All green.
+- 138 / 138 of the broader affected suites green (parabolic + Webull
+  + doctrine).
+
+### What did NOT change
+- No hard blocks introduced (operator directive: "doesn't hinder
+  trading"). All adjustments are continuous score deltas the
+  sizing-gate consumes as risk multipliers.
+- Crypto lane untouched. Brain core logic untouched (regime change
+  flows through existing brain-side logic that drops BUY confidence
+  and raises SELL when regime is "weak").
+- Safety gates still all live per operator standing directive.
+
+### Open follow-ons
+- Stable-run promotion: flip `PARABOLIC_5M_THRESHOLD_PCT=20.0` once
+  enough closed trades show the 8%-threshold version isn't catching
+  fades too late. Single env flip, no code change.
+- Explicit brain-side SELL emission for `topping`: currently relies
+  on regime→base_labels→score-drop→brain-confidence flow. If
+  observation shows brains aren't reliably flipping to SELL on
+  topping, a direct `urgent_exit` field on the snapshot could force
+  the behavior.
+
+---
+
+
 ## 2026-06-11 (pass 19) — Equity doctrines ready for tomorrow's open
 
 ### Operator directive

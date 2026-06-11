@@ -6,6 +6,7 @@ import QuickSeatSwitches from "@/components/QuickSeatSwitches";
 import PublicConnect from "@/components/PublicConnect";
 import KrakenBrokerTile from "@/components/KrakenBrokerTile";
 import WebullEntitlementsCard from "@/components/WebullEntitlementsCard";
+import ParabolicPhaseStrip from "@/components/ParabolicPhaseStrip";
 import DoctrineStrip from "@/components/DoctrineStrip";
 import AutoRetireStrip from "@/components/AutoRetireStrip";
 import DoctrineHealthPanel from "@/components/DoctrineHealthPanel";
@@ -628,6 +629,9 @@ export default function Intents() {
       <KrakenBrokerTile />
       <div className="mt-3">
         <WebullEntitlementsCard />
+      </div>
+      <div className="mt-3">
+        <ParabolicPhaseStrip />
       </div>
 
       {/* Live exposure caps — fetched from /api/config/exposure-caps so

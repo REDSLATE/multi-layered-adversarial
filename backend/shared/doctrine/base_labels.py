@@ -160,6 +160,36 @@ def build_doctrine_labels(snapshot: Dict[str, Any]) -> DoctrineLabels:
         labels.append("MARKET_WEAK_REDUCE_RISK")
         reasons.append("weak_market_regime")
 
+    # ── parabolic-phase adaptive sizing (2026-06-11 operator directive) ──
+    # Reads the parabolic_phase classifier output. We intentionally do NOT
+    # add a hard block on any phase — sizing scales continuously via
+    # score deltas so the brain still ships intents on parabolic moves,
+    # just at smaller size with tighter stops. Quality over quantity.
+    parabolic_phase = str(snapshot.get("parabolic_phase", "")).lower()
+    velocity_5m = float(snapshot.get("velocity_5m", 0.0))
+    if parabolic_phase == "accumulation":
+        score += 0.05
+        labels.append("ACCUMULATION_HEALTHY_EXPANSION")
+    elif parabolic_phase == "parabolic":
+        # Continuous scale-down: at +8% velocity → -0.10, at +20% → -0.30
+        # Linear clamp keeps the brain emitting but at progressively
+        # smaller size as the move extends past the fade-risk threshold.
+        v = max(0.0, velocity_5m - 8.0)  # excess above threshold
+        penalty = min(0.30, 0.10 + (v / 12.0) * 0.20)
+        score -= penalty
+        labels.append("PARABOLIC_LATE_ENTRY_RISK")
+        reasons.append(f"parabolic_5m_velocity_{velocity_5m:.1f}pct")
+    elif parabolic_phase == "topping":
+        # Two-red-bar confirmation already happened in the classifier.
+        # Score is hit hard — brains drop BUY confidence, raise SELL.
+        score -= 0.25
+        labels.append("TOPPING_DISTRIBUTION_STARTED")
+        reasons.append("topping_two_red_after_run")
+    elif parabolic_phase == "fade":
+        score -= 0.25
+        labels.append("FADE_LOWER_HIGHS_LOWER_LOWS")
+        reasons.append("fade_off_session_peak")
+
     # ── spread / liquidity ─────────────────────────────────────────
     if spread_bps <= 75.0:
         labels.append("SPREAD_ACCEPTABLE")

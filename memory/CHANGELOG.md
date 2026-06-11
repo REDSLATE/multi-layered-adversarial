@@ -1,3 +1,37 @@
+## 2026-06-11 (pass 20) — Parabolic phase classifier + adaptive sizing
+
+**Operator directive:** Teach the brains to read swings like the
+Warrior Trading PAVS chart. Quality over quantity, no hard blocks.
+
+**Built:**
+- `shared/snapshot_enrich/parabolic_phase.py` — pure 4-phase
+  classifier (accumulation / parabolic / topping / fade) on Webull
+  M1 bars. All thresholds env-tunable.
+- Equity enricher stamps `parabolic_phase` + velocity_1m, velocity_5m,
+  vwap_distance_pct, rvol_acceleration, peak_drop_pct.
+- `base_labels.py` — continuous score deltas per phase:
+  accumulation +0.05, parabolic linear -0.10 to -0.30 (8% → 20%),
+  topping -0.25, fade -0.25. No hard blocks.
+- Topping confirmed at 2 consecutive red bars after a green run
+  (configurable to 1 for Ross Cameron strict mode).
+- `/api/admin/parabolic/phases` + `ParabolicPhaseStrip.jsx`
+  operator strip showing live phase map.
+
+**Tests:** 10 new in `test_parabolic_phase.py` + 138 / 138 broader
+affected suites green.
+
+**Tunable env knobs:**
+```
+PARABOLIC_5M_THRESHOLD_PCT=8.0     # 20.0 in stable mode
+PARABOLIC_VWAP_DIST_PCT=5.0
+PARABOLIC_RVOL_ACCEL=2.0
+TOPPING_RED_BAR_COUNT=2
+FADE_DROP_FROM_PEAK_PCT=3.0
+```
+
+---
+
+
 ## 2026-06-11 — Webull → equity doctrine pipeline live
 
 **Operator directive:** Get the 5 doctrines ready for tomorrow's open.
