@@ -1,3 +1,33 @@
+## 2026-02-19 — Webull adapter rewritten to match real SDK shape
+
+Operator deployed the earlier auto-router + 20s-timeout fix at 1:56pm CST and a manual $3 BUY on PLTR still 502'd. Live debugging surfaced the real root cause behind every 502 today.
+
+**Triple-stack of bugs in `shared/broker/webull.py`** (all fixed):
+
+1. **SDK signature mismatch** — the adapter was written for a different Webull SDK version than what's installed. Every order called `place_order(payload_dict)` against an SDK whose real signature is `place_order(account_id, qty, instrument_id, side, client_order_id, order_type, extended_hours_trading, tif, ...)` (positional, `qty` must be a whole integer). The wrong-shape call raised `TypeError` deep inside the executor thread, the thread wedged, the request hung past the Cloudflare gateway timeout → HTTP 502.
+   - Fixed: `submit_market_order` now uses `OrderSide.BUY/SELL`, `OrderType.MARKET`, `OrderTIF.DAY` enums; converts notional → `int(notional // last_price)`; looks up `instrument_id` via the quotes client (cached per symbol); re-validates the effective notional against the cap band after the qty snap; surfaces `code != 200` envelopes as `RuntimeError` instead of hanging.
+   - Same fix applied to `get_account` (`get_account_balance` not `get_account_detail`), `get_order` (`query_order_detail` not `get_order_detail`), `list_open_orders` (`list_today_orders` with required `account_id`), `cancel_order` (`(account_id, client_order_id)` positional), `list_positions` (`account_v2.get_account_position_details`).
+
+2. **Per-order `ApiClient` construction** — burned the SDK's per-instance token cache and sent it into a `_check_token_enable result is False` hot loop on every order, wedging the executor thread for ~25s. Fixed: process-wide singleton (`_ADAPTER` + `_ADAPTER_LOCK`) so the token stays warm. Plus the noisy SDK loggers (`webull.core.http.initializer.*`) are raised to WARNING at module import so the supervisor log stays readable.
+
+3. **Wrong sub-account picked** — `_resolve_account_id` returned `accounts[0]`. Real Webull profiles have multiple sub-accounts (Margin, Cash, Events, Futures, Smart Advisor, …). On the operator's profile `accounts[0]` is the Futures sub (zero buying power). Fixed: picker now prefers CASH-type, then MARGIN, then first-in-list; plus a `WEBULL_ACCOUNT_ID` env override for explicit pin.
+
+**Live verification (preview env)**:
+- `get_account()` and `list_positions()` both return cleanly in < 0.4s, no 502, no event-loop block.
+- Pinned funded account `5NC19854` (`F8ISIGG74NU0C495ILNGG99D29`) still returns $0 cash / $0 buying_power / 0 positions even though Webull's app shows $777.68 Total Account Value. Operator confirmed: this matches Webull's own per-sub-account display ($0 across all visible subs). **The $777.68 lives outside this SDK's view** — likely unsettled funds (T+1 stock settlement) or a managed/advisor sub-account class. Operator-side action: wait for settlement OR contact Webull, then re-test.
+
+**New regression tests** (88/88 pass):
+- `tests/test_webull_adapter_sdk_signatures.py` — 7 source-level tripwires (`OrderSide/Type/TIF` enums, `get_account_balance`, `query_order_detail`, `get_account_position_details`, singleton, account picker, log silencing) so any future PR that reverts to the broken contract fails CI.
+- `tests/test_webull_adapter_non_blocking.py` — stubs updated to match the new SDK shape; still pins the `run_in_executor` contract.
+
+**Operator action items for production redeploy**:
+1. Set `WEBULL_ACCOUNT_ID` in production `.env` to the internal id of your funded sub-account (long alphanumeric like `F8ISIGG74NU0C495ILNGG99D29` — get it via Webull profile or by running `tc.account_v2.get_account_list()`).
+2. Redeploy. The adapter will now use the correct SDK signatures + the right sub-account.
+3. Once cash buying power is non-zero on the funded sub-account, $3 fractional buy via `place_order_v2` is the next layer to wire (current adapter is whole-share via `place_order` v1 — fractional support is a follow-up that uses `place_order_v2(account_id, stock_order_dict)`).
+
+---
+
+
 ## 2026-02-19 — Manual submit 20s timeout ceiling (post-deploy HTTP 502 hotfix)
 
 Operator reported HTTP 502 on a dashboard SUBMIT for AAPL at 2:22pm CST, 26 minutes after deploying the Webull/auto-router fix. The 502 reproduced even though the Webull SDK calls were already off-loop via `run_in_executor`.

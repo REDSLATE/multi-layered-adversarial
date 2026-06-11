@@ -38,18 +38,23 @@ class _StubResponse:
 
 class _StubAccountV2:
     def get_account_list(self):
-        # Simulate a slow HTTPS round-trip — this is what blocks the
-        # event loop when called without run_in_executor.
         time.sleep(0.5)
-        return _StubResponse({"code": "200", "data": [{"accountId": "ACC-1"}]})
+        return _StubResponse([{"account_id": "ACC-1", "account_number": "TEST",
+                               "account_type": "CASH"}])
 
-    def get_account_detail(self, account_id):  # noqa: ARG002
+    def get_account_balance(self, account_id):  # noqa: ARG002
+        # 2026-02-19: real SDK method name. Stub matches the new
+        # signature so the non-blocking contract test exercises the
+        # corrected adapter path.
         time.sleep(0.5)
         return _StubResponse({"data": {"cashBalance": 1000.0, "buyingPower": 1000.0}})
 
 
 class _StubOrderV1:
-    def place_order(self, payload):  # noqa: ARG002
+    def place_order(self, account_id, qty, instrument_id, side,
+                    client_order_id, order_type, extended_hours_trading,
+                    tif, *args, **kwargs):  # noqa: ARG002
+        # 2026-02-19: positional signature matches the installed SDK.
         time.sleep(0.5)
         return _StubResponse({"data": {"orderId": "ORD-1", "status": "SUBMITTED"}})
 
@@ -73,6 +78,11 @@ def _build_stub_adapter(monkeypatch):
     quota."""
     adapter = WebullAdapter(api_client=object(), account_id="ACC-1")
     monkeypatch.setattr(adapter, "_trade", lambda: _StubTradeClient())
+    # Stub the instrument-lookup so submit_market_order doesn't reach
+    # the live quotes client during the non-blocking smoke test.
+    async def _fake_instrument(self, symbol):  # noqa: ARG001
+        return ("12345", 4.50, False)
+    monkeypatch.setattr(WebullAdapter, "_resolve_instrument_id", _fake_instrument)
     return adapter
 
 
