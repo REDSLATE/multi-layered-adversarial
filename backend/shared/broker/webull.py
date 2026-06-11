@@ -31,6 +31,17 @@ Doctrine (2026-06-10, operator-pinned):
   so the event loop stays responsive while the SDK does its
   synchronous HTTPS round-trip on a worker thread.
 
+2026-02-19 (rev 2) — Adapter singleton + SDK log quiet:
+  The Webull SDK caches its OAuth token on the ApiClient. Constructing
+  a fresh ApiClient per order (the previous pattern) burned the
+  token cache, sending the SDK into a `_check_token_enable result is
+  False` hot loop that wedged the executor thread and produced an
+  HTTP 502 even with the executor wrapping in place. The adapter is
+  now a process-wide singleton (`_ADAPTER`, see factory below) so the
+  token stays warm across orders. The same module also raises the
+  Webull SDK's `client_initializer` logger to WARNING so the INFO-level
+  token-check chatter doesn't drown the supervisor logs.
+
 If `webull-openapi-python-sdk` isn't installed in the env, this module
 imports cleanly but `get_webull_adapter()` returns None — which maps
 to NO_TRADE at the router. Fail-closed.
@@ -40,8 +51,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import uuid
 from typing import Any, Optional
+
+# 2026-02-19 — Quiet the Webull SDK's INFO-level token-check chatter
+# so the operator can actually see request/response lines in the
+# supervisor logs. The SDK logs `_check_token_enable result is False`
+# every time it probes its internal token cache — which is many
+# times per order. Raising the threshold to WARNING preserves real
+# errors while removing the noise.
+for _noisy in (
+    "webull.core.http.initializer.client_initializer",
+    "webull.core.http.initializer",
+    "webull.core.client",
+):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 from shared.broker.base import (
     BrokerAccount, BrokerAdapter, BrokerOrder, BrokerPosition,
@@ -486,6 +511,25 @@ class WebullAdapter(BrokerAdapter):
 
 # ─────────────────────── factory ───────────────────────
 
+# 2026-02-19 — Process-wide singleton. Constructing a fresh `ApiClient`
+# on every order put the Webull SDK into a token-refresh spin (the
+# SDK's `_check_token_enable` cache is per-ApiClient; a brand-new
+# instance has nothing cached, hits a hot loop in
+# `client_initializer`, burns the executor thread for 25+ seconds,
+# and the request comes back as a Cloudflare 502). The quotes-side
+# code (`market_data/webull_quotes.py`) singletons its ApiClient for
+# the same reason; this mirrors that pattern.
+_ADAPTER: Optional[WebullAdapter] = None
+_ADAPTER_LOCK = threading.Lock()
+
+
+def reset_webull_adapter_for_tests() -> None:
+    """Tests rebind the singleton. Production never calls this."""
+    global _ADAPTER
+    with _ADAPTER_LOCK:
+        _ADAPTER = None
+
+
 async def get_webull_adapter() -> Optional[WebullAdapter]:
     """Build a `WebullAdapter` from env vars, or return None.
 
@@ -500,16 +544,23 @@ async def get_webull_adapter() -> Optional[WebullAdapter]:
 
     Mirrors `_get_public_adapter`'s shape exactly so the loader
     registry in broker_router.py can call it the same way.
+
+    2026-02-19: process-wide singleton (see module-level note). The
+    same ApiClient is reused across every order so the SDK's token
+    cache stays warm. If creds change, restart the pod or call
+    `reset_webull_adapter_for_tests()` from a test.
     """
+    global _ADAPTER
+    if not is_webull_armed():
+        # When ARMED flips off mid-session we DO NOT reuse a cached
+        # client — return None so the route log shows "not configured".
+        return None
+    if _ADAPTER is not None:
+        return _ADAPTER
+
     app_key = (os.environ.get("WEBULL_APP_KEY") or "").strip()
     app_secret = (os.environ.get("WEBULL_APP_SECRET") or "").strip()
     if not app_key or not app_secret:
-        return None
-    if not is_webull_armed():
-        # Cleanly disabled — return None so the operator sees
-        # "broker not configured" instead of "armed gate refused"
-        # in the route log. The cap evaluator surfaces the latter
-        # message at the router level if anything tries to bypass.
         return None
 
     region_id = (os.environ.get("WEBULL_REGION_ID") or "us").strip()
@@ -523,12 +574,21 @@ async def get_webull_adapter() -> Optional[WebullAdapter]:
         )
         return None
 
-    try:
-        api_client = ApiClient(app_key, app_secret, region_id)
-        if environment == "uat":
-            api_client.add_endpoint(region_id, "us-openapi-alb.uat.webullbroker.com")
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Webull ApiClient construction failed: %s", e)
-        return None
-
-    return WebullAdapter(api_client=api_client)
+    with _ADAPTER_LOCK:
+        # Double-checked locking — another coroutine may have built it
+        # while we were waiting on the lock.
+        if _ADAPTER is not None:
+            return _ADAPTER
+        try:
+            api_client = ApiClient(app_key, app_secret, region_id)
+            if environment == "uat":
+                api_client.add_endpoint(region_id, "us-openapi-alb.uat.webullbroker.com")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Webull ApiClient construction failed: %s", e)
+            return None
+        _ADAPTER = WebullAdapter(api_client=api_client)
+        logger.info(
+            "Webull adapter singleton initialized region=%s environment=%s",
+            region_id, environment,
+        )
+        return _ADAPTER
