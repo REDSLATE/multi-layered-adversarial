@@ -1,3 +1,23 @@
+## 2026-02-19 — Doctrine Training Export + Eval Suite
+
+Adapted the useful pieces of the operator-uploaded "Trading Stack Trainer" reference. **Discarded** the textbook `KNOWLEDGE_BASE` (would re-introduce drift). **Kept** the pair-generation and eval-scoring patterns, retargeted at our live `DOCTRINE_CARDS`.
+
+**Backend**
+- `routes/doctrine_training_export.py` — pair builders (qa / rule / fields / code / comparison) all pull from `DOCTRINE_CARDS` + `inspect.getsource(fn)`.
+  - `GET /api/admin/doctrine-training/preview` — JSON inspection
+  - `GET /api/admin/doctrine-training/jsonl` — streamed JSONL download (OpenAI/Anthropic chat fine-tune format)
+  - `GET /api/admin/doctrine-training/system-prompt`
+- `routes/doctrine_eval.py` — auto-generates eval questions from each card's `entries` / `exits` / `size_modifier_notes` / `snapshot_fields_read`. Keyword-overlap scorer.
+  - `GET /api/admin/doctrine-eval/questions[?strategy_id=...]`
+  - `POST /api/admin/doctrine-eval/score {eval_id, response}`
+- 19 new tests in `tests/test_doctrine_training_export.py` (all green).
+
+**Frontend**
+- `pages/DoctrineReference.jsx` — added `TrainingExportBlock` (download button) + `EvalBlock` (question picker, response textarea, live score with matched / missed keyword breakdown).
+
+**Anti-drift contract preserved**: training corpus and eval questions both derive 100% from the same `DOCTRINE_CARDS` registry that the CI integrity test already guards.
+
+
 ## 2026-02-19 — Live Doctrine Reference shipped
 
 Replaced the static/hallucination-prone "Tutor" concept with a live, code-driven operator reference. Cards are generated directly from the doctrine modules and a CI test guarantees zero drift between cards and code.

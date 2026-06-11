@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/ui-bits";
-import { BookOpen } from "@phosphor-icons/react";
+import { BookOpen, Download, CheckCircle } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 
 const LANES = ["all", "equity", "universal"];
@@ -126,6 +126,202 @@ function LanePill({ value, current, onClick }) {
   );
 }
 
+function TrainingExportBlock({ token, strategyIds }) {
+  const apiBase = `${process.env.REACT_APP_BACKEND_URL}/api/admin/doctrine-training`;
+  const [busy, setBusy] = useState(false);
+
+  const download = async () => {
+    setBusy(true);
+    try {
+      const resp = await fetch(`${apiBase}/jsonl`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `risedual_doctrine_corpus_${new Date().toISOString().slice(0, 10)}.jsonl`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      alert(`Export failed: ${e.message || e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="mb-4 p-3 border border-rd-border bg-rd-bg2 flex items-center justify-between flex-wrap gap-3"
+      data-testid="doctrine-training-block"
+    >
+      <div>
+        <div className="text-[10px] font-mono uppercase tracking-widest text-rd-dim">
+          Fine-tune Corpus
+        </div>
+        <div className="text-[12px] text-rd-text mt-0.5">
+          JSONL training pairs built from {strategyIds.length} live cards
+          (q&amp;a, rules, fields, code, comparisons). Same anti-drift contract
+          — code is the only source.
+        </div>
+      </div>
+      <button
+        onClick={download}
+        disabled={busy}
+        data-testid="doctrine-training-download"
+        className="flex items-center gap-2 px-3 py-1.5 text-[11px] font-mono uppercase tracking-wider border border-rd-text text-rd-text hover:bg-rd-text hover:text-rd-bg transition-colors disabled:opacity-50"
+      >
+        <Download size={14} />
+        {busy ? "Building…" : "Download JSONL"}
+      </button>
+    </div>
+  );
+}
+
+function EvalBlock({ token }) {
+  const apiBase = `${process.env.REACT_APP_BACKEND_URL}/api/admin/doctrine-eval`;
+  const [questions, setQuestions] = useState([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [response, setResponse] = useState("");
+  const [scoreResult, setScoreResult] = useState(null);
+  const [scoring, setScoring] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`${apiBase}/questions`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const j = await r.json();
+        if (!cancelled) {
+          setQuestions(j.questions || []);
+          if (j.questions?.length && !selectedId) {
+            setSelectedId(j.questions[0].id);
+          }
+        }
+      } catch {
+        /* noop */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  const selected = questions.find((q) => q.id === selectedId);
+
+  const runScore = async () => {
+    if (!selected) return;
+    setScoring(true);
+    setScoreResult(null);
+    try {
+      const r = await fetch(`${apiBase}/score`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ eval_id: selected.id, response }),
+      });
+      const j = await r.json();
+      setScoreResult(j);
+    } catch (e) {
+      setScoreResult({ error: String(e.message || e) });
+    } finally {
+      setScoring(false);
+    }
+  };
+
+  if (questions.length === 0) return null;
+
+  return (
+    <div
+      className="mb-6 p-4 border border-rd-border bg-rd-bg2"
+      data-testid="doctrine-eval-block"
+    >
+      <div className="text-[10px] font-mono uppercase tracking-widest text-rd-dim mb-1">
+        Doctrine Eval
+      </div>
+      <div className="text-[11px] text-rd-dim mb-3">
+        Keyword-overlap scoring of an LLM response against expected card fields.
+        Questions are auto-generated from cards — they cannot go stale.
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr] gap-3 items-start">
+        <select
+          value={selectedId}
+          onChange={(e) => {
+            setSelectedId(e.target.value);
+            setScoreResult(null);
+          }}
+          data-testid="doctrine-eval-question-select"
+          className="bg-rd-bg border border-rd-border text-rd-text text-[11px] font-mono p-2"
+        >
+          {questions.map((q) => (
+            <option key={q.id} value={q.id}>
+              {q.id}
+            </option>
+          ))}
+        </select>
+        <div>
+          {selected && (
+            <div className="text-[12px] text-rd-text mb-2" data-testid="doctrine-eval-question-text">
+              {selected.q}
+            </div>
+          )}
+          <textarea
+            value={response}
+            onChange={(e) => setResponse(e.target.value)}
+            placeholder="Paste a brain / LLM response here…"
+            data-testid="doctrine-eval-response"
+            className="w-full h-20 bg-rd-bg border border-rd-border text-rd-text text-[11px] font-mono p-2 resize-y"
+          />
+          <div className="flex items-center gap-3 mt-2">
+            <button
+              onClick={runScore}
+              disabled={scoring || !response.trim()}
+              data-testid="doctrine-eval-score-btn"
+              className="flex items-center gap-2 px-3 py-1 text-[11px] font-mono uppercase tracking-wider border border-rd-text text-rd-text hover:bg-rd-text hover:text-rd-bg transition-colors disabled:opacity-50"
+            >
+              <CheckCircle size={14} />
+              {scoring ? "Scoring…" : "Score"}
+            </button>
+            {scoreResult && !scoreResult.error && (
+              <div
+                className="text-[11px] font-mono text-rd-text"
+                data-testid="doctrine-eval-score-result"
+              >
+                Score:{" "}
+                <span style={{ color: scoreResult.score >= 0.5 ? "#22c55e" : "#f59e0b" }}>
+                  {(scoreResult.score * 100).toFixed(0)}%
+                </span>{" "}
+                <span className="text-rd-dim">
+                  ({scoreResult.matched_keywords.length}/{
+                    scoreResult.matched_keywords.length + scoreResult.missed_keywords.length
+                  } keywords)
+                </span>
+              </div>
+            )}
+            {scoreResult?.error && (
+              <div className="text-[11px] text-red-400">{scoreResult.error}</div>
+            )}
+          </div>
+          {scoreResult && !scoreResult.error && scoreResult.missed_keywords?.length > 0 && (
+            <div className="text-[10px] font-mono text-rd-dim mt-2">
+              Missed: {scoreResult.missed_keywords.join(", ")}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DoctrineReference() {
   const { token } = useAuth();
   const [data, setData] = useState(null);
@@ -223,8 +419,18 @@ export default function DoctrineReference() {
           className="text-[11px] font-mono text-rd-dim p-4 border border-rd-border bg-rd-bg2"
           data-testid="doctrine-reference-empty"
         >
-          No strategies registered for lane "{lane}".
+          No strategies registered for lane &quot;{lane}&quot;.
         </div>
+      )}
+
+      {!loading && !error && data && (
+        <>
+          <TrainingExportBlock
+            token={token}
+            strategyIds={(data.strategies || []).map((s) => s.strategy_id)}
+          />
+          <EvalBlock token={token} />
+        </>
       )}
 
       <div data-testid="doctrine-reference-cards">

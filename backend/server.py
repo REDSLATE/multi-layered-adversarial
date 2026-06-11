@@ -162,6 +162,8 @@ from routes.parabolic_phase_admin import router as parabolic_phase_admin_router
 from routes.data_council_admin import router as data_council_admin_router
 from routes.broker_selection import router as broker_selection_router
 from routes.strategy_reference import router as strategy_reference_router
+from routes.doctrine_training_export import router as doctrine_training_router
+from routes.doctrine_eval import router as doctrine_eval_router
 
 
 
@@ -735,6 +737,8 @@ api_router.include_router(parabolic_phase_admin_router)
 api_router.include_router(data_council_admin_router)
 api_router.include_router(broker_selection_router)
 api_router.include_router(strategy_reference_router)
+api_router.include_router(doctrine_training_router)
+api_router.include_router(doctrine_eval_router)
 
 app.include_router(api_router)
 
