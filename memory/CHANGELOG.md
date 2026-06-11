@@ -1,3 +1,25 @@
+## 2026-06-11 (pass 22) — Polygon/Finnhub demoted to council-of-last-resort
+
+**Operator directive:** keep them alive but strip their authority.
+
+**Shipped:**
+- 3-second per-call timeout on `_fetch_technical` so a slow Polygon/
+  Finnhub upstream can never drag the brain tick budget.
+- `primary_source` + `data_council` provenance fields on every
+  enriched equity snapshot.
+- `/api/admin/data-council/status` endpoint surfacing the council
+  state per lane: primary feed, council members, live status, 15-min
+  feeder-health audit roll-up.
+
+**Architecture:**
+- Equity primary: Webull · council: Polygon, Finnhub
+- Crypto primary: Kraken · council: Webull (cross-check)
+
+**Tests:** 198/198 green.
+
+---
+
+
 ## 2026-06-11 (pass 21) — Squeeze Detector V2 wired to Barracuda + GTO
 
 **Operator-shipped module** dropped verbatim at

@@ -320,6 +320,13 @@ def _enrich_sync(symbol: str, base: Dict[str, Any]) -> Dict[str, Any]:
     # Provenance — operator can filter "real_webull_data" vs cold-start
     out["webull_enriched"] = True
     out["real_market_data"] = True
+    # Data council (2026-06-11 demotion): Webull is now the primary
+    # source for equity. Polygon/Finnhub remain in the council but are
+    # consulted only when Webull doesn't carry a field. Stamping the
+    # primary_source lets the operator audit every intent for what
+    # actually drove the decision.
+    out["primary_source"] = "webull"
+    out.setdefault("data_council", []).append("webull")
     return out
 
 

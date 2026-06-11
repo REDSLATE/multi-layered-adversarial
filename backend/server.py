@@ -159,6 +159,7 @@ from routes.position_misread_admin import router as position_misread_admin_route
 from routes.intent_origin import router as intent_origin_router
 from routes.webull_admin import router as webull_admin_router
 from routes.parabolic_phase_admin import router as parabolic_phase_admin_router
+from routes.data_council_admin import router as data_council_admin_router
 
 
 
@@ -729,6 +730,7 @@ api_router.include_router(broker_lane_admin_router)
 api_router.include_router(intent_origin_router)
 api_router.include_router(webull_admin_router)
 api_router.include_router(parabolic_phase_admin_router)
+api_router.include_router(data_council_admin_router)
 
 app.include_router(api_router)
 

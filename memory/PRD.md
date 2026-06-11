@@ -1,3 +1,64 @@
+## 2026-06-11 (pass 22) — Polygon/Finnhub demoted to council-of-last-resort
+
+### Operator directive
+> *"Polygon/Massive isn't accepting a lot of the requests despite it
+> being paid. Also Finnhub. We counsel them if nothing else works."*
+
+The operator did NOT want them disabled (initial instinct was wrong on
+my part — first reverted the env kill-switches). They wanted them
+DEMOTED: kept alive in the runtime so they can be consulted when the
+primary feed can't carry a field, but stripped of authority over the
+brain tick.
+
+### Shipped
+1. **Tighter per-call timeout on the technical-pipeline fetch** —
+   `runner.py::_fetch_technical` now caps each call at 3 seconds
+   (independent of the 8s client default). A slow or 429'd Polygon /
+   Finnhub upstream can no longer drag the brain tick budget; the
+   technical endpoint silently fails-soft and the Webull-enriched
+   snapshot proceeds without it.
+
+2. **Provenance stamping on the snapshot** — `equity_doctrine`
+   enricher now writes `primary_source = "webull"` and appends to
+   `data_council` so every intent the brain emits can be audited for
+   what actually drove the decision.
+
+3. **`/api/admin/data-council/status`** — operator-facing council
+   state. Shows per-lane primary + council members, their live status,
+   entitlement state, and 15-min feeder-health audit roll-up so the
+   operator can spot a council member drowning in 429s without it
+   actually affecting trading.
+
+### Result
+| Lane | Primary | Council (last-resort) |
+|---|---|---|
+| Equity | **Webull** (Nasdaq Basic L1, $0/mo, expires 2027-06-10) | Polygon, Finnhub |
+| Crypto | **Kraken** (when creds present) | Webull spot snapshot (cross-check) |
+
+The Polygon/Finnhub feeders continue to write to the OHLCV /
+indicator collections that the technical pipeline reads, but the
+brain's hot loop now treats that pipeline as advisory. If technical
+returns 200 with data, fine — the Webull enricher overlays its
+fields on top. If technical times out or returns empty, the brain
+proceeds with Webull-only data and never blocks.
+
+### Doctrine
+> *"Webull is the primary equity feed; Kraken is the primary crypto
+> feed. Polygon and Finnhub are kept in the council but consulted
+> only when the primary source can't carry the field. Per-call
+> technical-fetch timeout is 3s so a slow council member cannot drag
+> the brain tick budget."*
+
+### What did NOT change
+- Polygon & Finnhub API keys remain in `.env` and feeders still run.
+- Feeder-health audit log still writes (now usefully consumed by the
+  council status endpoint).
+- No tests touch the production envs.
+- 198 / 198 affected suites green.
+
+---
+
+
 ## 2026-06-11 (pass 21) — Squeeze Detector V2 shipped & wired
 
 ### Operator directive

@@ -877,12 +877,23 @@ class BrainRunner:
     async def _fetch_technical(
         self, http: httpx.AsyncClient, symbol: str,
     ) -> Optional[dict]:
-        """Hit MC's runtime technical endpoint (loopback, runtime-token auth)."""
+        """Hit MC's runtime technical endpoint (loopback, runtime-token auth).
+
+        2026-06-11 demotion: this path is backed by the Polygon /
+        Finnhub feeders which have been demoted to "council-of-last-
+        resort" status per operator directive. A tight per-call
+        timeout (3s, separate from the brain's 8s client default)
+        ensures a slow or 429'd upstream cannot drag the brain tick
+        budget. Webull (equity) and Kraken (crypto) data is overlaid
+        downstream by the snapshot enrichers and takes priority over
+        anything this endpoint returns.
+        """
         try:
             r = await http.get(
                 f"{MC_LOOPBACK_URL}/api/runtime-discussion/technical/{symbol}",
                 params={"caller": self.brain_id, "tf": "1h", "bars": 200},
                 headers={"X-Runtime-Token": self.token},
+                timeout=3.0,
             )
             if r.status_code == 200:
                 return r.json()
