@@ -228,15 +228,24 @@ def _enrich_sync(symbol: str, base: Dict[str, Any]) -> Dict[str, Any]:
         ask = _to_float(snap.get("ask"))
         change_ratio = _to_float(snap.get("change_ratio"))
         volume = _to_float(snap.get("volume"))
+        day_high = _to_float(snap.get("high"))
+        day_low = _to_float(snap.get("low"))
         if price > 0:
             out["price"] = price
             out["near_half_or_whole_dollar"] = _near_half_or_whole_dollar(price)
+        if pre_close > 0:
+            # Preserve for downstream consumers (squeeze adapter, ledger).
+            out["pre_close"] = pre_close
         if pre_close > 0 and price > 0:
             out["gap_pct"] = round((price - pre_close) / pre_close * 100.0, 4)
         if change_ratio:
             out["change_ratio"] = change_ratio
         if volume > 0:
             out["volume"] = volume
+        if day_high > 0:
+            out["high"] = day_high
+        if day_low > 0:
+            out["low"] = day_low
         sp = _spread_bps(bid, ask, price)
         if sp is not None:
             out["spread_bps"] = round(sp, 2)
@@ -291,6 +300,22 @@ def _enrich_sync(symbol: str, base: Dict[str, Any]) -> Dict[str, Any]:
             # Override the cold-start "calm" only when phase is decisive.
             # `unknown` / `neutral` leave the regime slot untouched.
             out["market_regime"] = regime
+
+        # Squeeze Detector V2 (operator-shipped 2026-06-11). Builds a
+        # SqueezeInput from this snapshot + bars and stamps the
+        # SqueezeResult (grade / score / action_bias / risk_flags) on
+        # the snapshot so Barracuda + GTO wrappers can read it via
+        # intent.evidence and modulate confidence/size.
+        try:
+            from shared.squeeze.squeeze_adapter import build_squeeze_block  # noqa: WPS433
+            sq = build_squeeze_block(sym, out, bars)
+            if sq is not None:
+                out["squeeze"] = sq
+        except Exception:  # noqa: BLE001
+            # Fail-soft: missing squeeze block must never break the
+            # equity tick. The brain just doesn't get the squeeze
+            # modulation that tick.
+            pass
 
     # Provenance — operator can filter "real_webull_data" vs cold-start
     out["webull_enriched"] = True

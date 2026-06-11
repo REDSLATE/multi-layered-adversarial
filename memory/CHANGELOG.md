@@ -1,3 +1,27 @@
+## 2026-06-11 (pass 21) — Squeeze Detector V2 wired to Barracuda + GTO
+
+**Operator-shipped module** dropped verbatim at
+`shared/squeeze/squeeze_detector_v2.py`. Hardened: bad data →
+DATA_ERROR, stale data (>5s) → WAIT_FOR_FRESH_DATA, risk flags
+now subtract penalty points from the final score.
+
+**Adapter** `shared/squeeze/squeeze_adapter.py` builds SqueezeInput
+from the live equity snapshot + Webull bars, runs the detector,
+and stamps the result on `snapshot.squeeze`.
+
+**Wrapper integration:**
+- Barracuda (camaro): grade A+BUY → +conf/+size, F → compress,
+  `already_fading_from_high` → no-chase, `wide_spread_risk` → ×0.75
+- GTO (redeye): grade A+BUY → crowded-long compress, A+SELL →
+  failed-breakout boost, `already_fading_from_high` → short thesis,
+  `blowoff_velocity_risk`+SELL → reversal target, F → no-act
+
+**Tests:** 12 detector + 9 wrapper integration tests, all green.
+220 / 220 broader regression green.
+
+---
+
+
 ## 2026-06-11 (pass 20) — Parabolic phase classifier + adaptive sizing
 
 **Operator directive:** Teach the brains to read swings like the

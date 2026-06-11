@@ -389,6 +389,35 @@ def apply_camaro_legacy_strategist(intent: dict[str, Any]) -> dict[str, Any]:
     if action == "HOLD":
         size_bias = 0.0
 
+    # Squeeze Detector V2 (operator-shipped 2026-06-11). Barracuda is
+    # the tape strategist — when the squeeze grade is A and the brain
+    # already wants long, the squeeze confirms the tape; when the
+    # grade is F (data error / stale), Barracuda steps back. When
+    # `already_fading_from_high` fires, Barracuda compresses size hard
+    # (it's the "don't chase tops" rule baked into the wrapper).
+    snap = evidence.get("snapshot") or {}
+    sq = snap.get("squeeze") or {}
+    sq_grade = str(sq.get("grade") or "").upper()
+    sq_risks = sq.get("risk_flags") or []
+    if sq_grade == "A" and action == "BUY":
+        confidence += 0.06
+        size_bias *= 1.10
+        reasons.append("CAMARO_WRAPPER_SQUEEZE_A_TAPE_CONFIRMED")
+    elif sq_grade == "B" and action == "BUY":
+        confidence += 0.02
+        reasons.append("CAMARO_WRAPPER_SQUEEZE_B_TAPE_OK")
+    elif sq_grade == "F":
+        confidence -= 0.08
+        size_bias *= 0.60
+        warnings.append("CAMARO_WRAPPER_SQUEEZE_DATA_ERROR_OR_STALE")
+    if "already_fading_from_high" in sq_risks and action == "BUY":
+        confidence -= 0.10
+        size_bias *= 0.55
+        warnings.append("CAMARO_WRAPPER_SQUEEZE_FADING_FROM_HIGH_NO_CHASE")
+    if "wide_spread_risk" in sq_risks:
+        size_bias *= 0.75
+        warnings.append("CAMARO_WRAPPER_SQUEEZE_WIDE_SPREAD_COMPRESSED")
+
     evidence["legacy_wrapper"] = {
         "name": "camaro_legacy_strategist",
         "parent_brain": "camaro",
@@ -524,6 +553,40 @@ def apply_redeye_legacy_adversary(intent: dict[str, Any]) -> dict[str, Any]:
 
     if action == "HOLD":
         size_bias = 0.0
+
+    # Squeeze Detector V2 (operator-shipped 2026-06-11). RedEye is the
+    # adversary — when the squeeze is grade A (crowded long), RedEye
+    # suspects the trade is consensus and compresses BUY confidence
+    # while granting SELL confidence (waiting for the failed-breakout
+    # short). The `already_fading_from_high` and `blowoff_velocity_risk`
+    # flags directly support RedEye's contrarian-short thesis.
+    snap = evidence.get("snapshot") or {}
+    sq = snap.get("squeeze") or {}
+    sq_grade = str(sq.get("grade") or "").upper()
+    sq_risks = sq.get("risk_flags") or []
+    if sq_grade == "A":
+        if action == "BUY":
+            confidence -= 0.05
+            warnings.append("REDEYE_WRAPPER_SQUEEZE_A_CROWDED_LONG_SUSPECT")
+        elif action == "SELL":
+            confidence += 0.04
+            reasons.append("REDEYE_WRAPPER_SQUEEZE_A_FAILED_BREAKOUT_OPPORTUNITY")
+    if "already_fading_from_high" in sq_risks:
+        if action == "SELL":
+            confidence += 0.06
+            reasons.append("REDEYE_WRAPPER_SQUEEZE_FADING_FROM_HIGH_SHORT_THESIS")
+        elif action == "BUY":
+            confidence -= 0.08
+            size_bias *= 0.60
+            warnings.append("REDEYE_WRAPPER_SQUEEZE_FADING_FROM_HIGH_NO_LONG")
+    if "blowoff_velocity_risk" in sq_risks and action == "SELL":
+        confidence += 0.05
+        reasons.append("REDEYE_WRAPPER_SQUEEZE_BLOWOFF_REVERSAL_TARGET")
+    if sq_grade == "F":
+        # Stale or broken data: even RedEye won't act on it.
+        confidence -= 0.08
+        size_bias *= 0.55
+        warnings.append("REDEYE_WRAPPER_SQUEEZE_DATA_ERROR_OR_STALE")
 
     evidence["legacy_wrapper"] = {
         "name": "redeye_legacy_adversary",

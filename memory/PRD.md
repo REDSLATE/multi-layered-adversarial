@@ -1,3 +1,90 @@
+## 2026-06-11 (pass 21) — Squeeze Detector V2 shipped & wired
+
+### Operator directive
+Operator shipped the hardened production-safe `squeeze_detector_v2.py`
+inline (bad data → DATA_ERROR, stale data → WAIT_FOR_FRESH_DATA, risk
+flags → actual score penalties) and asked to wire it so Barracuda /
+GTO attach the result to intents.
+
+### Shipped
+1. **`shared/squeeze/squeeze_detector_v2.py`** — verbatim drop of the
+   operator-supplied module. `SqueezeDetectorV2` + `SqueezeInput` +
+   `SqueezeResult` dataclasses. Hard-field validation, stale-data
+   detection, risk-penalty arithmetic, confidence dampening on data
+   incompleteness. PAVS smoke test confirms grade C / RISK_DOWN_OR_WAIT
+   (the 18.50 vs 22.00 day_high triggers `already_fading_from_high`).
+
+2. **`shared/squeeze/squeeze_adapter.py`** — converts the live
+   doctrine snapshot + Webull M1 bars into a `SqueezeInput` and
+   returns a JSON-ready result dict. What we map:
+     * price, prev_close, day_high, volume_today — Webull snapshot
+     * avg_volume_20d — derived from `volume_today / relative_volume`
+     * spread_bps — Webull snapshot
+     * price_30s_ago, volume_last_1m, avg_volume_last_5m — last bar(s)
+     * premarket_high — max(bar highs) (approx; proper PM filter
+       deferred until we wire bar timestamps)
+     * news_catalyst — `snapshot.has_news` (default False)
+   Soft fields left None (no current Webull source): float_shares,
+   short_interest_pct, borrow_rate_pct, borrow_rate_change_pct,
+   shares_available_to_short. Detector surfaces `data_incomplete_risk`
+   and dampens confidence accordingly — exactly the v2 contract.
+
+3. **Equity enricher wiring** — every equity tick now stamps
+   `snapshot.squeeze = {grade, squeeze_score, action_bias, reasons,
+   risk_flags, confidence, metrics}`. Also persisted pre_close, high,
+   low on the snapshot (was previously consumed locally then dropped).
+
+4. **`apply_camaro_legacy_strategist` (Barracuda) modulation:**
+     * grade A + BUY → +0.06 conf, ×1.10 size (tape confirmed)
+     * grade B + BUY → +0.02 conf
+     * grade F (data error / stale) → -0.08 conf, ×0.60 size
+     * `already_fading_from_high` + BUY → -0.10 conf, ×0.55 size
+       (don't chase tops)
+     * `wide_spread_risk` → ×0.75 size
+
+5. **`apply_redeye_legacy_adversary` (GTO) modulation:**
+     * grade A + BUY → -0.05 conf (crowded-long suspect)
+     * grade A + SELL → +0.04 conf (failed-breakout opportunity)
+     * `already_fading_from_high` + SELL → +0.06 conf (short thesis)
+     * `already_fading_from_high` + BUY → -0.08 conf, ×0.60 size
+     * `blowoff_velocity_risk` + SELL → +0.05 conf
+     * grade F → -0.08 conf, ×0.55 size (even RedEye won't act on bad data)
+
+### Tests
+- `tests/test_squeeze_detector_v2.py` — 12 new (PAVS-style A grade,
+  DATA_ERROR paths, stale-data block, wide-spread C, fading-from-high
+  penalty, risk-penalty arithmetic, confidence completeness, low-float
+  / borrow-spike signal firing, score clamping, D-grade-on-quiet
+  baseline). All green.
+- `tests/test_squeeze_wrapper_integration.py` — 9 new covering both
+  wrapper modulation paths + no-op safety when no squeeze block. All
+  green.
+- 220 / 220 of the broader affected suites green.
+
+### Live verification (AAPL, post-restart)
+```
+price=291.58 pre_close=290.55 high=294.75
+parabolic_phase: neutral
+squeeze: grade=D score=0.0 bias=IGNORE
+        risks=[data_incomplete_risk]
+        confidence=0.47
+```
+Correct behavior — AAPL is a calm mega-cap, not a squeeze. Tomorrow
+at open, the same field will fire grade A on real PAVS-style
+candidates and the wrappers will modulate brain confidence/size
+accordingly.
+
+### What did NOT change
+- Detector code is verbatim operator drop — no modifications.
+- No hard blocks. Wrappers modulate confidence/size only.
+- Crypto lane untouched.
+- Soft fields (float / short interest / borrow) remain N/A under
+  current Webull entitlements — a Finnhub or Polygon side-fetch is
+  the natural plumbing for those, deferred.
+
+---
+
+
 ## 2026-06-11 (pass 20) — Parabolic phase awareness: brains adapt to swings
 
 ### Operator directive
