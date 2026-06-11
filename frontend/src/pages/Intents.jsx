@@ -5,6 +5,7 @@ import SeatRosterStrip from "@/components/SeatRosterStrip";
 import QuickSeatSwitches from "@/components/QuickSeatSwitches";
 import PublicConnect from "@/components/PublicConnect";
 import KrakenBrokerTile from "@/components/KrakenBrokerTile";
+import LaneRoutingPill from "@/components/LaneRoutingPill";
 import WebullEntitlementsCard from "@/components/WebullEntitlementsCard";
 import ParabolicPhaseStrip from "@/components/ParabolicPhaseStrip";
 import BrokerSelectionMenu from "@/components/BrokerSelectionMenu";
@@ -55,7 +56,7 @@ const ACTIONS = ["all", "BUY", "SELL", "SHORT", "COVER", "HOLD"];
 const LANES = ["all", "equity", "crypto"];
 const GATE_STATES = ["all", "pending", "passed", "blocked", "dry_run_passed", "dry_run_blocked", "rejected_at_ingest"];
 
-function SectionDivider({ title, sub, icon: IconComponent, testid }) {
+function SectionDivider({ title, sub, icon: IconComponent, testid, rightSlot }) {
   return (
     <div
       className="mt-6 mb-3 flex items-baseline gap-3 border-t border-rd-border pt-4"
@@ -64,7 +65,7 @@ function SectionDivider({ title, sub, icon: IconComponent, testid }) {
       {IconComponent && (
         <IconComponent size={14} weight="bold" className="text-rd-text shrink-0" />
       )}
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <div className="text-[11px] font-mono uppercase tracking-[0.25em] text-rd-text">
           {title}
         </div>
@@ -74,6 +75,9 @@ function SectionDivider({ title, sub, icon: IconComponent, testid }) {
           </div>
         )}
       </div>
+      {rightSlot && (
+        <div className="shrink-0 self-baseline">{rightSlot}</div>
+      )}
     </div>
   );
 }
@@ -618,6 +622,7 @@ export default function Intents() {
         icon={Buildings}
         sub="Public.com-routed equity execution. Seat assignment lives in Quick Seat Switches above."
         testid="intents-section-equity"
+        rightSlot={<LaneRoutingPill lane="equity" />}
       />
       <PublicConnect />
 
@@ -626,6 +631,7 @@ export default function Intents() {
         icon={CurrencyBtc}
         sub="Kraken-routed crypto execution. Seat assignment lives in Quick Seat Switches above. All crypto seats empty by default — operator must assign before any crypto trade can fire."
         testid="intents-section-crypto"
+        rightSlot={<LaneRoutingPill lane="crypto" />}
       />
       <KrakenBrokerTile />
       <div className="mt-3">

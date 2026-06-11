@@ -110,6 +110,16 @@ export default function BrokerSelectionMenu() {
     try {
       await api.put("/admin/broker-selection", next);
       setData((prev) => ({ ...(prev || {}), selection: next }));
+      // Broadcast to LaneRoutingPill (and any other listener) so the
+      // top-of-section pills update instantly without their own poll.
+      try {
+        window.dispatchEvent(
+          new CustomEvent("risedual:broker-selection-changed", { detail: next })
+        );
+      } catch {
+        /* CustomEvent unsupported (very old browsers) — listeners
+           still pick up the change via their 30s safety poll. */
+      }
       toast.success(
         `Broker selection saved · equity: ${BROKER_META[next.equity]?.label} · crypto: ${BROKER_META[next.crypto]?.label}`,
         { id: "broker-selection-saved" },
@@ -165,10 +175,11 @@ export default function BrokerSelectionMenu() {
 
       <div className="text-[10px] opacity-50 mt-3 leading-relaxed">
         Brain reads this selection on every tick and stamps it as a
-        broker_override on emitted intents. Default = unset → lane
-        router picks (equity → Public, crypto → Kraken). Webull for
-        crypto is the hot-failover when Kraken is offline; Webull for
-        equity is the $3-$10 live drop.
+        broker_override on emitted intents. Selecting Webull does NOT
+        disconnect Public.com or Kraken above — those broker connectors
+        stay live for connectivity health. The selection here decides
+        which broker the brain routes new intents through. Lane headers
+        above show the current ACTIVE routing in real-time.
       </div>
     </Card>
   );
