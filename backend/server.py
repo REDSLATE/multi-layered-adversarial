@@ -164,6 +164,9 @@ from routes.broker_selection import router as broker_selection_router
 from routes.strategy_reference import router as strategy_reference_router
 from routes.doctrine_training_export import router as doctrine_training_router
 from routes.doctrine_eval import router as doctrine_eval_router
+from routes.outcome_join_admin import router as outcome_join_admin_router
+from routes.scorecard_by_brain import router as scorecard_by_brain_router
+from routes.safety_gates_audit import router as safety_gates_audit_router
 
 
 
@@ -739,6 +742,9 @@ api_router.include_router(broker_selection_router)
 api_router.include_router(strategy_reference_router)
 api_router.include_router(doctrine_training_router)
 api_router.include_router(doctrine_eval_router)
+api_router.include_router(outcome_join_admin_router)
+api_router.include_router(scorecard_by_brain_router)
+api_router.include_router(safety_gates_audit_router)
 
 app.include_router(api_router)
 

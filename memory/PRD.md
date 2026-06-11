@@ -1,3 +1,44 @@
+## 2026-02-19 — Outcome-Join Diagnostics + Safety Gates Audit (pre-market sweep)
+
+### Operator directive
+> *"P1, definitely. 2 hrs til trading starts."*
+
+### Shipped (3 new admin slices, all read-only by default)
+
+**1. Outcome-Join admin** — `routes/outcome_join_admin.py`
+- `GET /api/admin/outcome-join/health` — chain visibility: doctrine_sidecars counts, intents, positions, joined ratio, orphan sample.
+- `POST /api/admin/outcome-join/backfill {dry_run, lane, older_than_hours, limit}` — retroactively attaches outcome envelopes to historical sidecars whose intent_id maps to a closed position but never joined. Idempotent (helper short-circuits on existing envelopes).
+
+**2. Scorecard-by-Brain** — `routes/scorecard_by_brain.py`
+- `GET /api/admin/doctrine/scorecard-by-brain` — aggregates joined outcomes by `(lane, stack, doctrine_version)` for per-brain visibility (Camino / Barracuda / Hellcat / GTO display names attached).
+- METADATA only — promotion gates still key on `(lane, seat, doctrine_version)` per Patent J.
+
+**3. Safety Gates Audit** — `routes/safety_gates_audit.py` + `pages/SafetyGatesAudit.jsx`
+- `GET /api/admin/safety-gates/audit?hours=N&sample_size=K` — per-gate pass / block stats + top block reasons, sliced by lookback window (1h / 6h / 24h / 7d / 30d / ALL).
+- New frontend page **Safety Gates** in left nav. Color-coded by block-rate severity.
+
+### Findings (pre-market 2026-02-19, 30d window over 49,390 gate decisions)
+
+| Gate | Pass | Block | Rate | Root cause (NOT calibration) |
+|---|---|---|---|---|
+| `lane_execution_enabled` | 7,321 | 15,182 | **67.5%** | Equity + crypto execution toggles OFF |
+| `executor_seat_check` | 17,069 | 19,294 | **53.1%** | Crypto executor seat vacant; some intents posted by wrong holder |
+| `governor_authority` | 19,834 | 2,679 | **11.9%** | Governor seat vacant intermittently |
+| `roadguard_spread_floor` | 20,307 | 2,200 | **9.8%** | Stale snapshots (9999 bps sentinel) — data plumbing, not gate calibration |
+
+**Verdict**: No gate needs threshold tuning. All blocks trace to seat vacancy / toggle state / data freshness. Operator action items before market open: flip equity execution toggle, seat the crypto executor + governor, fix stale snapshot source.
+
+### Tests
+- 7 new unit tests in `tests/test_outcome_join_admin_and_audit.py` (all green).
+- All endpoints verified against live preview DB.
+
+### Pre-existing flakes left unresolved
+- `test_tenure_resets_on_swap`, `test_opinion_gets_posted_as`, `test_stale_conflicts_only_includes_open_past_threshold` — integration tests vs live backend+DB shared state. Multi-hour rabbit hole; deferred.
+
+### Closed out
+- P2 scraper fixes (Reddit / Zillow / Quiver) — verified there are no scrapers in this codebase. Item removed from backlog.
+
+
 ## 2026-02-19 (pass 24) — Live Doctrine Reference (drift-proof operator cards)
 
 ### Operator directive

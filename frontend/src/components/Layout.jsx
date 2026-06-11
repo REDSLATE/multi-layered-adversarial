@@ -50,6 +50,7 @@ const SECTIONS = [
       { to: "/admin/scorecards", label: "Scorecards", icon: Trophy, testid: "nav-scorecards" },
       { to: "/admin/doctrine", label: "Doctrine", icon: Shield, testid: "nav-doctrine" },
       { to: "/admin/doctrine-reference", label: "Doctrine Ref", icon: Shield, testid: "nav-doctrine-reference" },
+      { to: "/admin/safety-gates", label: "Safety Gates", icon: Shield, testid: "nav-safety-gates" },
       { to: "/admin/conflicts", label: "Conflicts", icon: LightningSlash, testid: "nav-conflicts" },
       { to: "/admin/promotion", label: "Promotion", icon: TrendUp, testid: "nav-promotion" },
     ],
