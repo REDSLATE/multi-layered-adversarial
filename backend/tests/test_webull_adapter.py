@@ -57,7 +57,15 @@ def test_lane_for_known_crypto():
 
 
 def test_lane_for_unknown_symbol():
-    assert _lane_for_symbol("ZZZZ") is None
+    """Symbols that fit no heuristic pattern (non-alphabetic, too
+    long, etc.) return None so the adapter fails closed. ZZZZ used
+    to return None here because the lane index was strict-map-only;
+    after the 2026-06-10 expansion to rule-based + heuristic
+    classification, a 4-letter alpha ticker is treated as equity
+    (which is correct — adapter still fails if Webull rejects it)."""
+    assert _lane_for_symbol("") is None
+    assert _lane_for_symbol("12345") is None
+    assert _lane_for_symbol("$$$") is None
 
 
 # ── factory: get_webull_adapter ────────────────────────────────────

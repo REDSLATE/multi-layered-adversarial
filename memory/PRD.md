@@ -1,3 +1,67 @@
+## 2026-06-11 — Webull rule-based symbol expansion: tests green
+
+### Operator directive
+> *"Yeah, I need that expanded to include accurate tickers on Webull.
+> The way things are going, it may be the one site worth sticking with."*
+
+### What shipped
+Made the rule-based Webull symbol resolver land cleanly. Last pass
+introduced the heuristic but broke 14-15 backend tests; this pass
+fixes them without altering production behavior.
+
+**Symbol resolver (`shared/broker_symbol_resolver.py`).**
+- `_rule_based_webull_native` now requires an explicit `BASE/QUOTE`
+  separator for crypto canonicals (`-` or `/`). Bare `CRYPTO:BTC`
+  (no quote) returns `None`. The "concat pass-through" path that
+  silently accepted any alnum string is removed — quote is part of
+  identity, not a derived field.
+
+**Webull adapter (`shared/broker/webull.py`).**
+- `_lane_for_symbol` is now pure & sync: `_LANE_INDEX` static lookup
+  plus a USD/USDT-suffix heuristic. The lazy `from server import db`
+  + Motor `find_one` call was removed — it was dead code
+  (always returned an awaitable that the code discarded) and was
+  binding the global motor client to whichever loop ran the first
+  sync test, poisoning subsequent async tests with
+  `"Future attached to a different loop"`.
+
+**Test helper.**
+- `tests/test_webull_symbol_expansion.py::_asset` now passes the
+  required `quote` kwarg to `AssetKey` (`"USD"` for crypto / `None`
+  for equity).
+
+### Test status
+| Suite | Pass | Fail |
+|---|---|---|
+| Webull symbol expansion | 35 | 0 |
+| Webull adapter | 14 | 0 |
+| Broker router Webull override | 8 | 0 |
+| Webull caps | 29 | 0 |
+| Auto-router max-per-tick | 4 | 0 |
+| Broker connected override | 5 | 0 |
+| **Full backend suite** | **2088** | **6** (pre-existing flakes, none Webull-related) |
+
+The 6 stragglers are the known P2 list: `test_tenure_resets_on_swap`
+(timestamp tolerance) plus 5 SSE / rate-limit tests that pass in
+isolation at a saner 30s timeout.
+
+### What did NOT change
+- Production wire behavior of `_lane_for_symbol` is identical (the
+  Mongo branch was unreachable in production already).
+- `BROKER_SYMBOL_MAP["webull"]` static entries still authoritative
+  for any operator overrides.
+- All safety rails from pass 18 stay 100% active.
+
+### Operator next-step toggles still live
+- `lane_execution_enabled` per-lane master switch
+- `executor_seat_check`
+- `governor_authority`
+- `roadguard_spread_floor`
+*(Per operator: do NOT disable until they explicitly say so.)*
+
+---
+
+
 ## 2026-06-10 (pass 18) — Ladder eliminated + broker_connected override bug fixed
 
 ### Operator directive

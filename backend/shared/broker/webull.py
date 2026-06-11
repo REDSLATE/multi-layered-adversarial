@@ -74,7 +74,32 @@ _LANE_INDEX = _build_lane_index()
 
 
 def _lane_for_symbol(symbol: str) -> Optional[str]:
-    return _LANE_INDEX.get((symbol or "").upper())
+    """Return 'equity' / 'crypto' / None for a Webull-native symbol.
+
+    Pure, sync, no I/O. Two-tier lookup (2026-06-10, operator wants
+    Webull to cover the full patterns_universe without manual map
+    upkeep):
+      1. Static `_LANE_INDEX` built from BROKER_SYMBOL_MAP["webull"]
+         (explicit operator overrides — always wins).
+      2. Heuristic fallback for the order path: 6+ letter symbol
+         ending in USD/USDT → crypto; anything purely alphabetic and
+         1-5 chars → equity. Returns None when undecidable so the
+         adapter fails closed.
+    """
+    sym = (symbol or "").upper()
+    if not sym:
+        return None
+    cached = _LANE_INDEX.get(sym)
+    if cached:
+        return cached
+    # Heuristic — crypto pairs on Webull end in USD/USDT.
+    if sym.endswith("USDT") and len(sym) >= 7 and sym[:-4].isalpha():
+        return "crypto"
+    if sym.endswith("USD") and len(sym) >= 6 and sym[:-3].isalpha():
+        return "crypto"
+    if sym.isalpha() and 1 <= len(sym) <= 5:
+        return "equity"
+    return None
 
 
 class WebullAdapter(BrokerAdapter):

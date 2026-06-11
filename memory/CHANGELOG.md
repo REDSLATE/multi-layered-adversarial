@@ -1,3 +1,43 @@
+## 2026-06-11 — Webull rule-based symbol expansion stabilized
+
+**Problem.** Last session shipped rule-based Webull symbol resolution
+(operator's entire watchlist routes through Webull without manual
+`BROKER_SYMBOL_MAP["webull"]` upkeep) but left 14-15 backend tests red
+spanning `test_webull_symbol_expansion.py`, `test_webull_adapter.py`,
+and `test_broker_router_webull_override.py`.
+
+**Root causes fixed.**
+1. `_rule_based_webull_native("CRYPTO:BTC")` returned `"BTC"` because
+   the "already concatenated" pass-through accepted anything alnum.
+   Now requires an explicit `BASE/QUOTE` separator (`-` or `/`) — a
+   bare canonical with no quote returns `None`. Doctrine: the quote
+   MUST be carried explicitly; the wire-form concat is broker-side.
+2. `_lane_for_symbol` lazy-imported `server.db` and called Motor's
+   `find_one()`. Motor returns an awaitable that the code
+   immediately discarded (always `None` in production), but the call
+   bound the global motor client to whatever loop happened to be
+   active during sync tests — which then poisoned later async tests
+   with `"Future attached to a different loop"`. Removed the dead
+   Mongo lookup entirely; `_lane_for_symbol` is now pure & sync
+   (static map + USD/USDT-suffix heuristic). Behavior unchanged in
+   production because the Mongo branch was already unreachable.
+3. `tests/test_webull_symbol_expansion.py::_asset` constructed
+   `AssetKey` without `quote`, breaking 5 resolver tests with
+   `TypeError`. Helper now passes `quote="USD"` for crypto and
+   `quote=None` for equity.
+
+**Result.** All 95 Webull-related tests green
+(`test_webull_symbol_expansion` 35 / `test_webull_adapter` 14 /
+`test_broker_router_webull_override` 8 / `test_webull_caps` 29 /
+`test_auto_router_max_per_tick` 4 / `test_broker_connected_override`
+5). Full backend suite: 2088 / 2094, the 6 stragglers are
+pre-existing timing flakes (`test_roster::test_tenure_resets_on_swap`
++ 5 sub-30s timing-tolerance tests that pass in isolation) — none
+touch files changed in this pass.
+
+---
+
+
 ## 2026-06-10 (pass 18) — Ladder eliminated + broker_connected override bug fixed
 
 **Ladder eliminated** (operator directive). `_ladder_cap_and_route`

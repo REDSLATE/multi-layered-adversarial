@@ -202,8 +202,59 @@ class BrokerSymbolUnresolved(Exception):
     as a fail-closed NO_TRADE signal by every routing layer."""
 
 
+def _rule_based_webull_native(canonical: str) -> Optional[str]:
+    """Derive Webull's native symbol from the canonical form using
+    Webull's known conventions. Returns None if the canonical can't
+    be parsed.
+
+    Doctrine pin (2026-06-10): Webull's tradeable universe covers
+    standard US-listed equities (bare ticker on the wire) and the
+    major crypto pairs in concatenated form (`BTCUSD`, `ETHUSD`,
+    `SOLUSD`, etc.). The static `BROKER_SYMBOL_MAP["webull"]` entries
+    handle any name where the convention DOESN'T hold (e.g., a
+    Webull-side rename or a non-USD quote that needs a custom map);
+    everything else falls through to this rule.
+
+    Conventions:
+      * `EQ:<TICKER>`              → `<TICKER>`
+      * `CRYPTO:<BASE>-<QUOTE>`    → `<BASE><QUOTE>`  (no dash, no slash)
+      * `CRYPTO:<BASE>/<QUOTE>`    → `<BASE><QUOTE>`  (legacy slash form)
+
+    This means adding a symbol to `patterns_universe` automatically
+    makes it Webull-routable — no broker_symbol_resolver code change
+    required for new universe entries.
+    """
+    s = (canonical or "").upper().strip()
+    if not s:
+        return None
+    if s.startswith("EQ:"):
+        ticker = s[3:]
+        return ticker if ticker.isalnum() else None
+    if s.startswith("CRYPTO:"):
+        pair = s[7:]
+        # Require an explicit BASE/QUOTE separator. Webull's wire form
+        # is concatenated (BTCUSD), but the canonical we accept must
+        # carry the quote explicitly — a bare "CRYPTO:BTC" has no
+        # quote and must NOT silently resolve.
+        for sep in ("-", "/"):
+            if sep in pair:
+                base, _, quote = pair.partition(sep)
+                if base and quote and base.isalnum() and quote.isalnum():
+                    return f"{base}{quote}"
+        return None
+    return None
+
+
 def resolve_broker_symbol(asset: AssetKey, broker: str) -> Any:
-    """Translate canonical → broker-native. Fail-closed."""
+    """Translate canonical → broker-native. Fail-closed.
+
+    For brokers in `_RULE_BASED_SYMBOL_BROKERS` (Webull as of
+    2026-06-10), if the static map has no explicit entry we apply
+    the broker's known symbol-shape convention. This keeps the
+    static map authoritative for edge cases (Webull renames, custom
+    pairs) while letting the operator's full `patterns_universe`
+    route through Webull without manual map maintenance.
+    """
     if not isinstance(asset, AssetKey):
         raise BrokerSymbolUnresolved(
             f"resolver expects AssetKey, got {type(asset).__name__}; NO_TRADE"
@@ -214,11 +265,23 @@ def resolve_broker_symbol(asset: AssetKey, broker: str) -> Any:
             f"broker {broker!r} is not registered in BROKER_SYMBOL_MAP; NO_TRADE"
         )
     resolved = broker_map.get(asset.canonical)
-    if resolved is None:
-        raise BrokerSymbolUnresolved(
-            f"no broker mapping for {asset.canonical!r} on {broker!r}; NO_TRADE"
-        )
-    return resolved
+    if resolved is not None:
+        return resolved
+    # Rule-based fallback (Webull only, today).
+    if broker in _RULE_BASED_SYMBOL_BROKERS:
+        derived = _rule_based_webull_native(asset.canonical)
+        if derived:
+            return derived
+    raise BrokerSymbolUnresolved(
+        f"no broker mapping for {asset.canonical!r} on {broker!r}; NO_TRADE"
+    )
+
+
+# Brokers whose symbol shape follows a deterministic rule, so any
+# canonical not in the static map can still be resolved. The static
+# map remains authoritative for explicit overrides (e.g., a Webull
+# rename of a ticker we'd otherwise compute wrong).
+_RULE_BASED_SYMBOL_BROKERS: frozenset[str] = frozenset({"webull"})
 
 
 # ───────────────────────── lane → broker registry ─────────────────────
