@@ -16,15 +16,25 @@ Endpoints:
   Returns the list of intents the tick touched (executed / no_trade /
   observation / advisory). Useful right after flipping a gate when you
   don't want to wait `interval_sec` for the scheduled tick.
+* `POST /api/admin/auto-router/start` — flip the `auto_router_enabled`
+  runtime flag ON and start the task immediately (if not already
+  running). The flag persists across pod restarts in the
+  `runtime_flags` collection.
+* `POST /api/admin/auto-router/stop` — flip the flag OFF. The current
+  task is left to finish its tick gracefully (no-op for any future
+  pickup; the loop reads the flag at the top of each tick).
 
 Both endpoints are admin-JWT-only — no runtime token bypass.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends
 
 from auth import get_current_user
-from shared.auto_router import force_one_tick, get_status
+from db import db
+from shared.auto_router import force_one_tick, get_status, start_auto_router_if_enabled
 
 
 router = APIRouter(prefix="/admin/auto-router", tags=["admin-auto-router"])
@@ -76,3 +86,46 @@ async def auto_router_force_tick(
     semantic — only "drain the queue now."
     """
     return await force_one_tick()
+
+
+@router.post("/start")
+async def auto_router_start(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Flip `runtime_flags.auto_router_enabled = true` AND start the
+    background task immediately.
+
+    This is the safe alternative to making the auto-router boot
+    unconditionally — on 2026-02-19 an unconditional boot crashed
+    the prod pod (520 across all authed endpoints). With this
+    endpoint, the operator can flip on a healthy pod, watch the
+    `/status` endpoint, and POST `/stop` if anything starts to
+    smell wrong, without redeploying.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    await db["runtime_flags"].update_one(
+        {"_id": "auto_router_enabled"},
+        {"$set": {"enabled": True, "updated_at": now, "updated_by": _user.get("email") or "unknown"}},
+        upsert=True,
+    )
+    try:
+        start_auto_router_if_enabled()
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e), "flag": "enabled"}
+    return {"ok": True, "flag": "enabled", "updated_at": now}
+
+
+@router.post("/stop")
+async def auto_router_stop(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Flip `runtime_flags.auto_router_enabled = false`.
+
+    The running task is not interrupted mid-tick — it will simply
+    not be started on the next pod boot. To stop a runaway task
+    immediately, also flip the master trading switch off
+    (POST /admin/trading/toggle {enabled: false, reason: ...}).
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    await db["runtime_flags"].update_one(
+        {"_id": "auto_router_enabled"},
+        {"$set": {"enabled": False, "updated_at": now, "updated_by": _user.get("email") or "unknown"}},
+        upsert=True,
+    )
+    return {"ok": True, "flag": "disabled", "updated_at": now}

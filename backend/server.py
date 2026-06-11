@@ -246,23 +246,39 @@ async def lifespan(app: FastAPI):
     # the broker without operator clicks. Gated by the same gate chain
     # as /execution/submit.
     #
-    # Doctrine pin (2026-02-19): the legacy gate on `alpaca_credentials`
-    # was a 2025 holdover. Alpaca is no longer the active equity broker
-    # (Public.com is, with Webull as a sized-down live drop). Starting
-    # the auto-router gated on that doc meant the loop SILENTLY never
-    # ran on any prod that wasn't seeded with Alpaca creds — exactly the
-    # 30-BUY-intents-sitting-at-dry_run_passed symptom we just hit.
+    # Doctrine pin (2026-02-19, rev 2): the unconditional auto-router
+    # start crashed the prod pod (HTTP 520 across all authed endpoints
+    # ~30s after boot). Root cause to be confirmed, but most likely
+    # candidates: (a) Webull adapter blocking the event loop with a
+    # sync HTTP call when 30+ queued intents got picked up at once,
+    # (b) connection-pool exhaustion against MongoDB during the first
+    # _tick, (c) log volume from per-intent exceptions OOM-killing
+    # the pod.
     #
-    # Correct behavior: always start the auto-router if the env flag
-    # `AUTO_ROUTER_ENABLED=true`. The runtime kill switch
-    # (is_trading_enabled()) inside `_route_one` still short-circuits
-    # every tick when the operator pauses via the master switch, so
-    # this is safe.
-    start_auto_router_if_enabled()
-    logger.info("Auto-router started")
+    # Until the offender is identified, the auto-router is gated on
+    # an EXPLICIT, OPERATOR-FLIPPED FLAG:
+    #     /admin/auto-router/start  POST  → flips the gate ON in
+    #                                       `runtime_flags` collection
+    # The flag persists across pod restarts. Operator can flip it
+    # back OFF if the pod degrades again. This is safer than the
+    # previous all-or-nothing env var because the operator can
+    # iterate without redeploying.
+    enabled_flag = await db["runtime_flags"].find_one(
+        {"_id": "auto_router_enabled"}, {"_id": 0, "enabled": 1}
+    )
+    if enabled_flag and enabled_flag.get("enabled") is True:
+        try:
+            start_auto_router_if_enabled()
+            logger.info("Auto-router started (runtime_flags.auto_router_enabled=true)")
+        except Exception as e:  # noqa: BLE001
+            logger.error("Auto-router start failed: %s", e)
+    else:
+        logger.info(
+            "Auto-router NOT started — runtime_flags.auto_router_enabled is not true. "
+            "POST /api/admin/auto-router/start to enable."
+        )
     # Keep Alpaca's pinger conditional — only matters if Alpaca creds
-    # exist (zero-cost no-op otherwise, but the credential check is
-    # still useful diagnostic noise reduction).
+    # exist (zero-cost no-op otherwise).
     alpaca_doc = await db["alpaca_credentials"].find_one({"_id": "singleton"}, {"_id": 1})
     if alpaca_doc:
         # Symmetric to Kraken's poller: keeps `last_ping_at` fresh so the
