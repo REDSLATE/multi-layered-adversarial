@@ -196,6 +196,17 @@ class WebullAdapter(BrokerAdapter):
     async def _resolve_account_id(self) -> str:
         if self.account_id:
             return self.account_id
+        # 2026-02-19 — Operator override. A real Webull profile has
+        # multiple sub-accounts (Margin, Cash, Events, Futures, …).
+        # `accounts[0]` may not be the funded one (operator screenshot
+        # showed Total=$777.68 but Margin sub=$0, Cash sub=$0 — the
+        # SDK's first row was the Margin account). If the operator
+        # pins `WEBULL_ACCOUNT_ID` we use it as-is and skip the
+        # auto-pick logic.
+        pinned = (os.environ.get("WEBULL_ACCOUNT_ID") or "").strip()
+        if pinned:
+            self.account_id = pinned
+            return self.account_id
         try:
             res = await self._sdk_call(self._trade().account_v2.get_account_list)
             data = res.json() if hasattr(res, "json") else res
@@ -230,9 +241,33 @@ class WebullAdapter(BrokerAdapter):
         if not accounts:
             raise RuntimeError("Webull account list empty or unparseable")
 
-        first = accounts[0] if isinstance(accounts[0], dict) else {}
+        # 2026-02-19 — Picking logic, in priority order:
+        #   1. CASH account (operator's funded sub-account on Webull
+        #      retail profiles — confirmed via direct screenshot
+        #      cross-check).
+        #   2. MARGIN account (next-most-common funded sub).
+        #   3. First account in the list (back-compat fallback).
+        # The operator can override with WEBULL_ACCOUNT_ID at any time
+        # if Webull adds new sub-account types or the funding moves.
+        def _type(a: dict) -> str:
+            t = a.get("accountType") or a.get("account_type") or ""
+            return str(t).upper()
+
+        picked = None
+        for a in accounts:
+            if _type(a) == "CASH":
+                picked = a
+                break
+        if picked is None:
+            for a in accounts:
+                if _type(a) == "MARGIN":
+                    picked = a
+                    break
+        if picked is None:
+            picked = accounts[0] if isinstance(accounts[0], dict) else {}
+
         self.account_id = str(
-            first.get("accountId") or first.get("account_id") or ""
+            picked.get("accountId") or picked.get("account_id") or ""
         )
         if not self.account_id:
             raise RuntimeError("Webull account list missing accountId")
