@@ -81,18 +81,34 @@ export default function OperatorInjectIntent({ onSubmitted }) {
     Number(notional) > 0 &&
     symbol.trim() !== "";
 
+  // Strip the canonical prefix ("EQ:", "CRYPTO:", "CR:") before
+  // sending. The persisted intent row stores BARE tickers and the
+  // `symbol_in_universe` gate keys on the bare form. The backend
+  // also strips defensively (broker_symbol_resolver._strip_canonical_prefix
+  // / shared.intents.post_intent), so this is belt-and-braces — the
+  // operator's visual workflow is unchanged.
+  const _stripCanonicalPrefix = (s) => {
+    if (!s) return s;
+    const upper = String(s).trim().toUpperCase();
+    for (const p of ["CRYPTO:", "EQUITY:", "EQ:", "CR:"]) {
+      if (upper.startsWith(p)) return upper.slice(p.length);
+    }
+    return upper;
+  };
+
   const fire = async () => {
     setBusy(true);
     setResult(null);
     try {
+      const cleanSymbol = _stripCanonicalPrefix(symbol);
       // 1) Post the intent as the seat holder
       const intent = await api.post("/intents", {
         stack: holder.holder,
-        symbol: symbol.trim(),
+        symbol: cleanSymbol,
         action: side,
         lane,
         confidence: 0.9,
-        rationale: `Operator-injected ${side} · $${notional} ${symbol}${brokerOverride ? ` via ${brokerOverride}` : ""}`,
+        rationale: `Operator-injected ${side} · $${notional} ${cleanSymbol}${brokerOverride ? ` via ${brokerOverride}` : ""}`,
         snapshot: { spread_bps: 5.0 },
         broker_override: brokerOverride,
       });

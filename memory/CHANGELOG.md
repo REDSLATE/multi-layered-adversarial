@@ -1,3 +1,50 @@
+## 2026-02-19 — Manual submit 20s timeout ceiling (post-deploy HTTP 502 hotfix)
+
+Operator reported HTTP 502 on a dashboard SUBMIT for AAPL at 2:22pm CST, 26 minutes after deploying the Webull/auto-router fix. The 502 reproduced even though the Webull SDK calls were already off-loop via `run_in_executor`.
+
+**Root cause:** `shared/execution.py:execution_submit` called `await _route_order(...)` with NO timeout. Even with SDK calls now isolated to a thread executor, a slow Webull API round-trip (IPO-day load, rate-limit back-pressure, network jitter) was still able to hang the request past Cloudflare's 30s gateway timeout → HTTP 502 surfaced at the UI as `BLOCKED / ERROR`.
+
+**Fix:** wrap the manual submit's `route_order` call in `asyncio.wait_for(..., timeout=20.0)`. On timeout, return HTTP 504 with a clean `broker_submit_timeout_20s` reason. The operator now sees a readable block on the dashboard instead of a 502, and the failure is auditable in `SHARED_GATE_RESULTS` with `kind="submit_timeout"`.
+
+**Why 20s:** comfortably under Cloudflare's ~30s gateway ceiling AND under the auto-router's 25s ceiling so a slow broker can't cascade-block multiple submission paths.
+
+**Test:** new `tests/test_execution_submit_timeout.py` includes a source-level tripwire that fails CI if the timeout wrapper is ever removed.
+
+---
+
+
+## 2026-02-19 — Outcome-join audit + symbol-format unification
+
+P1 + P2 follow-up after the Webull-only + auto-router fixes.
+
+**P1 — Outcome-join pipeline audit (audit-only, no code changes)**
+- Full report at `/app/memory/audits/outcome_join_pipeline_2026-02-19.md`.
+- Verified the five-link chain end-to-end:
+  1. `shared/intents.py:589` writes `doctrine_sidecars` row keyed by `intent_id`.
+  2. `shared/execution.py:execution_submit` stamps `intent_id` onto the broker receipt.
+  3. `shared/live_positions.py:open_from_receipt` preserves `intent_id` on the position doc.
+  4. `shared/live_positions.py:close` (lines 358-380) calls `join_outcome_to_doctrine` fail-soft on every close.
+  5. `shared/doctrine/outcome_join.py` writes the `outcome_join` envelope via an idempotent `$exists: false` filter.
+- 0/100 counter (`scorecard.py:149`) is wired correctly and waiting on live closed trades; no code holds it back.
+- Report lists 5 operator-facing signals to monitor on SpaceX IPO day + the backfill recovery curl recipe.
+- Verdict: **no code changes required**. Watch the signals; backfill on demand if the live join misses a batch.
+
+**P2 — Intent symbol format unification (EQ:AMZN vs AMZN)**
+- Root cause: `patterns_universe` stores BARE tickers ("AAPL"), the canonical-stamping logic produces PREFIXED form ("EQ:AAPL"), and manual operator injections sometimes carried the prefixed form back into the inject UI — `symbol_in_universe` gate would NO_TRADE every time.
+- Backend fix:
+  - `shared/broker_symbol_resolver.py` — new `_strip_canonical_prefix()` helper (idempotent, handles `EQ:`, `EQUITY:`, `CR:`, `CRYPTO:`).
+  - `compose()` accepts prefixed input and does NOT double-prefix.
+  - `shared/execution.py:_evaluate_gates` strips the prefix before the `patterns_universe` query.
+  - `shared/intents.py:post_intent` and `admin_post_intent` strip at the ingestion boundary so the persisted row carries the bare ticker.
+- Frontend fix:
+  - `components/OperatorInjectIntent.jsx` strips canonical prefixes on send. Presets retain the canonical-looking form for operator readability; the wire payload is the bare ticker.
+- New regression suite `tests/test_intent_symbol_normalization.py` (19 tests) pins the helper + compose idempotency.
+
+**Test status: 191/191 pass** across all touched files (symbol normalization, broker selection, Webull adapter non-blocking, broker router MC receipt, execution gates, intent contract, symbol-in-universe gate, Webull caps, Webull symbol expansion).
+
+---
+
+
 ## 2026-02-19 — Webull-only equity routing + auto-router crash fix
 
 Operator P0 cleanup: rip Alpaca/Public.com out of the live trading path AND fix the auto-router that was crashing prod with HTTP 520s after ~15 minutes.

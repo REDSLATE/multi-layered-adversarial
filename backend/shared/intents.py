@@ -710,6 +710,17 @@ async def post_intent(
         raise HTTPException(status_code=401, detail="X-Runtime-Token required")
     verify_runtime_token(body.stack, x_runtime_token)
 
+    # ─── Symbol normalization (2026-02-19) ──────────────────────────
+    # Strip any over-prefixed canonical form ("EQ:AAPL",
+    # "CRYPTO:BTC-USD") down to the bare ticker BEFORE any downstream
+    # code reads `body.symbol`. The system stores the bare form on
+    # the intent row and stamps the prefixed form on `canonical` —
+    # mixing the two shapes silently breaks the
+    # `symbol_in_universe` gate and any per-symbol cap lookup.
+    from shared.broker_symbol_resolver import _strip_canonical_prefix  # noqa: WPS433
+    if body.symbol:
+        body.symbol = _strip_canonical_prefix(body.symbol)
+
     # ─── OPEN / CLOSE verb translation (2026-05-24) ──────────────────
     # Brains may post `action="OPEN"` or `"CLOSE"` for symmetry with
     # the lifecycle vocabulary. We rewrite to canonical BUY/SHORT/SELL/
@@ -1178,6 +1189,14 @@ async def admin_post_intent(
     Useful for: stress-testing the gate chain, replaying historical
     decisions, or filling a missing intent during sidecar downtime.
     """
+    # Symbol normalization — same contract as POST /intents. Operator
+    # injections frequently carry the already-canonical form
+    # ("EQ:AAPL", "CRYPTO:BTC-USD"); strip it so the persisted intent
+    # row carries the bare ticker and downstream gates match.
+    from shared.broker_symbol_resolver import _strip_canonical_prefix  # noqa: WPS433
+    if body.symbol:
+        body.symbol = _strip_canonical_prefix(body.symbol)
+
     effective_lane, canonical, inferred_lane = _compose_canonical(body.symbol, body.lane)
 
     # Per-brain × lane policy applies to the admin proxy too — operators

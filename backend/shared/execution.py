@@ -11,6 +11,7 @@ Doctrine:
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -405,7 +406,15 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
     # boot-seed in server.py backfills `lane` onto pre-existing rows
     # so this is a one-deploy migration with no operator action.
     from namespaces import PATTERNS_UNIVERSE  # noqa: WPS433
-    intent_symbol = (intent.get("symbol") or "").upper().strip()
+    from shared.broker_symbol_resolver import _strip_canonical_prefix  # noqa: WPS433
+    # 2026-02-19 (operator unification): the gate keys on bare tickers
+    # because `patterns_universe` stores bare tickers ("AAPL", not
+    # "EQ:AAPL"). Manual injections sometimes carry the already-
+    # canonical form ("EQ:AAPL", "CRYPTO:BTC-USD"). Strip the prefix
+    # here so the lookup is shape-agnostic.
+    intent_symbol = _strip_canonical_prefix(
+        (intent.get("symbol") or "").upper().strip(),
+    )
     intent_lane_for_universe = (intent_lane or "").lower().strip()
     universe_row = await db[PATTERNS_UNIVERSE].find_one(
         {"symbol": intent_symbol, "active": {"$ne": False}},
@@ -885,10 +894,49 @@ async def execution_submit(
     try:
         from shared.broker_router import BrokerRouteBlocked as _Blocked  # noqa: WPS433
         from shared.broker_router import route_order as _route_order  # noqa: WPS433
-        order = await _route_order(
-            intent,
-            notional_usd=body.order_notional_usd,
-            client_order_id=client_order_id,
+        # 2026-02-19: 20s ceiling around the broker submit. Webull's
+        # SDK calls are already off-loop via `run_in_executor`, but a
+        # slow Webull-API round-trip (rate limit, network jitter, IPO
+        # day load) can still take 30+ seconds — which is the
+        # Cloudflare gateway timeout. Converting that to a clean
+        # 504 with `broker_submit_timeout_20s` instead of an HTTP 502
+        # gives the operator something readable on the dashboard.
+        # 20s is well under the gateway ceiling.
+        order = await asyncio.wait_for(
+            _route_order(
+                intent,
+                notional_usd=body.order_notional_usd,
+                client_order_id=client_order_id,
+            ),
+            timeout=20.0,
+        )
+    except asyncio.TimeoutError:
+        await db[SHARED_GATE_RESULTS].insert_one({
+            "intent_id": body.intent_id,
+            "kind": "submit_timeout",
+            "ts": _now_iso(),
+            "by": user.get("email"),
+            "reason": "broker_submit_timeout_20s",
+        })
+        record_async(
+            event_type="order_rejected",
+            brain=intent.get("stack"),
+            symbol=intent.get("symbol"),
+            action=intent.get("action"),
+            outcome="no_trade",
+            error_reason="broker_submit_timeout_20s",
+            ref_id=body.intent_id,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "blocked_by": "broker_submit_timeout",
+                "reason": (
+                    "broker did not respond within 20s — order NOT submitted. "
+                    "Safe to retry; the order_id was never minted. If this "
+                    "persists, check the broker status page or operator logs."
+                ),
+            },
         )
     except _Blocked as e:
         await db[SHARED_GATE_RESULTS].insert_one({

@@ -55,12 +55,48 @@ class AssetKey:
         return self.lane == "equity"
 
 
+def _strip_canonical_prefix(symbol: str) -> str:
+    """Strip an over-prefixed canonical from operator-injected input.
+
+    The canonical format the system stores is `EQ:AAPL` / `CRYPTO:BTC-USD`
+    (composed by `compose()` here). But operators sometimes paste the
+    canonical form back into an intent-inject UI ("EQ:AAPL") thinking
+    that's the right input format. Downstream code (the
+    `symbol_in_universe` gate, the broker_symbol_map lookup) keys on
+    the BARE ticker — so a prefixed input would NO_TRADE every time.
+
+    This helper accepts ANY of:
+        AAPL          → AAPL
+        EQ:AAPL       → AAPL
+        BTC-USD       → BTC-USD
+        CRYPTO:BTC-USD→ BTC-USD
+        CR:BTC-USD    → BTC-USD          (shorthand)
+    and returns the bare form. Idempotent: bare input passes through.
+
+    Operator intent (2026-02-19): "Unify intent symbol formats — EQ:AMZN
+    vs AMZN mismatch in manual intent injections."
+    """
+    if not symbol:
+        return symbol
+    s = symbol.strip().upper()
+    for prefix in ("CRYPTO:", "EQUITY:", "EQ:", "CR:"):
+        if s.startswith(prefix):
+            return s[len(prefix):]
+    return s
+
+
 def compose(symbol: str, lane: Optional[str]) -> AssetKey:
     """Compose a canonical AssetKey from a (symbol, lane) pair.
 
     The brain ships `symbol` + `lane`; MC composes the canonical here.
     This is the single conversion point — once composed, downstream code
     only reads `.canonical` / `.lane` / `.base`.
+
+    2026-02-19: accepts already-canonical input (`EQ:AAPL`,
+    `CRYPTO:BTC-USD`, `CR:BTC-USD`) and idempotently re-composes — the
+    prefix is silently stripped so an operator who pastes the canonical
+    form into an inject UI doesn't blow up the `symbol_in_universe`
+    gate downstream.
 
     Fail-closed on any missing or malformed input.
     """
@@ -69,7 +105,7 @@ def compose(symbol: str, lane: Optional[str]) -> AssetKey:
     if not lane:
         raise CanonicalError("lane is required; missing lane = NO_TRADE")
 
-    sym = symbol.strip().upper()
+    sym = _strip_canonical_prefix(symbol)
     lane_l = lane.strip().lower()
 
     if lane_l == "equity":
