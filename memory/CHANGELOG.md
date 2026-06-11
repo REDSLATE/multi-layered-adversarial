@@ -1,3 +1,31 @@
+## 2026-02-19 (late) — Shadow-outcome engine: 0/100 LEARNING counter moved (now 1,973/100)
+
+Operator directive: "Can we have it change the number without real cash being involved? Just EOD closing tickers?"
+
+**What shipped:**
+- **`shared/market_data/stockfit_quotes.py`** — async httpx wrapper for StockFit Free tier. Singleton client, batch `/api/price/quote?symbols=A,B,C` (1 request covers ALL unique symbols per run), in-process cache (6h TTL on `symbol@yyyy-mm-dd`), local 45/min rate-limit gate (under the 50/min Free ceiling), and a **daily-budget reserve floor** (`STOCKFIT_DAILY_RESERVE_FLOOR=50`) — once `X-RateLimit-Remaining-Day` drops to 50 we refuse new calls locally, preventing a cron loop from locking the operator out of the API.
+- **`shared/doctrine/shadow_outcome.py`** — engine that scans today's un-joined `doctrine_sidecars` rows, batches one StockFit call across unique tickers, computes `pnl_pct` from entry (intent.snapshot.last_price when present) to today's EOD close, labels `win/loss/scratch`, and calls the existing idempotent `join_outcome_to_doctrine` helper. Stamps `closing_actor="shadow_eod"` + `shadow_outcome=True` + `price_source="stockfit"` so the operator can later filter live vs shadow outcomes. Filters synthetic `TRIPWIRE-*` system markers at the Mongo query layer (regex on `symbol`) so StockFit doesn't 400 the whole batch on one bad ticker.
+- **`routes/shadow_outcome_admin.py`** — `POST /api/admin/outcome-join/shadow-close` with `dry_run` + `max_rows` params. Returns `{considered, joined, skipped, samples, unique_symbols, stockfit_daily_remaining}`.
+- **`tests/test_shadow_outcome.py`** — 18 regression tests for `_is_real_ticker`, `_label_for_pnl`, `_entry_price_from_snapshot`.
+
+**Live verification (just now):**
+- Scorecard BEFORE: `samples_with_outcome=0`
+- Live run on 2000 rows → `joined=1973`, `skipped={'join_helper_no_op': 27}` (already attached by a race), used **7 StockFit calls all day** (`stockfit_daily_remaining=743/750`)
+- Scorecard AFTER: `samples_with_outcome=1973`, by quality:
+  - A_QUALITY: 2 samples, 2 wins
+  - C_QUALITY: 338 samples, 240 wins / 34 losses / 64 scratches
+  - REJECT: 1633 samples, 1146 wins / 463 losses / 24 scratches
+- 5 real symbols hit StockFit in one batch: `AAL, AAPL, ABNB, NVDA, PLTR`
+
+**Doctrine insight from first run:** REJECT-quality intents win 70% (in this dataset). Either (a) doctrine quality isn't predictive yet, (b) the market trended up enough that BUY bias dominated regardless of quality, or (c) the brain is replaying old intents whose snapshots are stale (NVDA pre-split $899 entries). The point is the operator now has 1,973 samples to actually MEASURE which it is, instead of guessing.
+
+**Env vars added:**
+- `STOCKFIT_API_KEY` (already set in preview; needs same setting in production)
+- `STOCKFIT_DAILY_RESERVE_FLOOR=50` (optional override; defaults to 50)
+
+---
+
+
 ## 2026-02-19 — Webull adapter rewritten to match real SDK shape
 
 Operator deployed the earlier auto-router + 20s-timeout fix at 1:56pm CST and a manual $3 BUY on PLTR still 502'd. Live debugging surfaced the real root cause behind every 502 today.
