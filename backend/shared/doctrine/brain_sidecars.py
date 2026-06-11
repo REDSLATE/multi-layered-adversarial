@@ -34,6 +34,13 @@ from typing import Any, Dict, Optional
 
 from shared.doctrine.base_labels import build_doctrine_labels
 
+# Re-export sidecar enrichers so the doctrine integrity test can resolve
+# the function names declared in `_DOCTRINE_FN_MAP` below via `hasattr`
+# on this module. The functions themselves live in their own
+# enrichment / detector modules.
+from shared.snapshot_enrich.parabolic_phase import classify_parabolic_phase  # noqa: F401
+from shared.squeeze.squeeze_adapter import build_squeeze_block  # noqa: F401
+
 
 # Doctrine version pinned for downstream consumers (Shelly,
 # scorecards, audit) so they can fan out on shape changes.
@@ -233,3 +240,99 @@ def _build_execution_judge(base, labels, holder):
         "may_create_direction": False,
         "requires_existing_trade_intent": True,
     }
+
+
+
+# ─── Operator reference cards (CI-enforced sync) ─────────────────────
+# Universal-lane sidecar signals. The `_DOCTRINE_FN_MAP` points at the
+# enricher / detector functions re-exported at the top of this module.
+# Anti-drift: `snapshot_fields_read` and `risk_flags_read` must be
+# strings that actually appear in the referenced function source.
+
+DOCTRINE_CARDS: Dict[str, Dict[str, Any]] = {
+    "parabolic_topping": {
+        "title": "Parabolic Phase Classifier",
+        "category": "Risk Signal",
+        "lane": "universal",
+        "tagline": "When the curve goes vertical, the reversal is usually violent.",
+        "source_attribution": "Risk Engine v4 / parabolic_phase.py",
+        "doctrine_version": "parabolic_topping_v2",
+        "ideal_conditions": [
+            "M1 bar history available (>= 10 bars)",
+            "5-bar velocity above parabolic threshold",
+            "distance from VWAP above parabolic threshold",
+            "RVOL accelerating in last 3 bars",
+        ],
+        "entries": [
+            "NO ENTRY — this is a risk classifier, not a long signal",
+            "Downstream brains dampen size when phase == 'parabolic' or 'topping'",
+        ],
+        "exits": [
+            "Phase resolves to 'fade' (peak drop confirmed)",
+            "Phase resolves to 'neutral' (volatility normalizes)",
+        ],
+        "size_modifier_notes": [
+            "Brains reduce conviction when phase == 'parabolic'",
+            "Brains flip to caution when phase == 'topping' (red bars after green run)",
+            "Phase == 'fade' is a hard avoid for new longs",
+        ],
+        "snapshot_fields_read": [
+            "velocity_1m",
+            "velocity_5m",
+            "vwap_distance_pct",
+            "rvol_acceleration",
+            "peak_drop_pct",
+        ],
+        "risk_flags_read": [
+            "parabolic",
+            "topping",
+            "fade",
+            "accumulation",
+            "neutral",
+        ],
+    },
+    "squeeze_block": {
+        "title": "Squeeze Block (v2)",
+        "category": "Volatility / Short-Squeeze",
+        "lane": "universal",
+        "tagline": "Detector wrapper that grades squeeze ignition vs already-fading-from-high.",
+        "source_attribution": "Volatility Engine v3 / squeeze_adapter.py",
+        "doctrine_version": "squeeze_block_v1",
+        "ideal_conditions": [
+            "live price and prev_close present (hard requirement)",
+            "day high captured from snapshot or bar history",
+            "relative_volume present to rebuild avg_volume_20d",
+            "M1 bar history for velocity/volume signals",
+        ],
+        "entries": [
+            "Detector emits ignition grade — brains read this; no direct entry",
+            "Wrapper returns None when inputs are too sparse to grade",
+        ],
+        "exits": [
+            "Detector flips to 'already_fading_from_high' grade",
+            "Spread widens beyond detector's spread_bps tolerance",
+        ],
+        "size_modifier_notes": [
+            "Brains scale size on detector grade tier",
+            "News catalyst (has_news) boosts ignition probability",
+            "Wide spread_bps caps the grade — RoadGuard owns the kill",
+        ],
+        "snapshot_fields_read": [
+            "price",
+            "pre_close",
+            "prev_close",
+            "high",
+            "volume",
+            "relative_volume",
+            "spread_bps",
+            "has_news",
+        ],
+        "risk_flags_read": [],
+    },
+}
+
+_DOCTRINE_FN_MAP: Dict[str, str] = {
+    "parabolic_topping": "classify_parabolic_phase",
+    "squeeze_block": "build_squeeze_block",
+}
+

@@ -26,6 +26,7 @@ import Discussion from "@/pages/Discussion";
 import Scorecards from "@/pages/Scorecards";
 import Conflicts from "@/pages/Conflicts";
 import Doctrine from "@/pages/Doctrine";
+import DoctrineReference from "@/pages/DoctrineReference";
 import Positions from "@/pages/Positions";
 import PublicTraffic from "@/pages/PublicTraffic";
 import LlmLedger from "@/pages/LlmLedger";
@@ -139,6 +140,7 @@ function App() {
             <Route path="discussion" element={<Discussion />} />
             <Route path="scorecards" element={<Scorecards />} />
             <Route path="doctrine" element={<Doctrine />} />
+            <Route path="doctrine-reference" element={<DoctrineReference />} />
             <Route path="conflicts" element={<Conflicts />} />
             <Route path="positions" element={<Positions />} />
             <Route path="public-traffic" element={<PublicTraffic />} />

@@ -1,3 +1,25 @@
+## 2026-02-19 — Live Doctrine Reference shipped
+
+Replaced the static/hallucination-prone "Tutor" concept with a live, code-driven operator reference. Cards are generated directly from the doctrine modules and a CI test guarantees zero drift between cards and code.
+
+**What's new**
+- `DOCTRINE_CARDS` + `_DOCTRINE_FN_MAP` appended to:
+  - `shared/doctrine/strategy_doctrines.py` (gap_and_go, micro_pullback)
+  - `shared/doctrine/large_cap_doctrine.py` (large_cap_equity)
+  - `shared/doctrine/brain_sidecars.py` (parabolic_topping, squeeze_block) — re-exports `classify_parabolic_phase` and `build_squeeze_block` so the test can resolve them.
+- New router `routes/strategy_reference.py` exposing:
+  - `GET /api/admin/doctrine-reference` — full payload
+  - `GET /api/admin/doctrine-reference/index` — sidebar payload
+  - `GET /api/admin/doctrine-reference/{strategy_id}` — single card
+- New frontend page `pages/DoctrineReference.jsx` with lane filter (all / equity / universal). Linked in left nav as **Doctrine Ref**.
+- New CI test `tests/test_doctrine_integrity.py` — 7 tests, all green. Drift check inspects function source for every claimed snapshot field / risk flag string.
+
+**Side fix**
+- `backend/.env` had `AUTO_ROUTER_NOTIONAL_USD="3.00"POLYGON_FEEDER_ENABLED=false` on a single line — pytest collection failed on `test_auto_router_dedupe_integration.py`. Newline restored.
+
+**Test status**: 2151 passed / 3 pre-existing flakes (roster tenure, stale conflicts) unrelated to this work.
+
+
 ## 2026-06-11 (pass 23) — Broker hamburger menu + Webull crypto failover
 
 **Operator directive:** option to switch between broker accounts per

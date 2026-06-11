@@ -314,3 +314,60 @@ def _build_execution_judge(base, labels, holder):
         "may_create_direction": False,
         "requires_existing_trade_intent": True,
     }
+
+
+# ─── Operator reference cards (CI-enforced sync) ─────────────────────
+# Anti-drift: `snapshot_fields_read` and `risk_flags_read` must be
+# strings that actually appear in the function source. See
+# tests/test_doctrine_integrity.py.
+
+DOCTRINE_CARDS: Dict[str, Dict[str, Any]] = {
+    "large_cap_equity": {
+        "title": "Large-Cap Equity v1",
+        "category": "Large-Cap Swing/Day Trade",
+        "lane": "equity",
+        "tagline": "Institutional footprints — liquidity, RVOL, and regime do the talking.",
+        "source_attribution": "Sector Rotation v2 / Large-Cap doctrine pin 2026-02-18",
+        "doctrine_version": "large_cap_equity_v1",
+        "ideal_conditions": [
+            "stock in large- or mega-cap band",
+            "elevated relative volume (>= 1.5x)",
+            "tape not in MARKET_WEAK_REDUCE_RISK regime",
+            "spread tight (<= 25 bps)",
+        ],
+        "entries": [
+            "Existing directional intent + ELEVATED_RELATIVE_VOLUME",
+            "News-backed continuation with regime green light",
+        ],
+        "exits": [
+            "Regime flip to MARKET_WEAK_REDUCE_RISK",
+            "Spread widening into SPREAD_TOO_WIDE",
+            "Earnings within 48h (mandatory trim)",
+        ],
+        "size_modifier_notes": [
+            "1.00x risk on A_QUALITY",
+            "0.85x on B_QUALITY, 0.60x on C_QUALITY",
+            "0.30x dampen on REJECT (never zero — RoadGuard owns kill)",
+            "0.40x on consecutive_losses >= 3; 0.25x on daily_pnl <= -100",
+        ],
+        "snapshot_fields_read": [
+            "symbol",
+            "gap_pct",
+            "relative_volume",
+            "has_news",
+            "market_regime",
+            "spread_bps",
+        ],
+        "risk_flags_read": [
+            "MARKET_WEAK_REDUCE_RISK",
+            "SPREAD_TOO_WIDE",
+            "ELEVATED_RELATIVE_VOLUME",
+            "HIGH_RELATIVE_VOLUME",
+            "NEWS_CATALYST",
+        ],
+    },
+}
+
+_DOCTRINE_FN_MAP: Dict[str, str] = {
+    "large_cap_equity": "_build_large_cap_labels",
+}

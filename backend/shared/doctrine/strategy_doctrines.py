@@ -290,6 +290,102 @@ def _build_micro_pullback_v1(snapshot, seat_holders):
 
 # ─── shared packet assembly ─────────────────────────────────────────
 
+# ─── Operator reference cards (CI-enforced sync with functions) ─────
+# Anti-drift: `snapshot_fields_read` and `risk_flags_read` MUST be
+# strings that actually appear in the corresponding function source.
+# See tests/test_doctrine_integrity.py.
+
+DOCTRINE_CARDS: Dict[str, Dict[str, Any]] = {
+    "gap_and_go": {
+        "title": "Gap-and-Go v1",
+        "category": "Equity Day Trading",
+        "lane": "equity",
+        "tagline": "Breakout or bailout — quick decisions on the premarket high.",
+        "source_attribution": "Technical Analysis v3 §Gap-and-Go",
+        "doctrine_version": "gap_and_go_v1",
+        "ideal_conditions": [
+            "gap >= 20% on the day",
+            "float < 10M shares",
+            "price above 20/50/200 EMA",
+            "premarket high crossed OR premarket bull-flag breakout",
+        ],
+        "entries": [
+            "Cross of premarket high on volume expansion",
+            "Premarket bull-flag breakout",
+        ],
+        "exits": [
+            "5-minute red candle (mandatory)",
+            "Heavy level-2 resistance",
+            "2:1 reward:risk target",
+        ],
+        "size_modifier_notes": [
+            "+0.12 conviction on A_QUALITY base label",
+            "Compressed risk_multiplier when daily_pnl <= -100 or consecutive_losses >= 3",
+        ],
+        "snapshot_fields_read": [
+            "premarket_high_crossed",
+            "premarket_bull_flag",
+            "price_above_emas",
+            "consecutive_losses",
+            "daily_pnl",
+        ],
+        "risk_flags_read": [
+            "STRONG_GAPPER",
+            "HIGH_RELATIVE_VOLUME",
+            "ULTRA_LOW_FLOAT",
+            "SPREAD_TOO_WIDE",
+        ],
+    },
+    "micro_pullback": {
+        "title": "Micro-Pullback v1",
+        "category": "Equity Day Trading",
+        "lane": "equity",
+        "tagline": "Buy the dip that isn't a reversal — half/whole-dollar pullback on active momentum.",
+        "source_attribution": "Technical Analysis v3 §Micro-Pullback",
+        "doctrine_version": "micro_pullback_v1",
+        "ideal_conditions": [
+            "leading momentum stock pulling back",
+            "entry near half- or whole-dollar level",
+            "known pullback low to anchor the stop",
+            "active momentum (not faded)",
+        ],
+        "entries": [
+            "Bounce near half/whole-dollar with momentum active",
+            "Micro-pullback or bull-flag pattern on a confirmed leader",
+        ],
+        "exits": [
+            "Close below pullback low (hard stop)",
+            "2:1 reward:risk target",
+            "First 50c into nearby resistance",
+        ],
+        "size_modifier_notes": [
+            "Full size on A_QUALITY with known pullback_low",
+            "0.30x size when pullback_low unknown (no anchor)",
+            "Aggressive dampen on consecutive_losses >= 3 or daily_pnl <= -100",
+        ],
+        "snapshot_fields_read": [
+            "near_half_or_whole_dollar",
+            "momentum_active",
+            "no_nearby_resistance",
+            "pullback_low",
+            "consecutive_losses",
+            "daily_pnl",
+        ],
+        "risk_flags_read": [
+            "MICRO_PULLBACK_PATTERN",
+            "BULL_FLAG_PATTERN",
+            "PULLBACK_PATTERN_ON_NON_LEADER",
+            "SPREAD_TOO_WIDE",
+        ],
+    },
+}
+
+_DOCTRINE_FN_MAP: Dict[str, str] = {
+    "gap_and_go": "_build_gap_and_go_v1",
+    "micro_pullback": "_build_micro_pullback_v1",
+}
+
+
 def _packet(*, doctrine_version, base, seat_holders, strategist, adversary, governor, execution_judge):
     holders = seat_holders or {}
     return {

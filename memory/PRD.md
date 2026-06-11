@@ -1,3 +1,47 @@
+## 2026-02-19 (pass 24) — Live Doctrine Reference (drift-proof operator cards)
+
+### Operator directive
+> *"Replace the static Tutor module with a live operator reference that reads documentation directly from the doctrine code, so cards can never drift from what the brains actually compute."*
+
+### Shipped
+1. **`DOCTRINE_CARDS` + `_DOCTRINE_FN_MAP`** appended to the three live
+   doctrine modules — `strategy_doctrines.py`, `large_cap_doctrine.py`,
+   `brain_sidecars.py`. 5 cards total: `gap_and_go`, `micro_pullback`,
+   `large_cap_equity`, `parabolic_topping`, `squeeze_block`.
+
+2. **`shared/doctrine/brain_sidecars.py`** re-exports
+   `classify_parabolic_phase` and `build_squeeze_block` so the
+   integrity test can resolve cross-module enricher / detector functions.
+
+3. **`routes/strategy_reference.py`** —
+   - `GET /api/admin/doctrine-reference` — merged payload
+   - `GET /api/admin/doctrine-reference/index` — lightweight sidebar
+   - `GET /api/admin/doctrine-reference/{strategy_id}` — single card
+   Mounted via `api_router.include_router(strategy_reference_router)`.
+
+4. **`pages/DoctrineReference.jsx`** — operator dashboard with lane
+   filter (all / equity / universal), version + source + module
+   provenance per card, all six card sections rendered (ideal /
+   entries / exits / size modifiers / snapshot fields / risk flags).
+   Linked in left nav as **Doctrine Ref**.
+
+5. **`tests/test_doctrine_integrity.py`** — 7 CI-enforced tests:
+   - every card has an FN_MAP entry
+   - every FN_MAP target resolves to a callable
+   - every `snapshot_fields_read` string appears in the function source
+   - every `risk_flags_read` string appears in the function source
+   - no duplicate strategy IDs across modules
+   - schema completeness (all required fields, list typing)
+   - `doctrine_version` matches `^[a-z_]+_v\d+$`
+
+### Side fix
+- `backend/.env` line 87 was `AUTO_ROUTER_NOTIONAL_USD="3.00"POLYGON_FEEDER_ENABLED=false` (missing newline) which broke pytest collection on `test_auto_router_dedupe_integration.py`. Restored.
+
+### Test result
+- 7/7 doctrine integrity tests pass
+- 2151/2154 full suite passes (3 pre-existing flakes in roster tenure + stale-conflicts, untouched here)
+
+
 ## 2026-06-11 (pass 23) — Per-lane broker hamburger + Webull crypto failover
 
 ### Operator directive
