@@ -90,7 +90,7 @@ export default function BrokerSelectionMenu() {
 
   const load = useCallback(async () => {
     try {
-      const res = await api.get("/api/admin/broker-selection");
+      const res = await api.get("/admin/broker-selection");
       setData(res.data);
       setErr(null);
     } catch (e) {
@@ -108,7 +108,7 @@ export default function BrokerSelectionMenu() {
   const save = useCallback(async (next) => {
     setSaving(true);
     try {
-      await api.put("/api/admin/broker-selection", next);
+      await api.put("/admin/broker-selection", next);
       setData((prev) => ({ ...(prev || {}), selection: next }));
       toast.success(
         `Broker selection saved · equity: ${BROKER_META[next.equity]?.label} · crypto: ${BROKER_META[next.crypto]?.label}`,

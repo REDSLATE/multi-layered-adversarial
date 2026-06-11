@@ -26,7 +26,7 @@ export default function WebullEntitlementsCard() {
     setLoading(true);
     setErr(null);
     try {
-      const res = await api.get("/api/admin/webull/entitlements");
+      const res = await api.get("/admin/webull/entitlements");
       setData(res.data);
     } catch (e) {
       setErr(e?.response?.data?.detail || e?.message || "fetch failed");

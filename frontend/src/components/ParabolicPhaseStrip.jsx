@@ -34,7 +34,7 @@ export default function ParabolicPhaseStrip() {
     setLoading(true);
     setErr(null);
     try {
-      const res = await api.get("/api/admin/parabolic/phases");
+      const res = await api.get("/admin/parabolic/phases");
       setData(res.data);
     } catch (e) {
       setErr(e?.response?.data?.detail || e?.message || "fetch failed");
