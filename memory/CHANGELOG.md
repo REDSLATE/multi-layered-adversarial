@@ -1,3 +1,38 @@
+## 2026-02-19 — Webull-only equity routing + auto-router crash fix
+
+Operator P0 cleanup: rip Alpaca/Public.com out of the live trading path AND fix the auto-router that was crashing prod with HTTP 520s after ~15 minutes.
+
+**The "Webull switch isn't lighting up anything" bug — fixed**
+- Root cause: the broker_selection singleton was UI-only — `route_order` never read it; selection saved to Mongo had zero effect on routing.
+- `shared/broker_router.py::route_order` now consults `routes.broker_selection.get_current_selection()` when no per-intent `broker_override` is set. Resolution order: per-intent override > broker_selection > lane default. Lookup failure falls back to lane default (selection is convenience, not hard dep).
+- `shared/broker_router.py::adapter_for_lane` mirrors the same resolution so the `broker_connected` gate sees the same broker the live route will use.
+- New regression suite `tests/test_broker_selection_drives_routing.py` (5 tests) pins this contract.
+
+**Alpaca + Public.com deprecation (live routing path)**
+- `shared/broker_symbol_resolver.py`: `LANE_BROKER_REGISTRY["equity"] = "webull"` (was `alpaca_paper`).
+- `shared/broker_router.py::_get_equity_adapter` now returns the Webull adapter — no Public/Alpaca call.
+- `routes/broker_selection.py`: DEFAULT = `{"equity":"webull","crypto":"kraken"}`, VALID_EQUITY = `{"webull"}`. **Silent read-time coercion** maps legacy values (`public`, `alpaca_paper`, `alpaca`) to `webull` so the production DB record `{"equity":"public"}` does not 500 the GET endpoint via Pydantic validation.
+- Test refresh: `tests/test_equity_public_only.py` rewritten as `Webull-only` tripwire (source-level assertion that `_get_equity_adapter` does NOT reference Public or Alpaca).
+
+**Auto-router 15-minute crash — root cause + fix**
+- Root cause: every Webull SDK method (`get_account_list`, `get_account_detail`, `place_order`, `get_order_detail`, `get_order_history`, `cancel_order`, `get_positions`) is a SYNCHRONOUS blocking HTTPS round-trip. They were being called directly from `async def` methods, starving the FastAPI event loop for the duration of each call. Under the auto-router's 5-per-tick load this accumulated into Cloudflare 520 gateway timeouts and the pod was killed.
+- Fix: introduced `WebullAdapter._sdk_call(fn, *args, **kwargs)` — wraps every SDK call in `asyncio.get_running_loop().run_in_executor(None, ...)`. Every SDK call site now goes through `_sdk_call`.
+- Also moved `mc_shelly.record`'s synchronous file IO (`with open(...)` + `fh.write(...)`) into an executor — daily JSONL append no longer blocks the loop.
+- Added a 25-second `asyncio.wait_for` ceiling around `route_order` inside `auto_router._route_one` — a hung broker call can no longer stall the next tick (interval is 30s).
+- New regression suite `tests/test_webull_adapter_non_blocking.py` (3 tests) — proves the SDK calls do NOT block the event loop using a synthetic sleep + heartbeat coroutine.
+
+**Test status**
+- 124/124 tests pass across all broker/router/auto-router/webull/mc_shelly + new regression suites.
+- One pre-existing flaky test (`test_data_stack_phase1.py::test_finnhub_fetch_candles_429_records_audit`) confirmed unrelated to this work — fails on `git stash` (clean main) too.
+
+**Safety profile for SpaceX IPO**
+- Auto-router still OFF on boot by default — operator must hit `/api/admin/auto-router/start` to arm it.
+- Manual `/api/execution/submit` flow now routes equity through Webull end-to-end with the cap gate enforced ($3–$10).
+- Public.com / Alpaca files remain on disk but are dead code on the live path; they can be deleted in a follow-up sweep once the operator confirms 24h of clean Webull routing.
+
+---
+
+
 ## 2026-02-19 — Doctrine Training Export + Eval Suite
 
 Adapted the useful pieces of the operator-uploaded "Trading Stack Trainer" reference. **Discarded** the textbook `KNOWLEDGE_BASE` (would re-introduce drift). **Kept** the pair-generation and eval-scoring patterns, retargeted at our live `DOCTRINE_CARDS`.

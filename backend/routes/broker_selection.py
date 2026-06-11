@@ -9,16 +9,17 @@ Persists a single config doc:
 
   {
     "_id":    "singleton",
-    "equity": "public" | "webull",
+    "equity": "webull",
     "crypto": "kraken" | "webull",
     "updated_at": ISO8601,
     "updated_by": <operator email>,
   }
 
-When the brain emits an intent, it reads this selection and stamps the
-chosen broker on `broker_override` so the broker router dispatches
-accordingly. Defaults are PRESERVED — equity → Public, crypto → Kraken
-— so removing the singleton reverts to lane defaults safely.
+Operator directive (2026-02-19): Public.com and Alpaca are fully
+deprecated. Equity ALWAYS routes through Webull. The doc on production
+that still carries `{"equity": "public"}` is silently coerced to
+`"webull"` on read so this deploy doesn't trigger a Pydantic validation
+crash. Operator sees "Webull" in the UI regardless of stored value.
 """
 from __future__ import annotations
 
@@ -34,14 +35,23 @@ from db import db
 router = APIRouter(prefix="/admin/broker-selection", tags=["broker-selection"])
 
 COLLECTION = "broker_selection"
-DEFAULT = {"equity": "public", "crypto": "kraken"}
+DEFAULT = {"equity": "webull", "crypto": "kraken"}
 
-VALID_EQUITY = {"public", "webull"}
+# Equity is single-broker (Webull) post-Alpaca-and-Public-deprecation.
+# Crypto can be Kraken or Webull (Webull as parallel route).
+VALID_EQUITY = {"webull"}
 VALID_CRYPTO = {"kraken", "webull"}
+
+# Legacy → current broker coercions. Production DB carries historical
+# values from before the deprecation (public/alpaca_paper). On READ we
+# silently map them to the current default so the API never 500s on
+# pre-existing rows; on WRITE the Pydantic schema rejects anything that
+# isn't in VALID_*.
+_LEGACY_EQUITY_COERCIONS = {"public", "alpaca_paper", "alpaca"}
 
 
 class BrokerSelectionIn(BaseModel):
-    equity: str = Field(default="public")
+    equity: str = Field(default="webull")
     crypto: str = Field(default="kraken")
 
 
@@ -50,14 +60,24 @@ async def get_current_selection() -> Dict[str, str]:
 
     Returns the persisted singleton if present, else the lane
     defaults. Always returns the two-key contract.
+
+    Silent coercion (2026-02-19): any historical equity value that
+    matches `_LEGACY_EQUITY_COERCIONS` is mapped to the current
+    default (`webull`). This keeps the production DB record
+    `{"equity": "public"}` compatible with the deprecated-broker
+    cleanup without an explicit migration step.
     """
     doc = await db[COLLECTION].find_one({"_id": "singleton"})
     if not doc:
         return dict(DEFAULT)
-    return {
-        "equity": doc.get("equity") or DEFAULT["equity"],
-        "crypto": doc.get("crypto") or DEFAULT["crypto"],
-    }
+    stored_equity = (doc.get("equity") or "").strip().lower()
+    if stored_equity in _LEGACY_EQUITY_COERCIONS or stored_equity not in VALID_EQUITY:
+        equity = DEFAULT["equity"]
+    else:
+        equity = stored_equity
+    stored_crypto = (doc.get("crypto") or "").strip().lower()
+    crypto = stored_crypto if stored_crypto in VALID_CRYPTO else DEFAULT["crypto"]
+    return {"equity": equity, "crypto": crypto}
 
 
 @router.get("")

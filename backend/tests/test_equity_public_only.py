@@ -1,12 +1,18 @@
-"""Public-only equity routing tests (2026-02-XX).
+"""Webull-only equity routing tests (2026-02-19).
 
-Operator decision: Alpaca paper removed from equity lane. Public.com
-is the sole equity broker. Verify:
+Operator decision: Public.com and Alpaca paper are DEPRECATED from
+the equity lane. Webull is the sole equity broker (parallel route on
+crypto). Verify:
 
-  * `equity_broker_preference()` always returns "public"
-  * `_get_equity_adapter()` calls Public's loader, never Alpaca's
-  * If Public is unavailable, equity NO_TRADEs (no silent Alpaca
-    fallback)
+  * `LANE_BROKER_REGISTRY["equity"] == "webull"`
+  * `_get_equity_adapter()` calls Webull's loader, never Alpaca's
+  * If Webull credentials are missing, equity NO_TRADEs (no silent
+    Public/Alpaca fallback).
+
+This file replaces the pre-deprecation `test_equity_public_only.py`
+doctrine. The OLD contract is removed by design — we want a tripwire
+that fires loudly if anyone tries to re-introduce Public/Alpaca as
+the equity default.
 """
 from __future__ import annotations
 
@@ -15,22 +21,11 @@ import inspect
 import pytest
 
 from shared import broker_router as br
-from shared.broker_symbol_resolver import equity_broker_preference
+from shared.broker_symbol_resolver import LANE_BROKER_REGISTRY
 
 
-def test_preference_returns_public_by_default(monkeypatch):
-    monkeypatch.delenv("RISEDUAL_EQUITY_BROKER", raising=False)
-    assert equity_broker_preference() == "public"
-
-
-def test_preference_returns_public_for_legacy_values(monkeypatch):
-    """Stale env vars like `auto` or `alpaca_paper` from earlier
-    deploys must NOT silently route through Alpaca anymore."""
-    for legacy in ("auto", "alpaca_paper", "alpaca", "garbage"):
-        monkeypatch.setenv("RISEDUAL_EQUITY_BROKER", legacy)
-        assert equity_broker_preference() == "public", (
-            f"legacy value {legacy!r} should resolve to `public`, not {legacy!r}"
-        )
+def test_equity_lane_registered_to_webull():
+    assert LANE_BROKER_REGISTRY["equity"] == "webull"
 
 
 def test_get_equity_adapter_never_calls_alpaca():
@@ -40,19 +35,30 @@ def test_get_equity_adapter_never_calls_alpaca():
     Alpaca."""
     src = inspect.getsource(br._get_equity_adapter)
     assert "get_alpaca_adapter" not in src, (
-        "_get_equity_adapter must not call Alpaca — Public is the "
+        "_get_equity_adapter must not call Alpaca — Webull is the "
         "sole equity broker."
     )
-    assert "_get_public_adapter" in src
+
+
+def test_get_equity_adapter_never_calls_public():
+    """Tripwire — Public.com is deprecated. The equity resolver must
+    NOT route through `_get_public_adapter` anymore."""
+    src = inspect.getsource(br._get_equity_adapter)
+    assert "_get_public_adapter" not in src, (
+        "_get_equity_adapter must not call Public — Webull is the "
+        "sole equity broker."
+    )
+    assert "get_webull_adapter" in src
 
 
 @pytest.mark.asyncio
-async def test_get_equity_adapter_returns_none_when_public_down(monkeypatch):
-    """If Public's loader returns None (no creds / probe failed),
-    `_get_equity_adapter` must also return None — no silent Alpaca
-    fallback. The router then raises BrokerRouteBlocked → NO_TRADE."""
-    async def _public_unavailable():
+async def test_get_equity_adapter_returns_none_when_webull_down(monkeypatch):
+    """If Webull's loader returns None (no creds / probe failed),
+    `_get_equity_adapter` must also return None — no silent fallback
+    to Public/Alpaca. The router then raises BrokerRouteBlocked →
+    NO_TRADE."""
+    async def _webull_unavailable():
         return None
-    monkeypatch.setattr(br, "_get_public_adapter", _public_unavailable)
+    monkeypatch.setattr(br, "get_webull_adapter", _webull_unavailable)
     result = await br._get_equity_adapter()
     assert result is None

@@ -56,12 +56,34 @@ class _FakeAdapter:
 
 @pytest.fixture
 def fake_alpaca_adapter(monkeypatch):
+    """Historically the equity lane defaulted to `alpaca_paper`; we
+    patched that slot. 2026-02-19 the lane default flipped to
+    `webull`, so this fixture patches BOTH slots (and the underlying
+    Webull cap gate) so the MC-receipt contract tests can hit the
+    fake adapter regardless of the lane → broker mapping.
+    """
     fake = _FakeAdapter()
 
     async def loader():
         return fake
 
     monkeypatch.setitem(broker_router.ADAPTER_LOADERS, "alpaca_paper", loader)
+    monkeypatch.setitem(broker_router.ADAPTER_LOADERS, "webull", loader)
+
+    # Bypass the Webull pre-trade cap gate for these tests — they
+    # protect a different contract (MC receipt seal), not Webull
+    # caps. The cap gate has its own dedicated coverage in
+    # test_webull_caps.py.
+    from shared.broker import webull_caps
+
+    class _AllowDecision:
+        ok = True
+        reason = "test bypass"
+
+    monkeypatch.setattr(
+        broker_router, "evaluate_webull_order",
+        lambda *a, **kw: _AllowDecision(),
+    )
     return fake
 
 
@@ -221,7 +243,10 @@ async def test_route_order_attaches_receipt_metadata_rollout_mode(
     assert order["mc_receipt"] is not None
     assert order["mc_receipt_status"] == "VALID_MC_RECEIPT"
     assert order["mc_receipt_enforced"] is False
-    assert order["broker"] == "alpaca_paper"
+    # 2026-02-19: equity lane default flipped from `alpaca_paper` to
+    # `webull` (Public/Alpaca deprecated). The MC-receipt contract is
+    # broker-agnostic; what matters is that the receipt is stamped.
+    assert order["broker"] in {"alpaca_paper", "webull"}
     assert order["lane"] == "equity"
     assert order["canonical"] == "EQ:MSFT"
 

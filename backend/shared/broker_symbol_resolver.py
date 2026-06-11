@@ -292,8 +292,15 @@ _RULE_BASED_SYMBOL_BROKERS: frozenset[str] = frozenset({"webull"})
 # and call sites reference it) but the actual loader resolves to
 # Public via `broker_router._get_equity_adapter`. No Alpaca fallback.
 
+# 2026-02-19 (operator directive): Webull is the SOLE equity broker.
+# Alpaca and Public.com are removed from the live routing path. The
+# legacy slot name `alpaca_paper` is retained as a back-compat alias
+# elsewhere, but the equity lane resolves to Webull from this deploy
+# onward. `broker_router._get_equity_adapter` still exists for any
+# legacy caller but now returns the Webull adapter so routing is
+# consistent end-to-end.
 LANE_BROKER_REGISTRY: dict[LaneT, str] = {
-    "equity": "alpaca_paper",
+    "equity": "webull",
     "crypto": "kraken",
 }
 

@@ -21,12 +21,23 @@ Doctrine (2026-06-10, operator-pinned):
     call can identify equity vs crypto without changing the base
     `BrokerAdapter` contract.
 
+2026-02-19 — Event-loop safety:
+  Every Webull SDK call this adapter makes is a SYNCHRONOUS blocking
+  HTTPS request. Calling them directly from `async def` methods
+  starves the FastAPI event loop while each request is in flight,
+  which on prod caused the pod to accumulate Cloudflare 520s after
+  the auto-router took ~15 minutes' worth of ticks. Every SDK call
+  is now dispatched through `asyncio.get_running_loop().run_in_executor`
+  so the event loop stays responsive while the SDK does its
+  synchronous HTTPS round-trip on a worker thread.
+
 If `webull-openapi-python-sdk` isn't installed in the env, this module
 imports cleanly but `get_webull_adapter()` returns None — which maps
 to NO_TRADE at the router. Fail-closed.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import uuid
@@ -133,11 +144,30 @@ class WebullAdapter(BrokerAdapter):
             self._trade_client = TradeClient(self._api_client)
         return self._trade_client
 
+    async def _sdk_call(self, fn, *args, **kwargs):
+        """Dispatch a synchronous SDK method on a thread executor.
+
+        2026-02-19: every SDK method (`get_account_list`,
+        `get_account_detail`, `place_order`, etc.) is a blocking
+        HTTPS request. Calling them from an `async def` method
+        without `run_in_executor` blocks the event loop for the
+        duration of the round-trip — under the auto-router's 5-per-
+        tick load this caused the prod pod to accumulate gateway
+        timeouts and crash after ~15 minutes. This helper isolates
+        the sync work on the default thread pool so the loop stays
+        responsive.
+
+        The SDK does not provide an async interface; the worker
+        thread is the cheapest correct fix.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
+
     async def _resolve_account_id(self) -> str:
         if self.account_id:
             return self.account_id
         try:
-            res = self._trade().account_v2.get_account_list()
+            res = await self._sdk_call(self._trade().account_v2.get_account_list)
             data = res.json() if hasattr(res, "json") else res
         except Exception as e:  # noqa: BLE001
             raise RuntimeError(f"Webull resolve account_id failed: {e}") from e
@@ -190,7 +220,9 @@ class WebullAdapter(BrokerAdapter):
     async def get_account(self) -> BrokerAccount:
         account_id = await self._resolve_account_id()
         try:
-            res = self._trade().account_v2.get_account_detail(account_id)
+            res = await self._sdk_call(
+                self._trade().account_v2.get_account_detail, account_id,
+            )
             data = res.json() if hasattr(res, "json") else res
         except Exception as e:  # noqa: BLE001
             raise RuntimeError(f"Webull get_account failed: {e}") from e
@@ -288,7 +320,7 @@ class WebullAdapter(BrokerAdapter):
             payload["quantity"] = f"{float(qty):.6f}"
 
         try:
-            res = self._trade().order.place_order(payload)
+            res = await self._sdk_call(self._trade().order.place_order, payload)
             data = res.json() if hasattr(res, "json") else res
         except Exception as e:  # noqa: BLE001
             raise RuntimeError(f"Webull submit_market_order failed: {e}") from e
@@ -335,7 +367,9 @@ class WebullAdapter(BrokerAdapter):
     async def get_order(self, order_id: str) -> BrokerOrder:
         account_id = await self._resolve_account_id()
         try:
-            res = self._trade().order.get_order_detail(account_id, order_id)
+            res = await self._sdk_call(
+                self._trade().order.get_order_detail, account_id, order_id,
+            )
             data = res.json() if hasattr(res, "json") else res
         except Exception as e:  # noqa: BLE001
             raise RuntimeError(f"Webull get_order failed: {e}") from e
@@ -370,7 +404,9 @@ class WebullAdapter(BrokerAdapter):
         # exposes a dedicated open-orders call it can replace this.
         try:
             account_id = await self._resolve_account_id()
-            res = self._trade().order.get_order_history(account_id)
+            res = await self._sdk_call(
+                self._trade().order.get_order_history, account_id,
+            )
             data = res.json() if hasattr(res, "json") else res
         except Exception:  # noqa: BLE001
             return []
@@ -401,7 +437,7 @@ class WebullAdapter(BrokerAdapter):
     async def cancel_order(self, order_id: str) -> None:
         account_id = await self._resolve_account_id()
         try:
-            self._trade().order.cancel_order({
+            await self._sdk_call(self._trade().order.cancel_order, {
                 "account_id": account_id,
                 "order_id": order_id,
             })
@@ -411,7 +447,9 @@ class WebullAdapter(BrokerAdapter):
     async def list_positions(self) -> list[BrokerPosition]:
         try:
             account_id = await self._resolve_account_id()
-            res = self._trade().position.get_positions(account_id)
+            res = await self._sdk_call(
+                self._trade().position.get_positions, account_id,
+            )
             data = res.json() if hasattr(res, "json") else res
         except Exception:  # noqa: BLE001
             return []

@@ -201,14 +201,28 @@ async def record(
 
     # ── File appendix (training-data substrate, daily) ──
     # Strip Mongo's potential _id mutation; use a fresh shallow copy.
+    # 2026-02-19: file IO is offloaded to the default thread executor
+    # so the synchronous `open(..., 'a')` + `write` doesn't block the
+    # event loop. Under the auto-router's per-tick load every blocking
+    # syscall compounds — moving disk IO off-loop was a measurable
+    # contributor to the 15-minute prod crash.
     try:
         line = json.dumps({k: v for k, v in row.items() if k != "_id"}, default=str)
-        with open(_today_file_path(), "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+        await asyncio.get_running_loop().run_in_executor(
+            None, _append_jsonl_line, _today_file_path(), line,
+        )
     except Exception as e:  # noqa: BLE001
         print(f"[mc_shelly] file append failed: {e}")
 
     return event_id
+
+
+def _append_jsonl_line(path: Path, line: str) -> None:
+    """Sync helper used from `run_in_executor`. Append one line of
+    JSON to the daily file. Kept tiny and exception-free at the
+    boundary so the executor never carries surprises."""
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
 
 
 def record_async(**kwargs) -> None:

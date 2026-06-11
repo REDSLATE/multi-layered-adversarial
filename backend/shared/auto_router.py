@@ -297,8 +297,22 @@ async def _route_one(intent: dict) -> dict:
         release_in_flight_slot = None  # type: ignore  # appease ruff
 
     # Phase 4: submit to broker; handle the 3 outcome branches.
+    # 2026-02-19: timeout-wrap the broker submit. Even with SDK calls
+    # now isolated on a thread executor (shared/broker/webull.py
+    # `_sdk_call`), a hung remote can still tie up an executor slot
+    # indefinitely. A 25-second ceiling keeps the tick bounded —
+    # well under the 30s `AUTO_ROUTER_INTERVAL_SEC` so a stalled
+    # call can't block the next tick.
     try:
-        order = await route_order(intent, notional_usd=effective, client_order_id=client_order_id)
+        order = await asyncio.wait_for(
+            route_order(intent, notional_usd=effective, client_order_id=client_order_id),
+            timeout=25.0,
+        )
+    except asyncio.TimeoutError:
+        if symbol_for_dedupe and release_in_flight_slot is not None:
+            await release_in_flight_slot(symbol_for_dedupe)
+        await _persist_router_error(intent_id, intent, "broker_submit_timeout_25s")
+        return {"intent_id": intent_id, "verdict": "error", "reason": "broker_submit_timeout_25s"}
     except BrokerRouteBlocked as e:
         if symbol_for_dedupe and release_in_flight_slot is not None:
             await release_in_flight_slot(symbol_for_dedupe)

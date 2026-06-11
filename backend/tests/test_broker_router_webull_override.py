@@ -115,7 +115,14 @@ async def test_unknown_override_falls_back_to_lane_default(monkeypatch):
     """An intent with `broker_override="public"` (NOT in the override
     set) must NOT redirect — the router silently ignores the value
     and uses the lane default. Doctrine: only opt-IN brokers can be
-    selected via override."""
+    selected via override.
+
+    2026-02-19: lane default for equity is now Webull (Public/Alpaca
+    deprecated). With WEBULL_ARMED=true and notional above the cap
+    band, the fallback path raises an ABOVE_CAP block at the Webull
+    cap gate — which itself proves the override was IGNORED (Webull
+    cap fires) and the lane default was used.
+    """
     monkeypatch.setenv("WEBULL_ARMED", "true")
     intent = {
         "intent_id": "test-4",
@@ -124,17 +131,12 @@ async def test_unknown_override_falls_back_to_lane_default(monkeypatch):
         "lane": "equity",
         "action": "BUY",
         "confidence": 0.7,
-        "broker_override": "public",  # not in override set
+        "broker_override": "public",  # not in override set — ignored
     }
-    # Will fail downstream because no Public creds are configured in
-    # the test env — but it must NOT fail with a Webull cap message;
-    # that would prove the override was incorrectly honored.
+    # Lane default = webull (post-deprecation). $50 > $10 cap → ABOVE_CAP.
     with pytest.raises(BrokerRouteBlocked) as exc:
         await route_order(intent, notional_usd=50.0)
-    msg = str(exc.value).lower()
-    assert "webull" not in msg, (
-        f"public override must not redirect to Webull; got: {exc.value}"
-    )
+    assert "ABOVE_CAP" in str(exc.value)
 
 
 @pytest.mark.asyncio
@@ -162,8 +164,12 @@ async def test_crypto_intent_can_override_to_webull(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_no_override_uses_lane_default(monkeypatch):
-    """Without a broker_override, the lane default applies — equity
-    routes to its lane broker, NOT Webull."""
+    """Without a broker_override, the lane default applies.
+
+    2026-02-19: equity lane default is now Webull (Public/Alpaca
+    deprecated). Without `broker_override` set, the Webull cap gate
+    is exercised — proves the lane resolved to Webull as expected.
+    """
     monkeypatch.setenv("WEBULL_ARMED", "true")
     intent = {
         "intent_id": "test-6",
@@ -173,8 +179,7 @@ async def test_no_override_uses_lane_default(monkeypatch):
         "action": "BUY",
         "confidence": 0.7,
     }
+    # $50 > $10 cap → ABOVE_CAP from the Webull cap gate.
     with pytest.raises(BrokerRouteBlocked) as exc:
         await route_order(intent, notional_usd=50.0)
-    # The failure should reference the lane default (Public/Alpaca),
-    # never the Webull cap.
-    assert "WEBULL" not in str(exc.value).upper()
+    assert "ABOVE_CAP" in str(exc.value)

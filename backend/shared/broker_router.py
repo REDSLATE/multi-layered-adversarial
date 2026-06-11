@@ -111,18 +111,17 @@ async def _get_ibkr_adapter():
 async def _get_equity_adapter():
     """Equity-lane adapter resolver.
 
-    2026-02-XX: Public.com is the SOLE equity broker. The previous
-    `auto` mode (Public first, Alpaca fallback) and the
-    `alpaca_paper`-direct mode were both removed at operator request.
+    2026-02-19 (operator directive): Public.com and Alpaca are
+    deprecated. Webull is the SOLE equity broker. This resolver
+    delegates to the Webull adapter so any legacy caller still
+    landing on the `alpaca_paper` slot name routes correctly.
 
-    Doctrine: if Public is unavailable (no creds / probe failed /
-    API down), this returns None. The broker_router then raises
-    `BrokerRouteBlocked` and the intent NO_TRADEs. We do NOT silently
-    route equity to Alpaca anymore — the operator has chosen Public
-    as the only equity broker, and a silent fallback would violate
-    that choice.
+    Fail-closed: if Webull credentials aren't configured the
+    adapter loader returns None and the router raises
+    `BrokerRouteBlocked`; equity NO_TRADEs rather than silently
+    routing through a deprecated path.
     """
-    return await _get_public_adapter()
+    return await get_webull_adapter()
 
 
 ADAPTER_LOADERS = {
@@ -336,14 +335,37 @@ async def route_order(
     #    only honored for brokers in `ROUTE_OVERRIDE_BROKERS`; anything
     #    else falls back to the lane default so a stale or hostile
     #    intent can't redirect to Public/Kraken/Alpaca arbitrarily.
+    #
+    # 2026-02-19 (operator: "the switch isn't lighting up anything"):
+    #    When no per-intent override is set, consult the broker
+    #    selection singleton so the UI hamburger ACTUALLY drives
+    #    routing. Previously the selection was UI-only — the route
+    #    always fell through to the lane default. Now: per-intent
+    #    override (still wins) > broker_selection (operator UI) >
+    #    lane default. Selection is read once per route_order call;
+    #    a failure here falls through to the lane default rather
+    #    than killing the trade.
     override = (intent.get("broker_override") or "").strip().lower() or None
     if override and override in ROUTE_OVERRIDE_BROKERS:
         broker_name = override
     else:
+        broker_name = None
         try:
-            broker_name = broker_for_lane(asset.lane)
-        except LaneRoutingError as e:
-            raise BrokerRouteBlocked(str(e)) from e
+            from routes.broker_selection import get_current_selection  # noqa: WPS433
+            sel = await get_current_selection()
+            sel_choice = (sel.get(asset.lane) or "").strip().lower() or None
+            if sel_choice and sel_choice in ADAPTER_LOADERS:
+                broker_name = sel_choice
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "broker_selection lookup failed lane=%s err=%s — falling "
+                "back to lane default", asset.lane, exc,
+            )
+        if not broker_name:
+            try:
+                broker_name = broker_for_lane(asset.lane)
+            except LaneRoutingError as e:
+                raise BrokerRouteBlocked(str(e)) from e
 
     # 2b. Webull-specific pre-trade cap gate. Runs BEFORE symbol
     #     resolution / adapter load so a refused order doesn't
@@ -438,16 +460,33 @@ async def adapter_for_lane(lane: str, broker_override: Optional[str] = None):
     Webull. Any unknown / non-override broker name silently falls
     back to the lane default — same doctrine as `route_order`.
 
+    2026-02-19: also consults the operator's `broker_selection`
+    singleton when no per-intent override is set, so the
+    `broker_connected` gate matches the live route resolution.
+
     Returns the adapter (truthy) or None.
     """
     override = (broker_override or "").strip().lower() or None
     if override and override in ROUTE_OVERRIDE_BROKERS:
         broker = override
     else:
+        broker = None
         try:
-            broker = broker_for_lane(lane)
-        except LaneRoutingError:
-            return None
+            from routes.broker_selection import get_current_selection  # noqa: WPS433
+            sel = await get_current_selection()
+            sel_choice = (sel.get(lane) or "").strip().lower() or None
+            if sel_choice and sel_choice in ADAPTER_LOADERS:
+                broker = sel_choice
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "adapter_for_lane: broker_selection lookup failed lane=%s "
+                "err=%s — falling back to lane default", lane, exc,
+            )
+        if not broker:
+            try:
+                broker = broker_for_lane(lane)
+            except LaneRoutingError:
+                return None
     loader = ADAPTER_LOADERS.get(broker)
     if not loader:
         return None
