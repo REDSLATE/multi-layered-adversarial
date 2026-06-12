@@ -200,3 +200,171 @@ async def webull_otoco_test(
         },
         "order": result,
     }
+
+
+# ──────────── OTOCO live tile — v3 open-orders grouped by combo ────────────
+
+
+def _classify_leg(client_order_id: str, combo_type: str) -> str:
+    """Identify whether an open-order row is the MASTER, TP or SL leg.
+
+    Webull's response carries `combo_type` ∈ {MASTER, OTOCO, NORMAL,
+    ...} but doesn't tell us TP vs SL inside the OTOCO pair. We rely
+    on the prefix MC stamps on `client_order_id` (`tp-` / `sl-` /
+    `mc-otoco-` for master) — see `submit_otoco_market`. Falls back
+    to "unknown" if neither hint resolves.
+    """
+    coid = (client_order_id or "").lower()
+    ct = (combo_type or "").upper()
+    if ct == "MASTER" or coid.startswith("mc-otoco-"):
+        return "master"
+    if coid.startswith("tp-"):
+        return "tp"
+    if coid.startswith("sl-"):
+        return "sl"
+    if ct == "OTOCO":
+        # Last-resort guess: order_type drives the inference. LIMIT =
+        # take-profit; STOP / STOP_LOSS = stop-loss. Anything else
+        # surfaces as unknown so the operator sees it without
+        # mislabeling.
+        return "unknown_otoco_child"
+    return "standalone"
+
+
+def _group_open_orders_by_combo(rows: list[dict]) -> dict[str, Any]:
+    """Group v3 open-order rows into bracket envelopes.
+
+    Returns:
+        {
+          "brackets": [ { combo_id, symbol, master, tp, sl } ... ],
+          "standalone": [ ... ],
+        }
+
+    A bracket is keyed by `combo_id` (Webull's, or MC's
+    `client_combo_order_id` mirrored on each leg). Standalone orders
+    (combo_type=NORMAL or no combo membership) are returned as-is so
+    the operator still sees them for context.
+    """
+    by_combo: dict[str, dict[str, Any]] = {}
+    standalone: list[dict] = []
+
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        # Webull may return camelCase or snake_case depending on SDK
+        # version; tolerate both.
+        client_order_id = (
+            r.get("client_order_id") or r.get("clientOrderId") or ""
+        )
+        client_combo_id = (
+            r.get("client_combo_order_id")
+            or r.get("clientComboOrderId")
+            or r.get("combo_id")
+            or r.get("comboId")
+            or ""
+        )
+        combo_type = (
+            r.get("combo_type") or r.get("comboType") or ""
+        )
+        order_type = (
+            r.get("order_type") or r.get("orderType") or ""
+        )
+        leg_kind = _classify_leg(client_order_id, combo_type)
+        normalized = {
+            "client_order_id": client_order_id,
+            "broker_order_id": (
+                r.get("order_id") or r.get("orderId") or ""
+            ),
+            "symbol": (r.get("symbol") or "").upper(),
+            "side": (r.get("side") or "").upper(),
+            "order_type": order_type,
+            "combo_type": combo_type,
+            "qty": (
+                r.get("quantity") or r.get("totalQuantity") or "0"
+            ),
+            "filled_qty": (
+                r.get("filled_quantity") or r.get("filledQuantity") or "0"
+            ),
+            "limit_price": r.get("limit_price") or r.get("limitPrice"),
+            "stop_price": r.get("stop_price") or r.get("stopPrice"),
+            "status": (r.get("status") or "").upper(),
+            "create_time": r.get("create_time") or r.get("createTime"),
+        }
+        if client_combo_id and combo_type in ("MASTER", "OTOCO", "OCO", "OTO"):
+            bucket = by_combo.setdefault(client_combo_id, {
+                "combo_id": client_combo_id,
+                "symbol": normalized["symbol"],
+                "master": None,
+                "tp": None,
+                "sl": None,
+                "other_legs": [],
+            })
+            if leg_kind == "master" and bucket["master"] is None:
+                bucket["master"] = normalized
+            elif leg_kind == "tp" and bucket["tp"] is None:
+                bucket["tp"] = normalized
+            elif leg_kind == "sl" and bucket["sl"] is None:
+                bucket["sl"] = normalized
+            else:
+                bucket["other_legs"].append({**normalized, "leg_kind": leg_kind})
+            # Symbol unifies across legs — pick the first non-empty.
+            if not bucket["symbol"] and normalized["symbol"]:
+                bucket["symbol"] = normalized["symbol"]
+        else:
+            standalone.append({**normalized, "leg_kind": leg_kind})
+
+    # Stable ordering: most-recent combo (by create_time on the master
+    # leg) first; standalones by create_time descending.
+    def _ct(o: dict | None) -> str:
+        return (o or {}).get("create_time") or ""
+
+    brackets = sorted(
+        by_combo.values(),
+        key=lambda b: _ct(b.get("master")) or _ct(b.get("tp")) or _ct(b.get("sl")),
+        reverse=True,
+    )
+    standalone.sort(key=lambda r: r.get("create_time") or "", reverse=True)
+    return {"brackets": brackets, "standalone": standalone}
+
+
+@router.get("/otoco/live")
+async def webull_otoco_live(
+    _user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return the operator's currently-open Webull orders, grouped
+    into OTOCO brackets where possible.
+
+    Doctrine (P1 Phase 2 follow-up, 2026-02-19): the operator
+    submits an atomic OTOCO via the test panel above; today they
+    have to switch to the Webull mobile app to see the TP/SL pair
+    after the master fills. This tile pulls the same information
+    from the v3 open-orders API and surfaces it on the dashboard.
+    Refreshes are operator-driven (frontend polls every ~8s).
+
+    Graceful degradation: if the Webull adapter isn't configured we
+    return an empty payload rather than 503 — the dashboard's panel
+    error boundary then renders a "broker not configured" state
+    without taking the whole Intents page down.
+    """
+    try:
+        from shared.broker.webull import get_webull_adapter  # noqa: WPS433
+        adapter = await get_webull_adapter()
+    except Exception:  # noqa: BLE001
+        adapter = None
+    if adapter is None:
+        return {
+            "ok": False,
+            "reason": "webull_adapter_not_configured",
+            "brackets": [],
+            "standalone": [],
+            "open_count": 0,
+        }
+
+    rows = await adapter.list_open_orders_v3(page_size=50)
+    grouped = _group_open_orders_by_combo(rows)
+    return {
+        "ok": True,
+        "brackets": grouped["brackets"],
+        "standalone": grouped["standalone"],
+        "open_count": len(rows),
+    }

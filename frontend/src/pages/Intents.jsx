@@ -9,6 +9,7 @@ import LaneRoutingPill from "@/components/LaneRoutingPill";
 import MasterTradingSwitch from "@/components/MasterTradingSwitch";
 import WebullEntitlementsCard from "@/components/WebullEntitlementsCard";
 import WebullOtocoTestPanel from "@/components/WebullOtocoTestPanel";
+import WebullOtocoLivePanel from "@/components/WebullOtocoLivePanel";
 import ParabolicPhaseStrip from "@/components/ParabolicPhaseStrip";
 import BrokerSelectionMenu from "@/components/BrokerSelectionMenu";
 import DoctrineStrip from "@/components/DoctrineStrip";
@@ -721,6 +722,16 @@ export default function Intents() {
       <div className="mt-3">
         <PanelErrorBoundary panelName="Webull OTOCO" testid="panel-error-otoco">
           <WebullOtocoTestPanel />
+        </PanelErrorBoundary>
+      </div>
+
+      {/* Live OTOCO tile — polls Webull's v3 open-orders API and
+          groups the rows into bracket envelopes so the operator can
+          watch the MASTER + TP + SL legs without opening the Webull
+          mobile app. */}
+      <div className="mt-3">
+        <PanelErrorBoundary panelName="Webull OTOCO Live" testid="panel-error-otoco-live">
+          <WebullOtocoLivePanel />
         </PanelErrorBoundary>
       </div>
 

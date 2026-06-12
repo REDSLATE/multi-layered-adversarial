@@ -1051,6 +1051,40 @@ class WebullAdapter(BrokerAdapter):
                     })
         return out
 
+    async def list_open_orders_v3(self, page_size: int = 50) -> list[dict]:
+        """List open orders via the v3 API (the combo-aware surface).
+
+        Unlike `list_open_orders` (which falls back to the v1
+        today-orders endpoint and loses combo metadata), this method
+        keeps every field Webull returns — including the combo
+        identifiers we need to group an OTOCO bracket's three legs
+        back together for the operator dashboard.
+
+        Returns the raw `data` array; the route-level grouper does
+        the OTOCO assembly so the adapter stays presentation-free.
+        """
+        try:
+            account_id = await self._resolve_account_id()
+            res = await self._sdk_call(
+                self._trade().order_v3.get_order_open, account_id, page_size,
+            )
+            data = res.json() if hasattr(res, "json") else res
+        except Exception as e:  # noqa: BLE001
+            logger.warning("list_open_orders_v3 failed: %s", e)
+            return []
+        if isinstance(data, dict):
+            code = data.get("code")
+            if code not in (None, "200", 200):
+                logger.warning(
+                    "list_open_orders_v3 SDK envelope code=%s msg=%s",
+                    code, data.get("msg"),
+                )
+                return []
+            rows = data.get("data") or []
+        else:
+            rows = data or []
+        return rows if isinstance(rows, list) else []
+
     async def cancel_order(self, order_id: str) -> None:
         # 2026-02-19: real SDK signature is
         # `cancel_order(account_id, client_order_id)` (positional),

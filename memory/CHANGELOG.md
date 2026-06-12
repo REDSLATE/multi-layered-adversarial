@@ -1,3 +1,51 @@
+## 2026-02-19 (P1 Phase 2 follow-up) — Live OTOCO Orders tile
+
+### What shipped
+A second OTOCO panel that polls Webull's v3 open-orders API every 8s and groups the rows back into bracket envelopes (master + TP + SL) so the operator can watch a live bracket play out on Mission Control without switching to the Webull mobile app.
+
+### Files
+1. **`backend/shared/broker/webull.py`** — new `list_open_orders_v3(page_size=50)` method:
+   - Calls `order_v3.get_order_open(account_id, page_size)`.
+   - Returns the raw `data` array (combo metadata preserved) instead of v1's stripped surface.
+   - Logs + degrades gracefully on SDK envelope errors.
+
+2. **`backend/routes/webull_admin.py`** — two new private helpers + one new route:
+   - `_classify_leg(client_order_id, combo_type)` → returns `master | tp | sl | unknown_otoco_child | standalone` based on Webull's `combo_type=MASTER` for entry and MC's `tp-`/`sl-`/`mc-otoco-` prefixes for children.
+   - `_group_open_orders_by_combo(rows)` → groups by `client_combo_order_id`; returns `{brackets: [{combo_id, symbol, master, tp, sl, other_legs}], standalone: [...]}`. Tolerates camelCase + snake_case field names (SDK version drift). Partial brackets (master already filled) still surface what's left.
+   - `GET /api/admin/webull/otoco/live` → wraps `list_open_orders_v3 → _group_open_orders_by_combo`. Returns `{ok, brackets, standalone, open_count}`. When the adapter isn't configured returns `{ok: false, reason: "webull_adapter_not_configured"}` instead of 503 so the dashboard's panel error boundary can render a friendly state.
+
+3. **`frontend/src/components/WebullOtocoLivePanel.jsx`** (new):
+   - Polls `/api/admin/webull/otoco/live` every 8s.
+   - Pauses polling on `visibilitychange` (hidden tab) — saves rate-limit budget when the operator isn't looking.
+   - Each bracket = 3 leg pills (MASTER / TP / SL) with status-colored badges, order_type, price (`@ $16.50` for LIMIT, `MKT` for the master) and the leg's client_order_id.
+   - Status colors: WORKING/FILLED → green, PENDING → amber, SUBMITTED → blue, PARTIALLY_FILLED → violet, REJECTED → red, CANCELLED → grey.
+   - Standalone open orders surface in a small list below the brackets.
+   - Empty state: "No open Webull orders. Fire an OTOCO above to populate this tile."
+   - Manual reload + autorefresh toggle controls.
+
+4. **`frontend/src/pages/Intents.jsx`** — the live panel mounts directly below the test panel in the Equity Lane, wrapped in its own `PanelErrorBoundary` so a transient backend hiccup doesn't take the whole page down.
+
+5. **`backend/tests/test_webull_otoco_live_grouping.py`** (new) — 11 tests on the pure-function grouper (no SDK):
+   - leg classification (master by combo_type, master by prefix, tp/sl by prefix, unknown_otoco_child, standalone)
+   - 3-leg bracket grouping
+   - multiple brackets stay separated
+   - standalone orders sorted into their own bucket
+   - partial bracket (only TP+SL when master already filled) still surfaces
+   - camelCase field names tolerated
+   - empty input handled
+
+### Tests
+- `pytest tests/test_webull_otoco_live_grouping.py tests/test_webull_otoco_adapter.py tests/test_operator_override_and_action_override.py tests/test_last_submit_block_endpoint.py tests/test_legacy_wrapper_dampener.py` → 48/48 passing
+- Lints clean (Python + JS)
+- Live curl `GET /api/admin/webull/otoco/live` returns `{ok: true, brackets: [], standalone: [], open_count: 0}` in preview (no open Webull orders)
+- Smoke screenshot shows both panels (Atomic OTOCO + Live OTOCO Orders) render cleanly in the Equity Lane with the live tile showing the empty-state hint
+
+### Operator deploy
+Save to GitHub → redeploy. Open the Intents page → Equity Lane → fire an OTOCO using the test panel above. Within 8s the Live OTOCO Orders tile will show the bracket with three pills (MASTER pending → WORKING → FILLED; TP and SL stay WORKING until one fires). When the master fills, you'll see it disappear (it's no longer open) while TP/SL remain. When TP or SL hits, the OCO pair collapses — both disappear from the tile.
+
+---
+
+
 ## 2026-02-19 (P1 Phase 2) — Webull Atomic OTOCO
 
 ### What shipped
