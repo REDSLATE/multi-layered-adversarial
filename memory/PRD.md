@@ -1,3 +1,31 @@
+## 2026-02-19 (later session) — Wrapper hardening + silent-tier tripwire
+
+### Operator directive
+> "The wraps were deployed yesterday, over 7 of them" — operator hypothesized that the recently deployed legacy brain wrappers may be silencing the brains, and noticed that the LAST RECEIPT table on prod was showing brains as LIVE when their decision receipts were 6-12 days stale.
+
+### Status: shipped to preview, awaiting "Save to GitHub" → prod redeploy
+
+### Root-cause summary
+1. **The LIVE/STALE/DEAD badge was structurally decoupled from "is the brain actually thinking."** The badge was derived purely from `SHARED_HEARTBEATS.last_seen` age; the actual `last_receipt_ts` from `SHARED_RECEIPTS` was rendered as text but never compared against the heartbeat. Result: a sidecar pinging every 30s with a wedged decision loop showed green `LIVE 30s` indefinitely.
+2. **The unified in-process runner inherited the May-14 sidecar bugs.** Half-open keep-alive socket on backend pod rotation (`httpx.AsyncClient(timeout=8)` doesn't trip on a `pool` acquire stall), and no per-loop watchdog meaning a wedged loop just stopped silently. The original separate-stack `chevelle-incoming/MC_HARDENING_NOTE_2026-05-14.md` memo described the exact fix; Camaro applied it in May, the other 3 sidecar teams didn't, and the unified runner was created without porting the doctrine.
+3. **The legacy brain wrappers (deployed yesterday) are likely compressing real conviction past the doctrine threshold** — `chevelle_legacy_governor` alone can stack penalties to drive `size_bias` to ~0.24 (matches `GOVERNOR · RISK_DOWN x0.13` in operator screenshot when combined with cap gate). Made worse by the Mongo outage triggering the `current_side=UNKNOWN` penalty in every wrapper simultaneously. Tuning deferred to a follow-up session.
+
+### Verification
+- 60/60 brain-runner-related tests passing.
+- `/api/admin/diagnostics` immediately returns `effective_tier=silent` for all 4 brains whose receipts are stale (12.9d / 13.5d / 11.2h / never) — exactly what was hidden before.
+- Backend boots clean. In preview, brains emit ~1 intent per 45s with <1.5% watchdog trip rate.
+
+### Remaining work (next session)
+- **Legacy wrapper tuning** — operator picked Option A+B (global penalty-strength scalar + non-HOLD size_bias floor) but deferred to a follow-up. Three knobs were identified: (A) `WRAPPER_PENALTY_STRENGTH` env, (B) `WRAPPER_MIN_SIZE_BIAS_NONZERO` env, (C) per-rule disable for the `current_side=UNKNOWN` penalty during Mongo outages.
+- **Diagnostic for pre-wrap vs post-wrap conviction** — operator would want a per-intent delta showing how much conviction/size each wrapper is eating, so the tuning conversation is data-driven.
+- **Mongo Atlas IP allowlist remediation on prod** — likely cause of the connection pool pause. Operator-side fix.
+- **Webull fractional shares** (`place_order_v2`) — P1, still on the backlog.
+- **US market holiday calendar** for `shadow_close_cron.py` — P2.
+- **StockFit 10-Q/10-K enrichment** into doctrine sidecars — P2.
+
+---
+
+
 ## 2026-02-19 — Alpaca fully excised (Webull-only equity routing)
 
 ### Operator directive

@@ -1,3 +1,57 @@
+## 2026-02-19 (later session) — Wrapper hardening + silent-tier tripwire
+
+### Operator triage trail
+Operator observed prod brains heartbeating green but producing no decision receipts for 6, 7, 12 days (BARRACUDA, HELLCAT, GTO). CAMINO was the only brain still emitting. Investigation cross-referenced the May-14 sidecar-hardening memo (`/app/external/chevelle-incoming/MC_HARDENING_NOTE_2026-05-14.md`) — Camaro patched the half-open-socket / single-tick / no-watchdog class of bug; the other 3 sidecar teams received instructions but didn't confirm application. The unified in-process runner here in MC's monorepo (`/app/external/brains/runner.py`) inherited the same defect when the brains were migrated in-process.
+
+### What shipped
+
+**`/app/external/brains/runner.py` — May-14 hardening doctrine applied to this stack:**
+- `_create_http_client()` helper — `httpx.Timeout(connect=3, read=8, write=5, pool=2)` + `httpx.Limits(max_keepalive_connections=0, max_connections=4)`. Loop HTTP calls no longer reuse a long-lived keep-alive socket that can go half-open on backend pod rotation.
+- `WATCHDOG_ITER_TIMEOUT_SEC=20` (env: `NEUTRAL_BRAIN_WATCHDOG_ITER_SEC`). Each iteration of all three loops (`_intent_loop` / `_checkin_loop` / `_sovereign_loop`) is wrapped in `asyncio.wait_for(_iter(), timeout=...)` so any single wedged HTTP call abandons that iter, logs `watchdog: <loop> iter exceeded Ns — abandoning brain=...`, and continues to the next iter.
+- `BrainRunner.__init__` tracks 6 timestamps: `last_intent_success_at`, `last_checkin_success_at`, `last_sovereign_success_at` (refreshed on each successful iter) + the matching `*_watchdog_trip_at` (refreshed on each timeout). All exposed via `BrainRunner.stats["loop_health"]` so the Diagnostics endpoint can surface silent-hang signatures.
+
+**`/app/backend/shared/diagnostics.py` — operator-visible "silent" tier:**
+- New `_effective_tier(hb_tier, receipt_age_s)` joins heartbeat + receipt freshness. A brain with fresh heartbeat (`hb_tier == "ok"`) but receipts older than `RECEIPT_STALE_AFTER_SECONDS` is now reported as `silent` instead of falsely `LIVE`. Non-ok heartbeats pass through unchanged (a dead heartbeat is a stronger signal than stale receipts).
+- The `/admin/diagnostics` payload now ships `last_receipt_age_seconds`, `effective_tier`, and `receipt_stale_after_seconds` per runtime.
+
+**`/app/backend/namespaces.py`:**
+- `RECEIPT_STALE_AFTER_SECONDS = 600` (env: `MC_RECEIPT_STALE_AFTER_SECONDS`). 10 min — past `TICK_INTERVAL_SEC × INTENT_COOLDOWN_TICKS` (45s × 6 ≈ 4.5 min) but short enough to catch hangs in minutes, not days.
+
+**`/app/frontend/src/pages/Diagnostics.jsx`:**
+- The LAST RECEIPT table's badge now keys off `effective_tier` instead of `heartbeat_tier`.
+- New `silent` band rendered in orange (`#F97316`) with label `SILENT` and inline tooltip `· alive but no decisions`. Heartbeat-age span gets a richer tooltip listing both the heartbeat tier and the receipt age, so operators can diagnose which axis is the trip cause.
+
+**Tests (15 new, all passing):**
+- `tests/test_diagnostics_silent_tier.py` — 9 cases covering all heartbeat × receipt combinations, plus a threshold-sanity guard.
+- `tests/test_runner_wrapper_hardening.py` — 6 tripwires that fail in CI if anyone reintroduces the May-14 bug class: phased timeouts present, watchdog constant defined + reasonable, three split loops still exist, each loop wraps its iter in `asyncio.wait_for`, `stats.loop_health` exposes all 6 timestamps, no raw `httpx.AsyncClient(timeout=...)` in any loop.
+
+### Verification
+
+Backend restart was clean. Diagnostics endpoint immediately confirmed the fix is catching the exact pattern we identified:
+```
+alpha    hb_tier=ok  effective_tier=silent  hb_age=12s   receipt_age=1,112,016s (~12.9 d)
+camaro   hb_tier=ok  effective_tier=silent  hb_age=11s   receipt_age=1,169,123s (~13.5 d)
+chevelle hb_tier=ok  effective_tier=silent  hb_age=16s   receipt_age=40,294s    (~11.2 h)
+redeye   hb_tier=ok  effective_tier=silent  hb_age=15s   receipt_age=None (never)
+```
+Brains in preview ARE emitting (8+ logged intent posts per brain in 17 min, ~1 every 45s — exactly `TICK_INTERVAL_SEC`). Only 1 watchdog trip across all 4 brains over hundreds of iters (`redeye tick=20`), and that loop recovered on the next tick. Trip rate <1.5%.
+
+### Open thread for next session
+
+Operator surfaced a second hypothesis: the **legacy brain wrappers** deployed yesterday (`/app/backend/shared/legacy_brain_wrappers.py` — 4 personality wrappers + 1 dispatcher + a squeeze wrapper) may be compressing brain conviction past the doctrine gate, contributing to the operator-visible silence even though the brains themselves are emitting. Worked through the math:
+- `chevelle_legacy_governor` can stack `current_side=UNKNOWN` (×0.60), `RISK_OFF + OPEN_LONG` (×0.50), and `SCALE_IN` (×0.80) → `size_bias ≈ 0.24`. Combined with cap-gate compression this matches the screenshot's `GOVERNOR · RISK_DOWN x0.13`.
+- The Mongo outage **pessimizes every wrapper at once**: when position state can't be read, every wrapper's `current_side in {None, "UNKNOWN"}` rule fires.
+- Three tunable knobs identified: (A) global penalty-strength scalar, (B) non-HOLD size_bias floor, (C) per-rule disable for the UNKNOWN-state penalty during Mongo outages.
+
+Decision: deploy the wrapper-hardening + silent-tier fixes now, tune the legacy wrappers in a follow-up session once Mongo is restored on prod and the operator can see real (not Mongo-induced) wrapper behavior.
+
+### What's still blocked upstream
+
+Mongo Atlas connection pool paused on prod (`customer-apps-shard-00-02.kndgvm.mongodb.net:27017`). Until that's resolved (likely an IP allowlist drift after the recent prod redeploy), receipt writes can't land regardless of how clean the wrapper code is. The silent-tier fix will correctly mark all 4 brains orange in the UI while Mongo is down — that's expected behavior, not a regression.
+
+---
+
+
 ## 2026-02-19 (post-shadow-cron) — Alpaca fully excised from the codebase
 
 Operator directive (continuation of the Webull migration): "Alpaca is the only one being removed." Webull already verified + funded. This pass deletes every Alpaca code path so the codebase reflects the production routing reality (Webull for equity, Kraken for crypto, Public.com stays as an opt-in fallback).
