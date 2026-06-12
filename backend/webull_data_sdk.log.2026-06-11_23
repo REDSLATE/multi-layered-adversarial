@@ -1,0 +1,405 @@
+272704544108960 2026-06-11 23:03:04,561 webull.core.client ERROR HttpError occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/crypto/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "BTCUSD",
+    "category": "US_CRYPTO"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-11T23:02:44Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "be9da4c6-1ca0-582d-9e1b-049c277ccdd3",
+    "x-signature": "cbxG7KuRrEv8IRyho6TeYbTNwCc=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} ClientException:SDK.HttpError HTTPSConnectionPool(host='api.webull.com', port=443): Max retries exceeded with url: /openapi/market-data/crypto/snapshot?symbols=BTCUSD&category=US_CRYPTO (Caused by ConnectTimeoutError(<HTTPSConnection(host='api.webull.com', port=443) at 0xf806080d2150>, 'Connection to api.webull.com timed out. (connect timeout=5)'))
+272702925042080 2026-06-11 23:03:13,604 webull.core.client ERROR HttpError occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/crypto/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "BTCUSD",
+    "category": "US_CRYPTO"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-11T23:02:53Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "b565d6b1-cb4a-52ed-9514-d00b0e75250f",
+    "x-signature": "pGlQEuayFOue/7u5h/8JteO+OOY=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} ClientException:SDK.HttpError HTTPSConnectionPool(host='api.webull.com', port=443): Max retries exceeded with url: /openapi/market-data/crypto/snapshot?symbols=BTCUSD&category=US_CRYPTO (Caused by ConnectTimeoutError(<HTTPSConnection(host='api.webull.com', port=443) at 0xf805f833cb10>, 'Connection to api.webull.com timed out. (connect timeout=5)'))
+280846476833184 2026-06-11 23:09:38,761 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "BTCUSD",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-11T23:09:38Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "dd19c342-10b2-5900-9f2e-07cc08031e35",
+    "x-signature": "vtwjH3wN7n1F9Joz/zHIq3CxMQk=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [BTCUSD].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [BTCUSD]., RequestID: 2ca2f7da-0197-4abf-8072-d95759435473
+280846476833184 2026-06-11 23:09:38,761 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [BTCUSD].",
+  "http_status": 417,
+  "request_id": "2ca2f7da-0197-4abf-8072-d95759435473"
+}
+281080913457568 2026-06-11 23:11:42,655 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "BTCUSD",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-11T23:11:42Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "5928fca2-0bc2-51a1-97ce-c8b06e9c68b9",
+    "x-signature": "32cWiMtKqZjDT8UVM3RZ0WWoNuc=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [BTCUSD].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [BTCUSD]., RequestID: ef10f428-a49c-439d-be62-199be50b0045
+281080913457568 2026-06-11 23:11:42,655 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [BTCUSD].",
+  "http_status": 417,
+  "request_id": "ef10f428-a49c-439d-be62-199be50b0045"
+}
+275516262838688 2026-06-11 23:16:47,011 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "BTCUSD",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-11T23:16:46Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "00f2790c-0ff2-565b-8ef5-3353eb1787d4",
+    "x-signature": "cQxCKHxwHhb9pYYtz1IUGH92dqM=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [BTCUSD].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [BTCUSD]., RequestID: 8bf44ca4-62cf-4789-938d-5be94ed748b0
+275516262838688 2026-06-11 23:16:47,011 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [BTCUSD].",
+  "http_status": 417,
+  "request_id": "8bf44ca4-62cf-4789-938d-5be94ed748b0"
+}
+276562406535584 2026-06-11 23:21:22,644 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "BTCUSD",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-11T23:21:22Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "d4dbab44-008a-5287-b2cc-1e9bde73aa46",
+    "x-signature": "3M2p0vgf1bw0JTQDrTYVcHkPgKs=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [BTCUSD].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [BTCUSD]., RequestID: 4cb6d972-df2f-4a34-b184-964ecb1cfc4a
+276562406535584 2026-06-11 23:21:22,644 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [BTCUSD].",
+  "http_status": 417,
+  "request_id": "4cb6d972-df2f-4a34-b184-964ecb1cfc4a"
+}
+281346664559008 2026-06-11 23:25:39,774 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "BTCUSD",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-11T23:25:39Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "b633bfa0-1610-5afe-9039-dc6183ec8138",
+    "x-signature": "39yxb3qEbTTlKEW0EfPd7GIs7MM=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [BTCUSD].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [BTCUSD]., RequestID: 90ef6818-c0f7-4c30-b847-b978273926f2
+281346664559008 2026-06-11 23:25:39,774 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [BTCUSD].",
+  "http_status": 417,
+  "request_id": "90ef6818-c0f7-4c30-b847-b978273926f2"
+}
+280812762821024 2026-06-11 23:26:32,817 webull.core.client ERROR HttpError occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/crypto/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "BTCUSD",
+    "category": "US_CRYPTO"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-11T23:26:12Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "7ae51f25-ea4f-5d63-8b1c-82c7277c6cf7",
+    "x-signature": "htDxeZpbaFlUrErvYx0cZAbupOw=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} ClientException:SDK.HttpError HTTPSConnectionPool(host='api.webull.com', port=443): Max retries exceeded with url: /openapi/market-data/crypto/snapshot?symbols=BTCUSD&category=US_CRYPTO (Caused by ConnectTimeoutError(<HTTPSConnection(host='api.webull.com', port=443) at 0xff64d788bf10>, 'Connection to api.webull.com timed out. (connect timeout=5)'))
+279445587161504 2026-06-11 23:30:02,091 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "BTCUSD",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-11T23:30:01Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "1baf1ff0-9915-585b-be07-462f452ab99f",
+    "x-signature": "sfAOjTN7hyl/dgGke49KIPv21mI=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [BTCUSD].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [BTCUSD]., RequestID: a862ab42-0889-4da1-9e2d-66a165c6c00e
+279445587161504 2026-06-11 23:30:02,091 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [BTCUSD].",
+  "http_status": 417,
+  "request_id": "a862ab42-0889-4da1-9e2d-66a165c6c00e"
+}
+274345426350496 2026-06-11 23:32:18,524 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "BTCUSD",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-11T23:32:18Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "a215e165-d2fe-5b57-89ad-746f6603aeb1",
+    "x-signature": "jBPzmrj5OeXq2rCCIhYzr08ectM=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [BTCUSD].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [BTCUSD]., RequestID: 74afcd02-0fd5-4b7e-95f3-4d98c2fd95be
+274345426350496 2026-06-11 23:32:18,524 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [BTCUSD].",
+  "http_status": 417,
+  "request_id": "74afcd02-0fd5-4b7e-95f3-4d98c2fd95be"
+}
+278797928559008 2026-06-11 23:34:49,836 webull.core.client ERROR HttpError occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/crypto/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "ETHUSD",
+    "category": "US_CRYPTO"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-11T23:34:29Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "2976517e-d624-53f8-be73-be197030b26c",
+    "x-signature": "u8qanRVqJMklwmMDjJR0Y0zl0AI=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} ClientException:SDK.HttpError HTTPSConnectionPool(host='api.webull.com', port=443): Max retries exceeded with url: /openapi/market-data/crypto/snapshot?symbols=ETHUSD&category=US_CRYPTO (Caused by ConnectTimeoutError(<HTTPSConnection(host='api.webull.com', port=443) at 0xfd90d25cf910>, 'Connection to api.webull.com timed out. (connect timeout=5)'))
