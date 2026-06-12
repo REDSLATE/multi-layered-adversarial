@@ -13,6 +13,7 @@ from namespaces import (
     HEARTBEAT_STALE_AFTER_SECONDS,
     HEARTBEAT_OK_BELOW_SECONDS,
     HEARTBEAT_PREVIEW_DRIFT_SECONDS,
+    RECEIPT_STALE_AFTER_SECONDS,
 )
 
 
@@ -42,6 +43,33 @@ def _heartbeat_tier(age: float | None) -> str:
     if age < HEARTBEAT_PREVIEW_DRIFT_SECONDS:
         return "stale"
     return "dead"
+
+
+def _effective_tier(hb_tier: str, receipt_age_s: float | None) -> str:
+    """Operator-facing tier that joins heartbeat freshness with
+    decision-receipt freshness (2026-02-19, May-14 silent-hang tripwire).
+
+    Doctrine: a brain that heartbeats every 30s but hasn't produced a
+    decision in 12 days is NOT live — it's silent. The legacy badge
+    showed `LIVE` for both because it only inspected the heartbeat.
+    This function downgrades a fresh-heartbeat brain to `silent` when
+    its last receipt is older than `RECEIPT_STALE_AFTER_SECONDS`. All
+    non-`ok` heartbeat tiers (stale/dead/unknown) pass through unchanged —
+    a dead heartbeat is a stronger signal than a stale receipt.
+
+    Bands (in addition to the heartbeat bands):
+        silent  — heartbeat fresh, but last receipt > threshold (or
+                  no receipt ever recorded). Operator action: the
+                  brain process is alive but its decision loop is
+                  wedged or it has never produced an intent.
+    """
+    if hb_tier != "ok":
+        return hb_tier
+    # Fresh heartbeat — now check the decision loop. None means
+    # "no receipt ever" which IS silent (the brain never wrote anything).
+    if receipt_age_s is None or receipt_age_s > RECEIPT_STALE_AFTER_SECONDS:
+        return "silent"
+    return "ok"
 
 
 router = APIRouter(prefix="/admin/diagnostics", tags=["diagnostics"])
@@ -103,15 +131,33 @@ async def diagnostics(_user: dict = Depends(get_current_user)):
     for rt in RUNTIMES:
         hb = await db[SHARED_HEARTBEATS].find_one({"runtime": rt}, {"_id": 0})
         hb_age, hb_stale = _hb_age_and_stale(hb)
+        hb_tier = _heartbeat_tier(hb_age)
+        last_receipt_ts = await _last_receipt_ts(rt)
+        # Receipt freshness — joined against hb_tier to produce the
+        # `silent` band (May-14 tripwire). None means no receipt ever.
+        receipt_age_s: float | None = None
+        if last_receipt_ts:
+            try:
+                receipt_age_s = (
+                    datetime.now(timezone.utc)
+                    - datetime.fromisoformat(last_receipt_ts)
+                ).total_seconds()
+            except Exception:  # noqa: BLE001
+                receipt_age_s = None
         per_runtime.append({
             "runtime": rt,
-            "last_receipt_ts": await _last_receipt_ts(rt),
+            "last_receipt_ts": last_receipt_ts,
+            "last_receipt_age_seconds": receipt_age_s,
             "log_count": await _runtime_log_count(rt),
             "memory_labels_count": await db[SHARED_MEMORY].count_documents({"runtime": rt}),
             "heartbeat": hb,
             "heartbeat_age_seconds": hb_age,
             "heartbeat_stale": hb_stale,
-            "heartbeat_tier": _heartbeat_tier(hb_age),
+            "heartbeat_tier": hb_tier,
+            # Operator-facing tier that joins heartbeat + receipt
+            # freshness. The UI keys its badge color/label off this
+            # field (2026-02-19 silent-hang tripwire).
+            "effective_tier": _effective_tier(hb_tier, receipt_age_s),
         })
 
     # Lane execution toggles — the operator's real kill switch.
@@ -131,6 +177,7 @@ async def diagnostics(_user: dict = Depends(get_current_user)):
         "heartbeat_stale_after_seconds": HEARTBEAT_STALE_AFTER_SECONDS,
         "heartbeat_ok_below_seconds": HEARTBEAT_OK_BELOW_SECONDS,
         "heartbeat_preview_drift_seconds": HEARTBEAT_PREVIEW_DRIFT_SECONDS,
+        "receipt_stale_after_seconds": RECEIPT_STALE_AFTER_SECONDS,
         "mongo": {"ok": mongo_ok, "error": mongo_err},
         "runtimes": per_runtime,
     }

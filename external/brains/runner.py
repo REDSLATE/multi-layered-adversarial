@@ -45,6 +45,7 @@ import os
 import random
 import socket
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -158,6 +159,64 @@ PATTERN_BIAS = float(os.environ.get("NEUTRAL_BRAIN_PATTERN_BIAS", "0.20"))
 # silent" banner even though the brain is alive and posting intents.
 # Default 60s — well inside the 5min stale threshold.
 SOVEREIGN_INTERVAL_SEC = float(os.environ.get("NEUTRAL_BRAIN_SOVEREIGN_SEC", "60"))
+
+# ── May-14 wrapper-hardening doctrine (applied to this stack on
+# 2026-02-19) — see `external/chevelle-incoming/MC_HARDENING_
+# NOTE_2026-05-14.md`. Camaro patched it in May; this stack
+# inherited the same in-process runner and shipped without the
+# fix, so 3-of-4 brains went silent for 6-12 days under prod pod
+# rotations. Three pieces:
+#
+#   1. PHASED httpx timeouts + zero keep-alive. A scalar timeout
+#      doesn't reliably trip on a `pool` acquire stall, and
+#      long-lived keep-alive sockets go half-open on backend pod
+#      rotation, causing the next POST to block in TLS handshake.
+#      `connect=3` (short — handshake should be near-instant on
+#      loopback), `pool=2` (fail fast if all conns are stuck),
+#      `read=HTTP_TIMEOUT_SEC` (longest — the brain MAY do real
+#      work server-side), `write=5` (POST bodies are < 10KB).
+#      `max_keepalive_connections=0` disables the keep-alive pool
+#      entirely — fresh TLS per call is cheap on loopback and
+#      eliminates the half-open class of bug.
+#
+#   2. Per-loop watchdog. Each iteration of `_intent_loop`,
+#      `_checkin_loop`, `_sovereign_loop` is wrapped in
+#      `asyncio.wait_for(..., timeout=WATCHDOG_ITER_TIMEOUT_SEC)`.
+#      A hung HTTP call (or any other awaitable in the loop body)
+#      raises TimeoutError, gets logged with a `watchdog:` tag,
+#      and the loop continues to the next iter. Without this, a
+#      single half-open socket can freeze the loop forever — the
+#      May 14 bug signature.
+#
+#   3. Per-loop success timestamps + a `loop_health` summary on
+#      `BrainRunner.stats`. The Diagnostics endpoint will join
+#      these against `last_receipt_ts` to produce the new
+#      `silent` tier (heartbeat fresh BUT decisions stale).
+WATCHDOG_ITER_TIMEOUT_SEC = float(
+    os.environ.get("NEUTRAL_BRAIN_WATCHDOG_ITER_SEC", "20"),
+)
+
+
+def _create_http_client() -> httpx.AsyncClient:
+    """Hardened httpx client per May-14 doctrine.
+
+    Loop-owned client (one per loop): bounded per-phase timeouts +
+    keep-alive disabled. Each call gets a fresh TLS handshake, which
+    is cheap on loopback and eliminates the half-open socket class of
+    failure that silently froze 3-of-4 sidecars for 6-12 days.
+    """
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(
+            connect=3.0,
+            read=HTTP_TIMEOUT_SEC,
+            write=5.0,
+            pool=2.0,
+        ),
+        limits=httpx.Limits(
+            max_keepalive_connections=0,
+            max_connections=4,
+        ),
+    )
 
 
 def _shadow_only_default() -> bool:
@@ -763,6 +822,21 @@ class BrainRunner:
         self._checkin_count = 0
         self._sovereign_count = 0
         self._universe: list[tuple[str, str]] = []
+        # ── Wrapper hardening watchdog timestamps (2026-02-19) ──
+        # Each loop refreshes its respective `last_X_success_at`
+        # on every successful iteration. Stats publishes these so
+        # MC's Diagnostics endpoint can detect a hung loop (e.g.,
+        # heartbeat fresh BUT decision loop stuck on a half-open
+        # socket) and surface the new `silent` tier in the UI.
+        # `last_X_watchdog_trip_at` records the most recent
+        # iteration that hit `WATCHDOG_ITER_TIMEOUT_SEC` so the
+        # operator can correlate silence with the trip event.
+        self._last_intent_success_at: Optional[datetime] = None
+        self._last_checkin_success_at: Optional[datetime] = None
+        self._last_sovereign_success_at: Optional[datetime] = None
+        self._last_intent_watchdog_trip_at: Optional[datetime] = None
+        self._last_checkin_watchdog_trip_at: Optional[datetime] = None
+        self._last_sovereign_watchdog_trip_at: Optional[datetime] = None
         # Anti-drumbeat cooldown. Records the last tick at which the
         # brain emitted an intent for each (lane, symbol). The intent
         # loop refuses to re-pick a symbol whose last-emit tick is
@@ -837,6 +911,18 @@ class BrainRunner:
 
     @property
     def stats(self) -> dict:
+        # Compute per-loop ages-since-success in seconds so the
+        # Diagnostics endpoint can surface them without needing to
+        # parse ISO timestamps. None means "loop has never had a
+        # successful iteration since process start" — important
+        # signal during cold-boot vs. silent-hang differentiation.
+        now = datetime.now(timezone.utc)
+
+        def _age(ts: Optional[datetime]) -> Optional[float]:
+            if ts is None:
+                return None
+            return (now - ts).total_seconds()
+
         return {
             "brain_id": self.brain_id,
             "display_name": self.display_name,
@@ -847,6 +933,14 @@ class BrainRunner:
             "checkin_count": self._checkin_count,
             "sovereign_count": self._sovereign_count,
             "universe_size": len(self._universe),
+            "loop_health": {
+                "intent_last_success_age_s": _age(self._last_intent_success_at),
+                "checkin_last_success_age_s": _age(self._last_checkin_success_at),
+                "sovereign_last_success_age_s": _age(self._last_sovereign_success_at),
+                "intent_last_watchdog_trip_age_s": _age(self._last_intent_watchdog_trip_at),
+                "checkin_last_watchdog_trip_age_s": _age(self._last_checkin_watchdog_trip_at),
+                "sovereign_last_watchdog_trip_age_s": _age(self._last_sovereign_watchdog_trip_at),
+            },
         }
 
     async def _resolve_universe(self, http: httpx.AsyncClient) -> list[tuple[str, str]]:
@@ -909,62 +1003,78 @@ class BrainRunner:
         return None
 
     async def _intent_loop(self) -> None:
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SEC) as http:
+        async with _create_http_client() as http:
             self._universe = await self._resolve_universe(http)
             refresh_every = 20  # re-pull universe every N ticks
             while not self._stop.is_set():
-                self._tick_count += 1
-                if self._tick_count % refresh_every == 0:
-                    self._universe = await self._resolve_universe(http)
-                    # Universe refresh wipes the cooldown so newly-added
-                    # symbols aren't held back and dropped symbols don't
-                    # leak stale state.
-                    self._last_emit_tick = {
-                        k: v for k, v in self._last_emit_tick.items()
-                        if k in self._universe
-                    }
-                if not self._universe:
-                    await asyncio.sleep(TICK_INTERVAL_SEC)
-                    continue
+                async def _iter():
+                    self._tick_count += 1
+                    if self._tick_count % refresh_every == 0:
+                        self._universe = await self._resolve_universe(http)
+                        # Universe refresh wipes the cooldown so newly-added
+                        # symbols aren't held back and dropped symbols don't
+                        # leak stale state.
+                        self._last_emit_tick = {
+                            k: v for k, v in self._last_emit_tick.items()
+                            if k in self._universe
+                        }
+                    if not self._universe:
+                        return
 
-                # ── Signal-ranked symbol selection (2026-06-09 fix) ──
-                # Prior version: `self._universe[(tick-1) % len]` —
-                # pure alphabetical round-robin. That caused the AAPL
-                # saturation: all 4 brains hit symbol[0] on tick 1,
-                # queueing 4 simultaneous BUYs on the same ticker.
-                # Now: score every symbol's setup_score this tick,
-                # rank desc, skip anything within INTENT_COOLDOWN_TICKS
-                # of its last emit, and post on the head.
-                ranked = await self._rank_universe(http)
-                pick: Optional[tuple[str, str, float]] = None
-                for lane, symbol, score in ranked:
-                    key = (lane, symbol)
-                    last = self._last_emit_tick.get(key, -10**9)
-                    if (self._tick_count - last) < INTENT_COOLDOWN_TICKS:
-                        continue
-                    pick = (lane, symbol, score)
-                    break
-                # If every symbol is on cooldown (rare — every name
-                # was hit within COOLDOWN window), fall back to the
-                # least-recently-emitted symbol so the brain never
-                # goes fully silent. We owe MC at least an OBSERVE.
-                if pick is None and ranked:
-                    lane, symbol, score = min(
-                        ranked,
-                        key=lambda r: self._last_emit_tick.get((r[0], r[1]), -10**9),
-                    )
-                    pick = (lane, symbol, score)
-                if pick is None:
-                    await asyncio.sleep(TICK_INTERVAL_SEC)
-                    continue
-                lane, symbol, score = pick
+                    # ── Signal-ranked symbol selection (2026-06-09 fix) ──
+                    # Prior version: `self._universe[(tick-1) % len]` —
+                    # pure alphabetical round-robin. That caused the AAPL
+                    # saturation: all 4 brains hit symbol[0] on tick 1,
+                    # queueing 4 simultaneous BUYs on the same ticker.
+                    # Now: score every symbol's setup_score this tick,
+                    # rank desc, skip anything within INTENT_COOLDOWN_TICKS
+                    # of its last emit, and post on the head.
+                    ranked = await self._rank_universe(http)
+                    pick: Optional[tuple[str, str, float]] = None
+                    for lane, symbol, score in ranked:
+                        key = (lane, symbol)
+                        last = self._last_emit_tick.get(key, -10**9)
+                        if (self._tick_count - last) < INTENT_COOLDOWN_TICKS:
+                            continue
+                        pick = (lane, symbol, score)
+                        break
+                    # If every symbol is on cooldown (rare — every name
+                    # was hit within COOLDOWN window), fall back to the
+                    # least-recently-emitted symbol so the brain never
+                    # goes fully silent. We owe MC at least an OBSERVE.
+                    if pick is None and ranked:
+                        lane, symbol, score = min(
+                            ranked,
+                            key=lambda r: self._last_emit_tick.get((r[0], r[1]), -10**9),
+                        )
+                        pick = (lane, symbol, score)
+                    if pick is None:
+                        return
+                    lane, symbol, score = pick
+                    try:
+                        await self._evaluate_and_post(http, lane, symbol)
+                        self._last_emit_tick[(lane, symbol)] = self._tick_count
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "intent_loop error brain=%s sym=%s: %s",
+                            self.brain_id, symbol, e,
+                        )
+
+                # ── May-14 watchdog wrap ──
+                # If any single iteration blocks > WATCHDOG_ITER_TIMEOUT_SEC
+                # (typically because an HTTP call wedged on a half-open
+                # socket), abandon this iter, stamp the trip timestamp,
+                # and let the next tick try again. Without this the
+                # whole loop freezes silently — the 2026-05 sidecar bug.
                 try:
-                    await self._evaluate_and_post(http, lane, symbol)
-                    self._last_emit_tick[(lane, symbol)] = self._tick_count
-                except Exception as e:  # noqa: BLE001
+                    await asyncio.wait_for(_iter(), timeout=WATCHDOG_ITER_TIMEOUT_SEC)
+                    self._last_intent_success_at = datetime.now(timezone.utc)
+                except asyncio.TimeoutError:
+                    self._last_intent_watchdog_trip_at = datetime.now(timezone.utc)
                     logger.warning(
-                        "intent_loop error brain=%s sym=%s: %s",
-                        self.brain_id, symbol, e,
+                        "watchdog: intent_loop iter exceeded %ss — abandoning "
+                        "brain=%s tick=%d",
+                        WATCHDOG_ITER_TIMEOUT_SEC, self.brain_id, self._tick_count,
                     )
                 await asyncio.sleep(TICK_INTERVAL_SEC + random.uniform(-3, 3))
 
@@ -1334,9 +1444,9 @@ class BrainRunner:
             )
 
     async def _checkin_loop(self) -> None:
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SEC) as http:
+        async with _create_http_client() as http:
             while not self._stop.is_set():
-                try:
+                async def _iter():
                     r = await http.post(
                         f"{MC_LOOPBACK_URL}/api/admin/runtime/"
                         f"sidecar-checkin/{self.brain_id}",
@@ -1345,6 +1455,16 @@ class BrainRunner:
                     )
                     if r.status_code // 100 == 2:
                         self._checkin_count += 1
+                try:
+                    await asyncio.wait_for(_iter(), timeout=WATCHDOG_ITER_TIMEOUT_SEC)
+                    self._last_checkin_success_at = datetime.now(timezone.utc)
+                except asyncio.TimeoutError:
+                    self._last_checkin_watchdog_trip_at = datetime.now(timezone.utc)
+                    logger.warning(
+                        "watchdog: checkin_loop iter exceeded %ss — "
+                        "abandoning brain=%s",
+                        WATCHDOG_ITER_TIMEOUT_SEC, self.brain_id,
+                    )
                 except Exception as e:  # noqa: BLE001
                     logger.warning("checkin error brain=%s: %s", self.brain_id, e)
                 await asyncio.sleep(CHECKIN_INTERVAL_SEC + random.uniform(-2, 2))
@@ -1363,10 +1483,20 @@ class BrainRunner:
         # brain has produced at least one intent (avoid posting with an
         # empty tape on tick 0).
         await asyncio.sleep(8.0 + random.uniform(0, 4.0))
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SEC) as http:
+        async with _create_http_client() as http:
             while not self._stop.is_set():
-                try:
+                async def _iter():
                     await self._post_sovereign_contribution(http)
+                try:
+                    await asyncio.wait_for(_iter(), timeout=WATCHDOG_ITER_TIMEOUT_SEC)
+                    self._last_sovereign_success_at = datetime.now(timezone.utc)
+                except asyncio.TimeoutError:
+                    self._last_sovereign_watchdog_trip_at = datetime.now(timezone.utc)
+                    logger.warning(
+                        "watchdog: sovereign_loop iter exceeded %ss — "
+                        "abandoning brain=%s",
+                        WATCHDOG_ITER_TIMEOUT_SEC, self.brain_id,
+                    )
                 except Exception as e:  # noqa: BLE001
                     logger.warning(
                         "sovereign_loop error brain=%s: %s", self.brain_id, e,

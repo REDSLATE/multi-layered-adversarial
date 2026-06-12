@@ -1,5 +1,6 @@
 """Centralized collection naming. Importing from here is the only sanctioned way.
 Crossing namespaces (e.g. alpha reading camaro_shadow_rows) is a doctrine violation."""
+import os
 
 # Shared infrastructure (the "shared nervous system")
 SHARED_RECEIPTS = "shared_adl_receipts"
@@ -741,6 +742,19 @@ HEARTBEAT_STALE_AFTER_SECONDS = 240
 # The dashboard surfaces these so an operator can spot URL drift fast.
 HEARTBEAT_OK_BELOW_SECONDS = 120
 HEARTBEAT_PREVIEW_DRIFT_SECONDS = 300
+
+# Receipt-staleness threshold (2026-02-19). Visibility only.
+# A brain is "silent" — alive but not producing decisions — when its
+# HEARTBEAT is fresh (`tier == "ok"`) but its LAST DECISION RECEIPT
+# is older than this many seconds. This is the operator tripwire for
+# the May-14 wrapper-hang signature: heartbeat loop keeps firing
+# (dumb endpoint, still works), decision loop wedged on a half-open
+# socket (silent). Default 600s = 10 min, well past the 45s tick
+# interval × intent-cooldown window. Operators see `silent` 5 min
+# after a hang instead of finding out 6 days later.
+RECEIPT_STALE_AFTER_SECONDS = int(
+    os.environ.get("MC_RECEIPT_STALE_AFTER_SECONDS", "600"),
+)
 
 
 def runtime_can_execute_state(authority_state: str) -> bool:

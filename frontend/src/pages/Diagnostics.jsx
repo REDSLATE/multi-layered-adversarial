@@ -495,15 +495,23 @@ export default function Diagnostics() {
               <tbody>
                 {data.runtimes.map((r) => {
                   const meta = RUNTIME_META[r.runtime];
-                  // Liveness-only tier from backend. The drift/wrong-URL
-                  // verdict lives in the Sidecar check-ins panel below.
-                  const tier = r.heartbeat_tier || (r.heartbeat_stale ? "dead" : "ok");
+                  // 2026-02-19 — UI keys off `effective_tier` (joins
+                  // heartbeat + receipt freshness) so a fresh-heartbeat
+                  // brain that hasn't produced a decision in > 10 min
+                  // shows as SILENT instead of falsely LIVE. Legacy
+                  // `heartbeat_tier` is still shown in the tooltip for
+                  // operators debugging which axis is the trip cause.
+                  const tier = r.effective_tier || r.heartbeat_tier || (r.heartbeat_stale ? "dead" : "ok");
                   const tierMeta = {
                     ok:      { color: "#10B981", label: "LIVE" },
+                    silent:  { color: "#F97316", label: "SILENT" },
                     stale:   { color: "#F59E0B", label: "STALE" },
                     dead:    { color: "#DC2626", label: "DEAD" },
                     unknown: { color: "#A1A1AA", label: "NO HEARTBEAT" },
-                  }[tier];
+                  }[tier] || { color: "#A1A1AA", label: tier.toUpperCase() };
+                  const receiptAgeText = (r.last_receipt_age_seconds != null)
+                    ? `receipt ${Math.floor(r.last_receipt_age_seconds)}s ago`
+                    : "no receipts";
                   return (
                     <tr
                       key={r.runtime}
@@ -528,8 +536,18 @@ export default function Diagnostics() {
                             className="ml-2"
                             style={{ color: tierMeta.color }}
                             data-testid={`diag-hb-age-${r.runtime}`}
+                            title={`heartbeat tier: ${r.heartbeat_tier || "—"} · ${receiptAgeText}`}
                           >
-                            {Math.floor(r.heartbeat_age_seconds)}s
+                            hb {Math.floor(r.heartbeat_age_seconds)}s
+                          </span>
+                        )}
+                        {tier === "silent" && (
+                          <span
+                            className="ml-2 text-[10px] text-rd-warning"
+                            data-testid={`diag-silent-${r.runtime}`}
+                            title="Heartbeat is fresh but no decision receipt in the last RECEIPT_STALE_AFTER_SECONDS window. Brain process is alive but its decision/intent loop is wedged (classic May-14 wrapper-hang). Check the brain's stats.loop_health watchdog timestamps."
+                          >
+                            · alive but no decisions
                           </span>
                         )}
                         {tier === "dead" && (
