@@ -38,11 +38,163 @@ Final matrix:
 The brain still emits its own doctrine-driven hypothesis; the
 wrapper layers in the old-personality instincts on top. Same brain
 in a different seat tomorrow still carries the same wrapper.
+
+────────────────────────────────────────────────────────────────────
+2026-02-19 — Penalty-stacking dampener (operator directive)
+
+The four wrappers above multiply `size_bias` 6-9 times each. A real-
+world BUY on AAPL in a chop regime with unknown position state could
+hit 4-6 penalty factors compounding: 0.80 × 0.75 × 0.70 × 0.85 × 0.50
+= ~0.18. The wrapper says "BUY size 0.18×" — by the time the ladder
+sizer is done with it, the intent is functionally a shadow ping with
+no real exposure. The brain "wanted" to buy; the wrapper silenced it.
+
+Two env knobs let the operator dial this in without code changes:
+
+  RISEDUAL_WRAPPER_PENALTY_STRENGTH   default 1.0
+        Global multiplier on the DEVIATION from each wrapper's base
+        input. 1.0 keeps current behavior (full penalty stacking).
+        0.5 cuts every penalty in half. 0.0 nullifies the wrapper
+        entirely (size_bias and confidence pass through unchanged).
+        Applies to BOTH penalties (factor < 1) and bonuses (factor >
+        1) symmetrically — softening the wrapper's voice, not its
+        bias direction.
+
+  RISEDUAL_WRAPPER_MIN_SIZE_BIAS_NONZERO   default 0.0
+        Floor for `size_bias` on DIRECTIONAL intents (BUY/SELL only).
+        If the stacked penalties drag size_bias below this floor,
+        clamp UP to the floor. HOLD intents are unaffected — they
+        always size to 0.0 (the HOLD-zeroing branches are preserved).
+        Doctrine: a directional intent the brain is willing to publish
+        deserves a minimum executable footprint; below that floor it
+        belongs in HOLD, not in micro-shadow purgatory.
+
+The dampener is applied via `_finalise_size_and_confidence` at the
+TAIL of each wrapper — wrapper internals are unchanged, only the
+final clamp/floor step is new. This keeps the multiplicative penalty
+logic intact for diagnostic purposes (warnings still tell the
+operator WHY size was compressed) but lets the operator decide how
+HARD to listen to that compression.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, asdict
 from typing import Any, Literal
+
+
+# ── Penalty-stacking dampener (2026-02-19 operator directive) ──
+# Defaults preserve current behavior. Operator dials these via env
+# without restarting the runner (re-read each call via os.environ
+# lookup → no caching). The cost of an env read per intent is
+# negligible at the brain's tick cadence (4 brains × <1Hz emit).
+_WRAPPER_PENALTY_STRENGTH_DEFAULT = 1.0
+_WRAPPER_MIN_SIZE_BIAS_NONZERO_DEFAULT = 0.0
+
+
+def _wrapper_penalty_strength() -> float:
+    """Read the global penalty-stacking dampener from env.
+
+    Returns a float in [0.0, 1.0]. Out-of-range values are clamped
+    rather than rejected — fail-soft, since the wrapper layer is on
+    the hot path and the operator may typo a value during a live
+    tune session.
+    """
+    raw = os.environ.get(
+        "RISEDUAL_WRAPPER_PENALTY_STRENGTH",
+        str(_WRAPPER_PENALTY_STRENGTH_DEFAULT),
+    )
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return _WRAPPER_PENALTY_STRENGTH_DEFAULT
+    return max(0.0, min(1.0, v))
+
+
+def _wrapper_min_size_bias_nonzero() -> float:
+    """Read the directional size-bias floor from env. Clamped to
+    [0.0, 1.0] — the floor is a directional minimum, not a multiplier."""
+    raw = os.environ.get(
+        "RISEDUAL_WRAPPER_MIN_SIZE_BIAS_NONZERO",
+        str(_WRAPPER_MIN_SIZE_BIAS_NONZERO_DEFAULT),
+    )
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return _WRAPPER_MIN_SIZE_BIAS_NONZERO_DEFAULT
+    return max(0.0, min(1.0, v))
+
+
+def _finalise_size_and_confidence(
+    final_size_bias: float,
+    final_confidence: float,
+    base_size_bias: float,
+    base_confidence: float,
+    action: str,
+) -> tuple[float, float, dict[str, Any]]:
+    """Apply the env-controlled penalty dampener + directional floor.
+
+    Args:
+        final_size_bias: the wrapper's accumulated size_bias after
+            all its `*=` multipliers fired.
+        final_confidence: the wrapper's accumulated confidence after
+            all its `+=`/`-=` adjustments.
+        base_size_bias: the size_bias the wrapper STARTED with
+            (the intent's input). Used to compute the deviation the
+            wrapper applied.
+        base_confidence: same for confidence.
+        action: "BUY" / "SELL" / "HOLD". Directional floor only
+            applies to BUY/SELL; HOLD stays at 0.
+
+    Returns:
+        (size_bias, confidence, dampener_diagnostics) — the dampener
+        diagnostics dict gets stamped into evidence.legacy_wrapper
+        so the operator can inspect what was applied.
+    """
+    strength = _wrapper_penalty_strength()
+    floor = _wrapper_min_size_bias_nonzero()
+
+    pre_dampener_size_bias = final_size_bias
+    pre_dampener_confidence = final_confidence
+
+    # Soften the deviation from base by `strength`. At strength=1.0
+    # the wrapper's full output passes through (current behavior).
+    # At strength=0.0 the wrapper's deviation is zeroed out — the
+    # intent reverts to its base values (de-wrappered).
+    if strength != 1.0:
+        final_size_bias = (
+            base_size_bias + (final_size_bias - base_size_bias) * strength
+        )
+        final_confidence = (
+            base_confidence + (final_confidence - base_confidence) * strength
+        )
+
+    # Directional floor — keep BUY/SELL above the operator's minimum
+    # so a stack of penalties can't reduce a real intent to a micro-
+    # shadow. HOLD intents are intentionally NOT floored (the wrappers
+    # explicitly zero them inside; we preserve that contract).
+    floored_from: float | None = None
+    if action in ("BUY", "SELL") and 0.0 < final_size_bias < floor:
+        floored_from = final_size_bias
+        final_size_bias = floor
+
+    # Final clamp to the doctrine bounds.
+    final_size_bias = clamp(final_size_bias, 0.0, 2.0)
+    final_confidence = clamp(final_confidence, 0.0, 1.0)
+
+    diagnostics: dict[str, Any] = {
+        "penalty_strength": strength,
+        "min_size_bias_nonzero": floor,
+    }
+    # Only stamp diagnostics when the dampener actually changed
+    # something — keeps the evidence blob clean in the default-
+    # configured case.
+    if strength != 1.0:
+        diagnostics["pre_dampener_size_bias"] = round(pre_dampener_size_bias, 4)
+        diagnostics["pre_dampener_confidence"] = round(pre_dampener_confidence, 4)
+    if floored_from is not None:
+        diagnostics["floored_size_bias_from"] = round(floored_from, 4)
+    return final_size_bias, final_confidence, diagnostics
 
 
 WrapperName = Literal[
@@ -180,6 +332,16 @@ def apply_alpha_legacy_executor(intent: dict[str, Any]) -> dict[str, Any]:
         "effect": "executor_commitment_and_position_discipline",
     }
 
+    # ── Penalty-stacking dampener (2026-02-19 operator directive) ──
+    size_bias, confidence, _damp = _finalise_size_and_confidence(
+        final_size_bias=size_bias,
+        final_confidence=confidence,
+        base_size_bias=x["size_bias"],
+        base_confidence=x["confidence"],
+        action=action,
+    )
+    evidence["legacy_wrapper"]["dampener"] = _damp
+
     wrapped = WrappedIntent(
         brain_id=x["brain_id"],
         display_name=x["display_name"],
@@ -187,8 +349,8 @@ def apply_alpha_legacy_executor(intent: dict[str, Any]) -> dict[str, Any]:
         parent_brain="alpha",
         doctrine="executor_confirming",
         action=action,
-        confidence=round(clamp(confidence), 4),
-        size_bias=round(clamp(size_bias, 0.0, 2.0), 4),
+        confidence=round(confidence, 4),
+        size_bias=round(size_bias, 4),
         current_side=current_side,
         transition_intent=transition,
         position_evolution=evolution,
@@ -270,6 +432,16 @@ def apply_chevelle_legacy_governor(intent: dict[str, Any]) -> dict[str, Any]:
         "effect": "risk_compression_and_governor_temperament",
     }
 
+    # ── Penalty-stacking dampener (2026-02-19 operator directive) ──
+    size_bias, confidence, _damp = _finalise_size_and_confidence(
+        final_size_bias=size_bias,
+        final_confidence=confidence,
+        base_size_bias=x["size_bias"],
+        base_confidence=x["confidence"],
+        action=action,
+    )
+    evidence["legacy_wrapper"]["dampener"] = _damp
+
     wrapped = WrappedIntent(
         brain_id=x["brain_id"],
         display_name=x["display_name"],
@@ -277,8 +449,8 @@ def apply_chevelle_legacy_governor(intent: dict[str, Any]) -> dict[str, Any]:
         parent_brain="chevelle",
         doctrine="adaptive_governor",
         action=action,
-        confidence=round(clamp(confidence), 4),
-        size_bias=round(clamp(size_bias, 0.0, 2.0), 4),
+        confidence=round(confidence, 4),
+        size_bias=round(size_bias, 4),
         current_side=current_side,
         transition_intent=transition,
         position_evolution=evolution,
@@ -424,6 +596,16 @@ def apply_camaro_legacy_strategist(intent: dict[str, Any]) -> dict[str, Any]:
         "effect": "live_market_tape_reading_and_continuation_bias",
     }
 
+    # ── Penalty-stacking dampener (2026-02-19 operator directive) ──
+    size_bias, confidence, _damp = _finalise_size_and_confidence(
+        final_size_bias=size_bias,
+        final_confidence=confidence,
+        base_size_bias=x["size_bias"],
+        base_confidence=x["confidence"],
+        action=action,
+    )
+    evidence["legacy_wrapper"]["dampener"] = _damp
+
     wrapped = WrappedIntent(
         brain_id=x["brain_id"],
         display_name=x["display_name"],
@@ -431,8 +613,8 @@ def apply_camaro_legacy_strategist(intent: dict[str, Any]) -> dict[str, Any]:
         parent_brain="camaro",
         doctrine="live_market_strategist",
         action=action,
-        confidence=round(clamp(confidence), 4),
-        size_bias=round(clamp(size_bias, 0.0, 2.0), 4),
+        confidence=round(confidence, 4),
+        size_bias=round(size_bias, 4),
         current_side=current_side,
         transition_intent=transition,
         position_evolution=evolution,
@@ -594,6 +776,16 @@ def apply_redeye_legacy_adversary(intent: dict[str, Any]) -> dict[str, Any]:
         "effect": "adversarial_short_pressure_and_consensus_challenge",
     }
 
+    # ── Penalty-stacking dampener (2026-02-19 operator directive) ──
+    size_bias, confidence, _damp = _finalise_size_and_confidence(
+        final_size_bias=size_bias,
+        final_confidence=confidence,
+        base_size_bias=x["size_bias"],
+        base_confidence=x["confidence"],
+        action=action,
+    )
+    evidence["legacy_wrapper"]["dampener"] = _damp
+
     wrapped = WrappedIntent(
         brain_id=x["brain_id"],
         display_name=x["display_name"],
@@ -601,8 +793,8 @@ def apply_redeye_legacy_adversary(intent: dict[str, Any]) -> dict[str, Any]:
         parent_brain="redeye",
         doctrine="opponent_adversary",
         action=action,
-        confidence=round(clamp(confidence), 4),
-        size_bias=round(clamp(size_bias, 0.0, 2.0), 4),
+        confidence=round(confidence, 4),
+        size_bias=round(size_bias, 4),
         current_side=current_side,
         transition_intent=transition,
         position_evolution=evolution,

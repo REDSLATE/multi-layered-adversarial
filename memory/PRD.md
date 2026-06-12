@@ -1,3 +1,63 @@
+## 2026-02-19 (final+4) — Legacy wrapper penalty dampener SHIPPED
+
+### Operator directive
+> Tune `legacy_brain_wrappers.py` (`WRAPPER_PENALTY_STRENGTH` + `WRAPPER_MIN_SIZE_BIAS_NONZERO` env knobs) so multiplicative penalties stop forcing every decision to HOLD.
+
+### Status: shipped to preview, 14 new tests + 0 regressions, dampener inert by default
+
+### Root cause
+The 4 wrappers (alpha/chevelle/camaro/redeye in `/app/backend/shared/legacy_brain_wrappers.py`) each multiply `size_bias` 6-9 times. A realistic BUY on AAPL in chop regime with unknown position state would stack:
+`1.0 × 0.70 × 0.85 × 0.80 × 0.75 × 0.50 = 0.18` — the brain "wants" to BUY but the wrapper functionally mutes the intent to a micro-shadow ping. The brain's voice gets crushed by stacked safety penalties.
+
+### Fix shipped
+Two operator-tunable env knobs + a single tail-of-wrapper helper (`_finalise_size_and_confidence`) called by all 4 wrappers. Wrapper internals UNCHANGED — only the final clamp step is new.
+
+- `RISEDUAL_WRAPPER_PENALTY_STRENGTH` (default `1.0`)
+  - Global multiplier on the wrapper's **deviation from base**. `1.0` = current behavior (full penalty stacking). `0.5` = halve every penalty. `0.0` = nullify the wrapper entirely (size_bias and confidence revert to base). Symmetric — softens both penalties AND bonuses.
+
+- `RISEDUAL_WRAPPER_MIN_SIZE_BIAS_NONZERO` (default `0.0`)
+  - Floor for `size_bias` on **directional intents only** (BUY/SELL). HOLD intents stay at 0.0 (the HOLD-zeroing branches inside each wrapper are preserved; the floor never lifts a HOLD to a directional footprint). Defends "the brain published a directional intent → it deserves a minimum executable footprint" without changing the brain's decision.
+
+- **Diagnostics** — `evidence.legacy_wrapper.dampener` carries the active knob values plus, when actually applied, the pre-dampener size_bias/confidence and the floor delta. The operator can see per-intent what the dampener did.
+
+### Verification
+- 14 new tests in `/app/backend/tests/test_legacy_wrapper_dampener.py`:
+  - Unit tests on `_finalise_size_and_confidence` pin: default pass-through, strength=0 neutralizes wrapper, strength=0.5 linearly interpolates, floor only applies to directional, floor doesn't lift HOLD's zero, out-of-range env clamped, bad env fails soft.
+  - End-to-end tests through all 4 wrappers verify: default preserves pre-dampener behavior (the critical regression check), strength=0 recovers base size_bias, floor protects directional intents, HOLD always stays 0, diagnostics stamp correctly.
+- **131/131 wrapper+legacy tests pass**. **437/437 in the broader wrapper/runner/opinion/webull/broker/execution sweep** — zero regressions. The dampener is opt-in; never silently active.
+- Backend restart clean, `/api/health` ok, brains posting intents 200 OK through the new code path.
+
+### How the operator dials this in
+```bash
+# Soften all wrapper penalties by 50% — start here as a gentle nudge.
+export RISEDUAL_WRAPPER_PENALTY_STRENGTH=0.5
+
+# Or: hard-floor every directional intent's footprint at 0.3 of base,
+# so penalties can compress but never below the operator's minimum.
+export RISEDUAL_WRAPPER_MIN_SIZE_BIAS_NONZERO=0.3
+
+# Or: turn the wrappers off entirely while debugging brain decisions.
+export RISEDUAL_WRAPPER_PENALTY_STRENGTH=0.0
+```
+
+Hot-rereads on next intent — no restart needed since `os.environ.get` is called fresh on every wrapper call (negligible cost at <1 Hz emit per brain).
+
+### Net effect
+Combined with the prior three changes (Webull $0 balance fix + $1 floor + fractional shares + discussion loop), the brain → wrapper → cap-gate → broker path is now:
+- Brains can DEBATE each other (`in_reply_to` rows landing live).
+- Wrappers can be DIALED (no more "every BUY ends up at 0.18×").
+- Webull receives REAL fractional dollar orders ($1-$10 on any ticker).
+- Operator has visible diagnostics on every step (`dampener` in evidence, gate chain reasons, broker submit logs).
+
+### Remaining backlog
+- 🟡 P2 — Add a "discussion_loop" health tile to the Diagnostics page (stats already published in `BrainRunner.stats.loop_health.discussion_*`).
+- 🟡 P2 — US market holiday calendar in `shadow_close_cron.py`.
+- 🟡 P2 — StockFit 10-Q/10-K doctrine enrichment.
+- 🟡 P2 — `auto_retire` governor pre-existing test failure (unrelated to anything in this session).
+
+---
+
+
 ## 2026-02-19 (final+3) — Cross-brain discussion loop SHIPPED + LIVE
 
 ### Operator directive
