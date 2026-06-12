@@ -161,27 +161,47 @@ function BrainColumn({ brain, data }) {
 export default function CompositeLivenessCard() {
   const [byBrain, setByBrain] = useState({});
   const [err, setErr] = useState("");
+  // 2026-02-19 (prod incident): track when each brain's data was
+  // last refreshed successfully so transient fetch failures don't
+  // wipe the card to "no data" everywhere. The previous behaviour
+  // (overwrite byBrain on every poll, including with nulls on
+  // failure) caused the cyclic blank-card flicker the operator
+  // observed on mobile during Webull-SDK overload windows.
+  const [lastRefreshAt, setLastRefreshAt] = useState({});
+  const [staleCount, setStaleCount] = useState(0);
 
   const load = useCallback(async () => {
-    try {
-      const results = await Promise.all(
-        BRAINS.map(async (b) => {
-          try {
-            const { data } = await api.get(
-              `/admin/brain/emission-diagnose/${b}`,
-            );
-            return [b, data];
-          } catch (e) {
-            return [b, null];
-          }
-        }),
-      );
-      const next = {};
-      for (const [b, d] of results) next[b] = d;
-      setByBrain(next);
+    let anyOk = false;
+    const updates = {};
+    const updatedTs = {};
+    const now = new Date();
+    await Promise.all(
+      BRAINS.map(async (b) => {
+        try {
+          const { data } = await api.get(
+            `/admin/brain/emission-diagnose/${b}`,
+          );
+          updates[b] = data;
+          updatedTs[b] = now;
+          anyOk = true;
+        } catch {
+          // Per-brain failure — leave the brain's previous value
+          // in place so the card stays populated.
+        }
+      }),
+    );
+    setByBrain((prev) => {
+      const next = { ...prev };
+      for (const [b, d] of Object.entries(updates)) next[b] = d;
+      return next;
+    });
+    setLastRefreshAt((prev) => ({ ...prev, ...updatedTs }));
+    if (anyOk) {
       setErr("");
-    } catch (e) {
-      setErr(e?.response?.data?.detail || e.message);
+      setStaleCount(0);
+    } else {
+      setErr("All brains failed to refresh — showing stale data.");
+      setStaleCount((n) => n + 1);
     }
   }, []);
 
@@ -207,9 +227,9 @@ export default function CompositeLivenessCard() {
         </div>
       </div>
 
-      {err && (
-        <div className="border border-rd-danger text-rd-danger px-3 py-2 mb-3 text-xs font-mono">
-          {err}
+      {err && staleCount >= 2 && (
+        <div className="border border-rd-warn text-rd-warn px-3 py-1.5 mb-3 text-[11px] font-mono" data-testid="composite-liveness-stale">
+          {err} · {staleCount} consecutive refresh failures
         </div>
       )}
 

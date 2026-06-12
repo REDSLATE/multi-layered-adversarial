@@ -1,0 +1,393 @@
+277891145134496 2026-06-12 17:27:06,277 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-12T17:27:06Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "11149452-b00a-581b-9cdd-08ade6533d6c",
+    "x-signature": "P508oonl1IgzN6SLofkKEzCAYVA=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "403",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "d4085c15-e90c-4ed1-b313-6c8078a97e83",
+      "symbol": "AAPL",
+      "instrument_id": "913256135",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "MARKET",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "AMOUNT",
+      "total_cash_amount": "10.00",
+      "support_trading_session": "CORE",
+      "account_tax_type": "GENERAL",
+      "extended_hours_trading": false
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"d4085c15-e90c-4ed1-b313-6c8078a97e83\",\"symbol\":\"AAPL\",\"instrument_id\":\"913256135\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"MARKET\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"AMOUNT\",\"total_cash_amount\":\"10.00\",\"support_trading_session\":\"CORE\",\"account_tax_type\":\"GENERAL\",\"extended_hours_trading\":false},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "d4085c15-e90c-4ed1-b313-6c8078a97e83",
+    "symbol": "AAPL",
+    "instrument_id": "913256135",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "MARKET",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "AMOUNT",
+    "total_cash_amount": "10.00",
+    "support_trading_session": "CORE",
+    "account_tax_type": "GENERAL",
+    "extended_hours_trading": false
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 076e3ed3-243e-4a4d-807c-034f12cc9d46
+277891145134496 2026-06-12 17:27:06,278 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "076e3ed3-243e-4a4d-807c-034f12cc9d46"
+}
+276654387425696 2026-06-12 17:29:04,053 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-12T17:29:03Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "56d4d2c8-8115-5f7f-9df5-46d03f4032c4",
+    "x-signature": "ea8s8oEprrvdscQ66il2qxjwncY=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "403",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "68236a07-3b04-4cda-85d7-24eba3063784",
+      "symbol": "AAPL",
+      "instrument_id": "913256135",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "MARKET",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "AMOUNT",
+      "total_cash_amount": "10.00",
+      "support_trading_session": "CORE",
+      "account_tax_type": "GENERAL",
+      "extended_hours_trading": false
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"68236a07-3b04-4cda-85d7-24eba3063784\",\"symbol\":\"AAPL\",\"instrument_id\":\"913256135\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"MARKET\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"AMOUNT\",\"total_cash_amount\":\"10.00\",\"support_trading_session\":\"CORE\",\"account_tax_type\":\"GENERAL\",\"extended_hours_trading\":false},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "68236a07-3b04-4cda-85d7-24eba3063784",
+    "symbol": "AAPL",
+    "instrument_id": "913256135",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "MARKET",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "AMOUNT",
+    "total_cash_amount": "10.00",
+    "support_trading_session": "CORE",
+    "account_tax_type": "GENERAL",
+    "extended_hours_trading": false
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 34538aab-2c18-4c42-a79a-8450bff5dba6
+276654387425696 2026-06-12 17:29:04,054 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "34538aab-2c18-4c42-a79a-8450bff5dba6"
+}
+276845890761120 2026-06-12 17:57:27,337 webull.core.client ERROR HttpError occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "ABNB",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-12T17:57:07Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "dfcd0d52-127a-5c43-8d01-9026d96d392f",
+    "x-signature": "tScmtOmZWzIQV51exoqQfAKINJI=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} ClientException:SDK.HttpError HTTPSConnectionPool(host='api.webull.com', port=443): Max retries exceeded with url: /openapi/market-data/stock/snapshot?symbols=ABNB&category=US_STOCK (Caused by ConnectTimeoutError(<HTTPSConnection(host='api.webull.com', port=443) at 0xfbca980c5710>, 'Connection to api.webull.com timed out. (connect timeout=5)'))
+276847501443488 2026-06-12 17:57:29,575 webull.core.client ERROR HttpError occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "ABNB",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-12T17:57:09Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "1fc8fcc3-bcff-5a06-b82d-ec9db61a04b7",
+    "x-signature": "dJ/j4zTTzVNhQHqETdDE7GWuqXU=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} ClientException:SDK.HttpError HTTPSConnectionPool(host='api.webull.com', port=443): Max retries exceeded with url: /openapi/market-data/stock/snapshot?symbols=ABNB&category=US_STOCK (Caused by ConnectTimeoutError(<HTTPSConnection(host='api.webull.com', port=443) at 0xfbca746abf90>, 'Connection to api.webull.com timed out. (connect timeout=5)'))
+275492942770592 2026-06-12 18:47:02,760 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/option/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "AAPL",
+    "category": "US_OPTION"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-12T18:47:02Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "591bb313-dec3-5765-a117-05dc1e2adac9",
+    "x-signature": "SvS1sEjdsz9WltMF2/fDR37mjec=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'Unauthorized', 'message': 'Insufficient permission, please subscribe to US_OPTION quotes.', 'status': 401} ServerException:HTTP Status: 401, Code: Unauthorized, Msg: Insufficient permission, please subscribe to US_OPTION quotes., RequestID: c53b7e03-279f-411d-990b-9df166699328
+275492942770592 2026-06-12 18:47:02,763 webull.core.client ERROR get_response exception. {
+  "error_code": "Unauthorized",
+  "error_msg": "Insufficient permission, please subscribe to US_OPTION quotes.",
+  "http_status": 401,
+  "request_id": "c53b7e03-279f-411d-990b-9df166699328"
+}
+276810356879776 2026-06-12 18:48:21,431 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-12T18:48:21Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "1c1c9def-b7aa-521f-8e83-61b922201c84",
+    "x-signature": "bugwe8FvNZQyHu0RJAg9WrC5ybQ=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "403",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "2ed8daaf-1078-49ec-b337-af85cb72161a",
+      "symbol": "AAPL",
+      "instrument_id": "913256135",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "MARKET",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "AMOUNT",
+      "total_cash_amount": "10.00",
+      "support_trading_session": "CORE",
+      "account_tax_type": "GENERAL",
+      "extended_hours_trading": false
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"2ed8daaf-1078-49ec-b337-af85cb72161a\",\"symbol\":\"AAPL\",\"instrument_id\":\"913256135\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"MARKET\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"AMOUNT\",\"total_cash_amount\":\"10.00\",\"support_trading_session\":\"CORE\",\"account_tax_type\":\"GENERAL\",\"extended_hours_trading\":false},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "2ed8daaf-1078-49ec-b337-af85cb72161a",
+    "symbol": "AAPL",
+    "instrument_id": "913256135",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "MARKET",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "AMOUNT",
+    "total_cash_amount": "10.00",
+    "support_trading_session": "CORE",
+    "account_tax_type": "GENERAL",
+    "extended_hours_trading": false
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 9a751212-f77b-41df-bf1a-f6727ece685a
+276810356879776 2026-06-12 18:48:21,431 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "9a751212-f77b-41df-bf1a-f6727ece685a"
+}
+275973752418720 2026-06-12 19:01:29,529 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/option/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "AAPL",
+    "category": "US_OPTION"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-12T19:01:29Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "ad228f88-6777-529d-b0eb-ecd5e0855ff8",
+    "x-signature": "nK9RIqIIYGXecWx+UyaxH4VSOz8=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'Unauthorized', 'message': 'Insufficient permission, please subscribe to US_OPTION quotes.', 'status': 401} ServerException:HTTP Status: 401, Code: Unauthorized, Msg: Insufficient permission, please subscribe to US_OPTION quotes., RequestID: af0b3c75-184b-48e6-8e9d-2e808822e6d5
+275973752418720 2026-06-12 19:01:29,535 webull.core.client ERROR get_response exception. {
+  "error_code": "Unauthorized",
+  "error_msg": "Insufficient permission, please subscribe to US_OPTION quotes.",
+  "http_status": 401,
+  "request_id": "af0b3c75-184b-48e6-8e9d-2e808822e6d5"
+}
+277190184595872 2026-06-12 19:08:51,889 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/option/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "AAPL",
+    "category": "US_OPTION"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-12T19:08:51Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "e53e3ec8-560a-5bbe-8132-4717faace73e",
+    "x-signature": "9IerY3MbjiMwAi+1X4tqeesQNR4=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'Unauthorized', 'message': 'Insufficient permission, please subscribe to US_OPTION quotes.', 'status': 401} ServerException:HTTP Status: 401, Code: Unauthorized, Msg: Insufficient permission, please subscribe to US_OPTION quotes., RequestID: 4cdfb129-36bc-4e4e-a1e6-eb42146b1e9e
+277190184595872 2026-06-12 19:08:51,891 webull.core.client ERROR get_response exception. {
+  "error_code": "Unauthorized",
+  "error_msg": "Insufficient permission, please subscribe to US_OPTION quotes.",
+  "http_status": 401,
+  "request_id": "4cdfb129-36bc-4e4e-a1e6-eb42146b1e9e"
+}

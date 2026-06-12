@@ -27,6 +27,18 @@ Entitlement awareness:
     `get_app_subscriptions()` is the source of truth for whether the
     app key has US equity / OPRA / crypto. The `/api/admin/webull/
     entitlements` endpoint reads this same client.
+
+Circuit breaker (2026-02-19, prod incident):
+    When `api.webull.com` goes slow (5s connect timeouts) the brain
+    runner's per-tick fan-out (4 brains × ~50 symbols) saturates the
+    asyncio default thread pool with hung `requests` calls. That
+    starves UNRELATED async work — most painfully bcrypt password
+    verification on `/api/auth/login`, which the operator sees as
+    "site won't let me log in." The circuit breaker below trips
+    open after `_CB_FAIL_THRESHOLD` consecutive Webull failures and
+    short-circuits the next `_CB_OPEN_SEC` seconds of calls to
+    return None immediately — the brain runner sees "no enrichment
+    this tick" and moves on without touching the thread pool.
 """
 from __future__ import annotations
 
@@ -41,11 +53,28 @@ logger = logging.getLogger("risedual.market_data.webull")
 # ── Cache TTLs (seconds). Tuned for the 60/min snapshot rate ceiling
 #    with the 45s tick interval — at 1 call per 12 tickers the bound
 #    is ~4 calls/min if we batch 12-wide.
-SNAPSHOT_TTL_SEC = 5.0
+#
+# 2026-02-19: bumped SNAPSHOT_TTL_SEC from 5s → 30s. The brain runner
+# ticks every 45s, so a 5s cache meant almost every snapshot call
+# was a fresh HTTP round-trip. With Webull intermittently slow this
+# dragged the whole event loop. 30s still gives near-real-time
+# bracket sanity (entry-proxy price) while cutting the call volume
+# 6x.
+SNAPSHOT_TTL_SEC = 30.0
 BARS_TTL_SEC = 30.0
 SCREENER_TTL_SEC = 60.0
 INSTRUMENT_TTL_SEC = 3600.0
 ENTITLEMENTS_TTL_SEC = 60.0
+
+# ── Circuit breaker tuning ─────────────────────────────────────────
+# Trip after this many consecutive Webull failures.
+_CB_FAIL_THRESHOLD = 3
+# Stay open (skip all calls, return None) for this long after a trip.
+_CB_OPEN_SEC = 60.0
+# How long a single SDK call counts as "in flight" before we treat
+# it as a failure for the breaker. The Webull SDK's own connect
+# timeout is 5s so a real call usually completes within 7-8s.
+_CB_CALL_BUDGET_SEC = 10.0
 
 
 class _TTLCache:
@@ -78,6 +107,73 @@ class _TTLCache:
 _CACHE = _TTLCache()
 _CLIENT_LOCK = threading.Lock()
 _CLIENT: Optional["WebullQuotesClient"] = None
+
+
+class _CircuitBreaker:
+    """Process-wide trip switch for Webull SDK calls.
+
+    States:
+      * closed   — calls flow through. Each failure increments the
+                   consecutive-failure counter; each success resets it.
+      * open     — every call short-circuits to None until the cool-
+                   down expires. Saves the thread pool from being
+                   tied up by hung `requests` calls.
+      * half-open (implicit) — after the cool-down a single call is
+                   allowed through. Success closes the breaker;
+                   failure re-opens for another cool-down.
+    """
+    __slots__ = ("_lock", "_failures", "_open_until")
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._failures = 0
+        self._open_until = 0.0
+
+    def allow(self) -> bool:
+        """True when calls should flow; False when the breaker is open."""
+        with self._lock:
+            return time.time() >= self._open_until
+
+    def record_success(self) -> None:
+        with self._lock:
+            if self._failures or self._open_until:
+                logger.info(
+                    "webull circuit-breaker: closing after success "
+                    "(prior failures=%d)", self._failures,
+                )
+            self._failures = 0
+            self._open_until = 0.0
+
+    def record_failure(self, reason: str = "") -> None:
+        with self._lock:
+            self._failures += 1
+            if self._failures >= _CB_FAIL_THRESHOLD:
+                self._open_until = time.time() + _CB_OPEN_SEC
+                logger.warning(
+                    "webull circuit-breaker: OPEN for %.0fs after %d "
+                    "consecutive failures (last reason=%s)",
+                    _CB_OPEN_SEC, self._failures, reason or "?",
+                )
+
+    def status(self) -> Dict[str, Any]:
+        """Diagnostic snapshot for /admin/diagnostics."""
+        with self._lock:
+            now = time.time()
+            return {
+                "open": now < self._open_until,
+                "consecutive_failures": self._failures,
+                "open_for_seconds": max(0.0, self._open_until - now),
+                "threshold": _CB_FAIL_THRESHOLD,
+                "cool_down_seconds": _CB_OPEN_SEC,
+            }
+
+
+_BREAKER = _CircuitBreaker()
+
+
+def webull_quotes_breaker_status() -> Dict[str, Any]:
+    """Public accessor — diagnostics endpoint surfaces this."""
+    return _BREAKER.status()
 
 
 def get_quotes_client() -> Optional["WebullQuotesClient"]:
@@ -121,6 +217,9 @@ def reset_quotes_client_for_tests() -> None:
     with _CLIENT_LOCK:
         _CLIENT = None
     _CACHE.clear()
+    # 2026-02-19: reset the circuit breaker so a test that simulates
+    # Webull failures doesn't leak an "open" state into the next test.
+    _BREAKER.record_success()
 
 
 def _coerce_body(resp: Any) -> Any:
@@ -133,6 +232,36 @@ def _coerce_body(resp: Any) -> Any:
         except Exception:  # noqa: BLE001
             return None
     return resp
+
+
+def _guarded_call(label: str, fn):
+    """Run an SDK call through the circuit breaker.
+
+    `fn` is a zero-arg callable that performs the actual SDK request.
+    Returns the SDK response on success or None when the breaker is
+    open / the call raises. Records success/failure into the
+    process-wide breaker so the brain runner stops hammering a sick
+    Webull endpoint.
+
+    Why this exists: when api.webull.com slows to 5s connect-
+    timeouts, each blocking `requests` call ties up a worker thread
+    in asyncio's default ThreadPoolExecutor. Across 4 brains × ~50
+    symbols/tick the pool saturates and UNRELATED async work (bcrypt
+    on /api/auth/login) starves — operator sees "site won't let me
+    log in." The breaker keeps Webull-bound work bounded so the
+    rest of the app stays responsive.
+    """
+    if not _BREAKER.allow():
+        logger.debug("webull %s: breaker open — skipping call", label)
+        return None
+    try:
+        rv = fn()
+    except Exception as e:  # noqa: BLE001
+        _BREAKER.record_failure(str(e)[:80])
+        logger.debug("webull %s failed: %s", label, e)
+        return None
+    _BREAKER.record_success()
+    return rv
 
 
 class WebullQuotesClient:
@@ -213,12 +342,13 @@ class WebullQuotesClient:
         cached = _CACHE.get(("eq_snap", sym), SNAPSHOT_TTL_SEC)
         if cached is not None:
             return cached
-        try:
-            r = self._data.market_data.get_snapshot([sym], "US_STOCK")
-            body = _coerce_body(r)
-        except Exception as e:  # noqa: BLE001
-            logger.debug("equity_snapshot %s failed: %s", sym, e)
+        r = _guarded_call(
+            f"equity_snapshot({sym})",
+            lambda: self._data.market_data.get_snapshot([sym], "US_STOCK"),
+        )
+        if r is None:
             return None
+        body = _coerce_body(r)
         if not isinstance(body, list) or not body:
             return None
         row = body[0]
@@ -233,12 +363,13 @@ class WebullQuotesClient:
         cached = _CACHE.get(("cr_snap", sym), SNAPSHOT_TTL_SEC)
         if cached is not None:
             return cached
-        try:
-            r = self._data.crypto_market_data.get_crypto_snapshot([sym])
-            body = _coerce_body(r)
-        except Exception as e:  # noqa: BLE001
-            logger.debug("crypto_snapshot %s failed: %s", sym, e)
+        r = _guarded_call(
+            f"crypto_snapshot({sym})",
+            lambda: self._data.crypto_market_data.get_crypto_snapshot([sym]),
+        )
+        if r is None:
             return None
+        body = _coerce_body(r)
         if not isinstance(body, list) or not body:
             return None
         row = body[0]
@@ -254,14 +385,15 @@ class WebullQuotesClient:
         cached = _CACHE.get(key, BARS_TTL_SEC)
         if cached is not None:
             return cached
-        try:
-            r = self._data.market_data.get_history_bar(
+        r = _guarded_call(
+            f"equity_bars({sym},{timespan},{count})",
+            lambda: self._data.market_data.get_history_bar(
                 sym, "US_STOCK", timespan, count=str(count),
-            )
-            body = _coerce_body(r)
-        except Exception as e:  # noqa: BLE001
-            logger.debug("equity_bars %s failed: %s", sym, e)
+            ),
+        )
+        if r is None:
             return []
+        body = _coerce_body(r)
         bars = body if isinstance(body, list) else []
         _CACHE.set(key, bars)
         return bars

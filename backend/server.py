@@ -203,6 +203,24 @@ logger = logging.getLogger("risedual")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 2026-02-19 (prod incident): bump the asyncio default thread pool
+    # so blocking work (Webull SDK, bcrypt password verification,
+    # synchronous Mongo migration helpers) doesn't starve UNRELATED
+    # async work like /api/auth/login. Python's default is
+    # `min(32, cpu_count + 4)` which on small pods is 5-8 threads —
+    # not enough headroom when the brain runner fans 4 brains × ~50
+    # symbols out to Webull per tick. 64 threads is cheap (each idle
+    # thread is ~8KB stack) and gives the operator a fighting chance
+    # to log in even when Webull is hung. Combined with the
+    # circuit breaker on webull_quotes.py this is belt + suspenders.
+    import asyncio  # noqa: WPS433
+    from concurrent.futures import ThreadPoolExecutor  # noqa: WPS433
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(
+        ThreadPoolExecutor(max_workers=64, thread_name_prefix="risedual-io"),
+    )
+    logger.info("asyncio default executor set to 64-thread pool")
+
     await ensure_indexes()
     await seed_admin(db)
     await seed_all(db)

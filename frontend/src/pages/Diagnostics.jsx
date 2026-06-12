@@ -365,14 +365,22 @@ function QuantumPanel() {
 export default function Diagnostics() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+  // Track when the last fetch SUCCEEDED so transient mobile network
+  // blips don't wipe the screen. We only escalate to a big red
+  // banner if the failure persists beyond a polling cycle or two.
+  const [lastSuccessAt, setLastSuccessAt] = useState(null);
+  const [consecutiveFailures, setConsecutiveFailures] = useState(0);
 
   const loadDiag = useCallback(async () => {
     try {
       const { data } = await api.get("/admin/diagnostics");
       setData(data);
       setErr("");
+      setLastSuccessAt(new Date());
+      setConsecutiveFailures(0);
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
+      setConsecutiveFailures((n) => n + 1);
     }
   }, []);
 
@@ -396,8 +404,36 @@ export default function Diagnostics() {
 
       <ImposterScanCard />
 
-      {err && <div className="border border-rd-danger text-rd-danger px-3 py-2 mb-4 text-xs font-mono">{err}</div>}
-      {!data && <LoadingRow />}
+      {/* 2026-02-19 (prod incident): when a polling fetch fails on
+          mobile (network blip, backend slow under Webull-SDK load,
+          etc.) we used to show a big red banner that hid everything
+          else. Now we keep the last good `data` on screen and only
+          flag the failure DISCRETELY in the header — and only after
+          two consecutive failures, so a single dropped packet
+          doesn't flash an alarm. The full-width red bar only fires
+          when we've NEVER had data (first-load failure). */}
+      {err && !data && (
+        <div className="border border-rd-danger text-rd-danger px-3 py-2 mb-4 text-xs font-mono" data-testid="diag-fatal-error">
+          {err}
+        </div>
+      )}
+      {err && data && consecutiveFailures >= 2 && (
+        <div className="border border-rd-warn text-rd-warn px-3 py-1.5 mb-4 text-[11px] font-mono flex items-center justify-between" data-testid="diag-stale-warning">
+          <span>
+            data is stale · last successful refresh{" "}
+            {lastSuccessAt ? `${Math.floor((Date.now() - lastSuccessAt.getTime()) / 1000)}s ago` : "never"}{" "}
+            · {consecutiveFailures} consecutive refresh failures · retrying every 10s
+          </span>
+          <button
+            onClick={loadDiag}
+            className="ml-3 px-2 py-0.5 border border-rd-warn text-rd-warn hover:text-rd-text"
+            data-testid="diag-retry-now"
+          >
+            retry now
+          </button>
+        </div>
+      )}
+      {!data && !err && <LoadingRow />}
 
       {data && (
         <>

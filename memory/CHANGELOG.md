@@ -1,3 +1,65 @@
+## 2026-02-19 (prod incident) — Cyclic "Failed to fetch" + login timeouts
+
+### Operator symptom
+On mission.risedual.ai (mobile): "Coming with all kinds of errors now, and then it stops and works fine. It's a cycle it runs through. It also times me out and doesn't allow me to login." The Diagnostics dashboard cycled through a big red "Failed to fetch" banner with all 4 brain cards flipping to "no data," then recovering 10s later.
+
+### Root cause (one chain, three symptoms)
+Backend logs revealed the culprit:
+```
+WARNING - watchdog: intent_loop iter exceeded 20.0s — abandoning brain=camaro tick=102
+ERROR - HttpError... Connection to api.webull.com timed out. (connect timeout=5)
+```
+
+The Webull SDK is **synchronous** (uses `requests`). When api.webull.com goes slow (5s connect timeouts intermittently), every snapshot call from the brain runner (`webull_quotes.py`) ties up a worker thread in asyncio's default `ThreadPoolExecutor`. Across 4 brains × ~50 symbols/tick the pool saturates with hung calls. UNRELATED async work — most painfully `bcrypt.checkpw` on `/api/auth/login`, which also dispatches to the thread pool — then has to queue. From the operator's perspective:
+- `/admin/diagnostics` polls time out → red banner
+- `/admin/brain/emission-diagnose/{brain}` × 4 also time out → "no data" cards
+- `/auth/login` queues behind the hung Webull threads → login times out
+
+When Webull recovers, everything clears. That's the "cycle."
+
+### Backend fixes
+1. **`backend/shared/market_data/webull_quotes.py`** — added a process-wide `_CircuitBreaker`:
+   - Trips OPEN after 3 consecutive Webull SDK failures.
+   - While open (60s default), every Webull call short-circuits to None WITHOUT touching the thread pool.
+   - Half-open after the cool-down: next call probes; success closes the breaker, failure reopens.
+   - Exposed via `webull_quotes_breaker_status()` so a future diagnostics tile can surface it.
+   - Wired into `equity_snapshot`, `crypto_snapshot`, `equity_bars` — the hot paths the brain runner hammers.
+   - Bumped `SNAPSHOT_TTL_SEC` from 5s → 30s (the brain ticks every 45s; 5s cache was thrashing every tick).
+
+2. **`backend/server.py`** — bumped the asyncio default executor to a 64-thread `ThreadPoolExecutor` in lifespan. Python's default (`min(32, cpu_count + 4)`) is only 5-8 threads on small pods — not enough headroom when Webull, bcrypt, and Mongo are all sharing the pool. Threads are cheap (~8KB stack each idle); 64 gives login a fighting chance even mid-incident.
+
+3. **`backend/tests/test_webull_quotes_circuit_breaker.py`** (new) — 5 tests:
+   - Breaker opens after 3 consecutive failures, subsequent calls bypass the SDK.
+   - Cool-down recovery: after the window expires, the next call probes; success closes the breaker.
+   - Success resets the counter (2 failures + success + 2 failures = breaker still closed).
+   - Cache hits bypass the breaker entirely (don't even consult).
+   - Status shape pinned for the future diagnostics tile.
+
+### Frontend resilience fixes
+4. **`frontend/src/pages/Diagnostics.jsx`** — tracks `consecutiveFailures` + `lastSuccessAt`:
+   - Big red banner now only shows on the FIRST-LOAD failure (when there's no `data` to display).
+   - When we have data and a transient failure occurs, we show a small amber "data is stale · last successful refresh Ns ago · N consecutive failures · retrying every 10s · [retry now]" strip instead of wiping the screen.
+   - Single dropped packets stay silent (need ≥2 consecutive failures to surface anything).
+
+5. **`frontend/src/components/CompositeLivenessCard.jsx`** — restructured the polling:
+   - Per-brain results are now **merged** into `byBrain` instead of replacing the whole map. A failed call leaves the brain's previous value in place rather than nulling it out → no more "no data" everywhere when one packet drops.
+   - Tracks `staleCount` per brain — only shows the amber stale warning after ≥2 consecutive total failures.
+   - Tracks `lastRefreshAt` per brain (groundwork for a per-brain "Xs ago" timestamp).
+
+### Tests
+- `pytest tests/test_webull_quotes_circuit_breaker.py tests/test_webull_otoco_adapter.py tests/test_webull_otoco_live_grouping.py tests/test_operator_override_and_action_override.py tests/test_last_submit_block_endpoint.py tests/test_legacy_wrapper_dampener.py` → 53/53 passing
+- Lints clean (Python + JS)
+- Backend boots with the new lifespan: "asyncio default executor set to 64-thread pool" logged
+
+### Operator deploy
+Save to GitHub → redeploy. The cyclic "Failed to fetch" banners should stop because:
+- When Webull is slow, the brain runner stops hammering it after 3 fails (breaker opens for 60s) → thread pool frees up
+- Login + diagnostics complete normally even mid-Webull-incident
+- Even if a polling fetch occasionally times out, the UI now keeps the last good data instead of flashing red
+
+---
+
+
 ## 2026-02-19 (P1 Phase 2 follow-up) — Live OTOCO Orders tile
 
 ### What shipped
