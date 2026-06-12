@@ -125,9 +125,10 @@ export default function Ping() {
       await navigator.clipboard.writeText(bookmarkUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard API can fail under non-HTTPS / sandboxed iframes —
-      // operator can still copy from the visible URL block. Silent.
+    } catch (e) {
+      // Clipboard API blocked (non-HTTPS / sandboxed iframe); operator can copy
+      // from the visible URL block instead.
+      console.debug("Ping clipboard copy failed", e);
     }
   }, [bookmarkUrl]);
 

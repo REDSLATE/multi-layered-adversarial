@@ -29,61 +29,24 @@ Auth: any brain's X-Runtime-Token. The brain that calls is the brain
 """
 from __future__ import annotations
 
-import os
-from typing import Literal, Optional
-
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
 
 from db import db
-from namespaces import DISCUSSION_PARTICIPANTS
 from runtime_auth import verify_runtime_token
+from shared.position_close_models import (
+    CloseIn,
+    inverse_side as _inverse_side,
+    resolve_runtime_from_token as _resolve_runtime_from_token,
+)
 
 
 router = APIRouter(prefix="/runtime/positions", tags=["runtime-positions"])
 
 
-# ─── helpers ────────────────────────────────────────────────────────
-
-
-def _resolve_runtime_from_token(token: str) -> Optional[str]:
-    for brain in DISCUSSION_PARTICIPANTS:
-        expected = os.environ.get(f"{brain.upper()}_INGEST_TOKEN")
-        if expected and token == expected:
-            return brain
-    return None
-
-
-def _inverse_side(broker_side: str) -> Literal["SELL", "COVER"]:
-    """Map broker position side → the action that closes it.
-
-    Alpaca returns side as 'long' / 'short' (lowercase).
-    """
-    if broker_side.lower() == "long":
-        return "SELL"
-    if broker_side.lower() == "short":
-        return "COVER"
-    raise ValueError(f"unknown broker position side: {broker_side!r}")
-
-
-# ─── request/response ───────────────────────────────────────────────
-
-
-class CloseIn(BaseModel):
-    symbol: str = Field(min_length=1, max_length=24)
-    lane: Literal["equity", "crypto"]
-    # Partial-close support: fraction ∈ (0, 1.0]. Default 1.0 = full close.
-    # 0.5 = close half. <=0 or >1 rejected at the boundary.
-    fraction: float = Field(default=1.0, gt=0.0, le=1.0)
-    rationale: str = Field(
-        default="brain-initiated close",
-        min_length=1, max_length=4000,
-    )
-    # Confidence on this close decision. Defaults high (0.9) because a
-    # close intent is a different doctrinal beast — it's not "I think
-    # this trade will work" but "I am exiting this position now". The
-    # brain can override if it's expressing uncertainty about the exit.
-    confidence: float = Field(default=0.9, ge=0.0, le=1.0)
+# (The shared resolve_runtime_from_token + inverse_side + CloseIn now
+# live in `shared/position_close_models.py` so `shared/intents.py` can
+# import CloseIn statically without dragging the route handler in.
+# See that module's docstring for the full rationale.)
 
 
 # ─── endpoint ───────────────────────────────────────────────────────

@@ -292,8 +292,8 @@ function RosterRow({ row, lastWake, onWake }) {
           className="text-[10px] font-mono text-rd-danger pt-1 space-y-0.5"
           data-testid={`paradox-roster-failed-${row.role}`}
         >
-          {failedReasons.map((reason, i) => (
-            <div key={i}>✕ {reason}</div>
+          {failedReasons.map((reason) => (
+            <div key={reason}>✕ {reason}</div>
           ))}
         </div>
       )}

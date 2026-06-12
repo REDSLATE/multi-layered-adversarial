@@ -89,7 +89,8 @@ export default function RiseAI() {
       const r = await api.get("/admin/rise-ai/threads", { params });
       setThreads(r.data.items || []);
     } catch (e) {
-      // Non-fatal — the composer still works.
+      // Non-fatal — the composer still works without a refreshed thread list.
+      console.debug("RiseAI refreshThreads failed", e);
     }
   }, [pinnedOnly, search]);
 
@@ -116,7 +117,8 @@ export default function RiseAI() {
       setMode(data.mode || "chat");
       setRole(data.role || "");
       setTranscript(
-        (data.messages || []).map((m) => ({
+        (data.messages || []).map((m, i) => ({
+          _id: m.id || `t-${data.session_id}-${i}`,
           kind: m.kind,
           text: m.text,
           mode: m.mode,
@@ -215,6 +217,7 @@ export default function RiseAI() {
     setBusy(true);
     setErr("");
     const userMsg = {
+      _id: `u-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       kind: "user",
       text: p,
       mode,
@@ -229,6 +232,7 @@ export default function RiseAI() {
       const r = await api.post("/ai/run", payload);
       const data = r.data;
       const riseMsg = {
+        _id: `r-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         kind: "rise",
         text: data.answer,
         mode: data.mode,
@@ -270,6 +274,7 @@ export default function RiseAI() {
           refreshThreads();
         } catch (e) {
           // Persistence is best-effort; transcript still in memory.
+          console.debug("RiseAI thread persistence failed", e);
         }
       }
     } catch (e) {
@@ -277,6 +282,7 @@ export default function RiseAI() {
       setTranscript((t) => [
         ...t,
         {
+          _id: `err-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           kind: "rise",
           text: `Error: ${e?.response?.data?.detail || e.message}`,
           at: new Date().toISOString(),
@@ -519,7 +525,12 @@ export default function RiseAI() {
               </div>
             )}
             {transcript.map((m, i) => (
-              <Message key={i} idx={i} m={m} onGrade={onGrade} />
+              <Message
+                key={m._id ?? `msg-${i}`}
+                idx={i}
+                m={m}
+                onGrade={onGrade}
+              />
             ))}
             {busy && (
               <div className="px-3 py-2 text-[11px] font-mono text-rd-dim">

@@ -369,8 +369,8 @@ function DetailModal({ callId, onClose, onGraded }) {
                   prior grades ({detail.grades.length})
                 </div>
                 <div className="space-y-1">
-                  {detail.grades.map((g, i) => (
-                    <div key={i} className="border border-rd-border px-2 py-1 flex items-center gap-2 text-[11px]">
+                  {detail.grades.map((g) => (
+                    <div key={`${g.created_at}-${g.outcome}`} className="border border-rd-border px-2 py-1 flex items-center gap-2 text-[11px]">
                       <Badge color={scoreColor(g.score)}>{fmtScore(g.score)}</Badge>
                       <span className="text-rd-text">{g.outcome}</span>
                       {g.note && <span className="text-rd-dim">— {g.note}</span>}

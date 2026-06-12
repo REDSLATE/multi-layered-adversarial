@@ -100,8 +100,8 @@ function BracketCard({ bracket }) {
             <Warning size={9} weight="bold" />
             unrecognized combo legs · {bracket.other_legs.length}
           </div>
-          {bracket.other_legs.map((leg, i) => (
-            <div key={i} className="text-[10px] font-mono text-rd-text">
+          {bracket.other_legs.map((leg) => (
+            <div key={leg.client_order_id || leg.broker_order_id} className="text-[10px] font-mono text-rd-text">
               {leg.order_type} · {leg.side} · {leg.status} · {leg.client_order_id}
             </div>
           ))}

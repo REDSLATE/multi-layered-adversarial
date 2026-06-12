@@ -747,9 +747,12 @@ async def post_intent(
         # Hand off to the position-close flow which discovers side+qty
         # from the broker, builds the inverse-side intent, and routes
         # it through the SAME gate chain via this same function.
-        from routes.runtime_position_close import (  # noqa: WPS433
-            CloseIn, close_position,
-        )
+        # `CloseIn` lives in shared/position_close_models.py to keep
+        # the import boundary clean; `close_position` itself is the
+        # route handler so it's late-imported (the runtime delegation
+        # is intentional and mutual — see that module's docstring).
+        from routes.runtime_position_close import close_position  # noqa: WPS433
+        from shared.position_close_models import CloseIn  # noqa: WPS433
         if body.lane not in {"equity", "crypto"}:
             raise HTTPException(
                 status_code=422,

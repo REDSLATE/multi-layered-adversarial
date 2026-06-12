@@ -13,6 +13,7 @@ load_dotenv(ROOT_DIR / ".env")
 import os
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, APIRouter
 from starlette.middleware.cors import CORSMiddleware
@@ -497,9 +498,7 @@ async def lifespan(app: FastAPI):
                         f"{roster_executor!r} but legacy doc held "
                         f"{legacy_holder!r}; roster is authoritative"
                     ),
-                    "auto_cleared_at": __import__("datetime").datetime.now(
-                        __import__("datetime").timezone.utc,
-                    ).isoformat(),
+                    "auto_cleared_at": datetime.now(timezone.utc).isoformat(),
                 }},
                 upsert=True,
             )

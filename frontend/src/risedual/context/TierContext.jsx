@@ -16,8 +16,9 @@ export function TierProvider({ children }) {
     setTierState(t);
     try {
       localStorage.setItem(STORAGE_KEY, t);
-    } catch {
-      /* storage may be disabled (private mode); silently ignore. */
+    } catch (e) {
+      // Storage disabled (private mode / sandboxed iframe); fall back to in-memory only.
+      console.debug("TierContext: localStorage write failed", e);
     }
   }, []);
   useEffect(() => {

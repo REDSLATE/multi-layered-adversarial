@@ -1,3 +1,47 @@
+## 2026-02-19 (code review) — Real bug fixes (skipping linter noise)
+
+### Scope
+Operator asked to apply the suggested fixes from an external code-review report. Of the 10 categories flagged, 4 were real bugs and 6 were linter noise or opinionated refactors that would have hurt the codebase. The operator confirmed "do the ones that are actual problems and forget the rest."
+
+### Applied (real bugs)
+
+1. **Circular import** (`routes/runtime_position_close.py` ↔ `shared/intents.py`)
+   - Extracted `CloseIn` Pydantic model + `resolve_runtime_from_token` + `inverse_side` helpers to a new `shared/position_close_models.py`.
+   - Both modules now import `CloseIn` statically from the shared module. The runtime function reference `close_position` (route handler) stays as a late import inside the `post_intent` action=CLOSE branch — that's a designed mutual delegation at runtime, not a module-load cycle.
+   - Verified clean import resolution + 67/67 tests pass.
+
+2. **Dynamic `__import__("datetime")`** in `server.py:500-501`
+   - Replaced inline `__import__("datetime").datetime.now(__import__("datetime").timezone.utc)` with a normal top-level `from datetime import datetime, timezone` import.
+
+3. **Empty catch blocks** — 4 instances in `TierContext.jsx`, `RiseAI.jsx` (x2), `Ping.jsx`
+   - These were intentionally silent for UX reasons (private-mode localStorage, non-fatal refresh, clipboard sandbox). Added `console.debug(...)` calls so engineers debugging see them but normal users still get no toast noise.
+
+4. **Array-index keys** — 11 instances across `SafetyGatesAudit.jsx`, `RiseAI.jsx`, `LlmLedger.jsx`, `WebullOtocoLivePanel.jsx`, `ParadoxRosterPanel.jsx`, `MasterTradingSwitch.jsx`, `BrainProxiedStatusTile.jsx`
+   - Replaced with stable keys derived from data fields (`b.reason_prefix`, `g.created_at`, `leg.client_order_id`, `s.seat`, etc.).
+   - For `RiseAI` transcript (append-only chat) — added `_id` field at message creation time (`u-${ts}-${rand}` for user, `r-${ts}-${rand}` for rise, `err-...` for error fallbacks, `t-${session}-${i}` for loaded threads) so React keys stay stable across grading + re-renders.
+
+### Skipped (linter noise; would have hurt the codebase)
+
+* **"Hardcoded secrets in tests"** — These are fixture strings like `"real-camaro-token"`, `"forged-token"` DESIGNED to test that the token-validation code distinguishes a real token from a forged one. Not real secrets. Replacing them with `os.getenv(...)` would hurt test reliability without improving security.
+
+* **localStorage for auth tokens** — JWT-in-localStorage is a standard, accepted pattern. Switching to HttpOnly cookies would be a complete auth rewrite that would break runtime brain tokens, sidecar checkins, and the mobile login flow the operator depends on. Opinionated, not a bug.
+
+* **Oversized files** — System prompt explicitly says "Don't refactor code without a reason." `Intents.jsx` (488 lines) and `server.py` (161 imports) work correctly; refactoring just to be smaller introduces breakage risk.
+
+* **168 React hook-dep warnings** — Blanket fixing all 168 would risk infinite re-renders. The cited components have been working in prod for weeks. Deferred until specific bugs are reported.
+
+* **93 "undefined variables"** — No specifics provided; most likely linter false positives on branch-defined variables. Would need the actual list to triage.
+
+* **High-complexity refactors** (`BrainCard`, `BrainHealthTile`, etc.) — Quality concern, not bugs. Refactor when we touch them for a feature change, not in isolation.
+
+### Tests
+- `pytest tests/test_runtime_position_close.py tests/test_webull_quotes_circuit_breaker.py tests/test_webull_otoco_adapter.py tests/test_webull_otoco_live_grouping.py tests/test_operator_override_and_action_override.py tests/test_last_submit_block_endpoint.py tests/test_legacy_wrapper_dampener.py` → 67/67 passing
+- Lints clean (Python + JS)
+- Backend reboots clean: "Application startup complete"
+
+---
+
+
 ## 2026-02-19 (prod incident) — Cyclic "Failed to fetch" + login timeouts
 
 ### Operator symptom

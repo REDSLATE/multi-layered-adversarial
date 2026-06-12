@@ -57,9 +57,9 @@ function GateRow({ gate }) {
           <div className="text-[9px] font-mono uppercase tracking-widest text-rd-dim mb-1">
             Top Block Reasons
           </div>
-          {gate.top_block_reasons.map((b, i) => (
+          {gate.top_block_reasons.map((b) => (
             <div
-              key={i}
+              key={b.reason_prefix}
               className="text-[11px] font-mono text-rd-text pl-3 relative before:content-['—'] before:absolute before:left-0 before:text-rd-dim"
             >
               <span className="text-rd-dim">[{b.count}]</span> {b.reason_prefix}
@@ -74,9 +74,9 @@ function GateRow({ gate }) {
             Sample Block Messages ({gate.block_reason_samples.length})
           </summary>
           <div className="mt-1 pl-2 border-l border-rd-border">
-            {gate.block_reason_samples.map((s, i) => (
+            {gate.block_reason_samples.map((s) => (
               <div
-                key={i}
+                key={`${s.ts || ""}-${s.reason || ""}`}
                 className="text-[10px] font-mono text-rd-text py-1 leading-relaxed"
               >
                 <span className="text-rd-dim">{s.ts?.slice(11, 19)}</span>{" "}

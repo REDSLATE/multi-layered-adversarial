@@ -186,7 +186,7 @@ export default function BrainProxiedStatusTile({ brain, proxied }) {
               <div className="text-[11px] text-rd-dim font-mono">none held locally</div>
             ) : (
               (p.seats.seats_held || []).map((s, i) => (
-                <KV key={i} k={s.seat || "seat"} v={s.lane || "—"} testid={`seat-${i}`} />
+                <KV key={`${s.seat || "seat"}-${s.lane || i}`} k={s.seat || "seat"} v={s.lane || "—"} testid={`seat-${i}`} />
               ))
             )}
           </Section>
@@ -216,9 +216,9 @@ export default function BrainProxiedStatusTile({ brain, proxied }) {
             <KV k="enabled" v={p.data_keys.enabled} />
             <KV k="refresh_s" v={p.data_keys.refresh_s} />
             <KV k="whitelist" v={(p.data_keys.whitelist || []).join(", ")} />
-            {(p.data_keys.env_now || []).map((k, i) => (
+            {(p.data_keys.env_now || []).map((k) => (
               <KV
-                key={i}
+                key={k.name}
                 k={k.name}
                 v={k.present ? `${k.digest?.slice?.(0, 12) || "present"}…` : "missing"}
                 testid={`datakey-${k.name}`}

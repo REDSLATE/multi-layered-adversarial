@@ -269,8 +269,8 @@ export default function MasterTradingSwitch() {
                 Last {audit.length} flips
               </summary>
               <div className="mt-2 border-l border-rd-border pl-3 space-y-1.5">
-                {audit.map((row, i) => (
-                  <div key={i} className="text-[10px] font-mono leading-relaxed">
+                {audit.map((row) => (
+                  <div key={row.flipped_at || `${row.enabled}-${row.by}-${row.reason}`} className="text-[10px] font-mono leading-relaxed">
                     <span
                       style={{ color: row.enabled ? "#10B981" : "#DC2626" }}
                       className="mr-2"
