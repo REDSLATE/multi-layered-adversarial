@@ -130,7 +130,7 @@ async def test_submit_blocked_below_floor(monkeypatch):
     monkeypatch.setenv("WEBULL_ARMED", "true")
     adapter = _adapter()
     with pytest.raises(WebullCapBlocked) as exc:
-        await adapter.submit_market_order("AAPL", notional=2.00, side="BUY")
+        await adapter.submit_market_order("AAPL", notional=0.50, side="BUY")
     assert "BELOW_FLOOR" in str(exc.value)
 
 

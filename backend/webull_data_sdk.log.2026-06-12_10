@@ -1,0 +1,33 @@
+279782474248608 2026-06-12 10:51:06,688 webull.core.client ERROR HttpError occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/crypto/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "BTCUSD",
+    "category": "US_CRYPTO"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-12T10:50:46Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "07087c15-2c8d-5a64-872a-9f678d96ef50",
+    "x-signature": "H9FF/qpp2izZYxbq0Jz3e8AB3iE=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} ClientException:SDK.HttpError HTTPSConnectionPool(host='api.webull.com', port=443): Max retries exceeded with url: /openapi/market-data/crypto/snapshot?symbols=BTCUSD&category=US_CRYPTO (Caused by ConnectTimeoutError(<HTTPSConnection(host='api.webull.com', port=443) at 0xfe764c4d44d0>, 'Connection to api.webull.com timed out. (connect timeout=5)'))

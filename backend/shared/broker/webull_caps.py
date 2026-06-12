@@ -14,9 +14,19 @@ Doctrine pin (operator, 2026-06-10):
 
         2. The notional MUST satisfy
                WEBULL_MIN_NOTIONAL_USD  ≤  notional  ≤  WEBULL_MAX_NOTIONAL_USD
-           Defaults: $3.00 ≤ N ≤ $10.00. Operator can widen via env
+           Defaults: $1.00 ≤ N ≤ $10.00. Operator can widen via env
            later, but the floor and ceiling exist precisely to keep
            the live-pilot cost-per-mistake bounded.
+
+           2026-02-19 (rev): floor lowered from $3 → $1 because Webull
+           fractional shares clear at a $1 minimum (per their order
+           docs). Holding the floor at $3 was over-conservative and
+           was forcing the gate to drop legit small fractional intents
+           on cheap tickers (e.g., a 0.05-share intent on a $40 ticker
+           = $2.00 notional, which is well within Webull's fractional
+           tier but was bouncing off the gate). Lowering to $1 widens
+           the playable universe without changing the blast-radius
+           ceiling.
 
     These caps are ADDITIVE to the existing $500 exposure cap, the
     in-flight dedupe, and the position-misread detection — they do
@@ -34,7 +44,9 @@ from typing import Optional
 
 
 # Sentinel values used by the router when the gate refuses an order.
-DEFAULT_MIN_NOTIONAL_USD = 3.00
+# 2026-02-19 (rev): min lowered $3 → $1 to align with Webull's
+# fractional-share order minimum. Max held at $10 for blast-radius.
+DEFAULT_MIN_NOTIONAL_USD = 1.00
 DEFAULT_MAX_NOTIONAL_USD = 10.00
 
 

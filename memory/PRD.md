@@ -1,3 +1,28 @@
+## 2026-02-19 (final+1) — Webull cap floor lowered $3 → $1
+
+### Operator directive
+> "Webull fractional trades start at a dollar. I think if we lower the $3 → $1, then it will allow for more trades."
+
+### Status: shipped to preview + verified via gate sweep
+
+### Change
+- `/app/backend/shared/broker/webull_caps.py::DEFAULT_MIN_NOTIONAL_USD` — `3.00` → `1.00`. Doctrine comment updated to record the operator's rationale (Webull's fractional minimum is $1 per their order docs; the $3 floor was rejecting legit fractional intents like 0.05 shares of a $40 ticker).
+- `/app/backend/.env` — `WEBULL_MIN_NOTIONAL_USD="3.00"` → `"1.00"` so the change takes effect on the running pod without waiting for a doctrine-default redeploy.
+- `cap_per_order` ceiling untouched ($10) — blast radius unchanged.
+
+### Verification
+- 3 new doctrine-pin tests added (`test_one_dollar_fractional_intent_passes`, `test_intermediate_two_dollar_intent_passes`, `test_sub_one_dollar_still_blocked`) so a future env tweak that raises the floor back above $1 fails CI.
+- 4 existing tests updated to the new floor (default-band assertion, BELOW_FLOOR / boundary inclusivity in both `test_webull_caps.py` and `test_webull_adapter.py`).
+- All 46 webull-cap + adapter tests green.
+- Live gate sweep against the patched env confirms: $0.50→BLOCK, $1.00→PASS, $2.00→PASS, $10.00→PASS, $10.01→BLOCK.
+- Backend restart clean, `/api/health` ok, `/api/admin/trading/status` returning live config.
+
+### Net effect
+Playable BUY universe widens substantially — the brains can now route any fractional intent ≥ $1.00 ≤ $10.00. Operator's $676.68 buying power covers up to ~67 concurrent $10 intents or ~676 fractional $1 intents within the daily/open caps.
+
+---
+
+
 ## 2026-02-19 (final) — Webull $0 balance bug FIXED + verified live
 
 ### Operator directive
