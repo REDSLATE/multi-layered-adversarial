@@ -1,3 +1,70 @@
+## 2026-02-19 (final+3) — Cross-brain discussion loop SHIPPED + LIVE
+
+### Operator directive
+Two items on the desk:
+1. **P1** — Cross-brain discussion loop dead (zero `in_reply_to` rows). Brains monologue, never reply.
+2. **P2** — Admin `may_execute` UI toggle.
+
+### Status
+
+**P1: Discussion loop shipped — LIVE in preview, 3 reply rows already posted, 2 `disagree` stances.**
+
+**P2: Already done — `LaneExecutionTogglesPanel` is fully built (per-lane buttons, confirm modal, audit log) and mounted at `/diagnostics`.** The handoff misclassified the real switch as `may_execute` (which is a schema-pinned seat policy constant, not user-flippable). The actual operator switch is `lane_execution_enabled`, and its UI + backend already work end-to-end (`GET/POST /api/admin/execution/lane-toggles`).
+
+### P1 root cause
+`/api/ingest/opinion` POSTs were healthy (200 OK across all 4 brains, 50+ rows in last hour). But ZERO `in_reply_to` rows ever landed — `runner.py` only had `_post_directional_opinion` (monologue) and no peer-read/reply path. MC's reply infrastructure (`GET /api/runtime-discussion/opinions`, `in_reply_to` threading with cycle/depth protection, conflict auto-detect) was server-ready but starved of clients.
+
+### P1 fix (lightweight dissent-only scope, operator-chosen default)
+Added to `/app/external/brains/runner.py` (the in-process runner — the 4 brains all live in MC's Python process; the folder name is historical):
+
+- **5 new env knobs**:
+  - `RISEDUAL_DISCUSSION_LOOP_ENABLED` master gate (default `true`)
+  - `NEUTRAL_BRAIN_DISCUSSION_SEC` cadence (default 60s)
+  - `DISCUSSION_MAX_REPLIES_PER_TICK` spam cap (default 3)
+  - `DISCUSSION_LOOKBACK_MIN` reader window (default 5m)
+  - `_CONFLICTING_PAIRS` constant — frozen set restricted to directional pairs (`long↔short`, `long/short↔veto`).
+
+- **New state on `BrainRunner`**:
+  - `_my_last_stance_by_symbol[sym] → (stance, ts)` — populated by `_post_directional_opinion` ONLY on `long`/`short` (HOLD's `observation` deliberately excluded so it doesn't generate false-positive dissents).
+  - `_replied_to_opinion_ids` — FIFO-bounded (cap 1000) in-memory idempotency set.
+
+- **New methods**:
+  - `_discussion_loop` — async loop with watchdog + jittered cadence; mirrors `_sovereign_loop` shape.
+  - `_discussion_tick` — extracted so unit tests can drive it deterministically.
+  - `_post_dissent_reply` — builds the `disagree` reply with `in_reply_to`, modest 0.5 confidence (not claiming overwhelming conviction), explanatory body, and peer-context evidence dict for audit.
+
+- **Wired into `run()`** as a 4th task alongside intent/checkin/sovereign, gated on `DISCUSSION_LOOP_ENABLED`.
+
+- **Stats surface** (`BrainRunner.stats.loop_health.discussion_*`) so the Diagnostics dashboard can add a "discussion_loop" band next to the existing intent/checkin/sovereign bands.
+
+### Doctrine pinned by tests
+- Concurrence is silent (no spam).
+- No own stance → silent (no monologue from peer alone).
+- Self-authored peer rows → skipped.
+- Already-replied opinion_ids → skipped (idempotency).
+- Non-`symbol:` topics → skipped (no contradiction model for regimes/theories).
+- Replies cap at `DISCUSSION_MAX_REPLIES_PER_TICK` per tick (3).
+- **Brains MUST NOT consult peer opinions BEFORE forming their own intent** — independence is preserved.
+- `_CONFLICTING_PAIRS` is locked to directional pairs only; adding `("observation", "long")` would turn the loop into a herd detector, which the operator explicitly rejected.
+
+### Verification
+- **13 new unit tests** in `/app/backend/tests/test_runner_discussion_loop.py` — all green. Covers dissent, silence, idempotency, throttle, topic filtering, request shape, and doctrine invariants.
+- **All 290 runner/opinion/webull/broker tests green** post-change. Zero regressions.
+- **LIVE evidence after backend restart**: in <3 minutes the discussion layer had:
+  - `in_reply_to=null` → `3 reply rows now have it set`.
+  - `disagree` stance count went from 0 → 2.
+  - Alpha (long on AAL) replied to two peer `short` calls on AAL at 15:53:03–04. Textbook contradiction case.
+  - All 4 brains observed polling `GET /api/runtime-discussion/opinions` on their cadence.
+
+### Remaining backlog (now P1 → P2)
+- 🟠 P1 — Legacy wrapper tuning (`WRAPPER_PENALTY_STRENGTH`, `WRAPPER_MIN_SIZE_BIAS_NONZERO`).
+- 🟡 P2 — US market holiday calendar in `shadow_close_cron.py`.
+- 🟡 P2 — StockFit 10-Q/10-K doctrine enrichment.
+- 🟡 P2 — Diagnostics dashboard: add a "discussion_loop" health band (stats already published; just needs a UI tile next to the existing intent/checkin/sovereign tiles).
+
+---
+
+
 ## 2026-02-19 (final+2) — Webull fractional shares via `place_order_v2` + AMOUNT
 
 ### Operator directive

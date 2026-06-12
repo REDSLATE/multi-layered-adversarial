@@ -160,6 +160,57 @@ PATTERN_BIAS = float(os.environ.get("NEUTRAL_BRAIN_PATTERN_BIAS", "0.20"))
 # Default 60s — well inside the 5min stale threshold.
 SOVEREIGN_INTERVAL_SEC = float(os.environ.get("NEUTRAL_BRAIN_SOVEREIGN_SEC", "60"))
 
+# ── Cross-brain discussion loop (P1, 2026-02-19) ──────────────────
+# Brains post solo opinions on every intent (healthy: 200 OK across
+# all 4 brains). But ZERO `in_reply_to` rows ever land in the
+# `shared_brain_opinions` collection — brains monologue and never
+# react to peers. MC's discussion infra (`/api/runtime-discussion/
+# opinions` reader, `in_reply_to` threading with cycle/depth
+# protection, conflict auto-detect) is fully wired server-side
+# but starved of reply traffic.
+#
+# This loop fills the gap with the operator's recommended scope —
+# LIGHTWEIGHT DISSENT-ONLY (option a from the 2026-02-19 ask):
+# each brain reads peer opinions since its last successful loop tick
+# and posts a `disagree` reply ONLY when a peer's stance directly
+# contradicts this brain's own most-recent stance on the same symbol.
+# Concurrence = silence (no spam). Brains never herd, never read
+# peer opinions BEFORE forming their own intent — independence is
+# preserved.
+#
+# Operator switches:
+#   RISEDUAL_DISCUSSION_LOOP_ENABLED  on/off master gate (default on)
+#   NEUTRAL_BRAIN_DISCUSSION_SEC      tick cadence (default 60s)
+#   DISCUSSION_MAX_REPLIES_PER_TICK   spam ceiling (default 3)
+#   DISCUSSION_LOOKBACK_MIN           how far back to scan peer
+#                                     opinions on each tick (default 5m)
+DISCUSSION_INTERVAL_SEC = float(
+    os.environ.get("NEUTRAL_BRAIN_DISCUSSION_SEC", "60"),
+)
+DISCUSSION_LOOP_ENABLED = (
+    os.environ.get("RISEDUAL_DISCUSSION_LOOP_ENABLED", "true").lower()
+    not in ("false", "0", "no", "off")
+)
+DISCUSSION_MAX_REPLIES_PER_TICK = int(
+    os.environ.get("DISCUSSION_MAX_REPLIES_PER_TICK", "3"),
+)
+DISCUSSION_LOOKBACK_MIN = float(
+    os.environ.get("DISCUSSION_LOOKBACK_MIN", "5"),
+)
+# In-memory replied-to set is bounded so a long-running brain doesn't
+# leak memory on the opinion_id history. 1000 entries × ~40 chars
+# = ~40 KB per brain — negligible.
+DISCUSSION_REPLIED_TO_MAX = 1000
+# Stance pairs that constitute DIRECT contradiction. Anything not in
+# this set is treated as "no conflict" — the loop stays silent.
+# Doctrine: only `long` vs `short` is a real directional conflict.
+# `endorse` / `agree` / `disagree` / `refine` / observations don't
+# automatically conflict with a directional stance.
+_CONFLICTING_PAIRS: frozenset[tuple[str, str]] = frozenset({
+    ("long", "short"), ("short", "long"),
+    ("long", "veto"),  ("short", "veto"),
+})
+
 # ── May-14 wrapper-hardening doctrine (applied to this stack on
 # 2026-02-19) — see `external/chevelle-incoming/MC_HARDENING_
 # NOTE_2026-05-14.md`. Camaro patched it in May; this stack
@@ -834,9 +885,24 @@ class BrainRunner:
         self._last_intent_success_at: Optional[datetime] = None
         self._last_checkin_success_at: Optional[datetime] = None
         self._last_sovereign_success_at: Optional[datetime] = None
+        self._last_discussion_success_at: Optional[datetime] = None
         self._last_intent_watchdog_trip_at: Optional[datetime] = None
         self._last_checkin_watchdog_trip_at: Optional[datetime] = None
         self._last_sovereign_watchdog_trip_at: Optional[datetime] = None
+        self._last_discussion_watchdog_trip_at: Optional[datetime] = None
+        self._discussion_count = 0
+        self._discussion_reply_count = 0
+        # ── Cross-brain discussion state (P1, 2026-02-19) ──
+        # `_my_last_stance_by_symbol` is updated by `_post_directional_
+        # opinion` after a successful 200. The discussion loop reads
+        # it to decide whether a peer opinion DIRECTLY contradicts
+        # this brain's current stance (e.g., peer says short on AAPL
+        # while we still hold long).
+        # `_replied_to_opinion_ids` is the in-memory idempotency set
+        # so we never double-reply to the same peer opinion. FIFO
+        # bounded so a long-running brain can't leak memory.
+        self._my_last_stance_by_symbol: dict[str, tuple[str, datetime]] = {}
+        self._replied_to_opinion_ids: list[str] = []
         # Anti-drumbeat cooldown. Records the last tick at which the
         # brain emitted an intent for each (lane, symbol). The intent
         # loop refuses to re-pick a symbol whose last-emit tick is
@@ -895,12 +961,25 @@ class BrainRunner:
         intent_task = asyncio.create_task(self._intent_loop())
         checkin_task = asyncio.create_task(self._checkin_loop())
         sovereign_task = asyncio.create_task(self._sovereign_loop())
+        # P1 (2026-02-19) — cross-brain discussion loop.
+        # Reads peer opinions and posts `disagree` replies when a peer
+        # stance contradicts our most-recent stance on the same symbol.
+        # Master-gated by `RISEDUAL_DISCUSSION_LOOP_ENABLED` so the
+        # operator can kill-switch the entire reply layer in a single
+        # env flip without restarting the runner.
+        discussion_task = (
+            asyncio.create_task(self._discussion_loop())
+            if DISCUSSION_LOOP_ENABLED else None
+        )
         try:
             await self._stop.wait()
         finally:
-            for t in (intent_task, checkin_task, sovereign_task):
+            tasks = [intent_task, checkin_task, sovereign_task]
+            if discussion_task is not None:
+                tasks.append(discussion_task)
+            for t in tasks:
                 t.cancel()
-            for t in (intent_task, checkin_task, sovereign_task):
+            for t in tasks:
                 try:
                     await t
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
@@ -932,14 +1011,18 @@ class BrainRunner:
             "intent_count": self._intent_count,
             "checkin_count": self._checkin_count,
             "sovereign_count": self._sovereign_count,
+            "discussion_count": self._discussion_count,
+            "discussion_reply_count": self._discussion_reply_count,
             "universe_size": len(self._universe),
             "loop_health": {
                 "intent_last_success_age_s": _age(self._last_intent_success_at),
                 "checkin_last_success_age_s": _age(self._last_checkin_success_at),
                 "sovereign_last_success_age_s": _age(self._last_sovereign_success_at),
+                "discussion_last_success_age_s": _age(self._last_discussion_success_at),
                 "intent_last_watchdog_trip_age_s": _age(self._last_intent_watchdog_trip_at),
                 "checkin_last_watchdog_trip_age_s": _age(self._last_checkin_watchdog_trip_at),
                 "sovereign_last_watchdog_trip_age_s": _age(self._last_sovereign_watchdog_trip_at),
+                "discussion_last_watchdog_trip_age_s": _age(self._last_discussion_watchdog_trip_at),
             },
         }
 
@@ -1441,6 +1524,188 @@ class BrainRunner:
             logger.debug(
                 "opinion rejected brain=%s sym=%s status=%s body=%s",
                 self.brain_id, intent.symbol, r.status_code, r.text[:200],
+            )
+            return
+        # ── Track own stance so the discussion loop can detect
+        #    direct contradictions from peers (P1, 2026-02-19). Only
+        #    DIRECTIONAL stances (long/short) seed contradiction
+        #    detection — `observation` rows from HOLD intents are
+        #    intentionally NOT tracked because they don't conflict
+        #    with anything.
+        if stance in ("long", "short"):
+            self._my_last_stance_by_symbol[intent.symbol.upper()] = (
+                stance, datetime.now(timezone.utc),
+            )
+
+    async def _discussion_loop(self) -> None:
+        """Cross-brain discussion loop — lightweight dissent-only.
+
+        Doctrine (operator-chosen, 2026-02-19):
+          * Brains MUST NOT consult peer opinions BEFORE forming
+            their own intent. Independence is the whole point of the
+            adversarial council; pre-decision influence would create
+            feedback loops and erode the gate chain's signal.
+          * Brains MAY react to peer opinions AFTER they've already
+            posted their own — that's just dialogue. The reaction
+            never feeds back into the brain's own model state; it's
+            a published reply only.
+          * Concurrence is silent. Brains only speak up when they
+            DISAGREE with a peer on the same symbol. Otherwise the
+            reply log would be 90% noise.
+
+        Loop body (every DISCUSSION_INTERVAL_SEC):
+          1. GET `/api/runtime-discussion/opinions?caller=<self>&
+             since=<now - DISCUSSION_LOOKBACK_MIN>`.
+          2. Filter peer rows (drop self-authored).
+          3. For each peer row with topic `symbol:<X>` and stance
+             `long`/`short`/`veto`, look up own most-recent stance on
+             `<X>`. If the pair is in `_CONFLICTING_PAIRS`, post a
+             `disagree` reply with `in_reply_to=peer.opinion_id`.
+          4. Throttle to DISCUSSION_MAX_REPLIES_PER_TICK per iter so
+             a heavy peer-burst can't generate a runaway reply storm.
+          5. Bookkeep replied-to ids in a FIFO-bounded list.
+        """
+        # Start with a small randomised offset so all 4 brains don't
+        # hit MC's reader on the same tick boundary.
+        await asyncio.sleep(random.uniform(2.0, DISCUSSION_INTERVAL_SEC))
+        async with _create_http_client() as http:
+            while not self._stop.is_set():
+                async def _iter():
+                    await self._discussion_tick(http)
+                try:
+                    await asyncio.wait_for(
+                        _iter(), timeout=WATCHDOG_ITER_TIMEOUT_SEC,
+                    )
+                    self._last_discussion_success_at = datetime.now(timezone.utc)
+                    self._discussion_count += 1
+                except asyncio.TimeoutError:
+                    self._last_discussion_watchdog_trip_at = datetime.now(timezone.utc)
+                    logger.warning(
+                        "watchdog: discussion_loop iter exceeded %ss — "
+                        "abandoning brain=%s",
+                        WATCHDOG_ITER_TIMEOUT_SEC, self.brain_id,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "discussion_loop error brain=%s: %s",
+                        self.brain_id, e,
+                    )
+                await asyncio.sleep(
+                    DISCUSSION_INTERVAL_SEC + random.uniform(-5, 5),
+                )
+
+    async def _discussion_tick(self, http: httpx.AsyncClient) -> None:
+        """One iteration of the discussion loop. Extracted so the
+        unit test can drive it deterministically without spinning the
+        full async loop."""
+        from datetime import timedelta
+        # Lookback window is intentionally short — only react to fresh
+        # opinions. Older peer takes are stale; the operator's intent
+        # is dialogue, not archeology.
+        since = (
+            datetime.now(timezone.utc)
+            - timedelta(minutes=DISCUSSION_LOOKBACK_MIN)
+        ).isoformat()
+        r = await http.get(
+            f"{MC_LOOPBACK_URL}/api/runtime-discussion/opinions",
+            params={"caller": self.brain_id, "since": since, "limit": 200},
+            headers={"X-Runtime-Token": self.token},
+        )
+        if r.status_code // 100 != 2:
+            logger.debug(
+                "discussion_loop read rejected brain=%s status=%s body=%s",
+                self.brain_id, r.status_code, r.text[:200],
+            )
+            return
+        try:
+            items = (r.json() or {}).get("items") or []
+        except Exception:  # noqa: BLE001
+            items = []
+
+        replies_this_tick = 0
+        for op in items:
+            if replies_this_tick >= DISCUSSION_MAX_REPLIES_PER_TICK:
+                break
+            # Skip self-authored — brains don't reply to themselves.
+            if str(op.get("runtime", "")).lower() == self.brain_id.lower():
+                continue
+            opinion_id = op.get("opinion_id")
+            if not opinion_id or opinion_id in self._replied_to_opinion_ids:
+                continue
+            # Symbol topics only — `free`/`regime:`/`theory:` etc are
+            # broader discussion items that don't map onto a directional
+            # contradiction the way `symbol:NVDA` does.
+            topic = op.get("topic", "")
+            if not topic.startswith("symbol:"):
+                continue
+            symbol = topic.split(":", 1)[1].upper()
+            peer_stance = str(op.get("stance", "")).lower()
+            my_entry = self._my_last_stance_by_symbol.get(symbol)
+            if not my_entry:
+                # No own stance on this symbol → no conflict to express.
+                continue
+            my_stance, _ = my_entry
+            if (my_stance, peer_stance) not in _CONFLICTING_PAIRS:
+                continue
+            # Post the dissent reply. Confidence is intentionally
+            # moderate (0.5) — we're flagging disagreement, not
+            # claiming overwhelming conviction. The original brain's
+            # intent already carries the conviction.
+            await self._post_dissent_reply(http, op, symbol, my_stance)
+            self._replied_to_opinion_ids.append(opinion_id)
+            # FIFO bound to keep memory flat.
+            if len(self._replied_to_opinion_ids) > DISCUSSION_REPLIED_TO_MAX:
+                self._replied_to_opinion_ids = (
+                    self._replied_to_opinion_ids[-DISCUSSION_REPLIED_TO_MAX:]
+                )
+            replies_this_tick += 1
+            self._discussion_reply_count += 1
+
+    async def _post_dissent_reply(
+        self,
+        http: httpx.AsyncClient,
+        peer_op: dict,
+        symbol: str,
+        my_stance: str,
+    ) -> None:
+        """Post a single `disagree` reply to a peer's opinion."""
+        peer_runtime = peer_op.get("runtime", "?")
+        peer_stance = peer_op.get("stance", "?")
+        peer_conf = float(peer_op.get("confidence") or 0.0)
+        body = {
+            "runtime": self.brain_id,
+            "topic": f"symbol:{symbol}",
+            "stance": "disagree",
+            "confidence": 0.5,
+            "body": (
+                f"{self.display_name} ({self.brain_id}) disagrees with "
+                f"{peer_runtime}'s {peer_stance} call on {symbol} "
+                f"(conf {peer_conf:.2f}). My current stance: {my_stance}. "
+                f"Directional conflict — published for the record; my "
+                f"intent stream is the authority on this brain's view."
+            )[:6000],
+            "evidence": {
+                "peer_runtime": peer_runtime,
+                "peer_stance": peer_stance,
+                "peer_confidence": peer_conf,
+                "my_stance": my_stance,
+                "source": "in_process_brain_runner.discussion_loop",
+                "personality_risk_mode": (
+                    get_personality(self.brain_id).get("risk_mode")
+                ),
+            },
+            "in_reply_to": peer_op.get("opinion_id"),
+            "may_execute": False,
+        }
+        r = await http.post(
+            f"{MC_LOOPBACK_URL}/api/ingest/opinion",
+            json=body,
+            headers={"X-Runtime-Token": self.token},
+        )
+        if r.status_code // 100 != 2:
+            logger.debug(
+                "discussion reply rejected brain=%s sym=%s status=%s body=%s",
+                self.brain_id, symbol, r.status_code, r.text[:200],
             )
 
     async def _checkin_loop(self) -> None:
