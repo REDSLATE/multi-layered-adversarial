@@ -1,3 +1,57 @@
+## 2026-02-19 (P1 Phase 2) — Webull Atomic OTOCO
+
+### What shipped
+Atomic OTOCO bracket via Webull's v3 combo API (`order_v3.place_order`). 3-leg payload: MASTER market entry + LIMIT take-profit child + STOP stop-loss child, submitted as one combo with a single `client_combo_order_id`. Webull manages the OCO lifecycle (one fill cancels the other automatically).
+
+### Key constraint discovered
+**Webull's combo API does NOT support fractional shares.** It requires `entrust_type="QTY"` with integer share quantity. The $1-$10 small-pilot fractional path stays on `submit_market_order` (v2 + AMOUNT entrust) with the passive `bracket_outcome_resolver` for outcome labeling. Atomic OTOCO is a PARALLEL capability for whole-share trades, NOT a replacement.
+
+### Files
+1. **`backend/shared/broker/webull.py`** — new `submit_otoco_market(symbol, qty, side, target_price, stop_price, ...)` method:
+   - Validates `qty >= 1` integer, side ∈ {BUY, SELL}, positive prices.
+   - Doctrine sanity check: for BUY, `stop < entry_proxy < target` (uses live last-trade price); for SELL, inverse. Malformed brackets refuse BEFORE any SDK call.
+   - Builds the 3-leg payload with correct combo_type (`MASTER` + 2× `OTOCO`), correct child sides (BUY entry → SELL TP/SL; SELL entry → BUY TP/SL), correct order_type per leg (MARKET / LIMIT / STOP), `entrust_type=QTY`.
+   - Mints `client_combo_order_id`, `tp_client_order_id`, `sl_client_order_id` from a deterministic prefix so the resolver/cancel paths can target the OCO pair.
+   - Returns BrokerOrder with `combo_order_id`, `tp_client_order_id`, `sl_client_order_id`, `tp_limit_price`, `sl_stop_price`, `entry_proxy_price`, `type=otoco_market`.
+
+2. **`backend/routes/webull_admin.py`** — new `POST /api/admin/webull/otoco/test`:
+   - Operator-driven smoke endpoint. Requires `confirm="execute-otoco"`.
+   - Validates body via Pydantic (qty 1-100, positive prices, side regex).
+   - Wraps the adapter call, surfaces structured error detail on failure (geometry, SDK envelope, etc).
+
+3. **`frontend/src/components/WebullOtocoTestPanel.jsx`** — new UI panel:
+   - Compact form: Symbol, Qty, BUY/SELL toggle, TP (limit), SL (stop).
+   - Live geometry validation (TP must be above stop for BUY; inverse for SELL).
+   - Window.confirm before firing, then POST to `/api/admin/webull/otoco/test`.
+   - Result panel showing master/TP/SL client IDs + entry proxy price; error panel with structured detail.
+
+4. **`frontend/src/pages/Intents.jsx`** — panel mounted inside the Equity Lane section, right after `WebullEntitlementsCard`.
+
+5. **`backend/tests/test_webull_otoco_adapter.py`** (new) — 9 tests:
+   - BUY/SELL bracket geometry refused on malformed shapes.
+   - Fractional qty rejected, zero qty rejected, negative prices rejected.
+   - Armed flag required.
+   - Payload shape verified: 3 legs, correct combo_type, correct sides (BUY → SELL children; SELL → BUY children), correct order_type per leg, stringified integer qty, entrust_type=QTY.
+   - SDK envelope errors surface as RuntimeError with the broker code.
+
+### Doctrine
+The auto-router still uses `submit_market_order` + passive bracket recorder for $1-$10 fractional intents. Atomic OTOCO is operator-driven so we observe Webull's combo lifecycle before wiring it into the auto-router. Next step (Phase 3) would be to fold atomic OTOCO into `route_order` when the intent carries `target_price + stop_price` AND `notional / last_price >= 1` (whole share affordable).
+
+### Tests
+- `pytest tests/test_webull_otoco_adapter.py` → 9/9 passing
+- Full execution-related suite (override + last-submit + dampener + OTOCO) → 37/37 passing
+- Lints clean
+- Smoke screenshot confirms UI panel renders with all controls + validation
+- Live curl smoke against `/api/admin/webull/otoco/test`:
+  - Without `confirm` → 400 with the right message
+  - With BUY but stop > entry → 400 with detailed geometry: "stop=10.0000 entry≈14.9150 target=12.0000 — expected stop < entry < target" (live AAL price came back as $14.91, confirming the entry-proxy lookup works)
+
+### Operator deploy
+Save to GitHub → redeploy. Open the Intents page → Equity Lane section now shows a "Webull Atomic OTOCO" panel. Pick a whole-share-affordable ticker (e.g., AAL at ~$15), enter qty=1, set TP above current and SL below current, click FIRE OTOCO. Webull will fill the master leg as MARKET; the TP/SL pair tracks automatically. If your account isn't armed (`WEBULL_ARMED=true`) the panel will surface the cap error.
+
+---
+
+
 ## 2026-02-19 (rev3) — Operator override + manual BUY/SELL toggle
 
 ### Operator directive

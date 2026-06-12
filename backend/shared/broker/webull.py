@@ -705,6 +705,258 @@ class WebullAdapter(BrokerAdapter):
             ),
         }
 
+    async def submit_otoco_market(
+        self,
+        symbol: str,
+        qty: int,
+        side: str,
+        target_price: float,
+        stop_price: float,
+        *,
+        client_order_id: Optional[str] = None,
+        mc_receipt: Optional[dict] = None,
+    ) -> BrokerOrder:
+        """Atomic OTOCO bracket — MARKET entry + LIMIT take-profit +
+        STOP stop-loss, submitted to Webull as a single combo so the
+        broker manages the lifecycle (TP fill cancels SL automatically
+        and vice-versa).
+
+        Doctrine (Phase 2, 2026-02-19):
+
+          * Webull's combo API uses v3 `order_v3.place_order` with
+            three `new_orders` and a `client_combo_order_id`.
+          * `combo_type=MASTER` is the entry leg; `combo_type=OTOCO`
+            on each child marks them as the TP/SL pair.
+          * INTEGER share quantity ONLY. Combo orders do NOT support
+            the `entrust_type=AMOUNT` fractional path used by the
+            $1-$10 small-pilot route. Callers must compute a
+            whole-share qty BEFORE invoking this method. Fractional
+            intents stay on the existing `submit_market_order` +
+            passive bracket-recorder pathway.
+          * Side semantics: BUY entry → SELL legs on TP/SL; SELL/SHORT
+            entry → BUY legs on TP/SL (cover). The adapter computes
+            the child side; callers only specify the entry side.
+          * Doctrine sanity check on the bracket: for BUY entry,
+            `stop_price < entry < target_price`; for SELL, the
+            inverse. Last-trade price is used as the entry proxy
+            because the master leg is MARKET (the actual fill price
+            may drift; the brain's thesis is still the right
+            reference for sanity).
+
+        Args:
+            symbol: ticker / canonical pair (resolved via the same
+                instrument cache the market path uses).
+            qty: integer number of shares for the entry AND each
+                child leg. Must be >= 1.
+            side: "BUY" or "SELL" for the entry leg.
+            target_price: TP limit price for the OCO child.
+            stop_price: SL stop price for the OCO child.
+            client_order_id: optional MC-side ID; if omitted the
+                adapter mints a UUID. Webull caps client IDs at 40
+                chars; we use the same truncation rule as the market
+                path.
+            mc_receipt: MC's signed execution receipt (logged for
+                provenance).
+
+        Returns:
+            BrokerOrder dict shaped like `submit_market_order` but
+            with extra fields:
+              * `combo_order_id` — the master leg's broker order id.
+              * `tp_client_order_id`, `sl_client_order_id` — child
+                leg client IDs (so the resolver/cancel paths can
+                target the OCO pair).
+              * `combo_client_order_id` — the umbrella ID used as
+                `client_combo_order_id` on the request.
+
+        Raises:
+            WebullCapBlocked — adapter not armed / above per-ticker
+                $1-$10 cap.
+            RuntimeError — SDK envelope failure, malformed bracket,
+                or qty < 1.
+        """
+        if not is_webull_armed():
+            raise WebullCapBlocked(
+                "WEBULL_NOT_ARMED — set WEBULL_ARMED=true in .env; NO_TRADE"
+            )
+        if qty < 1 or qty != int(qty):
+            raise RuntimeError(
+                f"OTOCO requires integer qty >= 1, got {qty!r} — "
+                "fractional intents must use submit_market_order"
+            )
+        side_str = _norm_side(side)
+        if side_str not in ("BUY", "SELL"):
+            raise RuntimeError(
+                f"OTOCO entry side must be BUY or SELL, got {side!r}"
+            )
+        if target_price <= 0 or stop_price <= 0:
+            raise RuntimeError(
+                f"OTOCO target_price/stop_price must be positive, got "
+                f"tp={target_price!r} sl={stop_price!r}"
+            )
+
+        # Resolve instrument + last price for the bracket sanity
+        # check (entry proxy).
+        instrument_id, last_price, _frac = await self._resolve_instrument_id(symbol)
+
+        # Doctrine sanity: ensure the bracket shape is coherent against
+        # the entry-proxy price. A malformed bracket (stop above entry
+        # on a BUY, etc.) would let the broker fire the wrong leg
+        # immediately. Fail closed — never submit a bracket whose
+        # geometry contradicts the entry direction.
+        if side_str == "BUY":
+            if not (stop_price < last_price < target_price):
+                raise RuntimeError(
+                    f"OTOCO BUY bracket malformed: stop={stop_price:.4f} "
+                    f"entry≈{last_price:.4f} target={target_price:.4f} — "
+                    f"expected stop < entry < target"
+                )
+            tp_side = "SELL"
+            sl_side = "SELL"
+        else:  # SELL
+            if not (target_price < last_price < stop_price):
+                raise RuntimeError(
+                    f"OTOCO SELL bracket malformed: target={target_price:.4f} "
+                    f"entry≈{last_price:.4f} stop={stop_price:.4f} — "
+                    f"expected target < entry < stop"
+                )
+            tp_side = "BUY"
+            sl_side = "BUY"
+
+        sym_u = (symbol or "").upper().strip()
+        lane = _lane_for_symbol(symbol)
+        if lane is None:
+            raise RuntimeError(
+                f"Webull OTOCO: no lane known for symbol {symbol!r}; NO_TRADE"
+            )
+
+        account_id = await self._resolve_account_id()
+        master_id = (client_order_id or str(uuid.uuid4()))[:40]
+        # Per Webull combo docs: combo_id is the umbrella; each leg
+        # carries its own unique client_order_id.
+        combo_id = f"combo-{master_id[:32]}"[:40]
+        tp_id = f"tp-{master_id[:36]}"[:40]
+        sl_id = f"sl-{master_id[:36]}"[:40]
+        qty_str = str(int(qty))
+
+        # Format prices to 2 decimals (Webull's documented precision
+        # for US equities). Brain target/stop already arrive in
+        # dollar precision, but be defensive.
+        tp_str = f"{float(target_price):.2f}"
+        sl_str = f"{float(stop_price):.2f}"
+
+        common = {
+            "symbol": sym_u,
+            "instrument_id": instrument_id,
+            "instrument_type": "EQUITY",
+            "market": "US",
+            "quantity": qty_str,
+            "time_in_force": "DAY",
+            "entrust_type": "QTY",
+            "support_trading_session": "CORE",
+            "account_tax_type": "GENERAL",
+            "extended_hours_trading": False,
+        }
+        master_leg = {
+            **common,
+            "client_order_id": master_id,
+            "combo_type": "MASTER",
+            "order_type": "MARKET",
+            "side": side_str,
+        }
+        tp_leg = {
+            **common,
+            "client_order_id": tp_id,
+            "combo_type": "OTOCO",
+            "order_type": "LIMIT",
+            "limit_price": tp_str,
+            "side": tp_side,
+        }
+        sl_leg = {
+            **common,
+            "client_order_id": sl_id,
+            "combo_type": "OTOCO",
+            "order_type": "STOP",
+            "stop_price": sl_str,
+            "side": sl_side,
+        }
+        new_orders = [master_leg, tp_leg, sl_leg]
+
+        if mc_receipt:
+            sig = (mc_receipt.get("signature") or "")[:12]
+            logger.info(
+                "Webull submit_otoco_market receipt_sig=%s symbol=%s qty=%s "
+                "side=%s entry≈%.4f tp=%s sl=%s combo_id=%s",
+                sig, sym_u, qty_str, side_str, last_price, tp_str, sl_str,
+                combo_id,
+            )
+        else:
+            logger.info(
+                "Webull submit_otoco_market symbol=%s qty=%s side=%s "
+                "entry≈%.4f tp=%s sl=%s combo_id=%s",
+                sym_u, qty_str, side_str, last_price, tp_str, sl_str, combo_id,
+            )
+
+        try:
+            res = await self._sdk_call(
+                self._trade().order_v3.place_order,
+                account_id, new_orders, combo_id,
+            )
+            data = res.json() if hasattr(res, "json") else res
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(f"Webull submit_otoco_market (v3) failed: {e}") from e
+
+        if isinstance(data, dict):
+            code = data.get("code")
+            if code not in (None, "200", 200):
+                raise RuntimeError(
+                    f"Webull order_v3.place_order returned code={code} "
+                    f"msg={data.get('msg')!r}"
+                )
+
+        body = (data or {}).get("data") if isinstance(data, dict) else None
+        body = body if isinstance(body, dict) else (data if isinstance(data, dict) else {})
+
+        # The combo response generally returns the master order id
+        # under one of {orderId, master_order_id, parent_order_id};
+        # be defensive across surface drift.
+        master_broker_id = (
+            body.get("orderId")
+            or body.get("master_order_id")
+            or body.get("parent_order_id")
+            or master_id
+        )
+
+        now_iso = body.get("createTime") or body.get("submitted_at")
+
+        # Estimate notional = qty * last_price. The actual fill might
+        # drift on a MARKET entry but we surface our best estimate so
+        # the receipts dashboard has a value before the fill report
+        # arrives.
+        est_notional = float(qty) * float(last_price) if last_price > 0 else 0.0
+
+        return {
+            "order_id": str(master_broker_id),
+            "client_order_id": master_id,
+            "symbol": sym_u,
+            "qty": float(qty),
+            "notional": est_notional,
+            "side": side_str,
+            "type": "otoco_market",
+            "status": body.get("status") or "SUBMITTED",
+            "submitted_at": now_iso,
+            "filled_at": None,
+            "filled_qty": 0.0,
+            "filled_avg_price": None,
+            "combo_order_id": str(master_broker_id),
+            "combo_client_order_id": combo_id,
+            "tp_client_order_id": tp_id,
+            "sl_client_order_id": sl_id,
+            "tp_limit_price": float(target_price),
+            "sl_stop_price": float(stop_price),
+            "entry_proxy_price": float(last_price),
+            "lane": lane,
+        }
+
     async def submit_limit_order(
         self,
         symbol: str,

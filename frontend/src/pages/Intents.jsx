@@ -8,6 +8,7 @@ import KrakenBrokerTile from "@/components/KrakenBrokerTile";
 import LaneRoutingPill from "@/components/LaneRoutingPill";
 import MasterTradingSwitch from "@/components/MasterTradingSwitch";
 import WebullEntitlementsCard from "@/components/WebullEntitlementsCard";
+import WebullOtocoTestPanel from "@/components/WebullOtocoTestPanel";
 import ParabolicPhaseStrip from "@/components/ParabolicPhaseStrip";
 import BrokerSelectionMenu from "@/components/BrokerSelectionMenu";
 import DoctrineStrip from "@/components/DoctrineStrip";
@@ -713,6 +714,15 @@ export default function Intents() {
         rightSlot={<LaneRoutingPill lane="equity" />}
       />
       <WebullEntitlementsCard />
+
+      {/* Atomic OTOCO bracket — P1 Phase 2 (2026-02-19). Whole-share
+          only; operator-driven so we can observe Webull's combo
+          lifecycle before wiring this into the auto-router. */}
+      <div className="mt-3">
+        <PanelErrorBoundary panelName="Webull OTOCO" testid="panel-error-otoco">
+          <WebullOtocoTestPanel />
+        </PanelErrorBoundary>
+      </div>
 
       <SectionDivider
         title="Crypto Lane"
