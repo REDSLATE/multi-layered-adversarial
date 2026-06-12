@@ -540,6 +540,8 @@ export default function Intents() {
       // `shared_gate_results`; fetch that audit row to recover the
       // structured `blocked_by`/`reason`/`gates` payload so the UI
       // can render the same detail it would have shown inline.
+      let auditFetchFailed = false;
+      let auditFetchStatus = null;
       if (!detail || typeof detail === "string") {
         try {
           const audit = await api.get(
@@ -550,17 +552,53 @@ export default function Intents() {
               blocked_by: audit.data.blocked_by,
               reason: audit.data.reason,
               gates: audit.data.gates,
+              kind: audit.data.kind,
               _from_audit: true,
             };
+          } else if (audit?.data) {
+            // 2026-02-19 (rev2): audit row exists but is missing
+            // `blocked_by` — surface what we DO have rather than
+            // leaving the red bar blank.
+            detail = {
+              blocked_by: audit.data.kind || "unknown",
+              reason:
+                audit.data.reason ||
+                "audit row found but no reason/gate detail was recorded; check backend logs around " +
+                  (audit.data.ts || "submit time"),
+              gates: audit.data.gates || [],
+              _from_audit: true,
+              _audit_partial: true,
+            };
           }
-        } catch {
-          // best-effort — if the audit fetch also fails, we keep the
-          // bare HTTP message we already had.
+        } catch (auditErr) {
+          // 2026-02-19 (rev2): if the fallback ALSO fails, capture
+          // the status so the UI can tell the operator the audit
+          // pipeline itself is broken (vs. a real 403 with no body).
+          auditFetchFailed = true;
+          auditFetchStatus = auditErr?.response?.status || null;
         }
+      }
+      // Guarantee the red bar has SOMETHING to render — never blank.
+      if (!detail) {
+        detail = {
+          blocked_by: `http_${status || "unknown"}`,
+          reason: auditFetchFailed
+            ? `Submit returned HTTP ${status || "?"} with no body, and the audit ` +
+              `fallback also failed (HTTP ${auditFetchStatus || "?"}). The block ` +
+              `reason was not persisted server-side — check backend logs for ` +
+              `intent ${intentId.slice(0, 8)}.`
+            : `Submit returned HTTP ${status || "?"} with no body and no audit ` +
+              `row was found. The request likely never reached the gate chain ` +
+              `(network / proxy / auth). Check backend logs for intent ` +
+              `${intentId.slice(0, 8)}.`,
+          gates: [],
+          _from_audit: false,
+          _audit_missing: true,
+        };
       }
       setSubmitByIntent((m) => ({
         ...m,
-        [intentId]: { error: detail || e.message, status },
+        [intentId]: { error: detail, status },
       }));
       const shortReason = typeof detail === "string"
         ? detail

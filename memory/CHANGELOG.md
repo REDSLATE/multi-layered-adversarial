@@ -1,3 +1,32 @@
+## 2026-02-19 (rev2) — Opaque-403 root cause: audit fallback was missing `submit_no_trade`
+
+### Operator triage trail
+Operator reported: even after deploying the `RISEDUAL_WRAPPER_MIN_SIZE_BIAS_NONZERO=0.3` floor, intent submits still 403'd on prod with the red error bar **completely blank** — including for AAL with `DRY_RUN_PASSED`. Operator's instinct ("more than a weight issue") was right.
+
+### Root cause
+The submit endpoint writes audit rows with **four different kinds** depending on where the failure happened:
+- `submit_blocked`  — gate chain rejected (legacy fallback covered this)
+- `submit_timeout`  — broker did not respond in 20s (legacy fallback covered this)
+- `submit_error`    — broker raised an exception (legacy fallback covered this)
+- `submit_no_trade` — `BrokerRouteBlocked` raised by `broker_router.route_order` (MC receipt rejected, Webull cap evaluator NO_TRADE, lane disabled, broker frozen, missing creds) — **NOT in the legacy fallback's `$in` filter**
+
+`submit_no_trade` is the **most common 403 source** on the small-pilot route because the broker_router runs AFTER the gate chain passes. When the prod proxy strips the 403 body AND the fallback can't find the row, the UI red bar shows nothing — exactly the screenshot the operator filed.
+
+### Fix (this pass)
+1. **`backend/shared/execution.py`** — `/execution/last-submit-block` now queries all four kinds. For `submit_no_trade` / `submit_timeout` / `submit_error` rows (which carry `reason`/`error` instead of a `gates` array), synthesize a single virtual gate `{name: "broker_router"|"broker_submit_timeout"|"broker_submit_error", passed: false, reason: <recovered>}` so the UI's existing failing-gates panel has something readable to render.
+2. **`frontend/src/pages/Intents.jsx`** — fallback path no longer leaves the red bar blank. If the audit lookup itself fails OR returns an empty payload, render an explicit message ("Submit returned HTTP X with no body; audit also failed/missing — check backend logs for intent <id>") so the operator always sees a diagnosis instead of a void.
+3. **`backend/tests/test_last_submit_block_endpoint.py`** — added regression tests for `submit_no_trade` and `submit_error`. Rewired the test fixtures to use sync pymongo so seed/cleanup doesn't fight pytest-asyncio's per-test event loop. All 7 tests pass.
+
+### Verification (preview)
+- `pytest backend/tests/test_last_submit_block_endpoint.py -v` → 7/7 passing
+- Lints clean
+
+### Next step (operator-owned)
+Save to GitHub → redeploy prod. Click submit on any intent that still 403s. The red bar will now show the actual block reason (most likely `broker_router: MC receipt rejected: seat_self_review_block; NO_TRADE` if Barracuda is acting as both Strategist and Executor — rotate a neutral brain into the Executor seat to clear it).
+
+---
+
+
 ## 2026-02-19 (token rotation) — Cut off zombie sidecar writers
 
 ### Operator triage trail

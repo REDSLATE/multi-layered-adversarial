@@ -76,21 +76,19 @@ def _heavy_penalty_buy_intent() -> dict:
 
 
 def test_finalizer_default_passes_through(monkeypatch):
-    """Default config (strength=1.0, floor=0.0) must NOT change the
-    wrapper's accumulated values."""
+    """Default config (strength=1.0, floor=0.3 as of 2026-02-19 rev2)
+    floors directional intents but otherwise lets the wrapper output
+    pass through. For an input above the floor, no change."""
     monkeypatch.delenv("RISEDUAL_WRAPPER_PENALTY_STRENGTH", raising=False)
     monkeypatch.delenv("RISEDUAL_WRAPPER_MIN_SIZE_BIAS_NONZERO", raising=False)
     sb, conf, damp = _finalise_size_and_confidence(
-        final_size_bias=0.18, final_confidence=0.30,
+        final_size_bias=0.595, final_confidence=0.30,
         base_size_bias=1.0, base_confidence=0.55,
         action="BUY",
     )
-    assert sb == pytest.approx(0.18)
+    assert sb == pytest.approx(0.595)   # above floor → unchanged
     assert conf == pytest.approx(0.30)
-    # Default config writes only the knob values into diagnostics —
-    # no "pre_dampener_*" keys because the dampener didn't actually
-    # change anything.
-    assert damp == {"penalty_strength": 1.0, "min_size_bias_nonzero": 0.0}
+    assert damp == {"penalty_strength": 1.0, "min_size_bias_nonzero": 0.3}
 
 
 def test_finalizer_strength_zero_neutralizes_wrapper(monkeypatch):
@@ -163,20 +161,22 @@ def test_finalizer_floor_skips_when_already_zero(monkeypatch):
 
 def test_finalizer_clamps_out_of_range_env(monkeypatch):
     """An operator typo (e.g., strength=99) must be clamped, not
-    propagated — fail-soft on a hot path."""
+    propagated — fail-soft on a hot path. Floor stays at the default
+    0.3 so 0.18 → floored to 0.3."""
     monkeypatch.setenv("RISEDUAL_WRAPPER_PENALTY_STRENGTH", "99")
     sb, _, damp = _finalise_size_and_confidence(
         final_size_bias=0.18, final_confidence=0.30,
         base_size_bias=1.0, base_confidence=0.55,
         action="BUY",
     )
-    # Clamped to 1.0 — pass-through.
+    # Clamped to 1.0 (strength) → pass-through; floor=0.3 lifts 0.18.
     assert damp["penalty_strength"] == 1.0
-    assert sb == pytest.approx(0.18)
+    assert sb == pytest.approx(0.3)
 
 
 def test_finalizer_handles_bad_env_gracefully(monkeypatch):
-    """Non-numeric env value falls back to default — never raises."""
+    """Non-numeric env value falls back to default — never raises.
+    Floor default (0.3) lifts the 0.18 wrapper output."""
     monkeypatch.setenv("RISEDUAL_WRAPPER_PENALTY_STRENGTH", "not-a-number")
     sb, _, damp = _finalise_size_and_confidence(
         final_size_bias=0.18, final_confidence=0.30,
@@ -184,7 +184,7 @@ def test_finalizer_handles_bad_env_gracefully(monkeypatch):
         action="BUY",
     )
     assert damp["penalty_strength"] == 1.0
-    assert sb == pytest.approx(0.18)
+    assert sb == pytest.approx(0.3)
 
 
 # ── end-to-end through actual wrappers ────────────────────────────
@@ -219,18 +219,43 @@ def test_alpha_wrapper_floor_protects_directional(monkeypatch):
     assert damp["min_size_bias_nonzero"] == pytest.approx(0.3)
 
 
-def test_alpha_wrapper_default_preserves_current_behavior(monkeypatch):
-    """Critical regression check: with NO env knobs set, the wrapper
-    must produce IDENTICAL output to pre-dampener behavior — the
-    dampener is opt-in, never silently active."""
+def test_alpha_wrapper_default_floors_directional_intents(monkeypatch):
+    """Regression check post-2026-02-19-rev2: default config now floors
+    directional intents at 0.3. Alpha's heavy-penalty BUY stacks to
+    0.595 (1.0 × 0.70 × 0.85), which is ABOVE the 0.3 floor → still
+    passes through unchanged. The floor only fires when penalties
+    crush BELOW 0.3."""
     monkeypatch.delenv("RISEDUAL_WRAPPER_PENALTY_STRENGTH", raising=False)
     monkeypatch.delenv("RISEDUAL_WRAPPER_MIN_SIZE_BIAS_NONZERO", raising=False)
     intent = _heavy_penalty_buy_intent()
     result = apply_alpha_legacy_executor(intent)
-    # Alpha applies: unknown_position (×0.70) + weak_commitment_open_long (×0.85)
-    # Starting size_bias=1.0 → 1.0 × 0.70 × 0.85 = 0.595
+    # 1.0 × 0.70 × 0.85 = 0.595, above the 0.3 floor.
     assert result["size_bias"] == pytest.approx(0.595, abs=0.001), (
-        "default config must preserve the pre-dampener stacked penalty"
+        "alpha's stacked penalty (0.595) is above the 0.3 floor → unchanged"
+    )
+
+
+def test_chevelle_heavy_penalty_floored_by_default(monkeypatch):
+    """The exact prod case: chevelle's governor stamps `×0.25` on a
+    FLIP intent and crushes size_bias to ~0.35. Then risk_off_open
+    `×0.50` would drop it to 0.175 — below the 0.3 floor. With the
+    new default the floor kicks in and keeps the intent at 0.3
+    instead of being crushed to micro-shadow."""
+    monkeypatch.delenv("RISEDUAL_WRAPPER_PENALTY_STRENGTH", raising=False)
+    monkeypatch.delenv("RISEDUAL_WRAPPER_MIN_SIZE_BIAS_NONZERO", raising=False)
+    intent = {
+        "brain_id": "hellcat", "display_name": "Hellcat",
+        "action": "BUY", "confidence": 0.70, "size_bias": 1.0,
+        "current_side": "SHORT",
+        "transition_intent": "FLIP_SHORT_TO_LONG",
+        "position_evolution": None,
+        "risk_transition": "RISK_OFF",  # adds another penalty leg
+        "evidence": {},
+    }
+    result = apply_chevelle_legacy_governor(intent)
+    assert result["size_bias"] >= 0.3, (
+        f"chevelle's heavy FLIP+RISK_OFF stack must be floored at 0.3 by "
+        f"default (got {result['size_bias']})"
     )
 
 
@@ -295,9 +320,10 @@ def test_redeye_wrapper_diagnostics_stamped(monkeypatch):
 
 
 def test_all_four_wrappers_default_unchanged_by_dampener(monkeypatch):
-    """Tripwire: under default env (no knobs set), every wrapper's
-    output must match what it would have produced before the dampener
-    landed. The pre-dampener_* diagnostics keys must NOT appear."""
+    """Tripwire: under default env (no knobs set), the diagnostics
+    record carries the active default knob values. Post-2026-02-19-
+    rev2 the floor default is 0.3 (was 0.0). No pre_dampener_* keys
+    appear because the strength is still 1.0 (no deviation softening)."""
     monkeypatch.delenv("RISEDUAL_WRAPPER_PENALTY_STRENGTH", raising=False)
     monkeypatch.delenv("RISEDUAL_WRAPPER_MIN_SIZE_BIAS_NONZERO", raising=False)
     for wrapper in (
@@ -308,8 +334,11 @@ def test_all_four_wrappers_default_unchanged_by_dampener(monkeypatch):
     ):
         result = wrapper(_heavy_penalty_buy_intent())
         damp = result["evidence"]["legacy_wrapper"]["dampener"]
-        # Pass-through configuration → no diagnostics drift.
-        assert damp == {"penalty_strength": 1.0, "min_size_bias_nonzero": 0.0}, (
-            f"{wrapper.__name__} produced unexpected dampener diagnostics "
-            f"under default config: {damp}"
+        assert damp.get("penalty_strength") == 1.0, (
+            f"{wrapper.__name__} should not soften deviations by default"
         )
+        assert damp.get("min_size_bias_nonzero") == 0.3, (
+            f"{wrapper.__name__} should expose the 0.3 directional floor"
+        )
+        assert "pre_dampener_size_bias" not in damp
+        assert "pre_dampener_confidence" not in damp

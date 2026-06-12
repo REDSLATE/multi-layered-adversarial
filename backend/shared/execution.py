@@ -763,8 +763,24 @@ async def execution_last_submit_block(
 
     Returns 404 if no submit_block has been recorded for this intent.
     """
+    # 2026-02-19 (rev2 — opaque-403 doom loop fix): include EVERY
+    # audit `kind` the submit pipeline writes. Previously this set
+    # missed `submit_no_trade` (the broker-router NO_TRADE path:
+    # Webull cap evaluator, MC receipt rejection, broker frozen,
+    # lane disabled, adapter missing creds), which is the MOST
+    # COMMON 403 source on the small-pilot route. When the prod
+    # proxy strips the 403 body AND the fallback returns 404, the
+    # UI shows a blank red bar — exactly the screenshot the operator
+    # filed. With `submit_no_trade` added, the fallback always finds
+    # the row the submit handler just wrote.
+    _SUBMIT_AUDIT_KINDS = (
+        "submit_blocked",     # gate chain rejected
+        "submit_no_trade",    # broker_router NO_TRADE (most common)
+        "submit_timeout",     # broker did not respond in 20s
+        "submit_error",       # broker raised an exception
+    )
     row = await db[SHARED_GATE_RESULTS].find_one(
-        {"intent_id": intent_id, "kind": {"$in": ["submit_blocked", "submit_timeout", "submit_error"]}},
+        {"intent_id": intent_id, "kind": {"$in": list(_SUBMIT_AUDIT_KINDS)}},
         {"_id": 0},
         sort=[("ts", -1)],
     )
@@ -777,17 +793,47 @@ async def execution_last_submit_block(
     # failing gate, mirroring the inline 403 detail shape. The UI's
     # existing render code (which reads `blocked_by`/`reason`/`gates`
     # off the error object) then "just works" against this fallback.
+    #
+    # 2026-02-19 (rev2): NO_TRADE/TIMEOUT/ERROR rows don't carry a
+    # `gates` array — they're broker-side rejections, not gate-chain
+    # blocks. Synthesize a single-row `gates` list so the UI's
+    # existing "failingGates" rendering path still surfaces the
+    # broker reason inside the red bar (instead of "blocked_by:
+    # submit_no_trade" with nothing else).
+    kind = row.get("kind") or "unknown"
     gates = row.get("gates") or []
     first_block = next((g for g in gates if not g.get("passed")), None)
+    # Broker-side / non-gate-chain rejection — synthesize a virtual
+    # gate row so the UI has something readable to render.
+    if not gates and kind in ("submit_no_trade", "submit_timeout", "submit_error"):
+        synthetic_reason = (
+            row.get("reason")
+            or row.get("error")
+            or {
+                "submit_no_trade": "broker_router NO_TRADE (no reason recorded)",
+                "submit_timeout": "broker did not respond within 20s",
+                "submit_error": "broker raised an exception (no detail recorded)",
+            }.get(kind, "broker rejected order")
+        )
+        gates = [{
+            "name": {
+                "submit_no_trade": "broker_router",
+                "submit_timeout": "broker_submit_timeout",
+                "submit_error": "broker_submit_error",
+            }.get(kind, kind),
+            "passed": False,
+            "reason": synthetic_reason,
+        }]
+        first_block = gates[0]
     return {
         "intent_id": intent_id,
-        "kind": row.get("kind"),
+        "kind": kind,
         "ts": row.get("ts"),
         "by": row.get("by"),
         "order_notional_usd": row.get("order_notional_usd"),
         "blocked_by": (
             (first_block or {}).get("name")
-            or (row.get("kind") if row.get("kind") in ("submit_timeout", "submit_error") else "unknown")
+            or (kind if kind in _SUBMIT_AUDIT_KINDS else "unknown")
         ),
         "reason": (
             (first_block or {}).get("reason")

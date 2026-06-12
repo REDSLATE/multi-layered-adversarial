@@ -88,8 +88,20 @@ from typing import Any, Literal
 # without restarting the runner (re-read each call via os.environ
 # lookup → no caching). The cost of an env read per intent is
 # negligible at the brain's tick cadence (4 brains × <1Hz emit).
+#
+# 2026-02-19 (rev2 — prod size-bias crush): floor lifted from 0.0
+# → 0.3 after operator observed EVERY directional intent on prod
+# arriving at the gate chain with `size_bias=0.000`. The wrapper
+# chain (camaro wrapper × chevelle governor × risk transitions)
+# was compressing the 0.8 base into 0 within 2-3 multiplicative
+# hops, putting effective_notional below the $1 cap floor and
+# blocking submit. 0.3 floor = "a directional intent the brain
+# is willing to publish deserves a minimum executable footprint;
+# below that floor it belongs in HOLD, not in micro-shadow
+# purgatory." Strength stays 1.0 — full penalties still fire,
+# they just can't crush below the floor.
 _WRAPPER_PENALTY_STRENGTH_DEFAULT = 1.0
-_WRAPPER_MIN_SIZE_BIAS_NONZERO_DEFAULT = 0.0
+_WRAPPER_MIN_SIZE_BIAS_NONZERO_DEFAULT = 0.3
 
 
 def _wrapper_penalty_strength() -> float:
