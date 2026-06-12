@@ -1,3 +1,53 @@
+## 2026-02-19 (final+5) — auto_retire test pollution + endpoint scoping fix
+
+### Operator directive
+> P2 — Pre-existing `auto_retire` governor test failure (unrelated; safe to leave).
+
+Operator wanted it cleaned up anyway. Investigated and found **two real bugs**, not just a flaky test.
+
+### Status: shipped to preview. Full backend suite 2283/2283 green.
+
+### Bug 1 (test isolation)
+`test_governor_block_underperformance_emits_candidate` and `test_execution_judge_ready_signal_failure_emits_candidate` seeded 60 synthetic rows under `doctrine_version="small_account_sidecar_v1"` / `"crypto_sidecar_v1"` — the SAME doctrine_version prod data lives under. The endpoint aggregates by `(lane, seat, doctrine_version)`, so the test's 30/30 win-loss ratio was being diluted into 16,192 prod rows' aggregate (real prod modulate loss rate was ~57%, not the test's 100%).
+
+**Fix**: tests now use a unique `doctrine_version` per run (`f"small_account_sidecar_v1_test_{prefix}"`) so the aggregator sees ONLY the test's slice.
+
+### Bug 2 (production endpoint scoping — discovered while fixing #1)
+`/api/admin/doctrine/retirement-candidates` computed `occupancy_during_window` via `_seat_occupancy_metadata(ALL_rows)` which aggregated by `(lane, seat)` only — **ignoring doctrine_version**. The candidate is for a specific `(lane, seat, doctrine_version)` slice, so attaching `(lane, seat)`-scoped occupancy leaks holders from OTHER doctrine versions into the candidate's "during window" metadata. The field name literally says `occupancy_DURING_WINDOW` — it must be scoped to the same window the candidate's loss-rate signal was measured on.
+
+**Fix** in `/app/backend/shared/doctrine/auto_retire.py`:
+- Pre-bucket rows by `(lane, doctrine_version)` once.
+- For each candidate, compute occupancy ONLY from rows in that candidate's window: `_seat_occupancy_metadata(rows_by_lane_dv[(lane, dv)], only_seat=seat)`.
+
+The change is a **scoping tighten, not a behavior change** in the default case where doctrine_version isn't being rotated. For the test (which uses a unique doctrine_version), it's the difference between "the test passes" and "the test sees 16K prod holders leak in and the filter fails".
+
+### Verification
+- **6/6 auto_retire tests pass** (was 5 fail 1, now 6/6).
+- **230/230 retire+doctrine+scorecard tests green** post-change.
+- **Full backend suite: 2283/2283 passing** in 7m34s — zero failures, zero errors across the entire codebase. This is the first 100% green run this session.
+- Live endpoint still works (`/api/admin/doctrine/retirement-candidates?lane=equity` returns its envelope cleanly).
+
+### Net effect (this session)
+Five P0/P1 items shipped this session, all tested, all live in preview:
+1. Webull `$0` balance bug — fixed (`settled_cash` coalesce).
+2. Webull cap floor `$3 → $1` — operator can route smaller fractional intents.
+3. Webull fractional shares — `place_order_v2 + AMOUNT` mode wired for the entire $1-$10 band on any US equity.
+4. Cross-brain discussion loop — `_discussion_loop` posts `disagree` replies when peer stances contradict; LIVE evidence shows `in_reply_to` rows going 0 → 3 within 3 minutes of restart.
+5. Legacy wrapper dampener — two env knobs (`PENALTY_STRENGTH`, `MIN_SIZE_BIAS_NONZERO`) let the operator dial the 4 wrappers without code change; default behavior preserved byte-identically.
+6. auto_retire test isolation + endpoint occupancy scoping — full suite green.
+
+### Three operator levers to flip live trading "on"
+1. POST `/api/admin/execution/lane-toggles {lane:"equity", enabled:true}` (or click the panel at `/diagnostics`).
+2. Place one $1 NVDA test order to validate end-to-end.
+
+### Remaining backlog
+- 🟡 P2 — Add a "discussion_loop" health tile to the Diagnostics page (stats already published in `BrainRunner.stats.loop_health.discussion_*`).
+- 🟡 P2 — US market holiday calendar in `shadow_close_cron.py`.
+- 🟡 P2 — StockFit 10-Q/10-K doctrine enrichment for brain snapshots.
+
+---
+
+
 ## 2026-02-19 (final+4) — Legacy wrapper penalty dampener SHIPPED
 
 ### Operator directive

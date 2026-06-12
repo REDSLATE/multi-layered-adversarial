@@ -94,13 +94,25 @@ def test_retirement_requires_auth(api_client):
 def test_governor_block_underperformance_emits_candidate(auth_client):
     """governor.block should have HIGHER loss_rate than .modulate; if
     not, the block heuristic is noise → emit a retirement candidate
-    keyed on (lane, seat, doctrine_version)."""
+    keyed on (lane, seat, doctrine_version).
+
+    2026-02-19: isolated to a unique doctrine_version per test run.
+    The endpoint aggregates by `(lane, seat, doctrine_version)`, so a
+    test using the shared `small_account_sidecar_v1` key would slice
+    across thousands of prod rows and dilute the synthetic 30/30
+    ratio into noise (the original failure mode — `comparator_loss_
+    rate` came back as 0.57 instead of the expected 1.0 because the
+    prod modulate rows have a real ~57% loss rate). Using a unique
+    `_test_<prefix>` doctrine_version cuts a clean slice that contains
+    ONLY the test's seeded rows.
+    """
     prefix = f"art-gov-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    doctrine_v = f"small_account_sidecar_v1_test_{prefix}"
     rows = []
     for i in range(30):
         rows.append(_row(
             intent_id=f"{prefix}-b-{i}", lane="equity",
-            doctrine_version="small_account_sidecar_v1", quality="C_QUALITY",
+            doctrine_version=doctrine_v, quality="C_QUALITY",
             governor_action="block",
             adversary_challenge_required=False,
             execution_judge_ready=False,
@@ -109,7 +121,7 @@ def test_governor_block_underperformance_emits_candidate(auth_client):
     for i in range(30):
         rows.append(_row(
             intent_id=f"{prefix}-m-{i}", lane="equity",
-            doctrine_version="small_account_sidecar_v1", quality="B_QUALITY",
+            doctrine_version=doctrine_v, quality="B_QUALITY",
             governor_action="modulate",
             adversary_challenge_required=False,
             execution_judge_ready=True,
@@ -126,7 +138,7 @@ def test_governor_block_underperformance_emits_candidate(auth_client):
         gov = next(
             (c for c in body["candidates"]
              if c["seat"] == "governor" and c["branch"] == "block"
-             and c["doctrine_version"] == "small_account_sidecar_v1"
+             and c["doctrine_version"] == doctrine_v
              and c["lane"] == "equity"
              and set(c["occupancy_during_window"].keys()) == {"chevelle"}),
             None,
@@ -134,7 +146,7 @@ def test_governor_block_underperformance_emits_candidate(auth_client):
         assert gov is not None, body
         assert gov["lane"] == "equity"
         assert gov["seat"] == "governor"
-        assert gov["doctrine_version"] == "small_account_sidecar_v1"
+        assert gov["doctrine_version"] == doctrine_v
         assert gov["branch_loss_rate"] == 0.0
         assert gov["comparator_loss_rate"] == 1.0
         assert gov["severity"] == "BLAZING"
@@ -147,13 +159,18 @@ def test_governor_block_underperformance_emits_candidate(auth_client):
 
 def test_execution_judge_ready_signal_failure_emits_candidate(auth_client):
     """execution_judge.ready should have LOWER loss_rate than .not_ready.
-    Invert that → candidate."""
+    Invert that → candidate.
+
+    2026-02-19: same isolation fix as the governor test above. Unique
+    doctrine_version per run prevents prod data pollution.
+    """
     prefix = f"art-judge-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    doctrine_v = f"crypto_sidecar_v1_test_{prefix}"
     rows = []
     for i in range(30):
         rows.append(_row(
             intent_id=f"{prefix}-r-{i}", lane="crypto",
-            doctrine_version="crypto_sidecar_v1", quality="A_QUALITY",
+            doctrine_version=doctrine_v, quality="A_QUALITY",
             governor_action="modulate",
             adversary_challenge_required=False,
             execution_judge_ready=True,
@@ -162,7 +179,7 @@ def test_execution_judge_ready_signal_failure_emits_candidate(auth_client):
     for i in range(30):
         rows.append(_row(
             intent_id=f"{prefix}-n-{i}", lane="crypto",
-            doctrine_version="crypto_sidecar_v1", quality="B_QUALITY",
+            doctrine_version=doctrine_v, quality="B_QUALITY",
             governor_action="modulate",
             adversary_challenge_required=False,
             execution_judge_ready=False,
@@ -180,7 +197,7 @@ def test_execution_judge_ready_signal_failure_emits_candidate(auth_client):
              if c["seat"] == "execution_judge"
              and c["branch"] == "ready"
              and c["lane"] == "crypto"
-             and c["doctrine_version"] == "crypto_sidecar_v1"),
+             and c["doctrine_version"] == doctrine_v),
             None,
         )
         assert cand is not None, body

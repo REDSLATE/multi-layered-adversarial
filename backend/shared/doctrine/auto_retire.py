@@ -103,7 +103,21 @@ async def retirement_candidates(
     rows = await db[DOCTRINE_SIDECARS].find(q, {"_id": 0}).to_list(50_000)
 
     slices = _aggregate_by_lane_seat_doctrine(rows)
-    occupancy = _seat_occupancy_metadata(rows)
+
+    # Pre-bucket rows by (lane, doctrine_version) so each candidate's
+    # `occupancy_during_window` can be scoped to the SAME window the
+    # candidate's loss-rate signal was measured on. The previous
+    # implementation passed ALL rows to `_seat_occupancy_metadata`
+    # which then aggregated holders by (lane, seat) only — that
+    # leaks holders from OTHER doctrine versions into the candidate's
+    # `occupancy_during_window`, defeating the field's whole purpose.
+    # The seat-doctrinal doctrine measures (lane, seat, doctrine_version);
+    # occupancy metadata must follow the same scoping axis.
+    rows_by_lane_dv: dict[tuple[str, str], list] = {}
+    for r in rows:
+        rl = r.get("lane") or "unknown"
+        rdv = r.get("doctrine_version") or "unknown"
+        rows_by_lane_dv.setdefault((rl, rdv), []).append(r)
 
     # The doctrinal expectations for each branch comparison
     expectations = [
@@ -141,7 +155,12 @@ async def retirement_candidates(
             if sev in ("OK", "INSUFFICIENT"):
                 continue
             occ_key = f"{seat_lane}/{seat}"
-            occ = (occupancy.get(occ_key) or {}).get("holders", {})
+            # Scope occupancy to the SAME (lane, doctrine_version)
+            # window the candidate's signal was measured on. Then
+            # filter to this seat's holders.
+            window_rows = rows_by_lane_dv.get((seat_lane, dv), [])
+            window_occ = _seat_occupancy_metadata(window_rows, only_seat=seat)
+            occ = (window_occ.get(occ_key) or {}).get("holders", {})
             candidates.append({
                 "kind": "seat_branch_underperforms",
                 "lane": seat_lane,
