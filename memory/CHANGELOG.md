@@ -1,3 +1,42 @@
+## 2026-02-19 (rev3) — Operator override + manual BUY/SELL toggle
+
+### Operator directive
+"Remove any other hindrances from trading, like operator override. Also a choice by the operator to buy or sell." → chose option C (full override, only money caps + freeze stay hard) and option A (BUY/SELL toggle in submit modal).
+
+### What shipped
+1. **`backend/shared/execution.py`**
+   - `SubmitBody` gains `operator_override: bool`, `override_reason: str`, `action_override: Optional[str]`.
+   - `_evaluate_gates(operator_override=True, override_reason=...)` lifts every failing soft gate (sets `passed=True`, stamps `operator_override=True`, `override_reason=...`, preserves the original failure under `doctrine_reason`, prefixes the reason with `[OVERRIDDEN BY OPERATOR]`).
+   - Hard set (`_HARD_GATES_NEVER_OVERRIDABLE`) is exposure caps only: `cap_per_order`, `cap_open_notional`, `cap_per_day`, plus lane variants. Money safety is authoritative regardless of the flag. Broker freeze + Webull $1-$10 pre-trade cap live in `broker_router` and are enforced there independently.
+   - `action_override`: BUY/SELL only. Mutates a working copy of the intent so all downstream gates + broker routing see the operator's chosen side. Receipt stamps `action_overridden`, `original_action`.
+   - Safety net: HOLD intent with no `action_override` → explicit 400 instead of the legacy silent HOLD→SELL coercion in broker_router.
+   - Submit endpoint enforces `override_reason ≥ 8 chars` when override is set.
+   - Receipt + `shared_gate_results` (kind=submit_passed) rows now carry `operator_override`, `override_reason`, `overridden_gate_names`, `action_overridden`, `original_action` for the audit trail.
+
+2. **`frontend/src/components/SubmitOrderModal.jsx`** (new)
+   - Replaces the legacy `window.prompt` + `window.confirm` pair.
+   - Notional input (capped per-lane), BUY/SELL toggle (defaults to brain's emit, flips with one tap), Operator Override checkbox + reason textarea (≥8 chars).
+   - Inline warnings: "Action flipped from brain's emit (BUY → SELL)" when overridden; "Brain emitted HOLD — pick a side" when source intent is HOLD; live reason-length validation.
+   - Data-testids for the testing agent: `submit-modal`, `submit-modal-side-{buy,sell}`, `submit-modal-override-toggle`, `submit-modal-override-reason`, `submit-modal-confirm`, etc.
+
+3. **`frontend/src/pages/Intents.jsx`**
+   - `runSubmit` now opens the modal; `performSubmit` is the modal's onConfirm. The new fields flow through to `/execution/submit`.
+   - Success receipt panel surfaces `action_overridden` (`HOLD → SELL`) and `operator_override` (`N gates bypassed · reason`) inline.
+
+4. **`backend/tests/test_operator_override_and_action_override.py`** (new)
+   - 6 tests covering: override lifts soft gate with audit stamp, exposure caps stay hard, override-off leaves audit clean, reason min-length enforced, action_override rejects bad values, HOLD without action_override refuses.
+
+### Test status
+- `pytest tests/test_operator_override_and_action_override.py tests/test_last_submit_block_endpoint.py tests/test_legacy_wrapper_dampener.py tests/test_broker_router_*.py tests/test_broker_lane_toggle.py tests/test_broker_connected_override.py` → 60/60 passing
+- Lints clean
+- Frontend page loads with no JS errors
+
+### Next step (operator)
+Save to GitHub → redeploy prod. Open any intent's SUBMIT button → the new modal appears with notional + BUY/SELL + override controls. Check the override box, type a reason (≥8 chars), confirm — every soft gate gets lifted. Hard money caps still block if the operator tries to exceed $10/ticker for Webull or $30/order for crypto. The receipt panel below the row will show what was overridden.
+
+---
+
+
 ## 2026-02-19 (rev2) — Opaque-403 root cause: audit fallback was missing `submit_no_trade`
 
 ### Operator triage trail

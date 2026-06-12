@@ -65,7 +65,35 @@ def _now_iso() -> str:
 
 # ───────────────────────────── gate chain ─────────────────────────────
 
-async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
+# Hard gates that the operator override cannot bypass. Per operator
+# directive (2026-02-19, "Override EVERYTHING except the $10 per-ticker
+# cap + freeze"), the ONLY gates that stay authoritative under the
+# operator override are the exposure caps (money safety). The freeze
+# and the Webull $1-$10 pre-trade cap live in `broker_router` and are
+# enforced there regardless of this flag — they're hard by location.
+#
+# Everything else in `_evaluate_gates` (schema_invariants,
+# action_routable, broker_connected, lane_execution_enabled,
+# executor_seat_check, symbol_in_universe, roadguard_spread_floor,
+# rr_ratio_floor, council_*, position_aware_*) is overridable. The
+# operator owns the trade.
+_HARD_GATES_NEVER_OVERRIDABLE = frozenset({
+    "cap_per_order",
+    "cap_open_notional",
+    "cap_per_day",
+    "cap_per_order_lane",
+    "cap_open_notional_lane",
+    "cap_per_day_lane",
+})
+
+
+async def _evaluate_gates(
+    intent: dict,
+    order_notional_usd: float,
+    *,
+    operator_override: bool = False,
+    override_reason: str = "",
+) -> dict:
     """Run the full gate chain for an intent.
 
     Returns:
@@ -633,6 +661,31 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
                 )
                 g["passed"] = True
 
+    # ─── Operator override (2026-02-19) ─────────────────────────────
+    # Lift every soft gate's failure when the operator has explicitly
+    # opted in via the submit body. Hard gates (money caps, broker
+    # connection, operator's own kill switches, schema doctrine) stay
+    # authoritative — see `_HARD_GATES_NEVER_OVERRIDABLE`. The reason
+    # gets stamped on the gate row for the audit trail so a future
+    # operator can answer "who decided this trade should bypass the
+    # spread floor and why" without grepping logs.
+    overridden_names: list[str] = []
+    if operator_override:
+        for g in gates:
+            if g.get("passed"):
+                continue
+            if g["name"] in _HARD_GATES_NEVER_OVERRIDABLE:
+                continue
+            g["operator_override"] = True
+            g["override_reason"] = override_reason or "(no reason provided)"
+            g["doctrine_reason"] = g.get("doctrine_reason") or g.get("reason")
+            g["reason"] = (
+                f"[OVERRIDDEN BY OPERATOR] {g.get('reason')} "
+                f"— override_reason={override_reason!r}"
+            )
+            g["passed"] = True
+            overridden_names.append(g["name"])
+
     verdict = "would_pass" if all(g["passed"] for g in gates) else "would_block"
 
     # MC Shelly — one row per gate, tagged with intent context. Lets
@@ -657,6 +710,9 @@ async def _evaluate_gates(intent: dict, order_notional_usd: float) -> dict:
         "effective_notional_usd": effective_notional,
         "risk_multiplier": risk_multiplier,
         "caps": caps_snapshot(),
+        "operator_override": operator_override,
+        "override_reason": override_reason if operator_override else None,
+        "overridden_gate_names": overridden_names if operator_override else [],
     }
 
 
@@ -916,6 +972,32 @@ class SubmitBody(BaseModel):
     intent_id: str = Field(..., min_length=8, max_length=80)
     order_notional_usd: float = Field(default=10.0, ge=0.01, le=10_000.0)
     confirm: str = Field(default="", description="must equal 'execute' to actually route")
+    # ─── Operator override (2026-02-19) ───────────────────────────
+    # When True, every SOFT gate failure is lifted with the supplied
+    # reason stamped on the gate row + receipt. Hard money safety
+    # (per-ticker cap, freeze, broker_connected, lane toggle,
+    # schema invariants, action_routable) stays authoritative —
+    # operator cannot bypass those. Requires a non-empty
+    # `override_reason` (min 8 chars) so the audit trail isn't
+    # littered with "test" or empty strings.
+    operator_override: bool = Field(
+        default=False,
+        description="if True, soft gates are bypassed; hard caps + freeze stay",
+    )
+    override_reason: str = Field(
+        default="",
+        max_length=500,
+        description="required when operator_override=True (min 8 chars)",
+    )
+    # ─── Manual BUY/SELL choice (2026-02-19) ──────────────────────
+    # The operator can flip the action at submit time. Original brain
+    # action is preserved on the receipt for the audit trail. Only
+    # BUY or SELL accepted — operator cannot fabricate HOLD/SHORT/
+    # COVER without an underlying intent shape.
+    action_override: Optional[str] = Field(
+        default=None,
+        description="optional BUY/SELL override; receipt stamps original action",
+    )
 
 
 @router.post("/execution/submit")
@@ -935,6 +1017,31 @@ async def execution_submit(
             detail="confirmation phrase missing — set confirm='execute' to route this order",
         )
 
+    # Operator override sanity — reason must be substantial enough
+    # to be useful in an audit trail. 8 chars is a low bar but
+    # weeds out "test" / "" / " ".
+    if body.operator_override:
+        reason_clean = (body.override_reason or "").strip()
+        if len(reason_clean) < 8:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "operator_override=true requires `override_reason` of at "
+                    "least 8 characters describing why every soft gate is "
+                    "being bypassed (audit-trail requirement)"
+                ),
+            )
+
+    # Validate the manual action override.
+    action_override = (body.action_override or "").strip().upper() or None
+    if action_override and action_override not in ("BUY", "SELL"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"action_override must be BUY or SELL, got {body.action_override!r}"
+            ),
+        )
+
     intent = await db[SHARED_INTENTS].find_one({"intent_id": body.intent_id}, {"_id": 0})
     if not intent:
         raise HTTPException(status_code=404, detail=f"intent {body.intent_id} not found")
@@ -944,10 +1051,38 @@ async def execution_submit(
             detail=f"intent {body.intent_id} already executed at {intent.get('executed_at')}",
         )
 
+    # Apply the action override BEFORE the gate chain runs so every
+    # downstream check (action_routable, council, broker_router) sees
+    # the operator's chosen side, not the brain's. Mutate a working
+    # copy — never the DB row.
+    original_action = intent.get("action")
+    if action_override and action_override != original_action:
+        intent = {**intent, "action": action_override}
+
+    # Safety net: with operator_override=True the `action_routable`
+    # gate is overridable, but the broker_router's `side = "BUY" if
+    # action in ("BUY","COVER") else "SELL"` silently coerces HOLD/
+    # unknown into SELL. Refuse explicitly so a misclick on a HOLD
+    # intent can't fire an accidental short.
+    effective_action = intent.get("action")
+    if effective_action not in ("BUY", "SELL", "SHORT", "COVER"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"intent action is {effective_action!r}; not routable. "
+                f"Set `action_override` to BUY or SELL to route this intent."
+            ),
+        )
+
     # Re-run the gate chain at submit time — state may have shifted
     # between the dry-run and the click (seat rotated, caps changed,
     # broker disconnected).
-    result = await _evaluate_gates(intent, body.order_notional_usd)
+    result = await _evaluate_gates(
+        intent,
+        body.order_notional_usd,
+        operator_override=body.operator_override,
+        override_reason=body.override_reason.strip() if body.operator_override else "",
+    )
     if result["verdict"] != "would_pass":
         # Audit-log the block so the operator can see why on the page.
         await db[SHARED_GATE_RESULTS].insert_one({
@@ -1104,6 +1239,15 @@ async def execution_submit(
         "mc_receipt": order.get("mc_receipt"),
         "mc_receipt_status": order.get("mc_receipt_status"),
         "mc_receipt_enforced": order.get("mc_receipt_enforced"),
+        # ── Operator override audit (2026-02-19) ──
+        "operator_override": bool(body.operator_override),
+        "override_reason": (
+            body.override_reason.strip() if body.operator_override else None
+        ),
+        "overridden_gate_names": result.get("overridden_gate_names") or [],
+        # ── Manual action override audit (2026-02-19) ──
+        "action_overridden": bool(action_override and action_override != original_action),
+        "original_action": original_action,
     }
     await db[EXECUTION_RECEIPTS].insert_one(receipt)
     await db[SHARED_INTENTS].update_one(
@@ -1126,6 +1270,13 @@ async def execution_submit(
         "order_notional_usd": float(body.order_notional_usd),
         "broker_order_id": order["order_id"],
         "gates": result["gates"],
+        "operator_override": bool(body.operator_override),
+        "override_reason": (
+            body.override_reason.strip() if body.operator_override else None
+        ),
+        "overridden_gate_names": result.get("overridden_gate_names") or [],
+        "action_overridden": bool(action_override and action_override != original_action),
+        "original_action": original_action,
     })
 
     # PARADOX audit — the executor's call passed every gate AND

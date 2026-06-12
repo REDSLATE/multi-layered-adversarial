@@ -16,6 +16,7 @@ import DoctrineHealthPanel from "@/components/DoctrineHealthPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import SeatRegistryDriftBanner from "@/components/SeatRegistryDriftBanner";
 import OperatorInjectIntent from "@/components/OperatorInjectIntent";
+import SubmitOrderModal from "@/components/SubmitOrderModal";
 import { toast } from "sonner";
 import {
   Lightning, ArrowsClockwise, Funnel, Pulse,
@@ -349,6 +350,20 @@ function IntentRow({ intent, expanded, onToggle, onDryRun, onSubmit, dryRunResul
                         <div><span className="text-rd-dim">side · notional</span> <span className="text-rd-text">{submitResult.receipt?.side} · ${Number(submitResult.receipt?.notional_usd).toFixed(2)}</span></div>
                         <div><span className="text-rd-dim">status</span> <span className="text-rd-text">{submitResult.order?.status}</span></div>
                         <div><span className="text-rd-dim">executed_at</span> <span className="text-rd-text">{submitResult.receipt?.executed_at}</span></div>
+                        {submitResult.receipt?.action_overridden && (
+                          <div className="text-rd-accent">
+                            <span className="text-rd-dim">action_override</span>{" "}
+                            <span>{submitResult.receipt?.original_action} → {submitResult.receipt?.action}</span>
+                          </div>
+                        )}
+                        {submitResult.receipt?.operator_override && (
+                          <div className="text-rd-accent">
+                            <span className="text-rd-dim">operator_override</span>{" "}
+                            <span>
+                              {(submitResult.receipt?.overridden_gate_names || []).length} gates bypassed · {submitResult.receipt?.override_reason}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     )}
                   </>
@@ -391,6 +406,9 @@ export default function Intents() {
   const [dryRunByIntent, setDryRunByIntent] = useState({});
   const [submitByIntent, setSubmitByIntent] = useState({});
   const [autoRefresh, setAutoRefresh] = useState(true);
+  // Submit modal — replaces the legacy prompt+confirm pair. Carries
+  // notional, BUY/SELL toggle, and operator override flag/reason.
+  const [submitModal, setSubmitModal] = useState({ open: false, intent: null });
   // Single source of truth for caps — fetched on mount, refreshed on
   // submit so any cap tuning the operator just made is reflected.
   // Shape: { per_order_usd, per_day_usd, open_notional_usd, per_order_by_lane_usd: { <lane>: cap } }
@@ -482,52 +500,49 @@ export default function Intents() {
   };
 
   const runSubmit = async (intentId, lane) => {
-    // Always re-fetch caps right before the dialog so the operator
-    // sees the current truth (the cap may have been retuned since
-    // page-load). If the fetch fails we fall back to the cached value.
+    // Always re-fetch caps right before opening the modal so the
+    // operator sees the current truth (the cap may have been retuned
+    // since page-load).
     await loadCaps();
     const cap = capForLane(lane);
     if (cap == null) {
       toast.error("Cap config unavailable — refresh the page and retry.");
       return;
     }
-    const laneLabel = lane ? lane.toUpperCase() : "GLOBAL";
+    const intent = (intents || []).find((it) => it.intent_id === intentId);
+    if (!intent) {
+      toast.error("Intent vanished from the table — reload and retry.");
+      return;
+    }
+    setSubmitModal({ open: true, intent });
+  };
 
-    // Operator-typed notional. Defaults to the lane cap; operator can
-    // dial it down (never up — the cap is the doctrine ceiling).
-    const raw = window.prompt(
-      `${laneLabel} order notional in USD?\n\n` +
-      `Cap: $${cap.toFixed(2)} (per-order, lane=${laneLabel}).\n` +
-      `Enter any value ≤ cap. Defaults to cap.`,
-      String(cap),
-    );
-    if (raw === null) return; // operator cancelled
-    const notional = Number(raw);
-    if (!Number.isFinite(notional) || notional <= 0) {
-      toast.error("Notional must be a positive number.");
-      return;
-    }
-    if (notional > cap) {
-      toast.error(`Notional $${notional.toFixed(2)} > per-order cap $${cap.toFixed(2)}. Lower the amount or raise the cap.`);
-      return;
-    }
-    if (!window.confirm(
-      `Route this ${laneLabel} intent to the broker?\n\n` +
-      `A $${notional.toFixed(2)} notional market-day order will be placed.\n` +
-      `(Cap: $${cap.toFixed(2)} per-order, lane=${laneLabel}.)`
-    )) {
-      return;
-    }
+  const performSubmit = async (payload) => {
+    const intentId = submitModal.intent?.intent_id;
+    if (!intentId) return;
     setSubmitByIntent((m) => ({ ...m, [intentId]: { loading: true } }));
     setExpanded(intentId);
+    setSubmitModal({ open: false, intent: null });
     try {
-      const res = await api.post("/execution/submit", {
+      const body = {
         intent_id: intentId,
-        order_notional_usd: notional,
+        order_notional_usd: payload.order_notional_usd,
         confirm: "execute",
-      });
+      };
+      if (payload.operator_override) {
+        body.operator_override = true;
+        body.override_reason = payload.override_reason;
+      }
+      if (payload.action_override) {
+        body.action_override = payload.action_override;
+      }
+      const res = await api.post("/execution/submit", body);
       setSubmitByIntent((m) => ({ ...m, [intentId]: res.data }));
-      toast.success(`Order routed · $${notional.toFixed(2)} · ${res.data?.order?.status || "submitted"}`);
+      const sideLabel = payload.action_override || submitModal.intent?.action || "";
+      const overrideTag = payload.operator_override ? " · OVERRIDE" : "";
+      toast.success(
+        `Order routed · ${sideLabel} $${payload.order_notional_usd.toFixed(2)}${overrideTag} · ${res.data?.order?.status || "submitted"}`,
+      );
       load();
     } catch (e) {
       const status = e?.response?.status;
@@ -833,6 +848,19 @@ export default function Intents() {
           </div>
         )}
       </Card>
+
+      {/* Submit confirmation modal — replaces the legacy
+          window.prompt/confirm pair. Carries notional, BUY/SELL
+          toggle, and operator override flag/reason. */}
+      <SubmitOrderModal
+        open={submitModal.open}
+        intent={submitModal.intent}
+        capUsd={
+          submitModal.intent ? capForLane(submitModal.intent.lane) : null
+        }
+        onConfirm={performSubmit}
+        onClose={() => setSubmitModal({ open: false, intent: null })}
+      />
     </div>
   );
 }
