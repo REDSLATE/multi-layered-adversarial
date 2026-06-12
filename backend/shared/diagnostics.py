@@ -76,10 +76,92 @@ router = APIRouter(prefix="/admin/diagnostics", tags=["diagnostics"])
 
 
 async def _last_receipt_ts(runtime: str) -> str | None:
+    """Latest decision-artifact timestamp for `runtime` across ALL the
+    collections a brain writes to when it makes a decision.
+
+    Doctrine (2026-02-19, rev3 — prod SILENT-badge bug):
+        The legacy `shared_receipts` collection was the original
+        canonical "the brain just decided something" tripwire. But
+        the in-process runner doesn't write to it — modern brains
+        post intents to `shared_intents` and opinions to
+        `shared_brain_opinions`, and only authority-call mirrors
+        backfill `shared_receipts`. So a brain firing intents every
+        second showed SILENT for 13 days straight because nothing
+        was touching the legacy collection.
+
+        The operator-facing definition of "silent" is "this brain
+        hasn't produced ANY decision artifact recently" — not "this
+        brain hasn't written to one specific legacy collection".
+        Take the MAX over all the modern decision-emitting paths:
+
+          * `shared_intents.ingest_ts`            where `stack==runtime`
+          * `shared_brain_opinions.posted_at`     where `runtime==runtime`
+          * `shared_receipts.timestamp`           where `runtime==runtime`
+                                                  (legacy authority-call
+                                                  mirror — still respected)
+          * `<brain>_decision_log.timestamp`      per-brain audit trail
+
+        If ANY of these is fresh, the brain is NOT silent.
+
+    Returns ISO timestamp string or None if no artifact exists.
+    """
+    candidates: list[str] = []
+
+    # 1. Legacy receipts collection — still consulted for backward
+    #    compat with the authority-call mirror written by
+    #    `shared/opinions.py::_mirror_authority_call_to_receipt`.
     doc = await db[SHARED_RECEIPTS].find_one(
-        {"runtime": runtime}, {"_id": 0, "timestamp": 1}, sort=[("timestamp", -1)]
+        {"runtime": runtime}, {"_id": 0, "timestamp": 1},
+        sort=[("timestamp", -1)],
     )
-    return doc["timestamp"] if doc else None
+    if doc and doc.get("timestamp"):
+        candidates.append(doc["timestamp"])
+
+    # 2. Cross-brain opinion stream — runner posts on every intent.
+    doc = await db[SHARED_OPINIONS].find_one(
+        {"runtime": runtime}, {"_id": 0, "posted_at": 1},
+        sort=[("posted_at", -1)],
+    )
+    if doc and doc.get("posted_at"):
+        candidates.append(doc["posted_at"])
+
+    # 3. shared_intents — the actual decision artifact. Note the
+    #    identifier field is `stack`, not `runtime`.
+    try:
+        from namespaces import SHARED_INTENTS  # noqa: WPS433
+    except ImportError:
+        SHARED_INTENTS = None  # very old layout; skip gracefully
+    if SHARED_INTENTS:
+        doc = await db[SHARED_INTENTS].find_one(
+            {"stack": runtime}, {"_id": 0, "ingest_ts": 1},
+            sort=[("ingest_ts", -1)],
+        )
+        if doc and doc.get("ingest_ts"):
+            candidates.append(doc["ingest_ts"])
+
+    # 4. Per-brain canonical decision log — the brain's own append-
+    #    only audit trail. No `runtime` filter needed; the collection
+    #    IS the brain.
+    coll_per_brain = {
+        "alpha":    ALPHA_DECISION_LOG,
+        "camaro":   CAMARO_SHADOW_ROWS,
+        "chevelle": CHEVELLE_MEMORY_LABELS,
+        "redeye":   REDEYE_DECISION_LOG,
+    }.get(runtime)
+    if coll_per_brain:
+        doc = await db[coll_per_brain].find_one(
+            {}, {"_id": 0, "timestamp": 1},
+            sort=[("timestamp", -1)],
+        )
+        if doc and doc.get("timestamp"):
+            candidates.append(doc["timestamp"])
+
+    if not candidates:
+        return None
+    # Return the latest. ISO-8601 strings sort lexicographically
+    # provided they all share a timezone (they do — every writer
+    # uses `datetime.now(timezone.utc).isoformat()`).
+    return max(candidates)
 
 
 async def _runtime_log_count(runtime: str) -> int:

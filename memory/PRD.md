@@ -1,3 +1,68 @@
+## 2026-02-19 (final+6) — SILENT-badge prod bug FIXED
+
+### Operator directive
+Screenshot from `mission.risedual.ai` (PROD): all 4 brains marked `SILENT — alive but no decisions`, but the Decisions Feed RIGHT BELOW shows the same brains posting `gate_pass` entries every second. The Brain Health panel meanwhile says `opinion: fresh 18s`. Three panels disagreeing with each other.
+
+> "I'm not sure why it's saying they are quiet, they aren't quiet. they are submitting intents."
+
+### Root cause
+`/app/backend/shared/diagnostics.py::_last_receipt_ts` queried ONLY the legacy `shared_receipts` collection. Modern in-process brains write to:
+- `shared_brain_opinions.posted_at` (every intent → opinion)
+- `shared_intents.ingest_ts` (every intent, identifier field is `stack`)
+- `<brain>_decision_log.timestamp` (per-brain audit)
+
+But NOT `shared_receipts` (only the authority-call mirror in `shared/opinions.py::_mirror_authority_call_to_receipt` writes to it, and only when an opinion carries `evidence.authority_call`). So a brain firing intents every second showed SILENT for ~13 days straight on production.
+
+The Brain Health panel was reading a different source (the sidecar checkin's `opinion_freshness`) which correctly saw the opinions → "fresh 18s". The Composite Brain Status panel + Runtimes table were reading the broken `_last_receipt_ts`.
+
+### Fix shipped
+Rewrote `_last_receipt_ts` to take the **MAX timestamp across all 4 decision-producing collections**:
+
+```python
+candidates = []
+# 1. Legacy receipts (authority-call mirror — kept for backward compat)
+... shared_receipts.timestamp where runtime==rt
+# 2. Cross-brain opinions
+... shared_brain_opinions.posted_at where runtime==rt
+# 3. shared_intents (NB: identifier field is `stack`, not `runtime`)
+... shared_intents.ingest_ts where stack==rt
+# 4. Per-brain canonical decision log
+... <brain>_decision_log.timestamp (no runtime filter — collection IS the brain)
+
+return max(candidates) if candidates else None
+```
+
+ISO-8601 sorts lexicographically when all timestamps share a timezone (they do — every writer uses `datetime.now(timezone.utc).isoformat()`).
+
+Doctrine update in the docstring: "silent" means "this brain hasn't produced ANY decision artifact recently" — not "this brain hasn't written to one specific legacy collection".
+
+### Verification
+- 5 new tests in `/app/backend/tests/test_diagnostics_silent_uses_all_collections.py`:
+  - Fresh opinion alone (no receipt) keeps brain out of SILENT.
+  - Fresh intent alone (HOLD case, no opinion) keeps brain out of SILENT.
+  - MAX selection across 3 populated collections returns the latest.
+  - No artifact in any collection still correctly returns None.
+  - `_effective_tier` doctrine pinned: fresh hb + None receipt = silent; fresh hb + fresh receipt = ok.
+- All 9 existing `test_diagnostics_silent_tier.py` tests still green — zero regressions.
+- 106/106 broader diagnostic+silent+receipt tests pass.
+- **Live verification on preview**: all 4 brains now show `effective_tier: ok` with `last_receipt_age_seconds: ~25s`. Pre-fix they would have been `silent` with `age: None` because preview's `shared_receipts` was empty.
+
+### Operator impact
+This is **PROD-only** — the operator needs to redeploy (Save to GitHub) for the fix to land on `mission.risedual.ai`. Once deployed:
+- Composite Brain Status panel will stop showing `opinion DEAD 0/1h` for active brains.
+- Runtimes table will stop showing `SILENT — alive but no decisions` for active brains.
+- Both panels will agree with Brain Health and Decisions Feed (which were correct all along).
+
+The SILENT band remains intact for its original purpose: catching brains with fresh heartbeats but truly no decision activity (e.g., a wedged decision loop).
+
+### Remaining backlog
+- 🟡 P2 — "discussion_loop" health tile on Diagnostics page (stats already published in `BrainRunner.stats.loop_health.discussion_*`).
+- 🟡 P2 — US market holiday calendar.
+- 🟡 P2 — StockFit 10-Q/10-K doctrine enrichment.
+
+---
+
+
 ## 2026-02-19 (final+5) — auto_retire test pollution + endpoint scoping fix
 
 ### Operator directive
