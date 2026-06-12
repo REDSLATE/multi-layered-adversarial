@@ -453,25 +453,43 @@ class WebullAdapter(BrokerAdapter):
              bypass).
           3. Exactly one of (qty, notional) must be supplied.
 
-        2026-02-19 (rev 2): rewritten against the actual installed
-        Webull SDK signature. The previous implementation passed a
-        dict payload to `place_order(...)` which takes positional
-        args — the SDK raised TypeError inside the executor thread,
-        the thread wedged, the request stalled past the gateway
-        timeout and surfaced as HTTP 502 on the dashboard.
+        2026-02-19 (rev 3) — FRACTIONAL SHARES via place_order_v2:
+        Operator confirmed they bought $1 of NVDA via Webull's own
+        UI today. Webull's standard `place_order` (v1) is documented
+        for HK / China-Connect markets and accepts integer qty only —
+        which is why the previous adapter floor-divided notional and
+        bailed with "WEBULL_QTY_BELOW_ONE" on every ticker priced
+        above the $10 cap. The real US fractional path is:
 
-        Real SDK signature:
-          place_order(account_id, qty, instrument_id, side,
-                      client_order_id, order_type,
-                      extended_hours_trading, tif, limit_price=None,
-                      stop_price=None, ...)
+            order.place_order_v2(account_id, stock_order_dict)
 
-        Webull standard API supports WHOLE-SHARE QTY only — no
-        fractional. We convert the requested notional to qty via
-        `floor(notional / last_price)` and re-validate the resulting
-        notional against the cap band so the actual dollars spent
-        still respect the operator's $3-$10 ceiling (a high-priced
-        ticker yields qty=0 → NO_TRADE).
+        where `stock_order_dict` carries `entrust_type="AMOUNT"` and
+        `total_cash_amount="<dollars>"`, e.g.,
+
+            {
+              "client_order_id": "...",
+              "symbol": "NVDA",
+              "instrument_id": "<resolved>",
+              "instrument_type": "EQUITY",
+              "market": "US",
+              "order_type": "MARKET",
+              "side": "BUY",
+              "time_in_force": "DAY",
+              "entrust_type": "AMOUNT",
+              "total_cash_amount": "1.00",
+              "support_trading_session": "CORE",
+              "account_tax_type": "GENERAL"
+            }
+
+        AMOUNT mode is intended for sub-share fractional buys — which
+        is exactly our $1-$10 pilot band. With NVDA at ~$140 a $10
+        intent buys ~0.07 shares; the broker handles the rounding.
+
+        Path selection:
+          * `notional` provided → v2 + AMOUNT (fractional). The whole
+            pilot lives here.
+          * `qty` provided      → v1 + integer (legacy; reconcile /
+            manual whole-share paths only). Untouched.
         """
         # Belt-and-braces re-check of the cap.
         decision = evaluate_webull_order(
@@ -503,59 +521,134 @@ class WebullAdapter(BrokerAdapter):
         # Resolve the instrument_id + last price (cached).
         instrument_id, last_price, fractionable = await self._resolve_instrument_id(symbol)
 
-        # Convert notional → integer qty. Webull's place_order takes
-        # `qty: integer`; fractional is not supported via this entry
-        # point. If qty<1 the notional can't fit one share at current
-        # price — NO_TRADE with a readable reason.
-        if qty is None:
-            calc_qty = int(float(notional) // last_price) if last_price > 0 else 0
-            if calc_qty < 1:
-                raise WebullCapBlocked(
-                    f"WEBULL_QTY_BELOW_ONE — {symbol} last=${last_price:.2f} "
-                    f"× 1 = ${last_price:.2f} which exceeds notional "
-                    f"${float(notional):.2f}. Webull does not support "
-                    f"fractional shares via this adapter; pick a lower-"
-                    f"priced ticker or raise the notional cap."
+        sym_u = (symbol or "").upper().strip()
+
+        if notional is not None:
+            # ── FRACTIONAL PATH (v2 + AMOUNT) ────────────────────────
+            # Build the stock_order dict per Webull's v2 spec and
+            # send via place_order_v2. No qty rounding — the broker
+            # converts the cash amount to fractional shares.
+            effective_notional = float(notional)
+            # `total_cash_amount` is documented as a STRING in
+            # Webull's API; pass with 2-decimal precision so the
+            # request body matches the doc example exactly.
+            cash_amt_str = f"{effective_notional:.2f}"
+
+            stock_order = {
+                "client_order_id": order_id,
+                "symbol": sym_u,
+                "instrument_id": instrument_id,
+                "instrument_type": "EQUITY",
+                "market": "US",
+                "order_type": "MARKET",
+                "side": side_str,
+                "time_in_force": "DAY",
+                "entrust_type": "AMOUNT",
+                "total_cash_amount": cash_amt_str,
+                "support_trading_session": "CORE",
+                "account_tax_type": "GENERAL",
+                "extended_hours_trading": False,
+            }
+
+            # Log MC receipt provenance (signature prefix only).
+            if mc_receipt:
+                sig = (mc_receipt.get("signature") or "")[:12]
+                logger.info(
+                    "Webull submit_market_order (v2/AMOUNT) receipt_sig=%s "
+                    "symbol=%s instrument_id=%s lane=%s side=%s "
+                    "total_cash_amount=%s last_price=%s",
+                    sig, sym_u, instrument_id, lane, side_str,
+                    cash_amt_str, last_price,
                 )
-            qty_int = calc_qty
-            # Recompute effective notional and re-check the cap. The
-            # actual dollars spent at execution may exceed the
-            # requested notional because we're snapping up to a whole
-            # share — re-validate against the band so a runaway price
-            # spike can't blow past the cap.
-            effective_notional = qty_int * last_price
-            decision2 = evaluate_webull_order(
-                notional_usd=effective_notional, symbol=symbol,
+            else:
+                logger.info(
+                    "Webull submit_market_order (v2/AMOUNT) symbol=%s "
+                    "instrument_id=%s lane=%s side=%s total_cash_amount=%s "
+                    "last_price=%s",
+                    sym_u, instrument_id, lane, side_str, cash_amt_str,
+                    last_price,
+                )
+
+            try:
+                res = await self._sdk_call(
+                    self._trade().order.place_order_v2,
+                    account_id, stock_order,
+                )
+                data = res.json() if hasattr(res, "json") else res
+            except Exception as e:  # noqa: BLE001
+                raise RuntimeError(f"Webull submit_market_order (v2) failed: {e}") from e
+
+            # Surface SDK envelope-level errors. Webull's response
+            # wraps the result in {code, msg, data}; code "200" means
+            # accepted.
+            if isinstance(data, dict):
+                code = data.get("code")
+                if code not in (None, "200", 200):
+                    raise RuntimeError(
+                        f"Webull place_order_v2 returned code={code} "
+                        f"msg={data.get('msg')!r}"
+                    )
+
+            body = (data or {}).get("data") if isinstance(data, dict) else None
+            body = body if isinstance(body, dict) else (data if isinstance(data, dict) else {})
+
+            # Fractional qty estimate for receipt — broker will fill
+            # the exact decimal share count, but we surface our best
+            # estimate so the receipts dashboard shows non-zero qty
+            # before the fill report arrives.
+            est_qty = (effective_notional / last_price) if last_price > 0 else 0.0
+
+            return {
+                "order_id": str(
+                    body.get("orderId") or body.get("order_id") or
+                    body.get("clientOrderId") or order_id
+                ),
+                "client_order_id": order_id,
+                "symbol": sym_u,
+                "qty": float(body.get("filledQuantity") or est_qty),
+                "notional": effective_notional,
+                "side": side_str,
+                "type": "market",
+                "limit_price": None,
+                "time_in_force": "DAY",
+                "status": str(body.get("status") or "SUBMITTED"),
+                "submitted_at": body.get("createTime") or body.get("submitted_at"),
+                "filled_at": body.get("filledAt"),
+                "filled_qty": float(body.get("filledQuantity") or 0),
+                "filled_avg_price": (
+                    float(body["averagePrice"])
+                    if body.get("averagePrice") is not None else None
+                ),
+            }
+
+        # ── WHOLE-SHARE PATH (v1 + integer qty) ──────────────────────
+        # Only used by callers that pass `qty` explicitly (reconcile,
+        # manual operator scripts). The auto-router never hits this
+        # branch — it always sends notional intents through the v2
+        # fractional path above.
+        qty_int = int(float(qty))
+        if qty_int < 1:
+            raise WebullCapBlocked(
+                f"WEBULL_QTY_BELOW_ONE — qty={qty} < 1; the integer "
+                f"whole-share path requires qty >= 1. Pass `notional` "
+                f"instead for fractional via v2/AMOUNT."
             )
-            if not decision2.ok:
-                raise WebullCapBlocked(
-                    f"{decision2.reason} (effective={effective_notional:.2f} "
-                    f"from {qty_int} × ${last_price:.2f})"
-                )
-        else:
-            qty_int = int(float(qty))
-            if qty_int < 1:
-                raise WebullCapBlocked(
-                    f"WEBULL_QTY_BELOW_ONE — qty={qty} < 1; Webull requires "
-                    f"whole shares via this adapter."
-                )
 
         # Log MC receipt provenance (signature prefix only).
         if mc_receipt:
             sig = (mc_receipt.get("signature") or "")[:12]
             logger.info(
-                "Webull submit_market_order receipt_sig=%s symbol=%s "
-                "instrument_id=%s lane=%s side=%s qty=%s notional=%s "
+                "Webull submit_market_order (v1/QTY) receipt_sig=%s "
+                "symbol=%s instrument_id=%s lane=%s side=%s qty=%s "
                 "last_price=%s",
-                sig, symbol, instrument_id, lane, side_str, qty_int,
-                notional, last_price,
+                sig, sym_u, instrument_id, lane, side_str, qty_int,
+                last_price,
             )
         else:
             logger.info(
-                "Webull submit_market_order symbol=%s instrument_id=%s "
-                "lane=%s side=%s qty=%s notional=%s last_price=%s",
-                symbol, instrument_id, lane, side_str, qty_int,
-                notional, last_price,
+                "Webull submit_market_order (v1/QTY) symbol=%s "
+                "instrument_id=%s lane=%s side=%s qty=%s last_price=%s",
+                sym_u, instrument_id, lane, side_str, qty_int, last_price,
             )
 
         # Resolve SDK enums.
@@ -595,9 +688,9 @@ class WebullAdapter(BrokerAdapter):
                 body.get("clientOrderId") or order_id
             ),
             "client_order_id": order_id,
-            "symbol": symbol.upper(),
+            "symbol": sym_u,
             "qty": float(qty_int),
-            "notional": float(notional) if notional is not None else float(qty_int) * last_price,
+            "notional": float(qty_int) * last_price,
             "side": side_str,
             "type": "market",
             "limit_price": None,

@@ -111,8 +111,10 @@ async def test_webull_override_blocked_below_floor(monkeypatch):
         "confidence": 0.7,
         "broker_override": "webull",
     }
+    # 2026-02-19 (rev): floor lowered $3 → $1, so $0.50 is the
+    # canonical below-floor case now.
     with pytest.raises(BrokerRouteBlocked) as exc:
-        await route_order(intent, notional_usd=1.0)
+        await route_order(intent, notional_usd=0.50)
     assert "BELOW_FLOOR" in str(exc.value)
 
 

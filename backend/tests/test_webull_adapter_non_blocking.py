@@ -58,6 +58,14 @@ class _StubOrderV1:
         time.sleep(0.5)
         return _StubResponse({"data": {"orderId": "ORD-1", "status": "SUBMITTED"}})
 
+    def place_order_v2(self, account_id, stock_order):  # noqa: ARG002
+        # 2026-02-19 (rev 3): fractional path. Same blocking time
+        # signature as v1 — the non-blocking test asserts the
+        # executor-thread wrapper isolates EITHER path from the
+        # event loop.
+        time.sleep(0.5)
+        return _StubResponse({"data": {"orderId": "ORD-V2-1", "status": "SUBMITTED"}})
+
 
 class _StubTradeClient:
     account_v2 = _StubAccountV2()
@@ -116,8 +124,10 @@ async def test_submit_market_order_does_not_block_event_loop(monkeypatch):
         f"event loop was blocked during SDK call — heartbeat only "
         f"reached {progress['ticks']} ticks"
     )
-    # Submit must have returned a real order envelope.
-    assert order["order_id"] == "ORD-1"
+    # Submit must have returned a real order envelope. Notional-based
+    # submits go through v2/AMOUNT (the fractional path) → orderId
+    # from the v2 stub. The whole-share path would surface "ORD-1".
+    assert order["order_id"] == "ORD-V2-1"
     # End-to-end should be ~max(0.5s, 0.5s) = ~0.5s, NOT 1.0s
     # (which would mean it ran serially).
     assert elapsed < 0.9, (

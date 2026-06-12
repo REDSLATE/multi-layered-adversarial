@@ -29,27 +29,39 @@ import pytest
 
 
 def test_webull_adapter_uses_correct_place_order_signature():
-    """The installed SDK's `place_order` is:
+    """The installed SDK has TWO order entry points:
 
-        place_order(account_id, qty, instrument_id, side, client_order_id,
-                    order_type, extended_hours_trading, tif, ...)
+        order.place_order(account_id, qty, instrument_id, side, ...)
+            — v1, integer qty only (doctstring'd for HK / China Connect).
 
-    `submit_market_order` MUST call it positionally with those args,
-    NOT with a dict payload. If a future PR reverts to the dict shape,
-    this test fails before it ever ships.
+        order.place_order_v2(account_id, stock_order_dict)
+            — v2, supports fractional via entrust_type=AMOUNT +
+              total_cash_amount=<dollars>.
+
+    2026-02-19 (rev 3): the adapter MUST route notional-based intents
+    through `place_order_v2` (fractional). Operator confirmed buying
+    $1 of NVDA — the previous integer-only path would have rejected
+    every BUY priced > the $10 cap, defeating the $1 fractional floor.
     """
     from shared.broker.webull import WebullAdapter
     src = inspect.getsource(WebullAdapter.submit_market_order)
-    # Must reference the SDK enum names, not raw strings.
-    assert "OrderSide" in src, "submit_market_order must use OrderSide enum"
-    assert "OrderType.MARKET" in src, "submit_market_order must use OrderType.MARKET"
-    assert "OrderTIF" in src, "submit_market_order must use OrderTIF enum"
-    # Must compute integer qty (Webull's standard place_order is
-    # whole-share only).
-    assert "qty_int" in src or "int(" in src, (
-        "submit_market_order must convert notional to integer qty — "
-        "Webull's standard place_order does not accept fractional"
+    # Notional path must hit v2/AMOUNT.
+    assert "place_order_v2" in src, (
+        "submit_market_order must call place_order_v2 for fractional "
+        "notional intents — the operator's $1 NVDA case proves this is "
+        "the right entry point"
     )
+    assert '"AMOUNT"' in src, (
+        "fractional path must set entrust_type=AMOUNT"
+    )
+    assert "total_cash_amount" in src, (
+        "AMOUNT mode requires total_cash_amount in the stock_order dict"
+    )
+    # Whole-share legacy path is still wired (used by reconcile /
+    # manual scripts) — must still use the SDK enums.
+    assert "OrderSide" in src, "qty path must use OrderSide enum"
+    assert "OrderType.MARKET" in src, "qty path must use OrderType.MARKET"
+    assert "OrderTIF" in src, "qty path must use OrderTIF enum"
 
 
 def test_webull_adapter_uses_correct_account_balance_method():

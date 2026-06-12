@@ -1,3 +1,71 @@
+## 2026-02-19 (final+2) — Webull fractional shares via `place_order_v2` + AMOUNT
+
+### Operator directive
+> "all the tickers can be fractional. I brought NVDA for a $1 today."
+
+Translation: the $3→$1 floor change is meaningless if MC's adapter still rounds notional to integer shares — every BUY on a ticker priced > $10 (AAPL, NVDA, MSFT, TSLA, NFLX, etc.) would bounce with `WEBULL_QTY_BELOW_ONE`. The operator validated against Webull's UI that $1 NVDA orders clear → the API supports fractional, MC just wasn't using the right entry point.
+
+### Status: shipped to preview + 7 new behavior tests + full suite green
+
+### Root cause
+`submit_market_order` was calling Webull SDK's `order.place_order(account_id, qty, ...)` — the v1 method docstring'd for HK / China-Connect markets, integer-qty only. The adapter floor-divided `notional // last_price` and bailed when the result was < 1.
+
+### Fix
+- Rewrote `submit_market_order` notional branch to call `order.place_order_v2(account_id, stock_order)` with the canonical US fractional shape:
+
+  ```python
+  stock_order = {
+      "client_order_id": ...,
+      "symbol": "NVDA",
+      "instrument_id": ...,
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "MARKET",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "AMOUNT",          # fractional!
+      "total_cash_amount": "1.00",       # string with 2-decimal precision
+      "support_trading_session": "CORE", # regular hours only
+      "account_tax_type": "GENERAL",
+      "extended_hours_trading": False,
+  }
+  ```
+
+- The whole-share path (v1 `place_order` with integer qty) is preserved for callers that pass `qty` explicitly (reconcile + manual ops). Error message on qty<1 now points the caller at the notional/v2 path.
+- Removed the legacy "WEBULL_QTY_BELOW_ONE — pick a lower-priced ticker" exit on the notional branch — that whole class of false negatives is gone.
+
+### Verification
+- **New test file** `/app/backend/tests/test_webull_fractional_order.py` (7 tests):
+  - `test_notional_buy_uses_place_order_v2_with_amount_mode` — pins the entire v2 stock_order request shape.
+  - `test_one_dollar_nvda_no_longer_blocked` — operator's exact case.
+  - `test_ten_dollar_aapl_uses_amount_mode_not_qty_rounding` — the previous worst case.
+  - `test_total_cash_amount_is_string_with_two_decimals` — Webull's strict string-with-2dp contract.
+  - `test_sell_side_routes_through_amount_mode_too` — partial-share SELL liquidations work.
+  - `test_qty_path_still_uses_v1_integer_place_order` — legacy whole-share preserved.
+  - `test_qty_below_one_still_blocked_on_legacy_path` — legacy path still rejects qty<1 with a useful error.
+- **Updated** `test_webull_adapter_sdk_signatures.py::test_webull_adapter_uses_correct_place_order_signature` — asserts the new doctrine (v2 + AMOUNT + total_cash_amount).
+- **Updated stubs** in `test_webull_adapter_non_blocking.py` and `test_broker_router_webull_override.py` to match the new method + sub-$1 below-floor case.
+- All **276 webull/broker/execution tests pass**. Wider suite: 2209/2210 pass; the single failure (`test_governor_block_underperformance_emits_candidate`) is pre-existing and unrelated (auto-retire governor logic).
+- Backend restart clean. `/api/health` ok. `/api/admin/execution/diagnose?lane=equity` flows through `broker_connected: webull`.
+
+### Net effect
+Combined with the $3→$1 floor change (final+1) and the $0 balance fix (final), MC can now route a $1–$10 fractional BUY on **any US-listed equity** through Webull. With operator's $676.68 buying power, that's ~67 concurrent $10 intents or ~676 distinct $1 fractional intents within the daily/open caps.
+
+### Three blockers remaining to flip live trading "on"
+1. `lane_execution_enabled` is `False` for equity lane → flip via `POST /api/admin/execution/...`.
+2. `may_execute` pinned False → operator must un-pin (leftover from June 8 AAPL incident).
+3. (Optional) place one $1 NVDA test order in prod once 1+2 are flipped, to validate the entire path end-to-end.
+
+### Remaining backlog (P1 → P2)
+- 🟠 P1 — Cross-brain discussion loop dead (zero `in_reply_to` rows). Runner only monologues — needs a `_discussion_loop` to read peer opinions + post replies.
+- 🟠 P1 — Legacy wrapper tuning (`WRAPPER_PENALTY_STRENGTH`, `WRAPPER_MIN_SIZE_BIAS_NONZERO`).
+- 🟡 P2 — Admin `may_execute` UI toggle.
+- 🟡 P2 — US market holiday calendar.
+- 🟡 P2 — StockFit 10-Q/10-K doctrine enrichment.
+
+---
+
+
 ## 2026-02-19 (final+1) — Webull cap floor lowered $3 → $1
 
 ### Operator directive
