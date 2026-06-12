@@ -1,3 +1,40 @@
+## 2026-02-19 (token rotation) — Cut off zombie sidecar writers
+
+### Operator triage trail
+Operator noticed `ALPHA source IPs: 5` on sidecar-imposter-scan tile vs. `1` for the other 3 brains — meaning 4 other processes were still writing as Alpha alongside MC's in-process runner. Likely the legacy external Alpha (risedual.ai-facing) plus orphan preview/staging pods that were never torn down. They shared the `ALPHA_INGEST_TOKEN` and were upserting MC's `sidecar_checkins` doc with stale state.
+
+### Action
+Rotated all 4 brain ingest tokens with `secrets.token_hex(16)` and atomically replaced them in `/app/backend/.env`. Restarted backend. The in-process runner picked up the new values cleanly and all 4 brain identities (alpha=Camino, camaro=Barracuda, chevelle=Hellcat, redeye=GTO) immediately resumed posting intents (820/815/819/814 intent counts within minutes, perfectly even distribution). Backend `/api/health` returned 200. No auth failures in the backend log.
+
+### What this cuts off
+Any zombie writer still POSTing with the OLD `*_INGEST_TOKEN` will get `401 invalid token` from `backend/shared/runtime/sidecar_checkin.py:355-356` on every check-in and intent POST. The in-process runner is the ONLY writer that has the new tokens (because they live in MC's env). The `ALPHA source IPs` count on the imposter-scan tile is expected to drop from 5 → 1 within the 24h rolling window as zombie pods' contributions age out.
+
+### Why this works without touching external pods
+The auth check at line 355 is identity-only — no IP allowlist, no per-stack identity. Whoever has the matching token writes; rotating the token invalidates everyone except whoever was given the new value (the in-process runner, via env). Zero code, zero schema, zero external deployment access required.
+
+### New token values (paste into prod `backend/.env` lines 13-16)
+```
+ALPHA_INGEST_TOKEN="alpha-ingest-28b3b31bdc9dad561f9b3fe58bee4697"
+CAMARO_INGEST_TOKEN="camaro-ingest-7372ed93da9a2c1c6b06394bf618322b"
+CHEVELLE_INGEST_TOKEN="chevelle-ingest-e1de75aa90fa6548ed1c9da6c8696dfe"
+REDEYE_INGEST_TOKEN="redeye-ingest-3f2b5a1357546f8f8f711897b6d13995"
+```
+
+### Verification once prod redeploys
+1. Prod backend startup log must include `neutral_brains started: 4 runners — alpha=Camino, camaro=Barracuda, chevelle=Hellcat, redeye=GTO`.
+2. `sidecar_checkin_audit` collection should accumulate `verdict=401` rows from zombie source IPs (perfect forensic evidence — every rejected POST is logged with source IP + timestamp).
+3. Within 24h the imposter-scan tile's `ALPHA source IPs` count drops from 5 → 1.
+4. LAST RECEIPT table tiles for BARRACUDA / HELLCAT / GTO flip from `SILENT` → `LIVE` as the in-process runner's first receipts land for each brain identity.
+
+### Open thread for next session
+- **Belt-and-suspenders** — operator may want an admin tripwire that surfaces "auth failures per brain over last N min" so zombie writer cutoff is visible in the UI instead of buried in logs. ~30 min build.
+- **Legacy wrapper tuning** — still deferred (A+B knobs: penalty-strength scalar + non-HOLD size_bias floor).
+- **Decision-flow telemetry card** — pre-wrap vs post-wrap conviction/size delta per brain. Would drive the wrapper-tuning conversation with real data.
+
+---
+
+---
+
 ## 2026-02-19 (later session) — Wrapper hardening + silent-tier tripwire
 
 ### Operator triage trail
