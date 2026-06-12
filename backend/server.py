@@ -521,6 +521,18 @@ async def lifespan(app: FastAPI):
         await start_neutral_brains()
     except Exception as e:  # noqa: BLE001
         logger.warning("neutral_brains start failed: %s", e)
+
+    # Bracket outcome resolver — converts the brain's stated
+    # `target_price`/`stop_price` thesis on every order into clean
+    # categorical `tp_hit`/`sl_hit`/`timeout` labels for training.
+    # Master-gated on RISEDUAL_BRACKET_OUTCOMES_ENABLED (default off);
+    # when off the task is still spawned but just idles. Cheap.
+    try:
+        from shared.runtime.bracket_outcome_resolver import start_resolver_task
+        start_resolver_task()
+        logger.info("bracket_outcome_resolver task started")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("bracket_outcome_resolver start failed: %s", e)
     yield
     await stop_poller()
     await stop_tickler()
@@ -759,6 +771,9 @@ api_router.include_router(doctrine_router)
 api_router.include_router(doctrine_scorecard_router)
 api_router.include_router(doctrine_auto_retire_router)
 api_router.include_router(doctrine_promotion_router)
+# Bracket outcomes — training-signal tile + read API.
+from routes.admin_brackets import router as admin_brackets_router
+api_router.include_router(admin_brackets_router)
 api_router.include_router(quantum_router)
 api_router.include_router(personalities_router)
 api_router.include_router(flags_router)

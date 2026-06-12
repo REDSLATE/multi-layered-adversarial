@@ -744,6 +744,65 @@ async def execution_dry_run(
     }
 
 
+@router.get("/execution/last-submit-block")
+async def execution_last_submit_block(
+    intent_id: str = Query(..., description="intent_id to look up"),
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Return the most recent `submit_blocked` audit row for an intent.
+
+    Why this exists (2026-02-19, P1):
+        Some production proxies (Cloudflare, ingress configs with body
+        stripping on 4xx) silently drop the response body of an HTTP
+        403, leaving the operator staring at a bare "HTTP 403" with
+        no idea which gate refused. MC already persists the full gate
+        breakdown to `shared_gate_results` (kind="submit_blocked") on
+        every block, so the UI can fetch it here as a fallback and
+        render the same `blocked_by` / `reason` / `gates` payload that
+        the inline 403 body WOULD have carried.
+
+    Returns 404 if no submit_block has been recorded for this intent.
+    """
+    row = await db[SHARED_GATE_RESULTS].find_one(
+        {"intent_id": intent_id, "kind": {"$in": ["submit_blocked", "submit_timeout", "submit_error"]}},
+        {"_id": 0},
+        sort=[("ts", -1)],
+    )
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no submit_block audit row found for intent {intent_id}",
+        )
+    # Surface a `blocked_by` + `reason` synthesized from the first
+    # failing gate, mirroring the inline 403 detail shape. The UI's
+    # existing render code (which reads `blocked_by`/`reason`/`gates`
+    # off the error object) then "just works" against this fallback.
+    gates = row.get("gates") or []
+    first_block = next((g for g in gates if not g.get("passed")), None)
+    return {
+        "intent_id": intent_id,
+        "kind": row.get("kind"),
+        "ts": row.get("ts"),
+        "by": row.get("by"),
+        "order_notional_usd": row.get("order_notional_usd"),
+        "blocked_by": (
+            (first_block or {}).get("name")
+            or (row.get("kind") if row.get("kind") in ("submit_timeout", "submit_error") else "unknown")
+        ),
+        "reason": (
+            (first_block or {}).get("reason")
+            or row.get("reason")
+            or row.get("error")
+            or "gate chain blocked"
+        ),
+        "gates": gates,
+        "verdict": row.get("verdict"),
+        "_from_audit": True,
+    }
+
+
+
+
 # ───────────────────── auto-dry-run drain (one-time backfill) ─────────────────────
 
 @router.post("/admin/intents/auto-dry-run-drain")

@@ -227,6 +227,12 @@ SHARED_GOVERNANCE_DECISIONS = "shared_governance_decisions"  # per-intent govern
 SHARED_EXECUTOR_SEAT = "shared_executor_seat"              # single-row registry: who holds the executor seat
 SHARED_EXECUTOR_ROTATIONS = "shared_executor_rotations"    # append-only audit log of seat rotations
 
+# Bracket outcomes — captures the brain's target/stop thesis at order
+# submit and is resolved later by the bracket outcome resolver into
+# categorical tp_hit / sl_hit / timeout labels. Drives the training
+# signal upgrade documented in `shared/broker/webull_brackets.py`.
+WEBULL_BRACKET_INTENTS = "webull_bracket_intents"
+
 # Auditor seat — mirrors the Executor seat. Rotates separately. The brain
 # holding this seat plays the contrary-case "what could go wrong" role
 # on every hypothesis analysis. Default empty; operator rotates.

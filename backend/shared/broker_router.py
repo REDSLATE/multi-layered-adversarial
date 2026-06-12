@@ -443,6 +443,31 @@ async def route_order(
     order["mc_receipt"] = receipt_check.get("receipt")
     order["mc_receipt_status"] = receipt_check["reason"]
     order["mc_receipt_enforced"] = receipt_check["enforced"]
+
+    # Bracket-outcome training signal capture (2026-02-19, P1).
+    # When the brain's intent carries `target_price` + `stop_price`,
+    # record the bracket thesis so the outcome resolver can later
+    # assign tp_hit/sl_hit/timeout — categorical training labels that
+    # are directly aligned with the brain's stated conviction. This
+    # is a NO-OP when the brain didn't publish a bracket or when the
+    # operator hasn't flipped RISEDUAL_BRACKET_OUTCOMES_ENABLED on.
+    # Failures here NEVER block the trade — the bracket recorder
+    # is best-effort by design.
+    try:
+        from shared.broker.webull_brackets import record_bracket_intent
+        entry_price = float(
+            order.get("filled_avg_price")
+            or (order.get("notional") or 0) / max(order.get("qty") or 1e-9, 1e-9)
+        )
+        await record_bracket_intent(
+            intent=intent, order=order, entry_price=entry_price,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "bracket_intent capture failed intent=%s symbol=%s: %s",
+            intent_id, asset.canonical, e,
+        )
+
     return order
 
 

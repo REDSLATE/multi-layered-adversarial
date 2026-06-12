@@ -531,7 +531,33 @@ export default function Intents() {
       load();
     } catch (e) {
       const status = e?.response?.status;
-      const detail = e?.response?.data?.detail;
+      let detail = e?.response?.data?.detail;
+      // ── Prod proxy fallback (2026-02-19, P1) ──
+      // Some proxies (Cloudflare, ingress configs that strip 4xx
+      // bodies for security) silently drop the response body on 403,
+      // leaving `detail` undefined and the operator staring at a bare
+      // "HTTP 403". MC persists every submit block to
+      // `shared_gate_results`; fetch that audit row to recover the
+      // structured `blocked_by`/`reason`/`gates` payload so the UI
+      // can render the same detail it would have shown inline.
+      if (!detail || typeof detail === "string") {
+        try {
+          const audit = await api.get(
+            `/execution/last-submit-block?intent_id=${encodeURIComponent(intentId)}`,
+          );
+          if (audit?.data && audit.data.blocked_by) {
+            detail = {
+              blocked_by: audit.data.blocked_by,
+              reason: audit.data.reason,
+              gates: audit.data.gates,
+              _from_audit: true,
+            };
+          }
+        } catch {
+          // best-effort — if the audit fetch also fails, we keep the
+          // bare HTTP message we already had.
+        }
+      }
       setSubmitByIntent((m) => ({
         ...m,
         [intentId]: { error: detail || e.message, status },

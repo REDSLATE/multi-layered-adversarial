@@ -8,6 +8,7 @@ import RuntimeBundlesPanel from "@/components/RuntimeBundlesPanel";
 import SidecarCheckinPanel from "@/components/SidecarCheckinPanel";
 import BrainHealthTile from "@/components/BrainHealthTile";
 import LaneExecutionTogglesPanel from "@/components/LaneExecutionTogglesPanel";
+import BracketOutcomeDistributionPanel from "@/components/BracketOutcomeDistributionPanel";
 import PromotionArtifactPanel from "@/components/PromotionArtifactPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import BrainDeepDiagnoseCard from "@/components/BrainDeepDiagnoseCard";
@@ -581,6 +582,18 @@ export default function Diagnostics() {
           <div className="mt-6">
             <PanelErrorBoundary panelName="LaneExecutionTogglesPanel">
               <LaneExecutionTogglesPanel />
+            </PanelErrorBoundary>
+          </div>
+
+          {/* Training-signal tile — bracket outcome distribution.
+              Surfaces the categorical tp_hit/sl_hit/timeout labels per
+              confidence band. If the bin curve is flat, confidence is
+              uncalibrated → wrapper dampener / scorecard need tuning.
+              Master-gated on RISEDUAL_BRACKET_OUTCOMES_ENABLED; when
+              off, panel shows an enable hint. */}
+          <div className="mt-6">
+            <PanelErrorBoundary panelName="BracketOutcomeDistributionPanel">
+              <BracketOutcomeDistributionPanel />
             </PanelErrorBoundary>
           </div>
 
