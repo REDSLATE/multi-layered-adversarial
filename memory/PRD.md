@@ -1,3 +1,38 @@
+## 2026-02-19 (final) — Webull $0 balance bug FIXED + verified live
+
+### Operator directive
+> Webull funded sub-account showed $0 in MC even though Webull's own UI showed $677.68 settled cash — blocking every live BUY behind the cap gate's "buying_power > 0" precondition.
+
+### Status: shipped to preview + verified end-to-end against live Webull API
+
+### Root cause (three compounding bugs in `webull.py::get_account`)
+1. **Field naming**: parser looked for `cashBalance` (camelCase). Webull v2 OpenAPI returns `cash_balance` (snake_case).
+2. **Nesting**: parser looked at top level. Webull puts per-currency detail under `account_currency_assets[<USD>]`.
+3. **Field semantics**: for INDIVIDUAL_CASH sub-accounts, Webull's literal `buying_power` field is `"0.00"` by design — cash accounts spend `settled_cash` directly, not "buying power". MC must coalesce `buying_power` → `settled_cash` → `cash_balance` so the cap gate sees real headroom.
+
+### Fix shipped
+`/app/backend/shared/broker/webull.py::get_account` rewritten to:
+- Walk `account_currency_assets[]`, preferring `currency == "USD"` over [0].
+- Use a `_f(*keys)` coalescer that checks nested-cur first, falls back to top-level, then to legacy camelCase aliases — fail-closed if all are missing.
+- For `buying_power`, fall through to `settled_cash` when the broker's literal `buying_power` is 0 (the cash-account case).
+
+### Verification
+- **6 new parser tests** at `/app/backend/tests/test_webull_get_account_parser.py` covering: cash sub-account coalesce, margin sub-account preservation, multi-currency USD-picking, legacy envelope fallback, legacy camelCase fallback, empty-response fail-closed.
+- **All 88 existing Webull tests pass** — zero regressions.
+- **Live API probe** against operator's prod Webull account (`F8ISIGG74NU0C495ILNGG99D29`) returns: `cash=$676.68`, `buying_power=$676.68`, `equity=$677.67`. Exactly matches the operator's UI screenshot.
+- `/api/admin/execution/diagnose?lane=equity` now flows cleanly through `broker_connected` — remaining gate blockers are operator-intentional config (`lane_execution_enabled=False` kill-switch + synthetic $15>$10 cap), not the balance bug.
+
+### Remaining work (next session, ordered)
+- **Cross-brain discussion/opinion loop dead across all 4 brains** (P1) — investigate `/api/ingest/opinion` failures.
+- **Legacy wrapper tuning** (P1) — `WRAPPER_PENALTY_STRENGTH` + `WRAPPER_MIN_SIZE_BIAS_NONZERO` env knobs.
+- **Webull fractional shares** (P1) — `place_order_v2` once funding is verified end-to-end.
+- **Admin override `may_execute` pinned False** (P2) — leftover from June 8 AAPL incident kill-switch.
+- **US market holiday calendar** (P2) for `shadow_close_cron.py`.
+- **StockFit 10-Q/10-K enrichment** (P2).
+
+---
+
+
 ## 2026-02-19 (later session) — Wrapper hardening + silent-tier tripwire
 
 ### Operator directive

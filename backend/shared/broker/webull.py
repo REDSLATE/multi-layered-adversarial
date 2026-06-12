@@ -283,9 +283,38 @@ class WebullAdapter(BrokerAdapter):
         return {"ok": True, "account_number": account_id, "equity": 0.0}
 
     async def get_account(self) -> BrokerAccount:
-        # 2026-02-19: real SDK exposes `get_account_balance`, not
-        # `get_account_detail`. Method name corrected; response shape
-        # is the same JSON envelope.
+        # 2026-02-19 (later): the real Webull `get_account_balance`
+        # response is nested + snake_case, not the camelCase top-level
+        # shape the prior parser assumed. Actual surface:
+        #
+        #   {
+        #     "total_net_liquidation_value": "677.67",
+        #     "total_cash_balance":          "676.68",
+        #     "account_currency_assets": [{
+        #       "currency":            "USD",
+        #       "cash_balance":        "676.68",
+        #       "settled_cash":        "676.68",
+        #       "buying_power":        "0.00",
+        #       "option_buying_power": "676.68",
+        #       "net_liquidation_value": "677.67",
+        #       ...
+        #     }]
+        #   }
+        #
+        # Two gotchas the previous parser missed:
+        #   1. Per-currency detail is nested under
+        #      `account_currency_assets[<USD>]`, not the top level.
+        #   2. For INDIVIDUAL_CASH sub-accounts, the literal
+        #      `buying_power` field is *0.00* — cash accounts don't
+        #      use "buying power", they spend `settled_cash` directly.
+        #      MC must coalesce `buying_power` → `settled_cash` →
+        #      `cash_balance` so the gate chain sees real headroom.
+        #
+        # Old field names (cashBalance / buyingPower / netLiquidation)
+        # are kept as fallbacks in case Webull adds a camelCase alias
+        # or a future SDK version normalizes the shape — but the
+        # snake_case + nested path is the one that actually works
+        # against today's prod endpoint.
         account_id = await self._resolve_account_id()
         try:
             res = await self._sdk_call(
@@ -294,10 +323,55 @@ class WebullAdapter(BrokerAdapter):
             data = res.json() if hasattr(res, "json") else res
         except Exception as e:  # noqa: BLE001
             raise RuntimeError(f"Webull get_account failed: {e}") from e
-        d = (data or {}).get("data") or data or {}
-        cash = float(d.get("cashBalance") or d.get("cash") or 0)
-        bp = float(d.get("buyingPower") or d.get("dayBuyingPower") or 0)
-        equity = float(d.get("netLiquidation") or d.get("totalAssetValue") or bp)
+
+        # Tolerate the legacy `{"data": {...}}` envelope just in case
+        # a future SDK build adds one back.
+        d = (data or {}).get("data") if isinstance(data, dict) and "data" in data else data
+        d = d or {}
+
+        # Per-currency entry — prefer USD; fall back to whatever's at
+        # [0] if USD isn't listed (e.g., crypto-only sub-account).
+        cur_assets = d.get("account_currency_assets") or []
+        cur: dict = {}
+        if isinstance(cur_assets, list) and cur_assets:
+            usd = next(
+                (a for a in cur_assets if (a or {}).get("currency", "").upper() == "USD"),
+                cur_assets[0],
+            )
+            cur = usd or {}
+
+        def _f(*keys: str) -> float:
+            """Pick the first numeric value found across keys, in order."""
+            for k in keys:
+                v = cur.get(k) if k in cur else d.get(k)
+                if v is None:
+                    continue
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    continue
+            return 0.0
+
+        cash = _f(
+            "settled_cash",          # cash account — actually spendable
+            "cash_balance",          # snake_case nested
+            "total_cash_balance",    # snake_case top-level total
+            "cashBalance",           # legacy camelCase fallback
+            "cash",                  # legacy short-form fallback
+        )
+        # For cash accounts the broker's `buying_power` is 0 by design.
+        # Coalesce up through settled_cash so the cap gate sees real
+        # purchasing power on Individual Cash subs.
+        bp_raw = _f("buying_power", "buyingPower", "dayBuyingPower")
+        bp = bp_raw if bp_raw > 0 else cash
+
+        equity = _f(
+            "net_liquidation_value",       # snake_case nested
+            "total_net_liquidation_value", # snake_case top-level total
+            "netLiquidation",              # legacy camelCase fallback
+            "totalAssetValue",             # very old fallback
+        ) or bp
+
         return {
             "account_number": account_id,
             "status": d.get("status", "ACTIVE"),
@@ -306,7 +380,12 @@ class WebullAdapter(BrokerAdapter):
             "buying_power": bp,
             "daytrade_buying_power": bp,
             "last_equity": equity,
-            "pattern_day_trader": bool(d.get("patternDayTrader") or False),
+            "pattern_day_trader": bool(
+                cur.get("pattern_day_trader")
+                or d.get("pattern_day_trader")
+                or d.get("patternDayTrader")
+                or False
+            ),
             "paper": False,
         }
 
