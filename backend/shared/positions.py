@@ -607,10 +607,11 @@ async def _maybe_auto_advance(
         return
     if not policy["may_execute"]:
         return
-    # 2026-02-19 doctrine refresh: the executor seat now ships in TWO
-    # flavours (equity executor=alpha, crypto executor=redeye). Each
-    # has a lane-scoped authority. A crypto-seated brain must NOT
-    # auto-advance an equity position and vice versa.
+    # 2026-02-19 doctrine: the executor seat ships in TWO flavours —
+    # equity `executor` (lane_scope=equity) and `crypto` (lane_scope=
+    # crypto). A crypto-seated brain must NOT auto-advance an equity
+    # position and vice versa. Pure seat-policy enforcement; the seat
+    # owns the lane scope, the brain only fills the seat.
     seat = policy.get("posted_as")
     if seat:
         from shared.seat_policy import seat_may_execute_lane

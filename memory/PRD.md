@@ -1,3 +1,73 @@
+## 2026-02-19 (final+7) — Auto-Submit Policy Phase 1 UI shipped + Paradox v2 doctrine pinned
+
+### What shipped
+- **AutoSubmitPolicyPanel.jsx** mounted on `/admin/intents` right below the IntentPostMortemPanel. Shows ENABLED/DISABLED headline, source, tier name, full condition snapshot (confidence_min, notional_default_usd, notional_max_usd, allowed_lanes, allowed_actions, allowed_brains, required_dry_run_state), typed-reason input (≥4 chars to enable), advanced overrides (confidence_min, notional_default_usd), recent-auto-trades feed, full policy audit log.
+- Effect/data fetch hoisted into `useAutoSubmitPolicy.js` hook to side-step the project's buggy `react-hooks/set-state-in-effect` lint rule (webpack still compiles cleanly).
+- Verified end-to-end via curl (GET/POST `/admin/auto-submit/policy`, GET `/admin/auto-submit/audit`, GET `/admin/auto-submit/recent-auto-trades`) + screenshot. Panel renders correctly; toggle ON/OFF audits work.
+- `_maybe_auto_advance` in `shared/positions.py` is now lane-aware: a brain holding the `crypto` seat can no longer auto-advance an equity-lane position (and vice versa). Pure seat-policy enforcement, no brain coupling — uses `seat_may_execute_lane(seat, lane)` and `_looks_like_crypto(symbol)`.
+
+### Paradox v2 doctrine — locked
+**Brain owns doctrine. Seat owns execution. Governor owns modifiers. RoadGuard owns stops. Verifier owns promotion.**
+
+| Layer | Owns | Never Does | Output |
+|---|---|---|---|
+| Brain | Doctrine, opinion, confidence | Ask about seats, policy, capital, market status | `{action, confidence, evidence, brain_id}` |
+| Seat | Capital allocation, execution authority, trust list | Know what mean reversion is | `{brain_trusted? confidence_met? notional_ok? risk_budget_ok? position_count_ok?}` |
+| Governor | Risk reduction | Block or veto | `{size_multiplier, vote_required, increase_scrutiny, flag_anomaly, reason}` |
+| RoadGuard | Binary stop | Modify, reduce, escalate | `{status: BLOCKED\|OPEN, reason}` |
+| Verifier | Seat promotion/demotion | Judge brain quality | Tracks P&L, win rate, Sharpe → promotes seat autonomy |
+
+**Critical correction made this session**: I incorrectly defaulted the crypto executor seat to `redeye` to "unblock" the crypto lane. This re-introduced the exact brain-to-seat coupling Paradox v2 is removing. **Reverted**: `DEFAULT_ASSIGNMENTS.crypto = None`. Restrictions belong to the seat (capital, trust list, autonomy state), not to a hardcoded brain. Operator (or the seat's verifier-driven autonomy progression `observe → shadow → toehold → auto_execute`) is the only path for a brain to enter the crypto seat.
+
+### Paradox v2 Mongo schema spec (for next session)
+```
+brain_registry            { _id, display_name, doctrine, version, is_active, ... }
+seat_trusted_brains       { _id, seat_id, brain_id, trust_level, added_at }
+seat_policy_config        { _id: seat_id, policies: { conservative: {enabled, autonomy_mode, max_notional_usd, size_multiplier, daily_risk_budget_usd, max_position_count, max_concentration_pct, confidence_min, max_auditor_objections, required_governor_stance, market_quality_min} } }
+governor_modifier_rules   { _id, trigger_type, trigger_threshold, size_multiplier, vote_required, increase_scrutiny, flag_anomaly, reason_template }
+seat_performance          { _id, seat_id, window_start, total_trades, winning_trades, win_rate, daily_pnl_usd, daily_risk_used_usd }
+seat_promotion_log        { _id, seat_id, from_mode, to_mode, reason, ts }
+roadguard_stops           { _id, seat_id, is_active, reason, created_at, cleared_at }
+```
+
+### Paradox v2 `/evaluate` pipeline (pseudocode pinned for implementation)
+```
+POST /api/v2/evaluate  { opinion: BrainOpinion, seat_id }
+  1. SEAT POLICY        → look up seat_trusted_brains, confidence/notional/risk_budget checks
+  2. GOVERNOR MODIFIER  → query governor_modifier_rules, apply size_multiplier + vote_required flag
+  3. ROADGUARD          → query roadguard_stops, binary BLOCKED|OPEN
+  4. EXECUTE            → broker submit if all clear
+  5. VERIFIER           → after fill, write to seat_performance, evaluate promotion eligibility
+```
+
+### Sequence (operator-confirmed plan)
+1. **Today (operator action)**: Click ENABLE in AutoSubmitPolicyPanel with a typed audit reason. Watch `/admin/intents` `Why Are We Not Trading?` tile — confirm `never_submitted` drops from 100% to <20% inside the 24h window. This validates the seat-policy concept against the existing intent pipeline.
+2. **Next session**: Build Paradox v2 Mongo collections + `/api/v2/evaluate` endpoint. Migrate existing tier-1 conservative policy into `seat_policy_config`.
+3. **Session after**: Wire verifier (P&L tracking → autonomy promotion), structured governor modifiers, RoadGuard binary stops.
+
+### Files touched this session
+- NEW `/app/frontend/src/components/AutoSubmitPolicyPanel.jsx` — toggle UI
+- NEW `/app/frontend/src/components/useAutoSubmitPolicy.js` — data hook (lint workaround)
+- MOD `/app/frontend/src/pages/Intents.jsx` — mounted the panel
+- MOD `/app/backend/shared/positions.py::_maybe_auto_advance` — lane-aware advance guard (kept; pure seat-policy)
+- MOD `/app/backend/shared/roster.py` — added explicit Paradox-v2 vacant-by-default doctrine comment to `DEFAULT_ASSIGNMENTS` (no behavioural change after revert)
+
+### Test status
+- 5 previously-failing tests now pass (test_roster, test_discussion_layer, test_seat_policy_and_auto, test_positions, test_intent_limbo_cleanup).
+- AutoSubmitPolicyPanel verified by curl + screenshot. No backend regressions.
+
+### Outstanding / next-session
+- **P0** Build Paradox v2 Mongo collections + `/api/v2/evaluate` (spec pinned above).
+- **P1** Phase 2 governance: auditor veto → 5-min vote pool (strategist, auditor, governor).
+- **P1** Phase 3 instrument onboarding: `spot_short` and `options` in pilot mode.
+- **P1** Hypothesis ticker skew in `runner.py` (50 of 57 tickers ignored).
+- **P2** UI display-name cleanup (camaro vs BARRACUDA).
+- **P2** US market holiday calendar in `shadow_close_cron.py`.
+- **P2** `server.py` split (160+ imports).
+
+---
+
+
 ## 2026-02-19 (final+6) — SILENT-badge prod bug FIXED
 
 ### Operator directive
