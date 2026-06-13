@@ -782,3 +782,18 @@ def next_authority(current: str) -> str | None:
     if idx + 1 >= len(AUTHORITY_LADDER):
         return None
     return AUTHORITY_LADDER[idx + 1]
+
+
+# ─── Paradox v2 — seat-owned execution doctrine (2026-02-19) ──────────
+# The five-layer architecture: Brain owns doctrine. Seat owns execution.
+# Governor owns modifiers. RoadGuard owns binary stops. Verifier owns
+# promotion. Every collection here is owned by a single layer; no layer
+# crosses the IP boundary. See /app/memory/PRD.md for the full spec.
+PARADOX_V2_BRAIN_REGISTRY     = "paradox_v2_brain_registry"
+PARADOX_V2_SEAT_TRUSTED       = "paradox_v2_seat_trusted_brains"
+PARADOX_V2_SEAT_POLICY        = "paradox_v2_seat_policy_config"
+PARADOX_V2_GOVERNOR_RULES     = "paradox_v2_governor_modifier_rules"
+PARADOX_V2_SEAT_PERFORMANCE   = "paradox_v2_seat_performance"
+PARADOX_V2_PROMOTION_LOG      = "paradox_v2_seat_promotion_log"
+PARADOX_V2_ROADGUARD_STOPS    = "paradox_v2_roadguard_stops"
+PARADOX_V2_EVALUATIONS        = "paradox_v2_evaluations"   # one row per /api/v2/evaluate call (audit + replay)

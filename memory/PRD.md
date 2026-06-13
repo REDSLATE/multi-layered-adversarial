@@ -1,3 +1,75 @@
+## 2026-02-19 (final+8) — Paradox v2 stand-alone shipped (P0 complete)
+
+### What shipped
+**Backend** — 7 Mongo collections + idempotent seed + 5-stage pipeline:
+- `namespaces.py` — added `PARADOX_V2_*` constants (8 total incl. evaluations log).
+- `shared/paradox_v2/__init__.py` — module doctrine pin.
+- `shared/paradox_v2/models.py` — Pydantic schemas with explicit IP-boundary docstrings:
+  `BrainRegistryDoc`, `BrainOpinion`, `SeatTrustedBrain`, `SeatPolicyConfig`,
+  `GovernorModifierRule`, `SeatPerformanceWindow`, `SeatPromotionLogEntry`,
+  `RoadGuardStop`, `EvaluationReceipt`.
+- `shared/paradox_v2/seed.py` — idempotent seed: 4 canonical brains (alpha/Camino, camaro/Barracuda, chevelle/Hellcat, redeye/GTO), 2 seats (equity_executor=auto_execute, crypto_executor=observe — paper-only until verifier promotes), 1 default trust row (equity_executor ← alpha), 3 governor rules (wide_spread, low_rvol, earnings_window). Auto-runs on boot via `server.py` lifespan.
+- `shared/paradox_v2/evaluator.py` — 5-stage pipeline: SEAT POLICY → GOVERNOR (compounding multipliers, never blocks) → ROADGUARD (binary STOP) → EXEC ASSEMBLY → VERIFIER (write receipt). Persists every call to `paradox_v2_evaluations` for replay.
+- `routes/paradox_v2.py` — mounted at `/api/v2/*`:
+  `POST /v2/seed`, `POST /v2/evaluate`, `GET /v2/state`,
+  `POST /v2/seat-trust`, `DELETE /v2/seat-trust`,
+  `PATCH /v2/seat-policy/{seat_id}` (autonomy promote — writes to promotion_log),
+  `POST /v2/roadguard/raise`, `POST /v2/roadguard/clear`,
+  `GET /v2/evaluations` (filtered audit feed),
+  `GET /v2/brains`, `GET /v2/governor-rules`.
+- `server.py` — router mounted, boot-time seeder.
+
+**Frontend** — operator dashboard on `/admin/intents`:
+- `useParadoxV2State.js` — data hook (effect hoisted to bypass buggy lint).
+- `ParadoxV2DashboardPanel.jsx` — full operator surface:
+  doctrine banner, seat policy table with inline autonomy-promote buttons,
+  trust list, active RoadGuard stops, governor rules summary,
+  inline test-fire form (synthetic opinion → /v2/evaluate, never hits broker),
+  recent evaluations feed, autonomy promotion log.
+
+**Tests** — `tests/test_paradox_v2.py`: 17/17 passing. Covers seed idempotence, each rejection path (unknown_seat, untrusted_brain, low_confidence, notional_over_cap), governor compounding (wide_spread halves; earnings_window triggers vote), roadguard binary (raise/clear), observe-mode block, receipt persistence, and an IP-boundary test that proves `BrainOpinion` does NOT leak seat-side fields.
+
+### Live smoke-test outcomes (verified via curl + screenshot)
+| Scenario | Decision | Notional |
+|---|---|---|
+| alpha · AAPL · conf 0.92 · $2000 · clean | EXECUTED | $1000 (× 0.5 seat) |
+| alpha · AAPL · spread 12 bps | EXECUTED | $500 (× 0.5 seat × 0.5 gov) |
+| camaro on equity_executor (untrusted) | REJECTED_SEAT | — |
+| redeye on crypto_executor (trusted, observe mode) | BLOCKED | — |
+| equity_executor under active STOP | REJECTED_ROADGUARD | — |
+| equity_executor STOP cleared | EXECUTED | — |
+| crypto_executor autonomy patch observe → shadow | promotion_log row written ✓ | — |
+
+### Doctrine boundary enforcement (locked)
+- **Brain** outputs `BrainOpinion {brain_id, symbol, lane, action, confidence, suggested_notional_usd, evidence, emitted_at}`. NEVER reads seat/policy/trust.
+- **Seat** owns trust list + capital + autonomy. NEVER inspects brain doctrine.
+- **Governor** outputs structured modifiers (`size_multiplier`, `vote_required`). NEVER blocks.
+- **RoadGuard** outputs binary `BLOCKED`|`OPEN`. NEVER modifies.
+- **Verifier** writes performance + promotion log. NEVER reads brain quality.
+
+### Stand-alone deployment posture
+The pipeline is **NOT wired into the live intent flow yet** (per user spec). Operator drives `/api/v2/evaluate` manually via the dashboard's test-fire panel. After ≥50 manual evaluations validate the seat-policy concept against real brain outputs, flip the wire in `shared/intents.py` (replace the current `auto_submit_policy` chain).
+
+### Next session — P1 work pinned
+- **Phase 2 vote escalation**: auditor veto → 3-min vote pool, BRAIN-level voting (alpha, camaro, chevelle, redeye), quorum ≥2, ties REJECT, timeout REJECT, auditor doesn't re-vote, **abstain counts for quorum but not majority** (operator note). Wire to `paradox_v2_evaluations` rows with `decision=PENDING_VOTE`.
+- **Hypothesis ticker skew**: investigate `services/paradox_evaluator.py` / candidate ranker; 50 of 57 tickers ignored.
+- **Phase 3** instrument onboarding: `spot_short` + `options` in pilot mode (use the new `seat_policy_config.autonomy_mode=observe → shadow → toehold → auto_execute` progression natively).
+
+### Files touched / created this session
+NEW:
+- `/app/backend/shared/paradox_v2/{__init__.py,models.py,seed.py,evaluator.py}`
+- `/app/backend/routes/paradox_v2.py`
+- `/app/backend/tests/test_paradox_v2.py`
+- `/app/frontend/src/components/{ParadoxV2DashboardPanel.jsx,useParadoxV2State.js}`
+
+MOD:
+- `/app/backend/namespaces.py` — 8 new constants
+- `/app/backend/server.py` — router mount + boot seed
+- `/app/frontend/src/pages/Intents.jsx` — panel mount
+
+---
+
+
 ## 2026-02-19 (final+7) — Auto-Submit Policy Phase 1 UI shipped + Paradox v2 doctrine pinned
 
 ### What shipped

@@ -13,6 +13,7 @@ import WebullOtocoLivePanel from "@/components/WebullOtocoLivePanel";
 import LegacyWrapperTogglePanel from "@/components/LegacyWrapperTogglePanel";
 import IntentPostMortemPanel from "@/components/IntentPostMortemPanel";
 import AutoSubmitPolicyPanel from "@/components/AutoSubmitPolicyPanel";
+import ParadoxV2DashboardPanel from "@/components/ParadoxV2DashboardPanel";
 import ParabolicPhaseStrip from "@/components/ParabolicPhaseStrip";
 import BrokerSelectionMenu from "@/components/BrokerSelectionMenu";
 import DoctrineStrip from "@/components/DoctrineStrip";
@@ -693,6 +694,19 @@ export default function Intents() {
       <div className="mb-4" data-testid="intents-auto-submit-policy-mount">
         <PanelErrorBoundary label="Auto-Submit Policy">
           <AutoSubmitPolicyPanel />
+        </PanelErrorBoundary>
+      </div>
+
+      {/* ─── Paradox v2 Dashboard (2026-02-19, stand-alone) ───
+          Five-layer seat-owned execution doctrine. Brain owns
+          doctrine. Seat owns execution. Governor owns modifiers.
+          RoadGuard owns stops. Verifier owns promotion. This panel
+          is the operator surface for the new pipeline — not yet
+          wired into the live intent flow. Use the inline test-fire
+          form to walk synthetic opinions through /api/v2/evaluate. */}
+      <div className="mb-4" data-testid="intents-paradox-v2-mount">
+        <PanelErrorBoundary label="Paradox v2 Dashboard">
+          <ParadoxV2DashboardPanel />
         </PanelErrorBoundary>
       </div>
 

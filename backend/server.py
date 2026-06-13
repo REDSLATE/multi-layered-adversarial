@@ -166,6 +166,7 @@ from routes.outcome_join_admin import router as outcome_join_admin_router
 from routes.shadow_outcome_admin import router as shadow_outcome_admin_router
 from routes.scorecard_by_brain import router as scorecard_by_brain_router
 from routes.safety_gates_audit import router as safety_gates_audit_router
+from routes.paradox_v2 import router as paradox_v2_router
 
 
 
@@ -228,6 +229,16 @@ async def lifespan(app: FastAPI):
     await ensure_indexes()
     await seed_admin(db)
     await seed_all(db)
+    # Paradox v2 — idempotent seed of brains, seat policies, governor
+    # rules, and the alpha→equity_executor trust default. Stand-alone
+    # deployment: not wired into the live intent flow yet (operator
+    # exercises it via /api/v2/evaluate).
+    try:
+        from shared.paradox_v2.seed import seed_paradox_v2
+        v2_seed = await seed_paradox_v2()
+        logger.info("Paradox v2 seed: %s", v2_seed.get("seeded"))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Paradox v2 seed failed (non-fatal): %s", e)
     flags = get_flags_snapshot()
     logger.info("RISEDUAL boot: deploy_mode=%s flags=%s", flags["deploy_mode"], flags["enforce_flags"])
     # Start the Kraken auto-poller if credentials exist. Safe no-op when
@@ -719,6 +730,7 @@ api_router.include_router(execution_router)
 api_router.include_router(admin_wrappers_router)
 api_router.include_router(admin_intents_post_mortem_router)
 api_router.include_router(admin_auto_submit_router)
+api_router.include_router(paradox_v2_router)
 api_router.include_router(live_positions_router)
 api_router.include_router(brain_lane_policy_router)
 api_router.include_router(redeye_bridge_router)
