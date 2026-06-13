@@ -74,6 +74,14 @@ BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("alpha", "camaro", "chevel
 # auditor + every crypto seat start vacant so the operator slots them
 # explicitly. A brain MAY hold one equity seat AND one crypto seat
 # simultaneously — eligibility (below) only restricts Governor seats.
+# Default seat → brain assignment. Operator-pinned defaults for the
+# equity lane (strategist=camaro, executor=alpha, governor=chevelle).
+# All other seats start vacant. CRYPTO LANE INTENTIONALLY VACANT:
+# per Paradox v2 doctrine, restrictions belong to the SEAT (capital,
+# trust list, autonomy state) not to the BRAIN. The seat decides who
+# it trusts; defaulting a brain into a seat re-introduces the exact
+# coupling we're removing. Operator (or the seat's verifier-driven
+# promotion path) is the only way a brain enters the crypto seat.
 DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
     "strategist":        "camaro",
     "executor":          "alpha",
@@ -190,6 +198,13 @@ async def get_roster() -> dict:
             for r in missing:
                 assignments[r] = None
             dirty = True
+        # ── Paradox v2 doctrine note (2026-02-19) ──
+        # The crypto seat intentionally remains vacant by default.
+        # Restrictions and trust lists belong to the SEAT, not the
+        # brain — we never auto-seat a brain just to "unblock" the
+        # lane. Lane unblocking is the seat's own responsibility via
+        # its trust list + autonomy state (observe → shadow →
+        # toehold → auto_execute). Any previous backfill was reverted.
         if dirty:
             doc["assignments"] = assignments
             await db[BRAIN_ROSTER].update_one(

@@ -338,13 +338,16 @@ class TestEligibility:
 
     def test_redeye_not_seated_by_default(self):
         """REDEYE is NOT seated by default — it lives across positions
-        via stances. Opponent seat starts vacant; operator decides who
-        sits there (if anyone)."""
+        via stances. Crypto seat starts vacant; the operator (or the
+        seat's verifier-driven autonomy progression) is the only path
+        for a brain to enter the crypto seat. Restrictions belong to
+        the seat, not the brain (Paradox v2 doctrine)."""
         tok = _login()
         _reset(tok)
         r = requests.get(f"{BASE_URL}/api/admin/roster", headers=_hdr(tok), timeout=10)
         a = r.json()["assignments"]
         assert a.get("auditor") is None
+        assert a.get("crypto") is None
         assert "redeye" not in {v for v in a.values() if v}
 
 

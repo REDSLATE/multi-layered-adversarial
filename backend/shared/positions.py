@@ -607,6 +607,19 @@ async def _maybe_auto_advance(
         return
     if not policy["may_execute"]:
         return
+    # 2026-02-19 doctrine refresh: the executor seat now ships in TWO
+    # flavours (equity executor=alpha, crypto executor=redeye). Each
+    # has a lane-scoped authority. A crypto-seated brain must NOT
+    # auto-advance an equity position and vice versa.
+    seat = policy.get("posted_as")
+    if seat:
+        from shared.seat_policy import seat_may_execute_lane
+        from shared.regime_keys import _looks_like_crypto
+        position_lane = (
+            "crypto" if _looks_like_crypto(doc.get("symbol") or "") else "equity"
+        )
+        if not seat_may_execute_lane(seat, position_lane):
+            return
     if stance not in (STANCE_LONG, STANCE_SHORT):
         return
 

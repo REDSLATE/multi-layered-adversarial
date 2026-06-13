@@ -91,10 +91,13 @@ async def _fire_and_forget_dry_run(intent_id: str, actor: str) -> None:
     if not _auto_dry_run_enabled():
         return
     try:
-        from shared.execution import run_dry_run_for_intent  # noqa: WPS433
-        # Schedule on the running event loop; do NOT await — we want
-        # the ingest response to be unblocked.
-        _asyncio.create_task(_run_safely(run_dry_run_for_intent(intent_id, 10.0, actor=actor)))
+        # Chain dry-run → auto-submit (Phase 1 throughput unlock).
+        # `_run_dry_run_then_auto_submit` runs the existing dry-run
+        # and then calls the auto-submit policy. Policy is OFF by
+        # default — operator opts in via the admin endpoint.
+        _asyncio.create_task(_run_safely(
+            _run_dry_run_then_auto_submit(intent_id, actor=actor)
+        ))
     except Exception as e:  # noqa: BLE001
         logger.warning("auto_dry_run schedule failed for %s: %s", intent_id, e)
 
@@ -107,6 +110,30 @@ async def _run_safely(coro) -> None:
         await coro
     except Exception as e:  # noqa: BLE001
         logger.warning("auto_dry_run background task failed: %s", e)
+
+
+async def _run_dry_run_then_auto_submit(intent_id: str, actor: str) -> None:
+    """Chain auto-submit (Phase 1) onto the dry-run finalizer.
+
+    Doctrine: the brain emits → dry-run completes ~50ms later → if
+    tier-1 policy matches we call the SAME `execution_submit` path
+    the operator's SUBMIT button uses. Every gate still runs. The
+    receipt's `executed_by` field marks the intent as machine-
+    advanced (`auto_submit_tier_1@risedual.io`) so the audit feed
+    shows operator-click vs. policy-advanced trades distinctly.
+
+    Failure here is silently swallowed — auto-submit is a throughput
+    optimization, not a correctness gate. If it fails, the intent
+    sits at dry_run_passed and the operator can click SUBMIT
+    manually. The post-mortem panel will surface the failure pattern.
+    """
+    from shared.execution import run_dry_run_for_intent  # noqa: WPS433
+    from shared.auto_submit_policy import maybe_auto_submit  # noqa: WPS433
+    await run_dry_run_for_intent(intent_id, 10.0, actor=actor)
+    try:
+        await maybe_auto_submit(intent_id)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("auto_submit chain failed for %s: %s", intent_id, e)
 
 
 

@@ -12,6 +12,7 @@ import WebullOtocoTestPanel from "@/components/WebullOtocoTestPanel";
 import WebullOtocoLivePanel from "@/components/WebullOtocoLivePanel";
 import LegacyWrapperTogglePanel from "@/components/LegacyWrapperTogglePanel";
 import IntentPostMortemPanel from "@/components/IntentPostMortemPanel";
+import AutoSubmitPolicyPanel from "@/components/AutoSubmitPolicyPanel";
 import ParabolicPhaseStrip from "@/components/ParabolicPhaseStrip";
 import BrokerSelectionMenu from "@/components/BrokerSelectionMenu";
 import DoctrineStrip from "@/components/DoctrineStrip";
@@ -679,6 +680,19 @@ export default function Intents() {
       <div className="mb-4" data-testid="intents-post-mortem-mount">
         <PanelErrorBoundary label="Intent Post-Mortem">
           <IntentPostMortemPanel />
+        </PanelErrorBoundary>
+      </div>
+
+      {/* ─── Auto-Submit Policy Toggle (2026-02-19, Phase 1 throughput unlock) ───
+          The Post-Mortem above told us 100% of intents drop because
+          no human is clicking SUBMIT. This panel is the unlock —
+          a single toggle that lets the system auto-perform the
+          SUBMIT click on Tier 1 (conservative equity longs) while
+          every gate, every audit row, every receipt continues to
+          fire as before. */}
+      <div className="mb-4" data-testid="intents-auto-submit-policy-mount">
+        <PanelErrorBoundary label="Auto-Submit Policy">
+          <AutoSubmitPolicyPanel />
         </PanelErrorBoundary>
       </div>
 
