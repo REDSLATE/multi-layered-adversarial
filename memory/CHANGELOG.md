@@ -1,3 +1,53 @@
+## 2026-02-19 (root-cause analysis) — "Why are we not trading?" smoking gun
+
+### Operator pain point
+Two weeks of patches without trades. Operator asked for the actual root cause, not more A/B toggles.
+
+### What shipped
+1. **`backend/routes/admin_intents_post_mortem.py`** — new `GET /api/admin/intents/post-mortem?hours=N` endpoint that joins `shared_intents` × `shared_gate_results` and classifies every recent intent into one of 7 buckets:
+   - `executed` — order placed at the broker
+   - `gate_chain_blocked` — `_evaluate_gates` rejected with the first failing gate name surfaced
+   - `broker_router_blocked` — `BrokerRouteBlocked` (Webull cap, MC receipt rejected, lane disabled, broker frozen)
+   - `submit_timeout` / `submit_error` — broker layer failures
+   - `dry_run_blocked` — emit-time dry-run already refused
+   - `never_submitted` — emitted, dry-run passed, but the operator never clicked SUBMIT
+
+   Also computes the biggest funnel drop (emit → dry-run → submit → execute) so the dominant failure mode is impossible to miss.
+
+2. **`frontend/src/components/IntentPostMortemPanel.jsx`** — single-tile UI that surfaces the diagnostic at the top of `/admin/intents`. Time-window selector (1h / 6h / 24h / 72h). Big headline shows total intents, executed count, execution rate (colored red if < 1%, amber if < 5%, green otherwise). The funnel-drop narrative is shown as an amber bar so the operator sees it before the table. Per-lane + per-brain breakdowns in a collapsible details block.
+
+### THE FINDING (24h window, preview env)
+```
+total_intents:   4604
+executed:        0  (0.0%)
+never_submitted: 4604 (100%)
+biggest_funnel_drop: "100% of intents drop between dry run passed (4604) 
+                      and submitted (0)"
+```
+
+**The brains are doing their job — 4604 intents in 24h, dry-run passes them all. The blocker is the MANUAL SUBMIT REQUIREMENT.** The system was built requiring human approval on every single intent. At ~3 intents/minute the operator cannot keep up.
+
+The wrappers, gates, broker connections, and circuit breaker are all working correctly. The architectural choice ("operator clicks submit on every intent") is what's preventing trades, not any bug.
+
+### Secondary finding
+The dashboard also shows `SEAT REGISTRY DRIFT DETECTED — lane CRYPTO — no executor assigned`. Even if the operator wanted to manually approve a crypto trade, the crypto-lane executor seat is empty, so crypto intents would block at `executor_seat_check` regardless.
+
+### Tests
+- Endpoint validated via live curl on preview: returns expected shape, 4604 intents → 100% never_submitted
+- Lints clean
+- Smoke screenshot confirms the panel renders correctly with live data and the funnel-drop narrative
+
+### Recommended next step (operator decision)
+The fix is NOT another gate or another override. The fix is a policy decision: either
+   a. **Auto-submit qualifying intents** (e.g., confidence ≥ 0.8 AND notional ≤ $5 AND dry-run passed AND no override needed) — requires a new "auto-execute policy" toggle in /admin
+   b. **Filter what reaches the operator** — show only the top 10 intents/hour by conviction × edge, hide the rest from the SUBMIT queue
+   c. **Aggressive operator override** — operator pre-approves a brain (e.g., GTO equity intents) to auto-submit when they meet a checklist
+
+Operator needs to pick (a)/(b)/(c) before any more code changes — otherwise we're patching around the wrong problem.
+
+---
+
+
 ## 2026-02-19 (code review) — Real bug fixes (skipping linter noise)
 
 ### Scope

@@ -11,6 +11,7 @@ import WebullEntitlementsCard from "@/components/WebullEntitlementsCard";
 import WebullOtocoTestPanel from "@/components/WebullOtocoTestPanel";
 import WebullOtocoLivePanel from "@/components/WebullOtocoLivePanel";
 import LegacyWrapperTogglePanel from "@/components/LegacyWrapperTogglePanel";
+import IntentPostMortemPanel from "@/components/IntentPostMortemPanel";
 import ParabolicPhaseStrip from "@/components/ParabolicPhaseStrip";
 import BrokerSelectionMenu from "@/components/BrokerSelectionMenu";
 import DoctrineStrip from "@/components/DoctrineStrip";
@@ -668,6 +669,18 @@ export default function Intents() {
           blocks piling up under a stale legacy holder. Read-only;
           polls /admin/seat-registry/diagnose every 30s. */}
       <SeatRegistryDriftBanner />
+
+      {/* ─── Why are we not trading? (2026-02-19, prod-incident smoking gun) ───
+          Single tile that answers the operator's persistent question:
+          which gate/layer is killing intents and how often. Surfaces
+          the dominant failure mode + top blockers ranked by frequency
+          so we stop guessing. Always visible at the top — this is
+          the single most important panel for diagnosing prod. */}
+      <div className="mb-4" data-testid="intents-post-mortem-mount">
+        <PanelErrorBoundary label="Intent Post-Mortem">
+          <IntentPostMortemPanel />
+        </PanelErrorBoundary>
+      </div>
 
       {/* ─── Seat Roster strip (2026-05-27, pass #15) ───
           All four seats per lane in one view + freshness of each
