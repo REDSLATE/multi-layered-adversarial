@@ -68,6 +68,22 @@ class BrainOpinion(BaseModel):
 
 
 AutonomyMode = Literal["observe", "shadow", "toehold", "auto_execute"]
+# Autonomy progression doctrine (2026-02-19, no-paper world):
+#   observe       — seat decides but does NOT place an order. The
+#                   EvaluationReceipt with decision=BLOCKED is the only
+#                   artifact. Used to gather seat-decision telemetry
+#                   before risking a single dollar.
+#   shadow        — same no-order behaviour as observe. Distinct only
+#                   so the verifier can require BOTH a clean observe
+#                   window AND a clean shadow window with stricter
+#                   evidence-quality gates before promoting.
+#   toehold       — live execution at a heavily-reduced size cap
+#                   (operator sets via seat_policy.max_notional_usd
+#                   and size_multiplier — typically 5-10% of full).
+#   auto_execute  — live execution at full per-policy notional.
+# There are NO paper trades in this system. The decision-vs-execute
+# split lives entirely in the seat's autonomy_mode, not in a separate
+# paper broker.
 
 
 class SeatTrustedBrain(BaseModel):

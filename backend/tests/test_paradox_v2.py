@@ -238,7 +238,12 @@ async def test_roadguard_cleared_stop_does_not_block():
 
 
 async def test_observe_mode_blocks_even_when_all_gates_pass():
-    """Paradox v2: a seat in observe/shadow is paper-only by design."""
+    """Paradox v2: a seat in observe/shadow logs decisions but never places orders.
+
+    There are no paper trades in this system. observe/shadow mode means
+    the seat's verdict is recorded as an EvaluationReceipt with
+    decision=BLOCKED and no broker side-effect at all. Toehold and
+    auto_execute are the only modes that place live orders."""
     await _seed()
     from db import db
     from namespaces import PARADOX_V2_SEAT_POLICY, PARADOX_V2_SEAT_TRUSTED
@@ -253,6 +258,7 @@ async def test_observe_mode_blocks_even_when_all_gates_pass():
         r = await evaluate(_opinion(), seat_id="equity_executor")
         assert r["decision"] == "BLOCKED"
         assert "observe_mode" in r["reason"]
+        assert "no order placed" in r["reason"]
     finally:
         await db[PARADOX_V2_SEAT_POLICY].update_one(
             {"seat_id": "equity_executor"},

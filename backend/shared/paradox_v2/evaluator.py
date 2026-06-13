@@ -11,7 +11,7 @@ Decision codes:
     EXECUTED            — passed all gates; ready for broker submit
     REJECTED_SEAT       — seat refused (trust, confidence, capital, etc.)
     REJECTED_ROADGUARD  — RoadGuard binary STOP active
-    BLOCKED             — seat in observe/shadow mode (paper only)
+    BLOCKED             — seat in observe/shadow mode (decision-only, no order)
     PENDING_VOTE        — a governor rule flagged vote_required=true
 
 Stand-alone deployment: this pipeline does NOT submit orders. It returns
@@ -254,7 +254,7 @@ async def evaluate(opinion: dict[str, Any], seat_id: str) -> dict[str, Any]:
         reason = "governor_flagged_vote_required: " + "; ".join(gov_res["reasons"])
     elif seat_res["autonomy_mode"] in ("observe", "shadow"):
         decision = "BLOCKED"
-        reason = f"seat_in_{seat_res['autonomy_mode']}_mode: paper-only until promoted"
+        reason = f"seat_in_{seat_res['autonomy_mode']}_mode: decision logged, no order placed"
     else:
         decision = "EXECUTED"
         reason = "all_gates_pass"

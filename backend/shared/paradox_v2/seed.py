@@ -55,7 +55,7 @@ DEFAULT_SEAT_POLICIES = [
     },
     {
         "seat_id": "crypto_executor",
-        "autonomy_mode": "observe",     # paper-only until verifier promotes
+        "autonomy_mode": "observe",     # decision-only until verifier promotes (NO execution; no paper trades exist)
         "enabled": True,
         "max_notional_usd": 1_000.0,
         "size_multiplier": 0.25,
