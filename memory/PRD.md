@@ -1,4 +1,44 @@
-## 2026-02-19 (final+8) — Paradox v2 stand-alone shipped (P0 complete)
+## 2026-02-19 (final+9) — Paradox v2 doctrine sentence locked (no paper trades)
+
+### Locked doctrine sentence (PRD reference)
+> **Observe and shadow modes do not simulate trades; they only log seat decisions and verifier-readable receipts. Live orders begin only at toehold mode.**
+
+### The clean rule
+**Seat always decides. Autonomy mode decides whether that decision becomes an order.**
+
+### Canonical flow
+```
+Brain opinion
+  → Seat decision           (trust list, capital gates, confidence floor)
+  → Governor modifier       (compounding size multipliers, vote_required flag)
+  → RoadGuard check         (binary BLOCKED | OPEN)
+  → autonomy_mode gate      (observe/shadow → receipt-only; toehold/auto_execute → live)
+  → receipt or order
+```
+
+### Autonomy mode semantics (locked)
+| Mode | Behaviour | Verifier reads |
+|---|---|---|
+| `observe` | Seat decides → `BLOCKED` receipt logged. **No order placed.** | Decision-quality telemetry (would-have-been P&L is computable later from receipt + market data). |
+| `shadow` | Same as observe — distinct only so the verifier can require **both** a clean observe window AND a clean shadow window with stricter evidence gates before promoting. | Same as observe + stricter gate audit. |
+| `toehold` | **Live** order at heavily-reduced size cap (operator-set `max_notional_usd` + `size_multiplier`, typically 5-10% of full). | Real fills, real P&L. |
+| `auto_execute` | **Live** order at full per-policy notional. | Real fills at full size. |
+
+### Why this matters
+- No fake accounting. The system never claims it "would have made $X" via simulated fills. The only artifacts are: (a) a logged decision receipt, or (b) a real broker fill.
+- Prevents veto creep — there's no second-class "paper trade" pile that gets used to justify staying observe-forever.
+- Verifier reads receipts (observe/shadow) and real fills (toehold/auto_execute) with the same schema, so promotion rules can be uniform across modes.
+
+### Files touched
+MOD:
+- `/app/backend/shared/paradox_v2/models.py` — doctrine sentence embedded in AutonomyMode docstring.
+- `/app/backend/shared/paradox_v2/evaluator.py` — pipeline header carries the canonical flow.
+- `/app/backend/shared/paradox_v2/seed.py` — observe comment updated to reflect no-paper world.
+- `/app/backend/tests/test_paradox_v2.py` — assertion now pins "no order placed" in reason text.
+
+---
+
+
 
 ### What shipped
 **Backend** — 7 Mongo collections + idempotent seed + 5-stage pipeline:

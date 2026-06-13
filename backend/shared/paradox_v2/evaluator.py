@@ -1,17 +1,29 @@
 """Paradox v2 `/evaluate` pipeline — five-layer execution decision.
 
-Stages:
-    1. SEAT POLICY     → trust check, capital gates, autonomy mode
-    2. GOVERNOR        → structured size modifiers (never blocks)
-    3. ROADGUARD       → binary STOP check
-    4. EXEC DECISION   → assemble final notional + decision
-    5. VERIFIER (out)  → write receipt; verifier ingests later
+Doctrine (locked 2026-02-19):
+
+    Seat always decides. Autonomy mode decides whether that decision
+    becomes an order. Observe and shadow modes do not simulate trades;
+    they only log seat decisions and verifier-readable receipts. Live
+    orders begin only at toehold mode.
+
+Canonical flow:
+
+    Brain opinion
+      → Seat decision           (trust + capital + confidence gates)
+      → Governor modifier       (compounding size multipliers)
+      → RoadGuard check         (binary BLOCKED | OPEN)
+      → autonomy_mode gate      (observe/shadow → receipt; toehold/auto_execute → live)
+      → receipt or order
 
 Decision codes:
-    EXECUTED            — passed all gates; ready for broker submit
+    EXECUTED            — passed all gates, ready for broker submit
+                          (only emitted when autonomy_mode in
+                          {toehold, auto_execute})
     REJECTED_SEAT       — seat refused (trust, confidence, capital, etc.)
     REJECTED_ROADGUARD  — RoadGuard binary STOP active
-    BLOCKED             — seat in observe/shadow mode (decision-only, no order)
+    BLOCKED             — seat in observe/shadow mode (decision-only,
+                          no order, no simulated fill)
     PENDING_VOTE        — a governor rule flagged vote_required=true
 
 Stand-alone deployment: this pipeline does NOT submit orders. It returns
