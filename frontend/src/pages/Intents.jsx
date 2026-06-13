@@ -10,6 +10,7 @@ import MasterTradingSwitch from "@/components/MasterTradingSwitch";
 import WebullEntitlementsCard from "@/components/WebullEntitlementsCard";
 import WebullOtocoTestPanel from "@/components/WebullOtocoTestPanel";
 import WebullOtocoLivePanel from "@/components/WebullOtocoLivePanel";
+import LegacyWrapperTogglePanel from "@/components/LegacyWrapperTogglePanel";
 import ParabolicPhaseStrip from "@/components/ParabolicPhaseStrip";
 import BrokerSelectionMenu from "@/components/BrokerSelectionMenu";
 import DoctrineStrip from "@/components/DoctrineStrip";
@@ -732,6 +733,15 @@ export default function Intents() {
       <div className="mt-3">
         <PanelErrorBoundary panelName="Webull OTOCO Live" testid="panel-error-otoco-live">
           <WebullOtocoLivePanel />
+        </PanelErrorBoundary>
+      </div>
+
+      {/* Legacy wrapper A/B switch — per-brain toggle so the operator
+          can confirm whether the penalty-stacking wrappers are
+          compressing size_bias and causing 403/502 cascades. */}
+      <div className="mt-3">
+        <PanelErrorBoundary panelName="Legacy Wrapper Toggle" testid="panel-error-wrapper-toggle">
+          <LegacyWrapperTogglePanel />
         </PanelErrorBoundary>
       </div>
 

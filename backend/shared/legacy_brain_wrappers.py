@@ -836,11 +836,125 @@ BRAIN_WRAPPER_ASSIGNMENTS = {
 }
 
 
+# ── Operator-driven wrapper disable (2026-02-19) ────────────────────
+#
+# A/B diagnostic: when 403/502 rates spike on intent submit the
+# operator wants to test whether the legacy wrappers are doing it
+# (penalty-stacking dampener compresses size_bias toward zero;
+# downstream cap_per_order then rejects). This toggle lets the
+# operator switch off the wrapper for a SPECIFIC brain (one at a
+# time, "disable AUDITOR for REDEYE only") and observe whether
+# 403/502 frequency drops by ~25%.
+#
+# Sources of truth (highest precedence first):
+#   1. In-process override set via `set_wrapper_disabled(brain_id, ...)`
+#      from the admin endpoint — survives within the process; UI
+#      driven, no restart needed.
+#   2. `RISEDUAL_DISABLED_WRAPPERS` env var — comma-separated list
+#      of brain_ids (e.g. "gto,hellcat"). Applies at process start.
+#
+# When a wrapper is disabled, `apply_legacy_wrapper` returns the
+# intent unchanged but stamps `wrapper_disabled_by_operator: true`,
+# `wrapper_disabled_reason`, and the original wrapper name on the
+# intent so the audit feed shows WHICH intents skipped the wrapper.
+
+import os as _os
+import threading as _threading
+
+_WRAPPER_DISABLE_LOCK = _threading.Lock()
+_WRAPPER_DISABLED_OVERRIDES: dict[str, str] = {}
+
+
+def _env_disabled_brains() -> set[str]:
+    raw = _os.environ.get("RISEDUAL_DISABLED_WRAPPERS", "").strip()
+    if not raw:
+        return set()
+    return {b.strip().lower() for b in raw.split(",") if b.strip()}
+
+
+def is_wrapper_disabled(brain_id: str) -> tuple[bool, str]:
+    """Return (disabled, reason). Reason is empty when enabled."""
+    bid = (brain_id or "").lower().strip()
+    if not bid:
+        return False, ""
+    with _WRAPPER_DISABLE_LOCK:
+        if bid in _WRAPPER_DISABLED_OVERRIDES:
+            return True, _WRAPPER_DISABLED_OVERRIDES[bid]
+    if bid in _env_disabled_brains():
+        return True, "env:RISEDUAL_DISABLED_WRAPPERS"
+    return False, ""
+
+
+def set_wrapper_disabled(brain_id: str, disabled: bool, reason: str = "") -> None:
+    """Operator API — toggle a brain's legacy wrapper at runtime.
+
+    `reason` is a short string the operator types when disabling
+    (e.g. "A/B testing 403 cascade"). Stored alongside the disable
+    flag so a future operator can answer "why is REDEYE's wrapper
+    off?" from the audit panel.
+    """
+    bid = (brain_id or "").lower().strip()
+    if bid not in BRAIN_WRAPPER_ASSIGNMENTS:
+        raise ValueError(
+            f"unknown brain_id {brain_id!r}; expected one of "
+            f"{sorted(BRAIN_WRAPPER_ASSIGNMENTS)}"
+        )
+    with _WRAPPER_DISABLE_LOCK:
+        if disabled:
+            _WRAPPER_DISABLED_OVERRIDES[bid] = reason or "operator-toggled"
+        else:
+            _WRAPPER_DISABLED_OVERRIDES.pop(bid, None)
+
+
+def wrapper_status() -> dict:
+    """Snapshot for the admin UI / diagnostics. Returns each
+    brain → wrapper assignment alongside its enabled/disabled state
+    + reason."""
+    env_disabled = _env_disabled_brains()
+    with _WRAPPER_DISABLE_LOCK:
+        overrides = dict(_WRAPPER_DISABLED_OVERRIDES)
+    rows = []
+    for brain, wrapper in BRAIN_WRAPPER_ASSIGNMENTS.items():
+        if brain in overrides:
+            rows.append({
+                "brain_id": brain,
+                "wrapper": wrapper,
+                "disabled": True,
+                "source": "operator_override",
+                "reason": overrides[brain],
+            })
+        elif brain in env_disabled:
+            rows.append({
+                "brain_id": brain,
+                "wrapper": wrapper,
+                "disabled": True,
+                "source": "env",
+                "reason": "RISEDUAL_DISABLED_WRAPPERS",
+            })
+        else:
+            rows.append({
+                "brain_id": brain,
+                "wrapper": wrapper,
+                "disabled": False,
+                "source": None,
+                "reason": "",
+            })
+    return {
+        "wrappers": rows,
+        "env_disabled_brains": sorted(env_disabled),
+        "override_count": len(overrides),
+    }
+
+
 def apply_legacy_wrapper(intent: dict[str, Any]) -> dict[str, Any]:
     """
     Generic wrapper entry point.
 
     If the brain has no wrapper assignment, returns the intent unchanged.
+
+    If the brain's wrapper is operator-disabled (env var OR runtime
+    override), returns the intent unchanged with audit fields stamped
+    so the Intents feed shows which rows skipped the wrapper.
     """
 
     brain_id = str(intent.get("brain_id", "")).lower().strip()
@@ -848,6 +962,21 @@ def apply_legacy_wrapper(intent: dict[str, Any]) -> dict[str, Any]:
 
     if not wrapper_name:
         return intent
+
+    disabled, reason = is_wrapper_disabled(brain_id)
+    if disabled:
+        # Don't mutate the caller's dict — return a copy with the
+        # audit fields stamped.
+        return {
+            **intent,
+            "wrapper_disabled_by_operator": True,
+            "wrapper_disabled_source": (
+                "operator_override" if reason and not reason.startswith("env:")
+                else "env"
+            ),
+            "wrapper_disabled_reason": reason,
+            "wrapper_skipped": wrapper_name,
+        }
 
     wrapper = WRAPPER_REGISTRY[wrapper_name]
     return wrapper(intent)
