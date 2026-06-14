@@ -18,6 +18,7 @@ import RecentIngests from "@/pages/RecentIngests";
 import RuntimeDetail from "@/pages/RuntimeDetail";
 import BrainConsole from "@/pages/BrainConsole";
 import Intents from "@/pages/Intents";
+import ParadoxV2Page from "@/pages/ParadoxV2";
 import Hypothesis from "@/pages/Hypothesis";
 import McShelly from "@/pages/McShelly";
 import Redeye from "@/pages/Redeye";
@@ -134,6 +135,7 @@ function App() {
             <Route path="runtime/:runtime" element={<RuntimeDetail />} />
             <Route path="brain/:brain" element={<BrainConsole />} />
             <Route path="intents" element={<Intents />} />
+            <Route path="paradox" element={<ParadoxV2Page />} />
             <Route path="hypothesis" element={<Hypothesis />} />
             <Route path="mc-shelly" element={<McShelly />} />
             <Route path="redeye" element={<Redeye />} />

@@ -20,6 +20,7 @@ import {
   Crosshair,
   Sparkle,
   Brain,
+  Eye,
   SignOut,
   List as Hamburger,
   X as CloseIcon,
@@ -38,6 +39,7 @@ const SECTIONS = [
     items: [
       { to: "/admin/hypothesis", label: "Hypothesis", icon: Sparkle, testid: "nav-hypothesis" },
       { to: "/admin/intents", label: "Intents", icon: Lightning, testid: "nav-intents" },
+      { to: "/admin/paradox", label: "Paradox V2", icon: Eye, testid: "nav-paradox" },
       { to: "/admin/learning-ladder", label: "Live Routes", icon: TrendUp, testid: "nav-learning-ladder" },
       { to: "/admin/positions", label: "Positions", icon: Crosshair, testid: "nav-positions" },
     ],

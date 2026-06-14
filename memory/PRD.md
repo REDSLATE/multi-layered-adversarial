@@ -1,3 +1,22 @@
+## 2026-02-19 (final+15) — Paradox V2 surfaces moved to dedicated `/admin/paradox` page
+
+### What changed
+Operator complained that `/admin/intents` was cluttered. Moved both Paradox V2 surfaces (Council Chamber + Seat Dashboard) off the Intents page to a new dedicated page accessible via sidebar.
+
+### Files
+- NEW `frontend/src/pages/ParadoxV2.jsx` — minimal page wrapper with `PageHeader` + 2 panels under `PanelErrorBoundary`.
+- MOD `frontend/src/App.js` — registered `/admin/paradox → ParadoxV2Page`.
+- MOD `frontend/src/components/Layout.jsx` — added "Paradox V2" sidebar link (Eye icon) under the **Trading** group, directly below Intents.
+- MOD `frontend/src/pages/Intents.jsx` — removed CouncilChamberTile + ParadoxV2DashboardPanel imports and mounts (replaced with a breadcrumb comment pointing to the new page).
+
+### Verified
+- `/admin/paradox` renders both tiles with full live data (quorum 4/4 · 10m; live BUY/SELL/HOLD stances showing brain disagreement).
+- `/admin/intents` no longer has any paradox-v2 testids present.
+- Sidebar nav link `nav-paradox` clickable + active state correct.
+
+---
+
+
 ## 2026-02-19 (final+14) — Council Chamber tile + operator-driven promotion gate (25-eval floor)
 
 ### What shipped
