@@ -1,3 +1,47 @@
+## 2026-02-19 (final+14) — Council Chamber tile + operator-driven promotion gate (25-eval floor)
+
+### What shipped
+1. **Council Chamber tile** on `/admin/intents` — real-time 4-column live brain vote view (Camino / Barracuda / Hellcat / GTO). Polls `/api/v2/council/live` every 6s, pauses when tab hidden. Shows stance + symbol + regime + calibrated confidence + first line of reasoning + "Xs/Xm ago". Quorum indicator at top (`4/4 · 10m` = all four brains active in last 10 min). Distinguishes SILENT (warn badge, no card) from HOLD (gray stance text).
+2. **Promotion Readiness strip** inside `ParadoxV2DashboardPanel`. Polls `/api/v2/seats/pilot-readiness` every 15s. Two sections:
+   - **Promotable (green):** seats that crossed the 25-eval floor with zero RoadGuard rejections. Inline button "READY → promote to {next_mode}" opens a typed-reason prompt, calls the existing autonomy patch endpoint, then refreshes.
+   - **In progress (dim):** seats below threshold with a progress bar to 25/25. Stalled seats (RG hit in window) get a red bar and a ⚠ RG-stalled badge.
+
+### Doctrine pinned
+**No verifier auto-promotion** — operator is the only path. Threshold is `25` evals in the current autonomy-mode window. Window starts at the most recent `seat_promotion_log` entry to the seat's current mode (or seed time if never promoted). RoadGuard rejections veto promotion regardless of count. All four ladder steps (`observe → shadow → toehold → auto_execute`) use the same gate.
+
+Threshold env-tunable: `PARADOX_V2_PILOT_PROMOTION_MIN_EVALS=25` (default).
+
+### New endpoints (routes/paradox_v2.py)
+- `GET /api/v2/seats/pilot-readiness` — per-seat eval count, breakdown by decision, avg confidence, promotable flag, next mode in ladder.
+- `GET /api/v2/council/live` — one row per canonical brain with their latest BrainVote, plus a 10-min-window quorum count.
+
+### New files
+- `frontend/src/components/CouncilChamberTile.jsx` — 4-column tile + StanceBadge + BrainColumn sub-components.
+- `frontend/src/components/useCouncilLive.js` — visibility-aware 6s poller (lint-rule workaround pattern).
+- `backend/tests/test_paradox_v2_promotion_council.py` — 9 tests covering: readiness threshold flip at 25, RG-stalled veto, auto_execute has no next_mode, council chamber returns all 4 canonical brains in order, latest-vote-per-brain logic, quorum counting, silent-brain handling.
+
+### Modified files
+- `routes/paradox_v2.py` — appended 2 endpoints + `_next_mode()` ladder helper + `PILOT_PROMOTION_MIN_EVALS` constant + `_COUNCIL_DISPLAY_*` map.
+- `frontend/src/components/ParadoxV2DashboardPanel.jsx` — added `<PromotionReadinessStrip>` between seat table and trust list.
+- `frontend/src/pages/Intents.jsx` — mounted CouncilChamberTile above ParadoxV2DashboardPanel.
+
+### Live verification
+- `GET /api/v2/seats/pilot-readiness` returns 4 seats; live counts: equity_executor 98 evals (auto_execute, no next), spot_short 6/25, options 3/25, crypto 1/25 — all correctly `promotable=false`.
+- `GET /api/v2/council/live` shows `quorum: 4/4 · 10m`, latest votes per brain (alpha BUY NVDA c=0.58, camaro BUY NVDA c=0.59, chevelle HOLD AAPL c=0.59, redeye BUY NVDA c=0.55).
+- Frontend screenshot confirms tile renders cleanly with all 4 columns lit + readiness strip below the seat table.
+
+### Tests
+**73/74 paradox_v2 + supporting suites pass; 1 skipped** (silent-brain test intentionally skips on live DB with redeye votes).
+
+### Outstanding / next-session
+- **P1** Operator action: monitor pilot seats and click "READY → promote to shadow" once spot_short_executor / options_executor cross 25 clean observe evals.
+- **P1** Once a pilot seat reaches `toehold`, hook in real broker submission for short equities (Webull) and options.
+- **P2** (deferred) Verifier rule expansion, holiday calendar, display-name cleanup, server.py refactor.
+
+---
+
+
+
 ## 2026-02-19 (final+13) — Phase 3 instrument onboarding (spot_short + options pilot seats)
 
 ### What shipped

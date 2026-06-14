@@ -236,6 +236,9 @@ export default function ParadoxV2DashboardPanel() {
         </div>
       </div>
 
+      {/* Promotion Readiness — operator-driven promotion gate (25+ evals) */}
+      <PromotionReadinessStrip onPromote={patchAutonomy} busy={busy} />
+
       {/* Trust + active stops + governor rules: 3 columns */}
       <div className="grid grid-cols-3 gap-2 font-mono text-[10px]">
         <div className="border border-rd-border bg-rd-bg p-2" data-testid="paradox-v2-trust">
@@ -467,6 +470,167 @@ export default function ParadoxV2DashboardPanel() {
           ))}
         </div>
       </details>
+    </div>
+  );
+}
+
+// ─── Promotion Readiness Strip ──────────────────────────────────────
+//
+// Operator-driven promotion gate. Polls /v2/seats/pilot-readiness.
+// Surfaces per-seat decision-quality stats (eval count, BLOCKED vs
+// REJECTED breakdown, avg confidence) since the LAST promotion to
+// the seat's current autonomy_mode. When eval_count crosses the
+// threshold (default 25), the row turns green and the "promote to
+// {next_mode}" button activates. No verifier auto-promotion — the
+// operator is the only path. See routes/paradox_v2.py for the
+// threshold env override (PARADOX_V2_PILOT_PROMOTION_MIN_EVALS).
+
+function PromotionReadinessStrip({ onPromote, busy }) {
+  const [state, setState] = React.useState({ readiness: [], threshold: 25, loading: true, err: null });
+
+  const load = React.useCallback(async () => {
+    try {
+      const r = await api.get("/v2/seats/pilot-readiness");
+      setState({
+        readiness: r.data.readiness || [],
+        threshold: r.data.threshold || 25,
+        loading: false,
+        err: null,
+      });
+    } catch (e) {
+      setState((s) => ({ ...s, loading: false, err: e }));
+    }
+  }, []);
+
+  React.useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      if (!alive) return;
+      await load();
+      if (alive) setTimeout(tick, 15000);
+    };
+    tick();
+    return () => { alive = false; };
+  }, [load]);
+
+  if (state.loading && state.readiness.length === 0) {
+    return (
+      <div className="border border-rd-border bg-rd-bg p-2 font-mono text-[10px] text-rd-dim" data-testid="paradox-v2-readiness-loading">
+        loading promotion readiness …
+      </div>
+    );
+  }
+  if (state.err) {
+    return (
+      <div className="border border-rd-danger/50 bg-rd-danger/5 p-2 font-mono text-[10px] text-rd-danger" data-testid="paradox-v2-readiness-error">
+        promotion readiness failed: {String(state.err.message || state.err)}
+      </div>
+    );
+  }
+
+  const promotable = state.readiness.filter((r) => r.promotable && r.next_mode);
+  const inProgress = state.readiness.filter((r) => !r.promotable && r.next_mode);
+
+  const tryPromote = async (row) => {
+    if (!row.next_mode) return;
+    const reason = window.prompt(
+      `Promote ${row.seat_id} from ${row.current_mode} → ${row.next_mode}?\nType a short audit reason (≥ 4 chars):`,
+      `clean ${row.eval_count}-eval observe window`,
+    );
+    if (!reason || reason.trim().length < 4) return;
+    await onPromote(row.seat_id, row.next_mode);
+    await load();
+  };
+
+  return (
+    <div className="border border-rd-border bg-rd-bg p-2 font-mono text-[10px] space-y-1" data-testid="paradox-v2-promotion-readiness">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[9px] uppercase text-rd-dim tracking-wider">
+          Promotion Readiness · {state.threshold}-eval gate
+        </span>
+        <span className="text-[9px] text-rd-dim">operator-driven · no auto-promote</span>
+      </div>
+
+      {/* Promotable section (green, on top) */}
+      {promotable.length > 0 && (
+        <div className="space-y-1">
+          {promotable.map((r) => (
+            <div
+              key={r.seat_id}
+              className="flex items-center justify-between border border-rd-success/40 bg-rd-success/5 px-2 py-1"
+              data-testid={`readiness-row-${r.seat_id}`}
+            >
+              <div className="flex items-baseline gap-2">
+                <span className="text-rd-success font-bold">{r.seat_id}</span>
+                <span className="text-[9px] text-rd-dim uppercase">{r.instrument_type}</span>
+                <span className="text-rd-text">
+                  {r.eval_count}/{state.threshold} evals
+                </span>
+                <span className="text-rd-dim">
+                  · {r.blocked_count} BLOCKED · {r.rejected_seat_count} REJ_SEAT
+                  {r.rejected_roadguard_count > 0 && (
+                    <span className="text-rd-danger"> · {r.rejected_roadguard_count} REJ_RG</span>
+                  )}
+                </span>
+                {typeof r.avg_confidence === "number" && (
+                  <span className="text-rd-dim">· avg conf {r.avg_confidence}</span>
+                )}
+              </div>
+              <button
+                disabled={busy}
+                onClick={() => tryPromote(r)}
+                className="text-rd-success font-bold hover:underline"
+                data-testid={`promote-ready-${r.seat_id}`}
+              >
+                READY → promote to {r.next_mode}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* In-progress section (dim, below) */}
+      {inProgress.length > 0 && (
+        <div className="space-y-0.5 pt-1 border-t border-rd-border/40">
+          {inProgress.map((r) => {
+            const pct = Math.min(100, (r.eval_count / state.threshold) * 100);
+            const stalled = r.rejected_roadguard_count > 0;
+            return (
+              <div
+                key={r.seat_id}
+                className="flex items-center justify-between px-2 py-0.5"
+                data-testid={`readiness-row-${r.seat_id}`}
+              >
+                <div className="flex items-baseline gap-2 flex-1">
+                  <span className="text-rd-text">{r.seat_id}</span>
+                  <span className="text-[9px] text-rd-dim uppercase">{r.instrument_type}</span>
+                  <span className="text-rd-dim">
+                    {r.current_mode}{r.next_mode ? ` → ${r.next_mode}` : ""}
+                  </span>
+                  <span className="text-rd-dim">
+                    {r.eval_count}/{state.threshold} evals
+                  </span>
+                  {stalled && (
+                    <span className="text-rd-danger" title="RoadGuard fired in this window — clear the underlying issue before promotion">
+                      ⚠ RG-stalled
+                    </span>
+                  )}
+                </div>
+                <div className="w-24 h-1 bg-rd-border relative">
+                  <div
+                    className={stalled ? "h-full bg-rd-danger" : "h-full bg-rd-accent"}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {promotable.length === 0 && inProgress.length === 0 && (
+        <div className="text-rd-dim italic">no seats in a promotable mode (all at auto_execute or no policy rows)</div>
+      )}
     </div>
   );
 }

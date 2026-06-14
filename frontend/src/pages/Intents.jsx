@@ -14,6 +14,7 @@ import LegacyWrapperTogglePanel from "@/components/LegacyWrapperTogglePanel";
 import IntentPostMortemPanel from "@/components/IntentPostMortemPanel";
 import AutoSubmitPolicyPanel from "@/components/AutoSubmitPolicyPanel";
 import ParadoxV2DashboardPanel from "@/components/ParadoxV2DashboardPanel";
+import CouncilChamberTile from "@/components/CouncilChamberTile";
 import ParabolicPhaseStrip from "@/components/ParabolicPhaseStrip";
 import BrokerSelectionMenu from "@/components/BrokerSelectionMenu";
 import DoctrineStrip from "@/components/DoctrineStrip";
@@ -694,6 +695,17 @@ export default function Intents() {
       <div className="mb-4" data-testid="intents-auto-submit-policy-mount">
         <PanelErrorBoundary label="Auto-Submit Policy">
           <AutoSubmitPolicyPanel />
+        </PanelErrorBoundary>
+      </div>
+
+      {/* ─── Council Chamber (2026-02-19, P1 v2 surfacing) ───
+          Real-time view of the four canonical brains' latest BrainVote
+          (alpha/Camino, camaro/Barracuda, chevelle/Hellcat, redeye/GTO).
+          Polls /api/v2/council/live every 6 s. This is the operator's
+          at-a-glance "are the brains actually debating?" tile. */}
+      <div className="mb-4" data-testid="intents-council-chamber-mount">
+        <PanelErrorBoundary label="Council Chamber">
+          <CouncilChamberTile />
         </PanelErrorBoundary>
       </div>
 

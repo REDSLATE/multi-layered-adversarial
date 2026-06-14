@@ -785,3 +785,165 @@ async def post_cache_reset(_user: dict = Depends(get_current_user)) -> dict:
     from shared.paradox_v2.verifier_loop import invalidate_caches
     invalidate_caches()
     return {"ok": True, "ts": _dt.now(_tz.utc).isoformat()}
+
+
+# ─── /v2/seats/pilot-readiness ─────────────────────────────────────────
+#
+# Operator-driven promotion gating (no auto-promotion — per operator
+# directive 2026-02-19, the verifier does NOT promote pilot seats on
+# its own). This endpoint surfaces decision-quality stats per seat so
+# the operator can decide when to manually patch autonomy_mode.
+#
+# Readiness threshold: 25 observe-mode evaluations on the current
+# autonomy_mode. (Operator-set; tunable via env if the floor moves.)
+
+import os as _os
+PILOT_PROMOTION_MIN_EVALS = int(_os.environ.get("PARADOX_V2_PILOT_PROMOTION_MIN_EVALS", "25"))
+
+
+_PROMOTION_LADDER = ("observe", "shadow", "toehold", "auto_execute")
+
+
+def _next_mode(current: str) -> Optional[str]:
+    try:
+        i = _PROMOTION_LADDER.index(current)
+    except ValueError:
+        return None
+    if i + 1 >= len(_PROMOTION_LADDER):
+        return None
+    return _PROMOTION_LADDER[i + 1]
+
+
+@router.get("/seats/pilot-readiness")
+async def get_pilot_readiness(_user: dict = Depends(get_current_user)) -> dict:
+    """Per-seat decision-quality stats and a promotability flag.
+
+    Counts only evaluations in the seat's CURRENT autonomy_mode window
+    — promoting a seat resets the clock. The verifier promotion log
+    gives us the window-start timestamp.
+
+    Returns:
+      readiness: [
+        { seat_id, instrument_type, current_mode, next_mode,
+          window_started_at, eval_count, blocked_count,
+          rejected_seat_count, rejected_roadguard_count,
+          executed_count, pending_vote_count, avg_confidence,
+          promotable (bool), threshold (int) }
+      ]
+      threshold: 25
+    """
+    seats = await db[PARADOX_V2_SEAT_POLICY].find({}, {"_id": 0}).to_list(50)
+    out: list[dict] = []
+    for seat in seats:
+        seat_id = seat["seat_id"]
+        current_mode = seat.get("autonomy_mode", "observe")
+        # Window-start: last promotion log entry to this mode, else seat seed time.
+        last_promo = await db[PARADOX_V2_PROMOTION_LOG].find_one(
+            {"seat_id": seat_id, "to_mode": current_mode},
+            {"_id": 0}, sort=[("ts", -1)],
+        )
+        window_start = (last_promo or {}).get("ts") or seat.get("updated_at") or "1970-01-01T00:00:00+00:00"
+
+        cursor = db[PARADOX_V2_EVALUATIONS].find(
+            {"seat_id": seat_id, "ts": {"$gte": window_start}}, {"_id": 0},
+        )
+        evals = await cursor.to_list(10_000)
+
+        counts: dict[str, int] = {}
+        conf_sum, conf_n = 0.0, 0
+        for e in evals:
+            d = e.get("decision", "UNKNOWN")
+            counts[d] = counts.get(d, 0) + 1
+            c = (e.get("opinion") or {}).get("confidence")
+            if isinstance(c, (int, float)):
+                conf_sum += float(c)
+                conf_n += 1
+
+        total = len(evals)
+        nxt = _next_mode(current_mode)
+        promotable = (
+            current_mode in ("observe", "shadow", "toehold")
+            and total >= PILOT_PROMOTION_MIN_EVALS
+            and (counts.get("REJECTED_ROADGUARD", 0) == 0)
+        )
+
+        out.append({
+            "seat_id": seat_id,
+            "instrument_type": seat.get("instrument_type"),
+            "current_mode": current_mode,
+            "next_mode": nxt,
+            "window_started_at": window_start,
+            "eval_count": total,
+            "blocked_count": counts.get("BLOCKED", 0),
+            "rejected_seat_count": counts.get("REJECTED_SEAT", 0),
+            "rejected_roadguard_count": counts.get("REJECTED_ROADGUARD", 0),
+            "executed_count": counts.get("EXECUTED", 0),
+            "pending_vote_count": counts.get("PENDING_VOTE", 0),
+            "avg_confidence": round(conf_sum / conf_n, 3) if conf_n else None,
+            "promotable": promotable,
+            "threshold": PILOT_PROMOTION_MIN_EVALS,
+        })
+
+    out.sort(key=lambda r: (0 if r["promotable"] else 1, -r["eval_count"]))
+    return {"readiness": out, "threshold": PILOT_PROMOTION_MIN_EVALS, "ladder": list(_PROMOTION_LADDER)}
+
+
+# ─── /v2/council/live ──────────────────────────────────────────────────
+#
+# Council Chamber — the operator's real-time view of what each brain is
+# saying right now. One row per brain, latest BrainVote, projected with
+# enough context to read at a glance: who, what stance, on what symbol,
+# in what regime, how confident, when.
+
+# Display map for the Council Chamber tile. Source of truth: seed.py
+# CANONICAL_BRAINS. Hardcoded here to avoid a DB round-trip per render.
+_COUNCIL_DISPLAY_ORDER = ("alpha", "camaro", "chevelle", "redeye")
+_COUNCIL_DISPLAY_NAMES = {
+    "alpha":    "Camino",
+    "camaro":   "Barracuda",
+    "chevelle": "Hellcat",
+    "redeye":   "GTO",
+}
+
+
+@router.get("/council/live")
+async def get_council_live(_user: dict = Depends(get_current_user)) -> dict:
+    """Latest BrainVote per brain — drives the Council Chamber UI.
+
+    Returns one row per canonical brain (alpha, camaro, chevelle,
+    redeye). A brain with no recorded vote yet shows `latest=null` so
+    the operator can tell the difference between SILENT and HOLD.
+    """
+    from namespaces import PARADOX_V2_BRAIN_VOTES
+
+    chamber: list[dict] = []
+    for brain_id in _COUNCIL_DISPLAY_ORDER:
+        latest = await db[PARADOX_V2_BRAIN_VOTES].find_one(
+            {"brain": brain_id}, {"_id": 0}, sort=[("timestamp", -1)],
+        )
+        chamber.append({
+            "brain_id": brain_id,
+            "display_name": _COUNCIL_DISPLAY_NAMES[brain_id],
+            "latest": latest,  # full vote dict; null if brain has never spoken
+        })
+
+    # Quorum vitals — how many of the 4 brains have spoken in the
+    # last 10 minutes? Operator wants to know if the council is alive.
+    from datetime import timedelta as _td
+    cutoff = (_dt.now(_tz.utc) - _td(minutes=10)).isoformat()
+    alive_ids: set[str] = set()
+    async for row in db[PARADOX_V2_BRAIN_VOTES].find(
+        {"timestamp": {"$gte": cutoff}}, {"brain": 1, "_id": 0},
+    ):
+        if row.get("brain") in _COUNCIL_DISPLAY_NAMES:
+            alive_ids.add(row["brain"])
+
+    return {
+        "chamber": chamber,
+        "quorum": {
+            "alive_in_10min": sorted(alive_ids),
+            "alive_count": len(alive_ids),
+            "expected": 4,
+        },
+        "ts": _dt.now(_tz.utc).isoformat(),
+    }
