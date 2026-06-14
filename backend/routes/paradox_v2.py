@@ -433,6 +433,108 @@ async def _cast_vote_impl(body: "CastVoteRequest") -> dict:
             "calibrated_confidence": vote.calibrated_confidence}
 
 
+# ─── /v2/votes/emit — server-side calibration (Paradox v2 wire-up) ──
+
+
+class EmitVoteRequest(BaseModel):
+    """Brain ships RAW signals. MC calibrates server-side using its
+    persisted history and applies negative-knowledge before persisting."""
+    brain: Literal["alpha", "camaro", "chevelle", "redeye"]
+    stance: Literal["BUY", "SELL", "HOLD"]
+    raw_confidence: float = Field(..., ge=0.0, le=1.0)
+    symbol: str
+    lane: Literal["equity", "crypto"]
+    regime: str
+    reasoning: list[str] = Field(..., min_length=1)
+    setup_hash: Optional[str] = Field(
+        None,
+        description=(
+            "stable hash of the brain's setup for negative-knowledge lookup. "
+            "If omitted, MC composes '{symbol}:{regime}:{stance}'."
+        ),
+    )
+
+
+@router.post("/votes/emit")
+async def post_emit_vote(
+    body: EmitVoteRequest,
+    x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
+) -> dict:
+    """Server-side calibrate + check + persist in one round-trip.
+
+    Steps:
+      1. Authenticate the brain via X-Runtime-Token.
+      2. Hydrate (cached) per-brain BrainCalibration + NegativeKnowledge
+         from Mongo on first use.
+      3. Check negative-knowledge — if a matching pattern fires, the
+         emitted vote becomes ABSTAIN (raw confidence preserved for
+         the verifier's audit).
+      4. Otherwise calibrate raw → calibrated via Bayesian shrinkage.
+      5. Build the immutable BrainVote (invariants enforced) and
+         persist. Returns the calibrated vote + which path fired
+         (calibrated|abstained).
+
+    Trading impact: zero. No seat, no broker, no order.
+    """
+    if not x_runtime_token:
+        raise HTTPException(status_code=401, detail="X-Runtime-Token required")
+    from runtime_auth import verify_runtime_token
+    try:
+        verify_runtime_token(body.brain, x_runtime_token)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=401, detail=f"token verify failed: {e}")
+
+    # Lazy-hydrate per-brain stores (reuses the verifier-loop caches).
+    from shared.paradox_v2.verifier_loop import _get_calibrator, _get_negative_knowledge
+    cal = await _get_calibrator(body.brain)
+    nk = await _get_negative_knowledge(body.brain)
+
+    setup_hash = body.setup_hash or f"{body.symbol.upper()}:{body.regime}:{body.stance}"
+    abstained, nk_reason = nk.check(setup_hash, regime=body.regime)
+    path = "calibrated"
+    if abstained:
+        path = "abstained"
+        vote = BrainVote.abstain(
+            brain=body.brain,
+            reason=nk_reason or f"negative_pattern:{setup_hash}",
+            calibration_key=CalibrationKey(
+                regime=body.regime,
+                conf_bucket=round(body.raw_confidence, 1),
+            ),
+            raw_confidence=body.raw_confidence,
+        )
+    else:
+        calibrated, key = cal.calibrate(body.raw_confidence, regime=body.regime)
+        try:
+            vote = BrainVote(
+                brain=body.brain,
+                stance=body.stance,
+                calibrated_confidence=calibrated,
+                raw_confidence=body.raw_confidence,
+                calibration_key=key,
+                memory_evidence=None,
+                negative_knowledge_triggered=False,
+                reasoning=tuple(body.reasoning),
+                timestamp=_dt.now(_tz.utc),
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+
+    vote_id = await save_brain_vote(vote, symbol=body.symbol, regime=body.regime)
+    return {
+        "ok": True,
+        "vote_id": vote_id,
+        "path": path,
+        "stance": vote.stance,
+        "raw_confidence": vote.raw_confidence,
+        "calibrated_confidence": vote.calibrated_confidence,
+        "negative_knowledge_triggered": vote.negative_knowledge_triggered,
+        "setup_hash": setup_hash,
+    }
+
+
 @router.get("/votes")
 async def get_votes(
     limit: int = Query(50, ge=1, le=500),
@@ -671,3 +773,15 @@ async def post_verifier_run_once(
     failure attributions and updates calibration/negative-knowledge
     stores in Mongo. Trading impact: zero (read-only on receipts)."""
     return await _vl.run_one_pass(lookback_min=lookback_min)
+
+
+
+@router.post("/cache/reset")
+async def post_cache_reset(_user: dict = Depends(get_current_user)) -> dict:
+    """Bust the in-memory per-brain calibration + negative-knowledge
+    caches so the next /v2/votes/emit call re-hydrates from Mongo.
+    Use after a direct DB mutation (verifier output bypassing the
+    in-memory learn path)."""
+    from shared.paradox_v2.verifier_loop import invalidate_caches
+    invalidate_caches()
+    return {"ok": True, "ts": _dt.now(_tz.utc).isoformat()}

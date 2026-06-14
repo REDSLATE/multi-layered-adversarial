@@ -150,6 +150,16 @@ TICK_INTERVAL_SEC = float(os.environ.get("NEUTRAL_BRAIN_TICK_SEC", "45"))
 # starved. The brain still EVALUATES every symbol every tick (for
 # ranking) — it just won't POST a new intent for one it just hit.
 INTENT_COOLDOWN_TICKS = int(os.environ.get("NEUTRAL_BRAIN_COOLDOWN_TICKS", "6"))
+
+# ── Forced-exploration constants (2026-02-19 ticker-skew fix) ─────────
+# A symbol's effective rank score gets a `min(MAX, age/DENOM)` bonus
+# where `age` is the number of ticks since it was last picked. Symbols
+# in the long tail rotate in once their bonus exceeds the head's
+# signal-advantage. Tunable via env so the operator can dial the
+# trade-off between staying on the best setup and walking the universe.
+EXPLORATION_BONUS_MAX = float(os.environ.get("NEUTRAL_BRAIN_EXPLORATION_BONUS_MAX", "0.40"))
+EXPLORATION_BONUS_DENOM = float(os.environ.get("NEUTRAL_BRAIN_EXPLORATION_BONUS_DENOM", "50"))
+EXPLORATION_BONUS_MAX_AGE = int(EXPLORATION_BONUS_DENOM * (EXPLORATION_BONUS_MAX + 0.5))
 CHECKIN_INTERVAL_SEC = float(os.environ.get("NEUTRAL_BRAIN_CHECKIN_SEC", "30"))
 HTTP_TIMEOUT_SEC = float(os.environ.get("NEUTRAL_BRAIN_HTTP_TIMEOUT_SEC", "8"))
 PATTERN_BIAS = float(os.environ.get("NEUTRAL_BRAIN_PATTERN_BIAS", "0.20"))
@@ -1210,7 +1220,31 @@ class BrainRunner:
                     regime_inputs.append(regime_input)
             else:
                 rows.append((lane, symbol, float(score)))
-        rows.sort(key=lambda r: r[2], reverse=True)
+        # ── Forced-exploration bonus (2026-02-19) ────────────────────
+        # The pure signal-ranked picker correctly identifies the head
+        # of the distribution, but it starves the long tail: NVDA-like
+        # symbols win 50+ rounds in a row while 50 of 57 tickers go
+        # un-evaluated.
+        #
+        # Fix: add a UCB-style "staleness" bonus to every symbol's
+        # score. A symbol picked this tick has bonus 0. A symbol last
+        # picked N ticks ago gets bonus min(EXPLORATION_BONUS_MAX,
+        # N / EXPLORATION_BONUS_DENOM). At default settings
+        # (max=0.40, denom=50) a symbol untouched for 50 ticks gets a
+        # +0.40 boost — enough to push it ahead of a strong-but-tired
+        # head symbol whose signal is 0.5–0.8.
+        #
+        # The head still wins when it has a clean signal advantage,
+        # but the tail isn't permanently locked out.
+        bonus_now = self._tick_count
+        boosted: list[tuple[str, str, float]] = []
+        for lane, symbol, s in rows:
+            last = self._last_emit_tick.get((lane, symbol), bonus_now - EXPLORATION_BONUS_MAX_AGE)
+            age = max(0, bonus_now - last)
+            bonus = min(EXPLORATION_BONUS_MAX, age / EXPLORATION_BONUS_DENOM)
+            boosted.append((lane, symbol, s + bonus))
+        boosted.sort(key=lambda r: r[2], reverse=True)
+        rows = boosted
         # Compute regime once per tick using the universe scan's
         # trend/vol/price_change signals. Falls back to "calm" only
         # when the universe is fully empty (cold start).
@@ -1558,44 +1592,36 @@ class BrainRunner:
         guard rejection) is logged and ignored. The vote never gates
         the intent flow.
 
-        Calibration + negative-knowledge are computed SERVER-SIDE: MC
-        holds the per-brain history; this runner only ships raw
-        confidence + symbol + regime + setup hash. MC then:
-          * shrinks raw → calibrated via BrainCalibration,
-          * runs NegativeKnowledge.check() and flips to ABSTAIN if it
-            fires,
-          * builds the immutable BrainVote with all invariants enforced.
+        Calibration + negative-knowledge live SERVER-SIDE now. The
+        runner ships raw signals (raw_confidence, symbol, lane,
+        regime, stance, reasoning) to /api/v2/votes/emit and MC:
+          * checks per-brain NegativeKnowledge — if a pattern fires,
+            the persisted vote becomes ABSTAIN automatically,
+          * otherwise calibrates raw → calibrated via Bayesian
+            shrinkage against the brain's historical bucket,
+          * persists the immutable BrainVote (invariants enforced).
 
-        Because the existing /api/v2/votes/cast endpoint expects the
-        brain to ship the FINAL vote (the brain ran calibration), we
-        send raw_confidence ≈ calibrated_confidence here. A follow-up
-        ticket will move calibration into a /votes/emit endpoint that
-        accepts raw + regime and persists the calibrated vote.
+        Fire-and-forget remains strict: any failure is logged and
+        ignored. The vote never gates intent flow.
         """
         stance_map = {"BUY": "BUY", "SELL": "SELL", "HOLD": "HOLD"}
         stance = stance_map.get(intent.action, "HOLD")
         raw_conf = float(intent.confidence)
-        # Until MC adds the calibration-on-emit endpoint, ship
-        # calibrated == raw and let the verifier loop calibrate over
-        # time via record_outcome(). The symmetric delta=0 satisfies
-        # the BrainVote invariant unconditionally.
         regime = getattr(self, "_current_regime", None) or "unknown"
-        bucket = round(raw_conf, 1)
         body = {
             "brain": self.brain_id,
             "stance": stance,
             "raw_confidence": raw_conf,
-            "calibrated_confidence": raw_conf,
-            "calibration_key": {"regime": regime, "conf_bucket": bucket},
+            "symbol": intent.symbol,
+            "lane": intent.lane,
+            "regime": regime,
             "reasoning": [
                 f"intent {intent.intent_id} {intent.action} "
                 f"on {intent.symbol} (lane={intent.lane}, regime={regime})"
             ],
-            "symbol": intent.symbol,
-            "regime": regime,
         }
         r = await http.post(
-            f"{MC_LOOPBACK_URL}/api/v2/votes/runtime-cast",
+            f"{MC_LOOPBACK_URL}/api/v2/votes/emit",
             json=body,
             headers={"X-Runtime-Token": self.token},
         )

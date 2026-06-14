@@ -1,3 +1,55 @@
+## 2026-02-19 (final+12) — Ticker-skew fix + server-side calibration (A & C)
+
+### A. Ticker-skew investigation + fix
+**Root cause** wasn't where the original spec pointed. Diagnostic findings:
+- `PARADOX_WATCHLIST` collection: 0 active rows. The "57-ticker universe" mentioned in the handoff doesn't live there — it's served by `GET /api/admin/patterns/universe-public` (49 equity + 8 crypto = 57).
+- The brain runners DO pull the full 57-symbol universe correctly.
+- The skew comes from `_rank_universe` in `external/brains/runner.py`: it ranks every symbol by signal score every tick and the brain emits on the head. Strong-signal symbols (NVDA, BTC/USD) win every tick; the long tail never reaches the head.
+
+**Fix** (`external/brains/runner.py`): UCB-style staleness bonus added to the rank-time score. A symbol's effective score is `setup_score + min(EXPLORATION_BONUS_MAX, age_in_ticks / EXPLORATION_BONUS_DENOM)`. At defaults (max=0.40, denom=50), a 50-tick-stale symbol gets +0.40 — enough to push the long tail ahead of the head when the head's signal is mid-range. Strong heads still win when their signal advantage exceeds the staleness bonus. Tunable via env (`NEUTRAL_BRAIN_EXPLORATION_BONUS_MAX`, `NEUTRAL_BRAIN_EXPLORATION_BONUS_DENOM`).
+
+**Validation**: live vote feed in the 3 minutes post-deploy shows rotation across NVDA → BTC/USD → ETH/USD → AAL (4 unique symbols), vs. the 6 unique symbols across the **entire** previous session.
+
+### C. POST /v2/votes/emit — server-side calibration
+`brain → /v2/votes/emit` now sends raw signals only; MC does the work:
+1. Authenticate brain via `X-Runtime-Token`.
+2. Lazy-hydrate per-brain `BrainCalibration` + `NegativeKnowledge` from Mongo.
+3. `NegativeKnowledge.check(setup_hash=symbol:regime:stance)` — if fires, persisted vote becomes ABSTAIN (raw confidence preserved for verifier audit).
+4. Otherwise `BrainCalibration.calibrate(raw, regime)` → calibrated value.
+5. Build immutable `BrainVote` (all invariants enforced) and persist.
+6. Return `{path: "calibrated"|"abstained", vote_id, raw, calibrated, ...}`.
+
+**Cache management**: hydrated stores cached per-brain. New endpoint `POST /v2/cache/reset` busts the cache for direct-DB-mutation use cases (test harnesses, manual ops).
+
+**Brain runner switched**: `_post_brain_vote` now POSTs `/v2/votes/emit` instead of `/v2/votes/runtime-cast`. The runtime-cast endpoint remains live for backward compatibility / cases where the brain ALREADY has a calibrated value.
+
+**Live verification (curl)**:
+- alpha NVDA trending raw 0.85 → calibrated 0.605 (cold-start shrinkage toward 0.5)
+- alpha NVDA trending raw 0.70 → calibrated 0.56 (cold-start)
+- After seeding a negative pattern for `alpha:NVDA:trending:BUY` + `/v2/cache/reset`: same setup → **path=abstained**, calibrated=0.0, negative_knowledge_triggered=true ✓
+- Different regime (`choppy`): same symbol/stance → **path=calibrated** ✓ (regime-scoped negative knowledge confirmed)
+
+### Trading impact: zero
+- `/v2/evaluate` regression check: EXECUTED $1000 unchanged.
+- All 78 affected tests still green.
+
+### Files touched
+NEW:
+- (none — only edits)
+
+MOD:
+- `/app/external/brains/runner.py` — exploration constants + UCB bonus in `_rank_universe`; switched `_post_brain_vote` to use `/v2/votes/emit`.
+- `/app/backend/routes/paradox_v2.py` — new `POST /v2/votes/emit` (server-side calibration), new `POST /v2/cache/reset` (cache bust).
+- `/app/backend/shared/paradox_v2/verifier_loop.py` — exported `invalidate_caches()`.
+
+### Outstanding / next session
+- **P2** Dashboard tile for the live vote-doctrine feed (the "council chamber" idea: 4 columns lighting up as votes arrive).
+- **P2** Verifier-driven autonomy promotion (the actual deterministic process layer that reads seat_performance and writes seat_promotion_log).
+- **P2** Tune exploration constants in production once a few hours of live rotation data have accumulated.
+
+---
+
+
 ## 2026-02-19 (final+11) — Vote-doctrine wire-up complete (Phase 2 + Verifier loop + Brain runner)
 
 ### What shipped

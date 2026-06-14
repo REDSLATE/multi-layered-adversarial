@@ -73,6 +73,14 @@ async def _get_negative_knowledge(brain_id: str) -> NegativeKnowledge:
     return nk
 
 
+def invalidate_caches() -> None:
+    """Bust the per-brain calibration + negative-knowledge caches so
+    the next call to /v2/votes/emit re-hydrates from Mongo. Used by
+    the admin `/v2/cache/reset` endpoint after a direct DB mutation."""
+    _CAL_CACHE.clear()
+    _NK_CACHE.clear()
+
+
 async def _find_votes_for_receipt(
     receipt: dict[str, Any],
 ) -> list[BrainVote]:
