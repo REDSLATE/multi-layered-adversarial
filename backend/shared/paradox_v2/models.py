@@ -68,6 +68,18 @@ class BrainOpinion(BaseModel):
 
 
 AutonomyMode = Literal["observe", "shadow", "toehold", "auto_execute"]
+InstrumentType = Literal["equity_long", "equity_short", "options", "crypto_spot"]
+# Instrument registry (Phase 3 onboarding, 2026-02-19):
+#
+#   equity_long   — buy-side equities. Default at boot (equity_executor).
+#   equity_short  — short-side equities. Pilot seat: spot_short_executor.
+#   options       — listed US options. Pilot seat: options_executor.
+#   crypto_spot   — spot crypto on Kraken. Default crypto_executor.
+#
+# instrument_type is METADATA only — it labels what the seat trades for
+# operator/UI clarity and verifier grouping. It does NOT gate execution;
+# capital + trust + autonomy still own that boundary. New instrument
+# types onboard by adding a new seat row here AND a literal value above.
 # Autonomy progression doctrine (2026-02-19, locked):
 #
 #   Seat always decides. Autonomy mode decides whether that decision
@@ -126,6 +138,10 @@ class SeatPolicyConfig(BaseModel):
 
     seat_id: str
     autonomy_mode: AutonomyMode = Field("observe", description="observe → shadow → toehold → auto_execute")
+    instrument_type: InstrumentType = Field(
+        "equity_long",
+        description="What this seat trades. Metadata only — capital + trust + autonomy still gate execution.",
+    )
     enabled: bool = Field(True)
 
     # Capital

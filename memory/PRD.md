@@ -1,3 +1,41 @@
+## 2026-02-19 (final+13) — Phase 3 instrument onboarding (spot_short + options pilot seats)
+
+### What shipped
+Two new execution seats now live in `paradox_v2_seat_policy_config`, both starting in `observe` (pilot) mode — decisions logged, no orders placed:
+
+| Seat | Instrument | Trusted Brain | Pilot Caps |
+|---|---|---|---|
+| `spot_short_executor` | `equity_short` | `camaro` (Barracuda — tape-reading doctrine fit) | $1k notional, conf≥0.90, max 3 positions, 10% concentration |
+| `options_executor` | `options` | `chevelle` (Hellcat — trend doctrine fit) | $500 notional, conf≥0.92 (highest bar — γ/θ blows up fast), max 3 positions |
+
+### Changes
+- `shared/paradox_v2/models.py` — new `InstrumentType = Literal["equity_long","equity_short","options","crypto_spot"]`. Added `instrument_type` field on `SeatPolicyConfig` (metadata only; capital + trust + autonomy still own execution gating).
+- `shared/paradox_v2/seed.py` — added the 2 new pilot seats + 2 default trust rows. Backfilled `instrument_type` onto pre-existing `equity_executor` / `crypto_executor` rows via `{$exists: false}` guard so operator edits are never overwritten. New `seat_policy_instrument_backfilled` counter exposed in the seed response.
+- `frontend/src/components/ParadoxV2DashboardPanel.jsx` — new "Instrument" column on the seat policy table; the existing test-fire dropdown and promote/demote actions Just Work for the two new seats via the existing `seat_policies.map`.
+
+### Live verification (curl against backend)
+- `POST /api/v2/seed` → all 4 seats present, idempotent on re-run (zero new upserts).
+- `camaro → spot_short_executor` @ conf 0.93, $500 → `BLOCKED` (`seat_in_observe_mode: decision logged, no order placed`) ✓
+- `chevelle → options_executor` @ conf 0.94, $300 → `BLOCKED` (observe gate) ✓
+- `alpha → spot_short_executor` → `REJECTED_SEAT` (`brain_not_trusted: alpha not in spot_short_executor trust list`) ✓
+
+### Tests
+- 8 new tests in `tests/test_paradox_v2.py` covering seed of pilot seats, trust list, observe-mode block, trust gate rejection, options confidence floor, and idempotence including the backfill. Total **24/24 paradox_v2 tests pass; 65/65 broader v2 suite pass.**
+
+### Promotion path (for operator awareness)
+Both pilot seats follow the standard `observe → shadow → toehold → auto_execute` ladder via `PATCH /api/v2/seat-policy/{seat_id}` or the dashboard's promote buttons. There is no special "pilot mode" constant — pilot status IS `observe` mode plus tighter caps. Operator (or future verifier) is the only path to promotion.
+
+### Outstanding / next-session
+- **P1** Council Chamber live dashboard tile — 4-column real-time brain vote widget on `/admin/intents` (still pending; user chose this path next).
+- **P2** Verifier promotion rules — explicitly DEFERRED at operator request (don't want lockups).
+- **P2** UI display-name cleanup (camaro vs BARRACUDA) — DEFERRED (cosmetic, not affecting trade).
+- **P2** US market holiday calendar — DEFERRED (brokers signal market state directly).
+- **P2** `server.py` refactor — DEFERRED (working code, no current friction).
+
+---
+
+
+
 ## 2026-02-19 (final+12) — Ticker-skew fix + server-side calibration (A & C)
 
 ### A. Ticker-skew investigation + fix

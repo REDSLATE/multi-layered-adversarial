@@ -1,11 +1,18 @@
 """Paradox v2 idempotent seed.
 
-Seeds the four canonical brains, the two execution seats (equity,
-crypto), the equity_executor's conservative policy, and the foundational
-trust list. Crypto executor starts in `observe` mode with NO trusted
-brains — per the Paradox v2 doctrine reset, restrictions belong to the
-SEAT, and the operator (or verifier autonomy progression) is the only
-path to giving a brain trust on the crypto lane.
+Seeds the four canonical brains, the four execution seats (two live —
+equity_executor + crypto_executor; two pilot — spot_short_executor +
+options_executor), the equity_executor's conservative policy, and the
+foundational trust list. Crypto, spot_short, and options executors all
+start in `observe` mode (pilot/decision-only). Per Paradox v2 doctrine
+restrictions belong to the SEAT — the operator (or verifier autonomy
+progression) is the only path to giving execution rights on a new lane.
+
+Phase 3 pilot seats (2026-02-19):
+  - spot_short_executor → camaro_ops (Barracuda is the doctrine fit for
+    short-side tape reading).
+  - options_executor    → chevelle_ops (Hellcat's trend doctrine maps
+    to directional options selection).
 
 Safe to re-run. Every collection writer uses upsert keyed by the IP
 boundary (brain_id, seat_id, or (seat_id, brain_id) for trust rows).
@@ -38,9 +45,11 @@ CANONICAL_BRAINS = [
 
 
 # Default seat policies. Crypto starts observe-only, no trust.
+# Phase 3 pilot seats (spot_short, options) also start observe-only.
 DEFAULT_SEAT_POLICIES = [
     {
         "seat_id": "equity_executor",
+        "instrument_type": "equity_long",
         "autonomy_mode": "auto_execute",
         "enabled": True,
         "max_notional_usd": 5_000.0,
@@ -55,6 +64,7 @@ DEFAULT_SEAT_POLICIES = [
     },
     {
         "seat_id": "crypto_executor",
+        "instrument_type": "crypto_spot",
         "autonomy_mode": "observe",     # decision-only until verifier promotes (NO execution; no paper trades exist)
         "enabled": True,
         "max_notional_usd": 1_000.0,
@@ -67,14 +77,54 @@ DEFAULT_SEAT_POLICIES = [
         "max_auditor_objections": 0,
         "required_governor_stance": "RISK_DOWN",
     },
+    # ─── Phase 3 pilot seats ────────────────────────────────────────
+    # Both start `observe` (decision-only, no orders) until the
+    # verifier promotes them through shadow → toehold → auto_execute
+    # on real measured decision quality.
+    {
+        "seat_id": "spot_short_executor",
+        "instrument_type": "equity_short",
+        "autonomy_mode": "observe",     # pilot mode — decision-only
+        "enabled": True,
+        "max_notional_usd": 1_000.0,    # small cap until promoted
+        "size_multiplier": 0.25,
+        "daily_risk_budget_usd": 5_000.0,
+        "max_position_count": 3,        # tighter than long-side
+        "max_concentration_pct": 10.0,  # short squeezes punish concentration
+        "confidence_min": 0.90,         # higher bar for short side
+        "market_quality_min": 0.70,
+        "max_auditor_objections": 0,
+        "required_governor_stance": "RISK_DOWN",
+    },
+    {
+        "seat_id": "options_executor",
+        "instrument_type": "options",
+        "autonomy_mode": "observe",     # pilot mode — decision-only
+        "enabled": True,
+        "max_notional_usd": 500.0,      # premium $; tightest of all seats
+        "size_multiplier": 0.20,
+        "daily_risk_budget_usd": 2_500.0,
+        "max_position_count": 3,
+        "max_concentration_pct": 10.0,
+        "confidence_min": 0.92,         # highest bar — gamma+theta blow up fast
+        "market_quality_min": 0.75,
+        "max_auditor_objections": 0,
+        "required_governor_stance": "RISK_DOWN",
+    },
 ]
 
 
-# Default trust: equity_executor trusts alpha at 1.0 (existing equity
-# executor in the legacy roster). All other seat × brain pairs start
-# untrusted. Operator adds via /api/v2/seat-trust.
+# Default trust list:
+#   - equity_executor   → alpha   (existing live equity executor)
+#   - spot_short_executor → camaro (Barracuda — pilot doctrine fit)
+#   - options_executor  → chevelle (Hellcat — pilot doctrine fit)
+#   - crypto_executor   → (vacant; operator/verifier promotion only)
+# All other seat × brain pairs start untrusted. Operator adds via
+# /api/v2/seat-trust.
 DEFAULT_TRUST = [
-    {"seat_id": "equity_executor", "brain_id": "alpha", "trust_level": 1.0},
+    {"seat_id": "equity_executor",       "brain_id": "alpha",    "trust_level": 1.0},
+    {"seat_id": "spot_short_executor",   "brain_id": "camaro",   "trust_level": 1.0},
+    {"seat_id": "options_executor",      "brain_id": "chevelle", "trust_level": 1.0},
 ]
 
 
@@ -165,6 +215,19 @@ async def seed_paradox_v2() -> dict[str, Any]:
         if r.upserted_id:
             n += 1
     counts["seat_policy_config"] = n
+
+    # Backfill: rows seeded before instrument_type was added (Phase 3
+    # onboarding, 2026-02-19) are missing the field. Set it once per
+    # row, only if absent — never overwrites operator edits.
+    backfilled = 0
+    for p in DEFAULT_SEAT_POLICIES:
+        r = await db[PARADOX_V2_SEAT_POLICY].update_one(
+            {"seat_id": p["seat_id"], "instrument_type": {"$exists": False}},
+            {"$set": {"instrument_type": p["instrument_type"]}},
+        )
+        if r.modified_count:
+            backfilled += r.modified_count
+    counts["seat_policy_instrument_backfilled"] = backfilled
 
     # Trust list
     n = 0

@@ -163,6 +163,7 @@ export default function ParadoxV2DashboardPanel() {
             <thead className="bg-rd-bg2 text-rd-dim uppercase text-[9px]">
               <tr>
                 <th className="px-2 py-1 text-left">Seat</th>
+                <th className="px-2 py-1 text-left">Instrument</th>
                 <th className="px-2 py-1 text-left">Autonomy</th>
                 <th className="px-2 py-1 text-right">Max $</th>
                 <th className="px-2 py-1 text-right">Size×</th>
@@ -174,6 +175,14 @@ export default function ParadoxV2DashboardPanel() {
               {data.seat_policies.map((p) => (
                 <tr key={p.seat_id} className="border-t border-rd-border" data-testid={`seat-row-${p.seat_id}`}>
                   <td className="px-2 py-1 text-rd-text font-bold">{p.seat_id}</td>
+                  <td className="px-2 py-1">
+                    <span
+                      className="text-[9px] uppercase tracking-wider text-rd-dim"
+                      data-testid={`instrument-${p.seat_id}`}
+                    >
+                      {p.instrument_type || "—"}
+                    </span>
+                  </td>
                   <td className="px-2 py-1">
                     <span className={
                       p.autonomy_mode === "auto_execute" ? "text-rd-success" :

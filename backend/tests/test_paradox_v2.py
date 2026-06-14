@@ -300,3 +300,128 @@ async def test_brain_opinion_has_no_seat_knowledge():
                  "size_multiplier", "daily_risk_budget_usd"}
     assert forbidden.isdisjoint(set(d.keys())), \
         f"BrainOpinion leaked seat-side fields: {forbidden & set(d.keys())}"
+
+
+# ─── Phase 3 pilot seats (spot_short, options) ───────────────────────
+
+
+async def test_seed_creates_phase3_pilot_seats():
+    """spot_short_executor and options_executor must exist after seed,
+    both in observe (pilot) mode with their instrument_type set."""
+    from db import db
+    from namespaces import PARADOX_V2_SEAT_POLICY
+    await _seed()
+
+    s = await db[PARADOX_V2_SEAT_POLICY].find_one(
+        {"seat_id": "spot_short_executor"}, {"_id": 0},
+    )
+    assert s is not None, "spot_short_executor must be seeded"
+    assert s["instrument_type"] == "equity_short"
+    assert s["autonomy_mode"] == "observe"
+    assert s["enabled"] is True
+
+    o = await db[PARADOX_V2_SEAT_POLICY].find_one(
+        {"seat_id": "options_executor"}, {"_id": 0},
+    )
+    assert o is not None, "options_executor must be seeded"
+    assert o["instrument_type"] == "options"
+    assert o["autonomy_mode"] == "observe"
+    assert o["enabled"] is True
+
+
+async def test_seed_pilot_trust_camaro_chevelle():
+    """Pilot seat trust list:
+        spot_short_executor → camaro (Barracuda doctrine fit)
+        options_executor    → chevelle (Hellcat doctrine fit)"""
+    from db import db
+    from namespaces import PARADOX_V2_SEAT_TRUSTED
+    await _seed()
+
+    short_trust = await db[PARADOX_V2_SEAT_TRUSTED].find(
+        {"seat_id": "spot_short_executor"}, {"_id": 0},
+    ).to_list(10)
+    assert {t["brain_id"] for t in short_trust} == {"camaro"}
+
+    options_trust = await db[PARADOX_V2_SEAT_TRUSTED].find(
+        {"seat_id": "options_executor"}, {"_id": 0},
+    ).to_list(10)
+    assert {t["brain_id"] for t in options_trust} == {"chevelle"}
+
+
+async def test_existing_seats_get_instrument_type_backfill():
+    """A seed run on a row missing instrument_type backfills the field
+    in place (idempotent — only sets when absent, never overwrites)."""
+    from db import db
+    from namespaces import PARADOX_V2_SEAT_POLICY
+    from shared.paradox_v2.seed import seed_paradox_v2
+
+    await _seed()
+    # Strip instrument_type to simulate a row seeded by the pre-Phase-3
+    # seed function.
+    await db[PARADOX_V2_SEAT_POLICY].update_one(
+        {"seat_id": "equity_executor"},
+        {"$unset": {"instrument_type": ""}},
+    )
+    r = await seed_paradox_v2()
+    assert r["seeded"]["seat_policy_instrument_backfilled"] >= 1
+    p = await db[PARADOX_V2_SEAT_POLICY].find_one(
+        {"seat_id": "equity_executor"}, {"_id": 0},
+    )
+    assert p["instrument_type"] == "equity_long"
+
+
+async def test_pilot_seat_in_observe_mode_blocks_orders():
+    """The pilot seats are 'observe' by default. Even with a trusted
+    brain and high-confidence opinion, the evaluator must return
+    BLOCKED (no broker submit, no paper trade — just a logged decision)."""
+    await _seed()
+    from shared.paradox_v2.evaluator import evaluate
+
+    # camaro is trusted on spot_short_executor; opinion passes all gates.
+    r = await evaluate(
+        _opinion(brain_id="camaro", confidence=0.92, suggested_notional_usd=500.0),
+        seat_id="spot_short_executor",
+    )
+    assert r["decision"] == "BLOCKED"
+    assert "observe_mode" in r["reason"]
+
+
+async def test_pilot_seat_rejects_unrooted_brain():
+    """spot_short_executor only trusts camaro by default; alpha is the
+    legacy equity_executor brain — must be rejected at the trust gate."""
+    await _seed()
+    from shared.paradox_v2.evaluator import evaluate
+
+    r = await evaluate(
+        _opinion(brain_id="alpha", confidence=0.92, suggested_notional_usd=500.0),
+        seat_id="spot_short_executor",
+    )
+    assert r["decision"] == "REJECTED_SEAT"
+    assert "brain_not_trusted" in r["reason"]
+
+
+async def test_options_seat_enforces_tighter_confidence_floor():
+    """options_executor has confidence_min=0.92 in seed. A 0.90 opinion
+    that would clear equity_executor must NOT clear options_executor."""
+    await _seed()
+    from shared.paradox_v2.evaluator import evaluate
+
+    r = await evaluate(
+        _opinion(brain_id="chevelle", confidence=0.90, suggested_notional_usd=400.0),
+        seat_id="options_executor",
+    )
+    assert r["decision"] == "REJECTED_SEAT"
+    assert "confidence_below_floor" in r["reason"]
+
+
+async def test_seed_idempotence_includes_phase3_seats():
+    """Re-running seed must produce zero new upserts for the policy
+    config collection, including the two new pilot seats."""
+    from shared.paradox_v2.seed import seed_paradox_v2
+    await seed_paradox_v2()
+    r2 = await seed_paradox_v2()
+    assert r2["seeded"]["seat_policy_config"] == 0
+    assert r2["seeded"]["seat_trusted_brains"] == 0
+    # Backfill is also idempotent: after the first run sets the field,
+    # subsequent runs see no rows missing it.
+    assert r2["seeded"]["seat_policy_instrument_backfilled"] == 0
