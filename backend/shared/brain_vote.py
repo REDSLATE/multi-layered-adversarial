@@ -117,7 +117,7 @@ class BrainVote:
         if not isinstance(self.reasoning, tuple):
             raise ValueError("reasoning must be a tuple (frozen, no mutation)")
         if len(self.reasoning) == 0:
-            raise ValueError("reasoning must contain at least one entry")
+            raise ValueError("reasoning must contain at least one reason")
 
     @classmethod
     def abstain(

@@ -10,6 +10,7 @@ Pins the immutable-record invariants the rest of the system depends on:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from dataclasses import FrozenInstanceError
 import pytest
 
 from shared.brain_vote import (
@@ -173,7 +174,7 @@ def test_reasoning_must_be_tuple_not_list():
 
 
 def test_reasoning_empty_is_rejected():
-    with pytest.raises(ValueError, match="at least one"):
+    with pytest.raises(ValueError, match="at least one reason"):
         BrainVote(
             brain="alpha", stance="BUY",
             calibrated_confidence=0.7, raw_confidence=0.7,
@@ -188,8 +189,7 @@ def test_brain_vote_is_immutable():
         brain="GTO", reason="r",
         calibration_key=_key(), raw_confidence=0.8,
     )
-    import dataclasses
-    with pytest.raises(dataclasses.FrozenInstanceError):
+    with pytest.raises(FrozenInstanceError):
         v.stance = "BUY"  # type: ignore[misc]
 
 
