@@ -805,3 +805,9 @@ PARADOX_V2_BRAIN_VOTES        = "paradox_v2_brain_votes"
 PARADOX_V2_CALIBRATION        = "paradox_v2_calibration_history"
 PARADOX_V2_NEGATIVE_PATTERNS  = "paradox_v2_negative_patterns"
 PARADOX_V2_FAILURE_ATTRIBUTIONS = "paradox_v2_failure_attributions"
+
+# Phase 2 governance — vote escalation on auditor veto / governor
+# vote_required (2026-02-19). Brain-level voting (alpha/camaro/
+# chevelle/redeye, NOT seats). Quorum ≥2, abstain counts for quorum
+# but NOT majority, ties REJECT, 3-min timeout REJECT.
+PARADOX_V2_VOTE_SESSIONS      = "paradox_v2_vote_sessions"

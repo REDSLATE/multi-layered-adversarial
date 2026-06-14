@@ -10,7 +10,7 @@ from typing import Optional, Literal
 from datetime import datetime, timezone
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from auth import get_current_user
@@ -368,12 +368,39 @@ async def post_cast_vote(
     body: CastVoteRequest,
     _user: dict = Depends(get_current_user),
 ) -> dict:
-    """Persist a single brain's immutable vote.
+    """Persist a single brain's immutable vote (operator/JWT auth).
 
     The full BrainVote invariants run at construction time — invalid
     votes raise 422. Trading remains unaffected; this endpoint only
     writes to paradox_v2_brain_votes and never reaches any seat or
     broker."""
+    return await _cast_vote_impl(body)
+
+
+@router.post("/votes/runtime-cast")
+async def post_runtime_cast_vote(
+    body: CastVoteRequest,
+    x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
+) -> dict:
+    """Brain-runner-friendly variant of /votes/cast.
+
+    Same invariants; uses the per-brain `X-Runtime-Token` header
+    instead of operator JWT so the in-process brain runners can
+    fire-and-forget without a user session. The runtime-token must
+    match the brain id named in the body."""
+    if not x_runtime_token:
+        raise HTTPException(status_code=401, detail="X-Runtime-Token required")
+    from runtime_auth import verify_runtime_token
+    try:
+        verify_runtime_token(body.brain, x_runtime_token)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=401, detail=f"token verify failed: {e}")
+    return await _cast_vote_impl(body)
+
+
+async def _cast_vote_impl(body: "CastVoteRequest") -> dict:
     mem = None
     if body.memory_evidence is not None:
         mem = MarketMemoryResult(
@@ -526,3 +553,121 @@ async def get_attributions(
         limit=limit, responsible_brain=responsible_brain,
     )
     return {"items": rows, "count": len(rows)}
+
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Phase 2 vote escalation routes (additive — no live trading hook yet)
+# ═════════════════════════════════════════════════════════════════════
+
+
+from shared.paradox_v2 import vote_session as _vs  # noqa: E402
+
+
+class OpenVoteSessionRequest(BaseModel):
+    intent_id: Optional[str] = None
+    symbol: str
+    lane: Literal["equity", "crypto"]
+    triggered_by: str = Field(..., description="'auditor_veto' | 'governor_vote_required' | operator email")
+    reason: str = Field(..., min_length=4)
+    excluded_brain: Optional[str] = Field(None, description="brain that auditored; cannot re-vote")
+    window_seconds: int = Field(180, ge=30, le=900)
+    quorum: int = Field(2, ge=1, le=4)
+
+
+@router.post("/vote-sessions/open")
+async def post_open_vote_session(
+    body: OpenVoteSessionRequest,
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    try:
+        doc = await _vs.open_session(
+            intent_id=body.intent_id,
+            symbol=body.symbol, lane=body.lane,
+            triggered_by=body.triggered_by, reason=body.reason,
+            excluded_brain=body.excluded_brain,
+            window_seconds=body.window_seconds, quorum=body.quorum,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"ok": True, "session": doc}
+
+
+class CastBallotRequest(BaseModel):
+    brain: Literal["alpha", "camaro", "chevelle", "redeye"]
+    vote: Literal["BUY_UP", "SELL_DOWN", "HOLD", "ABSTAIN"]
+    reason: str = Field(..., min_length=1)
+
+
+@router.post("/vote-sessions/{session_id}/vote")
+async def post_cast_ballot(
+    session_id: str,
+    body: CastBallotRequest,
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    try:
+        doc = await _vs.cast_vote(
+            session_id, brain=body.brain,
+            vote=body.vote, reason=body.reason,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"ok": True, "session": doc}
+
+
+@router.post("/vote-sessions/{session_id}/resolve")
+async def post_resolve_vote_session(
+    session_id: str,
+    force: bool = Query(False, description="resolve even if window not yet expired"),
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    try:
+        doc = await _vs.resolve(session_id, force=force)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"ok": True, "session": doc}
+
+
+@router.get("/vote-sessions")
+async def get_vote_sessions(
+    limit: int = Query(50, ge=1, le=500),
+    status: Optional[Literal["OPEN", "CLOSED"]] = Query(None),
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    from namespaces import PARADOX_V2_VOTE_SESSIONS
+    q: dict = {}
+    if status:
+        q["status"] = status
+    rows = await db[PARADOX_V2_VOTE_SESSIONS].find(q, {"_id": 0}).sort(
+        "opened_at", -1,
+    ).to_list(limit)
+    return {"items": rows, "count": len(rows)}
+
+
+@router.post("/vote-sessions/sweep")
+async def post_sweep(_user: dict = Depends(get_current_user)) -> dict:
+    """Manually trigger the expired-session sweeper. Normally runs in
+    the background — exposed here for operator override and tests."""
+    return await _vs.sweep_expired()
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Verifier loop control + manual pass
+# ═════════════════════════════════════════════════════════════════════
+
+
+from shared.paradox_v2 import verifier_loop as _vl  # noqa: E402
+
+
+@router.post("/verifier/run-once")
+async def post_verifier_run_once(
+    lookback_min: int = Query(60, ge=1, le=1440),
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    """Run one verifier pass synchronously. Reads recent
+    execution_receipts, grades any without attributions, persists
+    failure attributions and updates calibration/negative-knowledge
+    stores in Mongo. Trading impact: zero (read-only on receipts)."""
+    return await _vl.run_one_pass(lookback_min=lookback_min)

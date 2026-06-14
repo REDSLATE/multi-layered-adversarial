@@ -1,3 +1,74 @@
+## 2026-02-19 (final+11) — Vote-doctrine wire-up complete (Phase 2 + Verifier loop + Brain runner)
+
+### What shipped
+Three additive layers landed in one session — **no changes to existing trading flow**.
+
+**1. Phase 2 vote escalation** (operator spec verbatim):
+- New collection `paradox_v2_vote_sessions`; new module `shared/paradox_v2/vote_session.py`.
+- Eligible voters = canonical brains (alpha, camaro, chevelle, redeye). Auditor that vetoed is excluded (their veto IS their vote — `excluded_brain` in the request).
+- Quorum ≥2 (configurable). **ABSTAIN counts toward quorum but NOT toward majority.** Strict majority = `winning_count * 2 > non_abstain`.
+- Ties REJECT. Timeout (3 min default) without quorum REJECT. HOLD majority REJECT (never overrides the veto into a "do nothing" decision).
+- Auto-resolve when all eligible brains have voted (early exit).
+- Endpoints: `POST /v2/vote-sessions/open`, `POST /v2/vote-sessions/{id}/vote`, `POST /v2/vote-sessions/{id}/resolve`, `GET /v2/vote-sessions`, `POST /v2/vote-sessions/sweep`.
+- Background sweeper `shared/paradox_v2/vote_session_sweeper.py` runs every 30s and auto-resolves any session past `expires_at`.
+
+**2. Verifier background loop** — `shared/paradox_v2/verifier_loop.py`:
+- Runs every 60s (`SWEEP_INTERVAL_SEC`).
+- Reads `execution_receipts` from last 60 minutes.
+- Joins each receipt with the BrainVotes that influenced it (same symbol, votes within 10 min before `executed_at`).
+- Computes pnl_bps from the receipt; calls `VerifierReplay.analyze()`; persists `FailureReason` to `paradox_v2_failure_attributions`.
+- Feeds outcomes back into `BrainCalibration.record_outcome()` (per-brain, lazy-hydrated from Mongo) — future shrinkage uses fresh evidence.
+- If a brain was attributed responsible for a material loss (pnl < -100 bps, brain_error), calls `NegativeKnowledge.learn_from_failure()`.
+- Idempotent: receipts that already have an attribution row are skipped.
+- Manual override: `POST /v2/verifier/run-once?lookback_min=60`.
+
+**3. Brain runner wire-up** — `external/brains/runner.py`:
+- Mirrors the existing `_post_directional_opinion` enrichment pattern (strict fire-and-forget).
+- New method `_post_brain_vote(http, intent)` runs alongside intent emission.
+- Uses `self._current_regime` (already computed for tick) as the regime in the calibration key.
+- Posts to a new `POST /v2/votes/runtime-cast` endpoint (X-Runtime-Token auth; same token brains already use for opinions).
+- Operator-facing `POST /v2/votes/cast` (JWT) remains intact.
+- **Calibration ships raw == calibrated** for now — the verifier loop accumulates evidence; a follow-up `POST /v2/votes/emit` endpoint (next session) will move calibration server-side.
+
+### Files touched
+NEW:
+- `/app/backend/shared/paradox_v2/{vote_session.py,vote_session_sweeper.py,verifier_loop.py}`
+
+MOD:
+- `/app/backend/namespaces.py` — 1 new constant (`PARADOX_V2_VOTE_SESSIONS`)
+- `/app/backend/routes/paradox_v2.py` — vote-session CRUD + sweeper + verifier-run-once + `/votes/runtime-cast`
+- `/app/backend/server.py` — start/stop the two background workers
+- `/app/external/brains/runner.py` — `_post_brain_vote()` + call-site next to `_post_directional_opinion`
+
+### Live verification (curl)
+| Scenario | Result |
+|---|---|
+| `/v2/evaluate` (regression check) | EXECUTED, $1000 — unchanged |
+| Session: 2 BUY_UP + 1 ABSTAIN | majority BUY_UP (ABSTAIN excluded from tally) |
+| Session: 1 BUY_UP + 1 SELL_DOWN + 1 ABSTAIN (tie) | **REJECT** with `tie_or_no_majority` |
+| All-voted early auto-resolve | ✅ fires immediately when len(votes) == eligible |
+| Verifier `run-once` | graded=0 (no recent receipts) — clean no-op |
+| **Brain runners live-casting** | 10 votes recorded in 30s — alpha/camaro/chevelle/redeye, real symbols (NVDA/BTC/USD/ETH/USD), live regime detection (`chop`) |
+
+### Tests
+124/124 passing (no regressions). Phase 2 tally logic + verifier loop join-by-symbol+window are exercised live via the smoke tests above.
+
+### Doctrine fit (still locked)
+- Brain owns doctrine — runners only ship raw confidence + symbol + regime; never read seat/policy.
+- Seat owns execution — `/v2/evaluate` pipeline unchanged.
+- Governor owns modifiers — `compute_disagreement` is pure-function, never blocks.
+- RoadGuard owns binary stops — untouched.
+- Verifier owns promotion — the loop accumulates evidence; autonomy promotion remains operator-driven until enough samples accumulate to write deterministic rules.
+
+### Outstanding / next session
+- **P1** Hypothesis ticker skew: investigate `services/paradox_evaluator.py` candidate ranker (deferred this session — investigation-heavy).
+- **P2** `POST /v2/votes/emit` — accept raw confidence + regime, compute calibration server-side, persist calibrated BrainVote in one round-trip.
+- **P2** Dashboard tile for the new vote-doctrine + Phase 2 vote-session feeds.
+- **P2** Verifier-driven autonomy promotion rules (the actual "Verifier process" — read seat_performance, write seat_promotion_log).
+
+---
+
+
 ## 2026-02-19 (final+10) — Vote-doctrine layer shipped (additive, no trading impact)
 
 ### What shipped

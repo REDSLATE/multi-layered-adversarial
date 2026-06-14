@@ -1454,6 +1454,18 @@ class BrainRunner:
                     "opinion post failed brain=%s sym=%s err=%s",
                     self.brain_id, intent.symbol, exc,
                 )
+            # Paradox v2 wire-up (2026-02-19): cast an immutable
+            # BrainVote alongside the intent. Strict fire-and-forget —
+            # never blocks trading on a vote-cast failure. Calibration
+            # and negative-knowledge live in MC (hydrated from Mongo);
+            # the brain only ships raw confidence + symbol + regime.
+            try:
+                await self._post_brain_vote(http, intent)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "brain_vote post failed brain=%s sym=%s err=%s",
+                    self.brain_id, intent.symbol, exc,
+                )
             if self._intent_count % 10 == 1:
                 logger.info(
                     "neutral_brain intent posted brain=%s display=%s "
@@ -1535,6 +1547,62 @@ class BrainRunner:
         if stance in ("long", "short"):
             self._my_last_stance_by_symbol[intent.symbol.upper()] = (
                 stance, datetime.now(timezone.utc),
+            )
+
+    async def _post_brain_vote(
+        self, http: httpx.AsyncClient, intent,
+    ) -> None:
+        """POST a Paradox v2 BrainVote alongside the intent.
+
+        Strict fire-and-forget: any failure (network, 422, server-side
+        guard rejection) is logged and ignored. The vote never gates
+        the intent flow.
+
+        Calibration + negative-knowledge are computed SERVER-SIDE: MC
+        holds the per-brain history; this runner only ships raw
+        confidence + symbol + regime + setup hash. MC then:
+          * shrinks raw → calibrated via BrainCalibration,
+          * runs NegativeKnowledge.check() and flips to ABSTAIN if it
+            fires,
+          * builds the immutable BrainVote with all invariants enforced.
+
+        Because the existing /api/v2/votes/cast endpoint expects the
+        brain to ship the FINAL vote (the brain ran calibration), we
+        send raw_confidence ≈ calibrated_confidence here. A follow-up
+        ticket will move calibration into a /votes/emit endpoint that
+        accepts raw + regime and persists the calibrated vote.
+        """
+        stance_map = {"BUY": "BUY", "SELL": "SELL", "HOLD": "HOLD"}
+        stance = stance_map.get(intent.action, "HOLD")
+        raw_conf = float(intent.confidence)
+        # Until MC adds the calibration-on-emit endpoint, ship
+        # calibrated == raw and let the verifier loop calibrate over
+        # time via record_outcome(). The symmetric delta=0 satisfies
+        # the BrainVote invariant unconditionally.
+        regime = getattr(self, "_current_regime", None) or "unknown"
+        bucket = round(raw_conf, 1)
+        body = {
+            "brain": self.brain_id,
+            "stance": stance,
+            "raw_confidence": raw_conf,
+            "calibrated_confidence": raw_conf,
+            "calibration_key": {"regime": regime, "conf_bucket": bucket},
+            "reasoning": [
+                f"intent {intent.intent_id} {intent.action} "
+                f"on {intent.symbol} (lane={intent.lane}, regime={regime})"
+            ],
+            "symbol": intent.symbol,
+            "regime": regime,
+        }
+        r = await http.post(
+            f"{MC_LOOPBACK_URL}/api/v2/votes/runtime-cast",
+            json=body,
+            headers={"X-Runtime-Token": self.token},
+        )
+        if r.status_code // 100 != 2:
+            logger.debug(
+                "brain_vote rejected brain=%s sym=%s status=%s body=%s",
+                self.brain_id, intent.symbol, r.status_code, r.text[:200],
             )
 
     async def _discussion_loop(self) -> None:
