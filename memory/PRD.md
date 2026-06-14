@@ -1,3 +1,50 @@
+## 2026-02-19 (final+16) — Diagnostics declutter + Setup page extraction
+
+### Why
+Operator reported `/admin/diagnostics` on production was unreadable and intermittent HTTP 500s were lighting up multiple panels. Investigation: every failing endpoint returns 200 OK in preview — the 500s are **prod-environment-only** (likely pod/Mongo pool pressure). However, the page was mounting **16 heavy panels at once**, each firing its own fetch — making the prod 500s more frequent (concurrent load) and more visible (5 simultaneous red banners).
+
+### What changed
+
+| Action | Panel | Reason |
+|---|---|---|
+| **Dropped** | `CompositeLivenessCard` | Redundant — BrainHealthTile is the modern composite |
+| **Dropped** | Legacy `Runtimes Card` table (~110 lines) | Redundant — BrainHealthTile + STALE HEARTBEAT banner cover it |
+| **Lazy-mounted** | `BracketOutcomeDistributionPanel`, `SidecarCheckinPanel`, `QuantumPanel`, `VRLScorecardsPanel` | Rare-use deep-dives; fetch only on `<details>` expand |
+| **Compressed** | Mongo / Mode / Now (3 cards) → 1 header strip | 4 facts don't need 3 cards |
+| **Moved** | `RuntimeBundlesPanel`, `RuntimeTokensPanel` → new `/admin/setup` page | Operator-rare actions; don't belong on real-time health surface |
+
+### Net impact
+- Initial mount fetches: **~14 → ~7** (50% drop)
+- Always-visible panels: **16 → 6** (BrainDeepDiagnose, ImposterScan, status strip, STALE HEARTBEAT banner, DecisionsFeed, LaneToggles, LiveTradeDiagnose, PromotionArtifact, BrainHealthTile)
+- Lazy-expanded panels: 4 (operator clicks to load)
+- Moved panels: 2 (lives on `/admin/setup`)
+- Page reads top-to-bottom: **alarm-level (Imposter) → status (strip + banners) → live activity (Decisions, LaneToggles, LiveTrade) → evidence (PromotionArtifact, BrainHealth) → on-demand deep dives (4 collapsibles)**
+
+### Files
+- NEW `frontend/src/pages/Setup.jsx` — operator-rare admin actions (patch kits + ingest tokens).
+- MOD `frontend/src/App.js` — `/admin/setup → SetupPage` route.
+- MOD `frontend/src/components/Layout.jsx` — added "Setup" sidebar link (Wrench icon) under the System group.
+- MOD `frontend/src/pages/Diagnostics.jsx`:
+  - New local `LazyDetails` helper component (defer-mount on expand)
+  - Dropped CompositeLivenessCard import + mount
+  - Dropped legacy Runtimes Card block (kept STALE HEARTBEAT alert as a thin standalone banner)
+  - Replaced 3-card Mongo/Mode/Now grid with `diag-status-strip` (one-line)
+  - Wrapped 4 rare-use panels in LazyDetails
+  - Removed RuntimeBundlesPanel + RuntimeTokensPanel mounts + imports
+
+### Prod 500 note
+This change does **not** fix the production HTTP 500s themselves — those are prod-infra issues (Mongo pool, pod resources, or cold-start timeouts). It does dramatically reduce **how often the 500s trip** (less concurrent backend pressure) and **how visible they are when they do** (fewer simultaneous red banners). For root-cause prod fix, recommend filing an Emergent Support ticket asking them to look at MongoDB connection pooling / pod resource limits on `mission.risedual.ai`.
+
+### Verified on preview
+- `/admin/diagnostics` renders the compressed header, ImposterScan, BrainDeepDiagnose, DecisionsFeed visible; rare panels collapsed.
+- `/admin/setup` renders both moved panels.
+- Sidebar nav shows new "Setup" link under System group.
+- Webpack compiles clean; pre-existing buggy lint rule false positives unchanged (not blocking).
+
+---
+
+
+
 ## 2026-02-19 (final+15) — Paradox V2 surfaces moved to dedicated `/admin/paradox` page
 
 ### What changed

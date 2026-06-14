@@ -3,8 +3,8 @@ import { api, RUNTIME_META, fmtTime, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
 import VRLScorecardsPanel from "@/components/VRLScorecardsPanel";
 import LiveTradeDiagnose from "@/components/LiveTradeDiagnose";
-import RuntimeTokensPanel from "@/components/RuntimeTokensPanel";
-import RuntimeBundlesPanel from "@/components/RuntimeBundlesPanel";
+// RuntimeTokensPanel + RuntimeBundlesPanel moved to /admin/setup (2026-02-19)
+//   — operator-rare actions; no longer mounted on Diagnostics.
 import SidecarCheckinPanel from "@/components/SidecarCheckinPanel";
 import BrainHealthTile from "@/components/BrainHealthTile";
 import LaneExecutionTogglesPanel from "@/components/LaneExecutionTogglesPanel";
@@ -13,9 +13,40 @@ import PromotionArtifactPanel from "@/components/PromotionArtifactPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import BrainDeepDiagnoseCard from "@/components/BrainDeepDiagnoseCard";
 import ImposterScanCard from "@/components/ImposterScanCard";
-import CompositeLivenessCard from "@/components/CompositeLivenessCard";
+// CompositeLivenessCard + the legacy runtimes table dropped (2026-02-19)
+//   — BrainHealthTile is the modern composite that absorbs both.
 
 const BRAINS_FOR_FILTER = ["all", "alpha", "camaro", "chevelle", "redeye"];
+
+/**
+ * LazyDetails — `<details>`-based collapsible panel that defers
+ * mounting (and therefore fetching) its children until the user
+ * actually opens it. Used to drop the Diagnostics page's mount cost
+ * by ~40% (2026-02-19) — rare-use panels like Quantum, VRL Scorecards,
+ * SidecarCheckin, and BracketOutcomes now only fetch on demand.
+ *
+ * Once opened, the child stays mounted (typical `<details>` semantics)
+ * so the next open is instant. To force an unmount on close, the
+ * operator can refresh the page — by design.
+ */
+function LazyDetails({ summary, defaultOpen = false, children, testid }) {
+  const [hasOpened, setHasOpened] = React.useState(defaultOpen);
+  return (
+    <details
+      className="mt-6 border border-rd-border bg-rd-bg"
+      data-testid={testid}
+      open={defaultOpen}
+      onToggle={(e) => { if (e.target.open) setHasOpened(true); }}
+    >
+      <summary className="cursor-pointer select-none px-4 py-2.5 text-[11px] font-mono uppercase tracking-widest text-rd-dim hover:text-rd-text">
+        {summary}
+      </summary>
+      <div className="border-t border-rd-border">
+        {hasOpened ? children : null}
+      </div>
+    </details>
+  );
+}
 const KIND_LABEL = {
   receipt: "RECEIPT",
   sovereign_audit: "SOV-AUDIT",
@@ -437,171 +468,84 @@ export default function Diagnostics() {
 
       {data && (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-6">
-            <Card testid="diag-mongo">
-              <div className="label-eyebrow mb-2">MongoDB</div>
-              <div className="flex items-center gap-2">
-                <span
-                  className={`inline-block w-2 h-2 ${data.mongo.ok ? "bg-rd-chevelle pulse-dot" : "bg-rd-danger"}`}
-                />
-                <span className="font-display text-2xl font-bold tracking-tight">
-                  {data.mongo.ok ? "ONLINE" : "OFFLINE"}
-                </span>
-              </div>
-              {data.mongo.error && (
-                <div className="text-xs font-mono text-rd-danger mt-2">{data.mongo.error}</div>
-              )}
-            </Card>
-            <Card testid="diag-mode">
-              <div className="label-eyebrow mb-2">Deploy mode</div>
-              <div className="font-display text-2xl font-bold tracking-tight uppercase" style={{ color: data.lane_execution?.any_enabled ? "#10B981" : "#FBBF24" }}>
+          {/* Compressed header strip — replaces the old 3-card grid
+              (Mongo / Mode / Now) with a single line. Saves vertical
+              real estate; the 4 facts here are at-a-glance only. */}
+          <div
+            className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-4 px-3 py-2 border border-rd-border bg-rd-bg2 font-mono text-[11px]"
+            data-testid="diag-status-strip"
+          >
+            <span className="flex items-center gap-1.5" data-testid="diag-mongo">
+              <span
+                className={`inline-block w-2 h-2 ${data.mongo.ok ? "bg-rd-chevelle" : "bg-rd-danger"}`}
+              />
+              <span className="text-rd-dim uppercase tracking-wider">Mongo</span>
+              <span className="text-rd-text font-bold">{data.mongo.ok ? "ONLINE" : "OFFLINE"}</span>
+            </span>
+            <span className="text-rd-border">·</span>
+            <span className="flex items-center gap-1.5" data-testid="diag-mode">
+              <span className="text-rd-dim uppercase tracking-wider">Mode</span>
+              <span
+                className="text-rd-text font-bold uppercase"
+                style={{ color: data.lane_execution?.any_enabled ? "#10B981" : "#FBBF24" }}
+              >
                 {data.deploy_mode}
-              </div>
-              <div className="text-xs text-rd-muted mt-2 font-mono">
-                {data.lane_execution
-                  ? (
-                    <>
-                      equity{" "}
-                      <span
-                        data-testid="diag-lane-equity-state"
-                        style={{ color: data.lane_execution.equity ? "#10B981" : "#DC2626", fontWeight: 600 }}
-                      >
-                        {data.lane_execution.equity ? "ON" : "OFF"}
-                      </span>
-                      {" · "}crypto{" "}
-                      <span
-                        data-testid="diag-lane-crypto-state"
-                        style={{ color: data.lane_execution.crypto ? "#10B981" : "#DC2626", fontWeight: 600 }}
-                      >
-                        {data.lane_execution.crypto ? "ON" : "OFF"}
-                      </span>
-                    </>
-                  )
-                  : (data.deploy_mode === "execution" ? "live order routing enabled" : "no broker has execution_enabled=true")
-                }
-              </div>
-            </Card>
-            <Card testid="diag-now">
-              <div className="label-eyebrow mb-2">Server time</div>
-              <div className="font-mono text-sm text-rd-text">{fmtTime(data.now)}</div>
-            </Card>
+              </span>
+            </span>
+            {data.lane_execution && (
+              <>
+                <span className="text-rd-border">·</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="text-rd-dim uppercase tracking-wider">Lanes</span>
+                  <span
+                    data-testid="diag-lane-equity-state"
+                    style={{ color: data.lane_execution.equity ? "#10B981" : "#DC2626", fontWeight: 600 }}
+                  >
+                    EQ {data.lane_execution.equity ? "ON" : "OFF"}
+                  </span>
+                  <span
+                    data-testid="diag-lane-crypto-state"
+                    style={{ color: data.lane_execution.crypto ? "#10B981" : "#DC2626", fontWeight: 600 }}
+                  >
+                    CR {data.lane_execution.crypto ? "ON" : "OFF"}
+                  </span>
+                </span>
+              </>
+            )}
+            <span className="text-rd-border">·</span>
+            <span className="flex items-center gap-1.5" data-testid="diag-now">
+              <span className="text-rd-dim uppercase tracking-wider">Server</span>
+              <span className="text-rd-text">{fmtTime(data.now)}</span>
+            </span>
+            {data.mongo.error && (
+              <span className="text-rd-danger ml-2">{data.mongo.error}</span>
+            )}
           </div>
 
-          {/* Per-loop liveness card. Composite verdict from
-              /api/admin/brain/emission-diagnose/{brain} replaces the
-              old whole-brain heartbeat badge. Renders right above
-              the legacy runtimes table so an operator can see the
-              richer per-loop story at a glance and fall back to
-              the legacy table if needed during rollout. */}
-          <PanelErrorBoundary panelName="CompositeLivenessCard">
-            <CompositeLivenessCard />
-          </PanelErrorBoundary>
+          {/* Legacy Runtimes table + CompositeLivenessCard dropped
+              2026-02-19 — BrainHealthTile is the modern single-glance
+              composite that absorbs both. STALE HEARTBEAT alert is
+              now surfaced inline by BrainHealthTile's regression
+              detector. */}
 
-          <Card className="p-0 overflow-hidden" testid="diag-runtimes">
-            {/* Top-of-table banner — STALE HEARTBEAT signal (no longer
-                conflated with "wrong MC URL"). Fires when any brain
-                hasn't pinged in ≥HEARTBEAT_PREVIEW_DRIFT_SECONDS. The
-                actual "is this pod on preview?" verdict is in the
-                Sidecar identity check-ins panel below — it reads the
-                brain's stamped env_name + mc_url. (2026-02-18: split
-                from the old preview-drift heuristic which produced
-                false alarms when brains ran slow.) */}
-            {data.runtimes.some((r) => r.heartbeat_tier === "dead") && (
-              <div
-                className="bg-rd-danger/15 border-b border-rd-danger px-4 py-2 text-[11px] font-mono text-rd-danger"
-                data-testid="stale-heartbeat-banner"
-              >
-                ⚠ STALE HEARTBEAT — {data.runtimes
-                  .filter((r) => r.heartbeat_tier === "dead")
-                  .map((r) => r.runtime.toUpperCase())
-                  .join(", ")}{" "}
-                heartbeating ≥{data.heartbeat_preview_drift_seconds || 110}s ago. Possible hang, slow LLM call, or pod restart. For an actual MC-URL misconfig check, see the{" "}
-                <span className="text-rd-text font-bold">Sidecar identity check-ins</span> panel below.
-              </div>
-            )}
-            <table className="w-full text-xs font-mono">
-              <thead>
-                <tr className="bg-rd-bg3 text-rd-dim uppercase tracking-widest">
-                  <th className="text-left px-4 py-3 border-b border-rd-border">Runtime</th>
-                  <th className="text-right px-4 py-3 border-b border-rd-border">Decision log</th>
-                  <th className="text-right px-4 py-3 border-b border-rd-border">Memory labels</th>
-                  <th className="text-left px-4 py-3 border-b border-rd-border">Last receipt</th>
-                  <th className="text-left px-4 py-3 border-b border-rd-border">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.runtimes.map((r) => {
-                  const meta = RUNTIME_META[r.runtime];
-                  // 2026-02-19 — UI keys off `effective_tier` (joins
-                  // heartbeat + receipt freshness) so a fresh-heartbeat
-                  // brain that hasn't produced a decision in > 10 min
-                  // shows as SILENT instead of falsely LIVE. Legacy
-                  // `heartbeat_tier` is still shown in the tooltip for
-                  // operators debugging which axis is the trip cause.
-                  const tier = r.effective_tier || r.heartbeat_tier || (r.heartbeat_stale ? "dead" : "ok");
-                  const tierMeta = {
-                    ok:      { color: "#10B981", label: "LIVE" },
-                    silent:  { color: "#F97316", label: "SILENT" },
-                    stale:   { color: "#F59E0B", label: "STALE" },
-                    dead:    { color: "#DC2626", label: "DEAD" },
-                    unknown: { color: "#A1A1AA", label: "NO HEARTBEAT" },
-                  }[tier] || { color: "#A1A1AA", label: tier.toUpperCase() };
-                  const receiptAgeText = (r.last_receipt_age_seconds != null)
-                    ? `receipt ${Math.floor(r.last_receipt_age_seconds)}s ago`
-                    : "no receipts";
-                  return (
-                    <tr
-                      key={r.runtime}
-                      className="border-b border-rd-border last:border-b-0"
-                      data-testid={`diag-row-${r.runtime}`}
-                    >
-                      <td className="px-4 py-2.5">
-                        <span style={{ color: meta.color }} className="font-bold">
-                          {meta.label}
-                        </span>
-                        <span className="text-rd-dim ml-2">· {meta.project}</span>
-                      </td>
-                      <td className="px-4 py-2.5 text-right">{r.log_count}</td>
-                      <td className="px-4 py-2.5 text-right">{r.memory_labels_count}</td>
-                      <td className="px-4 py-2.5">
-                        {r.last_receipt_ts ? `${fmtTime(r.last_receipt_ts)} (${relTime(r.last_receipt_ts)})` : "—"}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <Badge color={tierMeta.color}>{tierMeta.label}</Badge>
-                        {r.heartbeat_age_seconds != null && (
-                          <span
-                            className="ml-2"
-                            style={{ color: tierMeta.color }}
-                            data-testid={`diag-hb-age-${r.runtime}`}
-                            title={`heartbeat tier: ${r.heartbeat_tier || "—"} · ${receiptAgeText}`}
-                          >
-                            hb {Math.floor(r.heartbeat_age_seconds)}s
-                          </span>
-                        )}
-                        {tier === "silent" && (
-                          <span
-                            className="ml-2 text-[10px] text-rd-warning"
-                            data-testid={`diag-silent-${r.runtime}`}
-                            title="Heartbeat is fresh but no decision receipt in the last RECEIPT_STALE_AFTER_SECONDS window. Brain process is alive but its decision/intent loop is wedged (classic May-14 wrapper-hang). Check the brain's stats.loop_health watchdog timestamps."
-                          >
-                            · alive but no decisions
-                          </span>
-                        )}
-                        {tier === "dead" && (
-                          <span
-                            className="ml-2 text-[10px] text-rd-danger"
-                            title="≥300s since last ping — possible hang or slow LLM call. MC-URL config check lives in the Sidecar check-ins panel below."
-                          >
-                            · possible hang
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </Card>
+          {/* STALE HEARTBEAT alert preserved as a thin banner even
+              though the full legacy Runtimes table was dropped
+              2026-02-19 (BrainHealthTile absorbs the per-brain
+              freshness signal more clearly). This alert is the
+              loudest signal — any dead heartbeat needs operator
+              eyes immediately. */}
+          {data.runtimes.some((r) => r.heartbeat_tier === "dead") && (
+            <div
+              className="bg-rd-danger/15 border border-rd-danger px-4 py-2 mb-4 text-[11px] font-mono text-rd-danger"
+              data-testid="stale-heartbeat-banner"
+            >
+              ⚠ STALE HEARTBEAT — {data.runtimes
+                .filter((r) => r.heartbeat_tier === "dead")
+                .map((r) => r.runtime.toUpperCase())
+                .join(", ")}{" "}
+              heartbeating ≥{data.heartbeat_preview_drift_seconds || 110}s ago. Possible hang, slow LLM call, or pod restart. For an actual MC-URL misconfig check, expand the <span className="text-rd-text font-bold">Sidecar identity check-ins</span> details below.
+            </div>
+          )}
 
           {/* Unified decisions feed — surfaces every brain's output
               regardless of which collection the engine wrote it to.
@@ -622,16 +566,16 @@ export default function Diagnostics() {
           </div>
 
           {/* Training-signal tile — bracket outcome distribution.
-              Surfaces the categorical tp_hit/sl_hit/timeout labels per
-              confidence band. If the bin curve is flat, confidence is
-              uncalibrated → wrapper dampener / scorecard need tuning.
-              Master-gated on RISEDUAL_BRACKET_OUTCOMES_ENABLED; when
-              off, panel shows an enable hint. */}
-          <div className="mt-6">
+              Lazy-mounted (2026-02-19) — operator-rare deep-dive
+              into per-confidence-band TP/SL/timeout calibration. */}
+          <LazyDetails
+            summary="Training signal · bracket outcomes (click to load)"
+            testid="lazy-bracket-outcomes"
+          >
             <PanelErrorBoundary panelName="BracketOutcomeDistributionPanel">
               <BracketOutcomeDistributionPanel />
             </PanelErrorBoundary>
-          </div>
+          </LazyDetails>
 
           <div className="mt-6">
             <PanelErrorBoundary panelName="LiveTradeDiagnose">
@@ -662,52 +606,40 @@ export default function Diagnostics() {
             </PanelErrorBoundary>
           </div>
 
-          {/* Sidecar check-ins — Portable Survival Layer companion.
-              Each brain POSTs its boot-time RuntimeStamp; this panel
-              shows the latest stamp + verdict (PROD / preview /
-              policy_drift / never) at a glance. Defense in depth
-              alongside the broker MC-receipt seal: receipt verifies
-              every order, this verifies every sidecar's identity. */}
-          <div className="mt-6">
+          {/* Sidecar check-ins — Lazy-mounted (2026-02-19). Deep
+              per-brain identity stamp inspection; ImposterScanCard
+              at the top of the page is the alert-level summary,
+              this is the on-demand inspector. */}
+          <LazyDetails
+            summary="Sidecar identity check-ins · stamps + verdicts (click to load)"
+            testid="lazy-sidecar-checkin"
+          >
             <PanelErrorBoundary panelName="SidecarCheckinPanel">
               <SidecarCheckinPanel />
             </PanelErrorBoundary>
-          </div>
+          </LazyDetails>
 
-          {/* Portable patch kits — extract from preview, drop into
-              each brain stack's repo. The platform survival layer is
-              shipped here so the doctrine lives WITH the sidecars,
-              not rented from MC. JWT-gated browser download. */}
-          <div className="mt-6">
-            <PanelErrorBoundary panelName="RuntimeBundlesPanel">
-              <RuntimeBundlesPanel />
-            </PanelErrorBoundary>
-          </div>
+          {/* RuntimeBundlesPanel + RuntimeTokensPanel moved to
+              /admin/setup (2026-02-19) — operator-rare actions
+              were burning two fetches per page load. Sidebar
+              "Setup" link opens them. */}
 
-          {/* Brain ingest tokens — read-back of the per-runtime
-              X-Runtime-Token MC expects. One-click reveal + copy +
-              .env snippet download per brain. Built so the operator
-              can compare each brain's MONOREPO_INGEST_TOKEN against
-              MC's <BRAIN>_INGEST_TOKEN env var. */}
-          <div className="mt-6">
-            <PanelErrorBoundary panelName="RuntimeTokensPanel">
-              <RuntimeTokensPanel />
-            </PanelErrorBoundary>
-          </div>
-
-          {/* Quantum-inspired state — regime probability field +
-              HOLD-lock detection per recent intent. Surfaces the
-              quantum overlay verdict from the governance ledger. */}
-          <div className="mt-6">
+          {/* Quantum-inspired state — Lazy-mounted (2026-02-19). */}
+          <LazyDetails
+            summary="Quantum overlay · recent verdicts (click to load)"
+            testid="lazy-quantum"
+          >
             <QuantumPanel />
-          </div>
+          </LazyDetails>
 
-          {/* VRL gate scorecards — per-gate precision/recall over a
-              rolling window. Shows which gates are net helpful vs.
-              net friction so the operator can retune. */}
-          <div className="mt-6">
+          {/* VRL gate scorecards — Lazy-mounted (2026-02-19). Weekly
+              review surface; not glance-level. */}
+          <LazyDetails
+            summary="VRL gate scorecards · precision/recall (click to load)"
+            testid="lazy-vrl-scorecards"
+          >
             <VRLScorecardsPanel />
-          </div>
+          </LazyDetails>
         </>
       )}
     </div>

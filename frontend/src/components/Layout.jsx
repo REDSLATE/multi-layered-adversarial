@@ -75,6 +75,7 @@ const SECTIONS = [
       { to: "/admin/feature-builders", label: "Feature Builders", icon: Stack, testid: "nav-features" },
       { to: "/admin/artifacts", label: "Artifacts", icon: Cube, testid: "nav-artifacts" },
       { to: "/admin/flags", label: "Runtime Flags", icon: Flag, testid: "nav-flags" },
+      { to: "/admin/setup", label: "Setup", icon: Wrench, testid: "nav-setup" },
       { to: "/admin/public-traffic", label: "Public Traffic", icon: Pulse, testid: "nav-public-traffic" },
     ],
   },
