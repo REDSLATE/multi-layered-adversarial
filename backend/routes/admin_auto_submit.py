@@ -17,7 +17,8 @@ from db import db
 from shared.auto_submit_policy import (
     TIER_1_DEFAULTS,
     get_policy,
-    set_policy,
+    hydrate_from_mongo,
+    set_policy_async,
 )
 
 
@@ -36,7 +37,13 @@ class PolicyBody(BaseModel):
 
 @router.get("/policy")
 async def policy_status(_user: dict = Depends(get_current_user)) -> dict:
-    """Current effective policy + defaults snapshot."""
+    """Current effective policy + defaults snapshot.
+
+    Lazy-hydrates from Mongo on first access if the lifespan hook
+    hasn't already (safety net for fork pods / scripts)."""
+    from shared.auto_submit_policy import _HYDRATED
+    if not _HYDRATED:
+        await hydrate_from_mongo()
     return {
         "policy": get_policy(),
         "defaults": TIER_1_DEFAULTS,
@@ -61,13 +68,19 @@ async def policy_toggle(
         overrides["confidence_min"] = body.confidence_min
     if body.notional_default_usd is not None:
         overrides["notional_default_usd"] = body.notional_default_usd
-    policy = set_policy(enabled=body.enabled, **overrides)
+    # set_policy_async PERSISTS the override to Mongo — this is the
+    # fix for the 2026-02-19 incident where the toggle was wiped on
+    # every K8s pod restart because we only had an in-memory dict.
+    policy = await set_policy_async(enabled=body.enabled, **overrides)
     await db[POLICY_AUDIT].insert_one({
         "ts": datetime.now(timezone.utc).isoformat(),
+        "event": "toggle_enabled" if body.enabled else "toggle_disabled",
         "by": user.get("email"),
+        "user_email": user.get("email"),
         "enabled": body.enabled,
         "reason": body.reason.strip(),
         "overrides": overrides,
+        "persisted": True,
     })
     return {"ok": True, "policy": policy}
 

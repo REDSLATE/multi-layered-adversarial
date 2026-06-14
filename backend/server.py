@@ -239,6 +239,22 @@ async def lifespan(app: FastAPI):
         logger.info("Paradox v2 seed: %s", v2_seed.get("seeded"))
     except Exception as e:  # noqa: BLE001
         logger.warning("Paradox v2 seed failed (non-fatal): %s", e)
+
+    # Auto-submit policy — hydrate persisted override from Mongo so
+    # the operator's toggle survives pod restarts. Without this,
+    # `_POLICY_OVERRIDE` resets to {} on every boot and Shelly
+    # silently forgets she was enabled (2026-02-19 prod incident
+    # — "I flipped the toggle and nothing happened").
+    try:
+        from shared.auto_submit_policy import hydrate_from_mongo as _hydrate_auto_submit
+        p = await _hydrate_auto_submit()
+        logger.info(
+            "auto_submit_policy boot: enabled=%s · source=%s",
+            p.get("enabled"), p.get("source"),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception("auto_submit_policy: lifespan hydrate FAILED: %s", e)
+
     flags = get_flags_snapshot()
     logger.info("RISEDUAL boot: deploy_mode=%s flags=%s", flags["deploy_mode"], flags["enforce_flags"])
     # Start the Kraken auto-poller if credentials exist. Safe no-op when

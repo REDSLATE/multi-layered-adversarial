@@ -1,3 +1,65 @@
+## 2026-02-19 (final+17) — Auto-submit policy persistence fix + broadened defaults
+
+### The incident
+Operator on production (`mission.risedual.ai`) reported: **"I flipped the Shelly auto-submit toggle and nothing happened."**
+
+### Root cause
+The `_POLICY_OVERRIDE` dict in `shared/auto_submit_policy.py` was a **module-level in-memory dict with ZERO Mongo persistence**. Every K8s pod restart silently reset the toggle to default-off. Production saw the toggle flip in the UI, then a deployment / scale event / hot reload would wipe it within seconds. The operator's audit log showed the flip happened, but the actual policy state was gone.
+
+### Fix
+- New singleton Mongo doc `shared_auto_submit_policy_state` (`_id="singleton"`) holds the persisted override.
+- New `set_policy_async()` writes the override to Mongo AND updates the in-memory cache atomically.
+- New `hydrate_from_mongo()` reloads the override into the cache. Called at:
+  - **App startup** via the `lifespan` hook (so a fresh pod boots with the operator's last-known policy).
+  - **First `/api/admin/auto-submit/policy` GET** if startup hydration didn't run (fork/script safety net).
+- Old sync `set_policy()` is retained but **deprecated** — tests use it, no operator-facing path does. Admin route now calls `set_policy_async()` exclusively.
+- Audit log writer now stamps `event`, `user_email`, and `persisted` fields (the prior schema had `by` / `enabled` only, producing audit rows that read `by ? · event ?`).
+
+### Broadened defaults (per operator directive)
+`TIER_1_DEFAULTS` was BUY+equity only — too narrow for "Shelly handles all of it":
+```diff
+- "allowed_lanes":   ["equity"]
++ "allowed_lanes":   ["equity", "crypto"]
+- "allowed_actions": ["BUY"]
++ "allowed_actions": ["BUY", "SELL"]
+```
+Risk rails unchanged: `confidence_min=0.85`, `notional_max_usd=$5000`, `required_dry_run_state=passed`, all 4 brains trusted. **`enabled` still defaults to `False`** — flipping ON is an explicit operator action with a typed audit reason.
+
+### Verified end-to-end (live backend restart)
+```
+before flip       → enabled=False  source=default_off
+POST /policy ON   → enabled=True   source=runtime_override
+[backend restart]
+after restart     → enabled=True   source=runtime_override   ← survived ✓
+```
+
+### Tests
+- NEW `tests/test_auto_submit_policy_persistence.py` (5 tests):
+  - `set_policy_async` writes to Mongo
+  - Toggle survives simulated pod restart (THE incident scenario)
+  - Toggle-OFF also persists (no silent re-enable on restart)
+  - `hydrate_from_mongo` handles empty Mongo cleanly on fresh deploy
+  - Broadened defaults include both lanes + both actions
+- All 152 auto-submit + Webull regression tests still pass.
+
+### Files
+- MOD `backend/shared/auto_submit_policy.py` — Mongo persistence, lazy hydration, `set_policy_async`, broadened defaults
+- MOD `backend/routes/admin_auto_submit.py` — POST handler uses async-persisting variant; GET lazy-hydrates; audit log writes richer schema
+- MOD `backend/server.py` — lifespan hook calls `hydrate_from_mongo()` at boot
+- NEW `backend/tests/test_auto_submit_policy_persistence.py`
+
+### Operator action required on production
+1. **Redeploy** — push these changes to `mission.risedual.ai`.
+2. **Flip the toggle ON once** via the Intents → Auto-Submit Policy panel (or `POST /api/admin/auto-submit/policy {"enabled":true,"reason":"..."}`). After redeploy + flip, the policy survives **every** future pod restart.
+3. **Verify Monday at open**: watch the "Why are we not trading?" funnel — `Never submitted by operator` should drop and `Auto-submitted by Shelly` should rise.
+
+### Why this matters
+This is the doctrinal bridge: brains emit intents, gate chain validates them, Shelly auto-submits, broker executes, audit log files. The chain was breaking at the Shelly step because of an in-memory-only state bug — the rest of the doctrine was working all along.
+
+---
+
+
+
 ## 2026-02-19 (final+16) — Diagnostics declutter + Setup page extraction
 
 ### Why

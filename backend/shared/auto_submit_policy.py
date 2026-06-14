@@ -21,6 +21,7 @@ endpoint `POST /api/admin/auto-submit/policy` (runtime override).
 from __future__ import annotations
 
 import logging
+import asyncio
 import os
 import threading
 from datetime import datetime, timezone
@@ -28,22 +29,50 @@ from typing import Any
 
 logger = logging.getLogger("risedual.auto_submit_policy")
 
-# ── Tier 1 defaults — conservative by design ─────────────────────────
+# ── Tier 1 defaults — operator-driven (2026-02-19 update) ────────────
+# Original "tier_1_conservative" was BUY+equity only. Operator directive
+# (2026-02-19): "I'm not reviewing, it should be handled by Shelly and
+# filed." → broaden the doctrine surface so when the toggle is flipped
+# on, Shelly catches every intent the brains emit, regardless of action
+# or lane. Risk controls remain:
+#   - confidence_min        (≥ 0.85 — high-confidence floor)
+#   - notional_max_usd      (≤ $5,000 absolute ceiling per order)
+#   - required_dry_run_state (intent must have passed all gates first)
+# `enabled` STILL defaults to False — flipping ON is an explicit
+# operator action via /api/admin/auto-submit/policy (signed audit
+# trail with a typed reason).
 TIER_1_DEFAULTS: dict[str, Any] = {
     "tier_name": "tier_1_conservative",
     "confidence_min": 0.85,
-    "notional_default_usd": 5.0,        # the brain's preferred size for a tier-1 auto-trade
-    "notional_max_usd": 5000.0,         # absolute ceiling; per-order cap still applies below this
-    "allowed_lanes": ["equity"],        # NO crypto in tier 1 — pilot equity first
-    "allowed_actions": ["BUY"],         # spot_long only
+    "notional_default_usd": 5.0,                       # operator-tunable per-order default
+    "notional_max_usd": 5000.0,                        # absolute hard cap
+    "allowed_lanes": ["equity", "crypto"],             # both lanes (was equity-only)
+    "allowed_actions": ["BUY", "SELL"],                # both directions (was BUY-only)
     "allowed_brains": ["alpha", "camaro", "chevelle", "redeye"],
     "required_dry_run_state": "passed",
 }
 
 
 # ── Runtime override (toggled via admin endpoint) ────────────────────
+#
+# Persistence story (2026-02-19, post-incident):
+#   The override was originally a process-local dict. Production
+#   operator reported "I flipped the toggle and nothing happened" —
+#   investigation showed every K8s pod restart silently reset the
+#   override back to default-off, because there was NO persistence.
+#
+#   Fix: writes go to Mongo (`shared_auto_submit_policy_state`,
+#   singleton doc keyed by `_id="singleton"`). On first access we
+#   lazy-hydrate the in-memory cache from Mongo so subsequent calls
+#   stay cheap. `set_policy_async` is the persisting entrypoint
+#   (called by the admin route). `set_policy` (sync) is retained for
+#   tests that don't need persistence.
 _POLICY_LOCK = threading.Lock()
 _POLICY_OVERRIDE: dict[str, Any] = {}
+_HYDRATED: bool = False  # set True after first Mongo load
+
+POLICY_STATE_COLL = "shared_auto_submit_policy_state"
+POLICY_STATE_DOC_ID = "singleton"
 
 
 def _env_enabled() -> bool:
@@ -51,27 +80,110 @@ def _env_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+async def hydrate_from_mongo() -> dict[str, Any]:
+    """Load the persisted policy override from Mongo into the
+    in-memory cache. Called once at app startup (lifespan hook) and
+    also lazily on first access if the startup hook didn't run
+    (tests, scripts, etc).
+
+    Idempotent — safe to call multiple times. Returns the resulting
+    effective policy.
+    """
+    global _HYDRATED
+    try:
+        from db import db  # late import — module is loaded before db in some tests
+        doc = await db[POLICY_STATE_COLL].find_one({"_id": POLICY_STATE_DOC_ID})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("auto_submit_policy: hydrate_from_mongo failed: %s", e)
+        with _POLICY_LOCK:
+            _HYDRATED = True  # don't keep retrying — env/default fallback is fine
+        return get_policy()
+    with _POLICY_LOCK:
+        _POLICY_OVERRIDE.clear()
+        if doc:
+            # `_id` is the doc key; the rest is the override payload.
+            for k, v in doc.items():
+                if k == "_id":
+                    continue
+                if k == "enabled" or k in TIER_1_DEFAULTS:
+                    _POLICY_OVERRIDE[k] = v
+        _HYDRATED = True
+    p = get_policy()
+    logger.info(
+        "auto_submit_policy: hydrated from Mongo · enabled=%s · source=%s",
+        p["enabled"], p["source"],
+    )
+    return p
+
+
+async def _persist_to_mongo(override: dict[str, Any]) -> None:
+    """Upsert the override dict to Mongo. Called from set_policy_async."""
+    from db import db
+    payload = {**override, "updated_at": datetime.now(timezone.utc).isoformat()}
+    await db[POLICY_STATE_COLL].update_one(
+        {"_id": POLICY_STATE_DOC_ID},
+        {"$set": payload},
+        upsert=True,
+    )
+
+
 def get_policy() -> dict[str, Any]:
-    """Current effective policy = defaults + runtime overrides."""
+    """Current effective policy = defaults + runtime overrides.
+
+    Pure read; no Mongo I/O. Callers that need a fresh hydrate
+    (post-restart cold start) should `await hydrate_from_mongo()`
+    first — the admin route + lifespan hook do this.
+    """
     with _POLICY_LOCK:
         ovr = dict(_POLICY_OVERRIDE)
     enabled = ovr.get("enabled")
     if enabled is None:
         enabled = _env_enabled()
+    src = (
+        "runtime_override" if ovr.get("enabled") is not None
+        else ("env" if _env_enabled() else "default_off")
+    )
     return {
         "enabled": bool(enabled),
-        "source": (
-            "runtime_override" if ovr.get("enabled") is not None
-            else ("env" if _env_enabled() else "default_off")
-        ),
+        "source": src,
         **TIER_1_DEFAULTS,
         **{k: v for k, v in ovr.items() if k != "enabled"},
     }
 
 
+async def set_policy_async(enabled: bool, **overrides: Any) -> dict[str, Any]:
+    """Operator API — persist enabled flag + optional overrides to
+    Mongo AND update the in-memory cache. This is the entrypoint the
+    admin route MUST use so the toggle survives pod restarts.
+
+    `overrides` must be a subset of TIER_1_DEFAULTS keys.
+    """
+    with _POLICY_LOCK:
+        _POLICY_OVERRIDE.clear()
+        _POLICY_OVERRIDE["enabled"] = bool(enabled)
+        for k, v in overrides.items():
+            if k in TIER_1_DEFAULTS:
+                _POLICY_OVERRIDE[k] = v
+        snapshot = dict(_POLICY_OVERRIDE)
+    try:
+        await _persist_to_mongo(snapshot)
+    except Exception as e:  # noqa: BLE001
+        # Persistence failure is loud but does not roll back the
+        # in-memory flip — operator's UI click took effect for this
+        # process. A pod restart would lose it; logged so monitoring
+        # can catch it.
+        logger.error(
+            "auto_submit_policy: set_policy_async PERSIST FAILED — "
+            "in-memory flip will NOT survive pod restart: %s", e,
+        )
+    return get_policy()
+
+
 def set_policy(enabled: bool, **overrides: Any) -> dict[str, Any]:
-    """Operator API — flip the enabled flag + optionally override any
-    field. `overrides` must be a subset of TIER_1_DEFAULTS keys."""
+    """SYNC variant — in-memory ONLY, does NOT persist. Retained for
+    tests and direct callers that explicitly don't want Mongo I/O.
+    Operator-facing toggles MUST use set_policy_async.
+    """
     with _POLICY_LOCK:
         _POLICY_OVERRIDE.clear()
         _POLICY_OVERRIDE["enabled"] = bool(enabled)
@@ -82,8 +194,10 @@ def set_policy(enabled: bool, **overrides: Any) -> dict[str, Any]:
 
 
 def reset_policy_for_tests() -> None:
+    global _HYDRATED
     with _POLICY_LOCK:
         _POLICY_OVERRIDE.clear()
+        _HYDRATED = False
 
 
 def matches_tier_1(intent: dict, policy: dict | None = None) -> tuple[bool, str]:
