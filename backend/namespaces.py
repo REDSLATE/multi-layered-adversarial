@@ -797,3 +797,11 @@ PARADOX_V2_SEAT_PERFORMANCE   = "paradox_v2_seat_performance"
 PARADOX_V2_PROMOTION_LOG      = "paradox_v2_seat_promotion_log"
 PARADOX_V2_ROADGUARD_STOPS    = "paradox_v2_roadguard_stops"
 PARADOX_V2_EVALUATIONS        = "paradox_v2_evaluations"   # one row per /api/v2/evaluate call (audit + replay)
+
+# Vote-doctrine layer (2026-02-19, additive; does not touch /v2/evaluate).
+# Immutable per-brain vote records. Calibration & negative-pattern
+# stores live across restarts. Failure attributions are append-only.
+PARADOX_V2_BRAIN_VOTES        = "paradox_v2_brain_votes"
+PARADOX_V2_CALIBRATION        = "paradox_v2_calibration_history"
+PARADOX_V2_NEGATIVE_PATTERNS  = "paradox_v2_negative_patterns"
+PARADOX_V2_FAILURE_ATTRIBUTIONS = "paradox_v2_failure_attributions"

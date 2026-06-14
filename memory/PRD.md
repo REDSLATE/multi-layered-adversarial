@@ -1,3 +1,67 @@
+## 2026-02-19 (final+10) — Vote-doctrine layer shipped (additive, no trading impact)
+
+### What shipped
+Five new modules + Mongo persistence + 5 new API endpoints. **Existing `/api/v2/evaluate` untouched.**
+
+**Backend modules**
+- `shared/brain_vote.py` — immutable `BrainVote` dataclass (`frozen=True`). Invariants enforced at construction. Includes the operator-mandated symmetric delta cap: `|calibrated − raw| > 0.30` raises (replaces the earlier one-sided rule that wrongly blocked honest upward calibration).
+- `brains/calibration.py` — `BrainCalibration` Bayesian shrinkage per `(regime, conf_bucket)`. Cold-start shrinks aggressively toward 0.5; warm bucket converges to 60/40 raw/observed-wr mix; extra 0.1 shrinkage penalty when historical avg return < -20 bps.
+- `brains/negative_knowledge.py` — `NegativeKnowledge` pre-vote pattern check; verifier-driven `learn_from_failure()` reinforces or appends regime-scoped patterns; placeholder `_similarity` ready to swap for cosine over embeddings when the vector store lands.
+- `governor/disagreement.py` — pure-function `compute_disagreement(votes, regime)` returning frozen `DisagreementMetrics` (normalised Shannon entropy, outlier brain = most-confident dissenter, abstention rate, majority stance, majority mean confidence).
+- `verifier/replay.py` — `VerifierReplay.analyze(case) → FailureReason` classifying ACCEPTABLE_LOSS / GOVERNOR_ERROR / BRAIN_ERROR (with sub-flags `calibration_error`, `memory_error`, `negative_knowledge_miss`).
+
+**Persistence** — `shared/paradox_v2/vote_doctrine_repo.py` provides ISO-string ↔ datetime conversion + 4 new collections:
+- `paradox_v2_brain_votes` — every immutable vote
+- `paradox_v2_calibration_history` — per (brain, regime, conf_bucket) running totals
+- `paradox_v2_negative_patterns` — per-brain regime-scoped failure patterns
+- `paradox_v2_failure_attributions` — append-only verifier conclusions
+
+**API surface** (all additive, namespaced under `/api/v2`):
+- `POST /v2/votes/cast` — persist a single BrainVote (invariants → 422 on violation)
+- `GET  /v2/votes` — filterable feed (`brain`, `symbol`, `limit`)
+- `POST /v2/disagreement` — compute metrics on a vote bundle by id
+- `POST /v2/replay` — verifier failure attribution on a synthetic case (auto-persists)
+- `GET  /v2/attributions` — append-only attribution feed
+
+### Tests
+41 new + 17 prior Paradox v2 + 66 affected legacy = **124/124 passing**. Includes the operator's canonical abstain contract test, the symmetric-delta guard (both directions), all 4 disagreement scenarios (unanimous / 3-to-1 / 2-to-2 / outlier-by-confidence), calibration cold-start + warm bucket + penalty escalation, negative-pattern regime scoping, and replay attribution across all 5 failure types.
+
+### Live smoke-test outcomes (verified by curl)
+| Endpoint | Scenario | Outcome |
+|---|---|---|
+| `POST /v2/evaluate` | alpha BUY $2000 clean | EXECUTED, $1000 (unchanged — no regression) |
+| `POST /v2/votes/cast` ×4 | alpha BUY, camaro BUY, chevelle SELL, redeye ABSTAIN | All persisted with vote_ids |
+| `POST /v2/disagreement` | the 4-vote bundle | entropy 0.92, outlier=chevelle(SELL), abstain=0.25, majority=BUY conf 0.685 |
+| `POST /v2/replay` | -200 bps loss | brain_error, responsible=alpha, calibration_error=true |
+| `POST /v2/votes/cast` | raw 0.10 → calibrated 0.95 | HTTP 422 — symmetric delta guard fires |
+
+### Doctrine fit (what we did NOT build)
+Per spec: NO vector memory store, NO market embedding pipeline, NO LLM training layer this session. The `_similarity` placeholder in `negative_knowledge.py` is a hash-prefix comparator with a TODO marker for the eventual swap to cosine similarity over embeddings.
+
+### Files touched this session
+NEW:
+- `/app/backend/shared/brain_vote.py`
+- `/app/backend/brains/{__init__.py,calibration.py,negative_knowledge.py}`
+- `/app/backend/governor/{__init__.py,disagreement.py}`
+- `/app/backend/verifier/{__init__.py,replay.py}`
+- `/app/backend/shared/paradox_v2/vote_doctrine_repo.py`
+- `/app/backend/tests/{test_brain_vote.py,test_calibration.py,test_disagreement.py,test_negative_knowledge.py,test_verifier_replay.py}`
+
+MOD:
+- `/app/backend/namespaces.py` — 4 new collection constants
+- `/app/backend/routes/paradox_v2.py` — 5 new endpoints (existing endpoints untouched)
+
+### Build path locked for next session
+The user's milestone target is now achievable on the next pass:
+- ✅ Every brain emits immutable BrainVote (contract + persistence shipped)
+- ✅ Governor computes disagreement (pure-function ready)
+- ✅ Verifier can replay a losing trade (analyzer + persistence ready)
+
+Remaining: wire the brain runners to call `BrainCalibration.calibrate()` + `NegativeKnowledge.check()` before emitting votes; wire the verifier loop to consume execution_receipts → attributions. These hot-path integrations were intentionally deferred to keep trading unaffected this session.
+
+---
+
+
 ## 2026-02-19 (final+9) — Paradox v2 doctrine sentence locked (no paper trades)
 
 ### Locked doctrine sentence (PRD reference)

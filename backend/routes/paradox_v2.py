@@ -311,3 +311,218 @@ async def get_brains(_user: dict = Depends(get_current_user)) -> dict:
 async def get_governor_rules(_user: dict = Depends(get_current_user)) -> dict:
     rows = await db[PARADOX_V2_GOVERNOR_RULES].find({}, {"_id": 0}).to_list(50)
     return {"items": rows, "count": len(rows)}
+
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Vote-doctrine layer (2026-02-19, additive — does NOT touch /v2/evaluate)
+# ═════════════════════════════════════════════════════════════════════
+
+
+from datetime import datetime as _dt, timezone as _tz  # noqa: E402
+from typing import Any as _Any  # noqa: E402
+from shared.brain_vote import (  # noqa: E402
+    BrainVote, CalibrationKey, MarketMemoryResult,
+)
+from governor.disagreement import compute_disagreement  # noqa: E402
+from verifier.replay import VerifierReplay, ReplayCase  # noqa: E402
+from shared.paradox_v2.vote_doctrine_repo import (  # noqa: E402
+    save_brain_vote, list_recent_votes, load_votes_by_ids,
+    save_failure_attribution, list_recent_attributions,
+)
+
+
+# ─── /v2/votes — cast & list immutable BrainVotes ────────────────────
+
+
+class MemoryEvidencePayload(BaseModel):
+    similar_count: int = Field(..., ge=0)
+    win_rate: float = Field(..., ge=0.0, le=1.0)
+    avg_return_bps: float
+    worst_drawdown_bps: float
+    failure_pattern: Optional[str] = None
+
+
+class CalibrationKeyPayload(BaseModel):
+    regime: str
+    conf_bucket: float = Field(..., ge=0.0, le=1.0)
+
+
+class CastVoteRequest(BaseModel):
+    brain: str
+    stance: Literal["BUY", "SELL", "HOLD", "ABSTAIN"]
+    raw_confidence: float = Field(..., ge=0.0, le=1.0)
+    calibrated_confidence: float = Field(..., ge=0.0, le=1.0)
+    calibration_key: CalibrationKeyPayload
+    memory_evidence: Optional[MemoryEvidencePayload] = None
+    negative_knowledge_triggered: bool = False
+    reasoning: list[str] = Field(..., min_length=1)
+    # Operator context — for read filtering only; the brain layer
+    # has no notion of symbol/regime in its BrainVote dataclass.
+    symbol: Optional[str] = None
+    regime: Optional[str] = None
+
+
+@router.post("/votes/cast")
+async def post_cast_vote(
+    body: CastVoteRequest,
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    """Persist a single brain's immutable vote.
+
+    The full BrainVote invariants run at construction time — invalid
+    votes raise 422. Trading remains unaffected; this endpoint only
+    writes to paradox_v2_brain_votes and never reaches any seat or
+    broker."""
+    mem = None
+    if body.memory_evidence is not None:
+        mem = MarketMemoryResult(
+            similar_count=body.memory_evidence.similar_count,
+            win_rate=body.memory_evidence.win_rate,
+            avg_return_bps=body.memory_evidence.avg_return_bps,
+            worst_drawdown_bps=body.memory_evidence.worst_drawdown_bps,
+            failure_pattern=body.memory_evidence.failure_pattern,
+        )
+    try:
+        vote = BrainVote(
+            brain=body.brain,
+            stance=body.stance,
+            calibrated_confidence=body.calibrated_confidence,
+            raw_confidence=body.raw_confidence,
+            calibration_key=CalibrationKey(
+                regime=body.calibration_key.regime,
+                conf_bucket=body.calibration_key.conf_bucket,
+            ),
+            memory_evidence=mem,
+            negative_knowledge_triggered=body.negative_knowledge_triggered,
+            reasoning=tuple(body.reasoning),
+            timestamp=_dt.now(_tz.utc),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    vote_id = await save_brain_vote(vote, symbol=body.symbol, regime=body.regime)
+    return {"ok": True, "vote_id": vote_id,
+            "stance": vote.stance,
+            "calibrated_confidence": vote.calibrated_confidence}
+
+
+@router.get("/votes")
+async def get_votes(
+    limit: int = Query(50, ge=1, le=500),
+    brain: Optional[str] = Query(None),
+    symbol: Optional[str] = Query(None),
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    rows = await list_recent_votes(limit=limit, brain=brain, symbol=symbol)
+    return {"items": rows, "count": len(rows)}
+
+
+# ─── /v2/disagreement — compute metrics on a vote bundle ─────────────
+
+
+class DisagreementRequest(BaseModel):
+    vote_ids: list[str] = Field(..., min_length=1)
+    regime: str
+
+
+@router.post("/disagreement")
+async def post_disagreement(
+    body: DisagreementRequest,
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    """Compute DisagreementMetrics across a set of persisted votes.
+
+    Pure read + pure math — the governor would consume the returned
+    metrics to decide size cuts, but this endpoint never executes
+    any downstream action."""
+    votes = await load_votes_by_ids(body.vote_ids)
+    if not votes:
+        raise HTTPException(status_code=404, detail="no votes resolved from vote_ids")
+    metrics = compute_disagreement(votes, regime=body.regime)
+    return {
+        "ok": True,
+        "vote_count": len(votes),
+        "metrics": {
+            "entropy": metrics.entropy,
+            "outlier_brain": metrics.outlier_brain,
+            "outlier_stance": metrics.outlier_stance,
+            "regime_mismatch": metrics.regime_mismatch,
+            "abstention_rate": metrics.abstention_rate,
+            "majority_stance": metrics.majority_stance,
+            "majority_confidence": metrics.majority_confidence,
+        },
+    }
+
+
+# ─── /v2/replay — verifier failure attribution on a case ─────────────
+
+
+class ReplayRequest(BaseModel):
+    """Operator-supplied replay case. The verifier reads from real
+    paradox_v2_evaluations + execution_receipts in production; for
+    stand-alone testing this lets you POST a synthetic case."""
+    symbol: str
+    regime: str
+    direction: Literal["BUY", "SELL", "HOLD"]
+    notional_usd: float = Field(..., ge=0.0)
+    pnl_bps: float
+    vote_ids: list[str] = Field(..., min_length=1)
+    loss_threshold_bps: int = Field(-50)
+    roadguard_decision: Literal["OPEN", "BLOCKED"] = "OPEN"
+
+
+@router.post("/replay")
+async def post_replay(
+    body: ReplayRequest,
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    """Run VerifierReplay.analyze() on a case assembled from persisted
+    votes. Always persists the resulting FailureReason to
+    paradox_v2_failure_attributions."""
+    votes = await load_votes_by_ids(body.vote_ids)
+    if not votes:
+        raise HTTPException(status_code=404, detail="no votes resolved from vote_ids")
+    case = ReplayCase(
+        timestamp=_dt.now(_tz.utc),
+        symbol=body.symbol.upper().strip(),
+        regime=body.regime,
+        brain_votes={v.brain: v for v in votes},
+        governor_output={},
+        roadguard_decision=body.roadguard_decision,
+        seat_action={"direction": body.direction,
+                     "notional_usd": body.notional_usd},
+        actual_outcome={"pnl_bps": body.pnl_bps},
+    )
+    reason = VerifierReplay(loss_threshold_bps=body.loss_threshold_bps).analyze(case)
+    attribution_id = await save_failure_attribution(
+        reason,
+        case_context={
+            "symbol": case.symbol, "regime": case.regime,
+            "direction": body.direction, "pnl_bps": body.pnl_bps,
+            "vote_ids": body.vote_ids,
+        },
+    )
+    return {
+        "ok": True,
+        "attribution_id": attribution_id,
+        "failure_reason": {
+            "type": reason.type.value,
+            "responsible_brain": reason.responsible_brain,
+            "calibration_error": reason.calibration_error,
+            "memory_error": reason.memory_error,
+            "negative_knowledge_miss": reason.negative_knowledge_miss,
+            "explanation": reason.explanation,
+        },
+    }
+
+
+@router.get("/attributions")
+async def get_attributions(
+    limit: int = Query(50, ge=1, le=500),
+    responsible_brain: Optional[str] = Query(None),
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    rows = await list_recent_attributions(
+        limit=limit, responsible_brain=responsible_brain,
+    )
+    return {"items": rows, "count": len(rows)}
