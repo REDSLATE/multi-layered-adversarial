@@ -23,7 +23,7 @@ export default function ParadoxV2Page() {
   return (
     <div className="space-y-4" data-testid="paradox-v2-page">
       <PageHeader
-        title="Paradox V2"
+        title="Seraph"
         kicker="Decision Doctrine"
         subtitle="Seat-owned execution. Brain owns doctrine. Seat owns execution. Governor owns modifiers. RoadGuard owns stops. Verifier owns promotion."
       />
@@ -32,7 +32,7 @@ export default function ParadoxV2Page() {
         <CouncilChamberTile />
       </PanelErrorBoundary>
 
-      <PanelErrorBoundary label="Paradox v2 Dashboard">
+      <PanelErrorBoundary label="Seraph Dashboard">
         <ParadoxV2DashboardPanel />
       </PanelErrorBoundary>
     </div>

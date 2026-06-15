@@ -1,3 +1,18 @@
+## 2026-02-20 (Paradox → Seraph display rebrand, trademark conflict)
+
+Display-only rename, same playbook as the Angel layer. Internal module tree (`shared/paradox_v2/`, `paradox_v2_*` mongo kinds, `ParadoxV2Page` component, `/admin/paradox` URL, `/api/admin/paradox/*` endpoints, `nav-paradox` testid) all retained.
+
+User-facing strings flipped to "Seraph":
+- `Layout.jsx` sidebar nav label `Paradox V2` → `Seraph`
+- `ParadoxV2.jsx` `PageHeader title` → `Seraph`; `PanelErrorBoundary label` → `Seraph Dashboard`
+- `CouncilChamberTile.jsx` tagline → `Per Seraph doctrine: …`
+- `ParadoxV2DashboardPanel.jsx` panel header → `Seraph · Seat-Owned Execution`
+
+Verified on preview `/admin/paradox`: DOM contains zero `Paradox`/`PARADOX` strings; four `Seraph`/`SERAPH` occurrences render where expected. Angel labels + IGNIS brand still intact.
+
+---
+
+
 ## 2026-02-20 (Angel/Ignis UI verification — P0 closed)
 
 Visually confirmed via screenshot tool on preview (`/admin/paradox` + `/admin/intents`):

@@ -169,7 +169,7 @@ export default function CouncilChamberTile() {
             </span>
           </div>
           <div className="font-mono text-[9px] text-rd-dim mt-1">
-            Per Paradox v2 doctrine: brains emit opinions only; seats decide execution. This tile shows the four canonical brains{"'"} latest stance.
+            Per Seraph doctrine: brains emit opinions only; seats decide execution. This tile shows the four canonical brains{"'"} latest stance.
           </div>
         </div>
         <div className="flex items-center gap-2">

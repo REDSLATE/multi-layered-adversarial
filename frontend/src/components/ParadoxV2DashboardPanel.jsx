@@ -129,7 +129,7 @@ export default function ParadoxV2DashboardPanel() {
       <div className="flex items-center gap-2">
         <ShieldCheck size={14} weight="bold" className="text-rd-accent" />
         <span className="text-[11px] font-mono uppercase tracking-widest text-rd-text font-bold">
-          Paradox v2 · Seat-Owned Execution
+          Seraph · Seat-Owned Execution
         </span>
         <span className="ml-2 text-[10px] font-mono text-rd-dim italic">
           stand-alone — not wired into live intents yet
