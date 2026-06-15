@@ -12,7 +12,10 @@ import FeatureBuilders from "@/pages/FeatureBuilders";
 import Artifacts from "@/pages/Artifacts";
 import Diagnostics from "@/pages/Diagnostics";
 import Flags from "@/pages/Flags";
-import Promotion from "@/pages/Promotion";
+// "Promotion" (Patent G + J governance) page removed from routing
+// 2026-02-19 — superseded by Paradox V2 seat-policy + 25-eval
+// autonomy ladder. The /pages/Promotion.jsx file is left on disk
+// for git history but no longer imported or routable.
 import LearningLadder from "@/pages/LearningLadder";
 import RecentIngests from "@/pages/RecentIngests";
 import RuntimeDetail from "@/pages/RuntimeDetail";
@@ -130,7 +133,6 @@ function App() {
             <Route path="artifacts" element={<Artifacts />} />
             <Route path="diagnostics" element={<Diagnostics />} />
             <Route path="flags" element={<Flags />} />
-            <Route path="promotion" element={<Promotion />} />
             <Route path="learning-ladder" element={<LearningLadder />} />
             <Route path="recent" element={<RecentIngests />} />
             <Route path="runtime/:runtime" element={<RuntimeDetail />} />

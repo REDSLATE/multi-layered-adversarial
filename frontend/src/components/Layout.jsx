@@ -54,7 +54,11 @@ const SECTIONS = [
       { to: "/admin/doctrine-reference", label: "Doctrine Ref", icon: Shield, testid: "nav-doctrine-reference" },
       { to: "/admin/safety-gates", label: "Safety Gates", icon: Shield, testid: "nav-safety-gates" },
       { to: "/admin/conflicts", label: "Conflicts", icon: LightningSlash, testid: "nav-conflicts" },
-      { to: "/admin/promotion", label: "Promotion", icon: TrendUp, testid: "nav-promotion" },
+      // "Promotion" (Patent G + J governance) removed 2026-02-19 —
+      // superseded by Paradox V2 seat-policy + 25-eval autonomy ladder.
+      // Operator deferred the readiness-gate doctrine; every gate on
+      // that page showed FAILED because the underlying artifacts were
+      // intentionally never built.
     ],
   },
   {

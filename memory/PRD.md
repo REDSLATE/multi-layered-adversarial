@@ -1,3 +1,31 @@
+## 2026-02-19 (final+18) — Legacy "Promotion" page (Patent G + J) removed from routing
+
+### Why
+Operator screenshot from production showed the "Governed authority elevation" page with every readiness gate (`artifact_present`, `calibration_ece`, `calibration_brier`, `resolved_rows`, `disagreement_stability`, `audit_integrity`) showing FAILED across all four brains. The page existed but was non-functional because the operator had **explicitly deferred the readiness-gate doctrine earlier this session** ("I don't want the promotion rules to lock up the system again") — so the artifacts those gates require were intentionally never built.
+
+Operator directive: "There is no viable way to use the page. Can we get rid of the section?"
+
+### What changed
+- MOD `frontend/src/components/Layout.jsx` — removed "Promotion" sidebar nav link.
+- MOD `frontend/src/App.js` — removed `Promotion` import and `<Route path="promotion">` registration.
+- `pages/Promotion.jsx` and its backend routes left untouched on disk for git history; just unreachable.
+
+### Doctrine pin
+Promotion in this codebase is the **Paradox V2** ladder only:
+- Pilot seats start in `observe` mode (decision logged, no order)
+- 25 clean evaluations in the current window → readiness strip flips green → operator clicks promote → `observe → shadow → toehold → auto_execute`
+- Verifier does NOT auto-promote (explicit operator deferral)
+- No Patent G / Patent J / readiness-artifact gates apply
+
+### Verified on preview
+- Sidebar "Promotion" link gone
+- Other governance items (Conflicts, Safety Gates, Doctrine, Doctrine Ref) intact
+- Direct hit on `/admin/promotion` falls through to public landing page (no route match)
+
+---
+
+
+
 ## 2026-02-19 (final+17) — Auto-submit policy persistence fix + broadened defaults
 
 ### The incident
