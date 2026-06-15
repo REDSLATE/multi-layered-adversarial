@@ -114,10 +114,21 @@ async def intents_post_mortem(
                     # skipped this (HOLD, low-conf, etc.)" from a
                     # genuinely-stuck "Never submitted" intent.
                     "auto_submit_skipped", "auto_submit_failed",
+                    # 2026-02-19 (later same day): also include the
+                    # auto_router_* kinds. The auto_router is the
+                    # background loop that submits intents in
+                    # parallel to the dry-run→Shelly chain. Before
+                    # this addition the classifier saw NONE of its
+                    # rows and bucketed every gate-blocked auto-router
+                    # row as "Never submitted (no audit row)", which
+                    # is exactly the 2965-ghost mystery in production.
+                    "auto_router_passed", "auto_router_blocked",
+                    "auto_router_no_trade", "auto_router_error",
+                    "auto_router_advisory_only",
                 ]},
             },
             {"_id": 0, "intent_id": 1, "kind": 1, "gates": 1, "reason": 1,
-             "error": 1, "ts": 1, "skip_category": 1},
+             "error": 1, "ts": 1, "skip_category": 1, "classification": 1},
         ).to_list(length=20000)
     # Newest row per intent wins.
     latest_by_intent: Dict[str, dict] = {}
@@ -205,6 +216,44 @@ async def intents_post_mortem(
                     outcome = "submit_error"
                     reason = (row.get("reason") or "auto_submit raised")[:120]
                     top_blockers[("broker", reason)] += 1
+                # ─── auto_router_* kinds (2026-02-19, late fix) ────
+                # The auto_router is a parallel background submission
+                # path. Its audit rows were previously invisible to
+                # this classifier — producing the "2965 ghost intents
+                # in Never submitted" mystery on production.
+                elif kind == "auto_router_passed":
+                    outcome = "executed"
+                    funnel["submitted"] += 1
+                    funnel["executed"] += 1
+                    if len(executed_samples) < 10:
+                        executed_samples.append(it.get("intent_id"))
+                elif kind == "auto_router_blocked":
+                    outcome = "gate_chain_blocked"
+                    gates = row.get("gates") or []
+                    blocker = next(
+                        (g for g in gates if not g.get("passed")), None,
+                    )
+                    label = (blocker.get("name") if blocker
+                             else (row.get("reason", "?") or "?"))[:80]
+                    top_blockers[("auto_router_gate", label)] += 1
+                elif kind == "auto_router_no_trade":
+                    outcome = "broker_router_blocked"
+                    reason = (row.get("reason") or "broker_router unspecified")[:120]
+                    top_blockers[("auto_router_broker", reason)] += 1
+                elif kind == "auto_router_error":
+                    outcome = "submit_error"
+                    reason = (row.get("reason") or row.get("error") or "auto_router error")[:120]
+                    top_blockers[("auto_router_broker", reason)] += 1
+                elif kind == "auto_router_advisory_only":
+                    # Brain emitted HOLD / opinion-only / below-floor —
+                    # legitimately not an executable candidate. Mirror
+                    # the auto_submit_skipped surfacing so the operator
+                    # sees these as "filtered correctly" not "stuck".
+                    cls = row.get("classification") or {}
+                    cat = (cls.get("reason") or "advisory").replace(" ", "_")
+                    outcome = f"advisory_only_{cat}"
+                    auto_skipped_by_category[f"advisory_{cat}"] += 1
+                    top_blockers[("auto_router_advisory", cat)] += 1
                 else:
                     outcome = "never_submitted"
 
