@@ -114,6 +114,14 @@ async def intents_post_mortem(
                     # skipped this (HOLD, low-conf, etc.)" from a
                     # genuinely-stuck "Never submitted" intent.
                     "auto_submit_skipped", "auto_submit_failed",
+                    # 2026-02-20: complete audit-completeness contract
+                    # (see `maybe_auto_submit` docstring). Every call
+                    # produces exactly one of:
+                    #   auto_submit_skipped   — Shelly filter said no
+                    #   auto_submit_failed    — submit raised / path leak
+                    #   auto_submit_submitted — handed off to broker
+                    #   auto_submit_exception — unmapped exception (re-raised)
+                    "auto_submit_submitted", "auto_submit_exception",
                     # 2026-02-19 (later same day): also include the
                     # auto_router_* kinds. The auto_router is the
                     # background loop that submits intents in
@@ -215,9 +223,10 @@ async def intents_post_mortem(
                 elif kind == "auto_submit_failed":
                     outcome = "submit_error"
                     # 2026-02-20: prefer the structured `skip_category`
-                    # (e.g. `internal_error`) over the raw exception
-                    # string. Groups all chain-raised failures into one
-                    # actionable bucket the operator can chase.
+                    # (e.g. `internal_error`, `execution_path_leak`,
+                    # `submit_raised`) over the raw exception string.
+                    # Groups all chain-raised failures into actionable
+                    # buckets the operator can chase.
                     cat = row.get("skip_category")
                     if cat:
                         top_blockers[("auto_submit_fail", cat)] += 1
@@ -225,6 +234,43 @@ async def intents_post_mortem(
                     else:
                         reason = (row.get("reason") or "auto_submit raised")[:120]
                         top_blockers[("broker", reason)] += 1
+                # ─── New audit-completeness kinds (2026-02-20) ─────
+                # Every maybe_auto_submit call now writes ONE of:
+                # skipped / failed / submitted / exception. The first
+                # two existed; the last two close the accounting gap
+                # that produced the "2586 ghost intents" leak.
+                elif kind == "auto_submit_submitted":
+                    # Shelly handed off to the broker. The actual
+                    # outcome of the order is in `submit_verdict`
+                    # (passed/blocked/no_trade) — fold those into the
+                    # existing buckets so success vs gate-block is
+                    # clear, while still counting the hand-off itself.
+                    verdict = (row.get("submit_verdict") or "").lower()
+                    if row.get("executed") or verdict == "passed":
+                        outcome = "executed"
+                        if len(executed_samples) < 10:
+                            executed_samples.append(it.get("intent_id"))
+                    elif verdict == "blocked":
+                        outcome = "gate_chain_blocked"
+                        top_blockers[("auto_submit_handoff", "blocked_at_broker")] += 1
+                    elif verdict == "no_trade":
+                        outcome = "broker_router_blocked"
+                        top_blockers[("auto_submit_handoff", "no_trade_at_broker")] += 1
+                    else:
+                        # Edge: submitted with unrecognized verdict —
+                        # still counts as a real hand-off (not a
+                        # ghost), surface it for diagnosis.
+                        outcome = "submit_error"
+                        top_blockers[("auto_submit_handoff", f"verdict={verdict or 'unknown'}")] += 1
+                elif kind == "auto_submit_exception":
+                    # Unmapped exception in maybe_auto_submit body.
+                    # The function re-raises after writing this row,
+                    # so the chain's catch-all may add a second row;
+                    # the newest-row-wins aggregator picks one. This
+                    # branch ensures the row is operator-visible.
+                    outcome = "submit_error"
+                    top_blockers[("auto_submit_fail", "exception_in_chain")] += 1
+                    auto_skipped_by_category["failed_exception"] += 1
                 # ─── auto_router_* kinds (2026-02-19, late fix) ────
                 # The auto_router is a parallel background submission
                 # path. Its audit rows were previously invisible to

@@ -306,104 +306,153 @@ async def maybe_auto_submit(intent_id: str) -> dict[str, Any] | None:
     are written, the receipt clearly stamps that this was machine-
     advanced rather than operator-clicked.
 
-    Skip auditing (2026-02-19): every skip writes an
-    `auto_submit_skipped` row to shared_gate_results with the skip
-    reason. Before this, operators saw 3718 "Never submitted by
-    operator" intents and couldn't tell whether Shelly was filtering
-    them correctly (HOLD, low-conf) or the pipeline was broken.
+    Audit-completeness contract (2026-02-20 operator directive — "no
+    silent execution-path leak"):
+      Every call to this function MUST produce exactly one terminal
+      gate-result row keyed by intent_id. Branches & their `kind`:
+
+        intent_id missing in DB    → auto_submit_skipped  (skip_category=intent_not_found)
+        Shelly filter says NO      → auto_submit_skipped  (skip_category=<reason>)
+        execution_submit raised    → auto_submit_failed   (skip_category=submit_raised)
+        execution_submit returned  → auto_submit_submitted (one of: passed/blocked/no_trade)
+            None or fall-through   → auto_submit_failed   (skip_category=execution_path_leak)
+        Unexpected exception       → auto_submit_exception (kind, re-raised to caller)
+
+      The aggregator in admin_intents_post_mortem.py uses the latest
+      row per intent — the chain's outer catch-all may write a second
+      row but the inner one's `phase` field helps localize the bug.
     """
     from db import db  # noqa: WPS433
     from namespaces import SHARED_INTENTS, SHARED_GATE_RESULTS  # noqa: WPS433
 
-    intent = await db[SHARED_INTENTS].find_one(
-        {"intent_id": intent_id}, {"_id": 0},
-    )
-    if not intent:
-        # 2026-02-20: previously returned None silently → the intent
-        # ended up in "Never submitted (no audit row)" with zero
-        # diagnostic signal. Surface the miss so the operator can see
-        # the race / DB-consistency issue instead of having it eaten.
-        await db[SHARED_GATE_RESULTS].insert_one({
-            "intent_id": intent_id,
-            "kind": "auto_submit_skipped",
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "by": "auto_submit_tier_1",
-            "reason": "intent not found in shared_intents at auto-submit time",
-            "skip_category": "intent_not_found",
-        })
-        return None
-
-    policy = get_policy()
-    ok, reason = matches_tier_1(intent, policy)
-    if not ok:
-        logger.debug("auto_submit skip %s: %s", intent_id, reason)
-        # Audit the skip so post-mortem can show WHY Shelly didn't
-        # submit. Reason follows a `<category>: <detail>` shape so
-        # the classifier can bucket them deterministically.
-        await db[SHARED_GATE_RESULTS].insert_one({
-            "intent_id": intent_id,
-            "kind": "auto_submit_skipped",
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "by": "auto_submit_tier_1",
-            "reason": reason,
-            "tier": policy.get("tier_name", "tier_1_conservative"),
-            "skip_category": _categorize_skip(reason),
-        })
-        return None
-
-    # Resolve the lane's per-order cap so we don't try to submit
-    # above what the caps gate would reject.
-    cap = None
-    try:
-        from shared.risk_caps import caps_snapshot  # noqa: WPS433
-        caps = caps_snapshot()
-        lane = intent.get("lane") or "equity"
-        lane_caps = (caps.get("lanes") or {}).get(lane) or {}
-        cap = lane_caps.get("per_order_usd") or caps.get("per_order_usd")
-    except Exception:  # noqa: BLE001
-        pass
-
-    notional = chosen_notional(intent, cap)
-
-    # Build the submit body and route through the same endpoint the
-    # operator's SUBMIT button uses. The "executed_by" on the receipt
-    # will show 'auto_submit_tier_1' so the audit feed shows machine-
-    # advanced trades distinctly.
-    from shared.execution import execution_submit, SubmitBody  # noqa: WPS433
-
-    submit_body = SubmitBody(
-        intent_id=intent_id,
-        order_notional_usd=notional,
-        confirm="execute",
-        operator_override=False,
-        override_reason="",
-        action_override=None,
-    )
-    auto_user = {
-        "email": "auto_submit_tier_1@risedual.io",
-        "auto_submit": True,
-    }
+    async def _write(payload: dict[str, Any]) -> None:
+        """Write a terminal audit row. Wrapped so a DB hiccup never
+        nukes the caller — the row is best-effort, but if even this
+        fails the outer exception wrapper will still produce a row."""
+        try:
+            await db[SHARED_GATE_RESULTS].insert_one({
+                "intent_id": intent_id,
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "by": "auto_submit_tier_1",
+                **payload,
+            })
+        except Exception as audit_err:  # noqa: BLE001
+            logger.error(
+                "auto_submit terminal audit write FAILED intent=%s payload=%s err=%s",
+                intent_id, payload.get("kind"), audit_err,
+            )
 
     try:
-        result = await execution_submit(submit_body, user=auto_user)
-    except Exception as e:  # noqa: BLE001
-        logger.warning(
-            "auto_submit failed for intent %s: %s", intent_id, e,
+        intent = await db[SHARED_INTENTS].find_one(
+            {"intent_id": intent_id}, {"_id": 0},
         )
-        # Audit the failure so the post-mortem panel surfaces it.
-        from namespaces import SHARED_GATE_RESULTS  # noqa: WPS433
-        await db[SHARED_GATE_RESULTS].insert_one({
-            "intent_id": intent_id,
-            "kind": "auto_submit_failed",
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "by": "auto_submit_tier_1",
-            "reason": str(e)[:500],
-            "tier": "tier_1_conservative",
-        })
-        return None
+        if not intent:
+            await _write({
+                "kind": "auto_submit_skipped",
+                "reason": "intent not found in shared_intents at auto-submit time",
+                "skip_category": "intent_not_found",
+            })
+            return None
 
-    logger.info(
-        "auto_submit OK intent=%s brain=%s symbol=%s notional=%.2f",
-        intent_id, intent.get("stack"), intent.get("symbol"), notional,
-    )
-    return result
+        policy = get_policy()
+        ok, reason = matches_tier_1(intent, policy)
+        if not ok:
+            logger.debug("auto_submit skip %s: %s", intent_id, reason)
+            await _write({
+                "kind": "auto_submit_skipped",
+                "reason": reason,
+                "tier": policy.get("tier_name", "tier_1_conservative"),
+                "skip_category": _categorize_skip(reason),
+            })
+            return None
+
+        # Resolve the lane's per-order cap so we don't try to submit
+        # above what the caps gate would reject.
+        cap = None
+        try:
+            from shared.risk_caps import caps_snapshot  # noqa: WPS433
+            caps = caps_snapshot()
+            lane = intent.get("lane") or "equity"
+            lane_caps = (caps.get("lanes") or {}).get(lane) or {}
+            cap = lane_caps.get("per_order_usd") or caps.get("per_order_usd")
+        except Exception:  # noqa: BLE001
+            pass
+
+        notional = chosen_notional(intent, cap)
+
+        from shared.execution import execution_submit, SubmitBody  # noqa: WPS433
+
+        submit_body = SubmitBody(
+            intent_id=intent_id,
+            order_notional_usd=notional,
+            confirm="execute",
+            operator_override=False,
+            override_reason="",
+            action_override=None,
+        )
+        auto_user = {
+            "email": "auto_submit_tier_1@risedual.io",
+            "auto_submit": True,
+        }
+
+        try:
+            result = await execution_submit(submit_body, user=auto_user)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "auto_submit submit-stage raised intent=%s err=%s", intent_id, e,
+            )
+            await _write({
+                "kind": "auto_submit_failed",
+                "reason": str(e)[:500],
+                "tier": "tier_1_conservative",
+                "skip_category": "submit_raised",
+            })
+            return None
+
+        # ─── Explicit "eligible but no submit path" guard ──────────
+        # If execution_submit returned None or fell through without a
+        # verdict, the intent silently disappeared. Capture it.
+        if result is None:
+            await _write({
+                "kind": "auto_submit_failed",
+                "reason": "eligible_but_no_submit_path",
+                "skip_category": "execution_path_leak",
+                "tier": "tier_1_conservative",
+                "intent_notional_usd": notional,
+            })
+            return None
+
+        # ─── Success terminal row ──────────────────────────────────
+        # execution_submit writes its own gate row (`submit_passed` /
+        # `submit_blocked` / `submit_no_trade`). We ALSO write an
+        # `auto_submit_submitted` row so the post-mortem can account
+        # the auto-submit chain's outcome explicitly: did Shelly hand
+        # off and what did the broker layer return?
+        verdict = result.get("verdict") if isinstance(result, dict) else None
+        await _write({
+            "kind": "auto_submit_submitted",
+            "tier": "tier_1_conservative",
+            "intent_notional_usd": notional,
+            "submit_verdict": verdict,
+            "executed": bool(isinstance(result, dict) and result.get("executed")),
+        })
+        logger.info(
+            "auto_submit OK intent=%s brain=%s symbol=%s notional=%.2f verdict=%s",
+            intent_id, intent.get("stack"), intent.get("symbol"), notional, verdict,
+        )
+        return result
+
+    except Exception as e:  # noqa: BLE001
+        # Catch-ALL: any unexpected exception in the body that wasn't
+        # mapped to a terminal row above. Operator directive: re-raise
+        # AFTER writing the row so the chain's outer try/except can
+        # also see + log the failure.
+        logger.error(
+            "auto_submit unexpected exception intent=%s err=%r", intent_id, e,
+        )
+        await _write({
+            "kind": "auto_submit_exception",
+            "reason": repr(e)[:500],
+            "skip_category": "internal_error",
+        })
+        raise

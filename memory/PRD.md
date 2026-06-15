@@ -1,3 +1,45 @@
+## 2026-02-20 (later) — Audit-completeness contract on maybe_auto_submit (P0 verified)
+
+### Operator directive
+"Fix the Shelly eligible → submitted black hole first. eligible_intent → no auto_submit_skipped, no auto_submit_failed, no submitted order, no audit row. That's not just rejecting trades. It's losing execution-path observability."
+
+### Contract enforced
+Every call to `shared/auto_submit_policy.py::maybe_auto_submit(intent_id)` now produces EXACTLY ONE terminal `shared_gate_results` row:
+
+| Branch                                                | Kind                     | skip_category          |
+|-------------------------------------------------------|--------------------------|------------------------|
+| intent_id not in shared_intents                       | auto_submit_skipped      | intent_not_found       |
+| Shelly filter rejects (HOLD, low-conf, lane, etc.)    | auto_submit_skipped      | <categorized reason>   |
+| execution_submit raised                               | auto_submit_failed       | submit_raised          |
+| execution_submit returned None (the ghost-intent path)| auto_submit_failed       | execution_path_leak    |
+| execution_submit returned dict                        | auto_submit_submitted    | (submit_verdict captured) |
+| Unmapped exception anywhere in body                   | auto_submit_exception    | internal_error (re-raised) |
+
+### Post-mortem classifier updates
+- Recognizes `auto_submit_submitted` (success hand-off) and maps the broker verdict (passed/blocked/no_trade) to the right operator bucket.
+- Recognizes `auto_submit_exception` as `submit_error` with category `exception_in_chain`.
+- `auto_submit_failed` now buckets by `skip_category` (internal_error / execution_path_leak / submit_raised) instead of fragmenting on raw exception strings.
+
+### Test coverage
+- 7 contract tests in `tests/test_auto_submit_chain_audit_guarantee.py`:
+  intent-missing, in-dry-run raise, post-dry-run raise, submit-raised, **execution-path-leak** (the critical 2,586-ghost-intent fix), success-path-submitted, unexpected-exception-and-reraise.
+- All 53 related backend tests pass.
+
+### Why this matters before lowering confidence_min
+Per operator: "Lowering confidence_min just feeds more intents into the same black hole." With the contract enforced, the next 24h post-mortem MUST account for 100% of Shelly-eligible intents in one of the buckets above. Only after the accounting closes do we touch `confidence_min: 0.85 → 0.70`.
+
+### Production redeploy expected behavior
+The 2,586 "Never submitted (no audit row)" will re-bucket into ONE of:
+- `[auto_submit_fail] execution_path_leak` — execution_submit returning None silently. This points us at execution.py.
+- `[auto_submit_fail] internal_error` / `[auto_submit_fail] exception_in_chain` — a real exception in the chain. The `reason` field names the exception class.
+- `[auto_submit_handoff] blocked_at_broker` / `no_trade_at_broker` — Shelly successfully handed off but the broker layer rejected. Then we know the broker-side gate that's killing trades.
+- `executed` — the 2,586 just hadn't been processed when the screenshot was taken (transient).
+
+Whatever the answer, the operator gets actionable signal instead of a black hole.
+
+---
+
+
 ## 2026-02-20 (later) — Audit-gap closure: chain leak no longer silent (P0 verified)
 
 ### Problem
