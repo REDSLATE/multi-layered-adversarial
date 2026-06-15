@@ -107,3 +107,159 @@ async def recent_auto_trades(
         {"_id": 0},
     ).sort("executed_at", -1).to_list(length=limit)
     return {"receipts": rows, "count": len(rows)}
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Tunables what-if dial (2026-02-19)
+# ──────────────────────────────────────────────────────────────────────
+#
+# Operator wants live what-if visibility before committing to a policy
+# change: "if I lowered confidence_min from 0.85 → 0.75, what would
+# I actually unlock?" Without this, the only way to find out is to
+# loosen the floor in prod and watch what happens — too expensive a
+# discovery loop for a real-money pipeline.
+#
+# Logic: read every auto_submit_skipped row in the window, join with
+# the original intent to get the brain's confidence, symbol, lane.
+# For a set of candidate confidence_min values, count how many of
+# the `low_confidence` skips would have passed that floor instead.
+# Group by symbol and brain so the operator sees "lowering to 0.75
+# unlocks 87 intents (35 NVDA, 28 AAL · mostly Camino)" at a glance.
+#
+# Pure read; no mutation. Safe to poll.
+
+import asyncio as _asyncio  # noqa: E402
+from collections import Counter as _Counter, defaultdict as _defaultdict  # noqa: E402
+from datetime import timedelta  # noqa: E402
+
+from namespaces import SHARED_INTENTS, SHARED_GATE_RESULTS  # noqa: E402
+
+
+# Candidate confidence floors we surface. 0.85 is the current default;
+# the others bracket below it. Above-current floors are uninteresting
+# (raising filters more, never less, never unlocks).
+_CANDIDATE_FLOORS = [0.80, 0.75, 0.70, 0.65, 0.60]
+_TOP_N = 5  # symbols/brains shown in each what-if row
+
+
+@router.get("/tunables-simulator")
+async def tunables_simulator(
+    _user: dict = Depends(get_current_user),
+    hours: int = 24,
+) -> dict:
+    """What-if simulator for the auto-submit policy filters.
+
+    Returns:
+      current_confidence_min, current_allowed_lanes, current_allowed_actions
+      by_skip_category:  raw counts per category in the window
+      confidence_what_if: [
+        { new_min, would_unlock, top_symbols, top_brains }
+      ]
+      lane_what_if:      [{ lane, would_unlock, top_symbols }]  // if lane currently filtered
+      action_what_if:    [{ action, would_unlock, top_symbols }] // if action currently filtered
+    """
+    hours = max(1, min(int(hours), 168))
+    policy = get_policy()
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+    # Pull all skip rows + the joined intent payloads in parallel.
+    # `shared_intents` uses `ingest_ts` for its timestamp field.
+    skip_rows, intents = await _asyncio.gather(
+        db[SHARED_GATE_RESULTS].find(
+            {"kind": "auto_submit_skipped", "ts": {"$gte": since}},
+            {"_id": 0, "intent_id": 1, "skip_category": 1, "reason": 1},
+        ).to_list(length=20000),
+        db[SHARED_INTENTS].find(
+            {"ingest_ts": {"$gte": since}},
+            {"_id": 0, "intent_id": 1, "confidence": 1, "symbol": 1,
+             "lane": 1, "action": 1, "stack": 1},
+        ).to_list(length=20000),
+    )
+    intent_by_id = {i["intent_id"]: i for i in intents if i.get("intent_id")}
+
+    by_skip_category: _Counter[str] = _Counter()
+    # Per-skip-category: list of joined intent docs for the what-if math.
+    skips_by_cat: dict[str, list[dict]] = _defaultdict(list)
+    for r in skip_rows:
+        cat = r.get("skip_category") or "other"
+        by_skip_category[cat] += 1
+        intent = intent_by_id.get(r.get("intent_id"))
+        if intent:
+            skips_by_cat[cat].append(intent)
+
+    # ─── confidence_min what-if ─────────────────────────────────────
+    # Only `low_confidence` skips can be unlocked by lowering the floor.
+    # HOLD signals are filtered by action, not confidence — moving the
+    # floor doesn't help.
+    current_floor = float(policy.get("confidence_min", 0.85))
+    low_conf_skips = skips_by_cat.get("low_confidence", [])
+    confidence_what_if: list[dict] = []
+    for new_min in _CANDIDATE_FLOORS:
+        if new_min >= current_floor:
+            continue  # raising the floor never unlocks anything
+        passing = [
+            s for s in low_conf_skips
+            if (s.get("confidence") or 0) >= new_min
+        ]
+        if not passing:
+            continue
+        sym_counts = _Counter(s.get("symbol") for s in passing if s.get("symbol"))
+        brain_counts = _Counter(s.get("stack") for s in passing if s.get("stack"))
+        confidence_what_if.append({
+            "new_min": new_min,
+            "would_unlock": len(passing),
+            "top_symbols": sym_counts.most_common(_TOP_N),
+            "top_brains": brain_counts.most_common(_TOP_N),
+        })
+
+    # ─── lane what-if ─────────────────────────────────────────────
+    # `lane_filtered` skips would unlock if the operator added that
+    # lane to allowed_lanes. Group what-if by lane (e.g. "options").
+    lane_what_if: list[dict] = []
+    current_lanes = set(policy.get("allowed_lanes") or [])
+    lane_skips = skips_by_cat.get("lane_filtered", [])
+    lane_groups: dict[str, list[dict]] = _defaultdict(list)
+    for s in lane_skips:
+        ln = s.get("lane")
+        if ln and ln not in current_lanes:
+            lane_groups[ln].append(s)
+    for ln, group in lane_groups.items():
+        sym_counts = _Counter(s.get("symbol") for s in group if s.get("symbol"))
+        lane_what_if.append({
+            "lane": ln,
+            "would_unlock": len(group),
+            "top_symbols": sym_counts.most_common(_TOP_N),
+        })
+    lane_what_if.sort(key=lambda r: -r["would_unlock"])
+
+    # ─── action what-if ────────────────────────────────────────────
+    # Same shape, for action_filtered skips. HOLD is excluded — adding
+    # HOLD to allowed_actions doesn't make sense (no order to place).
+    action_what_if: list[dict] = []
+    current_actions = set(policy.get("allowed_actions") or [])
+    action_skips = skips_by_cat.get("action_filtered", [])
+    action_groups: dict[str, list[dict]] = _defaultdict(list)
+    for s in action_skips:
+        act = s.get("action")
+        if act and act not in current_actions and act != "HOLD":
+            action_groups[act].append(s)
+    for act, group in action_groups.items():
+        sym_counts = _Counter(s.get("symbol") for s in group if s.get("symbol"))
+        action_what_if.append({
+            "action": act,
+            "would_unlock": len(group),
+            "top_symbols": sym_counts.most_common(_TOP_N),
+        })
+    action_what_if.sort(key=lambda r: -r["would_unlock"])
+
+    return {
+        "window_hours": hours,
+        "current_confidence_min": current_floor,
+        "current_allowed_lanes": sorted(current_lanes),
+        "current_allowed_actions": sorted(current_actions),
+        "by_skip_category": dict(by_skip_category),
+        "total_skipped": sum(by_skip_category.values()),
+        "confidence_what_if": confidence_what_if,
+        "lane_what_if": lane_what_if,
+        "action_what_if": action_what_if,
+    }

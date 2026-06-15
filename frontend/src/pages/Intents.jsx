@@ -13,6 +13,7 @@ import WebullOtocoLivePanel from "@/components/WebullOtocoLivePanel";
 import LegacyWrapperTogglePanel from "@/components/LegacyWrapperTogglePanel";
 import IntentPostMortemPanel from "@/components/IntentPostMortemPanel";
 import AutoSubmitPolicyPanel from "@/components/AutoSubmitPolicyPanel";
+import TunablesStrip from "@/components/TunablesStrip";
 // ParadoxV2DashboardPanel + CouncilChamberTile moved to /admin/paradox (2026-02-19)
 //   — Intents page was getting cluttered; doctrine-specific surfaces now live
 //     on their own dedicated page accessible via the sidebar "Paradox V2" link.
@@ -696,6 +697,17 @@ export default function Intents() {
       <div className="mb-4" data-testid="intents-auto-submit-policy-mount">
         <PanelErrorBoundary label="Auto-Submit Policy">
           <AutoSubmitPolicyPanel />
+        </PanelErrorBoundary>
+      </div>
+
+      {/* ─── Tunables what-if dial (2026-02-19) ───
+          Live read-only simulator that answers "if I lowered
+          confidence_min from 0.85 → 0.75, how many intents would I
+          actually unlock?" before the operator commits to a policy
+          change in the panel above. Pure read; refreshes every 30s. */}
+      <div className="mb-4" data-testid="intents-tunables-mount">
+        <PanelErrorBoundary label="Tunables what-if">
+          <TunablesStrip />
         </PanelErrorBoundary>
       </div>
 

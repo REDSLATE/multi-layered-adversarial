@@ -1,3 +1,40 @@
+## 2026-02-19 (final+20) — Tunables what-if dial
+
+### What shipped
+Live read-only simulator that answers **"if I lowered confidence_min from 0.85 → 0.75, how many intents would I actually unlock?"** before the operator commits to a policy change. Three dial dimensions surfaced:
+
+1. **confidence_min** — for each candidate floor (0.80 → 0.60), count `low_confidence` skips that would have passed, grouped by symbol + brain.
+2. **allowed_lanes** — for each lane currently filtered (e.g. `options`), count skipped intents that would unlock if added.
+3. **allowed_actions** — same for non-`BUY`/`SELL` actions (HOLD explicitly excluded since adding HOLD makes no sense — no order to place).
+
+Header line shows raw skip distribution: `Skips today: 327 · 317 off · 7 low-conf · 2 lane · 1 action` so operator sees at a glance what's being filtered and why.
+
+### Endpoint
+`GET /api/admin/auto-submit/tunables-simulator?hours=24`
+
+Joins `shared_gate_results` (skip rows from the prior fix) with `shared_intents` to pull each skipped intent's confidence/symbol/lane/action/stack, then runs the what-if math. Pure read; no mutation. Polls every 30s on the frontend.
+
+### Files
+- MOD `backend/routes/admin_auto_submit.py` — new endpoint with confidence/lane/action what-if math; uses `shared_intents.ingest_ts` (not `created_at` — verified against live schema).
+- NEW `frontend/src/components/TunablesStrip.jsx` — compact one-pane strip with three what-if rows + skip distribution header.
+- MOD `frontend/src/pages/Intents.jsx` — mounted strip directly under the Auto-Submit Policy panel.
+- NEW `backend/tests/test_tunables_simulator.py` — 5 tests: confidence math accuracy, lane grouping, HOLD-exclusion (adding HOLD makes no sense), empty-window safety, no-suggest-above-current-floor.
+
+### Verified
+- 5/5 tunables tests pass
+- 166/166 broader auto-submit + Webull + intents-post-mortem regression pass
+- Seeded demo skips on preview → strip renders all three what-if sections + breakdowns correctly + screenshot confirms
+
+### Operator UX
+Strip is **read-only** — explicitly tagged "To apply, edit policy in the Auto-Submit Policy panel above." Operator can scan the cost of a loosening before committing, then go to the panel above to actually make the change. No accidental policy mutations from this surface.
+
+### Why this matters
+Without this, the only way to learn "would lowering confidence_min unlock anything useful?" is to lower it in prod and watch what happens. Too expensive a discovery loop for real-money pipeline. The simulator turns it into a 5-second glance.
+
+---
+
+
+
 ## 2026-02-19 (final+19) — "Why are we not trading?" — audit Shelly's skip decisions
 
 ### The misleading number
