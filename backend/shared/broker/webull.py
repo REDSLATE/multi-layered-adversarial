@@ -545,17 +545,17 @@ class WebullAdapter(BrokerAdapter):
                 "time_in_force": "DAY",
                 "entrust_type": "AMOUNT",
                 "total_cash_amount": cash_amt_str,
-                # 2026-02-20 (operator option B): allow extended-hours
-                # routing. `ALL` = pre-market (04:00 ET) + RTH + after-
-                # hours (20:00 ET) per Webull /docs/trade-api/stock/.
-                # Previously hardcoded to CORE which caused HTTP 417
-                # "time not supported" any time the chain fired
-                # outside 09:30-16:00 ET. Extended-hours fills carry
-                # wider spreads and lower liquidity — the gate chain
-                # still applies (spread floor, RoadGuard, caps).
-                "support_trading_session": "ALL",
+                # 2026-02-20: extended-hours flags reverted to RTH-only
+                # after Webull docs confirmed MARKET orders are NOT
+                # eligible for extended sessions (extended hours
+                # require LIMIT). Keeping CORE/False matches the
+                # behaviour the council + caps were tuned against.
+                # If extended-hours becomes a target, add a LIMIT
+                # branch with a slippage band — see /app/memory/PRD.md
+                # under "Future / Backlog".
+                "support_trading_session": "CORE",
                 "account_tax_type": "GENERAL",
-                "extended_hours_trading": True,
+                "extended_hours_trading": False,
             }
 
             # Log MC receipt provenance (signature prefix only).
@@ -860,13 +860,11 @@ class WebullAdapter(BrokerAdapter):
             "quantity": qty_str,
             "time_in_force": "DAY",
             "entrust_type": "QTY",
-            # 2026-02-20 (operator option B): extended-hours enabled,
-            # see note on the v2/AMOUNT branch above. OTOCO bracket
-            # legs (TP/SL) need the same session selector so the
-            # children inherit the parent's eligibility window.
-            "support_trading_session": "ALL",
+            # 2026-02-20: reverted to CORE — see note on v2/AMOUNT path.
+            # Webull MARKET orders are not eligible for extended hours.
+            "support_trading_session": "CORE",
             "account_tax_type": "GENERAL",
-            "extended_hours_trading": True,
+            "extended_hours_trading": False,
         }
         master_leg = {
             **common,
