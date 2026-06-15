@@ -214,8 +214,17 @@ async def intents_post_mortem(
                     top_blockers[("auto_submit_skip", category)] += 1
                 elif kind == "auto_submit_failed":
                     outcome = "submit_error"
-                    reason = (row.get("reason") or "auto_submit raised")[:120]
-                    top_blockers[("broker", reason)] += 1
+                    # 2026-02-20: prefer the structured `skip_category`
+                    # (e.g. `internal_error`) over the raw exception
+                    # string. Groups all chain-raised failures into one
+                    # actionable bucket the operator can chase.
+                    cat = row.get("skip_category")
+                    if cat:
+                        top_blockers[("auto_submit_fail", cat)] += 1
+                        auto_skipped_by_category[f"failed_{cat}"] += 1
+                    else:
+                        reason = (row.get("reason") or "auto_submit raised")[:120]
+                        top_blockers[("broker", reason)] += 1
                 # ─── auto_router_* kinds (2026-02-19, late fix) ────
                 # The auto_router is a parallel background submission
                 # path. Its audit rows were previously invisible to

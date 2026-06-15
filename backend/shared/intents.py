@@ -129,11 +129,43 @@ async def _run_dry_run_then_auto_submit(intent_id: str, actor: str) -> None:
     """
     from shared.execution import run_dry_run_for_intent  # noqa: WPS433
     from shared.auto_submit_policy import maybe_auto_submit  # noqa: WPS433
-    await run_dry_run_for_intent(intent_id, 10.0, actor=actor)
+    # 2026-02-20: track whether maybe_auto_submit was actually
+    # entered. If the chain raises *before* maybe_auto_submit writes
+    # its own audit row, we'd previously lose the intent into the
+    # "Never submitted (no audit row)" black hole. Now we write a
+    # catch-all `auto_submit_failed` row with the exception so the
+    # post-mortem panel surfaces the leak with diagnostic detail.
+    submit_attempted = False
     try:
+        await run_dry_run_for_intent(intent_id, 10.0, actor=actor)
+        submit_attempted = True
         await maybe_auto_submit(intent_id)
     except Exception as e:  # noqa: BLE001
         logger.warning("auto_submit chain failed for %s: %s", intent_id, e)
+        # Only write the catch-all when the failure happened *outside*
+        # maybe_auto_submit's own audit envelope. If submit_attempted
+        # is True the failure was inside maybe_auto_submit, which has
+        # its own internal try/except writing `auto_submit_failed`.
+        # But if it raised after maybe_auto_submit had a chance to
+        # bubble its own pre-audit exception, we still want a row —
+        # `kind=auto_submit_failed` is idempotent in spirit (one
+        # latest row per intent wins in the post-mortem aggregator).
+        try:
+            from db import db as _db  # noqa: WPS433
+            from namespaces import SHARED_GATE_RESULTS  # noqa: WPS433
+            await _db[SHARED_GATE_RESULTS].insert_one({
+                "intent_id": intent_id,
+                "kind": "auto_submit_failed",
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "by": "auto_submit_tier_1",
+                "reason": f"chain raised before audit: {type(e).__name__}: {str(e)[:400]}",
+                "skip_category": "internal_error",
+                "phase": "post_dry_run" if submit_attempted else "in_dry_run",
+            })
+        except Exception:  # noqa: BLE001
+            # last-ditch — if even the audit write fails, we accept
+            # the loss; logs still carry the exception.
+            pass
 
 
 

@@ -212,6 +212,8 @@ SKIP_CATEGORY_ACTION_FILTERED   = "action_filtered"       # action not BUY/SELL/
 SKIP_CATEGORY_DRY_RUN_NOT_READY = "dry_run_not_ready"     # dry_run not passed yet
 SKIP_CATEGORY_ALREADY_EXECUTED  = "already_executed"      # raced ourselves
 SKIP_CATEGORY_OTHER             = "other"                 # anything not classified
+SKIP_CATEGORY_NOT_FOUND         = "intent_not_found"      # intent_id missing at auto-submit time (DB race or rogue caller)
+SKIP_CATEGORY_INTERNAL_ERROR    = "internal_error"        # exception in chain before audit could be written
 
 
 def _categorize_skip(reason: str) -> str:
@@ -317,6 +319,18 @@ async def maybe_auto_submit(intent_id: str) -> dict[str, Any] | None:
         {"intent_id": intent_id}, {"_id": 0},
     )
     if not intent:
+        # 2026-02-20: previously returned None silently → the intent
+        # ended up in "Never submitted (no audit row)" with zero
+        # diagnostic signal. Surface the miss so the operator can see
+        # the race / DB-consistency issue instead of having it eaten.
+        await db[SHARED_GATE_RESULTS].insert_one({
+            "intent_id": intent_id,
+            "kind": "auto_submit_skipped",
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "by": "auto_submit_tier_1",
+            "reason": "intent not found in shared_intents at auto-submit time",
+            "skip_category": "intent_not_found",
+        })
         return None
 
     policy = get_policy()

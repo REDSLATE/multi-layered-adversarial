@@ -1,3 +1,31 @@
+## 2026-02-20 (later) — Audit-gap closure: chain leak no longer silent (P0 verified)
+
+### Problem
+After redeploying the auto_router classifier fix to Production, operator still saw the funnel-drop pattern: 2,586 of 3,755 intents in "Never submitted (no audit row)" with Submitted=0. Top blockers were only the Shelly skip categories (hold_action 1020, low_confidence 115, dry_run_not_ready 34). The 2,586 had no audit row of any kind — meaning `maybe_auto_submit()` either was never called or raised before any audit row got written.
+
+### Three code paths that swallowed audit signal
+1. `maybe_auto_submit()` silently `return None` when `db.find_one` missed the intent_id (DB race, rogue caller).
+2. `_run_dry_run_then_auto_submit()` outer `try/except` swallowed any exception from `run_dry_run_for_intent` before reaching `maybe_auto_submit` (intent stuck at dry_run_passed forever, no row).
+3. Same chain swallowed exceptions from `maybe_auto_submit` itself if they happened in the small unaudited window (lines 316-323 of auto_submit_policy.py — find_one through matches_tier_1).
+
+### Fix (verified)
+- `maybe_auto_submit()` `find_one` miss → writes `auto_submit_skipped` row with `skip_category=intent_not_found`.
+- `_run_dry_run_then_auto_submit()` wraps the entire chain. On exception, writes `auto_submit_failed` row with `skip_category=internal_error`, `phase=in_dry_run|post_dry_run`, and exception text.
+- Post-mortem classifier prefers `skip_category` over raw exception text for `auto_submit_failed` rows → groups all chain-raised failures into one actionable `[auto_submit_fail] internal_error` bucket instead of fragmenting across unique exception strings.
+- Added 3 new regression tests pinning the audit guarantee (`tests/test_auto_submit_chain_audit_guarantee.py`).
+- All 49 related tests pass.
+
+### What the operator sees after the next redeploy
+Instead of 2,586 "Never submitted (no audit row)", they should see one of:
+- A new top blocker `[auto_submit_fail] internal_error` with the count → the chain is throwing inside dry-run or submit. The `reason` field will name the exception class.
+- A new top blocker `[auto_submit_skip] intent_not_found` → some other code is calling `maybe_auto_submit` with stale intent_ids.
+- The 2,586 dropping into proper buckets (gate_chain_blocked, broker_router_blocked, etc.) → the leak was a transient race that healed on its own.
+
+Whatever the answer, the operator now has signal instead of a black hole.
+
+---
+
+
 ## 2026-02-20 — Post-mortem classifier sees auto_router_* audit rows (P0 verified)
 
 ### Problem
