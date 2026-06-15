@@ -1,3 +1,31 @@
+## 2026-02-20 — Post-mortem classifier sees auto_router_* audit rows (P0 verified)
+
+### Problem
+Production user reported "no trades happening" and the post-mortem was bucketing thousands of intents as "Never submitted (no audit row)". Real cause: `shared/auto_router.py` (the background submission path, parallel to Shelly) writes audit rows with kinds `auto_router_passed / _blocked / _no_trade / _error / _advisory_only`. The classifier in `routes/admin_intents_post_mortem.py` only queried `submit_*` and `auto_submit_*` kinds → it couldn't see auto_router rows → every blocked auto_router intent fell through to "never_submitted".
+
+### Fix (verified)
+- Added all 5 `auto_router_*` kinds to the `$in` query.
+- Mapped them to the existing operator-facing buckets:
+  - `auto_router_passed` → executed (+ funnel)
+  - `auto_router_blocked` → gate_chain_blocked (with gate name surfaced)
+  - `auto_router_no_trade` → broker_router_blocked (reason surfaced)
+  - `auto_router_error` → submit_error
+  - `auto_router_advisory_only` → `advisory_only_<reason>` (NOT stuck — by design)
+
+### Verification (2026-02-20)
+- `python -c "import ast; ast.parse(...)"` → SYNTAX_OK
+- `mcp_lint_python` on the route → no blocking issues
+- 51 existing auto-submit / auto-router / quiver / dry-run tests → all PASS
+- NEW: `tests/test_post_mortem_auto_router.py` (5 tests) pinning the new classifier branches — all PASS
+- Live curl `GET /api/admin/intents/post-mortem?hours=24` on Preview → 200 OK, returns funnel + buckets. Preview is currently dominated by `auto_submit_skipped_policy_disabled` (Shelly toggle OFF) which is the operator-actionable explanation for "no trades" in Preview.
+
+### Operator-actionable insight from current Preview data
+- 1556 of 1995 intents bucketed `auto_submit_skipped_policy_disabled` = Shelly is OFF. Flip the toggle to start the chain.
+- 437 "never_submitted" remaining are intents that never reached either submission path — most likely pre-Shelly-fix backlog. Should drain naturally as auto_router runs.
+
+---
+
+
 ## 2026-02-19 (final+22) — THE leak: dry-run → auto-submit chain missing in 2 call sites
 
 ### The actual production incident
