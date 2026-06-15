@@ -24,22 +24,23 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { api, RUNTIME_META } from "@/lib/api";
 import { CircleNotch, WarningCircle, CheckCircle, Pulse } from "@phosphor-icons/react";
+import { seatDisplayLabel } from "@/lib/seatAngels";
 
 const ROLES_EQUITY = [
-  { key: "strategist", label: "STRATEGIST", desc: "conviction signal" },
-  { key: "governor",   label: "GOVERNOR",   desc: "risk sizer" },
-  { key: "executor",   label: "EXECUTOR",   desc: "fires intents" },
+  { key: "strategist", label: seatDisplayLabel("strategist"), desc: "conviction signal" },
+  { key: "governor",   label: seatDisplayLabel("governor"),   desc: "risk sizer" },
+  { key: "executor",   label: seatDisplayLabel("executor"),   desc: "fires intents" },
   // 2026-05-27: opponent merged INTO auditor. Auditor now carries
   // BOTH the pre-trade contrary-case argument AND the post-trade
   // outcome review — same brain, two time windows.
-  { key: "auditor",    label: "AUDITOR",    desc: "contrary case · post-trade review" },
+  { key: "auditor",    label: seatDisplayLabel("auditor"),    desc: "contrary case · post-trade review" },
 ];
 
 const ROLES_CRYPTO = [
-  { key: "crypto_strategist", label: "STRATEGIST", desc: "conviction signal" },
-  { key: "crypto_governor",   label: "GOVERNOR",   desc: "risk sizer" },
-  { key: "crypto",            label: "EXECUTOR",   desc: "fires intents" },
-  { key: "crypto_auditor",    label: "AUDITOR",    desc: "contrary case · post-trade review" },
+  { key: "crypto_strategist", label: seatDisplayLabel("crypto_strategist"), desc: "conviction signal" },
+  { key: "crypto_governor",   label: seatDisplayLabel("crypto_governor"),   desc: "risk sizer" },
+  { key: "crypto",            label: seatDisplayLabel("crypto"),            desc: "fires intents" },
+  { key: "crypto_auditor",    label: seatDisplayLabel("crypto_auditor"),    desc: "contrary case · post-trade review" },
 ];
 
 // Freshness thresholds (mirror sidecar_diagnostics.py).

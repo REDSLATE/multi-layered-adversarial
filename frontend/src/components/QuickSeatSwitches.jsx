@@ -25,21 +25,22 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, RUNTIME_META } from "@/lib/api";
 import { ArrowsClockwise, X, CircleNotch } from "@phosphor-icons/react";
+import { seatDisplayLabel } from "@/lib/seatAngels";
 
 const BRAINS = ["alpha", "camaro", "chevelle", "redeye"];
 
 // Post-merge 4-seat doctrine (2026-05-27). Auditor = opponent + auditor.
 const SEATS_EQUITY = [
-  { key: "strategist", label: "STRATEGIST" },
-  { key: "governor",   label: "GOVERNOR" },
-  { key: "executor",   label: "EXECUTOR" },
-  { key: "auditor",    label: "AUDITOR" },
+  { key: "strategist", label: seatDisplayLabel("strategist") },
+  { key: "governor",   label: seatDisplayLabel("governor") },
+  { key: "executor",   label: seatDisplayLabel("executor") },
+  { key: "auditor",    label: seatDisplayLabel("auditor") },
 ];
 const SEATS_CRYPTO = [
-  { key: "crypto_strategist", label: "STRATEGIST" },
-  { key: "crypto_governor",   label: "GOVERNOR" },
-  { key: "crypto",            label: "EXECUTOR" },
-  { key: "crypto_auditor",    label: "AUDITOR" },
+  { key: "crypto_strategist", label: seatDisplayLabel("crypto_strategist") },
+  { key: "crypto_governor",   label: seatDisplayLabel("crypto_governor") },
+  { key: "crypto",            label: seatDisplayLabel("crypto") },
+  { key: "crypto_auditor",    label: seatDisplayLabel("crypto_auditor") },
 ];
 
 function SeatRow({ seat, holder, eligibility, onAssign, onVacate, busy }) {

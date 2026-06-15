@@ -2,8 +2,9 @@ import React, { useState } from "react";
 import { api, relTime } from "@/lib/api";
 import { useCouncilLive } from "./useCouncilLive";
 import {
-  ArrowsClockwise, CheckCircle, Warning, XCircle, Eye,
+  ArrowsClockwise, CheckCircle, Warning, XCircle, Eye, Flame,
 } from "@phosphor-icons/react";
+import { IGNIS_BRAND } from "@/lib/seatAngels";
 
 /**
  * CouncilChamberTile — operator's real-time, four-column view of the
@@ -146,6 +147,18 @@ export default function CouncilChamberTile() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
+          {/* Ignis brand label — the engine container that houses the
+              council's signal generation. Per RISEDUAL brand
+              architecture (2026-02-20). */}
+          <div className="flex items-center gap-1.5 mb-1" data-testid="council-ignis-brand">
+            <Flame size={10} weight="fill" className="text-rd-warn" />
+            <span className="font-mono text-[10px] font-bold text-rd-warn uppercase tracking-[0.2em]">
+              {IGNIS_BRAND.name}
+            </span>
+            <span className="font-mono text-[9px] text-rd-dim italic">
+              · {IGNIS_BRAND.tagline}
+            </span>
+          </div>
           <div className="flex items-center gap-2">
             <Eye size={12} weight="bold" className="text-rd-accent" />
             <span className="font-mono text-[11px] font-bold text-rd-text uppercase tracking-widest">

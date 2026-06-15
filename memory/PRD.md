@@ -1,3 +1,19 @@
+## 2026-02-20 (Angel/Ignis UI verification — P0 closed)
+
+Visually confirmed via screenshot tool on preview (`/admin/paradox` + `/admin/intents`):
+
+- `/admin/paradox` Council Chamber tile renders the `IGNIS · Dual-core signal engine · only conviction ignites action` brand line above the brain quorum row.
+- `/admin/intents` SEAT ROSTER strip renders all 8 angel·role labels:
+  - Equity Lane: `RAZIEL · STRATEGIST`, `NURIEL · GOVERNOR`, `PASCHAR · EXECUTOR`, `SARIEL · AUDITOR`
+  - Crypto Lane: `REMIEL · CRYPTO STRATEGIST`, `CASSIEL · CRYPTO GOVERNOR`, `ISRAFEL · CRYPTO EXECUTOR`, `ZADKIEL · CRYPTO AUDITOR`
+- `/admin/intents` QUICK SEAT SWITCHES rows carry the same labels with brain pills (CAMINO/BARRACUDA/HELLCAT/GTO) still functioning for assignment.
+- DOM substring assertions for all 8 angel tokens passed; existing seat-cell `data-testid`s (e.g. `seat-cell-strategist`, `seat-switch-row-crypto`) and brain pill testids unchanged, so testing-agent flows still resolve.
+
+No backend / DB keys changed — `seatAngels.js` remains a pure display shim. P0 marketing-rebrand item is closed.
+
+---
+
+
 ## 2026-02-20 (final) — Council floor relaxed + crypto hydration audit + audit enrichment (A + C shipped; B reverted per operator)
 
 ### A. Equity council kill-chain relaxed
