@@ -1,3 +1,72 @@
+## 2026-02-19 (final+22) — THE leak: dry-run → auto-submit chain missing in 2 call sites
+
+### The actual production incident
+Monday at market open with Shelly toggled ON, operator screenshot showed:
+- Funnel: `shelly_eligible (2967) → submitted (0)` — **100% drop**
+- Outcome distribution: 2965 of 2967 eligible intents stuck in "Never submitted (no audit row)"
+
+The skip categorization fix (final+19) was working — it correctly bucketed 661 HOLD + 62 low-conf + 16 dry-run-not-ready. But the 2965 intents that PASSED Shelly's filter were never even reaching `maybe_auto_submit()` to get a chance.
+
+### Root cause
+TWO call sites invoked `run_dry_run_for_intent()` directly without chaining `maybe_auto_submit()`:
+
+1. **`auto_dry_run_drain`** (`shared/execution.py`, the catch-up sweep for pending backlog). This was the BIG leak — the drain runs in batches of 500–5000 intents, transitioning them to `dry_run_passed` and stopping. Every drained intent skipped Shelly entirely.
+
+2. **`POST /execution/dry_run`** (the manual operator dry-run button). Smaller leak but real: operator manually dry-runs an intent → it would pass → never submits.
+
+Only the ingest path (`_run_dry_run_then_auto_submit` in `shared/intents.py`) chained correctly. Anything that went through either of the other two paths was permanently stuck in "Never submitted (no audit row)" since no submit-* audit row ever got written.
+
+### Fix
+Added `maybe_auto_submit()` chain after every `would_pass` dry-run in both leaking call sites:
+
+**`shared/execution.py:780` (`execution_dry_run` endpoint)**
+```python
+result = await run_dry_run_for_intent(intent_id, ...)
+if result.get("verdict") == "would_pass":
+    try:
+        from shared.auto_submit_policy import maybe_auto_submit
+        await maybe_auto_submit(intent_id)
+    except Exception as e:
+        logger.warning("auto_submit chain failed for %s: %s", intent_id, e)
+```
+
+**`shared/execution.py:924` (`auto_dry_run_drain` endpoint)**
+- Imported `maybe_auto_submit` once at the top of the loop
+- After each `would_pass`, calls it inside its own try/except
+- Records auto_submit failures in the response `failures` list with `"auto_submit:"` prefix so post-mortem can distinguish dry-run vs auto-submit failure
+- New response field `auto_submitted: <count>` so the operator can see how many were Shelly-advanced
+
+### Tests
+NEW `backend/tests/test_dry_run_auto_submit_chain.py` (4 tests pinning both call sites):
+- `test_manual_dry_run_endpoint_chains_to_auto_submit` — would_pass MUST invoke Shelly
+- `test_manual_dry_run_skips_auto_submit_when_blocked` — would_block must NOT invoke Shelly
+- `test_auto_dry_run_drain_chains_to_auto_submit` — drain must invoke Shelly for every would_pass row
+- `test_drain_records_auto_submit_failures` — Shelly exceptions surface in `failures` list
+
+**272 regression tests pass · 0 regressions**.
+
+### Verified on preview
+Restarted backend, enabled Shelly on preview, ran drain on 50 backlog intents:
+```
+processed: 50, would_pass: 0, would_block: 50, auto_submitted: 0, failures: 0
+```
+All 50 preview backlog intents `would_block` (stale data; gates correctly reject). Auto-submit chain was reached — chain works; nothing to submit because nothing passed gates. The leak is sealed.
+
+### Effect on Monday's prod session (after redeploy)
+**Before:** 2965 eligible intents → "Never submitted (no audit row)" black hole.
+**After:** Every drained or manually-dry-runned intent reaches Shelly, which either:
+- Auto-submits (writes `submit_passed` or `submit_blocked` row), OR
+- Skips with category (writes `auto_submit_skipped` row with `skip_category`).
+
+Post-mortem panel can now classify 100% of intents. The "Never submitted (no audit row)" bucket should drop to ~0 for new intents.
+
+### Operator action required
+**Redeploy to production.** The 2965 existing stuck intents won't get retroactively fixed (no time travel for audit rows), but new intents from this point on will all flow through Shelly. Within 1 hour of redeploy + market activity, the "Never submitted (no audit row)" bucket will start draining as new intents enter the funnel correctly.
+
+---
+
+
+
 ## 2026-02-19 (final+21) — QuiverQuant alternative-data integration scaffolded
 
 ### What shipped

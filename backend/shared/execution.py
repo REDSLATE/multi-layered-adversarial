@@ -788,10 +788,24 @@ async def execution_dry_run(
     ),
     user: dict = Depends(get_current_user),  # noqa: B008
 ):
-    """Evaluate the full gate chain WITHOUT placing an order."""
+    """Evaluate the full gate chain WITHOUT placing an order.
+
+    Then — if Shelly's auto-submit policy is on and the intent
+    qualifies — call `maybe_auto_submit` to advance it through the
+    real submit path (2026-02-19 bug fix: previously this endpoint
+    transitioned the intent to `dry_run_passed` and stopped, leaking
+    every eligible intent into the "Never submitted (no audit row)"
+    bucket).
+    """
     result = await run_dry_run_for_intent(
         intent_id, order_notional_usd, actor=user.get("email") or "operator",
     )
+    if result.get("verdict") == "would_pass":
+        try:
+            from shared.auto_submit_policy import maybe_auto_submit  # noqa: WPS433
+            await maybe_auto_submit(intent_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("auto_submit chain failed for %s: %s", intent_id, e)
     return {
         "intent_id": intent_id,
         "evaluated_by": user.get("email"),
@@ -935,7 +949,15 @@ async def auto_dry_run_drain(
     processed = 0
     passed = 0
     blocked = 0
+    auto_submitted = 0
     failures: list[dict] = []
+
+    # 2026-02-19 fix: chain maybe_auto_submit after every would_pass
+    # dry-run. The drain previously stopped at `dry_run_passed`, which
+    # meant 2965 backlog intents leaked into the post-mortem panel's
+    # "Never submitted (no audit row)" bucket. With Shelly enabled,
+    # she now picks them up here.
+    from shared.auto_submit_policy import maybe_auto_submit  # noqa: WPS433
 
     for p in pending:
         iid = p["intent_id"]
@@ -944,6 +966,16 @@ async def auto_dry_run_drain(
             processed += 1
             if result["verdict"] == "would_pass":
                 passed += 1
+                # Chain auto-submit — same gate-respecting path the
+                # ingest hook uses. maybe_auto_submit is fully
+                # idempotent; it writes its own audit row for both
+                # skip and success.
+                try:
+                    sub_result = await maybe_auto_submit(iid)
+                    if sub_result is not None:
+                        auto_submitted += 1
+                except Exception as e:  # noqa: BLE001
+                    failures.append({"intent_id": iid, "error": f"auto_submit: {repr(e)[:160]}"})
             else:
                 blocked += 1
         except Exception as e:  # noqa: BLE001
@@ -956,6 +988,7 @@ async def auto_dry_run_drain(
         "processed": processed,
         "would_pass": passed,
         "would_block": blocked,
+        "auto_submitted": auto_submitted,
         "failures": failures[:20],
         "failure_count": len(failures),
         "doctrine_note": (
