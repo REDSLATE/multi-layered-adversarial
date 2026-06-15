@@ -42,6 +42,24 @@ const OUTCOME_LABELS = {
   auto_submit_skipped_other:              { label: "Skipped by Shelly · other reason",       color: "#64748B" },
 };
 
+// Smart fallback for outcome keys not in the static map.
+// The backend creates dynamic keys like `auto_submit_skipped_<category>`
+// and `advisory_only_<reason>` from auto_router_advisory_only rows
+// (HOLD signal, opinion-only, below-floor confidence, etc.). Rather
+// than enumerate every possibility, format them human-readably.
+function prettyLabelFor(key) {
+  if (OUTCOME_LABELS[key]) return OUTCOME_LABELS[key];
+  if (key.startsWith("auto_submit_skipped_")) {
+    const cat = key.slice("auto_submit_skipped_".length).replaceAll("_", " ");
+    return { label: `Skipped by Shelly · ${cat}`, color: "#64748B" };
+  }
+  if (key.startsWith("advisory_only_")) {
+    const reason = key.slice("advisory_only_".length).replaceAll("_", " ");
+    return { label: `Advisory only · ${reason} (auto-router)`, color: "#71717A" };
+  }
+  return { label: key.replaceAll("_", " "), color: "#A1A1AA" };
+}
+
 const WINDOWS = [1, 6, 24, 72];
 
 export default function IntentPostMortemPanel() {
@@ -153,7 +171,7 @@ export default function IntentPostMortemPanel() {
               {Object.entries(data.by_outcome || {})
                 .sort((a, b) => b[1] - a[1])
                 .map(([k, n]) => {
-                  const meta = OUTCOME_LABELS[k] || { label: k, color: "#A1A1AA" };
+                  const meta = prettyLabelFor(k);
                   const pct = total > 0 ? (100 * n / total) : 0;
                   return (
                     <div key={k} className="flex items-center gap-2 font-mono text-[10px]">
