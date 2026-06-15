@@ -475,3 +475,182 @@ async def replay_ghost_intents(
             len(candidates) - len(already_audited) - replayed,
         ),
     }
+
+
+
+# ─── Single-intent trace (2026-02-20 operator directive) ────────────
+# "Show me a single intent that was Shelly-eligible and trace every
+# step until it either became a broker order or died."
+#
+# This endpoint answers that question for ANY intent_id, not just the
+# aggregate. It pulls the intent row, every gate-result row keyed to
+# it (sorted oldest → newest), and any execution receipt — then
+# returns a chronological timeline plus a derived "died_at" verdict.
+#
+# Read-only. Operator uses this when the post-mortem aggregator
+# screams "2586 eligible / 0 submitted" and they need to know which
+# gate ate ONE specific intent so the bug can be fixed at the source.
+
+
+@router.get("/{intent_id}/trace")
+async def trace_intent(
+    intent_id: str,
+    _user: dict = Depends(get_current_user),  # noqa: B008
+) -> Dict[str, Any]:
+    """Full lifecycle of one intent: emit → gates → submit → broker.
+
+    Returns:
+        {
+          "intent_id": str,
+          "intent": {symbol, lane, action, stack, confidence,
+                     dry_run_state, executed, ingest_ts, ...} | null,
+          "timeline": [
+            {ts, kind, summary, gate_name?, reason?, skip_category?,
+             passed?, raw_keys}, ...
+          ],
+          "receipts": [...],
+          "verdict": "executed" | "blocked_at_<gate>" | "skipped_<cat>"
+                     | "no_audit_row" | "intent_not_found",
+          "summary": str  # one-liner the operator can paste in chat
+        }
+    """
+    from namespaces import EXECUTION_RECEIPTS  # noqa: WPS433
+
+    intent = await db[SHARED_INTENTS].find_one(
+        {"intent_id": intent_id}, {"_id": 0},
+    )
+
+    rows = await db[SHARED_GATE_RESULTS].find(
+        {"intent_id": intent_id},
+        {"_id": 0},
+    ).to_list(length=500)
+    rows.sort(key=lambda r: r.get("ts") or "")
+
+    receipts = await db[EXECUTION_RECEIPTS].find(
+        {"intent_id": intent_id},
+        {"_id": 0},
+    ).to_list(length=20)
+    receipts.sort(key=lambda r: r.get("ts") or r.get("created_at") or "")
+
+    timeline: List[Dict[str, Any]] = []
+    for r in rows:
+        kind = r.get("kind") or "unknown"
+        entry: Dict[str, Any] = {
+            "ts": r.get("ts"),
+            "kind": kind,
+            "raw_keys": sorted([k for k in r.keys() if k not in ("intent_id",)]),
+        }
+        # First failing gate, if this row carries the gate-chain output.
+        gates = r.get("gates") or []
+        if gates:
+            failed = next((g for g in gates if not g.get("passed")), None)
+            if failed:
+                entry["gate_name"] = failed.get("name")
+                entry["gate_reason"] = failed.get("reason") or failed.get("detail")
+                entry["passed"] = False
+            else:
+                entry["passed"] = True
+            entry["gate_count"] = len(gates)
+        # Reason / skip_category / verdict shortcuts.
+        for k in ("reason", "skip_category", "submit_verdict", "tier",
+                  "verdict", "broker_order_id", "error"):
+            v = r.get(k)
+            if v is not None:
+                entry[k] = v
+        # One-liner summary for the UI table.
+        if kind in ("auto_submit_skipped", "auto_router_advisory_only"):
+            entry["summary"] = (
+                f"{kind} · {entry.get('skip_category', entry.get('reason', '?'))}"
+            )
+        elif kind in ("submit_blocked", "auto_router_blocked"):
+            entry["summary"] = (
+                f"{kind} · {entry.get('gate_name', entry.get('reason', '?'))}"
+            )
+        elif kind in ("auto_submit_submitted",):
+            entry["summary"] = (
+                f"{kind} · broker_verdict={entry.get('submit_verdict', '?')}"
+            )
+        elif kind in ("auto_router_passed", "submit_passed"):
+            entry["summary"] = (
+                f"{kind} · order={entry.get('broker_order_id', '?')}"
+            )
+        elif kind in ("submit_error", "auto_router_error",
+                      "auto_submit_failed", "auto_submit_exception"):
+            entry["summary"] = (
+                f"{kind} · {entry.get('reason', entry.get('error', '?'))[:160]}"
+            )
+        else:
+            entry["summary"] = kind
+        timeline.append(entry)
+
+    # Derived verdict — the operator's "where did it die?" answer.
+    if intent is None:
+        verdict = "intent_not_found"
+        summary_line = f"intent_id={intent_id} has no row in shared_intents"
+    elif intent.get("executed"):
+        verdict = "executed"
+        broker_id = None
+        for rcpt in reversed(receipts):
+            broker_id = rcpt.get("broker_order_id") or broker_id
+            if broker_id:
+                break
+        summary_line = (
+            f"executed · {intent.get('stack')} {intent.get('action')} "
+            f"{intent.get('symbol')} · broker_order_id={broker_id or '?'}"
+        )
+    elif not timeline:
+        verdict = "no_audit_row"
+        summary_line = (
+            f"emitted but ZERO gate_result rows · "
+            f"dry_run_state={intent.get('dry_run_state', '?')} · "
+            f"this is a ghost intent (chain never reached audit-write)"
+        )
+    else:
+        last = timeline[-1]
+        kind = last.get("kind")
+        if kind == "auto_submit_skipped":
+            verdict = f"skipped_{last.get('skip_category', 'unknown')}"
+            summary_line = (
+                f"skipped at maybe_auto_submit · "
+                f"{last.get('skip_category', '?')} · "
+                f"reason={last.get('reason', '?')[:120]}"
+            )
+        elif kind in ("submit_blocked", "auto_router_blocked"):
+            gate = last.get("gate_name", "?")
+            verdict = f"blocked_at_{gate}"
+            summary_line = (
+                f"blocked at gate `{gate}` · "
+                f"reason={last.get('gate_reason') or last.get('reason') or '?'}"
+            )
+        elif kind == "auto_router_advisory_only":
+            verdict = "advisory_only"
+            summary_line = (
+                f"auto_router classified advisory_only · "
+                f"reason={last.get('reason', '?')}"
+            )
+        elif kind == "auto_submit_submitted":
+            verdict = f"submitted_verdict_{last.get('submit_verdict', 'unknown')}"
+            summary_line = (
+                f"handed off to broker · "
+                f"submit_verdict={last.get('submit_verdict', '?')} · "
+                f"executed={intent.get('executed')}"
+            )
+        elif kind in ("submit_error", "auto_router_error",
+                      "auto_submit_failed", "auto_submit_exception"):
+            verdict = "submit_error"
+            summary_line = (
+                f"chain raised · {kind} · "
+                f"reason={last.get('reason') or last.get('error') or '?'}"
+            )
+        else:
+            verdict = f"last_row_{kind}"
+            summary_line = f"last audit row was {kind}"
+
+    return {
+        "intent_id": intent_id,
+        "intent": intent,
+        "timeline": timeline,
+        "receipts": receipts,
+        "verdict": verdict,
+        "summary": summary_line,
+    }
