@@ -1,3 +1,48 @@
+## 2026-02-20 (no-trade root-cause investigation — 5 gates found, dry_run_state bug fixed, one-button ARM shipped)
+
+### Preview lifecycle trace — proved why "0 trades all day"
+
+Built `GET /api/admin/intents/{intent_id}/trace` (new) and traced one intent through every gate. Found **five** independent master switches that all had to be ON, plus a code bug that would have blocked Shelly even with the switches flipped:
+
+| # | Switch | Storage | Default | Backed by |
+|---|---|---|---|---|
+| 1 | Shelly auto-submit policy | `shared_auto_submit_policy.enabled` | `false` (default_off) | `POST /api/admin/auto-submit/policy` |
+| 2 | Auto-router background loop | `runtime_flags.auto_router_enabled` | unset → not started | `POST /api/admin/auto-router/start` |
+| 3 | Equity lane execution toggle | `lane_execution_toggles.equity` | `false` | `POST /api/admin/execution/lane-toggles` |
+| 4 | Crypto lane execution toggle | `lane_execution_toggles.crypto` | `false` | same |
+| 5 | Trading controls master kill | `trading_controls.enabled` | `false` (fail-CLOSED) | `POST /api/admin/trading/toggle` |
+
+### Code bug fix (`shared/execution.py`)
+
+`run_dry_run_for_intent` wrote `gate_state="dry_run_passed"` but **never wrote `dry_run_state="passed"`**, the field both `matches_tier_1` (Shelly) and the post-mortem aggregator read. 100% of intents were dying at `auto_submit_skipped/dry_run_not_ready` with reason `dry_run_state '' != required 'passed'`. Now persists both. Trace-confirmed on intent `4819984d` (chevelle BUY NVDA conf=1.00) which then reached Webull and was rejected with HTTP 417 "time not supported" (after-hours equity order, expected behaviour — same chain returns 200 during RTH).
+
+### One-button ARM (`/api/admin/intents/system-arm`)
+
+Operator-requested single switch. Flips all five master gates in one call, then re-runs the new `system-readiness` aggregator and returns granular green/red per switch + actionable `fix_endpoint` for any remaining red. Companion `system-disarm` flips them back off. Audit row written to `system_arm_audit`.
+
+### UI surface (`IntentPostMortemPanel.jsx`)
+
+- Gold "ONE-BUTTON ARM — FLIP ALL FIVE MASTER SWITCHES" tile at the top of the panel with reason input, `confidence_min` override, and a red HALT button next to it.
+- After click, the panel shows per-switch ✓/✗ + any remaining red gates with their fix endpoint inline.
+- New "TRACE ONE INTENT" block at the bottom — paste any `intent_id`, get the gate-by-gate timeline + derived verdict.
+
+### Production rollout (what the operator must do tomorrow during RTH)
+
+1. Deploy the `dry_run_state` + new endpoints commit.
+2. Open `/admin/intents` on prod, type a reason in the ARM tile, click ARM ALL.
+3. Watch readiness; resolve any remaining reds (most likely `executor_seat_crypto` if not seated).
+4. During RTH M-F 9:30–16:00 ET, the chain executes. Outside RTH, equity orders 417 at Webull — expected.
+
+### Future / Backlog still standing
+
+- P2: Market-hours gate in the auto-router so it stops firing 417-bound equity submits after-hours (now actually visible as "Broker error" rows in the panel).
+- P2: Stack display-name cleanup (camaro ↔ BARRACUDA).
+- P2: Expanded verifier-loop deterministic rule sheet.
+- P2: Large-cap baseline tuning (0.30 → 0.45) — hold until council floor proven in prod.
+
+---
+
+
 ## 2026-02-20 (Paradox → Seraph display rebrand, trademark conflict)
 
 Display-only rename, same playbook as the Angel layer. Internal module tree (`shared/paradox_v2/`, `paradox_v2_*` mongo kinds, `ParadoxV2Page` component, `/admin/paradox` URL, `/api/admin/paradox/*` endpoints, `nav-paradox` testid) all retained.

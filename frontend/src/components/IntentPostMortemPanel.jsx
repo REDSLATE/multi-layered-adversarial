@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { Crosshair, ArrowsClockwise, Warning, CheckCircle, XCircle } from "@phosphor-icons/react";
+import { Crosshair, ArrowsClockwise, Warning, CheckCircle, XCircle, MagnifyingGlass, Lightning, Power } from "@phosphor-icons/react";
 
 /**
  * IntentPostMortemPanel — the smoking-gun tile.
@@ -69,6 +69,44 @@ export default function IntentPostMortemPanel() {
   const [loading, setLoading] = useState(false);
   const [replayState, setReplayState] = useState({ running: false, result: null });
 
+  // 2026-02-20: per-intent trace ("show me where this one died"). The
+  // post-mortem aggregator answers "what's blocking trades in
+  // general" — this surface answers "what's blocking THIS intent"
+  // for any intent_id the operator pastes in (or clicks from
+  // `executed_samples` / top_blockers in the future).
+  const [traceState, setTraceState] = useState({
+    intentId: "",
+    loading: false,
+    result: null,
+    error: null,
+  });
+
+  const runTrace = useCallback(async (rawId) => {
+    const id = (rawId || "").trim();
+    if (!id) return;
+    setTraceState((s) => ({ ...s, intentId: id, loading: true, error: null }));
+    try {
+      const res = await api.get(`/admin/intents/${encodeURIComponent(id)}/trace`);
+      setTraceState({ intentId: id, loading: false, result: res.data, error: null });
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      setTraceState({
+        intentId: id, loading: false, result: null,
+        error: typeof d === "string" ? d : JSON.stringify(d),
+      });
+    }
+  }, []);
+
+  // 2026-02-20: one-button ARM. Flips all five master switches
+  // (trading_controls, auto_router, Shelly, lane:equity, lane:crypto)
+  // and re-reads readiness so the operator can see green/red after.
+  // Lives on this panel because "why no trades?" → arm everything is
+  // the canonical fix flow.
+  const [armState, setArmState] = useState({
+    running: false, result: null, error: null, reason: "",
+    confidenceMin: 0.65,
+  });
+
   const load = useCallback(async (h) => {
     setLoading(true);
     try {
@@ -96,6 +134,46 @@ export default function IntentPostMortemPanel() {
       setErr(typeof d === "string" ? d : JSON.stringify(d));
     }
   }, [hours, load]);
+
+  const armAll = useCallback(async () => {
+    const reason = (armState.reason || "").trim();
+    if (reason.length < 4) {
+      setArmState((s) => ({ ...s, error: "Reason must be at least 4 characters." }));
+      return;
+    }
+    setArmState((s) => ({ ...s, running: true, error: null, result: null }));
+    try {
+      const res = await api.post("/admin/intents/system-arm", {
+        reason,
+        confidence_min: armState.confidenceMin,
+      });
+      setArmState((s) => ({ ...s, running: false, result: res.data }));
+      // Re-pull post-mortem so the operator sees the new state right away.
+      await load(hours);
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      setArmState((s) => ({
+        ...s, running: false,
+        error: typeof d === "string" ? d : JSON.stringify(d),
+      }));
+    }
+  }, [armState.reason, armState.confidenceMin, hours, load]);
+
+  const disarmAll = useCallback(async () => {
+    const reason = (armState.reason || "").trim() || "operator halt";
+    setArmState((s) => ({ ...s, running: true, error: null }));
+    try {
+      const res = await api.post("/admin/intents/system-disarm", { reason });
+      setArmState((s) => ({ ...s, running: false, result: res.data }));
+      await load(hours);
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      setArmState((s) => ({
+        ...s, running: false,
+        error: typeof d === "string" ? d : JSON.stringify(d),
+      }));
+    }
+  }, [armState.reason, hours, load]);
 
   useEffect(() => { load(hours); }, [load, hours]);
 
@@ -148,6 +226,102 @@ export default function IntentPostMortemPanel() {
           {err}
         </div>
       )}
+
+      {/* ─── ONE-BUTTON ARM (2026-02-20) ─────────────────────────
+          Flips all five master switches in one call. Lives at the
+          TOP of the post-mortem panel because the canonical flow
+          when an operator opens this surface is: see "policy_disabled
+          dominates" → click ARM → re-check. */}
+      <div
+        className="border-2 border-rd-accent bg-rd-accent/5 p-2.5 space-y-2"
+        data-testid="system-arm-block"
+      >
+        <div className="flex items-center gap-2">
+          <Lightning size={13} weight="bold" className="text-rd-accent" />
+          <div className="flex-1">
+            <div className="font-mono text-[11px] uppercase tracking-widest text-rd-accent font-bold">
+              One-button ARM — flip all five master switches
+            </div>
+            <div className="font-mono text-[9px] text-rd-dim mt-0.5">
+              trading_controls · auto_router · Shelly · equity lane · crypto lane.
+              All gates downstream (council, governor, RoadGuard, caps) still apply.
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={armState.reason}
+            onChange={(e) => setArmState((s) => ({ ...s, reason: e.target.value }))}
+            placeholder="reason (≥4 chars, audit-logged)"
+            className="flex-1 bg-rd-bg border border-rd-border px-2 py-1 font-mono text-[10px] text-rd-text placeholder:text-rd-dim focus:outline-none focus:border-rd-accent"
+            data-testid="system-arm-reason"
+          />
+          <label className="font-mono text-[9px] text-rd-dim flex items-center gap-1">
+            conf_min
+            <input
+              type="number"
+              step="0.05"
+              min="0"
+              max="1"
+              value={armState.confidenceMin}
+              onChange={(e) => setArmState((s) => ({ ...s, confidenceMin: parseFloat(e.target.value) || 0.65 }))}
+              className="w-14 bg-rd-bg border border-rd-border px-1 py-1 font-mono text-[10px] text-rd-text focus:outline-none focus:border-rd-accent"
+              data-testid="system-arm-confidence-min"
+            />
+          </label>
+          <button
+            onClick={armAll}
+            disabled={armState.running || (armState.reason || "").trim().length < 4}
+            className="px-3 py-1 border-2 border-rd-accent bg-rd-accent text-black font-mono text-[10px] uppercase tracking-widest hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 font-bold"
+            data-testid="system-arm-button"
+          >
+            <Lightning size={11} weight="bold" />
+            {armState.running ? "Arming…" : "ARM ALL"}
+          </button>
+          <button
+            onClick={disarmAll}
+            disabled={armState.running}
+            className="px-2 py-1 border border-rd-danger text-rd-danger font-mono text-[10px] uppercase tracking-widest hover:bg-rd-danger/10 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+            data-testid="system-disarm-button"
+            title="Halt — flip all five back off"
+          >
+            <Power size={11} weight="bold" />
+            Halt
+          </button>
+        </div>
+        {armState.error && (
+          <div className="font-mono text-[10px] text-rd-danger flex items-start gap-1">
+            <XCircle size={10} weight="bold" className="mt-0.5 shrink-0" />
+            {armState.error}
+          </div>
+        )}
+        {armState.result && (
+          <div className="font-mono text-[10px] border-t border-rd-accent/30 pt-1.5 space-y-0.5" data-testid="system-arm-result">
+            <div className={armState.result.readiness?.ready_to_trade ? "text-rd-success" : "text-rd-warn"}>
+              {armState.result.readiness?.ready_to_trade
+                ? "✓ READY — orders will fire when an intent qualifies (subject to market hours)"
+                : `⚠ ${armState.result.readiness?.summary || "partial"}`}
+            </div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+              {(armState.result.switches || []).map((s) => (
+                <div key={s.switch} className="flex items-center gap-1.5">
+                  <span style={{ color: s.ok ? "#10B981" : "#DC2626" }}>{s.ok ? "✓" : "✗"}</span>
+                  <span className="text-rd-text">{s.switch}</span>
+                </div>
+              ))}
+            </div>
+            {(armState.result.readiness?.checks || []).filter((c) => c.status === "red").map((c) => (
+              <div key={c.name} className="text-rd-danger pl-2">
+                · {c.name}: {c.detail}
+                {c.fix_endpoint && (
+                  <span className="text-rd-dim block pl-3 text-[9px]">fix → {c.fix_endpoint}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {data && (
         <>
@@ -303,6 +477,113 @@ export default function IntentPostMortemPanel() {
               Recent executions: {data.executed_samples.slice(0, 5).map((id) => id.slice(0, 8)).join(", ")}
             </div>
           )}
+
+          {/* ─── Per-intent TRACE block (2026-02-20) ─────────────────
+              "Show me a single intent and trace every step until it
+              became a broker order or died." Hit GET /admin/intents/
+              {intent_id}/trace and render the full timeline + verdict. */}
+          <div className="border border-rd-border bg-rd-bg p-2 space-y-1.5" data-testid="intent-trace-block">
+            <div className="flex items-center gap-2">
+              <MagnifyingGlass size={11} weight="bold" className="text-rd-accent" />
+              <span className="font-mono text-[10px] uppercase tracking-widest text-rd-text font-bold">
+                Trace one intent
+              </span>
+              <span className="font-mono text-[9px] text-rd-dim">
+                paste any intent_id · see gate-by-gate timeline + where it died
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={traceState.intentId}
+                onChange={(e) => setTraceState((s) => ({ ...s, intentId: e.target.value }))}
+                onKeyDown={(e) => e.key === "Enter" && runTrace(traceState.intentId)}
+                placeholder="intent_id (e.g. dc4abe17-52f5-46c2-8538-54e4075a3604)"
+                className="flex-1 bg-rd-bg2 border border-rd-border px-2 py-1 font-mono text-[10px] text-rd-text placeholder:text-rd-dim focus:outline-none focus:border-rd-accent"
+                data-testid="intent-trace-input"
+              />
+              <button
+                onClick={() => runTrace(traceState.intentId)}
+                disabled={traceState.loading || !(traceState.intentId || "").trim()}
+                className="px-3 py-1 border border-rd-accent text-rd-accent font-mono text-[10px] uppercase tracking-widest hover:bg-rd-accent hover:text-rd-bg disabled:opacity-40"
+                data-testid="intent-trace-button"
+              >
+                {traceState.loading ? "Tracing…" : "Trace"}
+              </button>
+            </div>
+
+            {/* Recent execution_samples as one-click chips. */}
+            {(data.executed_samples || []).length > 0 && (
+              <div className="flex items-center gap-1 flex-wrap">
+                <span className="font-mono text-[9px] text-rd-dim">recent:</span>
+                {data.executed_samples.slice(0, 6).map((id) => (
+                  <button
+                    key={id}
+                    onClick={() => runTrace(id)}
+                    className="px-1.5 py-0.5 font-mono text-[9px] border border-rd-border text-rd-dim hover:text-rd-accent hover:border-rd-accent"
+                    data-testid={`intent-trace-chip-${id.slice(0, 8)}`}
+                  >
+                    {id.slice(0, 8)}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {traceState.error && (
+              <div className="font-mono text-[10px] text-rd-danger flex items-start gap-1" data-testid="intent-trace-error">
+                <XCircle size={10} weight="bold" className="mt-0.5 shrink-0" />
+                {traceState.error}
+              </div>
+            )}
+
+            {traceState.result && (
+              <div className="font-mono text-[10px] border-t border-rd-border pt-1.5 space-y-1" data-testid="intent-trace-result">
+                <div>
+                  <span className="text-rd-dim">VERDICT</span>{" "}
+                  <span
+                    className="font-bold"
+                    style={{
+                      color: traceState.result.verdict === "executed"
+                        ? "#10B981"
+                        : traceState.result.verdict?.startsWith("skipped")
+                          ? "#A1A1AA"
+                          : "#DC2626",
+                    }}
+                  >
+                    {traceState.result.verdict}
+                  </span>
+                </div>
+                <div className="text-rd-text">{traceState.result.summary}</div>
+                {traceState.result.intent && (
+                  <div className="text-rd-dim">
+                    intent: {traceState.result.intent.stack} {traceState.result.intent.action}{" "}
+                    {traceState.result.intent.symbol} conf={traceState.result.intent.confidence}{" "}
+                    lane={traceState.result.intent.lane} executed={String(traceState.result.intent.executed)}
+                  </div>
+                )}
+                <div className="text-rd-dim text-[9px] uppercase mt-1">timeline</div>
+                <div className="space-y-0.5 max-h-60 overflow-y-auto">
+                  {(traceState.result.timeline || []).map((ev, i) => (
+                    <div key={i} className="border-l-2 border-rd-border pl-2 py-0.5">
+                      <div className="text-rd-text">
+                        <span className="text-rd-dim">[{(ev.ts || "").slice(11, 23)}]</span>{" "}
+                        {ev.summary}
+                      </div>
+                      {ev.gate_name && (
+                        <div className="text-rd-warn text-[9px] pl-2">
+                          → gate <span className="font-bold">{ev.gate_name}</span>:{" "}
+                          {(ev.gate_reason || "").slice(0, 240)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {!(traceState.result.timeline || []).length && (
+                    <div className="text-rd-dim italic">no audit rows — this is a ghost intent</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </>
       )}
     </div>

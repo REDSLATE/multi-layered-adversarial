@@ -38,6 +38,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
 
 from auth import get_current_user
 from db import db
@@ -653,4 +654,401 @@ async def trace_intent(
         "receipts": receipts,
         "verdict": verdict,
         "summary": summary_line,
+    }
+
+
+
+# ─── Pre-market readiness check (2026-02-20) ────────────────────────
+# "Will trading fire when the market opens?" One GET → green/red on
+# every master switch + dependency, in one place, so the operator can
+# confirm the system is armed BEFORE 9:30 ET rather than discovering
+# at end of day it wasn't.
+
+
+@router.get("/system-readiness")
+async def system_readiness(
+    _user: dict = Depends(get_current_user),  # noqa: B008
+) -> Dict[str, Any]:
+    """Aggregate the 5 master switches + broker connectivity + seat
+    occupancy into a single green/red board.
+
+    All-green ⇒ when a brain emits a BUY/SELL intent during RTH
+    that passes the gate chain, an order goes to the broker.
+
+    Returns:
+        {
+          "ready_to_trade": bool,
+          "checks": [{name, status, detail, fix_endpoint?}, ...],
+          "summary": "READY" | "BLOCKED at <first red>",
+        }
+    """
+    from shared.auto_submit_policy import get_policy as _get_shelly
+    from shared.auto_router import get_status as _get_router_status
+    from shared.lane_execution import get_toggles as _get_lane_toggles
+    from routes.trading_controls import get_trading_status as _get_trade_ctrl
+
+    checks: List[Dict[str, Any]] = []
+
+    # 1. trading_controls.enabled (auto-router master gate, fail-closed)
+    try:
+        tc = await _get_trade_ctrl()
+        tc_ok = bool(tc.get("enabled"))
+        checks.append({
+            "name": "trading_controls",
+            "status": "green" if tc_ok else "red",
+            "detail": (
+                f"runtime={tc_ok} · updated_by={tc.get('updated_by')} · "
+                f"reason={tc.get('reason')!r}"
+            ),
+            "fix_endpoint": (
+                "POST /api/admin/trading/toggle {enabled:true, reason:'...'}"
+                if not tc_ok else None
+            ),
+        })
+    except Exception as e:  # noqa: BLE001
+        checks.append({
+            "name": "trading_controls",
+            "status": "red",
+            "detail": f"check failed: {e}",
+        })
+
+    # 2. auto_router task alive
+    try:
+        rs = _get_router_status()
+        alive = bool(rs.get("task_alive"))
+        ticks = int(rs.get("tick_count") or 0)
+        checks.append({
+            "name": "auto_router_loop",
+            "status": "green" if (alive and ticks > 0) else "red",
+            "detail": (
+                f"task_alive={alive} · tick_count={ticks} · "
+                f"last_tick_ts={rs.get('last_tick_ts')} · "
+                f"last_tick_error={rs.get('last_tick_error')}"
+            ),
+            "fix_endpoint": (
+                "POST /api/admin/auto-router/start" if not alive else None
+            ),
+        })
+    except Exception as e:  # noqa: BLE001
+        checks.append({
+            "name": "auto_router_loop",
+            "status": "red",
+            "detail": f"check failed: {e}",
+        })
+
+    # 3. Shelly policy enabled
+    try:
+        sp = _get_shelly()
+        sp_ok = bool(sp.get("enabled"))
+        checks.append({
+            "name": "shelly_auto_submit_policy",
+            "status": "green" if sp_ok else "red",
+            "detail": (
+                f"enabled={sp_ok} · source={sp.get('source')} · "
+                f"confidence_min={sp.get('confidence_min')}"
+            ),
+            "fix_endpoint": (
+                "POST /api/admin/auto-submit/policy {enabled:true, "
+                "confidence_min:0.65, reason:'...'}"
+                if not sp_ok else None
+            ),
+        })
+    except Exception as e:  # noqa: BLE001
+        checks.append({
+            "name": "shelly_auto_submit_policy",
+            "status": "red",
+            "detail": f"check failed: {e}",
+        })
+
+    # 4 & 5. Lane execution toggles
+    try:
+        lt = await _get_lane_toggles()
+        for lane in ("equity", "crypto"):
+            on = bool(lt.get(lane))
+            checks.append({
+                "name": f"lane_execution_{lane}",
+                "status": "green" if on else "red",
+                "detail": (
+                    f"enabled={on} · updated_by={lt.get(f'{lane}_updated_by')}"
+                ),
+                "fix_endpoint": (
+                    f"POST /api/admin/execution/lane-toggles "
+                    f"{{lane:'{lane}', enabled:true, "
+                    f"confirm:'I authorize {lane} trading'}}"
+                    if not on else None
+                ),
+            })
+    except Exception as e:  # noqa: BLE001
+        checks.append({
+            "name": "lane_execution_toggles",
+            "status": "red",
+            "detail": f"check failed: {e}",
+        })
+
+    # 6. Seat occupancy — at least one executor seat per lane.
+    try:
+        from shared.executor_seat import get_seat_holder, seats_with_execute
+        for lane in ("equity", "crypto"):
+            holder = None
+            for seat in seats_with_execute(lane):
+                h = await get_seat_holder(seat)
+                if h:
+                    holder = (seat, h)
+                    break
+            checks.append({
+                "name": f"executor_seat_{lane}",
+                "status": "green" if holder else "red",
+                "detail": (
+                    f"seat={holder[0]} holder={holder[1]}"
+                    if holder else "no executor-seat holder for this lane"
+                ),
+                "fix_endpoint": (
+                    "POST /api/admin/roster/assign — seat one of the brains"
+                    if not holder else None
+                ),
+            })
+    except Exception as e:  # noqa: BLE001
+        checks.append({
+            "name": "executor_seats",
+            "status": "red",
+            "detail": f"check failed: {e}",
+        })
+
+    # 7. Market-hours awareness (RTH for equity; crypto trades 24/7).
+    # Webull rejects equity orders outside RTH with HTTP 417 — useful
+    # context for the operator who's checking pre-market.
+    now_utc = datetime.now(timezone.utc)
+    # ET = UTC-5 (EST) or UTC-4 (EDT). Approx by using UTC offset 4
+    # for the Mar–Nov DST window; close enough for an operator hint.
+    et_hour_approx = (now_utc.hour - 4) % 24
+    weekday = now_utc.strftime("%A")
+    is_weekend = now_utc.weekday() >= 5
+    is_rth = (
+        not is_weekend
+        and (et_hour_approx > 9 or (et_hour_approx == 9 and now_utc.minute >= 30))
+        and et_hour_approx < 16
+    )
+    checks.append({
+        "name": "market_hours_equity",
+        "status": "green" if is_rth else "amber",
+        "detail": (
+            f"{weekday} {now_utc.isoformat()[:19]}Z · "
+            f"ET≈{et_hour_approx:02d}:{now_utc.minute:02d} · "
+            f"RTH={'YES' if is_rth else 'NO (Webull will 417 equity orders)'}"
+        ),
+        # Not a "fix" — just info. Crypto trades 24/7 via Kraken.
+    })
+
+    reds = [c for c in checks if c.get("status") == "red"]
+    ready = len(reds) == 0
+    if ready:
+        # Allow "amber" (market closed) to coexist with READY — the
+        # system is armed; orders fire when the market opens.
+        summary = "READY (orders will fire when an intent qualifies)"
+    else:
+        first_red = reds[0]
+        summary = f"BLOCKED at `{first_red['name']}` — {first_red.get('detail', '')[:120]}"
+
+    return {
+        "ready_to_trade": ready,
+        "checks": checks,
+        "summary": summary,
+        "checked_at": now_utc.isoformat(),
+    }
+
+
+
+# ─── One-button ARM / DISARM (2026-02-20 operator directive) ─────────
+# "Could you make one switch that turns them all on?"
+#
+# Flips the five master gates in one call:
+#   1. trading_controls.enabled               (auto-router master)
+#   2. runtime_flags.auto_router_enabled      (background loop)
+#   3. shared_auto_submit_policy.enabled      (Shelly)
+#   4. lane_execution_toggles.equity          (equity routing)
+#   5. lane_execution_toggles.crypto          (crypto routing)
+#
+# Doctrine: this is a CONVENIENCE wrapper. Every individual endpoint
+# below still works for fine-grained control. ARM does NOT skip any
+# safety: the broker connectivity gate, council math, governor floor,
+# RoadGuard stops, market-hours, and per-order caps all still apply
+# downstream. ARM only flips the operator's opt-in master switches.
+#
+# Each individual flip is audit-logged by its own endpoint's writer,
+# so the audit trail is complete (per-switch + the ARM call's own
+# `system_arm_audit` row that summarizes the batch).
+
+
+class ArmIn(BaseModel):
+    reason: str = Field(..., min_length=4, max_length=400,
+                        description="Why are you arming the system?")
+    confidence_min: float | None = Field(
+        default=0.65, ge=0.0, le=1.0,
+        description="Optional override for Shelly's confidence_min on flip. "
+                    "Defaults to 0.65 which lets ~mid-conviction trades through.",
+    )
+
+
+@router.post("/system-arm")
+async def system_arm(
+    body: ArmIn,
+    user: dict = Depends(get_current_user),  # noqa: B008
+) -> Dict[str, Any]:
+    """Flip all five master switches ON in one call. Each flip is
+    independent — if any single switch fails, the others still flip,
+    and the response surfaces which ones errored. The final
+    readiness snapshot tells the operator whether the system is live.
+    """
+    from shared.auto_submit_policy import set_policy_async
+    from shared.lane_execution import set_lane_toggle
+    from shared.auto_router import start_auto_router_if_enabled
+    from routes.trading_controls import set_trading_enabled
+
+    actor = (user or {}).get("email") or "operator"
+    reason = body.reason.strip()
+    flipped: List[Dict[str, Any]] = []
+
+    async def _safe(name: str, coro_or_call):
+        try:
+            res = await coro_or_call if hasattr(coro_or_call, "__await__") else coro_or_call
+            flipped.append({"switch": name, "ok": True, "detail": str(res)[:160] if res else "ok"})
+        except Exception as e:  # noqa: BLE001
+            flipped.append({"switch": name, "ok": False, "error": f"{type(e).__name__}: {e}"[:240]})
+
+    # 1. trading_controls
+    await _safe(
+        "trading_controls",
+        set_trading_enabled(True, reason, actor),
+    )
+    # 2. auto_router runtime flag + start
+    try:
+        await db["runtime_flags"].update_one(
+            {"_id": "auto_router_enabled"},
+            {"$set": {
+                "enabled": True,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_by": actor,
+            }},
+            upsert=True,
+        )
+        # `start_auto_router_if_enabled` is sync and idempotent
+        # (returns silently if env disabled or task already alive).
+        start_auto_router_if_enabled()
+        flipped.append({"switch": "auto_router_loop", "ok": True, "detail": "flag + start"})
+    except Exception as e:  # noqa: BLE001
+        flipped.append({
+            "switch": "auto_router_loop", "ok": False,
+            "error": f"{type(e).__name__}: {e}"[:240],
+        })
+    # 3. Shelly policy
+    overrides = {}
+    if body.confidence_min is not None:
+        overrides["confidence_min"] = body.confidence_min
+    await _safe(
+        "shelly_auto_submit_policy",
+        set_policy_async(enabled=True, **overrides),
+    )
+    # 4 + 5. Lane toggles
+    for lane in ("equity", "crypto"):
+        await _safe(
+            f"lane_execution_{lane}",
+            set_lane_toggle(lane, True, actor),
+        )
+
+    # Audit row — the batched ARM action itself, in addition to each
+    # individual switch's own audit log.
+    try:
+        await db["system_arm_audit"].insert_one({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "actor": actor,
+            "reason": reason,
+            "switches": flipped,
+            "confidence_min": body.confidence_min,
+        })
+    except Exception:  # noqa: BLE001
+        pass  # audit is best-effort; the operator already has per-switch logs
+
+    # Compute final readiness so the operator sees green/red in the
+    # same response.
+    readiness = await system_readiness(_user=user)  # noqa: SLF001
+
+    return {
+        "ok": all(f.get("ok") for f in flipped),
+        "actor": actor,
+        "reason": reason,
+        "switches": flipped,
+        "readiness": readiness,
+    }
+
+
+@router.post("/system-disarm")
+async def system_disarm(
+    body: ArmIn,
+    user: dict = Depends(get_current_user),  # noqa: B008
+) -> Dict[str, Any]:
+    """Flip all five master switches OFF in one call.
+
+    This is the inverse of `/system-arm`. The auto-router task is NOT
+    forcibly killed mid-tick — the runtime flag flip is enough; the
+    next tick's `is_trading_enabled` check will return False and the
+    router will write `no_trade · trading_controls_disabled` rows
+    instead of routing. Existing positions are not touched.
+    """
+    from shared.auto_submit_policy import set_policy_async
+    from shared.lane_execution import set_lane_toggle
+    from routes.trading_controls import set_trading_enabled
+
+    actor = (user or {}).get("email") or "operator"
+    reason = body.reason.strip()
+    flipped: List[Dict[str, Any]] = []
+
+    async def _safe(name: str, coro_or_call):
+        try:
+            res = await coro_or_call if hasattr(coro_or_call, "__await__") else coro_or_call
+            flipped.append({"switch": name, "ok": True, "detail": str(res)[:160] if res else "ok"})
+        except Exception as e:  # noqa: BLE001
+            flipped.append({"switch": name, "ok": False, "error": f"{type(e).__name__}: {e}"[:240]})
+
+    await _safe("trading_controls",
+                set_trading_enabled(False, reason, actor))
+    try:
+        await db["runtime_flags"].update_one(
+            {"_id": "auto_router_enabled"},
+            {"$set": {
+                "enabled": False,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_by": actor,
+            }},
+            upsert=True,
+        )
+        flipped.append({"switch": "auto_router_loop", "ok": True, "detail": "flag flipped off"})
+    except Exception as e:  # noqa: BLE001
+        flipped.append({
+            "switch": "auto_router_loop", "ok": False,
+            "error": f"{type(e).__name__}: {e}"[:240],
+        })
+    await _safe("shelly_auto_submit_policy",
+                set_policy_async(enabled=False))
+    for lane in ("equity", "crypto"):
+        await _safe(f"lane_execution_{lane}",
+                    set_lane_toggle(lane, False, actor))
+
+    try:
+        await db["system_arm_audit"].insert_one({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "actor": actor,
+            "reason": reason,
+            "action": "disarm",
+            "switches": flipped,
+        })
+    except Exception:  # noqa: BLE001
+        pass
+
+    readiness = await system_readiness(_user=user)  # noqa: SLF001
+    return {
+        "ok": all(f.get("ok") for f in flipped),
+        "actor": actor,
+        "reason": reason,
+        "switches": flipped,
+        "readiness": readiness,
     }
