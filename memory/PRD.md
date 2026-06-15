@@ -1,3 +1,41 @@
+## 2026-02-20 (late) — Ghost-intent replay button (operator escape hatch)
+
+### Problem
+Operator waited the weekend after the audit-completeness contract deploy. The 2,586 "Never submitted (no audit row)" intents remained because the contract only writes rows for FUTURE `maybe_auto_submit()` calls — pre-deploy ghosts have nothing to retroactively populate them.
+
+### Fix
+Added `POST /api/admin/intents/replay-ghosts?hours=24&limit=500`:
+- Scans for intents in the window that are `executed=false` AND have no audit row of any kind (submit_* / auto_submit_* / auto_router_*).
+- Re-invokes `maybe_auto_submit(intent_id)` on each. The bulletproof contract guarantees one terminal audit row per call.
+- Returns immediate breakdown: scanned / already_audited / replayed / errors / by_terminal_kind / remaining_ghosts_estimate.
+
+### UI
+The post-mortem panel now renders a "Replay N ghost intents" button when `by_outcome.never_submitted > 0`. Click handler:
+1. POSTs to the replay endpoint.
+2. Re-reads the post-mortem so the operator sees the new buckets immediately.
+3. Shows summary in-line (replayed count + per-terminal-kind histogram + remaining estimate).
+
+### Safety
+- Operator auth required.
+- Replays route through same `execution_submit` path — gates run, caps enforced.
+- `limit=500` per call so 5,000-intent backlog drains in successive clicks instead of one tidal wave.
+
+### Tests
+- `tests/test_replay_ghost_intents.py` (2 tests): endpoint shape, terminal-row guarantee, skips already-audited intents.
+- 32 related backend tests still pass.
+- Live curl on Preview returns clean schema.
+
+### Operator workflow on Production after redeploy
+1. Open Intents page → Post-Mortem panel.
+2. See "2,586 intents have no audit row" + button.
+3. Click "Replay 500 ghost intents".
+4. Result appears inline: `replayed=500 · auto_submit_skipped=N · auto_submit_failed=N · auto_submit_submitted=N · auto_submit_exception=N`.
+5. Click 5 more times to drain the rest.
+6. The outcome distribution and Top Blockers now show the REAL reasons the intents weren't trading.
+
+---
+
+
 ## 2026-02-20 (later) — Audit-completeness contract on maybe_auto_submit (P0 verified)
 
 ### Operator directive

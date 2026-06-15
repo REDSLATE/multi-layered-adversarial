@@ -67,6 +67,7 @@ export default function IntentPostMortemPanel() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [replayState, setReplayState] = useState({ running: false, result: null });
 
   const load = useCallback(async (h) => {
     setLoading(true);
@@ -81,6 +82,20 @@ export default function IntentPostMortemPanel() {
       setLoading(false);
     }
   }, []);
+
+  const replayGhosts = useCallback(async () => {
+    setReplayState({ running: true, result: null });
+    try {
+      const res = await api.post(`/admin/intents/replay-ghosts?hours=${hours}&limit=500`);
+      setReplayState({ running: false, result: res.data });
+      // Re-read post-mortem so the operator sees the new buckets right away.
+      await load(hours);
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      setReplayState({ running: false, result: null });
+      setErr(typeof d === "string" ? d : JSON.stringify(d));
+    }
+  }, [hours, load]);
 
   useEffect(() => { load(hours); }, [load, hours]);
 
@@ -161,6 +176,47 @@ export default function IntentPostMortemPanel() {
             <div className="border border-rd-warn bg-rd-warn/5 p-2 font-mono text-[11px] text-rd-warn flex items-start gap-1.5" data-testid="post-mortem-funnel-drop">
               <Warning size={11} weight="bold" className="mt-0.5 shrink-0" />
               <span>Biggest funnel drop: {data.biggest_funnel_drop}</span>
+            </div>
+          )}
+
+          {/* Ghost-intent replay (2026-02-20) — escape hatch when
+              the "Never submitted (no audit row)" bucket dominates */}
+          {(data.by_outcome?.never_submitted || 0) > 0 && (
+            <div className="border border-rd-border bg-rd-bg p-2 space-y-1.5" data-testid="post-mortem-replay-ghosts-block">
+              <div className="font-mono text-[10px] text-rd-dim">
+                {data.by_outcome.never_submitted} intent{data.by_outcome.never_submitted === 1 ? "" : "s"} have no audit row.
+                Replay through the bulletproof chain to surface the actual blocker.
+              </div>
+              <button
+                onClick={replayGhosts}
+                disabled={replayState.running}
+                className="px-2 py-1 border border-rd-accent text-rd-accent font-mono text-[10px] uppercase tracking-widest hover:bg-rd-accent hover:text-rd-bg disabled:opacity-50"
+                data-testid="post-mortem-replay-ghosts-button"
+              >
+                {replayState.running
+                  ? "Replaying…"
+                  : `Replay ${Math.min(500, data.by_outcome.never_submitted)} ghost intents`}
+              </button>
+              {replayState.result && (
+                <div className="font-mono text-[10px] text-rd-text border-t border-rd-border pt-1.5" data-testid="post-mortem-replay-result">
+                  <div>
+                    Scanned <span className="text-rd-accent">{replayState.result.scanned}</span>{" "}
+                    · Replayed <span className="text-rd-accent">{replayState.result.replayed}</span>{" "}
+                    · Errors <span className={replayState.result.errors ? "text-rd-danger" : "text-rd-dim"}>{replayState.result.errors}</span>
+                  </div>
+                  <div className="text-rd-dim mt-0.5">
+                    {Object.entries(replayState.result.by_terminal_kind || {})
+                      .filter(([, n]) => n > 0)
+                      .map(([k, n]) => `${k}=${n}`)
+                      .join(" · ") || "no terminal rows written (likely scope/window issue)"}
+                  </div>
+                  {replayState.result.remaining_ghosts_estimate > 0 && (
+                    <div className="text-rd-warn mt-0.5">
+                      ~{replayState.result.remaining_ghosts_estimate} ghosts remain — click again to drain.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

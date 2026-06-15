@@ -358,3 +358,120 @@ async def intents_post_mortem(
         "funnel": funnel,
         "biggest_funnel_drop": biggest_drop,
     }
+
+
+# ─── Ghost-intent replay (2026-02-20 operator escape hatch) ─────────
+# When the audit-completeness contract was added to maybe_auto_submit
+# it only writes rows for FUTURE calls. Intents emitted BEFORE the
+# fix remain stuck at "Never submitted (no audit row)" with no way to
+# diagnose them through the post-mortem panel. This endpoint replays
+# them through the now-instrumented chain so the contract produces
+# the missing audit rows. Same gate chain, same Shelly policy, same
+# broker caps — no bypass.
+
+
+@router.post("/replay-ghosts")
+async def replay_ghost_intents(
+    hours: int = 24,
+    limit: int = 500,
+    _user: dict = Depends(get_current_user),  # noqa: B008
+) -> Dict[str, Any]:
+    """Find intents in the last N hours that are executed=false AND
+    have no auto_submit_* / auto_router_* / submit_* audit row, then
+    re-invoke `maybe_auto_submit(intent_id)` on each. The bulletproof
+    contract guarantees one terminal audit row per call, so the next
+    post-mortem refresh will surface what's actually blocking them.
+
+    Args:
+        hours: scan window (default 24, max 168).
+        limit: hard cap on the number of replays this call kicks off
+            (default 500). Successive calls drain the rest.
+
+    Safety:
+        * Operator-auth required.
+        * Replays go through the same execution_submit path real
+          intents do — gates run, caps enforced, audit rows written.
+        * `limit` defaults to 500 so a 5000-ghost backlog drains in
+          successive clicks rather than one tidal wave.
+    """
+    hours = max(1, min(int(hours or 24), 168))
+    limit = max(1, min(int(limit or 500), 2000))
+    cutoff_iso = (
+        datetime.now(timezone.utc) - timedelta(hours=hours)
+    ).isoformat()
+
+    candidates = await db[SHARED_INTENTS].find(
+        {
+            "ingest_ts": {"$gte": cutoff_iso},
+            "executed": {"$ne": True},
+            "dry_run_state": {"$nin": ["blocked", "dry_run_blocked", "fail", "failed"]},
+        },
+        {"_id": 0, "intent_id": 1},
+    ).limit(limit * 4).to_list(limit * 4)
+
+    candidate_ids = [c["intent_id"] for c in candidates]
+    rows = await db[SHARED_GATE_RESULTS].find(
+        {
+            "intent_id": {"$in": candidate_ids},
+            "kind": {"$in": [
+                "submit_passed", "submit_blocked", "submit_no_trade",
+                "submit_timeout", "submit_error",
+                "auto_submit_skipped", "auto_submit_failed",
+                "auto_submit_submitted", "auto_submit_exception",
+                "auto_router_passed", "auto_router_blocked",
+                "auto_router_no_trade", "auto_router_error",
+                "auto_router_advisory_only",
+            ]},
+        },
+        {"_id": 0, "intent_id": 1},
+    ).to_list(len(candidate_ids) or 1)
+    already_audited = {r["intent_id"] for r in rows}
+    ghosts = [c["intent_id"] for c in candidates if c["intent_id"] not in already_audited]
+    ghosts = ghosts[:limit]
+
+    from shared.auto_submit_policy import maybe_auto_submit
+
+    by_terminal_kind: Dict[str, int] = {
+        "auto_submit_skipped": 0,
+        "auto_submit_failed": 0,
+        "auto_submit_submitted": 0,
+        "auto_submit_exception": 0,
+    }
+    errors = 0
+    replayed = 0
+    for intent_id in ghosts:
+        try:
+            await maybe_auto_submit(intent_id)
+            replayed += 1
+        except Exception:  # noqa: BLE001
+            errors += 1
+            replayed += 1
+
+    if ghosts:
+        terminals = await db[SHARED_GATE_RESULTS].find(
+            {
+                "intent_id": {"$in": ghosts},
+                "kind": {"$in": list(by_terminal_kind.keys())},
+            },
+            {"_id": 0, "intent_id": 1, "kind": 1, "ts": 1, "skip_category": 1},
+        ).to_list(len(ghosts) * 2)
+        latest: Dict[str, str] = {}
+        for r in sorted(terminals, key=lambda x: x.get("ts") or ""):
+            latest[r["intent_id"]] = r["kind"]
+        for kind in latest.values():
+            if kind in by_terminal_kind:
+                by_terminal_kind[kind] += 1
+
+    return {
+        "window_hours": hours,
+        "limit": limit,
+        "scanned": len(candidates),
+        "already_audited": len(already_audited),
+        "replayed": replayed,
+        "errors": errors,
+        "by_terminal_kind": by_terminal_kind,
+        "remaining_ghosts_estimate": max(
+            0,
+            len(candidates) - len(already_audited) - replayed,
+        ),
+    }
