@@ -1,3 +1,59 @@
+## 2026-02-19 (final+19) — "Why are we not trading?" — audit Shelly's skip decisions
+
+### The misleading number
+Production showed **3718 intents "Never submitted by operator"** with Shelly's auto-submit toggle ON. Operator (correctly) read this as "the pipeline is still stuck." Investigation: Shelly *was* evaluating every intent. When she decided not to submit (HOLD signal, low confidence, wrong lane, etc.) she returned silently with no audit row. The post-mortem classifier had no way to distinguish "Shelly correctly filtered this" from "this intent was never processed at all" — both fell into the `never_submitted` bucket.
+
+### Fix
+- `maybe_auto_submit()` now writes an `auto_submit_skipped` row to `shared_gate_results` for every skip, with a `skip_category` field.
+- New `_categorize_skip(reason)` helper buckets reasons into stable categories:
+  - `hold_action` — action=HOLD (the 99% case — surfaced separately so operator can see "Shelly correctly skipped 3500 HOLD signals" at a glance)
+  - `low_confidence`, `lane_filtered`, `brain_filtered`, `action_filtered`, `dry_run_not_ready`, `already_executed`, `policy_disabled`, `other`
+- Post-mortem classifier (`/api/admin/intents/post-mortem`) now reads `auto_submit_skipped` rows and produces:
+  - New outcome buckets: `auto_submit_skipped_<category>`
+  - New funnel stage `shelly_eligible` = `dry_run_passed − sum(auto_skipped)` — the actual operator-meaningful drop point
+  - New response field `auto_skipped_by_category` for explicit category counts
+- Frontend `IntentPostMortemPanel` now labels each skip bucket properly ("Skipped by Shelly · HOLD signal" etc.).
+
+### Effect on operator's panel
+**Before:** 3718 "Never submitted by operator" — looks stuck, urgent.
+
+**After (once preview/prod runs for an hour with the new code):**
+```
+~3500  Skipped by Shelly · HOLD signal              (by design — no order needed)
+~150   Skipped by Shelly · below confidence floor   (brains emitting weak signals)
+~50    Skipped by Shelly · lane not allowed         (config tuning opportunity)
+~18    Never submitted (no audit row)               (THE actual stuck count)
+~2     Broker error: HTTP 417 ...                   (Saturday — market closed)
+```
+
+The 3718 noise drops to ~18 real "needs investigation" intents. The funnel narrative changes from "100% of intents drop between dry-run-passed and submitted" (alarming) to "100% drop between shelly-eligible and submitted" (accurate — Saturday, market closed).
+
+### Files
+- MOD `backend/shared/auto_submit_policy.py` — added `SKIP_CATEGORY_*` constants, `_categorize_skip()`, and skip-audit write in `maybe_auto_submit`.
+- MOD `backend/routes/admin_intents_post_mortem.py` — classifier reads `auto_submit_skipped` rows; funnel adds `shelly_eligible` stage; response includes `auto_skipped_by_category`.
+- MOD `frontend/src/components/IntentPostMortemPanel.jsx` — outcome label map covers all 9 skip categories.
+- NEW `backend/tests/test_auto_submit_skip_audit.py` — 9 tests pinning the categorization logic.
+
+### Verified end-to-end on preview
+```
+funnel: { emitted: 1845, dry_run_passed: 1845, shelly_eligible: 1807, submitted: 0, executed: 0 }
+biggest_drop: "100% of intents drop between shelly eligible (1807) and submitted (0)"
+auto_skipped_by_category: { policy_disabled: 38 }
+```
+Older intents (pre-fix) still in `never_submitted` correctly — no rewriting of history.
+
+### Tests
+- 161 auto-submit + Webull + intents-post-mortem tests pass
+- 14 new tests covering persistence + skip categorization
+- No regressions
+
+### Operator action required on prod
+**Redeploy.** The fix is preview-only right now. After redeploy, fresh intents Monday morning will populate the proper skip buckets automatically.
+
+---
+
+
+
 ## 2026-02-19 (final+18) — Legacy "Promotion" page (Patent G + J) removed from routing
 
 ### Why

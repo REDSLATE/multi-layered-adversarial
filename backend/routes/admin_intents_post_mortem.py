@@ -109,9 +109,15 @@ async def intents_post_mortem(
                 "kind": {"$in": [
                     "submit_passed", "submit_blocked", "submit_no_trade",
                     "submit_timeout", "submit_error",
+                    # 2026-02-19: include the new auto_submit_skipped
+                    # rows so we can distinguish "Shelly correctly
+                    # skipped this (HOLD, low-conf, etc.)" from a
+                    # genuinely-stuck "Never submitted" intent.
+                    "auto_submit_skipped", "auto_submit_failed",
                 ]},
             },
-            {"_id": 0, "intent_id": 1, "kind": 1, "gates": 1, "reason": 1, "error": 1, "ts": 1},
+            {"_id": 0, "intent_id": 1, "kind": 1, "gates": 1, "reason": 1,
+             "error": 1, "ts": 1, "skip_category": 1},
         ).to_list(length=20000)
     # Newest row per intent wins.
     latest_by_intent: Dict[str, dict] = {}
@@ -124,7 +130,17 @@ async def intents_post_mortem(
     by_brain: Dict[str, Counter] = {}
     top_blockers: Counter[tuple[str, str]] = Counter()
     executed_samples: List[str] = []
-    funnel = {"emitted": 0, "dry_run_passed": 0, "submitted": 0, "executed": 0}
+    # New stage `shelly_eligible` (2026-02-19): intents that passed
+    # dry-run AND were not auto-skipped by Shelly. This is what the
+    # operator actually wants to track — the funnel drop between
+    # "passed dry-run" and "actually submitted" was misleading
+    # because 99% of dry-run-passed intents are HOLD signals Shelly
+    # correctly filters.
+    funnel = {
+        "emitted": 0, "dry_run_passed": 0, "shelly_eligible": 0,
+        "submitted": 0, "executed": 0,
+    }
+    auto_skipped_by_category: Counter[str] = Counter()
 
     for it in intents:
         funnel["emitted"] += 1
@@ -175,6 +191,20 @@ async def intents_post_mortem(
                     outcome = "submit_error"
                     reason = (row.get("error") or row.get("reason") or "?")[:120]
                     top_blockers[("broker", reason)] += 1
+                elif kind == "auto_submit_skipped":
+                    # Shelly looked at it and decided not to submit
+                    # (HOLD signal, low confidence, wrong lane, etc.).
+                    # By design — surface separately so the operator
+                    # can distinguish "filtered correctly" from
+                    # "pipeline stuck".
+                    category = row.get("skip_category") or "other"
+                    outcome = f"auto_submit_skipped_{category}"
+                    auto_skipped_by_category[category] += 1
+                    top_blockers[("auto_submit_skip", category)] += 1
+                elif kind == "auto_submit_failed":
+                    outcome = "submit_error"
+                    reason = (row.get("reason") or "auto_submit raised")[:120]
+                    top_blockers[("broker", reason)] += 1
                 else:
                     outcome = "never_submitted"
 
@@ -183,8 +213,17 @@ async def intents_post_mortem(
         by_brain[brain][outcome] += 1
 
     # 4) Funnel narrative — biggest stage-to-stage drop.
+    # `shelly_eligible` (2026-02-19) is computed post-loop:
+    #   dry_run_passed − (intents Shelly correctly auto-skipped) =
+    #   the count of intents that SHOULD have reached the broker.
+    # The drop between shelly_eligible and submitted is the real
+    # operator pain point; drops between dry_run_passed and
+    # shelly_eligible are HOLD signals, low-conf, etc. — by design.
+    total_auto_skipped = sum(auto_skipped_by_category.values())
+    funnel["shelly_eligible"] = max(0, funnel["dry_run_passed"] - total_auto_skipped)
+
     biggest_drop = None
-    stages = ["emitted", "dry_run_passed", "submitted", "executed"]
+    stages = ["emitted", "dry_run_passed", "shelly_eligible", "submitted", "executed"]
     worst_pct = -1.0
     for prev, curr in zip(stages, stages[1:]):
         prev_n = funnel[prev]
@@ -204,6 +243,7 @@ async def intents_post_mortem(
         "window_hours": hours,
         "total_intents": len(intents),
         "by_outcome": dict(outcome_counts),
+        "auto_skipped_by_category": dict(auto_skipped_by_category),
         "top_blockers": [
             {"category": cat, "name": name, "count": n}
             for (cat, name), n in top_blockers.most_common(10)

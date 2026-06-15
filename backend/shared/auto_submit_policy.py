@@ -200,6 +200,49 @@ def reset_policy_for_tests() -> None:
         _HYDRATED = False
 
 
+# Skip-reason categories surfaced in the post-mortem outcome strip.
+# Keys are stable (UI / tests depend on them); values are the broad
+# bucket labels the operator scans at a glance.
+SKIP_CATEGORY_HOLD              = "hold_action"           # action=HOLD — by design
+SKIP_CATEGORY_DISABLED          = "policy_disabled"       # Shelly is OFF
+SKIP_CATEGORY_LOW_CONFIDENCE    = "low_confidence"        # < confidence_min
+SKIP_CATEGORY_LANE_FILTERED     = "lane_filtered"         # lane not in allowed list
+SKIP_CATEGORY_BRAIN_FILTERED    = "brain_filtered"        # brain not in allowed list
+SKIP_CATEGORY_ACTION_FILTERED   = "action_filtered"       # action not BUY/SELL/HOLD
+SKIP_CATEGORY_DRY_RUN_NOT_READY = "dry_run_not_ready"     # dry_run not passed yet
+SKIP_CATEGORY_ALREADY_EXECUTED  = "already_executed"      # raced ourselves
+SKIP_CATEGORY_OTHER             = "other"                 # anything not classified
+
+
+def _categorize_skip(reason: str) -> str:
+    """Bucket a `matches_tier_1` skip reason into a coarse category for
+    the post-mortem panel. Kept simple — exact-string match against
+    the well-known reason prefixes in `matches_tier_1`."""
+    r = reason or ""
+    if r == "auto_submit_policy_disabled":
+        return SKIP_CATEGORY_DISABLED
+    if r.startswith("action "):
+        # "action 'HOLD' not in allowed [...]" is the most common skip
+        # — call HOLD out specifically so the operator can see
+        # "Shelly intentionally skipped 3500 HOLD signals" at a glance.
+        if "'HOLD'" in r:
+            return SKIP_CATEGORY_HOLD
+        return SKIP_CATEGORY_ACTION_FILTERED
+    if r.startswith("lane "):
+        return SKIP_CATEGORY_LANE_FILTERED
+    if r.startswith("brain "):
+        return SKIP_CATEGORY_BRAIN_FILTERED
+    if r.startswith("confidence "):
+        return SKIP_CATEGORY_LOW_CONFIDENCE
+    if r.startswith("dry_run_state "):
+        return SKIP_CATEGORY_DRY_RUN_NOT_READY
+    if r == "intent already executed":
+        return SKIP_CATEGORY_ALREADY_EXECUTED
+    return SKIP_CATEGORY_OTHER
+
+
+
+
 def matches_tier_1(intent: dict, policy: dict | None = None) -> tuple[bool, str]:
     """Returns (matches, reason). Reason describes the first failing
     criterion when matches=False so the audit trail can show WHY a
@@ -260,9 +303,15 @@ async def maybe_auto_submit(intent_id: str) -> dict[str, Any] | None:
     identity ("auto_submit_tier_1"). All gates run, all audit rows
     are written, the receipt clearly stamps that this was machine-
     advanced rather than operator-clicked.
+
+    Skip auditing (2026-02-19): every skip writes an
+    `auto_submit_skipped` row to shared_gate_results with the skip
+    reason. Before this, operators saw 3718 "Never submitted by
+    operator" intents and couldn't tell whether Shelly was filtering
+    them correctly (HOLD, low-conf) or the pipeline was broken.
     """
     from db import db  # noqa: WPS433
-    from namespaces import SHARED_INTENTS  # noqa: WPS433
+    from namespaces import SHARED_INTENTS, SHARED_GATE_RESULTS  # noqa: WPS433
 
     intent = await db[SHARED_INTENTS].find_one(
         {"intent_id": intent_id}, {"_id": 0},
@@ -274,6 +323,18 @@ async def maybe_auto_submit(intent_id: str) -> dict[str, Any] | None:
     ok, reason = matches_tier_1(intent, policy)
     if not ok:
         logger.debug("auto_submit skip %s: %s", intent_id, reason)
+        # Audit the skip so post-mortem can show WHY Shelly didn't
+        # submit. Reason follows a `<category>: <detail>` shape so
+        # the classifier can bucket them deterministically.
+        await db[SHARED_GATE_RESULTS].insert_one({
+            "intent_id": intent_id,
+            "kind": "auto_submit_skipped",
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "by": "auto_submit_tier_1",
+            "reason": reason,
+            "tier": policy.get("tier_name", "tier_1_conservative"),
+            "skip_category": _categorize_skip(reason),
+        })
         return None
 
     # Resolve the lane's per-order cap so we don't try to submit

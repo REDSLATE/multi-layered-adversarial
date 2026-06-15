@@ -28,7 +28,18 @@ const OUTCOME_LABELS = {
   submit_timeout: { label: "Broker timeout", color: "#F59E0B" },
   submit_error: { label: "Broker error", color: "#DC2626" },
   dry_run_blocked: { label: "Dry-run blocked", color: "#A78BFA" },
-  never_submitted: { label: "Never submitted by operator", color: "#A1A1AA" },
+  never_submitted: { label: "Never submitted (no audit row)", color: "#A1A1AA" },
+  // Auto-submit skip buckets (Shelly looked, decided NO — by design).
+  // Operator wants to distinguish these from "pipeline stuck" failures.
+  auto_submit_skipped_hold_action:        { label: "Skipped by Shelly · HOLD signal",        color: "#64748B" },
+  auto_submit_skipped_low_confidence:     { label: "Skipped by Shelly · below confidence floor", color: "#64748B" },
+  auto_submit_skipped_lane_filtered:      { label: "Skipped by Shelly · lane not allowed",   color: "#64748B" },
+  auto_submit_skipped_action_filtered:    { label: "Skipped by Shelly · action not allowed", color: "#64748B" },
+  auto_submit_skipped_brain_filtered:     { label: "Skipped by Shelly · brain not allowed",  color: "#64748B" },
+  auto_submit_skipped_dry_run_not_ready:  { label: "Skipped by Shelly · dry-run not ready",  color: "#64748B" },
+  auto_submit_skipped_policy_disabled:    { label: "Skipped by Shelly · policy disabled",    color: "#64748B" },
+  auto_submit_skipped_already_executed:   { label: "Skipped by Shelly · already executed",   color: "#64748B" },
+  auto_submit_skipped_other:              { label: "Skipped by Shelly · other reason",       color: "#64748B" },
 };
 
 const WINDOWS = [1, 6, 24, 72];
