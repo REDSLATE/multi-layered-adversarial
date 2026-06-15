@@ -17,6 +17,7 @@ Pattern mirrors `shared/alt_data/fred.py` + `shared/alt_data/sec_edgar.py`.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
@@ -244,4 +245,121 @@ async def sync_all(db, patent_tickers: list[str] | None = None) -> dict:
         "patents_upserted": patents_n,
         "patent_tickers": tickers_done,
         "ts": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+
+# ─── Weekly background worker (2026-02-20) ───────────────────────────
+# Quiver's underlying disclosures (Form 4 insider, congressional STOCK
+# Act filings, patent grants) DO NOT change intraday. Daily polling
+# burns the Hobbyist tier's ~300 req/day rate budget for zero new
+# information. Weekly cadence captures everything new with ~52 calls
+# per feed per year — well inside any tier.
+#
+# Pattern mirrors `sec_edgar._worker_loop` (same start/stop API so
+# server.py wires them identically): a single asyncio task sleeps
+# `QUIVER_SYNC_INTERVAL_S` between syncs and skips quietly when the
+# API key is missing.
+
+_quiver_task: asyncio.Task | None = None
+_quiver_stop = False
+
+QUIVER_SYNC_ENABLED = (
+    os.environ.get("QUIVER_SYNC_ENABLED", "true").lower() == "true"
+)
+# Default: 7 days. Disclosures aren't intraday.
+QUIVER_SYNC_INTERVAL_S = int(
+    os.environ.get("QUIVER_SYNC_INTERVAL_S", str(7 * 24 * 60 * 60))
+)
+# Initial delay so we don't slam the API on every pod restart during
+# a deploy storm. Five minutes is enough to clear restart bursts but
+# short enough that the first weekly sync happens promptly.
+QUIVER_FIRST_RUN_DELAY_S = int(
+    os.environ.get("QUIVER_FIRST_RUN_DELAY_S", "300")
+)
+
+
+async def _quiver_worker_loop() -> None:
+    """Background loop: sleep `interval`, then `sync_all`, repeat.
+
+    On first start, waits `QUIVER_FIRST_RUN_DELAY_S` before the first
+    sync. If `QUIVER_SYNC_ENABLED=false` is set, the loop runs but
+    every wake-up checks the flag and skips the sync — letting the
+    operator pause without restarting the pod.
+    """
+    # Lazy import so this module stays importable for tests that
+    # don't need Mongo.
+    from db import db  # type: ignore
+
+    # First-run delay (post-deploy quiet period).
+    await asyncio.sleep(QUIVER_FIRST_RUN_DELAY_S)
+
+    while not _quiver_stop:
+        if not QUIVER_SYNC_ENABLED:
+            await asyncio.sleep(min(3600, QUIVER_SYNC_INTERVAL_S))
+            continue
+        if not is_configured():
+            logger.info(
+                "quiver weekly worker: QUIVER_API_KEY unset; sleeping %ds",
+                QUIVER_SYNC_INTERVAL_S,
+            )
+            await asyncio.sleep(QUIVER_SYNC_INTERVAL_S)
+            continue
+        try:
+            summary = await sync_all(db)
+            logger.info(
+                "quiver weekly sync: insider=%s congress=%s patents=%s",
+                summary.get("insider_upserted"),
+                summary.get("congress_upserted"),
+                summary.get("patents_upserted"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("quiver weekly sync crashed: %s", exc)
+        # Sleep until next weekly tick. `_quiver_stop` is rechecked at
+        # top of loop, so cancellation is responsive within the sleep.
+        await asyncio.sleep(QUIVER_SYNC_INTERVAL_S)
+
+
+def start_worker_if_enabled() -> None:
+    """Start the weekly worker. Idempotent. Safe to call repeatedly
+    (e.g. from server lifespan startup or from an admin endpoint).
+    """
+    global _quiver_task, _quiver_stop
+    if _quiver_task is not None and not _quiver_task.done():
+        return
+    if not QUIVER_SYNC_ENABLED:
+        logger.info(
+            "quiver weekly worker disabled (QUIVER_SYNC_ENABLED=false)"
+        )
+        return
+    _quiver_stop = False
+    _quiver_task = asyncio.create_task(
+        _quiver_worker_loop(), name="quiver_weekly_worker",
+    )
+    logger.info(
+        "quiver weekly worker started (interval=%ds, first_run_delay=%ds)",
+        QUIVER_SYNC_INTERVAL_S, QUIVER_FIRST_RUN_DELAY_S,
+    )
+
+
+async def stop_worker() -> None:
+    """Gracefully stop the weekly worker. Called from lifespan shutdown."""
+    global _quiver_task, _quiver_stop
+    _quiver_stop = True
+    if _quiver_task is not None and not _quiver_task.done():
+        _quiver_task.cancel()
+        try:
+            await _quiver_task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+
+
+def worker_status() -> dict[str, Any]:
+    """Snapshot of the weekly worker for the admin readiness panel."""
+    return {
+        "enabled": QUIVER_SYNC_ENABLED,
+        "configured": is_configured(),
+        "interval_s": QUIVER_SYNC_INTERVAL_S,
+        "interval_human": f"{QUIVER_SYNC_INTERVAL_S / 86400:.1f}d",
+        "task_alive": bool(_quiver_task and not _quiver_task.done()),
     }

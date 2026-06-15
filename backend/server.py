@@ -122,6 +122,10 @@ from shared.alt_data.fred import (
     start_worker_if_enabled as start_fred_worker,
     stop_worker as stop_fred_worker,
 )
+from shared.alt_data.quiver_quant import (
+    start_worker_if_enabled as start_quiver_worker,
+    stop_worker as stop_quiver_worker,
+)
 from shelly import router as shelly_router
 from routes.brain_memory_ingest import router as brain_memory_ingest_router
 from routes.paradox_routes import router as paradox_router
@@ -384,6 +388,7 @@ async def lifespan(app: FastAPI):
         start_polygon_worker()
         start_sec_edgar_worker()
         start_fred_worker()
+        start_quiver_worker()
     except Exception as e:  # noqa: BLE001
         logger.warning("data_stack workers start failed: %s", e)
     # Opinion-silent watchdog — autonomous scan that emits an alert
@@ -632,6 +637,7 @@ async def lifespan(app: FastAPI):
         await stop_polygon_worker()
         await stop_sec_edgar_worker()
         await stop_fred_worker()
+        await stop_quiver_worker()
     except Exception:  # noqa: BLE001
         pass
     try:
