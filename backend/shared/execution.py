@@ -779,10 +779,21 @@ async def run_dry_run_for_intent(
 
     result = await _evaluate_gates(intent, order_notional_usd)
     new_state = "dry_run_passed" if result["verdict"] == "would_pass" else "dry_run_blocked"
+    # 2026-02-20: also persist the simpler `dry_run_state` field that
+    # `matches_tier_1` and the post-mortem aggregator both read. Before
+    # this fix the field was never written, so 100% of intents tripped
+    # `auto_submit_skipped/dry_run_not_ready` ("dry_run_state '' !=
+    # required 'passed'") and the funnel's dry-run-blocked bucket
+    # always read zero. Trace-confirmed on preview at 21:09:56 with
+    # intent ebd5418b (chevelle BUY AAPL conf=0.90, gate_state=
+    # dry_run_passed, but dry_run_state=None → maybe_auto_submit
+    # rejected).
+    dry_run_summary = "passed" if result["verdict"] == "would_pass" else "blocked"
     await db[SHARED_INTENTS].update_one(
         {"intent_id": intent_id},
         {"$set": {
             "gate_state": new_state,
+            "dry_run_state": dry_run_summary,
             "last_dry_run_ts": _now_iso(),
             "last_dry_run_by": actor,
             "last_dry_run_notional_usd": order_notional_usd,
