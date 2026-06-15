@@ -525,14 +525,47 @@ async def _evaluate_gates(
     spread_cap = LANE_SPREAD_CAP.get(lane_for_roadguard)
 
     if spread_bps_raw is None:
-        # Missing snapshot → MC cannot verify safety → fail closed,
-        # but as RoadGuard (deterministic infra failure), not as
-        # Governor dissent.
-        gates.append({
-            "name": "roadguard_spread_floor",
-            "passed": False,
-            "reason": "ROADGUARD_MISSING_SPREAD_BPS — snapshot absent; cannot verify market structure",
-        })
+        # 2026-02-20 operator directive: do NOT fail closed on missing
+        # snapshot for crypto majors. The Webull crypto entitlement
+        # sometimes returns price without bid/ask, leaving spread_bps
+        # absent. That was killing 100% of crypto intents under the
+        # old "fail closed" branch even though Kraken majors actually
+        # run <5 bps. Trust a documented fallback for known liquid
+        # pairs; still fail closed for unknown / exotic pairs so we
+        # can't accidentally trade a chaotic market.
+        _CRYPTO_KNOWN_LIQUID = {
+            "BTC/USD", "BTCUSD", "BTC-USD",
+            "ETH/USD", "ETHUSD", "ETH-USD",
+            "SOL/USD", "SOLUSD", "SOL-USD",
+            "ADA/USD", "ADAUSD", "ADA-USD",
+            "XRP/USD", "XRPUSD", "XRP-USD",
+            "DOGE/USD", "DOGEUSD",
+            "AVAX/USD", "AVAXUSD",
+            "MATIC/USD", "MATICUSD",
+            "DOT/USD",  "DOTUSD",
+            "LINK/USD", "LINKUSD",
+            "LTC/USD",  "LTCUSD",
+        }
+        intent_sym_upper = str(intent.get("symbol") or "").upper()
+        if (lane_for_roadguard == "crypto"
+                and intent_sym_upper in _CRYPTO_KNOWN_LIQUID):
+            gates.append({
+                "name": "roadguard_spread_floor",
+                "passed": True,
+                "reason": (
+                    f"roadguard passed via known-liquid-pair fallback "
+                    f"(sym={intent_sym_upper}); snapshot.spread_bps was "
+                    f"absent but the pair is on the Kraken majors list "
+                    f"(<5 bps typical). Lift this branch by hydrating "
+                    f"snapshot.spread_bps in the crypto enricher."
+                ),
+            })
+        else:
+            gates.append({
+                "name": "roadguard_spread_floor",
+                "passed": False,
+                "reason": "ROADGUARD_MISSING_SPREAD_BPS — snapshot absent; cannot verify market structure",
+            })
     else:
         try:
             spread_bps_val = float(spread_bps_raw)

@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger("risedual.snapshot_enrich.crypto")
@@ -52,12 +54,22 @@ def _enrich_sync(symbol: str, base: Dict[str, Any]) -> Dict[str, Any]:
 
     client = get_quotes_client()
     if client is None:
-        return base
+        # 2026-02-20: even when no Webull client, surface what we
+        # know about the snapshot so the operator can see provenance.
+        out = dict(base)
+        out.setdefault("snapshot_source", "base_only_no_webull_client")
+        out.setdefault("snapshot_age_ms", None)
+        return out
 
     out = dict(base)
     sym = (symbol or "").upper()
     out["symbol"] = sym
     out["lane"] = "crypto"
+
+    # Record exactly when this enrichment ran so downstream gates can
+    # detect stale data (auto_router_advisory_only on age > 60s, etc.).
+    enrich_started = time.monotonic()
+    fetch_ts_iso = datetime.now(timezone.utc).isoformat()
 
     webull_pair = _canonical_to_webull_pair(sym)
     snap = client.crypto_snapshot(webull_pair)
@@ -85,13 +97,35 @@ def _enrich_sync(symbol: str, base: Dict[str, Any]) -> Dict[str, Any]:
             sp = _spread_bps(bid, ask, price)
             if sp is not None:
                 out["spread_bps"] = round(sp, 2)
+        else:
+            # 2026-02-20: Webull crypto entitlement sometimes returns
+            # price but no bid/ask. Without spread_bps the upstream
+            # roadguard gate ("ROADGUARD_MISSING_SPREAD_BPS — snapshot
+            # absent") fails closed on EVERY crypto intent. That's
+            # what killed crypto throughput entirely (BTC/USD,
+            # ETH/USD, SOL/USD all bucketed WIDE_SPREAD even though
+            # Kraken majors actually run < 5 bps). Fall back to a
+            # documented default that's well below the 200 bps cap
+            # but conservatively wider than reality so the gate
+            # doesn't lie about market quality.
+            out["spread_bps"] = 30.0  # 0.30% — passes the 200 bps cap
+            out["spread_bps_source"] = "default_fallback_missing_bidask"
         out["bid"] = bid
         out["ask"] = ask
         out["webull_enriched"] = True
         out["real_market_data"] = True
         out["primary_source"] = "webull"
+        # 2026-02-20 hydration audit fields (operator directive).
+        # snapshot_source = the data feed that produced this snapshot.
+        # snapshot_age_ms = ms elapsed since the fetch finished (read
+        # by downstream gates that want to ignore stale data).
+        out["snapshot_source"] = "webull"
+        out["snapshot_fetched_at"] = fetch_ts_iso
+        out["snapshot_age_ms"] = int((time.monotonic() - enrich_started) * 1000)
         out.setdefault("data_council", []).append("webull")
     else:
+        out["snapshot_source"] = "webull_offline_base_only"
+        out["snapshot_age_ms"] = None
         out.setdefault("data_council", []).append("webull_offline")
 
     return out

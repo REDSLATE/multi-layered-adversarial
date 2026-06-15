@@ -409,8 +409,25 @@ def _governance_verdict(
         (2026-05-18). A non-fatal "block" reason gets downgraded to
         RISK_DOWN_ONLY: allowed=True with a conservative risk multiplier
         instead of zeroing the trade. Only reasons in
-        FATAL_GOVERNOR_REASONS stay hard-blocked."""
+        FATAL_GOVERNOR_REASONS stay hard-blocked.
+
+        2026-02-20 audit enrichment (operator directive): every verdict
+        carries structured `raw_conf`, `floor`, `governor_mult`, and
+        `eff_conf` fields so the post-mortem and downstream audit
+        consumers can answer "why did the council block this intent?"
+        deterministically without parsing the human reason string.
+        Critical for SOFT_DISSENT_BELOW_FLOOR — operators need the
+        actual numbers to know whether to tune the floor or accept the
+        rejection.
+        """
         eff_conf = executor_conf * conf_mult
+        floor_val = float(p["MIN_EXECUTOR_CONF_FLOOR"])
+        audit_payload = {
+            "raw_conf": round(executor_conf, 4),
+            "eff_conf": round(eff_conf, 4),
+            "floor": round(floor_val, 4),
+            "governor_mult": round(conf_mult, 4),
+        }
 
         if not allowed and not governor_blocks_execution(reason):
             # Non-fatal silence/dissent: downgrade to RISK_DOWN_ONLY.
@@ -430,6 +447,7 @@ def _governance_verdict(
                 "effective_conf": eff_conf,
                 "execution_effect": "RISK_DOWN_ONLY",
                 "display_status": "RISK_DOWN",
+                **audit_payload,
             }
 
         # Either fatal block, or rule said allow.
@@ -442,6 +460,7 @@ def _governance_verdict(
             "effective_conf": eff_conf,
             "execution_effect": "ALLOW" if allowed else "HARD_BLOCK",
             "display_status": "ALLOW" if allowed else "BLOCK",
+            **audit_payload,
         }
 
     # Governor seat vacant — no one to be heard. Block.
@@ -616,6 +635,14 @@ def _build_governor_gate(
         "disagreement": verdict["disagreement"],
         "risk_multiplier": verdict["risk_multiplier"],
         "effective_conf": verdict.get("effective_conf"),
+        # 2026-02-20 audit enrichment — structured fields surfaced
+        # from `_governance_verdict._result`. Lets the post-mortem
+        # show the exact math behind a SOFT_DISSENT_BELOW_FLOOR block
+        # without parsing the human reason string.
+        "raw_conf": verdict.get("raw_conf"),
+        "eff_conf": verdict.get("eff_conf"),
+        "floor": verdict.get("floor"),
+        "governor_mult": verdict.get("governor_mult"),
         "lane": lane,
         "policy_used": "crypto" if (lane or "").lower() == "crypto" else "equity",
     }

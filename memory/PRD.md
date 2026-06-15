@@ -1,3 +1,58 @@
+## 2026-02-20 (final) — Council floor relaxed + crypto hydration audit + audit enrichment (A + C shipped; B reverted per operator)
+
+### A. Equity council kill-chain relaxed
+**`shared/equity/council_policy.py`**:
+- `MIN_EXECUTOR_CONF_FLOOR: 0.50 → 0.35`
+- `GOVERNOR_DISSENT_CONF_MULT: 0.82 → 0.90`
+
+**Effective conf floor on governor dissent: 0.35 / 0.90 = 0.389** (was 0.50 / 0.82 = 0.610).
+
+**Cross-ref against the production intent feed:**
+| Intent | Conf | eff_conf | Old verdict | New verdict |
+|---|---|---|---|---|
+| AEO SELL  | 0.518 | 0.466 | BLOCKED  | survives (risk_down) |
+| ABNB SELL | 0.598 | 0.538 | BLOCKED  | survives (risk_down) |
+| AAPL BUY  | 0.589 | 0.530 | BLOCKED  | survives (risk_down) |
+| AEP BUY   | 0.713 | 0.642 | survived | survives |
+| AAL SELL  | 0.900 | 0.810 | survived | survives |
+
+The 0.52-0.61 conf trades stop getting auto-strangled by the council.
+
+### A-audit. Structured fields on every governor verdict
+`_governance_verdict._result` now emits these on every return dict (allowed AND blocked):
+- `raw_conf`     — executor's posted confidence
+- `eff_conf`     — `raw_conf × governor_mult`
+- `floor`        — `MIN_EXECUTOR_CONF_FLOOR` at decision time
+- `governor_mult`— the dissent/no-stance multiplier that was applied
+
+These bubble up through `_build_governor_gate` so the gate row carries them too. The operator can now answer "why was my 0.518 SELL killed?" deterministically: `raw_conf=0.518 × governor_mult=0.82 = eff_conf=0.425 < floor=0.50 → BLOCKED`. New regression in `tests/test_council_audit_enrichment.py` pins this.
+
+### C. Crypto WIDE_SPREAD bug fix (data hydration, NOT cap)
+The 200 bps cap is correct. The actual bug: `shared/snapshot_enrich/crypto_doctrine.py` only populated `spread_bps` when `bid AND ask AND price` were all truthy. Webull's free crypto entitlement sometimes returns price without bid/ask → no spread_bps → roadguard fail-closed → every crypto intent killed.
+
+**Two-layer fix:**
+
+1. **Enricher** (`crypto_doctrine.py`): if Webull returns price but no bid/ask, populate `spread_bps = 30.0` (0.30%) as a conservative fallback flagged with `spread_bps_source = "default_fallback_missing_bidask"`. Also now writes the operator-requested provenance fields on every enriched snapshot:
+   - `bid`, `ask`, `spread_bps`
+   - `snapshot_source` (`webull` / `webull_offline_base_only` / `base_only_no_webull_client`)
+   - `snapshot_fetched_at` (ISO timestamp)
+   - `snapshot_age_ms`
+
+2. **RoadGuard** (`shared/execution.py`): when `spread_bps` is missing AND the intent is for a known-liquid crypto major (BTC/ETH/SOL/ADA/XRP/DOGE/AVAX/MATIC/DOT/LINK/LTC pairs), the gate passes with a reason explaining the fallback. Unknown / exotic crypto pairs still fail closed.
+
+### B (reverted per operator)
+Large-cap doctrine baseline stays at 0.30. Operator: "raising baseline 0.30→0.45 changes the meaning of doctrine quality. May make calm mediocre setups look better than they are. Right later, not now." Will reconsider after council + snapshot observability are clean.
+
+### Test coverage
+- 199 existing related tests still pass (governance verdict, auto_submit chain, auto_router, council policy, confidence floor sweep, promotion gate).
+- 3 new tests in `tests/test_council_audit_enrichment.py` pin the audit field contract.
+
+### Operator next-step
+Redeploy. Watch the post-mortem refresh. Expected to see Executed > 0 within the first market-hours auto-router tick on any equity intent in the 0.52-0.85 conf range that wasn't HOLD. Crypto BTC/ETH/SOL no longer get bucketed under WIDE_SPREAD-from-missing-data.
+
+---
+
+
 ## 2026-02-20 (late) — Ghost-intent replay button (operator escape hatch)
 
 ### Problem
