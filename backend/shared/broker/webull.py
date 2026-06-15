@@ -545,9 +545,17 @@ class WebullAdapter(BrokerAdapter):
                 "time_in_force": "DAY",
                 "entrust_type": "AMOUNT",
                 "total_cash_amount": cash_amt_str,
-                "support_trading_session": "CORE",
+                # 2026-02-20 (operator option B): allow extended-hours
+                # routing. `ALL` = pre-market (04:00 ET) + RTH + after-
+                # hours (20:00 ET) per Webull /docs/trade-api/stock/.
+                # Previously hardcoded to CORE which caused HTTP 417
+                # "time not supported" any time the chain fired
+                # outside 09:30-16:00 ET. Extended-hours fills carry
+                # wider spreads and lower liquidity — the gate chain
+                # still applies (spread floor, RoadGuard, caps).
+                "support_trading_session": "ALL",
                 "account_tax_type": "GENERAL",
-                "extended_hours_trading": False,
+                "extended_hours_trading": True,
             }
 
             # Log MC receipt provenance (signature prefix only).
@@ -852,9 +860,13 @@ class WebullAdapter(BrokerAdapter):
             "quantity": qty_str,
             "time_in_force": "DAY",
             "entrust_type": "QTY",
-            "support_trading_session": "CORE",
+            # 2026-02-20 (operator option B): extended-hours enabled,
+            # see note on the v2/AMOUNT branch above. OTOCO bracket
+            # legs (TP/SL) need the same session selector so the
+            # children inherit the parent's eligibility window.
+            "support_trading_session": "ALL",
             "account_tax_type": "GENERAL",
-            "extended_hours_trading": False,
+            "extended_hours_trading": True,
         }
         master_leg = {
             **common,
