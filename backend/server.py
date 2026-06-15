@@ -156,6 +156,7 @@ from routes.webull_admin import router as webull_admin_router
 from routes.admin_wrappers import router as admin_wrappers_router
 from routes.admin_intents_post_mortem import router as admin_intents_post_mortem_router
 from routes.admin_auto_submit import router as admin_auto_submit_router
+from routes.admin_quiver import router as admin_quiver_router
 from routes.parabolic_phase_admin import router as parabolic_phase_admin_router
 from routes.data_council_admin import router as data_council_admin_router
 from routes.broker_selection import router as broker_selection_router
@@ -762,6 +763,7 @@ api_router.include_router(execution_router)
 api_router.include_router(admin_wrappers_router)
 api_router.include_router(admin_intents_post_mortem_router)
 api_router.include_router(admin_auto_submit_router)
+api_router.include_router(admin_quiver_router)
 api_router.include_router(paradox_v2_router)
 api_router.include_router(live_positions_router)
 api_router.include_router(brain_lane_policy_router)

@@ -1,3 +1,69 @@
+## 2026-02-19 (final+21) — QuiverQuant alternative-data integration scaffolded
+
+### What shipped
+New alt-data source for **insider trading, congressional trading, and patent momentum** via QuiverQuant API. Wired exactly per the existing `shared/alt_data/*` doctrine — descriptive evidence only, never a hard execution gate.
+
+### Files
+- NEW `backend/shared/alt_data/quiver_quant.py`:
+  - Bearer-token auth via `QUIVER_API_KEY` env var
+  - 3 async fetchers: `fetch_insider_trades()`, `fetch_congress_trades()`, `fetch_patent_momentum(ticker)`
+  - 3 store fns with composite-key upserts (idempotent): `(ticker, insider, date)`, `(ticker, member, date)`, `(ticker, as_of_date)`
+  - `sync_all(db, patent_tickers=[...])` orchestrator
+  - **Graceful no-key degradation** — every fn returns `None`/`{configured: false}` with a single log line; cron tick never crashes
+  - Handles 401, 403 (tier-locked feed), 429 (rate-limited) without bubbling exceptions
+
+- NEW `backend/routes/admin_quiver.py` (JWT-protected):
+  - `GET  /api/admin/alt-data/quiver/status` — config + collection counts
+  - `POST /api/admin/alt-data/quiver/sync` — pull latest, upsert
+  - `GET  /api/admin/alt-data/quiver/insider/latest` (?ticker=, ?limit=)
+  - `GET  /api/admin/alt-data/quiver/congress/latest` (?ticker=, ?limit=)
+  - `GET  /api/admin/alt-data/quiver/patents/{ticker}`
+
+- NEW `backend/tests/test_quiver_alt_data.py` (5 tests):
+  - No-key graceful skip (returns None, never raises)
+  - Insider upsert idempotency
+  - Congress field normalization (CamelCase + snake_case both accepted)
+  - Missing-field rows silently dropped
+  - End-to-end mocked sync
+
+### Mongo collections (versioned)
+- `alt_data_quiver_insider_v1`  — `{ticker, insider, transaction_date, filing_date, transaction_type, shares, price, value, raw}`
+- `alt_data_quiver_congress_v1` — `{ticker, member, transaction_date, filing_date, chamber, party, transaction_type, amount_range, state, raw}`
+- `alt_data_quiver_patents_v1`  — `{ticker, as_of_date, momentum, patent_count, raw}`
+
+### Live verification on preview
+```
+GET /api/admin/alt-data/quiver/status
+  → {"configured": false, "collections": {...counts 0,0,0...}}
+POST /api/admin/alt-data/quiver/sync
+  → {"configured": false, "message": "QUIVER_API_KEY not set — set it in backend/.env to enable", ...}
+```
+No crashes. Backend logs show single warning per missing-key call.
+
+### Operator next steps
+1. **Obtain API key** at https://api.quiverquant.com/pricing (Tier 1+ for patent momentum; insider + congress are public tier).
+2. **Add to `backend/.env`**: `QUIVER_API_KEY=<your-key>`
+3. **Restart backend** (lifespan picks up env on boot).
+4. **First sync**: `POST /api/admin/alt-data/quiver/sync` with optional body `{"patent_tickers": ["NVDA","AAPL"]}`.
+5. **Schedule** the sync (cron / scheduler hook — not auto-wired yet to avoid burning API quota until operator confirms ready).
+6. **Brain consumption**: brains opt-in via direct Mongo reads of the `alt_data_quiver_*_v1` collections. Recommended doctrine fit (per the integration agent + the existing brain doctrines):
+   - **Camino (alpha)** — congressional trades (politicians' edge on policy)
+   - **Hellcat (chevelle)** — insider Form 4 (alignment-of-interests signal)
+   - **GTO (redeye)** — patent momentum (long-horizon innovation tilt)
+   - **Barracuda (camaro)** — none initially (tape-reading doctrine; not narrative-driven)
+
+### Doctrine
+- Alt-data is **descriptive evidence**, never a hard gate. Brain may consider an insider buy as bullish-leaning evidence; never let absence-of-insider-buy block a trade.
+- Raw payloads always stored (`raw` field) so future schema changes don't lose data.
+- Per-key tier failures (403) silently disable that one feed; other feeds keep working.
+
+### Tests
+5/5 new tests pass. No regressions in broader suite.
+
+---
+
+
+
 ## 2026-02-19 (final+20) — Tunables what-if dial
 
 ### What shipped
