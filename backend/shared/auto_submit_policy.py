@@ -211,6 +211,7 @@ SKIP_CATEGORY_BRAIN_FILTERED    = "brain_filtered"        # brain not in allowed
 SKIP_CATEGORY_ACTION_FILTERED   = "action_filtered"       # action not BUY/SELL/HOLD
 SKIP_CATEGORY_DRY_RUN_NOT_READY = "dry_run_not_ready"     # dry_run not passed yet
 SKIP_CATEGORY_ALREADY_EXECUTED  = "already_executed"      # raced ourselves
+SKIP_CATEGORY_AFTER_HOURS       = "equity_after_hours"    # equity intent outside US RTH
 SKIP_CATEGORY_OTHER             = "other"                 # anything not classified
 SKIP_CATEGORY_NOT_FOUND         = "intent_not_found"      # intent_id missing at auto-submit time (DB race or rogue caller)
 SKIP_CATEGORY_INTERNAL_ERROR    = "internal_error"        # exception in chain before audit could be written
@@ -240,6 +241,8 @@ def _categorize_skip(reason: str) -> str:
         return SKIP_CATEGORY_DRY_RUN_NOT_READY
     if r == "intent already executed":
         return SKIP_CATEGORY_ALREADY_EXECUTED
+    if r.startswith("equity_after_hours"):
+        return SKIP_CATEGORY_AFTER_HOURS
     return SKIP_CATEGORY_OTHER
 
 
@@ -258,6 +261,14 @@ def matches_tier_1(intent: dict, policy: dict | None = None) -> tuple[bool, str]
     lane = (intent.get("lane") or "").lower()
     if lane not in p["allowed_lanes"]:
         return False, f"lane {lane!r} not in allowed {p['allowed_lanes']}"
+    # 2026-02-20: Equity-only market-hours gate. Webull 417s any
+    # equity order placed outside US RTH; we hold those intents
+    # rather than waste an MC receipt + API call + post-mortem row.
+    # Crypto trades 24/7 on Kraken, so this gate is equity-only.
+    if lane == "equity":
+        from shared.market_hours import is_equity_rth, market_hours_reason  # noqa: WPS433
+        if not is_equity_rth():
+            return False, market_hours_reason()
     brain = (intent.get("stack") or "").lower()
     if brain not in p["allowed_brains"]:
         return False, f"brain {brain!r} not in allowed {p['allowed_brains']}"

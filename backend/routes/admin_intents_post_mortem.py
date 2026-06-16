@@ -815,27 +815,32 @@ async def system_readiness(
         })
 
     # 7. Market-hours awareness (RTH for equity; crypto trades 24/7).
-    # Webull rejects equity orders outside RTH with HTTP 417 — useful
-    # context for the operator who's checking pre-market.
+    # Webull rejects equity orders outside RTH with HTTP 417. Uses the
+    # canonical `shared.market_hours` module (DST-aware + holiday-aware)
+    # — the same one the auto-submitter gate checks against, so the
+    # operator-facing readiness panel and the auto-submit decision
+    # agree on whether a market is open.
     now_utc = datetime.now(timezone.utc)
-    # ET = UTC-5 (EST) or UTC-4 (EDT). Approx by using UTC offset 4
-    # for the Mar–Nov DST window; close enough for an operator hint.
-    et_hour_approx = (now_utc.hour - 4) % 24
-    weekday = now_utc.strftime("%A")
-    is_weekend = now_utc.weekday() >= 5
-    is_rth = (
-        not is_weekend
-        and (et_hour_approx > 9 or (et_hour_approx == 9 and now_utc.minute >= 30))
-        and et_hour_approx < 16
-    )
+    try:
+        from shared.market_hours import (
+            is_equity_rth, next_rth_open_iso,
+        )
+        is_rth = is_equity_rth(now_utc=now_utc)
+        next_open = next_rth_open_iso(now_utc=now_utc) if not is_rth else ""
+        weekday = now_utc.strftime("%A")
+        detail = (
+            f"{weekday} {now_utc.isoformat()[:19]}Z · "
+            f"RTH={'YES' if is_rth else 'NO (Webull will 417 equity orders)'}"
+        )
+        if next_open:
+            detail += f" · next open {next_open[:19]}Z"
+    except Exception as e:  # noqa: BLE001
+        is_rth = False
+        detail = f"market_hours check failed: {e}"
     checks.append({
         "name": "market_hours_equity",
         "status": "green" if is_rth else "amber",
-        "detail": (
-            f"{weekday} {now_utc.isoformat()[:19]}Z · "
-            f"ET≈{et_hour_approx:02d}:{now_utc.minute:02d} · "
-            f"RTH={'YES' if is_rth else 'NO (Webull will 417 equity orders)'}"
-        ),
+        "detail": detail,
         # Not a "fix" — just info. Crypto trades 24/7 via Kraken.
     })
 
