@@ -167,6 +167,18 @@ export default function IntentPostMortemPanel() {
   }, [armState.reason, armState.confidenceMin, hours, load]);
 
   const disarmAll = useCallback(async () => {
+    // 2026-02-20: HALT now requires confirmation. The button sits
+    // adjacent to ARM ALL on mobile and operators were thumb-tapping
+    // it by accident, disarming the whole system and reading the
+    // resulting all-red readiness as "ARM didn't work."
+    const ok = window.confirm(
+      "Halt all trading?\n\n" +
+      "This flips all five master switches OFF: trading_controls, " +
+      "auto_router, Shelly, equity lane, crypto lane.\n\n" +
+      "Brains keep emitting opinions, but nothing routes to the broker " +
+      "until you ARM ALL again. Continue?",
+    );
+    if (!ok) return;
     const reason = (armState.reason || "").trim() || "operator halt";
     setArmState((s) => ({ ...s, running: true, error: null }));
     try {
@@ -299,21 +311,27 @@ export default function IntentPostMortemPanel() {
           <button
             onClick={armAll}
             disabled={armState.running || (armState.reason || "").trim().length < 4}
-            className="px-3 py-1 border-2 border-rd-accent bg-rd-accent text-black font-mono text-[10px] uppercase tracking-widest hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 font-bold"
+            className="px-4 py-1 border-2 border-rd-accent bg-rd-accent text-black font-mono text-[10px] uppercase tracking-widest hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 font-bold"
             data-testid="system-arm-button"
           >
             <Lightning size={11} weight="bold" />
             {armState.running ? "Arming…" : "ARM ALL"}
           </button>
+        </div>
+
+        {/* HALT lives on its own row below ARM, separated so a thumb
+            can't fat-finger it. Also gated behind `confirm()` in the
+            disarmAll handler. */}
+        <div className="flex items-center justify-end pt-1 border-t border-rd-border/40">
           <button
             onClick={disarmAll}
             disabled={armState.running}
-            className="px-2 py-1 border border-rd-danger text-rd-danger font-mono text-[10px] uppercase tracking-widest hover:bg-rd-danger/10 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+            className="px-2 py-0.5 border border-rd-danger/60 text-rd-danger/70 font-mono text-[9px] uppercase tracking-widest hover:bg-rd-danger/10 hover:text-rd-danger disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
             data-testid="system-disarm-button"
-            title="Halt — flip all five back off"
+            title="Halt — flips all five OFF (requires confirmation)"
           >
-            <Power size={11} weight="bold" />
-            Halt
+            <Power size={9} weight="bold" />
+            Halt (confirm)
           </button>
         </div>
         {armState.error && (
