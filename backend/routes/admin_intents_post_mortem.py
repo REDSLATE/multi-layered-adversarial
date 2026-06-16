@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -882,7 +882,16 @@ async def system_readiness(
 class ArmIn(BaseModel):
     reason: str = Field(..., min_length=4, max_length=400,
                         description="Why are you arming the system?")
-    confidence_min: float | None = Field(
+    # 2026-02-20: use Optional[float] instead of `float | None` —
+    # the PEP 604 union syntax is only evaluated lazily under
+    # `from __future__ import annotations`, which this module does
+    # not import. Without that, Pydantic resolves annotations at
+    # class-creation time, and Python <3.10 raises:
+    #   TypeError: unsupported operand type(s) for |: 'type' and 'NoneType'
+    # That ImportError takes down the whole route module on prod,
+    # which then 5xx's the FastAPI app → Cloudflare returns 520 to
+    # the operator. Optional[X] is portable across all versions.
+    confidence_min: Optional[float] = Field(
         default=0.65, ge=0.0, le=1.0,
         description="Optional override for Shelly's confidence_min on flip. "
                     "Defaults to 0.65 which lets ~mid-conviction trades through.",
