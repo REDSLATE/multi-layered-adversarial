@@ -1,3 +1,46 @@
+## 2026-02-20 (Webull cap: buying-power-scaled sizing replaces static $ ceiling)
+
+### Operator pain that drove the change
+
+Static `WEBULL_MAX_NOTIONAL_USD=10` ceiling was rejecting every intent emitted at `RISEDUAL_CAP_PER_ORDER_USD=25`. Operator was hand-tuning env vars on every deploy. The "right" abstraction is to size each order to **actual account buying power**, not a hardcoded dollar value.
+
+### Implementation
+
+- **`shared/broker/webull_caps.py`** — new `WEBULL_PCT_OF_BUYING_POWER` env var (default `0.05` = 5%). `webull_notional_band(buying_power_usd)` and `evaluate_webull_order(..., buying_power_usd=)` now compute the ceiling as `min(bp × pct, env_max, $500 sanity_ceiling)`. `WebullCapDecision` carries `buying_power_usd`, `pct_of_bp`, and `cap_source` for post-mortem visibility.
+- **`shared/broker_router.py`** — fetches Webull `buying_power` via `adapter.get_account()` before the cap eval, cached 60s to avoid hammering Webull on intent bursts. Falls back to env-only on any fetch error (never collapses to $0).
+- **`shared/broker/webull.py`** — belt-and-braces re-check inside `submit_market_order` now also fetches BP so it agrees with the router decision.
+- **`tests/test_webull_caps.py`** — 13 new assertions covering BP-cap-wins, env-cap-wins, BP-missing fallback, BP-zero fallback, and the operator's exact blocked case ($25 intent on AAPL with BP=$500 → passes).
+
+### Operator config (new env vars, all optional)
+
+| Var | Default | Effect |
+|---|---|---|
+| `WEBULL_PCT_OF_BUYING_POWER` | `0.05` | Per-order ceiling as a fraction of Webull buying power |
+| `WEBULL_MAX_NOTIONAL_USD` | `10.00` | Hard dollar upper rail (acts as a ceiling on the dynamic cap) |
+| `WEBULL_MIN_NOTIONAL_USD` | `1.00` | Hard floor (Webull fractional minimum) |
+
+Hard sanity ceiling pinned at `$500` regardless of env input.
+
+### Production rollout
+
+1. Redeploy preview → prod to ship the code change.
+2. On prod, raise `WEBULL_MAX_NOTIONAL_USD` to ≥ `$50` (or just leave the env cap and trust the BP cap).
+3. Confirm `WEBULL_ARMED=true` and `WEBULL_APP_KEY/SECRET` set so `get_account()` can fetch BP.
+4. Next intent emission on a $25 budget against a $500 account routes through (cap_source=`buying_power`).
+
+### Backlog (unchanged)
+
+- P2: Market-hours gate in auto-router (still firing 417-bound equity submits after-hours).
+- P1: StockFit 101-symbol watchlist bulk insert (still pending; user explicitly de-prioritized this session).
+- P2: Stack display-name cleanup (camaro ↔ BARRACUDA).
+- P2: Expanded verifier-loop deterministic rule sheet.
+- P2: Large-cap baseline tuning (0.30 → 0.45).
+- DEAD CODE: `equity_broker_preference()` in `broker_symbol_resolver.py` is uncalled anywhere — `RISEDUAL_EQUITY_BROKER` env var is a no-op. Safe to delete in a future cleanup pass; left intact this session to keep the diff scoped.
+
+---
+
+
+
 ## 2026-02-20 (no-trade root-cause investigation — 5 gates found, dry_run_state bug fixed, one-button ARM shipped)
 
 ### Preview lifecycle trace — proved why "0 trades all day"

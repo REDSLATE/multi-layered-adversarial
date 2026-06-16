@@ -29,6 +29,7 @@ def _isolate_env(monkeypatch):
         "WEBULL_ARMED",
         "WEBULL_MIN_NOTIONAL_USD",
         "WEBULL_MAX_NOTIONAL_USD",
+        "WEBULL_PCT_OF_BUYING_POWER",
     ):
         monkeypatch.delenv(key, raising=False)
     yield
@@ -52,29 +53,31 @@ def test_armed_false_values(monkeypatch, val):
 
 
 def test_default_band_is_1_to_10():
-    lo, hi = webull_notional_band()
+    lo, hi, src = webull_notional_band()
     assert lo == DEFAULT_MIN_NOTIONAL_USD == 1.00
     assert hi == DEFAULT_MAX_NOTIONAL_USD == 10.00
+    assert src == "env"
 
 
 def test_band_widens_from_env(monkeypatch):
     monkeypatch.setenv("WEBULL_MIN_NOTIONAL_USD", "5.00")
     monkeypatch.setenv("WEBULL_MAX_NOTIONAL_USD", "8.00")
-    lo, hi = webull_notional_band()
+    lo, hi, _ = webull_notional_band()
     assert lo == 5.00 and hi == 8.00
 
 
-def test_band_caps_ceiling_at_100(monkeypatch):
-    """Sanity rail: even if operator types 9999, the small-pilot
-    ceiling holds at $100 to keep blast radius bounded."""
+def test_band_caps_ceiling_at_sanity_rail(monkeypatch):
+    """Sanity rail: even if operator types 9999, the hard sanity
+    ceiling holds at $500 to keep blast radius bounded."""
     monkeypatch.setenv("WEBULL_MAX_NOTIONAL_USD", "9999")
-    lo, hi = webull_notional_band()
-    assert hi == 100.0
+    lo, hi, src = webull_notional_band()
+    assert hi == 500.0
+    assert src == "sanity_ceiling"
 
 
 def test_band_floors_below_1_cent(monkeypatch):
     monkeypatch.setenv("WEBULL_MIN_NOTIONAL_USD", "-5")
-    lo, hi = webull_notional_band()
+    lo, hi, _ = webull_notional_band()
     assert lo == 0.01
 
 
@@ -83,16 +86,44 @@ def test_band_inverted_collapses(monkeypatch):
     floor — never invert."""
     monkeypatch.setenv("WEBULL_MIN_NOTIONAL_USD", "20")
     monkeypatch.setenv("WEBULL_MAX_NOTIONAL_USD", "5")
-    lo, hi = webull_notional_band()
+    lo, hi, _ = webull_notional_band()
     assert hi >= lo
 
 
 def test_band_malformed_falls_back_to_default(monkeypatch):
     monkeypatch.setenv("WEBULL_MIN_NOTIONAL_USD", "abc")
     monkeypatch.setenv("WEBULL_MAX_NOTIONAL_USD", "xyz")
-    lo, hi = webull_notional_band()
+    lo, hi, _ = webull_notional_band()
     assert lo == DEFAULT_MIN_NOTIONAL_USD
     assert hi == DEFAULT_MAX_NOTIONAL_USD
+
+
+def test_band_uses_buying_power_when_supplied(monkeypatch):
+    """2026-02-20: when BP is supplied, the ceiling is BP × pct.
+    Default pct=5%, so BP=$500 → ceiling=$25, NOT the $10 env default."""
+    # Raise env cap so it doesn't bind — we want the BP cap to win.
+    monkeypatch.setenv("WEBULL_MAX_NOTIONAL_USD", "500")
+    lo, hi, src = webull_notional_band(buying_power_usd=500.0)
+    assert hi == 25.00
+    assert src == "buying_power"
+
+
+def test_band_env_caps_buying_power(monkeypatch):
+    """Env ceiling acts as an upper bound on the dynamic cap.
+    BP=$10,000 × 5% = $500 dyn cap, but env says $50 → ceiling=$50."""
+    monkeypatch.setenv("WEBULL_MAX_NOTIONAL_USD", "50")
+    lo, hi, src = webull_notional_band(buying_power_usd=10_000.0)
+    assert hi == 50.00
+    assert src == "env"
+
+
+def test_band_pct_env_override(monkeypatch):
+    """Operator can tune `WEBULL_PCT_OF_BUYING_POWER` to size differently."""
+    monkeypatch.setenv("WEBULL_PCT_OF_BUYING_POWER", "0.10")
+    monkeypatch.setenv("WEBULL_MAX_NOTIONAL_USD", "500")
+    lo, hi, src = webull_notional_band(buying_power_usd=500.0)
+    assert hi == 50.00  # 10% of $500
+    assert src == "buying_power"
 
 
 # ── evaluate_webull_order ──────────────────────────────────────────
@@ -204,3 +235,72 @@ def test_sub_one_dollar_still_blocked(monkeypatch):
     d = evaluate_webull_order(notional_usd=0.99, symbol="AAPL")
     assert d.ok is False
     assert "BELOW_FLOOR" in d.reason
+
+
+
+# ── dynamic buying-power cap (2026-02-20) ──────────────────────────
+
+
+def test_dynamic_cap_allows_25_when_bp_500(monkeypatch):
+    """Operator's blocked case: $25 intent on AAPL with BP=$500.
+    Default 5% pct × $500 = $25 ceiling → intent at exactly $25 passes."""
+    monkeypatch.setenv("WEBULL_ARMED", "true")
+    # Raise env cap so it doesn't bind — we want to verify BP cap wins.
+    monkeypatch.setenv("WEBULL_MAX_NOTIONAL_USD", "500")
+    d = evaluate_webull_order(
+        notional_usd=25.00, symbol="AAPL", buying_power_usd=500.0,
+    )
+    assert d.ok is True
+    assert d.cap_source == "buying_power"
+    assert d.max_usd == 25.00
+
+
+def test_dynamic_cap_blocks_above_bp_pct(monkeypatch):
+    """5% of $500 = $25 ceiling. A $26 intent must be rejected and
+    the reason must surface the BP source so the operator knows to
+    fund the account or raise the pct."""
+    monkeypatch.setenv("WEBULL_ARMED", "true")
+    monkeypatch.setenv("WEBULL_MAX_NOTIONAL_USD", "500")
+    d = evaluate_webull_order(
+        notional_usd=26.00, symbol="AAPL", buying_power_usd=500.0,
+    )
+    assert d.ok is False
+    assert "ABOVE_CAP" in d.reason
+    assert "buying power" in d.reason  # operator hint surfaced
+    assert d.cap_source == "buying_power"
+
+
+def test_dynamic_cap_falls_back_when_bp_missing(monkeypatch):
+    """If BP fetch fails (None), behave like the old env-only gate.
+    Pre-2026-02-20 callers (no buying_power_usd) MUST keep working."""
+    monkeypatch.setenv("WEBULL_ARMED", "true")
+    d = evaluate_webull_order(notional_usd=5.00, symbol="AAPL")
+    assert d.ok is True
+    assert d.cap_source == "env"
+    assert d.buying_power_usd is None
+
+
+def test_dynamic_cap_falls_back_when_bp_zero(monkeypatch):
+    """Zero BP should not collapse the ceiling to $0 — fall back to
+    env so the gate refuses for the right reason (above-env-cap)
+    rather than silently allowing $0."""
+    monkeypatch.setenv("WEBULL_ARMED", "true")
+    d = evaluate_webull_order(
+        notional_usd=5.00, symbol="AAPL", buying_power_usd=0.0,
+    )
+    assert d.ok is True
+    assert d.cap_source == "env"
+
+
+def test_dynamic_cap_env_binds_when_smaller_than_bp_cap(monkeypatch):
+    """Belt-and-suspenders: operator can pin a hard dollar ceiling via
+    WEBULL_MAX_NOTIONAL_USD. BP cap = 5% × $10,000 = $500, but env
+    says $20 → ceiling is $20, cap_source='env'."""
+    monkeypatch.setenv("WEBULL_ARMED", "true")
+    monkeypatch.setenv("WEBULL_MAX_NOTIONAL_USD", "20")
+    d = evaluate_webull_order(
+        notional_usd=25.00, symbol="AAPL", buying_power_usd=10_000.0,
+    )
+    assert d.ok is False
+    assert d.cap_source == "env"
+    assert d.max_usd == 20.0

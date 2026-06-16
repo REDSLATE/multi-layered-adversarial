@@ -491,9 +491,25 @@ class WebullAdapter(BrokerAdapter):
           * `qty` provided      → v1 + integer (legacy; reconcile /
             manual whole-share paths only). Untouched.
         """
-        # Belt-and-braces re-check of the cap.
+        # Belt-and-braces re-check of the cap. 2026-02-20: the cap is
+        # now buying-power-scaled, so we fetch the adapter's own
+        # account balance here so the re-check uses the same dynamic
+        # ceiling the router used. Falls back to env-only on any
+        # fetch error — never silently approves.
+        bp_usd: Optional[float] = None
+        try:
+            acct = await self.get_account()
+            bp_raw = float(acct.get("buying_power") or 0.0)
+            bp_usd = bp_raw if bp_raw > 0 else None
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "webull adapter pre-trade BP fetch failed (falling back "
+                "to env cap): %s", e,
+            )
         decision = evaluate_webull_order(
-            notional_usd=notional, symbol=symbol,
+            notional_usd=notional,
+            symbol=symbol,
+            buying_power_usd=bp_usd,
         )
         if not decision.ok and notional is not None:
             raise WebullCapBlocked(decision.reason)

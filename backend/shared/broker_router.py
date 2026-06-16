@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Optional
 
 from shared.broker.webull import get_webull_adapter
@@ -55,6 +56,46 @@ from shared.runtime.platform_survival import (
 
 
 logger = logging.getLogger("risedual.broker_router")
+
+
+# ─────────────────────── webull buying-power cache ───────────────────
+#
+# `evaluate_webull_order` can now scale its per-order cap to the
+# operator's live Webull buying power. Fetching the full account on
+# every routed intent would hammer Webull's API (and add ~200ms of
+# latency per order during a fast-firing burst), so we cache the BP
+# read for a short TTL — long enough to absorb a burst, short enough
+# that a freshly funded / drained account is reflected within a
+# minute. Cache is process-local; both supervisor workers will warm
+# their own copy.
+_WEBULL_BP_TTL_SEC = 60.0
+_webull_bp_cache: dict[str, float] = {"value": 0.0, "fetched_at": 0.0}
+
+
+async def _get_webull_buying_power() -> Optional[float]:
+    """Return cached Webull buying power, refreshing if stale.
+
+    Returns None on any failure (Webull SDK missing, creds missing,
+    network error). The cap gate falls back to the env-only ceiling
+    when BP is None — never to zero — so a transient balance-fetch
+    failure can't silently route the order at $0.
+    """
+    now = time.monotonic()
+    if (now - _webull_bp_cache["fetched_at"]) < _WEBULL_BP_TTL_SEC:
+        val = _webull_bp_cache["value"]
+        return val if val > 0 else None
+    try:
+        adapter = await get_webull_adapter()
+        if adapter is None:
+            return None
+        account = await adapter.get_account()
+        bp = float(account.get("buying_power") or 0.0)
+        _webull_bp_cache["value"] = bp
+        _webull_bp_cache["fetched_at"] = now
+        return bp if bp > 0 else None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("webull buying-power fetch failed: %s", e)
+        return None
 
 
 # ─────────────────────── adapter registry ───────────────────────
@@ -377,8 +418,15 @@ async def route_order(
     #     notional must satisfy $3 ≤ N ≤ $10 per ticker for the
     #     small-pilot route. The cap evaluator carries both checks.
     if broker_name == "webull":
+        # 2026-02-20: per-order cap now scales to live buying power
+        # (5% of BP default, env-overridable via WEBULL_PCT_OF_BUYING_POWER).
+        # If the BP fetch fails, the cap falls back to the env-only
+        # ceiling — never to $0.
+        bp = await _get_webull_buying_power()
         decision = evaluate_webull_order(
-            notional_usd=notional_usd, symbol=asset.canonical,
+            notional_usd=notional_usd,
+            symbol=asset.canonical,
+            buying_power_usd=bp,
         )
         if not decision.ok:
             raise BrokerRouteBlocked(decision.reason)

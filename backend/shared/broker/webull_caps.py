@@ -49,6 +49,21 @@ from typing import Optional
 DEFAULT_MIN_NOTIONAL_USD = 1.00
 DEFAULT_MAX_NOTIONAL_USD = 10.00
 
+# 2026-02-20 (operator directive): the static `WEBULL_MAX_NOTIONAL_USD`
+# ceiling was forcing the operator to hand-tune env vars every time the
+# brain's `RISEDUAL_CAP_PER_ORDER_USD` budget moved. Replace the static
+# ceiling with a buying-power-scaled cap: per-order notional is capped
+# at `buying_power * WEBULL_PCT_OF_BUYING_POWER`, then clamped between
+# the hard floor and the hard sanity ceiling. This means the operator
+# raises the per-order budget once (as a % of equity) and never has to
+# touch a dollar-denominated cap again as the account grows or shrinks.
+#
+# Static env-var ceiling is kept as a hard upper rail — if the operator
+# ever pins `WEBULL_MAX_NOTIONAL_USD` to a literal dollar value, the
+# dynamic cap will never exceed it (defense-in-depth).
+DEFAULT_PCT_OF_BUYING_POWER = 0.05  # 5% of buying power per order
+HARD_SANITY_CEILING_USD = 500.00    # absolute panic ceiling regardless of BP
+
 
 class WebullCapBlocked(Exception):
     """Raised when the Webull pre-trade cap refuses an order. Treated
@@ -62,6 +77,11 @@ class WebullCapDecision:
     min_usd: float
     max_usd: float
     armed: bool
+    # 2026-02-20: surfaced for trace/post-mortem visibility so the
+    # operator can see exactly how the per-order cap was computed.
+    buying_power_usd: Optional[float] = None
+    pct_of_bp: Optional[float] = None
+    cap_source: str = "env"  # "env" | "buying_power" | "sanity_ceiling"
 
     def raise_if_blocked(self) -> None:
         if not self.ok:
@@ -87,78 +107,153 @@ def is_webull_armed() -> bool:
     }
 
 
-def webull_notional_band() -> tuple[float, float]:
-    """Return (min_usd, max_usd) for the Webull route.
+def webull_pct_of_buying_power() -> float:
+    """Per-order budget as a fraction of Webull buying power.
 
-    The floor floors at 0.01 and the ceiling caps at 100.0 even if the
-    operator types something silly in `.env` — these are hardcoded
-    sanity bounds, not the operator-tunable defaults.
+    Operator-tunable via `WEBULL_PCT_OF_BUYING_POWER` (e.g. `0.05` =
+    5% of cash per order). Falls back to `DEFAULT_PCT_OF_BUYING_POWER`
+    on missing/malformed input. Clamped to (0, 1.0] — anything ≤ 0
+    or > 1 is nonsensical and reverts to default.
+    """
+    pct = _read_float_env(
+        "WEBULL_PCT_OF_BUYING_POWER", DEFAULT_PCT_OF_BUYING_POWER,
+    )
+    if pct <= 0 or pct > 1.0:
+        return DEFAULT_PCT_OF_BUYING_POWER
+    return pct
+
+
+def webull_notional_band(
+    buying_power_usd: Optional[float] = None,
+) -> tuple[float, float, str]:
+    """Return `(min_usd, max_usd, cap_source)` for the Webull route.
+
+    `cap_source` is one of:
+      * `"buying_power"` — ceiling derived from BP × pct
+      * `"env"`          — ceiling derived from `WEBULL_MAX_NOTIONAL_USD`
+      * `"sanity_ceiling"` — ceiling pinned at the hard panic rail
+
+    Doctrine (2026-02-20): when `buying_power_usd` is supplied and > 0,
+    the ceiling is computed as `min(bp * pct, env_max, sanity_ceiling)`.
+    The env-var `WEBULL_MAX_NOTIONAL_USD` becomes an **upper bound on
+    the dynamic cap** — the operator can still pin a hard dollar
+    ceiling if they want belt-and-suspenders, but no longer needs to
+    bump it every time the account or per-order budget changes.
+
+    When `buying_power_usd` is None / zero / negative, falls back to
+    the legacy env-only behavior so we don't go to zero on a transient
+    Webull balance-fetch failure (the gate would NO_TRADE the order
+    anyway via the `WEBULL_NOTIONAL_ABOVE_CAP` path, which is safer
+    than silently routing the order at $0).
     """
     lo = _read_float_env("WEBULL_MIN_NOTIONAL_USD", DEFAULT_MIN_NOTIONAL_USD)
-    hi = _read_float_env("WEBULL_MAX_NOTIONAL_USD", DEFAULT_MAX_NOTIONAL_USD)
-    # Sanity rails — never let the band invert and never let the
-    # ceiling exceed the small-pilot ceiling the operator pinned.
+    env_hi = _read_float_env(
+        "WEBULL_MAX_NOTIONAL_USD", DEFAULT_MAX_NOTIONAL_USD,
+    )
+    # Sanity rails — never let the floor invert.
     lo = max(0.01, lo)
+
+    # Dynamic ceiling from buying power, when available.
+    cap_source = "env"
+    if buying_power_usd is not None and buying_power_usd > 0:
+        pct = webull_pct_of_buying_power()
+        bp_cap = buying_power_usd * pct
+        # Pick the smallest of the three ceilings, but tag the source
+        # of whichever one bound the result so the operator can see
+        # in the trace why the cap was what it was.
+        candidates = [
+            (bp_cap, "buying_power"),
+            (env_hi, "env"),
+            (HARD_SANITY_CEILING_USD, "sanity_ceiling"),
+        ]
+        hi, cap_source = min(candidates, key=lambda x: x[0])
+    else:
+        hi = min(env_hi, HARD_SANITY_CEILING_USD)
+        if hi == HARD_SANITY_CEILING_USD and env_hi > HARD_SANITY_CEILING_USD:
+            cap_source = "sanity_ceiling"
+
+    # Floor must never exceed ceiling.
     hi = max(lo, hi)
-    hi = min(hi, 100.0)  # absolute panic ceiling
-    return lo, hi
+    return lo, hi, cap_source
 
 
 def evaluate_webull_order(
     *,
     notional_usd: Optional[float],
     symbol: str,
+    buying_power_usd: Optional[float] = None,
 ) -> WebullCapDecision:
     """The single decision point for whether an order can route via
     Webull. The router calls this BEFORE invoking the adapter.
 
+    `buying_power_usd` (2026-02-20): when supplied, the per-order
+    ceiling is computed dynamically as a percent of buying power
+    rather than a static dollar value. Falls back gracefully to the
+    env-only ceiling when BP is unavailable.
+
     Returns a `WebullCapDecision`. Callers that want exception
     semantics can use `decision.raise_if_blocked()`.
     """
-    lo, hi = webull_notional_band()
+    lo, hi, cap_source = webull_notional_band(buying_power_usd)
     armed = is_webull_armed()
+    pct = webull_pct_of_buying_power() if buying_power_usd else None
 
-    if not armed:
+    def _decision(ok: bool, reason: str) -> WebullCapDecision:
         return WebullCapDecision(
-            ok=False,
-            reason=(
-                "WEBULL_NOT_ARMED — set WEBULL_ARMED=true in .env to "
-                "enable the Webull route; NO_TRADE"
-            ),
+            ok=ok,
+            reason=reason,
             min_usd=lo,
             max_usd=hi,
-            armed=False,
+            armed=armed,
+            buying_power_usd=buying_power_usd,
+            pct_of_bp=pct,
+            cap_source=cap_source,
+        )
+
+    if not armed:
+        return _decision(
+            False,
+            "WEBULL_NOT_ARMED — set WEBULL_ARMED=true in .env to "
+            "enable the Webull route; NO_TRADE",
         )
 
     if notional_usd is None:
-        return WebullCapDecision(
-            ok=False,
-            reason="WEBULL_NOTIONAL_MISSING — router must pass notional_usd",
-            min_usd=lo, max_usd=hi, armed=True,
+        return _decision(
+            False,
+            "WEBULL_NOTIONAL_MISSING — router must pass notional_usd",
         )
 
     if notional_usd < lo:
-        return WebullCapDecision(
-            ok=False,
-            reason=(
-                f"WEBULL_NOTIONAL_BELOW_FLOOR — ${notional_usd:.2f} "
-                f"< ${lo:.2f} for {symbol}; NO_TRADE"
-            ),
-            min_usd=lo, max_usd=hi, armed=True,
+        return _decision(
+            False,
+            f"WEBULL_NOTIONAL_BELOW_FLOOR — ${notional_usd:.2f} "
+            f"< ${lo:.2f} for {symbol}; NO_TRADE",
         )
 
     if notional_usd > hi:
-        return WebullCapDecision(
-            ok=False,
-            reason=(
-                f"WEBULL_NOTIONAL_ABOVE_CAP — ${notional_usd:.2f} "
-                f"> ${hi:.2f} for {symbol}; NO_TRADE"
-            ),
-            min_usd=lo, max_usd=hi, armed=True,
+        # Tag the trace with the cap source so the operator immediately
+        # sees whether to raise the env ceiling, the BP %, or fund the
+        # account.
+        if cap_source == "buying_power":
+            detail = (
+                f" (cap = {pct:.0%} of ${buying_power_usd:.2f} buying "
+                f"power; raise WEBULL_PCT_OF_BUYING_POWER or fund "
+                f"account)"
+            )
+        elif cap_source == "sanity_ceiling":
+            detail = (
+                f" (hit hard sanity ceiling ${HARD_SANITY_CEILING_USD:.2f}; "
+                f"edit HARD_SANITY_CEILING_USD if you really need more)"
+            )
+        else:
+            detail = (
+                f" (env ceiling WEBULL_MAX_NOTIONAL_USD=${hi:.2f}; raise "
+                f"it or rely on dynamic BP cap)"
+            )
+        return _decision(
+            False,
+            f"WEBULL_NOTIONAL_ABOVE_CAP — ${notional_usd:.2f} "
+            f"> ${hi:.2f} for {symbol}{detail}; NO_TRADE",
         )
 
-    return WebullCapDecision(
-        ok=True,
-        reason="WEBULL_CAP_OK",
-        min_usd=lo, max_usd=hi, armed=True,
-    )
+    return _decision(True, "WEBULL_CAP_OK")
