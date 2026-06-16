@@ -141,14 +141,21 @@ export default function IntentPostMortemPanel() {
       setArmState((s) => ({ ...s, error: "Reason must be at least 4 characters." }));
       return;
     }
+    // 2026-02-20: coerce confidenceMin at submit time. The input
+    // keeps it as a raw string while the operator is typing
+    // (see the input's onChange above); here we parse + clamp.
+    const cmRaw = armState.confidenceMin;
+    const cmNum = typeof cmRaw === "number" ? cmRaw : parseFloat(cmRaw);
+    const confMin = Number.isFinite(cmNum)
+      ? Math.max(0, Math.min(1, cmNum))
+      : 0.65;
     setArmState((s) => ({ ...s, running: true, error: null, result: null }));
     try {
       const res = await api.post("/admin/intents/system-arm", {
         reason,
-        confidence_min: armState.confidenceMin,
+        confidence_min: confMin,
       });
-      setArmState((s) => ({ ...s, running: false, result: res.data }));
-      // Re-pull post-mortem so the operator sees the new state right away.
+      setArmState((s) => ({ ...s, running: false, result: res.data, confidenceMin: confMin }));
       await load(hours);
     } catch (e) {
       const d = e?.response?.data?.detail || e.message;
@@ -265,7 +272,26 @@ export default function IntentPostMortemPanel() {
               min="0"
               max="1"
               value={armState.confidenceMin}
-              onChange={(e) => setArmState((s) => ({ ...s, confidenceMin: parseFloat(e.target.value) || 0.65 }))}
+              onChange={(e) => {
+                const raw = e.target.value;
+                // 2026-02-20: do NOT snap to 0.65 on every keystroke.
+                // The previous handler used `parseFloat(v) || 0.65`,
+                // which meant the moment the user backspaced to clear
+                // the field the value reset to 0.65 — making it
+                // impossible to type a different number on mobile.
+                // Keep raw string while editing; coerce at submit.
+                setArmState((s) => ({ ...s, confidenceMin: raw }));
+              }}
+              onBlur={(e) => {
+                // On blur, validate. Empty → restore default 0.65.
+                // Out-of-range → clamp.
+                const n = parseFloat(e.target.value);
+                let next = 0.65;
+                if (!Number.isNaN(n)) {
+                  next = Math.max(0, Math.min(1, n));
+                }
+                setArmState((s) => ({ ...s, confidenceMin: next }));
+              }}
               className="w-14 bg-rd-bg border border-rd-border px-1 py-1 font-mono text-[10px] text-rd-text focus:outline-none focus:border-rd-accent"
               data-testid="system-arm-confidence-min"
             />
