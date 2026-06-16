@@ -1,3 +1,55 @@
+## 2026-02-20 (Market-hours gate + watchlist seed — 80 symbols armed)
+
+### P2 — Market-hours gate (auto-submitter)
+
+New `shared/market_hours.py` (DST-aware, holidays 2026-2027 hardcoded). `matches_tier_1` now refuses equity intents outside US RTH with reason `equity_after_hours: …; next open <ISO>`. Crypto path untouched (24/7 via Kraken). Operator bypass: `RISEDUAL_BYPASS_MARKET_HOURS=true` (off by default). Post-mortem readiness panel now reads from the same module — operator-facing "is the market open" status and the auto-submit decision can no longer disagree.
+
+Added skip-category `SKIP_CATEGORY_AFTER_HOURS = "equity_after_hours"` so the post-mortem strip can count held intents at a glance.
+
+20 new tests covering DST, weekends, Christmas, July 4 observed, bypass override, next-open lookahead, audit reason strings, and the auto-submit integration (equity blocked + crypto allowed on the same closed clock).
+
+### P1 — `paradox_watchlist` seed
+
+Watchlist collection was empty (previous agent compiled the list but never inserted). Operator directive (2026-02-20): top-50 Webull equities + top-30 Kraken USD crypto pairs.
+
+**Equity (50)**: AAPL, MSFT, NVDA, GOOGL, AMZN, META, TSLA, AVGO, LLY, JPM, V, UNH, XOM, WMT, MA, PG, JNJ, ORCL, HD, COST, ABBV, BAC, CVX, NFLX, MRK, KO, CRM, AMD, PEP, ADBE, TMO, CSCO, ACN, MCD, ABT, LIN, WFC, DIS, INTC, QCOM, IBM, CAT, TXN, GE, BA, PYPL, UBER, PLTR, COIN, MSTR.
+
+**Crypto (30)**: BTC, ETH, SOL, XRP, DOGE, ADA, AVAX, DOT, LINK, LTC, BCH, MATIC, ATOM, NEAR, APT, ARB, OP, UNI, AAVE, INJ, FIL, ALGO, XLM, TRX, TIA, SUI, SEI, WIF, PEPE, SHIB — all USD-quoted.
+
+Seed script: `backend/scripts/seed_watchlist_2026_02_20.py` (idempotent — re-runs skip existing symbols).
+
+### Broker symbol map extension
+
+`shared/broker_symbol_resolver.BROKER_SYMBOL_MAP["kraken"]` expanded from 2 → 30 pairs with proper Kraken altnames (XBTUSD for BTC, XDGUSD for DOGE, the rest follow `<BASE>USD`). Webull's equity rule-based fallback already handled the 50 equities, so no symbol-map maintenance was needed on the equity side.
+
+Verified: all 30 canonical crypto pairs resolve to Kraken altnames; all 50 equity tickers resolve to Webull bare-ticker form.
+
+### Files
+
+- `backend/shared/market_hours.py` (new)
+- `backend/shared/auto_submit_policy.py` (gate + skip category)
+- `backend/shared/broker_symbol_resolver.py` (kraken map expanded)
+- `backend/routes/admin_intents_post_mortem.py` (uses canonical market_hours module)
+- `backend/scripts/seed_watchlist_2026_02_20.py` (new)
+- `backend/tests/test_market_hours.py` (new, 20 tests)
+
+### Production rollout
+
+1. Redeploy preview → prod to ship code changes (market-hours gate + Kraken pairs).
+2. Run the seed script on prod once: `python scripts/seed_watchlist_2026_02_20.py` (idempotent).
+3. Optional: set `RISEDUAL_BYPASS_MARKET_HOURS=true` for a one-off after-hours burn-in test; default OFF.
+
+### Backlog (unchanged)
+
+- P2: UI display-name cleanup (camaro ↔ BARRACUDA).
+- P2: Expanded verifier-loop deterministic rule sheet.
+- P2: Large-cap baseline tuning (0.30 → 0.45).
+- Cleanup: delete dead `equity_broker_preference()` / `RISEDUAL_EQUITY_BROKER` no-op env var.
+
+---
+
+
+
 ## 2026-02-20 (Webull cap: buying-power-scaled sizing replaces static $ ceiling)
 
 ### Operator pain that drove the change

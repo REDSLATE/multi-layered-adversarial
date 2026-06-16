@@ -174,9 +174,47 @@ BROKER_SYMBOL_MAP: dict[str, dict[str, Any]] = {
         # not enough — the canonical key carries the discriminator.
     },
     "kraken": {
-        # Day-1 live crypto pairs ONLY.
-        "CRYPTO:BTC-USD": "XBTUSD",   # Kraken's altname for BTC/USD
-        "CRYPTO:ETH-USD": "ETHUSD",
+        # Day-1 + 2026-02-20 (operator directive): top-30 USD pairs
+        # by trading volume on Kraken, mapped to Kraken's altnames.
+        #
+        # Kraken altname convention for USD pairs is `<BASE>USD` with
+        # two well-known exceptions:
+        #   * BTC  → XBTUSD  (Kraken's legacy "XBT" ISO-coded ticker)
+        #   * DOGE → XDGUSD  (Kraken's legacy "XDG" ticker)
+        #
+        # Adding/removing pairs here is the ONLY place needed to
+        # extend crypto coverage — the broker_router NO_TRADEs any
+        # canonical not in this map, by design.
+        "CRYPTO:BTC-USD":   "XBTUSD",
+        "CRYPTO:ETH-USD":   "ETHUSD",
+        "CRYPTO:SOL-USD":   "SOLUSD",
+        "CRYPTO:XRP-USD":   "XRPUSD",
+        "CRYPTO:DOGE-USD":  "XDGUSD",
+        "CRYPTO:ADA-USD":   "ADAUSD",
+        "CRYPTO:AVAX-USD":  "AVAXUSD",
+        "CRYPTO:DOT-USD":   "DOTUSD",
+        "CRYPTO:LINK-USD":  "LINKUSD",
+        "CRYPTO:LTC-USD":   "LTCUSD",
+        "CRYPTO:BCH-USD":   "BCHUSD",
+        "CRYPTO:MATIC-USD": "MATICUSD",
+        "CRYPTO:ATOM-USD":  "ATOMUSD",
+        "CRYPTO:NEAR-USD":  "NEARUSD",
+        "CRYPTO:APT-USD":   "APTUSD",
+        "CRYPTO:ARB-USD":   "ARBUSD",
+        "CRYPTO:OP-USD":    "OPUSD",
+        "CRYPTO:UNI-USD":   "UNIUSD",
+        "CRYPTO:AAVE-USD":  "AAVEUSD",
+        "CRYPTO:INJ-USD":   "INJUSD",
+        "CRYPTO:FIL-USD":   "FILUSD",
+        "CRYPTO:ALGO-USD":  "ALGOUSD",
+        "CRYPTO:XLM-USD":   "XLMUSD",
+        "CRYPTO:TRX-USD":   "TRXUSD",
+        "CRYPTO:TIA-USD":   "TIAUSD",
+        "CRYPTO:SUI-USD":   "SUIUSD",
+        "CRYPTO:SEI-USD":   "SEIUSD",
+        "CRYPTO:WIF-USD":   "WIFUSD",
+        "CRYPTO:PEPE-USD":  "PEPEUSD",
+        "CRYPTO:SHIB-USD":  "SHIBUSD",
     },
     # Stubs for brokers connecting later. Fail-closed: unresolved lookups
     # raise BrokerSymbolUnresolved. Add entries as those integrations
