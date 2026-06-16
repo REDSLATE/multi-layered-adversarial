@@ -136,14 +136,16 @@ export default function IntentPostMortemPanel() {
   }, [hours, load]);
 
   const armAll = useCallback(async () => {
-    const reason = (armState.reason || "").trim();
-    if (reason.length < 4) {
-      setArmState((s) => ({ ...s, error: "Reason must be at least 4 characters." }));
-      return;
-    }
-    // 2026-02-20: coerce confidenceMin at submit time. The input
-    // keeps it as a raw string while the operator is typing
-    // (see the input's onChange above); here we parse + clamp.
+    // 2026-02-20: ARM now auto-defaults the reason if the operator
+    // leaves the field blank — matches HALT's behaviour. Earlier
+    // builds disabled the button when reason had <4 chars, which on
+    // mobile read as "ARM doesn't work" because the disabled state
+    // (opacity-40) is hard to see on a small screen.
+    const typedReason = (armState.reason || "").trim();
+    const reason = typedReason.length >= 4
+      ? typedReason
+      : "operator armed via UI";
+    // Coerce confidenceMin at submit time.
     const cmRaw = armState.confidenceMin;
     const cmNum = typeof cmRaw === "number" ? cmRaw : parseFloat(cmRaw);
     const confMin = Number.isFinite(cmNum)
@@ -155,7 +157,9 @@ export default function IntentPostMortemPanel() {
         reason,
         confidence_min: confMin,
       });
-      setArmState((s) => ({ ...s, running: false, result: res.data, confidenceMin: confMin }));
+      setArmState((s) => ({
+        ...s, running: false, result: res.data, confidenceMin: confMin,
+      }));
       await load(hours);
     } catch (e) {
       const d = e?.response?.data?.detail || e.message;
@@ -272,7 +276,7 @@ export default function IntentPostMortemPanel() {
             type="text"
             value={armState.reason}
             onChange={(e) => setArmState((s) => ({ ...s, reason: e.target.value }))}
-            placeholder="reason (≥4 chars, audit-logged)"
+            placeholder="reason (optional · audit-logged · auto-fills if blank)"
             className="flex-1 bg-rd-bg border border-rd-border px-2 py-1 font-mono text-[10px] text-rd-text placeholder:text-rd-dim focus:outline-none focus:border-rd-accent"
             data-testid="system-arm-reason"
           />
@@ -310,7 +314,7 @@ export default function IntentPostMortemPanel() {
           </label>
           <button
             onClick={armAll}
-            disabled={armState.running || (armState.reason || "").trim().length < 4}
+            disabled={armState.running}
             className="px-4 py-1 border-2 border-rd-accent bg-rd-accent text-black font-mono text-[10px] uppercase tracking-widest hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 font-bold"
             data-testid="system-arm-button"
           >
