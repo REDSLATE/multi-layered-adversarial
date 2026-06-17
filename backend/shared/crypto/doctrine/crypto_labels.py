@@ -68,9 +68,29 @@ def label_crypto_snapshot(snapshot: Dict[str, Any]) -> CryptoDoctrineLabels:
             reasons=["crypto doctrine received non-crypto lane snapshot"],
         )
 
-    score = 0.0
-    labels: List[str] = []
+    # 2026-02-20: baseline raised 0.00 → 0.20 per operator directive.
+    # Crypto has no "small-cap toolkit" rubric to begin with — every
+    # USD pair on Kraken clears the liquidity bar by virtue of being
+    # listed. The baseline gives that "tradable at all" credit without
+    # promoting any signal-driven conviction. Combined with the
+    # BASELINE_ONLY_TOEHOLD rule below, "nothing happening" days
+    # still emit a trade — at toehold size only.
+    score = 0.20
+    labels: List[str] = ["CRYPTO_LISTED"]
     reasons: List[str] = []
+
+    # ── fractional-trading capability (2026-02-20) ──
+    # Doctrine pin: "Fractional does not make the signal better.
+    # Fractional makes the risk smaller." Kraken supports fractional
+    # natively for every USD pair. We give a small (+0.05) credit
+    # because it means the per-order budget is never bounded by the
+    # asset price (BTC at $90k or SHIB at $0.00002 — both tradable
+    # at any notional). The real benefit lands at the SEAT layer
+    # (see `shared/broker/fractional_sizing.py`).
+    fractional_supported = bool(snapshot.get("fractional_supported", True))  # Kraken default ON
+    if fractional_supported:
+        score += 0.05
+        labels.append("FRACTIONAL_SUPPORTED")
 
     volume_24h_usd = _num(snapshot, "volume_24h_usd")
     spread_bps = _num(snapshot, "spread_bps", 9999.0)
@@ -144,6 +164,24 @@ def label_crypto_snapshot(snapshot: Dict[str, Any]) -> CryptoDoctrineLabels:
         reasons.append("asset direction aligns with BTC regime")
 
     score = max(0.0, min(1.0, score))
+
+    # ── BASELINE_ONLY_TOEHOLD detection (2026-02-20) ──
+    # Fires when NONE of the quality-positive labels triggered — i.e.,
+    # the only labels are CRYPTO_LISTED and (optionally)
+    # FRACTIONAL_SUPPORTED. Neutral noise like FUNDING_NEUTRAL or
+    # LIQUIDATION_BALANCED doesn't count as signal — they're "nothing
+    # wrong" tags. Any of {HIGH_24H_VOLUME, TIGHT_SPREAD,
+    # EXCHANGE_LIQUIDITY_OK, TREND_ALIGNED, VOL_EXPANSION, OI_EXPANSION,
+    # BTC_REGIME_ALIGNED} firing means the brain has a real lean and
+    # shouldn't be toehold-clamped.
+    quality_positive_labels = {
+        "HIGH_24H_VOLUME", "TIGHT_SPREAD", "EXCHANGE_LIQUIDITY_OK",
+        "TREND_ALIGNED", "VOL_EXPANSION", "OI_EXPANSION",
+        "BTC_REGIME_ALIGNED",
+    }
+    if not (set(labels) & quality_positive_labels):
+        labels.append("BASELINE_ONLY_TOEHOLD")
+        reasons.append("baseline_only_signal: toehold-size only")
 
     return CryptoDoctrineLabels(
         lane="crypto",

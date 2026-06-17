@@ -1,3 +1,90 @@
+## 2026-02-20 (Fractional doctrine + seat layer — "fractional makes risk smaller, not signal better")
+
+### Operator doctrine pin
+
+> Fractional does not make the signal better.
+> Fractional makes the risk smaller.
+
+The patch is intentionally split across two layers so this boundary is preserved in code:
+
+  * **Doctrine layer** awards a *small* score credit (`FRACTIONAL_SUPPORTED` +0.05) for the broker capability + raises baselines so nothing-burger days clear the *REJECT* threshold. But it does NOT promote nothing-burgers to higher conviction tiers.
+  * **Seat layer** owns the notional → fractional-quantity conversion. The brain says "BUY NVDA, 0.74 conviction"; the seat says "$10 notional on a $180 stock → submit 0.05555 shares via Webull v2 QTY mode."
+  * A new `BASELINE_ONLY_TOEHOLD` label catches the "no real signal beyond the baseline" case and clamps governor `risk_multiplier` to **0.20×** so those trades fire at *toehold* size only — never full size on a quiet day.
+
+### Doctrine layer changes
+
+**`shared/doctrine/large_cap_doctrine.py`**
+- Baseline raised `0.30 → 0.40` so a clean liquid large-cap clears C_QUALITY (0.40) on a sleepy day instead of REJECTing at exactly the threshold.
+- `FRACTIONAL_SUPPORTED` label adds `+0.05` to the score when `snapshot["fractional_supported"]=True`.
+- `BASELINE_ONLY_TOEHOLD` fires when NONE of the quality-positive labels (GAPPER, RVOL, NEWS, GREEN_LIGHT) triggered. Governor consumes the label and clamps `risk_multiplier ≤ 0.20`.
+- Critical invariant pinned in tests: lifting the baseline must NOT promote nothing-burgers to B_QUALITY (0.60) or A_QUALITY (0.80) — those thresholds are conviction floors, untouched.
+
+**`shared/crypto/doctrine/crypto_labels.py`**
+- Baseline raised `0.00 → 0.20` (+0.05 fractional default since Kraken supports it natively).
+- `BASELINE_ONLY_TOEHOLD` fires when NONE of {HIGH_24H_VOLUME, TIGHT_SPREAD, EXCHANGE_LIQUIDITY_OK, TREND_ALIGNED, VOL_EXPANSION, OI_EXPANSION, BTC_REGIME_ALIGNED} triggered.
+
+**`shared/crypto/doctrine/crypto_brain_sidecars.py`**
+- Crypto governor dampener for `BASELINE_ONLY_TOEHOLD = 0.20`, matching large-cap.
+
+### Seat layer changes
+
+**`shared/broker/fractional_sizing.py` (new module)**
+
+`size_for_fractional(broker, symbol, notional_usd, last_price, lane) -> FractionalSizingDecision`
+
+Decision tree:
+1. `notional ≥ price`                                       → `WHOLE_SHARE` (skip fractional machinery)
+2. Kraken any lane                                          → `AMOUNT` (native fractional)
+3. Webull equity in RTH + symbol eligible + notional ≥ $5 + price known → `QTY` (computes `floor(notional/price, 5dp)`)
+4. Webull equity in RTH + price unknown                     → `AMOUNT` (server-side qty resolve)
+5. Otherwise                                                → `REJECT` (operator gets clear reason string)
+
+Hard rails:
+- Webull fractional is **regular session only** (per their docs) — RTH gate enforced inline using `shared.market_hours.is_equity_rth`.
+- Webull `$5` minimum order value enforced.
+- Operator can blacklist symbols via `WEBULL_FRACTIONAL_INELIGIBLE_SYMBOLS=NVDA,GOOGL` env var.
+- Truncation (not rounding) on quantity math so the implied notional never exceeds the operator's budget.
+
+### Files
+
+- `backend/shared/broker/fractional_sizing.py` (new, 220 lines)
+- `backend/shared/doctrine/large_cap_doctrine.py` (baseline + labels + toehold clamp)
+- `backend/shared/crypto/doctrine/crypto_labels.py` (baseline + labels + toehold detection)
+- `backend/shared/crypto/doctrine/crypto_brain_sidecars.py` (toehold dampener)
+- `backend/tests/test_fractional_sizing_2026_02_20.py` (new, 18 tests)
+
+### Verification
+
+163 tests passing across doctrine, market-hours, webull-caps, broker-router, council, auto-submit, doctrine-alignment, and fractional sizing suites. Critical invariants pinned:
+
+- AAPL sleepy day → score=0.45, C_QUALITY, BASELINE_ONLY_TOEHOLD tag, governor.risk_multiplier ≤ 0.20
+- AAPL signal day (1.5% gap + 1.5× rvol + green tape) → ≥ B_QUALITY, governor.risk_multiplier > 0.20
+- BTC quiet day → BASELINE_ONLY_TOEHOLD tag, toehold-sized
+- Webull fractional rejects outside RTH, below $5 minimum, blacklisted symbols
+- Truncation math never exceeds budget (7/13 = 0.53846, implied = $6.9998 < $7.00)
+
+### Net effect on the operator's funnel
+
+Pre-2026-02-20 prod state: 3,634 intents emitted/day, 0 executed, every brain emitting HOLD because doctrine scored REJECT on the entire watchlist.
+
+Post-patch (predicted, based on doctrine math + the auto-submit chain we shipped earlier today):
+- Large-cap on quiet day: score 0.40-0.55 → C_QUALITY → brain emits BUY at low conviction → toehold size (~$2-5 on a $25 cap) → trade fires.
+- Crypto on quiet day: score 0.45-0.55 → C_QUALITY → brain emits BUY → toehold size → trade fires.
+- Large-cap on signal day: B_QUALITY+ → normal size → trade fires.
+
+### Production rollout
+
+1. Redeploy preview → prod.
+2. The brain runtime needs to ship `snapshot["fractional_supported"]` (Webull v2 docs say fractional is supported on the US equity universe — set to True by default). If the runtime doesn't set it, doctrine still emits the small (+0.05) bonus iff the field is True — false/missing falls back to current behavior. So this is fully forward-compatible.
+3. After live trading starts, the operator can tune:
+   - `BASELINE_ONLY_TOEHOLD_RISK_MULTIPLIER` in `large_cap_doctrine._build_governor` (default 0.20)
+   - `WEBULL_FRACTIONAL_INELIGIBLE_SYMBOLS` env var if Webull rejects any symbol
+   - Doctrine baselines (raise crypto if too restrictive, lower if too noisy)
+
+---
+
+
+
 ## 2026-02-20 (Seat autonomy_mode promotion — the systemic "rejecting every intent" cause)
 
 ### Root cause

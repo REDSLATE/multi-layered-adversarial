@@ -299,6 +299,13 @@ def _chevelle_dampeners(labels, snapshot) -> List[tuple[str, float]]:
         out.append(("THREE_CONSECUTIVE_LOSSES", GOVERNOR_DAMPENERS["THREE_CONSECUTIVE_LOSSES"]))
     if float(snapshot.get("daily_pnl_usd", 0.0) or 0.0) <= -100:
         out.append(("DAILY_LOSS_LIMIT", GOVERNOR_DAMPENERS["DAILY_LOSS_LIMIT"]))
+    # 2026-02-20: BASELINE_ONLY_TOEHOLD clamps sizing when no real
+    # signal fired beyond the baseline. Per operator doctrine:
+    # "Fractional makes the risk smaller, not the signal better."
+    # The brain still emits, but the seat / governor caps size at
+    # 0.20× (toehold) so "no signal" days don't trade at full size.
+    if "BASELINE_ONLY_TOEHOLD" in labels:
+        out.append(("BASELINE_ONLY_TOEHOLD", 0.20))
     return out
 
 

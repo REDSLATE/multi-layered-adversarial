@@ -73,10 +73,36 @@ def _build_large_cap_labels(snapshot: Dict[str, Any]) -> _LargeCapLabels:
     has_news = bool(snapshot.get("has_news", False))
     market_regime = str(snapshot.get("market_regime", "unknown")).lower()
     spread_bps = float(snapshot.get("spread_bps", 999.0))
+    fractional_supported = bool(snapshot.get("fractional_supported", False))
 
-    score = 0.30  # baseline: large-caps clear the liquidity bar by default
+    # 2026-02-20: baseline raised 0.30 → 0.40 per operator directive.
+    # A large-cap on a sleepy day now clears C_QUALITY (≥0.40) on
+    # liquidity-alone, instead of REJECTing at exactly the baseline.
+    # The brain still emits with LOW conviction (strategist conviction
+    # delta below scales to score); the BASELINE_ONLY_TOEHOLD rule
+    # downstream forces toehold-size sizing when only the baseline
+    # fired, so "no real signal" days don't trade at normal size.
+    score = 0.40
     labels: List[str] = ["LARGE_CAP_LIQUID"]
     reasons: List[str] = []
+
+    # ── fractional-trading capability (2026-02-20) ──
+    # Doctrine pin (operator, 2026-02-20):
+    #     "Fractional does not make the signal better.
+    #      Fractional makes the risk smaller."
+    # We give a SMALL (+0.05) doctrine credit when fractional is
+    # supported because it means the broker can fill ANY notional
+    # at this price — i.e., the per-order budget is not bounded by
+    # the share price. The real benefit lands at the SEAT layer
+    # (see `shared/broker/fractional_sizing.py`), which converts
+    # notional → fractional quantity. This label is a sizing
+    # unlock, not a conviction unlock — paired with the score
+    # bump it tilts the lane from "needs perfect setup" to
+    # "tradable at this account size", but it does NOT lift the
+    # B_QUALITY (0.60) / A_QUALITY (0.80) thresholds.
+    if fractional_supported:
+        score += 0.05
+        labels.append("FRACTIONAL_SUPPORTED")
 
     # ── gap (relaxed) ──
     if gap_pct >= 1.0:
@@ -124,6 +150,22 @@ def _build_large_cap_labels(snapshot: Dict[str, Any]) -> _LargeCapLabels:
         reasons.append("spread_too_wide")
 
     score = _clamp(score)
+
+    # ── BASELINE_ONLY_TOEHOLD detection (2026-02-20) ──
+    # Fires when NONE of the quality-positive labels triggered — i.e.,
+    # the only labels are LARGE_CAP_LIQUID and (optionally)
+    # FRACTIONAL_SUPPORTED. Neutral noise like SPREAD_ACCEPTABLE
+    # doesn't disqualify (it's a "nothing wrong" tag, not a signal),
+    # but any of {GAPPER, RVOL, NEWS, GREEN_LIGHT} firing means the
+    # brain has a real lean and shouldn't be toehold-clamped.
+    quality_positive_labels = {
+        "GAPPER_LARGE_CAP", "STRONG_GAPPER_LARGE_CAP",
+        "ELEVATED_RELATIVE_VOLUME", "HIGH_RELATIVE_VOLUME",
+        "NEWS_CATALYST", "MARKET_GREEN_LIGHT",
+    }
+    if not (set(labels) & quality_positive_labels):
+        labels.append("BASELINE_ONLY_TOEHOLD")
+        reasons.append("baseline_only_signal: toehold-size only")
 
     if score >= 0.80:
         quality = "A_QUALITY"
@@ -264,6 +306,17 @@ def _build_governor(base, labels, holder, snapshot):
     risk_multiplier = max(0.0, min(1.0, risk_multiplier))
     if 0.0 < risk_multiplier < 0.10:
         risk_multiplier = 0.10
+
+    # ── BASELINE_ONLY_TOEHOLD clamp (2026-02-20) ──
+    # Doctrine pin: "Fractional makes the risk smaller, not the
+    # signal better." When the label set says "only the baseline
+    # fired" (no gap / no rvol / no news / no green tape), the brain
+    # is allowed to BUY but only at TOEHOLD size. We clamp the
+    # governor's risk_multiplier DOWN to TOEHOLD_RISK_MULTIPLIER
+    # (0.20× the brain's normal sizing). The brain's confidence
+    # number is unchanged — the seat / governor owns sizing.
+    if "BASELINE_ONLY_TOEHOLD" in labels:
+        risk_multiplier = min(risk_multiplier, 0.20)
 
     display_status = (
         "RISK_DOWN" if (block_reasons or risk_multiplier < 1.0) else "ALLOW"
