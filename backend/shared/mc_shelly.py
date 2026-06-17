@@ -106,12 +106,12 @@ async def positions_at_now() -> dict[str, Optional[str]]:
 
     Shape:
         {
-          "STR": "camaro" | None,
-          "EXE": "alpha"  | None,
-          "GOV": "chevelle" | None,
+          "STR": "barracuda" | None,
+          "EXE": "camino"  | None,
+          "GOV": "hellcat" | None,
           "ADV": None,
-          "OPP": "redeye" | None,
-          "AUD": "redeye" | None,
+          "OPP": "gto" | None,
+          "AUD": "gto" | None,
         }
     """
     roster = await db[BRAIN_ROSTER].find_one({"_id": "current"}, {"_id": 0}) or {}

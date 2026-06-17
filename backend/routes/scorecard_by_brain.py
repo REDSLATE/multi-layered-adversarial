@@ -31,10 +31,10 @@ router = APIRouter(prefix="/admin/doctrine", tags=["doctrine-by-brain"])
 # Operator-facing rename map for frontend convenience. Backend
 # never trusts this — wire still flows on `stack`.
 BRAIN_DISPLAY_NAMES = {
-    "alpha": "Camino",
-    "camaro": "Barracuda",
-    "chevelle": "Hellcat",
-    "redeye": "GTO",
+    "camino": "Camino",
+    "barracuda": "Barracuda",
+    "hellcat": "Hellcat",
+    "gto": "GTO",
 }
 
 

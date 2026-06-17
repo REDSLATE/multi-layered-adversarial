@@ -45,7 +45,7 @@ router = APIRouter(
 )
 
 
-KNOWN_BRAINS: tuple[str, ...] = ("alpha", "camaro", "chevelle", "redeye")
+KNOWN_BRAINS: tuple[str, ...] = ("camino", "barracuda", "hellcat", "gto")
 
 
 def _expected_token_for(brain: str) -> str:

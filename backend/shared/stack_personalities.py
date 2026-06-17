@@ -30,7 +30,7 @@ from typing import Optional
 
 
 STACK_PERSONALITIES: dict[str, dict] = {
-    "camaro": {
+    "barracuda": {
         # ── Layer 1: voice / persona ────────────────────────────────
         "voice": "decisive_execution_operator",
         # ── Layer 2: bias profile (what it notices first) ───────────
@@ -53,7 +53,7 @@ STACK_PERSONALITIES: dict[str, dict] = {
             "fire without a passed gate chain",
         ],
     },
-    "alpha": {
+    "camino": {
         "voice": "opportunity_hunter",
         "bias": "momentum_and_upside",
         "bias_question": "Where is the asymmetric upside?",
@@ -72,7 +72,7 @@ STACK_PERSONALITIES: dict[str, dict] = {
             "act as Executor unless explicitly slotted there",
         ],
     },
-    "chevelle": {
+    "hellcat": {
         "voice": "risk_governor",
         "bias": "skeptical_validation",
         "bias_question": "What could go wrong and what size is justified?",
@@ -94,7 +94,7 @@ STACK_PERSONALITIES: dict[str, dict] = {
             "(GOVERNOR_HARD_VETO_THRESHOLD, see execution.py)",
         ],
     },
-    "redeye": {
+    "gto": {
         "voice": "adversarial_short_hunter",
         "bias": "downside_and_trap_detection",
         "bias_question": "Where is the downside, trap, or short opportunity?",

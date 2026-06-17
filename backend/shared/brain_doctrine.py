@@ -131,6 +131,12 @@ DOCTRINES: dict[str, BrainDoctrine] = {
 # identity going forward. This map is the only place the mapping
 # lives. Anything that needs to translate between them imports here.
 STACK_TO_BRAIN_ID: dict[str, str] = {
+    # Canonical → canonical (identity)
+    "camino": "camino",
+    "barracuda": "barracuda",
+    "hellcat": "hellcat",
+    "gto": "gto",
+    # Legacy → new canonical (accepted at ingress for back-compat)
     "alpha": "camino",
     "camaro": "barracuda",
     "chevelle": "hellcat",

@@ -30,7 +30,7 @@ def interpret_for_redeye(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     challenge_strength = min(1.0, 0.20 + 0.18 * len(objections))
 
     return {
-        "brain": "redeye",
+        "brain": "gto",
         "role": "adversary",
         "doctrine": doctrine.to_dict(),
         "challenge_required": bool(objections),

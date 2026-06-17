@@ -52,7 +52,7 @@ async def get_auditor_holder() -> Optional[str]:
 
 class RotateBody(BaseModel):
     new_holder: Optional[
-        Literal["alpha", "camaro", "chevelle", "redeye", "", None]
+        Literal["camino", "barracuda", "hellcat", "gto", "", None]
     ] = Field(default=None, description="brain name, or null/empty to clear seat")
     reason: str = Field(min_length=3, max_length=1000)
 

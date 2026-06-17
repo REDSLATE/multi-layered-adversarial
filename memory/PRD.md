@@ -1,3 +1,111 @@
+## 2026-02-20 (Deep canonical rename — alpha/camaro/chevelle/redeye → camino/barracuda/hellcat/gto)
+
+### Operator pin
+
+> "Been trying the cosmetics name change for a week now. Nothing has
+>  changed so we have to go deeper."
+> "There should be no external sidecars. Everything is internal now.
+>  No other stacks are connected."
+
+### What changed
+
+Canonical brain IDs were renamed across the entire backend so the DB,
+code, env vars, and operator-facing UI all match:
+
+| Legacy canonical | New canonical | Display name |
+|---|---|---|
+| `alpha`    | `camino`    | Camino    |
+| `camaro`   | `barracuda` | Barracuda |
+| `chevelle` | `hellcat`   | Hellcat   |
+| `redeye`   | `gto`       | GTO       |
+
+The legacy IDs still resolve at ingress via `shared.brain_identity.normalize_brain_id`
+(historical rows + any external client that still emits the old names),
+but every new write uses the new canonical.
+
+### Surface area
+
+**1. Identity vocabulary**
+- `shared/brain_identity.py` — `VALID_BRAIN_IDS` flipped to new canonical; added `LEGACY_TO_CANONICAL` alias map; `normalize_brain_id()` chains old → new.
+- `namespaces.py::RUNTIMES` and `LIVE_RUNTIMES` updated.
+- `shared/brain_lane_policy.py::KNOWN_BRAINS` updated.
+
+**2. Code-level rename**
+- 46 backend files updated via targeted regex replace (string literals only — `"alpha"`, `"camaro"`, `"chevelle"`, `"redeye"` in both single and double quotes). 254 string-literal replacements in total.
+- Skipped: `shared/brain_identity.py` (intentional alias preservation), `shared/legacy_brain_wrappers.py` (compat shim), `tests/` (updated separately).
+
+**3. In-process brain runner**
+- `external/brains/runner.py` — `BRAIN_ROSTER` now seeds `camino/barracuda/hellcat/gto`.
+- Brain doctrine table (`shared/brain_doctrine.py`) was already on new canonical; added legacy aliases to `STACK_TO_BRAIN_ID` for back-compat.
+
+**4. Env vars**
+- Added `CAMINO_INGEST_TOKEN`, `BARRACUDA_INGEST_TOKEN`, `HELLCAT_INGEST_TOKEN`, `GTO_INGEST_TOKEN` to `/app/backend/.env`. Same token values as legacy for zero-downtime.
+- Legacy `*_INGEST_TOKEN` vars retained (deletable in a follow-up once nothing references them).
+
+**5. Boot-time DB migration**
+- `shared/brain_identity_migration.py::migrate_brain_identity()` — runs on every backend boot, idempotent. Rewrites stored brain IDs in:
+  - `brain_roster.assignments[role]` values
+  - `paradox_v2_seat_trusted_brains.brain_id`
+  - `shared_executor_seat.holder`
+  - `shared_auditor_seat.holder`
+  - `brain_eligibility.matrix` keys
+
+**6. Tests**
+- `tests/test_roster.py` updated for new canonical (20/20 pass).
+- 11/11 unified pipeline tests still pass.
+- 4/4 seat-state single-source tests still pass.
+- 25/25 legacy executor auto-wipe tests still pass.
+
+### Verification (preview)
+
+Backend boot logs show the migration ran successfully:
+```
+brain_identity rename migration: {
+  'brain_roster.assignments': {strategist: ('camaro','barracuda'), executor: ('alpha','camino'), governor: ('chevelle','hellcat'), auditor: ('alpha','camino')},
+  'paradox_v2_seat_trusted_brains': [...]
+}
+neutral_brains started: 4 runners — camino=Camino, barracuda=Barracuda, hellcat=Hellcat, gto=GTO
+neutral_brain intent posted brain=barracuda display=Barracuda lane=equity sym=NVDA action=BUY conf=0.69 ...
+```
+
+Smoke test through unified pipeline:
+- `stack=camino` → reaches seat policy (works on new canonical) ✅
+- `stack=alpha` (legacy alias) → normalized at ingress, reaches seat policy ✅
+
+### Operator deployment
+
+1. Deploy this branch to prod.
+2. Boot migration runs automatically. Watch logs for `brain_identity rename migration:` line.
+3. Verify intent feed shows the new canonical stack names (CAMINO/BARRACUDA/HELLCAT/GTO).
+4. Quick Seat Switches UI will now write the new canonical to `brain_roster.assignments`.
+5. Legacy `*_INGEST_TOKEN` env vars are no longer used by any in-process code but retained for safety. Can be deleted in a follow-up deploy after burn-in.
+
+### Files
+
+- New:      `shared/brain_identity_migration.py`
+- Modified: `shared/brain_identity.py` (canonical flip + alias chain)
+- Modified: `namespaces.py` (RUNTIMES, LIVE_RUNTIMES)
+- Modified: `external/brains/runner.py` (BRAIN_ROSTER seeds)
+- Modified: `shared/brain_doctrine.py` (added legacy aliases)
+- Modified: 46 backend files (string-literal rename)
+- Modified: `tests/test_roster.py` (assertions updated)
+- Modified: `server.py` (boot migration runs first)
+- Modified: `.env` (added new canonical token env vars)
+
+### Sidecar cleanup — DEFERRED
+
+The user noted "if there are any old sidecars from those stacks left
+they need to be removed." The external sidecar infrastructure
+(`shared/runtime_tokens.py`, `shared/runtime/sidecar_checkin.py`,
+`shared/heartbeat_ping.py`, `routes/sidecar_imposter_scan.py`,
+`routes/runtime_token_health.py`) is still present but no longer
+exercised because all 4 brains run in-process via `external/brains/runner.py`.
+Deleting these files is a separate PR — touches `server.py` router
+registrations and 10+ test files. Tracking as P1 follow-up.
+
+---
+
+
 ## 2026-02-20 (Unified Pipeline flag — Mongo + admin endpoints, no redeploy needed)
 
 ### Operator pin

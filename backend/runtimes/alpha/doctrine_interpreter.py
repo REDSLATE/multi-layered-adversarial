@@ -33,7 +33,7 @@ def interpret_for_alpha(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         conviction_delta -= 0.06
 
     return {
-        "brain": "alpha",
+        "brain": "camino",
         "role": "strategist",
         "doctrine": doctrine.to_dict(),
         "conviction_delta": round(conviction_delta, 4),

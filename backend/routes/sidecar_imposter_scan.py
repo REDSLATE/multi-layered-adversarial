@@ -22,7 +22,7 @@ Returns:
   "window_hours": 24,
   "by_runtime": [
      {
-       "runtime": "redeye",
+       "runtime": "gto",
        "checkin_count": 288,
        "distinct_env_names": ["preview"],
        "distinct_pip_shas":  ["1aeb..."],

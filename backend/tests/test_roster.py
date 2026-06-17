@@ -72,9 +72,9 @@ class TestRosterBasics:
         a = d["assignments"]
         # 2026-05-24 (corrected): REDEYE not seated by default. Opponent
         # is operator-assigned. `decider` was renamed to `strategist`.
-        assert a["strategist"] == "camaro"
-        assert a["executor"]   == "alpha"
-        assert a["governor"]   == "chevelle"
+        assert a["strategist"] == "barracuda"
+        assert a["executor"]   == "camino"
+        assert a["governor"]   == "hellcat"
         assert a.get("opponent") is None
         assert a.get("auditor") is None
         assert a.get("advisor") is None
@@ -88,15 +88,15 @@ class TestRosterBasics:
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
-            json={"role": "executor", "brain": "camaro"},
+            json={"role": "executor", "brain": "barracuda"},
             timeout=10,
         )
         assert r.status_code == 200
         a = r.json()["assignments"]
-        assert a["executor"] == "camaro"
+        assert a["executor"] == "barracuda"
         assert a["strategist"] is None
         # And alpha (previously executor) is now nowhere
-        assert "alpha" not in a.values()
+        assert "camino" not in a.values()
 
     def test_assign_none_vacates_role(self):
         tok = _login()
@@ -122,8 +122,8 @@ class TestRosterBasics:
         )
         assert r.status_code == 200
         a = r.json()["assignments"]
-        assert a["strategist"] == "alpha"
-        assert a["executor"] == "camaro"
+        assert a["strategist"] == "camino"
+        assert a["executor"] == "barracuda"
 
     def test_swap_same_role_rejected(self):
         tok = _login()
@@ -140,7 +140,7 @@ class TestRosterBasics:
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
-            json={"role": "puppet_master", "brain": "alpha"},
+            json={"role": "puppet_master", "brain": "camino"},
             timeout=10,
         )
         assert r.status_code == 422
@@ -164,14 +164,14 @@ class TestRosterBasics:
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
-            json={"role": "decider", "brain": "alpha"},
+            json={"role": "decider", "brain": "camino"},
             timeout=10,
         )
         # alpha is eligible for strategist by default → accepted
         assert r.status_code == 200, r.text
         a = r.json()["assignments"]
         # Canonical key is set; legacy key does not appear
-        assert a["strategist"] == "alpha"
+        assert a["strategist"] == "camino"
         assert "decider" not in a
         _reset(tok)
 
@@ -181,16 +181,16 @@ class TestRosterBasics:
         requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
-            json={"role": "executor", "brain": "camaro"},
+            json={"role": "executor", "brain": "barracuda"},
             timeout=10,
         )
         _reset(tok)
         r = requests.get(f"{BASE_URL}/api/admin/roster", headers=_hdr(tok), timeout=10)
         a = r.json()["assignments"]
         # 2026-05-24 (corrected): REDEYE not seated by default
-        assert a["strategist"] == "camaro"
-        assert a["executor"]   == "alpha"
-        assert a["governor"]   == "chevelle"
+        assert a["strategist"] == "barracuda"
+        assert a["executor"]   == "camino"
+        assert a["governor"]   == "hellcat"
         assert a.get("opponent") is None
 
     def test_audit_log_captures_changes(self):
@@ -228,17 +228,17 @@ class TestEligibility:
         # Non-governor seats from the canonical 8: every brain × seat = True
         non_gov = ("strategist", "executor", "auditor",
                    "crypto_strategist", "crypto", "crypto_auditor")
-        for brain in ("alpha", "camaro", "chevelle", "redeye"):
+        for brain in ("camino", "barracuda", "hellcat", "gto"):
             for seat in non_gov:
                 assert m[brain][seat] is True, (
                     f"default matrix should allow {brain}→{seat}"
                 )
         # Governor + crypto_governor: only Chevelle and RedEye
         for seat in ("governor", "crypto_governor"):
-            assert m["alpha"][seat] is False
-            assert m["camaro"][seat] is False
-            assert m["chevelle"][seat] is True
-            assert m["redeye"][seat] is True
+            assert m["camino"][seat] is False
+            assert m["barracuda"][seat] is False
+            assert m["hellcat"][seat] is True
+            assert m["gto"][seat] is True
 
     def test_assign_any_brain_to_any_non_governor_seat_by_default(self):
         """All non-governor seats: any brain accepted by default.
@@ -250,7 +250,7 @@ class TestEligibility:
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
-            json={"role": "strategist", "brain": "chevelle"},
+            json={"role": "strategist", "brain": "hellcat"},
             timeout=10,
         )
         assert r.status_code == 200, r.text
@@ -258,7 +258,7 @@ class TestEligibility:
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
-            json={"role": "governor", "brain": "camaro"},
+            json={"role": "governor", "brain": "barracuda"},
             timeout=10,
         )
         assert r.status_code == 400, r.text
@@ -274,7 +274,7 @@ class TestEligibility:
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
-            json={"role": "governor", "brain": "redeye"},
+            json={"role": "governor", "brain": "gto"},
             timeout=10,
         )
         assert r.status_code == 200, r.text
@@ -290,7 +290,7 @@ class TestEligibility:
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/eligibility",
             headers=_hdr(tok),
-            json={"brain": "alpha", "role": "opponent", "allowed": False},
+            json={"brain": "camino", "role": "opponent", "allowed": False},
             timeout=10,
         )
         assert r.status_code == 200
@@ -298,7 +298,7 @@ class TestEligibility:
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/assign",
             headers=_hdr(tok),
-            json={"role": "opponent", "brain": "alpha"},
+            json={"role": "opponent", "brain": "camino"},
             timeout=10,
         )
         assert r.status_code == 400
@@ -306,7 +306,7 @@ class TestEligibility:
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/eligibility",
             headers=_hdr(tok),
-            json={"brain": "alpha", "role": "opponent", "allowed": True},
+            json={"brain": "camino", "role": "opponent", "allowed": True},
             timeout=10,
         )
         assert r.status_code == 200
@@ -314,7 +314,7 @@ class TestEligibility:
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/eligibility",
             headers=_hdr(tok),
-            json={"brain": "alpha", "role": "governor", "allowed": True},
+            json={"brain": "camino", "role": "governor", "allowed": True},
             timeout=10,
         )
         assert r.status_code == 400
@@ -330,7 +330,7 @@ class TestEligibility:
         r = requests.post(
             f"{BASE_URL}/api/admin/roster/eligibility",
             headers=_hdr(tok),
-            json={"brain": "camaro", "role": "strategist", "allowed": False},
+            json={"brain": "barracuda", "role": "strategist", "allowed": False},
             timeout=10,
         )
         assert r.status_code == 400
@@ -348,7 +348,7 @@ class TestEligibility:
         a = r.json()["assignments"]
         assert a.get("auditor") is None
         assert a.get("crypto") is None
-        assert "redeye" not in {v for v in a.values() if v}
+        assert "gto" not in {v for v in a.values() if v}
 
 
 class TestTenure:
@@ -413,7 +413,7 @@ class TestOpinionStamping:
             f"{BASE_URL}/api/ingest/opinion",
             headers={"X-Runtime-Token": CAMARO_TOKEN, "Content-Type": "application/json"},
             json={
-                "runtime": "camaro",
+                "runtime": "barracuda",
                 "topic": f"symbol:ROSTER{suffix}",
                 "stance": "observation",
                 "body": "stamp test",
@@ -428,7 +428,7 @@ class TestOpinionStamping:
         # alias backstop is permitted during the rename transition).
         r = requests.get(
             f"{BASE_URL}/api/shared/opinions",
-            params={"runtime": "camaro", "limit": 20},
+            params={"runtime": "barracuda", "limit": 20},
             headers=_hdr(tok), timeout=20,
         )
         match = next((x for x in r.json()["items"] if x["opinion_id"] == oid), None)
@@ -454,7 +454,7 @@ class TestOpinionStamping:
                 f"{BASE_URL}/api/ingest/opinion",
                 headers={"X-Runtime-Token": ALPHA_TOKEN, "Content-Type": "application/json"},
                 json={
-                    "runtime": "alpha",
+                    "runtime": "camino",
                     "topic": f"symbol:STAMP{suffix}",
                     "stance": "long",
                     "body": "alpha now strategist",
@@ -466,7 +466,7 @@ class TestOpinionStamping:
             oid = r.json()["opinion_id"]
             r = requests.get(
                 f"{BASE_URL}/api/shared/opinions",
-                params={"runtime": "alpha", "limit": 20},
+                params={"runtime": "camino", "limit": 20},
                 headers=_hdr(tok), timeout=20,
             )
             match = next((x for x in r.json()["items"] if x["opinion_id"] == oid), None)

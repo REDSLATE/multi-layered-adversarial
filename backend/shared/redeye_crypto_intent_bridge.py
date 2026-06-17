@@ -92,8 +92,8 @@ async def build_redeye_crypto_intent(
     now = _now_iso()
     return {
         "intent_id": f"redeye-crypto-{action.lower()}-{uuid.uuid4().hex}",
-        "stack": "redeye",                  # MC's emitting-brain field
-        "source": "redeye",                 # snippet alias
+        "stack": "gto",                  # MC's emitting-brain field
+        "source": "gto",                 # snippet alias
         "lane": "crypto",
         "asset_class": "crypto",
         "symbol": sym,

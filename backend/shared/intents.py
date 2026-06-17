@@ -174,7 +174,7 @@ async def _run_dry_run_then_auto_submit(intent_id: str, actor: str) -> None:
 class IntentIn(BaseModel):
     """Brain → MC. Subset of fields. MC fills the rest."""
 
-    stack: Literal["alpha", "camaro", "chevelle", "redeye"]
+    stack: Literal["camino", "barracuda", "hellcat", "gto"]
     # 2026-05-24: Extended verbs.
     #   OPEN  — opens a new position; requires `direction` field
     #           (`long`→BUY, `short`→SHORT). Rejected if `direction`

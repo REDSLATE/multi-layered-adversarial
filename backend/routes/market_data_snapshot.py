@@ -44,7 +44,7 @@ router = APIRouter(prefix="/admin/market-data", tags=["market-data-snapshot"])
 
 
 # Brain-auth mirrors the market-data-key proxy (`routes/market_data_keys.py`).
-KNOWN_BRAINS: tuple[str, ...] = ("alpha", "camaro", "chevelle", "redeye")
+KNOWN_BRAINS: tuple[str, ...] = ("camino", "barracuda", "hellcat", "gto")
 MAX_BATCH_SYMBOLS: int = 50
 
 

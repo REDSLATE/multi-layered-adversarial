@@ -13,13 +13,13 @@ The stream multiplexes 4 event types:
     data: {"ts": "2026-06-10T10:30:00Z"}
 
     event: intent
-    data: {"intent_id": "...", "stack": "camaro", "action": "BUY", ...}
+    data: {"intent_id": "...", "stack": "barracuda", "action": "BUY", ...}
 
     event: broker_fill
     data: {"symbol": "AAPL", "side": "BUY", "qty": ..., ...}
 
     event: position_misread
-    data: {"symbol": "AAPL", "brain": "camaro", "assumed_side": "flat", ...}
+    data: {"symbol": "AAPL", "brain": "barracuda", "assumed_side": "flat", ...}
 
     event: regime
     data: {"regime": "chop", "ts": "..."}

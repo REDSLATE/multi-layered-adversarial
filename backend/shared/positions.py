@@ -82,7 +82,7 @@ async def _audit(action: str, actor: str, position_id: str, payload: dict) -> No
 
 # ──────────────────────── models ────────────────────────
 
-BrainT = Literal["alpha", "camaro", "chevelle", "redeye"]
+BrainT = Literal["camino", "barracuda", "hellcat", "gto"]
 StanceT = Literal["long", "short", "abstain"]
 DirectionT = Literal["long", "short"]
 

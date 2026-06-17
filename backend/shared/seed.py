@@ -44,28 +44,28 @@ async def seed_all(db) -> None:
     # Calibrators (per-runtime, kept side-by-side but isolated)
     if await db[SHARED_CALIBRATORS].count_documents({}) == 0:
         await db[SHARED_CALIBRATORS].insert_many([
-            {"runtime": "alpha",    "name": "alpha_isotonic_v3",  "version": "3.1.0", "method": "isotonic",        "fit_at": _ts(60 * 22)},
-            {"runtime": "alpha",    "name": "alpha_platt_v1",     "version": "1.4.2", "method": "platt-scaling",   "fit_at": _ts(60 * 14)},
-            {"runtime": "camaro",   "name": "camaro_isotonic_v2", "version": "2.0.7", "method": "isotonic",        "fit_at": _ts(60 * 30)},
-            {"runtime": "camaro",   "name": "camaro_temp_scale",  "version": "0.3.1", "method": "temperature",     "fit_at": _ts(60 * 6)},
-            {"runtime": "chevelle", "name": "chevelle_iso_v1",    "version": "1.1.0", "method": "isotonic",        "fit_at": _ts(60 * 48)},
-            {"runtime": "chevelle", "name": "chevelle_platt_v2",  "version": "2.2.0", "method": "platt-scaling",   "fit_at": _ts(60 * 8)},
+            {"runtime": "camino",    "name": "alpha_isotonic_v3",  "version": "3.1.0", "method": "isotonic",        "fit_at": _ts(60 * 22)},
+            {"runtime": "camino",    "name": "alpha_platt_v1",     "version": "1.4.2", "method": "platt-scaling",   "fit_at": _ts(60 * 14)},
+            {"runtime": "barracuda",   "name": "camaro_isotonic_v2", "version": "2.0.7", "method": "isotonic",        "fit_at": _ts(60 * 30)},
+            {"runtime": "barracuda",   "name": "camaro_temp_scale",  "version": "0.3.1", "method": "temperature",     "fit_at": _ts(60 * 6)},
+            {"runtime": "hellcat", "name": "chevelle_iso_v1",    "version": "1.1.0", "method": "isotonic",        "fit_at": _ts(60 * 48)},
+            {"runtime": "hellcat", "name": "chevelle_platt_v2",  "version": "2.2.0", "method": "platt-scaling",   "fit_at": _ts(60 * 8)},
         ])
 
     # Artifact inventory (per-runtime, kept SEPARATE)
     if await db[SHARED_ARTIFACTS].count_documents({}) == 0:
         await db[SHARED_ARTIFACTS].insert_many([
-            {"runtime": "alpha",    "artifact": "alpha_xgb",       "version": "v0.7.4", "sha": "a1b2c3d4", "registered_at": _ts(60 * 26)},
-            {"runtime": "alpha",    "artifact": "alpha_phase6",    "version": "v0.7.4", "sha": "a1b2c3d4", "registered_at": _ts(60 * 26)},
-            {"runtime": "camaro",   "artifact": "camaro_lgbm",     "version": "v0.4.2", "sha": "ee11ff22", "registered_at": _ts(60 * 12)},
-            {"runtime": "camaro",   "artifact": "camaro_executor", "version": "v0.4.2", "sha": "ee11ff22", "registered_at": _ts(60 * 12)},
-            {"runtime": "chevelle", "artifact": "chevelle_tx",     "version": "v0.2.1", "sha": "99aabbcc", "registered_at": _ts(60 * 4)},
-            {"runtime": "chevelle", "artifact": "chevelle_authority", "version": "v0.2.1", "sha": "99aabbcc", "registered_at": _ts(60 * 4)},
+            {"runtime": "camino",    "artifact": "alpha_xgb",       "version": "v0.7.4", "sha": "a1b2c3d4", "registered_at": _ts(60 * 26)},
+            {"runtime": "camino",    "artifact": "alpha_phase6",    "version": "v0.7.4", "sha": "a1b2c3d4", "registered_at": _ts(60 * 26)},
+            {"runtime": "barracuda",   "artifact": "camaro_lgbm",     "version": "v0.4.2", "sha": "ee11ff22", "registered_at": _ts(60 * 12)},
+            {"runtime": "barracuda",   "artifact": "camaro_executor", "version": "v0.4.2", "sha": "ee11ff22", "registered_at": _ts(60 * 12)},
+            {"runtime": "hellcat", "artifact": "chevelle_tx",     "version": "v0.2.1", "sha": "99aabbcc", "registered_at": _ts(60 * 4)},
+            {"runtime": "hellcat", "artifact": "chevelle_authority", "version": "v0.2.1", "sha": "99aabbcc", "registered_at": _ts(60 * 4)},
         ])
 
     # ADL receipts (observed, not executed)
     if await db[SHARED_RECEIPTS].count_documents({}) == 0:
-        runtimes = ["alpha", "camaro", "chevelle"]
+        runtimes = ["camino", "barracuda", "hellcat"]
         actions = ["enter_long", "enter_short", "exit", "scale_in", "hold"]
         symbols = ["ES", "NQ", "CL", "GC", "ZB"]
         # NOTE: `random` (not `secrets`) is correct here. This is
@@ -95,7 +95,7 @@ async def seed_all(db) -> None:
 
     # Memory labels (firewall log)
     if await db[SHARED_MEMORY].count_documents({}) == 0:
-        runtimes = ["alpha", "camaro", "chevelle"]
+        runtimes = ["camino", "barracuda", "hellcat"]
         labels = ["safe", "review", "quarantine"]
         bulk = []
         rng = random.Random(11)  # noqa: S311 — non-crypto demo data

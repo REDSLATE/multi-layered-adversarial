@@ -11,7 +11,7 @@ from namespaces import SHARED_MEMORY
 SAFE_LABELS = {"safe", "review", "quarantine"}
 
 
-async def label_and_store(db, runtime: Literal["alpha", "camaro", "chevelle"], payload: dict, label: str, reason: str = "") -> dict:
+async def label_and_store(db, runtime: Literal["camino", "barracuda", "hellcat"], payload: dict, label: str, reason: str = "") -> dict:
     if label not in SAFE_LABELS:
         raise ValueError(f"label must be one of {SAFE_LABELS}")
     doc = {

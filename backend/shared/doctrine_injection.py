@@ -260,18 +260,18 @@ def build_crypto_breakout_overlay() -> DoctrineOverlay:
         lane="crypto",
         volatility="high",
         stack_weights={
-            "redeye":   1.15,
-            "alpha":    1.05,
-            "chevelle": 0.80,
+            "gto":   1.15,
+            "camino":    1.05,
+            "hellcat": 0.80,
         },
         governor_policy={
             "downweight_floor": 0.75,
             "lighter_damping": True,
         },
         personality_bias={
-            "redeye": "trap_hunter",
-            "alpha":  "momentum_expansion",
-            "camaro": "execution_precision",
+            "gto": "trap_hunter",
+            "camino":  "momentum_expansion",
+            "barracuda": "execution_precision",
         },
         metadata={"description": "High-volatility crypto breakout doctrine"},
     )
@@ -282,15 +282,15 @@ def build_fomc_overlay() -> DoctrineOverlay:
         overlay_id="fomc_event_guard_v1",
         event_type="fomc",
         stack_weights={
-            "chevelle": 1.10,
-            "alpha":    0.85,
+            "hellcat": 1.10,
+            "camino":    0.85,
         },
         governor_policy={
             "max_position_reduction": 0.65,
             "volatility_guard": True,
         },
         personality_bias={
-            "chevelle": "macro_risk_focus",
+            "hellcat": "macro_risk_focus",
         },
         metadata={"description": "FOMC macro volatility defense doctrine"},
     )

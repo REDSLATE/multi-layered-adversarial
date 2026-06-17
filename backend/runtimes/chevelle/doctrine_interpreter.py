@@ -45,7 +45,7 @@ def interpret_for_chevelle(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     risk_multiplier = max(0.0, min(1.0, risk_multiplier))
 
     return {
-        "brain": "chevelle",
+        "brain": "hellcat",
         "role": "governor",
         "doctrine": doctrine.to_dict(),
         "risk_multiplier": round(risk_multiplier, 4),

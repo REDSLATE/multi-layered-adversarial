@@ -67,7 +67,7 @@ ROLES: tuple[str, ...] = (
     # Crypto lane (lane-isolated execution authority):
     "crypto_strategist", "crypto", "crypto_governor", "crypto_auditor",
 )
-BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("alpha", "camaro", "chevelle", "redeye")
+BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("camino", "barracuda", "hellcat", "gto")
 
 # Default seat → brain assignment. Operator-pinned defaults for the
 # equity lane (strategist=camaro, executor=alpha, governor=chevelle);
@@ -83,9 +83,9 @@ BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("alpha", "camaro", "chevel
 # coupling we're removing. Operator (or the seat's verifier-driven
 # promotion path) is the only way a brain enters the crypto seat.
 DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
-    "strategist":        "camaro",
-    "executor":          "alpha",
-    "governor":          "chevelle",
+    "strategist":        "barracuda",
+    "executor":          "camino",
+    "governor":          "hellcat",
     "auditor":           None,
     "crypto_strategist": None,
     "crypto":            None,
@@ -105,7 +105,7 @@ _ALL_TRUE = {role: True for role in ROLES}
 
 # Seats Chevelle/RedEye exclusively may hold. Equity + crypto twins.
 _GOVERNOR_EXCLUSIVE_SEATS: tuple[str, ...] = ("governor", "crypto_governor")
-_GOVERNOR_EXCLUSIVE_BRAINS: tuple[str, ...] = ("chevelle", "redeye")
+_GOVERNOR_EXCLUSIVE_BRAINS: tuple[str, ...] = ("hellcat", "gto")
 
 
 def _build_default_eligibility() -> dict[str, dict[str, bool]]:
@@ -333,7 +333,7 @@ RoleT = Literal[
     # still post the legacy names; we rewrite at the boundary.
     "decider", "crypto_decider",
 ]
-BrainT = Literal["alpha", "camaro", "chevelle", "redeye"]
+BrainT = Literal["camino", "barracuda", "hellcat", "gto"]
 
 
 class AssignIn(BaseModel):

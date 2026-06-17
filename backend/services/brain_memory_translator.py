@@ -23,12 +23,12 @@ from typing import Any, Dict, Tuple
 
 
 STACK_ALIASES = {
-    "camaro": "camaro",
-    "alpha": "alpha",
-    "chevelle": "chevelle",
-    "redeye": "redeye",
-    "red_eye": "redeye",
-    "red-eye": "redeye",
+    "barracuda": "barracuda",
+    "camino": "camino",
+    "hellcat": "hellcat",
+    "gto": "gto",
+    "red_eye": "gto",
+    "red-eye": "gto",
 }
 
 

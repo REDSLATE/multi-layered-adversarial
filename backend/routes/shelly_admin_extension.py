@@ -114,7 +114,7 @@ def brain_memory_md(
     Returns plain text/markdown — operator pastes into editor or the
     frontend renders as <pre>."""
     brain_l = brain.lower()
-    if brain_l not in ("alpha", "camaro", "chevelle", "redeye"):
+    if brain_l not in ("camino", "barracuda", "hellcat", "gto"):
         raise HTTPException(
             status_code=400,
             detail=f"unknown brain {brain!r}; expected alpha/camaro/chevelle/redeye",
@@ -130,7 +130,7 @@ def all_brain_memory_md(
     """Render all four brains' MEMORY.md concatenated, with separators.
     Lower default recent_limit since 4× the volume."""
     parts: list[str] = []
-    for brain in ("alpha", "camaro", "chevelle", "redeye"):
+    for brain in ("camino", "barracuda", "hellcat", "gto"):
         parts.append(render_brain_memory_md(brain, recent_limit=recent_limit))
         parts.append("\n---\n")
     return "\n".join(parts)

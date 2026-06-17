@@ -46,38 +46,58 @@ from __future__ import annotations
 from typing import Final
 
 
-# Canonical lowercase IDs. Any addition here must also update
-# `backend/namespaces.py::LIVE_RUNTIMES` and the BRAIN_ROSTER in
-# `external/brains/runner.py`.
+# Canonical lowercase IDs. The 2026-02-20 rename collapses
+# alpha→camino, camaro→barracuda, chevelle→hellcat, redeye→gto so the
+# DB / code IDs match the operator-facing display names. Legacy IDs
+# are still accepted at ingress (see DISPLAY_TO_ID below) so historical
+# rows / external integrations don't break — but every new write uses
+# the canonical names below.
 VALID_BRAIN_IDS: Final[frozenset[str]] = frozenset({
-    "alpha", "camaro", "chevelle", "redeye",
+    "camino", "barracuda", "hellcat", "gto",
 })
 
-# Display → canonical. Includes:
-#   * The current operator brand names (Camino/Barracuda/Hellcat/GTO).
-#   * The legacy slot codes typed as display names (Alpha/Camaro/
-#     Chevelle/RedEye) — defensive coverage in case a previous-pass
-#     UI bundle in someone's cache still emits them.
-#   * Common casing variants (RedEye vs Redeye, GTO/Gto) so a typo
-#     doesn't silently mint an orphan collection.
+# Legacy → canonical. The pre-rename canonical names get aliased to
+# the new canonical so any historical doc, audit row, or third-party
+# integration that still emits `"redeye"` keeps working.
+LEGACY_TO_CANONICAL: Final[dict[str, str]] = {
+    "alpha":    "camino",
+    "camaro":   "barracuda",
+    "chevelle": "hellcat",
+    "redeye":   "gto",
+}
+
+# Display → canonical. Accepts the new operator-facing names in any
+# casing variant, plus the legacy slot codes for back-compat.
 DISPLAY_TO_ID: Final[dict[str, str]] = {
-    # Current operator brand names
-    "Camino":    "alpha",
-    "Barracuda": "camaro",
-    "Hellcat":   "chevelle",
-    "GTO":       "redeye",
-    # Legacy slot codes as display labels (pre-rename UI residue)
-    "Alpha":     "alpha",
-    "Camaro":    "camaro",
-    "Chevelle":  "chevelle",
-    "RedEye":    "redeye",
-    "Redeye":    "redeye",
-    "Red Eye":   "redeye",
-    # Casing variants the operator or an LLM might emit
-    "CAMINO":    "alpha",
-    "BARRACUDA": "camaro",
-    "HELLCAT":   "chevelle",
-    "Gto":       "redeye",
+    # Current canonical (display name == canonical ID, title-cased)
+    "Camino":    "camino",
+    "Barracuda": "barracuda",
+    "Hellcat":   "hellcat",
+    "GTO":       "gto",
+    # Casing variants
+    "CAMINO":    "camino",
+    "BARRACUDA": "barracuda",
+    "HELLCAT":   "hellcat",
+    "Gto":       "gto",
+    "gto":       "gto",
+    "camino":    "camino",
+    "barracuda": "barracuda",
+    "hellcat":   "hellcat",
+    # Legacy slot codes — accepted at ingress, mapped to new canonical
+    "Alpha":     "camino",
+    "alpha":     "camino",
+    "ALPHA":     "camino",
+    "Camaro":    "barracuda",
+    "camaro":    "barracuda",
+    "CAMARO":    "barracuda",
+    "Chevelle":  "hellcat",
+    "chevelle":  "hellcat",
+    "CHEVELLE":  "hellcat",
+    "RedEye":    "gto",
+    "Redeye":    "gto",
+    "redeye":    "gto",
+    "REDEYE":    "gto",
+    "Red Eye":   "gto",
 }
 
 # Sentinel returned when the input cannot be canonicalized. Caller
@@ -133,8 +153,12 @@ def normalize_brain_id(value: object) -> str:
         return UNKNOWN_BRAIN
 
     lowered = text.lower()
+    # Already canonical?
     if lowered in VALID_BRAIN_IDS:
         return lowered
+    # Legacy canonical → new canonical.
+    if lowered in LEGACY_TO_CANONICAL:
+        return LEGACY_TO_CANONICAL[lowered]
 
     if text in DISPLAY_TO_ID:
         return DISPLAY_TO_ID[text]
@@ -159,6 +183,7 @@ def is_known_brain(value: object) -> bool:
 __all__ = [
     "VALID_BRAIN_IDS",
     "DISPLAY_TO_ID",
+    "LEGACY_TO_CANONICAL",
     "UNKNOWN_BRAIN",
     "normalize_brain_id",
     "is_known_brain",

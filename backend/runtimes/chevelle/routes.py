@@ -5,13 +5,13 @@ from auth import get_current_user
 from db import db
 from namespaces import CHEVELLE_MEMORY_LABELS
 
-router = APIRouter(prefix="/runtime/chevelle", tags=["chevelle"])
+router = APIRouter(prefix="/runtime/chevelle", tags=["hellcat"])
 
 
 @router.get("/status")
 async def status(_user: dict = Depends(get_current_user)):
     return {
-        "runtime": "chevelle",
+        "runtime": "hellcat",
         "mode": "seat-governed",
         "memory_labels_count": await db[CHEVELLE_MEMORY_LABELS].count_documents({}),
         "doctrine": (

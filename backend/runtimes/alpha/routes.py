@@ -5,13 +5,13 @@ from auth import get_current_user
 from db import db
 from namespaces import ALPHA_DECISION_LOG
 
-router = APIRouter(prefix="/runtime/alpha", tags=["alpha"])
+router = APIRouter(prefix="/runtime/alpha", tags=["camino"])
 
 
 @router.get("/status")
 async def status(_user: dict = Depends(get_current_user)):
     return {
-        "runtime": "alpha",
+        "runtime": "camino",
         "mode": "seat-governed",
         "decision_log_count": await db[ALPHA_DECISION_LOG].count_documents({}),
         "doctrine": (

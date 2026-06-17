@@ -188,11 +188,11 @@ def hoist_packet_audit_fields(packet: Dict[str, Any]) -> Dict[str, Any]:
 
     # Legacy equity shape — only here for back-compat with rows already
     # persisted before the role-keyed refactor.
-    alpha = packet.get("alpha") or {}
+    alpha = packet.get("camino") or {}
     doctrine = alpha.get("doctrine") or {}
-    redeye = packet.get("redeye") or {}
-    chevelle = packet.get("chevelle") or {}
-    camaro = packet.get("camaro") or {}
+    redeye = packet.get("gto") or {}
+    chevelle = packet.get("hellcat") or {}
+    camaro = packet.get("barracuda") or {}
     challenge_required = bool(redeye.get("challenge_required"))
     governor_action = chevelle.get("governor_action")
     execution_ready = bool(camaro.get("execution_ready"))

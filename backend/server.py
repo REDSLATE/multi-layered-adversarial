@@ -267,6 +267,15 @@ async def lifespan(app: FastAPI):
             migrate_legacy_auditor_to_roster,
             sync_v2_trust_from_roster,
         )
+        # Run the canonical-rename migration FIRST so the auditor
+        # migration + v2 trust sync operate on the new names.
+        from shared.brain_identity_migration import migrate_brain_identity
+        rename_report = await migrate_brain_identity()
+        # Only log if anything actually changed — keeps boot logs quiet
+        # once the migration has settled.
+        actual = {k: v for k, v in (rename_report.get("updates") or {}).items() if v}
+        if actual:
+            logger.info("brain_identity rename migration: %s", actual)
         result = await migrate_legacy_auditor_to_roster()
         logger.info("seat_state migration: %s", result)
         sync_result = await sync_v2_trust_from_roster()
@@ -537,7 +546,7 @@ async def lifespan(app: FastAPI):
     # 2026-02-20: companion to the auto-wipe-on-write helper in
     # `shared/roster.py`. Without this boot reconciliation, a deploy
     # that ships into prod with the legacy `shared_executor_seat`
-    # doc already holding a stale value (e.g. 'alpha' from a
+    # doc already holding a stale value (e.g. 'camino' from a
     # pre-QSS rotation) will keep the "SEAT REGISTRY DRIFT DETECTED"
     # banner firing on the Intents page until the operator does
     # SOMETHING that triggers a roster write.
@@ -737,7 +746,7 @@ async def root():
     return {
         "name": "RISEDUAL Mission Control",
         "deploy_mode": os.environ.get("DEPLOY_MODE", "observation"),
-        "runtimes": ["alpha", "camaro", "chevelle"],
+        "runtimes": ["camino", "barracuda", "hellcat"],
         "doctrine": "one shared nervous system, three separate decision brains",
     }
 

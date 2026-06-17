@@ -32,7 +32,7 @@ from db import db
 from namespaces import BRAIN_LANE_POLICY
 
 
-KNOWN_BRAINS = ("alpha", "camaro", "chevelle", "redeye")
+KNOWN_BRAINS = ("camino", "barracuda", "hellcat", "gto")
 KNOWN_LANES = ("equity", "crypto")
 
 
@@ -80,7 +80,7 @@ router = APIRouter(prefix="/admin/brain-lane-policy", tags=["roster"])
 
 
 class PolicyIn(BaseModel):
-    brain: Literal["alpha", "camaro", "chevelle", "redeye"]
+    brain: Literal["camino", "barracuda", "hellcat", "gto"]
     lane: Literal["equity", "crypto"]
     allowed: bool
     reason: Optional[str] = Field(default=None, max_length=512)
@@ -144,7 +144,7 @@ async def set_policy(
 
 @router.delete("/{brain}/{lane}")
 async def clear_policy(
-    brain: Literal["alpha", "camaro", "chevelle", "redeye"],
+    brain: Literal["camino", "barracuda", "hellcat", "gto"],
     lane: Literal["equity", "crypto"],
     user: dict = Depends(get_current_user),  # noqa: B008
 ):

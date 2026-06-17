@@ -33,7 +33,7 @@ from db import db
 from namespaces import PARADOX_V2_VOTE_SESSIONS
 
 
-CANONICAL_BRAINS: tuple[str, ...] = ("alpha", "camaro", "chevelle", "redeye")
+CANONICAL_BRAINS: tuple[str, ...] = ("camino", "barracuda", "hellcat", "gto")
 VOTE_WINDOW_SECONDS_DEFAULT: int = 180  # 3 min per the operator spec
 QUORUM_DEFAULT: int = 2
 

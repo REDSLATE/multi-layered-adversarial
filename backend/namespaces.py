@@ -348,9 +348,9 @@ PUBLIC_RATE_LIMITS = "public_rate_limits"
 #
 # Schema (lightweight; produced by the kernel, append-only):
 #   intent_id              : str  — the gated intent's id
-#   executor_runtime       : str  — anchored runtime ("camaro")
+#   executor_runtime       : str  — anchored runtime ("barracuda")
 #   executor_call          : dict — direction, confidence, snapshot ref
-#   opponent_runtime       : str  — anchored runtime ("redeye")
+#   opponent_runtime       : str  — anchored runtime ("gto")
 #   opponent_mode          : str  — live | shadow_observation | offline
 #   opponent_challenge     : dict | None — challenge payload (None if offline)
 #   kernel_verdict         : str  — APPROVED | REJECTED | DAMPENED
@@ -484,7 +484,7 @@ RISE_AI_THREADS = "rise_ai_threads"
 #    created_at}
 RISE_AI_THREAD_MESSAGES = "rise_ai_thread_messages"
 
-RUNTIMES = ("alpha", "camaro", "chevelle", "redeye")
+RUNTIMES = ("camino", "barracuda", "hellcat", "gto")
 
 # ───────────────────────────────────────────────────────────────────────
 # PARADOX hierarchy (2026-05-20)
@@ -516,10 +516,10 @@ RUNTIMES = ("alpha", "camaro", "chevelle", "redeye")
 PARADOX_KERNEL = "PARADOX"  # the system mind; the kernel above the brains
 
 ROLE_ANCHORS: dict[str, str] = {
-    "strategist": "alpha",
-    "executor":   "camaro",
-    "governor":   "chevelle",
-    "opponent":   "redeye",
+    "strategist": "camino",
+    "executor":   "barracuda",
+    "governor":   "hellcat",
+    "opponent":   "gto",
     "memory":     "shelly",   # namespace-reserved; Shelly is conceptual today
 }
 
@@ -528,7 +528,7 @@ RUNTIME_ROLE: dict[str, str] = {v: k for k, v in ROLE_ANCHORS.items()}
 
 # Runtimes that are operationally live (have a sidecar that reports in).
 # Shelly is reserved namespace but not yet a running sidecar.
-LIVE_RUNTIMES: tuple[str, ...] = ("alpha", "camaro", "chevelle", "redeye")
+LIVE_RUNTIMES: tuple[str, ...] = ("camino", "barracuda", "hellcat", "gto")
 
 # Opponent mode — REDEYE is currently re-learning in shadow mode.
 # `live`               → opponent challenges gate trades
@@ -563,7 +563,7 @@ DISCUSSION_PARTICIPANTS: tuple[str, ...] = RUNTIMES + ADVISORS
 #   NOT enforce anything.
 # ───────────────────────────────────────────────────────────────────────
 ROLES: dict[str, dict] = {
-    "alpha": {
+    "camino": {
         "role": "trader",
         "title": "Alpha",
         "tagline": "structured trader",
@@ -578,7 +578,7 @@ ROLES: dict[str, dict] = {
             "phase6_proposal",
         ],
     },
-    "camaro": {
+    "barracuda": {
         "role": "challenger",
         "title": "Camaro",
         "tagline": "challenger / counterfactual",
@@ -592,7 +592,7 @@ ROLES: dict[str, dict] = {
             "executor_proposed",
         ],
     },
-    "chevelle": {
+    "hellcat": {
         "role": "governor",
         "title": "Chevelle",
         "tagline": "memory + calibration",
@@ -607,7 +607,7 @@ ROLES: dict[str, dict] = {
             "promotion_decision", "authority_call",
         ],
     },
-    "redeye": {
+    "gto": {
         "role": "opponent",
         "title": "REDEYE",
         "tagline": "adversarial scout",
@@ -652,10 +652,10 @@ EXECUTION_AUTHORITY_STATES = frozenset({"co_trader", "primary"})
 # Default authority per runtime on first boot. Promotion writes new history;
 # the default is what we install when the doc is missing.
 DEFAULT_AUTHORITY: dict[str, str] = {
-    "alpha": "co_trader",     # only stack with execution authority today
-    "camaro": "challenger",
-    "chevelle": GOVERNOR_STATE,
-    "redeye": "advisor",      # full-seat short-side advisor
+    "camino": "co_trader",     # only stack with execution authority today
+    "barracuda": "challenger",
+    "hellcat": GOVERNOR_STATE,
+    "gto": "advisor",      # full-seat short-side advisor
 }
 
 # Patent J readiness thresholds (operator-tunable later).

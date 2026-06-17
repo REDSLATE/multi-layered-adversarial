@@ -533,7 +533,7 @@ async def _cast_vote_impl(body: "CastVoteRequest") -> dict:
 class EmitVoteRequest(BaseModel):
     """Brain ships RAW signals. MC calibrates server-side using its
     persisted history and applies negative-knowledge before persisting."""
-    brain: Literal["alpha", "camaro", "chevelle", "redeye"]
+    brain: Literal["camino", "barracuda", "hellcat", "gto"]
     stance: Literal["BUY", "SELL", "HOLD"]
     raw_confidence: float = Field(..., ge=0.0, le=1.0)
     symbol: str
@@ -790,7 +790,7 @@ async def post_open_vote_session(
 
 
 class CastBallotRequest(BaseModel):
-    brain: Literal["alpha", "camaro", "chevelle", "redeye"]
+    brain: Literal["camino", "barracuda", "hellcat", "gto"]
     vote: Literal["BUY_UP", "SELL_DOWN", "HOLD", "ABSTAIN"]
     reason: str = Field(..., min_length=1)
 
@@ -991,12 +991,12 @@ async def get_pilot_readiness(_user: dict = Depends(get_current_user)) -> dict:
 
 # Display map for the Council Chamber tile. Source of truth: seed.py
 # CANONICAL_BRAINS. Hardcoded here to avoid a DB round-trip per render.
-_COUNCIL_DISPLAY_ORDER = ("alpha", "camaro", "chevelle", "redeye")
+_COUNCIL_DISPLAY_ORDER = ("camino", "barracuda", "hellcat", "gto")
 _COUNCIL_DISPLAY_NAMES = {
-    "alpha":    "Camino",
-    "camaro":   "Barracuda",
-    "chevelle": "Hellcat",
-    "redeye":   "GTO",
+    "camino":    "Camino",
+    "barracuda":   "Barracuda",
+    "hellcat": "Hellcat",
+    "gto":   "GTO",
 }
 
 

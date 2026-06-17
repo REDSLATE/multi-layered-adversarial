@@ -164,7 +164,7 @@ MAX_THREAD_DEPTH = 64             # cycle / runaway-thread guard
 
 class OpinionIn(BaseModel):
     """Schema for posting an opinion. `runtime` is the speaker."""
-    runtime: Literal["alpha", "camaro", "chevelle", "redeye"]
+    runtime: Literal["camino", "barracuda", "hellcat", "gto"]
     topic: str = Field(..., min_length=1, max_length=128)
     stance: Literal[
         "long", "short", "veto", "endorse",

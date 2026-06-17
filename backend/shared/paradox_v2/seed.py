@@ -37,10 +37,10 @@ def _now() -> str:
 
 # Canonical brain doctrine map (brain_id → display + doctrine).
 CANONICAL_BRAINS = [
-    {"brain_id": "alpha",    "display_name": "Camino",    "doctrine": "adversarial"},
-    {"brain_id": "camaro",   "display_name": "Barracuda", "doctrine": "tape_reading"},
-    {"brain_id": "chevelle", "display_name": "Hellcat",   "doctrine": "trend"},
-    {"brain_id": "redeye",   "display_name": "GTO",       "doctrine": "mean_reversion"},
+    {"brain_id": "camino",    "display_name": "Camino",    "doctrine": "adversarial"},
+    {"brain_id": "barracuda",   "display_name": "Barracuda", "doctrine": "tape_reading"},
+    {"brain_id": "hellcat", "display_name": "Hellcat",   "doctrine": "trend"},
+    {"brain_id": "gto",   "display_name": "GTO",       "doctrine": "mean_reversion"},
 ]
 
 
@@ -118,9 +118,9 @@ DEFAULT_SEAT_POLICIES = [
 # All other seat × brain pairs start untrusted. Operator adds via
 # /api/v2/seat-trust.
 DEFAULT_TRUST = [
-    {"seat_id": "equity_executor",       "brain_id": "alpha",    "trust_level": 1.0},
-    {"seat_id": "spot_short_executor",   "brain_id": "camaro",   "trust_level": 1.0},
-    {"seat_id": "options_executor",      "brain_id": "chevelle", "trust_level": 1.0},
+    {"seat_id": "equity_executor",       "brain_id": "camino",    "trust_level": 1.0},
+    {"seat_id": "spot_short_executor",   "brain_id": "barracuda",   "trust_level": 1.0},
+    {"seat_id": "options_executor",      "brain_id": "hellcat", "trust_level": 1.0},
 ]
 
 

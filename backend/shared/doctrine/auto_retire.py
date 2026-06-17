@@ -26,7 +26,7 @@ Sample shape:
           "severity": "FRICTION",
           "headline": "equity/governor v1: block heuristic isn't catching losers",
           "rationale": "block loss_rate (0.41) ≤ modulate loss_rate (0.52)…",
-          "occupancy_during_window": {"chevelle": 71, "alpha": 11}
+          "occupancy_during_window": {"hellcat": 71, "camino": 11}
         }
       ],
       "doctrine_note": "Retirement targets seats, not brains.",

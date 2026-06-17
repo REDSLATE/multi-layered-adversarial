@@ -143,10 +143,10 @@ async def _last_receipt_ts(runtime: str) -> str | None:
     #    only audit trail. No `runtime` filter needed; the collection
     #    IS the brain.
     coll_per_brain = {
-        "alpha":    ALPHA_DECISION_LOG,
-        "camaro":   CAMARO_SHADOW_ROWS,
-        "chevelle": CHEVELLE_MEMORY_LABELS,
-        "redeye":   REDEYE_DECISION_LOG,
+        "camino":    ALPHA_DECISION_LOG,
+        "barracuda":   CAMARO_SHADOW_ROWS,
+        "hellcat": CHEVELLE_MEMORY_LABELS,
+        "gto":   REDEYE_DECISION_LOG,
     }.get(runtime)
     if coll_per_brain:
         doc = await db[coll_per_brain].find_one(
@@ -177,10 +177,10 @@ async def _runtime_log_count(runtime: str) -> int:
     arrived), the count returns 0 instead of crashing.
     """
     coll = {
-        "alpha":    ALPHA_DECISION_LOG,
-        "camaro":   CAMARO_SHADOW_ROWS,
-        "chevelle": CHEVELLE_MEMORY_LABELS,
-        "redeye":   REDEYE_DECISION_LOG,
+        "camino":    ALPHA_DECISION_LOG,
+        "barracuda":   CAMARO_SHADOW_ROWS,
+        "hellcat": CHEVELLE_MEMORY_LABELS,
+        "gto":   REDEYE_DECISION_LOG,
     }.get(runtime)
     if coll is None:
         # Unknown runtime — opinion-post count as the safe fallback.

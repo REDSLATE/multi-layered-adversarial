@@ -194,7 +194,7 @@ async def _alpha_match_in_window(
 async def compute_brain_report(
     brain: str,
     hours: int = 24,
-    benchmark_brain: str = "alpha",
+    benchmark_brain: str = "camino",
 ) -> dict:
     """Compute a PromotionArtifact report for one brain over `hours` window.
 
@@ -401,7 +401,7 @@ class BrainReportResponse(BaseModel):
 async def get_promotion_artifact(
     brain: str,
     hours: int = Query(24, ge=1, le=720),
-    benchmark_brain: str = Query("alpha"),
+    benchmark_brain: str = Query("camino"),
     _user: dict = Depends(get_current_user),
 ):
     if brain not in RUNTIMES:
@@ -416,7 +416,7 @@ async def get_promotion_artifact(
 @router.get("")
 async def get_promotion_artifact_all(
     hours: int = Query(24, ge=1, le=720),
-    benchmark_brain: str = Query("alpha"),
+    benchmark_brain: str = Query("camino"),
     _user: dict = Depends(get_current_user),
 ):
     """All-brains scan against the benchmark brain. Used by the dashboard

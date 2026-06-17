@@ -40,10 +40,10 @@ ACTUAL_VALUES = ("win", "loss", "no-event", "ambiguous")
 
 # Stances that count as a directional call worth scoring per role.
 ROLE_STANCES: dict[str, tuple[str, ...]] = {
-    "alpha":    ("long",),                  # Alpha is judged on longs only
-    "redeye":   ("short",),                 # REDEYE is judged on shorts only
-    "camaro":   ("endorse", "veto", "observation"),  # judgement calls
-    "chevelle": ("observation", "veto"),    # source-reliability rulings
+    "camino":    ("long",),                  # Alpha is judged on longs only
+    "gto":   ("short",),                 # REDEYE is judged on shorts only
+    "barracuda":   ("endorse", "veto", "observation"),  # judgement calls
+    "hellcat": ("observation", "veto"),    # source-reliability rulings
 }
 
 
@@ -81,8 +81,8 @@ async def post_outcome(
             status_code=401,
             detail="X-Runtime-Token required (chevelle); operators use /api/admin/outcome",
         )
-    verify_runtime_token("chevelle", x_runtime_token)
-    resolved_by = "chevelle"
+    verify_runtime_token("hellcat", x_runtime_token)
+    resolved_by = "hellcat"
 
     opinion = await db[SHARED_OPINIONS].find_one(
         {"opinion_id": body.opinion_id}, {"_id": 0}
@@ -90,7 +90,7 @@ async def post_outcome(
     if not opinion:
         raise HTTPException(status_code=404, detail="opinion not found")
 
-    if opinion.get("runtime") == "chevelle":
+    if opinion.get("runtime") == "hellcat":
         raise HTTPException(
             status_code=403,
             detail="chevelle may not resolve its own opinions (no brain self-grades)",
@@ -376,7 +376,7 @@ async def _gather_rows(runtime: str, since: Optional[str]) -> list[dict]:
     if stances:
         q["stance"] = {"$in": list(stances)}
     rows = await db[SHARED_OUTCOMES].find(q, {"_id": 0}).to_list(2000)
-    if runtime == "redeye":
+    if runtime == "gto":
         # Hydrate alpha_alignment from each source opinion's evidence
         ids = [r["opinion_id"] for r in rows]
         if ids:
@@ -388,7 +388,7 @@ async def _gather_rows(runtime: str, since: Optional[str]) -> list[dict]:
                 r["_alpha_alignment"] = (ev_by_id.get(r["opinion_id"]) or {}).get(
                     "alpha_alignment"
                 )
-    elif runtime == "chevelle":
+    elif runtime == "hellcat":
         # Hydrate evidence.source for source-reliability breakdown (Step 3).
         ids = [r["opinion_id"] for r in rows]
         if ids:
@@ -416,14 +416,14 @@ def _build_scorecard(runtime: str, rows: list[dict]) -> dict:
             "may rewrite another brain's authority based on a scorecard."
         ),
     }
-    if runtime == "alpha":
+    if runtime == "camino":
         base["lens"] = "longs"
         base["question_answered"] = "When am I good at longs?"
-    elif runtime == "redeye":
+    elif runtime == "gto":
         base["lens"] = "shorts"
         base["question_answered"] = "When am I good at shorts?"
         base["alpha_alignment_breakdown"] = _alpha_alignment_breakdown(rows)
-    elif runtime == "camaro":
+    elif runtime == "barracuda":
         base["lens"] = "judgement_calls"
         base["question_answered"] = (
             "When should I trust, reduce, veto, or execute? "
@@ -438,7 +438,7 @@ def _build_scorecard(runtime: str, rows: list[dict]) -> dict:
         # Step 5 — endorse hit rate by regime. Surfaces "which stack do I
         # trust under which market regime?".
         base["regime_breakdown"] = _regime_breakdown(rows)
-    elif runtime == "chevelle":
+    elif runtime == "hellcat":
         base["lens"] = "source_reliability"
         base["question_answered"] = "Which outside signals are reliable?"
         base["topic_breakdown"] = _topic_breakdown(rows)

@@ -123,13 +123,13 @@ async def list_brain_outages(
           "window_hours": 24,
           "min_gap_sec": 300,
           "per_brain": {
-            "chevelle": {
+            "hellcat": {
               "outage_count": 3,
               "total_outage_sec": 12_960,
               "longest_outage_sec": 7_824,
               "currently_down": true,
               "events": [
-                {"brain":"chevelle","started_at":"...","ended_at":"...",
+                {"brain":"hellcat","started_at":"...","ended_at":"...",
                  "duration_sec":3_700,"recovered":true},
                 ...
               ]
@@ -138,7 +138,7 @@ async def list_brain_outages(
           },
           "fleet_summary": {
             "total_outages": 7,
-            "brains_currently_down": ["chevelle", "redeye"],
+            "brains_currently_down": ["hellcat", "gto"],
           },
           "doctrine": "advisory_observability_only",
         }

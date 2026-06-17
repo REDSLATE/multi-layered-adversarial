@@ -42,7 +42,7 @@ async def intent_summary(
 
     Response shape:
         {
-            "brain": "camaro",
+            "brain": "barracuda",
             "window_minutes": 60,
             "total_intents": 47,
             "by_action": {"BUY": 12, "SELL": 5, "HOLD": 30},

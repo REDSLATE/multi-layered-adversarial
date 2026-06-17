@@ -201,7 +201,7 @@ async def learning_scoreboard(
 
     # ─── 5. Memory labels per brain — last write ─────────────────────
     memory_labels_by_brain: Dict[str, Dict[str, Any]] = {}
-    for brain in ("alpha", "camaro", "chevelle", "redeye"):
+    for brain in ("camino", "barracuda", "hellcat", "gto"):
         total = await db[SHARED_MEMORY].count_documents({"runtime": brain})
         last_doc = await db[SHARED_MEMORY].find_one(
             {"runtime": brain},

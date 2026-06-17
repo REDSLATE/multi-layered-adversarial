@@ -25,7 +25,7 @@ def interpret_for_camaro(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     execution_ready = all(execution_checks.values())
 
     return {
-        "brain": "camaro",
+        "brain": "barracuda",
         "role": "execution_judge",
         "doctrine": doctrine.to_dict(),
         "execution_ready": execution_ready,

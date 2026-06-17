@@ -58,7 +58,7 @@ TIER_1_DEFAULTS: dict[str, Any] = {
     "notional_max_usd": 5000.0,                        # absolute hard cap
     "allowed_lanes": ["equity", "crypto"],             # both lanes
     "allowed_actions": ["BUY", "SELL"],                # both directions
-    "allowed_brains": ["alpha", "camaro", "chevelle", "redeye"],
+    "allowed_brains": ["camino", "barracuda", "hellcat", "gto"],
     "required_dry_run_state": "passed",
 }
 
@@ -276,7 +276,7 @@ def _normalize_brain_to_stack(raw: str) -> str:
     if not key:
         return key
     # Already a stack code → done.
-    if key in {"alpha", "camaro", "chevelle", "redeye"}:
+    if key in {"camino", "barracuda", "hellcat", "gto"}:
         return key
     # brain_id or display_name → resolve via brain_doctrine.
     try:

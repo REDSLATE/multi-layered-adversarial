@@ -34,7 +34,7 @@ router = APIRouter(prefix="/admin/memory-kernel", tags=["memory-kernel"])
 
 
 class SubmitMemoryRequest(BaseModel):
-    source_stack: str = Field(..., examples=["redeye", "camaro", "alpha", "chevelle"])
+    source_stack: str = Field(..., examples=["gto", "barracuda", "camino", "hellcat"])
     memory_type: str = Field(..., examples=["execution", "diagnostic", "replay"])
     payload: Dict[str, Any]
     requested_provenance: Optional[str] = None

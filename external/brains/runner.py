@@ -106,15 +106,16 @@ def _select_skills_for(lane: str, symbol: str, action: str, snapshot: dict) -> t
         return [], {"selector_available": False, "error": str(exc)}
 
 
-# ── Brain identity map. INTERNAL slot ids (alpha/camaro/chevelle/
-# redeye) are the DB primary keys used across MC and never change.
-# DISPLAY NAMES are the operator-facing brand (Camino / Barracuda /
-# Hellcat / GTO) shown on every dashboard, intent card, ladder row.
+# ── Brain identity map. CANONICAL slot ids are the new operator
+# names (camino/barracuda/hellcat/gto) as of the 2026-02-20 rename.
+# DISPLAY NAMES match canonical, title-cased. Legacy IDs (alpha/
+# camaro/chevelle/redeye) are still accepted at ingress via
+# `shared.brain_identity.normalize_brain_id` for historical rows.
 BRAIN_ROSTER = [
-    ("alpha",    "Camino",    "ALPHA_INGEST_TOKEN"),
-    ("camaro",   "Barracuda", "CAMARO_INGEST_TOKEN"),
-    ("chevelle", "Hellcat",   "CHEVELLE_INGEST_TOKEN"),
-    ("redeye",   "GTO",       "REDEYE_INGEST_TOKEN"),
+    ("camino",    "Camino",    "CAMINO_INGEST_TOKEN"),
+    ("barracuda", "Barracuda", "BARRACUDA_INGEST_TOKEN"),
+    ("hellcat",   "Hellcat",   "HELLCAT_INGEST_TOKEN"),
+    ("gto",       "GTO",       "GTO_INGEST_TOKEN"),
 ]
 
 

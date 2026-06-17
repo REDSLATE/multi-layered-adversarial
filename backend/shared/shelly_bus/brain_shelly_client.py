@@ -15,7 +15,7 @@ Usage inside a brain pod:
     )
 
     await shelly.propose_memory(ShellyMemoryProposal(
-        source_brain="camaro",
+        source_brain="barracuda",
         lane="crypto",
         symbol="BTC/USD",
         event_type="market_pattern",
