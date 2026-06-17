@@ -160,6 +160,7 @@ from routes.webull_admin import router as webull_admin_router
 from routes.admin_wrappers import router as admin_wrappers_router
 from routes.admin_intents_post_mortem import router as admin_intents_post_mortem_router
 from routes.intent_why import router as intent_why_router
+from routes.seat_state_diagnose import router as seat_state_diagnose_router
 from routes.admin_auto_submit import router as admin_auto_submit_router
 from routes.admin_quiver import router as admin_quiver_router
 from routes.parabolic_phase_admin import router as parabolic_phase_admin_router
@@ -780,6 +781,7 @@ api_router.include_router(execution_router)
 api_router.include_router(admin_wrappers_router)
 api_router.include_router(admin_intents_post_mortem_router)
 api_router.include_router(intent_why_router)
+api_router.include_router(seat_state_diagnose_router)
 api_router.include_router(admin_auto_submit_router)
 api_router.include_router(admin_quiver_router)
 api_router.include_router(paradox_v2_router)
