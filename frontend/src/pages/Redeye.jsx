@@ -8,18 +8,18 @@ const REDEYE_COLOR = "#DC2626";
 const CAMARO_COLOR = "#F59E0B";
 
 const ALPHA_ALIGNMENT_TABLE = [
-  { value: "null",          label: "null (default)",  meaning: "REDEYE has no view",                                       camaro: "Standard short-advisory flow",                                badge: "#A1A1AA" },
-  { value: "aligned",       label: "aligned",         meaning: "Alpha is flat or bearish; REDEYE short reinforces",        camaro: "May size up modestly",                                       badge: "#10B981" },
-  { value: "divergent",     label: "divergent",       meaning: "Alpha has no position; REDEYE short is independent",       camaro: "Independent short; standard flow",                           badge: "#3B82F6" },
-  { value: "contradicts",   label: "contradicts",     meaning: "Alpha is currently long; REDEYE short directly contradicts", camaro: "Escalate. Patent J / dual-sign territory if elevation implied.", badge: REDEYE_COLOR },
+  { value: "null",          label: "null (default)",  meaning: "REDEYE has no view",                                       barracuda: "Standard short-advisory flow",                                badge: "#A1A1AA" },
+  { value: "aligned",       label: "aligned",         meaning: "Camino is flat or bearish; REDEYE short reinforces",        barracuda: "May size up modestly",                                       badge: "#10B981" },
+  { value: "divergent",     label: "divergent",       meaning: "Camino has no position; REDEYE short is independent",       barracuda: "Independent short; standard flow",                           badge: "#3B82F6" },
+  { value: "contradicts",   label: "contradicts",     meaning: "Camino is currently long; REDEYE short directly contradicts", barracuda: "Escalate. Patent J / dual-sign territory if elevation implied.", badge: REDEYE_COLOR },
 ];
 
 const CONTRACT_FIELDS = [
-  { k: "source",            v: "REDEYE",            note: "exact literal" },
+  { k: "source",            v: "GTO",            note: "exact literal" },
   { k: "role",              v: "short_side_advisor", note: "never peer brain" },
   { k: "may_execute",       v: "false",             note: "REDEYE never places orders" },
   { k: "may_override_alpha", v: "false",            note: "REDEYE never overrules Alpha directly" },
-  { k: "final_authority",   v: "CAMARO",            note: "buck stops at Camaro for REDEYE's advice — not a license to execute" },
+  { k: "final_authority",   v: "BARRACUDA",            note: "buck stops at Camaro for REDEYE's advice — not a license to execute" },
 ];
 
 const BRIDGE_CONFIG = [
@@ -34,7 +34,7 @@ export default function Redeye() {
     <div className="reveal" data-testid="redeye-page">
       <PageHeader
         eyebrow="Advisor · short-side scout"
-        title="REDEYE"
+        title="GTO"
         sub="Bearish/short-side adversarial scout. REDEYE sends advice to Camaro. Neither REDEYE nor Camaro can execute. Execution authority lives elsewhere on the ladder, gated by Patent J + operator countersign."
         right={
           <div className="flex items-center gap-2">

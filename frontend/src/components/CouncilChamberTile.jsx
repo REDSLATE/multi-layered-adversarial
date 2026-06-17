@@ -30,10 +30,10 @@ const STANCE_COLOR = {
 };
 
 const BRAIN_DOCTRINE = {
-  alpha:    "adversarial",
-  camaro:   "tape reading",
-  chevelle: "trend",
-  redeye:   "mean reversion",
+  camino:    "adversarial",
+  barracuda:   "tape reading",
+  hellcat: "trend",
+  gto:   "mean reversion",
 };
 
 function StanceBadge({ stance }) {

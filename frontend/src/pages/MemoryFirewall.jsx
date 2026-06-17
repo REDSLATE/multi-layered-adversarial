@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api, RUNTIME_META, fmtTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 
-const RT = ["all", "alpha", "camaro", "chevelle", "redeye"];
+const RT = ["all", "camino", "barracuda", "hellcat", "gto"];
 const LABELS = ["all", "safe", "review", "quarantine"];
 const LABEL_COLORS = { safe: "#10B981", review: "#FBBF24", quarantine: "#EF4444" };
 

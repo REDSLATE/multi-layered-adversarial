@@ -11,10 +11,10 @@ import { Plus, Crosshair, Trophy, Prohibit, ChatCircleDots } from "@phosphor-ico
 import { toast } from "sonner";
 
 const BRAIN_META = {
-  alpha:    { label: "ALPHA",    color: "#3B82F6" },
-  camaro:   { label: "CAMARO",   color: "#F59E0B" },
-  chevelle: { label: "CHEVELLE", color: "#10B981" },
-  redeye:   { label: "REDEYE",   color: "#DC2626" },
+  camino:    { label: "CAMINO",    color: "#3B82F6" },
+  barracuda:   { label: "BARRACUDA",   color: "#F59E0B" },
+  hellcat: { label: "HELLCAT", color: "#10B981" },
+  gto:   { label: "GTO",   color: "#DC2626" },
 };
 
 const STANCE_META = {

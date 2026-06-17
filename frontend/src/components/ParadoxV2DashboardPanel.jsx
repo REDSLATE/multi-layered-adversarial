@@ -36,7 +36,7 @@ export default function ParadoxV2DashboardPanel() {
 
   // Test-fire form state
   const [tfSeat, setTfSeat] = useState("equity_executor");
-  const [tfBrain, setTfBrain] = useState("alpha");
+  const [tfBrain, setTfBrain] = useState("camino");
   const [tfSymbol, setTfSymbol] = useState("AAPL");
   const [tfLane, setTfLane] = useState("equity");
   const [tfConf, setTfConf] = useState("0.90");

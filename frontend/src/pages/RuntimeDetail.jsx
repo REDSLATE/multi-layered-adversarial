@@ -7,9 +7,9 @@ import LivePulse from "@/components/LivePulse";
 import BrainProxiedStatusTile from "@/components/BrainProxiedStatusTile";
 
 const SUB_ENDPOINT = {
-  alpha: { url: "/runtime/alpha/decisions", title: "alpha_decision_log", cols: ["timestamp", "decision", "symbol", "score"] },
-  camaro: { url: "/runtime/camaro/shadow-rows", title: "camaro_shadow_rows", cols: ["timestamp", "shadow", "symbol", "side", "size"] },
-  chevelle: { url: "/runtime/chevelle/memory-labels", title: "chevelle_memory_labels", cols: ["timestamp", "authority_call", "symbol", "horizon"] },
+  camino: { url: "/runtime/alpha/decisions", title: "alpha_decision_log", cols: ["timestamp", "decision", "symbol", "score"] },
+  barracuda: { url: "/runtime/camaro/shadow-rows", title: "camaro_shadow_rows", cols: ["timestamp", "shadow", "symbol", "side", "size"] },
+  hellcat: { url: "/runtime/chevelle/memory-labels", title: "chevelle_memory_labels", cols: ["timestamp", "authority_call", "symbol", "horizon"] },
 };
 
 export default function RuntimeDetail() {

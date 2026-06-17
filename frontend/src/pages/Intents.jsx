@@ -35,7 +35,7 @@ import {
 
 const BRAIN_META = {
   ...RUNTIME_META,
-  redeye: { label: "REDEYE", color: "#DC2626" },
+  gto: { label: "GTO", color: "#DC2626" },
 };
 
 const ACTION_COLOR = {
@@ -62,7 +62,7 @@ const GATE_ICON = {
   dry_run_blocked: XCircle,
 };
 
-const STACKS = ["all", "alpha", "camaro", "chevelle", "redeye"];
+const STACKS = ["all", "camino", "barracuda", "hellcat", "gto"];
 const ACTIONS = ["all", "BUY", "SELL", "SHORT", "COVER", "HOLD"];
 const LANES = ["all", "equity", "crypto"];
 const GATE_STATES = ["all", "pending", "passed", "blocked", "dry_run_passed", "dry_run_blocked", "rejected_at_ingest"];

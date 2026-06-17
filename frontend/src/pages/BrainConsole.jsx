@@ -11,8 +11,8 @@ import {
 // Brain meta extended with REDEYE (not in RUNTIME_META by design).
 const ALL_BRAINS = {
   ...RUNTIME_META,
-  redeye: {
-    label: "REDEYE",
+  gto: {
+    label: "GTO",
     project: "Sigma-RD",
     color: "#DC2626",
     roleTitle: "Advisor",

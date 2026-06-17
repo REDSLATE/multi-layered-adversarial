@@ -27,7 +27,7 @@ import { api, RUNTIME_META } from "@/lib/api";
 import { ArrowsClockwise, X, CircleNotch } from "@phosphor-icons/react";
 import { seatDisplayLabel } from "@/lib/seatAngels";
 
-const BRAINS = ["alpha", "camaro", "chevelle", "redeye"];
+const BRAINS = ["camino", "barracuda", "hellcat", "gto"];
 
 // Post-merge 4-seat doctrine (2026-05-27). Auditor = opponent + auditor.
 const SEATS_EQUITY = [

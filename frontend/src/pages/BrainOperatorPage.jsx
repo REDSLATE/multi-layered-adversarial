@@ -15,8 +15,8 @@ import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui
  */
 
 const BRAIN_PROFILE = {
-  alpha: {
-    label: "ALPHA",
+  camino: {
+    label: "CAMINO",
     sub: "Strategist voice. Eligible for every seat.",
     color: "#3B82F6",
     expected_seats: ["strategist", "executor", "auditor", "governor",
@@ -24,8 +24,8 @@ const BRAIN_PROFILE = {
     test_intent: { action: "BUY", symbol: "SPY", lane: "equity", confidence: 0.55,
                    rationale: "operator wiring test — alpha" },
   },
-  camaro: {
-    label: "CAMARO",
+  barracuda: {
+    label: "BARRACUDA",
     sub: "Eligible for every seat. Posts intents through the gate chain.",
     color: "#F59E0B",
     expected_seats: ["strategist", "executor", "auditor", "governor",
@@ -33,8 +33,8 @@ const BRAIN_PROFILE = {
     test_intent: { action: "BUY", symbol: "AAPL", lane: "equity", confidence: 0.55,
                    rationale: "operator test ping" },
   },
-  chevelle: {
-    label: "CHEVELLE",
+  hellcat: {
+    label: "HELLCAT",
     sub: "Eligible for every seat. Default governor; can specialize elsewhere.",
     color: "#3B82F6",
     expected_seats: ["strategist", "executor", "auditor", "governor",
@@ -42,8 +42,8 @@ const BRAIN_PROFILE = {
     test_intent: { action: "BUY", symbol: "SPY", lane: "equity", confidence: 0.55,
                    rationale: "operator wiring test — chevelle" },
   },
-  redeye: {
-    label: "REDEYE",
+  gto: {
+    label: "GTO",
     sub: "Adversarial voice. Eligible for every seat. Vacant by default.",
     color: "#DC2626",
     expected_seats: ["strategist", "executor", "auditor", "governor",

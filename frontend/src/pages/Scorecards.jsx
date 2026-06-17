@@ -4,10 +4,10 @@ import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui
 import { Trophy, Lock, Target } from "@phosphor-icons/react";
 
 const BRAIN_META = {
-  alpha:    { label: "ALPHA",    color: "#3B82F6" },
-  camaro:   { label: "CAMARO",   color: "#F59E0B" },
-  chevelle: { label: "CHEVELLE", color: "#10B981" },
-  redeye:   { label: "REDEYE",   color: "#DC2626" },
+  camino:    { label: "CAMINO",    color: "#3B82F6" },
+  barracuda:   { label: "BARRACUDA",   color: "#F59E0B" },
+  hellcat: { label: "HELLCAT", color: "#10B981" },
+  gto:   { label: "GTO",   color: "#DC2626" },
 };
 
 const LENS_LABEL = {
@@ -157,7 +157,7 @@ function ScorecardPanel({ runtime, card }) {
           )}
 
           {/* Role-specific extra panel */}
-          {runtime === "redeye" && card.alpha_alignment_breakdown && (
+          {runtime === "gto" && card.alpha_alignment_breakdown && (
             <div className="px-4 py-3 border-b border-rd-border">
               <div className="text-[10px] text-rd-dim uppercase tracking-widest mb-2">
                 alpha_alignment breakdown · contradicts vs divergent vs aligned
@@ -193,7 +193,7 @@ function ScorecardPanel({ runtime, card }) {
             </div>
           )}
 
-          {runtime === "camaro" && card.per_stance && (
+          {runtime === "barracuda" && card.per_stance && (
             <div className="px-4 py-3 border-b border-rd-border">
               <div className="text-[10px] text-rd-dim uppercase tracking-widest mb-2">
                 Per-stance · endorse / veto / observation
@@ -211,7 +211,7 @@ function ScorecardPanel({ runtime, card }) {
             </div>
           )}
 
-          {runtime === "camaro" && card.regime_breakdown && (
+          {runtime === "barracuda" && card.regime_breakdown && (
             <div className="px-4 py-3 border-b border-rd-border" data-testid="camaro-regime-breakdown">
               <div className="text-[10px] text-rd-dim uppercase tracking-widest mb-2">
                 Endorse hit rate by regime · "which stack do I trust now?"
@@ -256,7 +256,7 @@ function ScorecardPanel({ runtime, card }) {
             </div>
           )}
 
-          {runtime === "chevelle" && (card.topic_breakdown || []).length > 0 && (
+          {runtime === "hellcat" && (card.topic_breakdown || []).length > 0 && (
             <div className="px-4 py-3 border-b border-rd-border">
               <div className="text-[10px] text-rd-dim uppercase tracking-widest mb-2">
                 Topic reliability · top {card.topic_breakdown.length}
@@ -273,7 +273,7 @@ function ScorecardPanel({ runtime, card }) {
             </div>
           )}
 
-          {runtime === "chevelle" && (card.source_breakdown || []).length > 0 && (
+          {runtime === "hellcat" && (card.source_breakdown || []).length > 0 && (
             <div className="px-4 py-3 border-b border-rd-border" data-testid="chevelle-source-breakdown">
               <div className="text-[10px] text-rd-dim uppercase tracking-widest mb-2">
                 Source reliability · evidence.source

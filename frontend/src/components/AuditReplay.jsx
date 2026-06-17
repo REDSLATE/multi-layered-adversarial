@@ -5,7 +5,7 @@ import { ClockCounterClockwise, ArrowsClockwise } from "@phosphor-icons/react";
 
 /**
  * Audit-replay strip. When an opinion carries `evidence.technical_ref`,
- * we render a one-line "Camaro saw" preview of the snapshot AS-OF the
+ * we render a one-line "Barracuda saw" preview of the snapshot AS-OF the
  * moment Camaro read it, recomputed from retained bars. Doctrine
  * payoff: every quantitative call is later reproducible from raw data.
  */

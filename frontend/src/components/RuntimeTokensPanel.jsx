@@ -3,10 +3,10 @@ import { api } from "@/lib/api";
 import { Card, Badge } from "@/components/ui-bits";
 
 const BRAIN_COLOR = {
-  alpha: "#3B82F6",
-  camaro: "#F59E0B",
-  chevelle: "#10B981",
-  redeye: "#06B6D4",
+  camino: "#3B82F6",
+  barracuda: "#F59E0B",
+  hellcat: "#10B981",
+  gto: "#06B6D4",
 };
 
 function TokenRow({ row, onReveal, onCopy, onDownload, revealed }) {
@@ -68,7 +68,7 @@ function TokenRow({ row, onReveal, onCopy, onDownload, revealed }) {
 export default function RuntimeTokensPanel() {
   const [items, setItems] = useState([]);
   const [doctrine, setDoctrine] = useState("");
-  const [revealed, setRevealed] = useState({}); // {alpha: {token}, ...}
+  const [revealed, setRevealed] = useState({}); // {camino: {token}, ...}
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
   const [copyStatus, setCopyStatus] = useState({});

@@ -16,7 +16,7 @@ import { Card } from "@/components/ui-bits";
 //
 // Read-only. Does not affect routing/authority. Refreshes every 10s.
 
-const BRAINS = ["alpha", "camaro", "chevelle", "redeye"];
+const BRAINS = ["camino", "barracuda", "hellcat", "gto"];
 
 const OVERALL_COLORS = {
   LIVE: "#10B981",

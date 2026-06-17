@@ -86,19 +86,19 @@ const SECTIONS = [
 ];
 
 const RUNTIMES = [
-  { to: "/admin/brain/alpha", label: "Alpha", color: "#3B82F6", testid: "nav-runtime-alpha" },
-  { to: "/admin/brain/camaro", label: "Camaro", color: "#F59E0B", testid: "nav-runtime-camaro" },
-  { to: "/admin/brain/chevelle", label: "Chevelle", color: "#10B981", testid: "nav-runtime-chevelle" },
-  { to: "/admin/brain/redeye", label: "REDEYE", color: "#DC2626", testid: "nav-runtime-redeye" },
+  { to: "/admin/brain/camino",    label: "Camino",    color: "#3B82F6", testid: "nav-runtime-camino" },
+  { to: "/admin/brain/barracuda", label: "Barracuda", color: "#F59E0B", testid: "nav-runtime-barracuda" },
+  { to: "/admin/brain/hellcat",   label: "Hellcat",   color: "#10B981", testid: "nav-runtime-hellcat" },
+  { to: "/admin/brain/gto",       label: "GTO",       color: "#DC2626", testid: "nav-runtime-gto" },
 ];
 
 // Per-brain operator/verification dashboards. One per brain so each
 // runtime team has a verification page after pushing updates.
 const BRAIN_OPERATORS = [
-  { to: "/admin/brain-op/alpha",    label: "Alpha Ops",    color: "#3B82F6", testid: "nav-brain-op-alpha" },
-  { to: "/admin/brain-op/camaro",   label: "Camaro Ops",   color: "#F59E0B", testid: "nav-brain-op-camaro" },
-  { to: "/admin/brain-op/chevelle", label: "Chevelle Ops", color: "#10B981", testid: "nav-brain-op-chevelle" },
-  { to: "/admin/brain-op/redeye",   label: "REDEYE Ops",   color: "#DC2626", testid: "nav-brain-op-redeye" },
+  { to: "/admin/brain-op/camino",    label: "Camino Ops",    color: "#3B82F6", testid: "nav-brain-op-camino" },
+  { to: "/admin/brain-op/barracuda", label: "Barracuda Ops", color: "#F59E0B", testid: "nav-brain-op-barracuda" },
+  { to: "/admin/brain-op/hellcat",   label: "Hellcat Ops",   color: "#10B981", testid: "nav-brain-op-hellcat" },
+  { to: "/admin/brain-op/gto",       label: "GTO Ops",       color: "#DC2626", testid: "nav-brain-op-gto" },
 ];
 
 // Find a short title for the mobile top bar based on the current route.

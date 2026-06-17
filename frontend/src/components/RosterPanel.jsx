@@ -30,16 +30,16 @@ const ROLE_META = {
 };
 
 const BRAIN_META = {
-  alpha:    { label: "ALPHA",    color: "#3B82F6" },
-  camaro:   { label: "CAMARO",   color: "#F59E0B" },
-  chevelle: { label: "CHEVELLE", color: "#10B981" },
-  redeye:   { label: "REDEYE",   color: "#DC2626" },
+  camino:    { label: "CAMINO",    color: "#3B82F6" },
+  barracuda:   { label: "BARRACUDA",   color: "#F59E0B" },
+  hellcat: { label: "HELLCAT", color: "#10B981" },
+  gto:   { label: "GTO",   color: "#DC2626" },
 };
 
 const EQUITY_ROLES = ["strategist", "executor", "governor", "advisor", "opponent", "auditor"];
 const CRYPTO_ROLES = ["crypto", "crypto_strategist", "crypto_governor", "crypto_advisor", "crypto_opponent", "crypto_auditor"];
 const ALL_ROLES = [...EQUITY_ROLES, ...CRYPTO_ROLES];
-const BRAINS = ["alpha", "camaro", "chevelle", "redeye"];
+const BRAINS = ["camino", "barracuda", "hellcat", "gto"];
 
 const LANE_META = {
   equity: { label: "EQUITY LANE",  desc: "Alpaca · consensus-first governance",      color: "#3B82F6" },
@@ -522,7 +522,7 @@ function BrainLanePolicyPanel({ busy }) {
   };
 
   const LANES = ["equity", "crypto"];
-  const POLICY_BRAINS = ["alpha", "camaro", "chevelle", "redeye"];
+  const POLICY_BRAINS = ["camino", "barracuda", "hellcat", "gto"];
   const explicitByKey = {};
   for (const r of data.items || []) {
     explicitByKey[`${r.brain}-${r.lane}`] = r;

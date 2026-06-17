@@ -142,7 +142,7 @@ function App() {
             <Route path="setup" element={<SetupPage />} />
             <Route path="hypothesis" element={<Hypothesis />} />
             <Route path="mc-shelly" element={<McShelly />} />
-            <Route path="redeye" element={<Redeye />} />
+            <Route path="gto" element={<Redeye />} />
             <Route path="brain-op/:brain" element={<BrainOperatorPage />} />
             <Route path="discussion" element={<Discussion />} />
             <Route path="scorecards" element={<Scorecards />} />

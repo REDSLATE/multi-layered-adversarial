@@ -4,10 +4,10 @@ import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui
 import { LightningSlash, Lock, Trophy, Question } from "@phosphor-icons/react";
 
 const BRAIN_META = {
-  alpha:    { label: "ALPHA",    color: "#3B82F6" },
-  camaro:   { label: "CAMARO",   color: "#F59E0B" },
-  chevelle: { label: "CHEVELLE", color: "#10B981" },
-  redeye:   { label: "REDEYE",   color: "#DC2626" },
+  camino:    { label: "CAMINO",    color: "#3B82F6" },
+  barracuda:   { label: "BARRACUDA",   color: "#F59E0B" },
+  hellcat: { label: "HELLCAT", color: "#10B981" },
+  gto:   { label: "GTO",   color: "#DC2626" },
 };
 
 const STATUS_META = {
@@ -25,15 +25,15 @@ const HEAT_META = {
 };
 
 const PAIRS = [
-  ["alpha", "redeye"],
-  ["alpha", "camaro"],
-  ["redeye", "camaro"],
-  ["alpha", "chevelle"],
-  ["redeye", "chevelle"],
-  ["camaro", "chevelle"],
+  ["camino", "gto"],
+  ["camino", "barracuda"],
+  ["gto", "barracuda"],
+  ["camino", "hellcat"],
+  ["gto", "hellcat"],
+  ["barracuda", "hellcat"],
 ];
 
-const BRAIN_ORDER = ["alpha", "camaro", "chevelle", "redeye"];
+const BRAIN_ORDER = ["camino", "barracuda", "hellcat", "gto"];
 
 export default function Conflicts() {
   const [items, setItems] = useState(null);

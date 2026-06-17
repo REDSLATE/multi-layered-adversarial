@@ -31,8 +31,8 @@ const EVENT_COLOR = {
   hypothesis_request: "#22D3EE", rotation: "#A1A1AA",
 };
 const BRAIN_COLOR = {
-  alpha: "#3B82F6", camaro: "#F59E0B",
-  chevelle: "#10B981", redeye: "#DC2626",
+  camino: "#3B82F6", barracuda: "#F59E0B",
+  hellcat: "#10B981", gto: "#DC2626",
 };
 
 // Static option lists for the McShelly filter pickers. Hoisted to
@@ -40,7 +40,7 @@ const BRAIN_COLOR = {
 // preserving any downstream memoization in <FilterPicker>.
 const EVENT_FILTER_OPTIONS = ["", ...EVENT_TYPES];
 const POSITION_FILTER_OPTIONS = ["", ...POSITIONS];
-const BRAIN_FILTER_OPTIONS = ["", "alpha", "camaro", "chevelle", "redeye"];
+const BRAIN_FILTER_OPTIONS = ["", "camino", "barracuda", "hellcat", "gto"];
 const OUTCOME_FILTER_OPTIONS = ["", "pending", "executed", "win", "loss", "pass", "fail", "blocked", "rejected"];
 const WINDOW_FILTER_OPTIONS = ["1", "6", "24", "72", "168", "720"];
 const WINDOW_FILTER_LABELS = { "1": "1h", "6": "6h", "24": "24h", "72": "3d", "168": "7d", "720": "30d" };

@@ -27,12 +27,12 @@ import { toast } from "sonner";
  *   testid          Base test-id (defaults to `roster-seat-${role}`)
  */
 
-const BRAINS = ["alpha", "camaro", "chevelle", "redeye"];
+const BRAINS = ["camino", "barracuda", "hellcat", "gto"];
 const BRAIN_COLOR = {
-  alpha: "#3B82F6",
-  camaro: "#F59E0B",
-  chevelle: "#10B981",
-  redeye: "#DC2626",
+  camino: "#3B82F6",
+  barracuda: "#F59E0B",
+  hellcat: "#10B981",
+  gto: "#DC2626",
 };
 
 function relTime(iso) {

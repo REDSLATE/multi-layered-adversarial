@@ -33,14 +33,14 @@ const ROLE_META = {
 };
 
 const RUNTIME_META = {
-  alpha:    { label: "ALPHA",    color: "#3B82F6" },
-  camaro:   { label: "CAMARO",   color: "#F59E0B" },
-  chevelle: { label: "CHEVELLE", color: "#10B981" },
-  redeye:   { label: "REDEYE",   color: "#DC2626" },
+  camino:    { label: "CAMINO",    color: "#3B82F6" },
+  barracuda:   { label: "BARRACUDA",   color: "#F59E0B" },
+  hellcat: { label: "HELLCAT", color: "#10B981" },
+  gto:   { label: "GTO",   color: "#DC2626" },
   shelly:   { label: "SHELLY",   color: "#A855F7" },
 };
 
-const LIVE_RUNTIMES = new Set(["alpha", "camaro", "chevelle", "redeye"]);
+const LIVE_RUNTIMES = new Set(["camino", "barracuda", "hellcat", "gto"]);
 
 const SEAT_STATUS_META = {
   occupied: { label: "OCCUPIED", color: "#22C55E" },

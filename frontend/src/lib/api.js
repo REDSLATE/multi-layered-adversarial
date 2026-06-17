@@ -189,7 +189,7 @@ export function formatApiErrorDetail(detail) {
 // Display labels are the operator brand:
 //   Camino / Barracuda / Hellcat / GTO  (rendered everywhere in the UI)
 export const RUNTIME_META = {
-  alpha: {
+  camino: {
     label: "CAMINO",
     project: "RISEDUAL-AI-2",
     color: "#3B82F6",
@@ -203,7 +203,7 @@ export const RUNTIME_META = {
     roleTagline: "structured trader",
     note: "Trader-trained · structured-signal-first.",
   },
-  camaro: {
+  barracuda: {
     label: "BARRACUDA",
     project: "RD4_0421",
     color: "#F59E0B",
@@ -217,7 +217,7 @@ export const RUNTIME_META = {
     roleTagline: "challenger / counterfactual",
     note: "Challenger-trained · attacks the thesis, surfaces counterfactuals.",
   },
-  chevelle: {
+  hellcat: {
     label: "HELLCAT",
     project: "2.1-APP",
     color: "#10B981",
@@ -231,9 +231,9 @@ export const RUNTIME_META = {
     roleTagline: "memory + calibration",
     note: "Governor-trained · memory firewall, readiness, calibration, audit.",
   },
-  redeye: {
+  gto: {
     label: "GTO",
-    project: "REDEYE",
+    project: "GTO",
     color: "#DC2626",
     accentClass: "text-rd-redeye",
     borderClass: "border-rd-redeye",

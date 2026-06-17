@@ -11,7 +11,7 @@ import { ArrowsClockwise, MagnifyingGlass } from "@phosphor-icons/react";
  * Purpose: avoid having to drop into mobile dev tools to run an
  * api.get() by hand. One tap → full picture.
  */
-const BRAINS = ["alpha", "camaro", "chevelle", "redeye"];
+const BRAINS = ["camino", "barracuda", "hellcat", "gto"];
 
 
 function JsonBlock({ data, label, testid }) {
@@ -28,7 +28,7 @@ function JsonBlock({ data, label, testid }) {
 
 
 export default function BrainDeepDiagnoseCard() {
-  const [brain, setBrain] = useState("redeye");
+  const [brain, setBrain] = useState("gto");
   const [emission, setEmission] = useState(null);
   const [status, setStatus] = useState(null);
   const [emissionErr, setEmissionErr] = useState("");

@@ -10,7 +10,7 @@ import { RUNTIME_META } from "@/lib/api";
  * page draws the eye. Each toast lives for ~5s then fades.
  *
  * Anatomy of the message:
- *   "Camaro just misread AAPL — assumed FLAT, broker says SHORT"
+ *   "Barracuda just misread AAPL — assumed FLAT, broker says SHORT"
  *
  * Stacking rules:
  *   * Newest on top.

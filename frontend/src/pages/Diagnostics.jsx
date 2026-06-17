@@ -16,7 +16,7 @@ import ImposterScanCard from "@/components/ImposterScanCard";
 // CompositeLivenessCard + the legacy runtimes table dropped (2026-02-19)
 //   — BrainHealthTile is the modern composite that absorbs both.
 
-const BRAINS_FOR_FILTER = ["all", "alpha", "camaro", "chevelle", "redeye"];
+const BRAINS_FOR_FILTER = ["all", "camino", "barracuda", "hellcat", "gto"];
 
 /**
  * LazyDetails — `<details>`-based collapsible panel that defers

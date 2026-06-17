@@ -1,3 +1,43 @@
+## 2026-02-20 (Frontend canonical rename — sidebar + 32 React files)
+
+### Operator pin
+
+> "They are already assigned in the seats. I show you the picture for both lanes."
+
+Screenshot confirmed all 8 seats (RAZIEL/NURIEL/PASCHAR/SARIEL + REMIEL/CASSIEL/ISRAFEL/ZADKIEL) assigned with new brain names (CAMINO/BARRACUDA/HELLCAT/GTO). But the LEFT SIDEBAR still showed legacy names (ALPHA / CAMARO / CHEVELLE / REDEYE) under "RUNTIMES" and "BRAIN OPERATORS" sections because the backend rename hadn't touched the React tree.
+
+### What changed
+
+- **32 React files** updated via targeted regex (string-literal rename only): 219 replacements covering lowercase canonical, title-case display strings, and uppercase labels.
+- **`components/Layout.jsx`** sidebar nav arrays:
+  - `RUNTIMES`: routes `/admin/brain/{camino,barracuda,hellcat,gto}`, labels `Camino / Barracuda / Hellcat / GTO`, test IDs renamed to match.
+  - `BRAIN_OPERATORS`: routes `/admin/brain-op/{camino,barracuda,hellcat,gto}`, labels `Camino Ops / Barracuda Ops / Hellcat Ops / GTO Ops`.
+- **`lib/api.js::RUNTIME_META`** — meta object keys flipped from `alpha/camaro/chevelle/redeye` to the new canonical.
+- Lint clean on `Layout.jsx` and `api.js`.
+
+### Known cosmetic residue
+
+- `pages/Redeye.jsx` — entire doctrine/lore page still hardcoded with `REDEYE` and `CAMARO` references in its narrative copy. This is content-level, not a runtime concern. Listed in P2 backlog as "rename Redeye.jsx → Gto.jsx".
+- `pages/BrainOperatorPage.jsx` — page-level RUNTIME_META object still has `alpha/camaro/chevelle/redeye` keys (a duplicate definition that my regex caught the values of but not the keys). Visible only on the per-brain ops dashboards. P2 cleanup.
+
+### The "brains: alpha 31 · redeye 14 · camaro 7" line in What-If dial
+
+That's the auto-submit policy what-if simulator (`routes/admin_auto_submit.py::confidence_what_if[].top_brains`) reading `intent["stack"]` from historical rows in the last-24h window. **Self-heals automatically** as new intents flow in with the new canonical names. No code change needed.
+
+### Verification
+
+- 36/36 regression tests pass.
+- Sidebar code shows correct new names in `Layout.jsx:88-102`.
+- Frontend lint clean.
+
+### Files
+
+- Modified: `components/Layout.jsx`, `lib/api.js`, plus 30 other React files via regex
+- Updated: `/app/memory/PRD.md`
+
+---
+
+
 ## 2026-02-20 (Sidecar infrastructure deletion — ~600 LOC removed)
 
 ### Operator pin
