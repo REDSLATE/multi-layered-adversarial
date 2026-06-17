@@ -126,9 +126,12 @@ async def positions_at_now() -> dict[str, Optional[str]]:
         POSITION_CODES["advisor"]:    assignments.get("advisor"),
         POSITION_CODES["opponent"]:   assignments.get("opponent"),
     }
-    # Auditor seat lives in its own collection (separate rotation history)
-    auditor = await db[SHARED_AUDITOR_SEAT].find_one({"_id": "auditor"}, {"_id": 0, "holder": 1}) or {}
-    out[POSITION_CODES["auditor"]] = auditor.get("holder")
+    # 2026-02-20 doctrine pin (single-source-of-truth refactor):
+    # Auditor holder lives in `brain_roster.assignments.auditor` —
+    # same place every other seat lives. The legacy `shared_auditor_seat`
+    # doc is no longer consulted here; it's migrated to roster at boot
+    # and slated for cleanup via /api/admin/seat-state/cleanup-legacy.
+    out[POSITION_CODES["auditor"]] = assignments.get("auditor")
     return out
 
 

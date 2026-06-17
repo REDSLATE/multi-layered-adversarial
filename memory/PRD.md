@@ -1,3 +1,93 @@
+## 2026-02-20 (Seat-state single-source-of-truth — merge & cleanup)
+
+### Operator request (verbatim)
+
+> "Can we just merge or delete them so this will stop happening?"
+
+### Root cause
+
+Five independent storage backends for seat holders existed in the codebase:
+
+1. `brain_roster.assignments`         — written by Quick Seat Switches UI via `POST /api/admin/roster/assign`
+2. `shared_executor_seat` doc          — legacy executor pin (read by `executor_seat.get_seat_holder`)
+3. `shared_auditor_seat` doc           — legacy auditor pin (read by `mc_shelly.positions_at_now`)
+4. `paradox_v2_seat_policy_config`     — Paradox v2 policy rows (autonomy_mode, confidence_min, etc.)
+5. `paradox_v2_seat_trusted_brains`    — Paradox v2 trust list (read by unified pipeline)
+
+Reads from (2) and (3) drifted from writes to (1) — producing the
+"STRATEGIST · holder: vacant" display the operator saw in production
+even though Quick Seat Switches showed seats filled.
+
+### Resolution
+
+**Canonical source of truth = `brain_roster.assignments`**. The legacy
+two collections (2, 3) are no longer read; (5) is now a derived
+mirror of (1) for the unified pipeline.
+
+Surgical changes:
+
+- `shared/mc_shelly.py::positions_at_now()` — auditor now reads from `brain_roster.assignments.auditor`, not `shared_auditor_seat`.
+- `shared/executor_seat.py::get_seat_holder()` — legacy doc fallback removed. Roster is the *only* read source.
+- `shared/roster.py::assign()` — after every successful write, mirrors the executor seat assignment to `paradox_v2_seat_trusted_brains` so the unified pipeline sees the new holder. Single-holder semantics: writing brain=`alpha` to a seat removes all other trusted brains for that seat.
+- `shared/seat_state.py` — new module owning the three primitives:
+    - `mirror_executor_to_v2_trust(role, brain_id)` — single-holder mirror.
+    - `migrate_legacy_auditor_to_roster()` — one-shot, idempotent. Copies `shared_auditor_seat.holder` → `brain_roster.assignments.auditor` if the latter is empty.
+    - `sync_v2_trust_from_roster()` — heals existing v2 trust drift against the roster. Runs on every boot.
+    - `cleanup_legacy_collections()` — drops `shared_executor_seat` and `shared_auditor_seat`. One-shot, gated by the operator.
+- `server.py` — boots call `migrate_legacy_auditor_to_roster()` then `sync_v2_trust_from_roster()` (idempotent; both logged).
+- `routes/seat_state_diagnose.py`:
+    - `GET  /api/admin/seat-state/all-sources` — dumps every source side-by-side, with drift detection. (Existing; from earlier this session.)
+    - `POST /api/admin/seat-state/cleanup-legacy` — admin-only one-shot drop of the two deprecated collections. The operator runs this after confirming the intent UI shows correct holders.
+
+### Tests
+
+`/app/backend/tests/test_seat_state_single_source_2026_02_20.py` — 4 tests, 100% pass:
+- `mirror_executor_to_v2_trust` enforces single-holder semantics (assign → reassign → clear; non-executor role is a no-op).
+- `migrate_legacy_auditor_to_roster` is idempotent (run twice → second is no-op with reason `roster_already_has_auditor`).
+- `cleanup_legacy_collections` drops both collections and reports row counts.
+- `executor_seat.get_seat_holder('executor')` returns None when roster says vacant, *even if* the legacy doc still has a stale holder.
+
+Regression: 37/37 across seat-state + unified pipeline + roster + legacy executor auto-wipe tests.
+
+### Smoke test on preview
+
+After boot migration + sync:
+```
+SUMMARY: { total_seats: 8, drift_seats_count: 0, vacant_in_roster: [crypto/*] }
+ROSTER:  { strategist: camaro, executor: alpha, governor: chevelle, auditor: alpha,
+           crypto_*: null }
+V2 trust: equity_executor → alpha   (mirrored from roster)
+LEGACY:   shared_executor_seat.holder: null   (auto-wiped)
+          shared_auditor_seat.holder: alpha   (deprecated; no longer read)
+```
+
+The "vacant in intent feed but filled in QSS" mismatch is now structurally impossible because there is exactly one read path and one write path through `brain_roster.assignments`.
+
+### Operator deployment
+
+1. Deploy this branch to `mission.risedual.ai`.
+2. Backend boot runs both migrations automatically. Watch logs for `seat_state migration:` and `seat_state v2 trust sync:`.
+3. Confirm intent UI shows the correct holders (no more `holder: vacant` on seats you assigned).
+4. Optional cleanup once confidence is restored:
+   ```
+   curl -X POST -H "Authorization: Bearer <prod-admin-jwt>" \
+     https://mission.risedual.ai/api/admin/seat-state/cleanup-legacy
+   ```
+   Drops `shared_executor_seat` and `shared_auditor_seat` collections. Irreversible.
+
+### Files
+
+- New:      `shared/seat_state.py`
+- New:      `tests/test_seat_state_single_source_2026_02_20.py`
+- Modified: `shared/mc_shelly.py` (auditor reads from roster)
+- Modified: `shared/executor_seat.py` (no legacy fallback)
+- Modified: `shared/roster.py` (mirror executor writes to v2 trust)
+- Modified: `server.py` (boot migration + sync)
+- Modified: `routes/seat_state_diagnose.py` (cleanup endpoint)
+
+---
+
+
 ## 2026-02-20 (Unified Execution Pipeline — three blockers only)
 
 ### Operator directive (verbatim)

@@ -257,6 +257,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("pipeline_receipts index ensure failed (non-fatal): %s", e)
 
+    # Seat-state single-source-of-truth migration (2026-02-20). Copies
+    # the legacy `shared_auditor_seat.holder` into the canonical
+    # `brain_roster.assignments.auditor` if the roster slot is empty.
+    # Idempotent: re-running on a healed roster is a no-op.
+    try:
+        from shared.seat_state import (
+            migrate_legacy_auditor_to_roster,
+            sync_v2_trust_from_roster,
+        )
+        result = await migrate_legacy_auditor_to_roster()
+        logger.info("seat_state migration: %s", result)
+        sync_result = await sync_v2_trust_from_roster()
+        logger.info("seat_state v2 trust sync: %s", sync_result)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("seat_state migration failed (non-fatal): %s", e)
+
     # Auto-submit policy — hydrate persisted override from Mongo so
     # the operator's toggle survives pod restarts. Without this,
     # `_POLICY_OVERRIDE` resets to {} on every boot and Shelly

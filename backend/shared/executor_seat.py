@@ -74,38 +74,28 @@ async def get_seat_holder(seat: str) -> Optional[str]:
     """Return the brain currently holding `seat` (e.g. 'executor',
     'crypto'), or None if the seat is empty.
 
-    Precedence (2026-02-17 doctrine refresh):
-        1. Multi-seat roster `shared_brain_roster.assignments` — the
-           UI Quick Seat Switches and `/admin/roster/assign` write
-           here. This is the operator's source of truth.
-        2. Legacy `shared_executor_seat` doc — fallback ONLY if the
-           roster has no assignment for `executor`. Preserves the
-           original rotation surface for back-compat with any code
-           path that still calls `POST /api/executor/rotate`.
+    Single source of truth (2026-02-20 refactor):
+        `shared_brain_roster.assignments[<seat>]`.
 
-    Before this refresh, precedence was reversed (legacy doc won) and
-    a stale `shared_executor_seat` row from a pre-QSS rotation could
-    silently override the operator's live Quick Seat Switches choice
-    — causing executor_seat_check to block intents under a holder the
-    operator no longer thought was in the seat. See
-    `/api/admin/seat-registry/diagnose` for live drift detection.
+    Previously this function fell back to the legacy
+    `shared_executor_seat` doc when the roster had no assignment for
+    `executor`. That created four-way drift (roster / legacy executor
+    doc / shared_auditor_seat / paradox_v2 trust list) and was the
+    direct cause of the "STRATEGIST · holder: vacant" display bug
+    operators saw even when QSS showed seats filled.
+
+    The legacy doc is now wiped on every roster write (see
+    `_wipe_legacy_executor_doc`) and slated for cleanup via the
+    one-shot `/api/admin/seat-state/cleanup-legacy` endpoint. There
+    is exactly one read path for seat holders, period.
     """
     if not seat:
         return None
     seat_l = seat.lower()
-    # Roster wins. Read the multi-seat assignment first.
     from shared.roster import get_roster  # noqa: WPS433
     r = await get_roster()
     assigned = (r.get("assignments") or {}).get(seat_l)
-    if assigned in RUNTIMES:
-        return assigned
-    # Fallback: legacy `shared_executor_seat` doc only if asked about
-    # the equity executor AND the roster has no assignment for it.
-    if seat_l == "executor":
-        h = await get_executor_holder()
-        if h:
-            return h
-    return None
+    return assigned if assigned in RUNTIMES else None
 
 
 def seats_with_execute(lane: Optional[str]) -> list[str]:

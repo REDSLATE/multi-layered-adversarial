@@ -16,14 +16,19 @@ Sources covered:
     4. paradox_v2_seat_policy_config         (new pipeline policy)
     5. paradox_v2_seat_trusted_brains        (new pipeline trust list)
 
-Read-only. No writes. Safe to hit on prod.
+Read-only diagnostic + one mutation:
+
+    GET  /api/admin/seat-state/all-sources    — drift report
+    POST /api/admin/seat-state/cleanup-legacy — DROP the two legacy
+        collections (shared_executor_seat + shared_auditor_seat). Run
+        ONCE after confirming the intent feed display is correct.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from auth import get_current_user
 from db import db
@@ -34,6 +39,7 @@ from namespaces import (
     SHARED_AUDITOR_SEAT,
     SHARED_EXECUTOR_SEAT,
 )
+from shared.seat_state import cleanup_legacy_collections
 
 
 router = APIRouter(prefix="/admin/seat-state", tags=["seat-state-diagnose"])
@@ -192,4 +198,30 @@ async def all_sources(_user: dict = Depends(get_current_user)) -> Dict[str, Any]
                 "can call the broker for that brain."
             ),
         },
+    }
+
+
+
+@router.post("/cleanup-legacy")
+async def cleanup_legacy(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
+    """One-shot legacy cleanup. DROPS the two legacy seat collections
+    (`shared_executor_seat` + `shared_auditor_seat`) so they can no
+    longer drift from the canonical `brain_roster.assignments`.
+
+    Safety: this is irreversible. The auditor migration runs at every
+    backend boot, so the canonical roster already has the data before
+    this endpoint is callable. Still — only call this after a hit to
+    `/all-sources` confirms the migration succeeded and the intent UI
+    is showing correct holders.
+
+    Admin-only. Returns the row counts that were dropped.
+    """
+    if not (user.get("role") == "admin" or user.get("is_admin")):
+        raise HTTPException(status_code=403, detail="admin only")
+    result = await cleanup_legacy_collections()
+    return {
+        "ok": True,
+        "operator": user.get("email"),
+        "ts": _now(),
+        **result,
     }
