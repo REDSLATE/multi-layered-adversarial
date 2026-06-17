@@ -40,8 +40,8 @@ def _env(key: str) -> str:
     raise RuntimeError(f"{key} missing")
 
 
-CAMARO_TOKEN = _env("CAMARO_INGEST_TOKEN")
-ALPHA_TOKEN = _env("ALPHA_INGEST_TOKEN")
+CAMARO_TOKEN = _env("BARRACUDA_INGEST_TOKEN")
+ALPHA_TOKEN = _env("CAMINO_INGEST_TOKEN")
 
 
 def _login() -> str:

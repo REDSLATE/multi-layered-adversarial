@@ -40,7 +40,6 @@ from shared.public_api.traffic import (
     public_traffic_middleware,
     router as public_traffic_router,
 )
-from shared.heartbeat_ping import router as heartbeat_ping_router
 from shared.seat_performance import router as seat_performance_router
 from shared.roster import router as roster_router
 from shared.promotion import router as promotion_router
@@ -79,7 +78,6 @@ from shared.auto_router import (
 from shared.hypothesis import router as hypothesis_router
 from shared.mc_shelly import router as mc_shelly_router
 from shared.patches import router as patches_router
-from shared.runtime_tokens import router as runtime_tokens_router
 from shared.runtime.routes import router as platform_survival_router
 from shared.runtime.sidecar_checkin import router as sidecar_checkin_router
 from shared.calibration.confidence_floor_sweep import router as confidence_floor_sweep_router
@@ -139,7 +137,6 @@ from routes.brain_emission_diagnose import router as brain_emission_diagnose_rou
 from routes.seat_registry_diagnose import router as seat_registry_diagnose_router
 from routes.rise_ai_admin import router as rise_ai_admin_router
 from routes.shelly_admin_extension import router as shelly_admin_extension_router
-from routes.sidecar_imposter_scan import router as sidecar_imposter_scan_router
 from shared.shelly_bus.mc_shelly_ingest import router as shelly_bus_router
 from routes.brain_doctrine_hint import router as brain_doctrine_hint_router
 from shared.observation_receipts import router as observation_receipts_router
@@ -147,7 +144,6 @@ from shared.learning_ladder import router as learning_ladder_router
 from routes.intent_inspect import router as intent_inspect_router
 from routes.storage_rollup import router as storage_rollup_router
 from routes.trading_controls import router as trading_controls_router
-from routes.runtime_token_health import router as runtime_token_health_router
 from routes.alpha_vantage_admin import router as alpha_vantage_admin_router
 from routes.broker_lane_admin import router as broker_lane_admin_router
 from routes.auto_router_admin import router as auto_router_admin_router
@@ -800,7 +796,6 @@ api_router.include_router(positions_router)
 api_router.include_router(sovereign_router)
 api_router.include_router(public_api_router)
 api_router.include_router(public_traffic_router)
-api_router.include_router(heartbeat_ping_router)
 api_router.include_router(seat_performance_router)
 api_router.include_router(technicals_router)
 api_router.include_router(kraken_router)
@@ -830,7 +825,6 @@ api_router.include_router(vrl_router)
 api_router.include_router(hypothesis_router)
 api_router.include_router(mc_shelly_router)
 api_router.include_router(patches_router)
-api_router.include_router(runtime_tokens_router)
 api_router.include_router(platform_survival_router)
 api_router.include_router(sidecar_checkin_router)
 api_router.include_router(confidence_floor_sweep_router)
@@ -873,7 +867,6 @@ api_router.include_router(brain_emission_diagnose_router)
 api_router.include_router(seat_registry_diagnose_router)
 api_router.include_router(rise_ai_admin_router)
 api_router.include_router(shelly_admin_extension_router)
-api_router.include_router(sidecar_imposter_scan_router)
 api_router.include_router(shelly_bus_router)
 api_router.include_router(brain_doctrine_hint_router)
 api_router.include_router(lane_execution_router)
@@ -908,7 +901,6 @@ api_router.include_router(camaro_router)
 api_router.include_router(chevelle_router)
 api_router.include_router(storage_rollup_router)
 api_router.include_router(trading_controls_router)
-api_router.include_router(runtime_token_health_router)
 api_router.include_router(alpha_vantage_admin_router)
 api_router.include_router(broker_lane_admin_router)
 api_router.include_router(intent_origin_router)

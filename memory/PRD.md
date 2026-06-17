@@ -1,3 +1,55 @@
+## 2026-02-20 (Sidecar infrastructure deletion — ~600 LOC removed)
+
+### Operator pin
+
+> "🟡 2 and cross off the 500 check."
+
+(Where "2" was the sidecar cleanup item from the previous deploy summary.)
+
+### Files deleted
+
+| File | Purpose (now defunct) |
+|---|---|
+| `shared/runtime_tokens.py` | Downloadable `.env` snippet endpoint so an external sidecar could bootstrap its `MONOREPO_INGEST_TOKEN`. With only the in-process runner, no external sidecar needs to bootstrap. |
+| `shared/heartbeat_ping.py` | Public `GET/POST /api/heartbeat-ping/{brain}` endpoint for external sidecars to prove they're alive over the wire. In-process runner uses `sidecar_checkin` directly. |
+| `routes/sidecar_imposter_scan.py` | Aggregate scanner for imposter sidecars (e.g. an old prod pod still pinging). With one process running all 4 brains, no imposter is possible. |
+| `routes/runtime_token_health.py` | Diagnostic for `<BRAIN>_INGEST_TOKEN` mismatches between MC and external sidecars. Not applicable with in-process. |
+| `tests/test_heartbeat_ping.py` | Tests for the removed `heartbeat_ping` endpoint. |
+| `tests/test_imposter_scan_env_filter.py` | Tests for the removed imposter scanner. |
+
+### server.py changes
+
+Removed 4 import lines and 4 `api_router.include_router(...)` lines for the deleted modules. Kept `shared/runtime/sidecar_checkin.py` because the in-process runner still uses it (it POSTs to `/api/admin/runtime/sidecar-checkin/{brain}` on every tick to refresh the `runtime_table.last_seen_at` so the dashboard "LIVE/STALE/DEAD" badge stays accurate).
+
+### .env changes
+
+Removed the 4 legacy `*_INGEST_TOKEN` env vars (`ALPHA / CAMARO / CHEVELLE / REDEYE`). Kept only the 4 new canonical ones (`CAMINO / BARRACUDA / HELLCAT / GTO`).
+
+### Verification
+
+- 36/36 regression tests pass (pipeline + seat-state + roster + legacy auto-wipe).
+- Endpoints that should be GONE return 404:
+    - `GET /api/admin/runtime/sidecar-imposter-scan`
+    - `GET /api/admin/runtime-tokens/env-snippet`
+    - `GET /api/heartbeat-ping/gto`
+    - `GET /api/admin/runtime-token-health`
+- Endpoints that should be ALIVE return 200:
+    - `GET /api/admin/unified-pipeline/status`
+    - `GET /api/admin/seat-state/all-sources`
+    - `GET /api/intents/_pipeline/summary?hours=1`
+- Backend boots cleanly. All 4 brains start with new canonical names and post intents successfully.
+
+### Files
+
+- Deleted: 4 backend modules + 2 test files (~600 LOC)
+- Modified: `server.py` (4 import lines + 4 include_router lines removed)
+- Modified: `.env` (4 legacy env vars removed)
+- Modified: `tests/test_roster.py` (updated to use `CAMINO_INGEST_TOKEN` / `BARRACUDA_INGEST_TOKEN`)
+- Updated: `/app/memory/test_credentials.md` (reflects new env var names)
+
+---
+
+
 ## 2026-02-20 (Deep canonical rename — alpha/camaro/chevelle/redeye → camino/barracuda/hellcat/gto)
 
 ### Operator pin
