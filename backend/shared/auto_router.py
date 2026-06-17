@@ -123,7 +123,7 @@ async def _route_one(intent: dict) -> dict:
         is_pipeline_enabled,
         run_unified_for_intent,
     )
-    if is_pipeline_enabled():
+    if await is_pipeline_enabled():
         return await run_unified_for_intent(intent, notional_raw)
 
     # ── Phase 4 (2026-02-17): LADDER-FIRST routing ────────────────────

@@ -1,3 +1,70 @@
+## 2026-02-20 (Unified Pipeline flag — Mongo + admin endpoints, no redeploy needed)
+
+### Operator pin
+
+> "It's live, still no slot."
+
+### Root cause
+
+The unified pipeline was gated on an env var (`UNIFIED_PIPELINE_ENABLED=true`)
+that required redeploying prod to flip. Emergent's deploy env doesn't
+expose a UI for ad-hoc flag changes, so the operator couldn't flip
+the pipeline from the running prod instance — only from a redeploy.
+
+### Resolution
+
+Mongo-backed runtime flag, same pattern as `auto_router_enabled`. Two
+sources, either flips the pipeline on:
+
+1. **Env var** `UNIFIED_PIPELINE_ENABLED=true` (deploy config). Wins absolutely.
+2. **Mongo flag** `runtime_flags._id=unified_pipeline_enabled.enabled=True`. Flipped from the admin UI via the new endpoints. Effect within 5 seconds (cache TTL).
+
+### New endpoints
+
+```
+POST /api/admin/unified-pipeline/start     — flip mongo flag ON
+POST /api/admin/unified-pipeline/stop      — flip mongo flag OFF
+GET  /api/admin/unified-pipeline/status    — current state + last-flip metadata
+```
+
+`/status` shape:
+```json
+{
+  "effective_enabled": true,
+  "sources": {
+    "env":   { "set": false, "value": "false", "enabled": false },
+    "mongo": { "enabled": true, "updated_at": "...", "updated_by": "admin@..." }
+  }
+}
+```
+
+The 5-second cache prevents per-intent Mongo reads (the auto-router fires up to 50 intents per tick). `refresh_pipeline_flag_cache()` is called from boot and from every start/stop endpoint so the cache is always coherent with the operator's last action.
+
+### Smoke test on preview
+
+- `POST /start` → effective_enabled=true (mongo flag flipped, cache refreshed)
+- Synthetic intent through `run_unified_for_intent` → receipt produced with `restriction_source=seat, reason=brain_not_trusted_for_seat:alpha->equity_executor`
+- `POST /stop` → effective_enabled=false
+- All 37 regression tests still pass.
+
+### Operator deployment
+
+1. Deploy this branch to prod.
+2. Hit `POST https://mission.risedual.ai/api/admin/unified-pipeline/start` (with admin JWT). One curl, no redeploy.
+3. Verify with `GET .../status` — both sources visible.
+4. Watch `GET /api/intents/_pipeline/summary?hours=1` for the first receipts.
+5. To roll back: `POST .../stop`. Effect within 5 seconds.
+
+### Files
+
+- New:      `routes/unified_pipeline_admin.py`
+- Modified: `shared/pipeline/adapter.py` (async `is_pipeline_enabled` + Mongo cache)
+- Modified: `shared/auto_router.py` (awaits the now-async flag check)
+- Modified: `server.py` (boot-time flag cache refresh + router register)
+
+---
+
+
 ## 2026-02-20 (Seat-state single-source-of-truth — merge & cleanup)
 
 ### Operator request (verbatim)

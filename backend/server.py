@@ -161,6 +161,7 @@ from routes.admin_wrappers import router as admin_wrappers_router
 from routes.admin_intents_post_mortem import router as admin_intents_post_mortem_router
 from routes.intent_why import router as intent_why_router
 from routes.seat_state_diagnose import router as seat_state_diagnose_router
+from routes.unified_pipeline_admin import router as unified_pipeline_admin_router
 from routes.admin_auto_submit import router as admin_auto_submit_router
 from routes.admin_quiver import router as admin_quiver_router
 from routes.parabolic_phase_admin import router as parabolic_phase_admin_router
@@ -272,6 +273,16 @@ async def lifespan(app: FastAPI):
         logger.info("seat_state v2 trust sync: %s", sync_result)
     except Exception as e:  # noqa: BLE001
         logger.warning("seat_state migration failed (non-fatal): %s", e)
+
+    # Unified pipeline flag — refresh the in-memory cache from Mongo so
+    # the first auto-router tick after boot sees the latest operator
+    # toggle (no stale 5-second cache from before boot).
+    try:
+        from shared.pipeline.adapter import refresh_pipeline_flag_cache
+        enabled = await refresh_pipeline_flag_cache()
+        logger.info("unified_pipeline_enabled (from mongo) = %s", enabled)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("unified_pipeline flag refresh failed (non-fatal): %s", e)
 
     # Auto-submit policy — hydrate persisted override from Mongo so
     # the operator's toggle survives pod restarts. Without this,
@@ -798,6 +809,7 @@ api_router.include_router(admin_wrappers_router)
 api_router.include_router(admin_intents_post_mortem_router)
 api_router.include_router(intent_why_router)
 api_router.include_router(seat_state_diagnose_router)
+api_router.include_router(unified_pipeline_admin_router)
 api_router.include_router(admin_auto_submit_router)
 api_router.include_router(admin_quiver_router)
 api_router.include_router(paradox_v2_router)
