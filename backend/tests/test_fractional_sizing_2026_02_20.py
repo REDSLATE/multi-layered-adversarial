@@ -257,6 +257,48 @@ def test_kraken_no_price_falls_back_to_amount():
     assert d.quantity is None
 
 
+# ── Deterministic snapshot auto-fill (2026-02-20) ──────────────────
+
+
+def test_fractional_autofill_equity_defaults_true():
+    """Operator pin (2026-02-20): equity lane → fractional_supported=True
+    by deterministic broker-capability table, not operator-dependent."""
+    from shared.intents import _fractional_default_for_lane
+    assert _fractional_default_for_lane("equity", "AAPL") is True
+    assert _fractional_default_for_lane("EQUITY", "NVDA") is True  # case-insensitive
+
+
+def test_fractional_autofill_crypto_defaults_true():
+    from shared.intents import _fractional_default_for_lane
+    assert _fractional_default_for_lane("crypto", "BTC") is True
+    assert _fractional_default_for_lane("crypto", "SHIB") is True
+
+
+def test_fractional_autofill_unknown_lane_false():
+    """Unknown lanes default False — conservative."""
+    from shared.intents import _fractional_default_for_lane
+    assert _fractional_default_for_lane("options", "SPY") is False
+    assert _fractional_default_for_lane("", "AAPL") is False
+    assert _fractional_default_for_lane(None, "AAPL") is False
+
+
+def test_fractional_autofill_env_override_disables(monkeypatch):
+    """`RISEDUAL_DISABLE_FRACTIONAL_AUTOFILL=true` forces False on
+    every lane — operator escape hatch for broker outages."""
+    from shared.intents import _fractional_default_for_lane
+    monkeypatch.setenv("RISEDUAL_DISABLE_FRACTIONAL_AUTOFILL", "true")
+    assert _fractional_default_for_lane("equity", "AAPL") is False
+    assert _fractional_default_for_lane("crypto", "BTC") is False
+
+
+@pytest.mark.parametrize("val", ["false", "0", "no", "", "  "])
+def test_fractional_autofill_env_off_values_keep_default(monkeypatch, val):
+    from shared.intents import _fractional_default_for_lane
+    monkeypatch.setenv("RISEDUAL_DISABLE_FRACTIONAL_AUTOFILL", val)
+    # off-values: env override does NOT apply, defaults restored
+    assert _fractional_default_for_lane("equity", "AAPL") is True
+
+
 def test_unknown_broker_rejects():
     d = size_for_fractional(
         broker="alpaca", symbol="AAPL", notional_usd=10.0,

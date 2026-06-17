@@ -1,3 +1,67 @@
+## 2026-02-20 (Deterministic fractional auto-fill — closes the silent-failure gap)
+
+### Operator pin
+
+> Removing operator-dependent failure modes is more important than
+> getting the flag "right" for some edge symbol.
+
+The earlier fractional doctrine patch was forward-compatible only — it gave +0.05 + baseline-unlock + toehold path when `snapshot["fractional_supported"]` was True, but silently fell back when the field was missing. That's the kind of bug that takes days to rediscover: someone refactors a brain runtime, forgets to plumb the flag, and large-caps go quiet again.
+
+### Fix
+
+`shared/intents.py` snapshot merge now hard-codes the broker capability table:
+
+```python
+if "fractional_supported" not in merged:
+    merged["fractional_supported"] = _fractional_default_for_lane(
+        merged.get("lane"), merged.get("symbol"),
+    )
+```
+
+Rule:
+
+| Lane | Default |
+|---|---|
+| `equity`  | `True` (Webull's fractional-eligible US equity/ETF universe) |
+| `crypto`  | `True` (Kraken supports fractional natively for every USD pair) |
+| anything else | `False` (conservative) |
+
+Operator escape hatch: `RISEDUAL_DISABLE_FRACTIONAL_AUTOFILL=true` forces every snapshot to False (use during a broker outage or whole-share fallback testing).
+
+Lane normalization is case-insensitive. Brain-supplied `fractional_supported` is **never overridden** — autofill is `setdefault`-shaped behavior, brains can still pin the flag explicitly.
+
+### Files
+
+- `backend/shared/intents.py` (autofill in the snapshot-merge step + `_fractional_default_for_lane` helper)
+- `backend/tests/test_fractional_sizing_2026_02_20.py` (+5 tests for autofill semantics)
+
+### Verification
+
+- 172 tests passing across doctrine / market-hours / webull-caps / broker-router / council / auto-submit / fractional-sizing suites.
+- End-to-end smoke test: AAPL intent emitted with brain snapshot `{'symbol': 'AAPL', 'spread_bps': 5.0}` (no fractional flag) → auto-fills `fractional_supported=True` → doctrine fires `FRACTIONAL_SUPPORTED` + `BASELINE_ONLY_TOEHOLD` labels → score=0.45 C_QUALITY → toehold-size trade.
+
+### Post-deploy diagnostics (operator-suggested, 2026-02-20)
+
+Watch *before P&L*:
+- HOLD % (should decrease)
+- REJECT % (should decrease)
+- BUY/SELL % (should increase)
+- C_QUALITY count (should increase — toehold trades appearing)
+- RoadGuard blocks (should stay flat — execution plumbing untouched)
+- Broker rejects (should stay flat — fractional path enforces RTH + min-order at the seat)
+
+If those deltas land as predicted, this confirms the system was previously starved by *doctrine scoring*, not by *execution plumbing*. P&L tuning comes after the funnel is healthy.
+
+### Production rollout
+
+1. Redeploy preview → prod.
+2. No additional curl commands needed beyond the seat-promote ones from the prior step.
+3. Watch the post-mortem panel's outcome distribution for the deltas above.
+
+---
+
+
+
 ## 2026-02-20 (Fractional doctrine + seat layer — "fractional makes risk smaller, not signal better")
 
 ### Operator doctrine pin

@@ -514,6 +514,48 @@ def _doctrine_failure_packet(symbol: str, lane: Optional[str], reason: str) -> d
     }
 
 
+def _fractional_default_for_lane(
+    lane: Optional[str], symbol: Optional[str],
+) -> bool:
+    """Deterministic default for `snapshot["fractional_supported"]`.
+
+    Doctrine pin (operator, 2026-02-20):
+        Removing operator-dependent failure modes is more important
+        than getting the flag "right" for some edge symbol. We hard-
+        code the broker-capability table here so a brain runtime
+        that forgets to set the flag doesn't silently lose:
+          * +0.05 FRACTIONAL_SUPPORTED label
+          * baseline-only toehold path
+          * large-caps going quiet again
+
+    Rule table:
+        equity     → True (Webull's fractional-eligible US equity/ETF
+                     universe; specific ineligible tickers are
+                     enforced at the seat layer via the
+                     `WEBULL_FRACTIONAL_INELIGIBLE_SYMBOLS` blacklist
+                     env var — not here, to keep doctrine layer
+                     broker-agnostic).
+        crypto     → True (Kraken supports fractional natively for
+                     every USD pair).
+        else       → False (unknown lane; conservative default).
+
+    Operator override: `RISEDUAL_DISABLE_FRACTIONAL_AUTOFILL=true`
+    forces every snapshot to False. Use during a broker outage or
+    when the operator wants to force whole-share fallback testing.
+    """
+    import os  # local import keeps module-load lean
+    if (os.environ.get("RISEDUAL_DISABLE_FRACTIONAL_AUTOFILL") or "").strip().lower() in {
+        "true", "1", "yes", "on",
+    }:
+        return False
+    lane_norm = (lane or "").lower()
+    if lane_norm == "equity":
+        return True
+    if lane_norm == "crypto":
+        return True
+    return False
+
+
 async def _build_and_persist_doctrine_packet(
     *,
     intent_id: str,
@@ -569,6 +611,17 @@ async def _build_and_persist_doctrine_packet(
         "existing_intent",
         (action or "").upper() in {"BUY", "SELL", "SHORT", "COVER"},
     )
+    # 2026-02-20: fractional-trading capability is a DETERMINISTIC
+    # property of the broker + lane combination, not something a
+    # brain should have to remember to set on every snapshot. We
+    # auto-fill here so the doctrine layer's `FRACTIONAL_SUPPORTED`
+    # label + BASELINE_ONLY_TOEHOLD path never silently de-activate
+    # because someone forgot to plumb the flag. Operator can flip
+    # OFF via env if a broker outage forces whole-share fallback.
+    if "fractional_supported" not in merged:
+        merged["fractional_supported"] = _fractional_default_for_lane(
+            merged.get("lane"), merged.get("symbol"),
+        )
 
     try:
         from shared.doctrine.lane_doctrine_router import (  # noqa: WPS433
