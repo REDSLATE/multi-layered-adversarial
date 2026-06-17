@@ -1,3 +1,56 @@
+## 2026-02-20 (Dead-code cleanup)
+
+Deleted three confirmed-dead artifacts that were misleading operators and noise during gate audits:
+
+### 1. `equity_broker_preference()` + `RISEDUAL_EQUITY_BROKER` env var
+
+The function lived in `shared/broker_symbol_resolver.py` and returned `"public"` for any env value. It was uncalled anywhere in the codebase — verified via grep before deletion. Equity routing is hardcoded via `LANE_BROKER_REGISTRY["equity"] = "webull"`. The env var was actively misleading the operator into thinking `RISEDUAL_EQUITY_BROKER=public` was breaking Webull routing — it wasn't, because the function was dead.
+
+Comment retained at the deletion site explaining why the function went away and how to add it back if equity routing ever needs to be operator-tunable.
+
+Side cleanup: `import os` removed from the file (no other uses). Comment in `broker_lane_admin.py` updated to reflect that the env var path is dead.
+
+### 2. `max_auditor_objections` field
+
+Declared on `SeatPolicyConfig` in `shared/paradox_v2/models.py`, seeded across all 4 seats in `seed.py`, exposed via the admin `PATCH /seat-policy/{seat_id}` route — but **never read or enforced anywhere**. Auditor objections are advisory per operator doctrine ("Brain = opinion only"), so the field had no honest place in a seat-policy model.
+
+Deleted from:
+- `shared/paradox_v2/models.py` (field declaration)
+- `shared/paradox_v2/seed.py` (4 occurrences)
+- `routes/paradox_v2.py` (`SeatPolicyPatch` payload model)
+
+Pydantic v2 ignores unknown fields on load (default `extra='ignore'`), so any existing DB doc with the field will load cleanly — field just drops silently.
+
+### 3. SeatPolicyConfig `confidence_min` default 0.85 → 0.70
+
+Same loosening rationale as the Shelly `TIER_1_DEFAULTS.confidence_min` change. The Paradox v2 seat-policy model's default `confidence_min` was 0.85, same problem the operator was hand-flipping on every prod deploy. Loosened to 0.70 to match.
+
+Per-seat overrides in `DEFAULT_SEAT_POLICIES` left intact (`crypto_executor=0.90`, `spot_short_executor=0.90`, `options_executor=0.92`) since those reflect lane-specific risk tolerance the operator explicitly tuned.
+
+### Files
+
+- `backend/shared/broker_symbol_resolver.py` (deleted func + import)
+- `backend/shared/paradox_v2/models.py` (field deleted; default loosened)
+- `backend/shared/paradox_v2/seed.py` (4 occurrences deleted)
+- `backend/routes/paradox_v2.py` (admin payload field deleted)
+- `backend/routes/broker_lane_admin.py` (docstring updated)
+
+### Verification
+
+- All 145 tests still passing across governance, market-hours, webull-caps, broker-router, auto-submit, doctrine-alignment suites.
+- Backend restarts cleanly, `/api/health` returns 200.
+- Smoke test confirms `SeatPolicyConfig.max_auditor_objections` no longer exists, `confidence_min.default = 0.7`, seed has no occurrences, lane routing unchanged (`equity → webull`, `crypto → kraken`).
+
+### Production rollout
+
+1. Redeploy preview → prod.
+2. **Optional cleanup on prod**: delete `RISEDUAL_EQUITY_BROKER` from prod env vars (harmless to leave; setting it now does nothing).
+3. Any existing seat-policy docs in production Mongo will load cleanly — the deleted field is dropped silently on Pydantic deserialization.
+
+---
+
+
+
 ## 2026-02-20 (Doctrine alignment: brain veto removed from execution path)
 
 ### Operator doctrine (pinned, code-enforced)

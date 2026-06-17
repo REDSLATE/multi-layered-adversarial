@@ -21,7 +21,6 @@ Canonical format:
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
@@ -379,26 +378,13 @@ LANE_BROKER_REGISTRY: dict[LaneT, str] = {
 }
 
 
-def equity_broker_preference() -> str:
-    """Operator-controlled equity-broker preference.
-
-    Legal values (2026-02-XX onward):
-        - "public" (default + only supported value)
-
-    Anything else falls back to "public". The previous `auto` and
-    `alpaca_paper` modes were removed when the operator chose to
-    drop Alpaca entirely — Public.com is now the only equity broker
-    in the system. If Public is unavailable (no creds / API down)
-    the broker_router fails-closed with NO_TRADE; it does NOT
-    silently route to Alpaca anymore.
-    """
-    val = (os.environ.get("RISEDUAL_EQUITY_BROKER") or "public").strip().lower()
-    if val != "public":
-        # Operator typo or stale env var — log-worthy but harmless.
-        # Forcing `public` here is intentional: equity ALWAYS goes
-        # to Public when this preference function is consulted.
-        return "public"
-    return "public"
+# 2026-02-20: `equity_broker_preference()` deleted along with the
+# `RISEDUAL_EQUITY_BROKER` env var. It was uncalled anywhere in the
+# codebase and was misleading operators into thinking the env var
+# controlled equity routing — it didn't; the static
+# LANE_BROKER_REGISTRY above is the canonical source of truth.
+# If equity routing ever needs to be operator-tunable again, add
+# it back here and CALL it from `broker_router._get_equity_adapter`.
 
 
 class LaneRoutingError(Exception):

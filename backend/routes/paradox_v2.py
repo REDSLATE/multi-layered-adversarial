@@ -177,7 +177,9 @@ class SeatPolicyPatch(BaseModel):
     max_concentration_pct: Optional[float] = Field(None, ge=0.0, le=100.0)
     confidence_min: Optional[float] = Field(None, ge=0.0, le=1.0)
     market_quality_min: Optional[float] = Field(None, ge=0.0, le=1.0)
-    max_auditor_objections: Optional[int] = Field(None, ge=0)
+    # 2026-02-20: max_auditor_objections removed — was declared but
+    # never enforced anywhere. Auditor objections are advisory per
+    # operator doctrine.
     required_governor_stance: Optional[Literal["RISK_DOWN", "NEUTRAL", "RISK_UP"]] = None
     reason: str = Field(..., min_length=4, description="audit reason ≥4 chars")
 

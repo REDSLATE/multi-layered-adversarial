@@ -8,9 +8,12 @@ Doctrine pin (2026-02-XX):
     NO_TRADE immediately.
 
     This is ORTHOGONAL to:
-      - `RISEDUAL_EQUITY_BROKER` env var: which broker for equity
-        (Public vs Alpaca). Decides identity, not whether to trade.
-      - Public/Kraken `execution_enabled` flags: per-broker kill
+      - The static `LANE_BROKER_REGISTRY` in `broker_symbol_resolver`:
+        which broker each lane routes to (Webull / Kraken). Decides
+        identity, not whether to trade. (Prior to 2026-02-20 there
+        was an env var `RISEDUAL_EQUITY_BROKER` for this; that path
+        is dead — equity ALWAYS routes to Webull now.)
+      - Webull/Kraken `execution_enabled` flags: per-broker kill
         switches. Decide whether THAT broker may fill orders.
       - Learning-ladder stage: per-brain-per-lane. Decides whether
         a SPECIFIC brain may trade THAT lane.

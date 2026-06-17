@@ -59,7 +59,6 @@ DEFAULT_SEAT_POLICIES = [
         "max_concentration_pct": 25.0,
         "confidence_min": 0.85,
         "market_quality_min": 0.60,
-        "max_auditor_objections": 0,
         "required_governor_stance": "RISK_DOWN",
     },
     {
@@ -74,7 +73,6 @@ DEFAULT_SEAT_POLICIES = [
         "max_concentration_pct": 15.0,
         "confidence_min": 0.90,         # higher bar to earn promotion
         "market_quality_min": 0.70,
-        "max_auditor_objections": 0,
         "required_governor_stance": "RISK_DOWN",
     },
     # ─── Phase 3 pilot seats ────────────────────────────────────────
@@ -93,7 +91,6 @@ DEFAULT_SEAT_POLICIES = [
         "max_concentration_pct": 10.0,  # short squeezes punish concentration
         "confidence_min": 0.90,         # higher bar for short side
         "market_quality_min": 0.70,
-        "max_auditor_objections": 0,
         "required_governor_stance": "RISK_DOWN",
     },
     {
@@ -108,7 +105,6 @@ DEFAULT_SEAT_POLICIES = [
         "max_concentration_pct": 10.0,
         "confidence_min": 0.92,         # highest bar — gamma+theta blow up fast
         "market_quality_min": 0.75,
-        "max_auditor_objections": 0,
         "required_governor_stance": "RISK_DOWN",
     },
 ]

@@ -152,11 +152,22 @@ class SeatPolicyConfig(BaseModel):
     max_concentration_pct: float = Field(25.0, ge=0.0, le=100.0)
 
     # Brain-quality gates
-    confidence_min: float = Field(0.85, ge=0.0, le=1.0)
+    # 2026-02-20: default loosened 0.85 → 0.70 to match the operator's
+    # preferred per-deploy hand-flip. Seat is the restriction authority
+    # in the doctrine, so operators can hand-tune per-seat via the
+    # admin endpoint if they want tighter; this is just the floor for
+    # fresh deploys / disarm-then-arm cycles.
+    confidence_min: float = Field(0.70, ge=0.0, le=1.0)
     market_quality_min: float = Field(0.60, ge=0.0, le=1.0)
 
     # Governance
-    max_auditor_objections: int = Field(0, ge=0)
+    # 2026-02-20: `max_auditor_objections` field deleted — it was
+    # declared on the model and seeded across all four seats but
+    # never enforced anywhere in the codebase. Auditor objections
+    # are advisory only per operator doctrine ("Brain = opinion
+    # only"), so the field had no honest place here. If auditor-
+    # objection counting ever needs to gate execution, do it via a
+    # seat-policy field that's actually wired into the evaluator.
     required_governor_stance: Optional[Literal["RISK_DOWN", "NEUTRAL", "RISK_UP"]] = Field("RISK_DOWN")
 
     updated_at: str = Field(default_factory=_now)
