@@ -321,3 +321,89 @@ def test_truncation_not_rounding(monkeypatch):
     assert d.quantity == 0.53846
     # Verify the implied notional is ≤ 7.00 (never exceeds budget):
     assert d.quantity * 13.0 <= 7.00
+
+
+
+# ── 2026-02-20: lane router default + contract toehold bypass ──────
+
+
+def test_lane_router_defaults_equity_to_large_cap():
+    """Operator pin (2026-02-20): brain runtime doesn't reliably set
+    `market_cap_band`, so the router default for equity now favors
+    large_cap_doctrine. Previously the default was small-cap which
+    auto-REJECTed every stock priced > $20."""
+    from shared.doctrine.lane_doctrine_router import build_lane_doctrine_packet
+    snap = {"symbol": "ABNB", "lane": "equity", "spread_bps": 5.0}
+    pkt = build_lane_doctrine_packet(snap, seat_holders={"governor": "chevelle"})
+    assert "large_cap" in (pkt.get("doctrine_version") or "")
+
+
+def test_lane_router_routes_explicit_small_cap_strategy():
+    """Small-cap day-trade strategies opt IN explicitly."""
+    from shared.doctrine.lane_doctrine_router import build_lane_doctrine_packet
+    snap = {
+        "symbol": "SNDL", "lane": "equity",
+        "strategy": "gap_and_go",
+        "gap_pct": 12.0, "relative_volume": 6.0, "price": 2.50,
+    }
+    pkt = build_lane_doctrine_packet(snap, seat_holders={"governor": "chevelle"})
+    dv = pkt.get("doctrine_version") or ""
+    assert "large_cap" not in dv
+
+
+def test_lane_router_routes_explicit_small_cap_band():
+    """`market_cap_band='small'` honors small-account doctrine."""
+    from shared.doctrine.lane_doctrine_router import build_lane_doctrine_packet
+    snap = {
+        "symbol": "RSLS", "lane": "equity",
+        "market_cap_band": "small", "price": 3.50,
+    }
+    pkt = build_lane_doctrine_packet(snap, seat_holders={"governor": "chevelle"})
+    assert "large_cap" not in (pkt.get("doctrine_version") or "")
+
+
+def test_contract_toehold_bypasses_floor():
+    """2026-02-20: BASELINE_ONLY_TOEHOLD intent bypasses confidence
+    floor — size is already toehold-clamped by the governor."""
+    from shared.intent_contract import classify_brain_intent
+    intent = {
+        "symbol": "AAPL", "lane": "equity",
+        "action": "BUY", "confidence": 0.20,
+        "doctrine_packet": {
+            "base_labels": {
+                "labels": ["LARGE_CAP_LIQUID", "FRACTIONAL_SUPPORTED",
+                           "BASELINE_ONLY_TOEHOLD"],
+            },
+        },
+    }
+    out = classify_brain_intent(intent, min_exec_conf=0.30)
+    assert out.executable_candidate is True
+    assert out.advisory_only is False
+    assert out.reason == "EXECUTABLE_CANDIDATE_TOEHOLD"
+
+
+def test_contract_non_toehold_below_floor_still_rejected():
+    """Non-toehold intents below floor still advisory_only."""
+    from shared.intent_contract import classify_brain_intent
+    intent = {
+        "symbol": "AAPL", "lane": "equity",
+        "action": "BUY", "confidence": 0.20,
+        "doctrine_packet": {
+            "base_labels": {"labels": ["LARGE_CAP_LIQUID"]},
+        },
+    }
+    out = classify_brain_intent(intent, min_exec_conf=0.30)
+    assert out.executable_candidate is False
+    assert out.reason == "CONFIDENCE_BELOW_EXEC_FLOOR"
+
+
+def test_contract_no_doctrine_packet_field_safe():
+    """Missing doctrine_packet must not crash classification."""
+    from shared.intent_contract import classify_brain_intent
+    intent = {
+        "symbol": "AAPL", "lane": "equity",
+        "action": "BUY", "confidence": 0.50,
+    }
+    out = classify_brain_intent(intent)
+    assert out.executable_candidate is True
+    assert out.reason == "EXECUTABLE_CANDIDATE"

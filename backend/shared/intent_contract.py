@@ -58,6 +58,9 @@ def classify_brain_intent(
 
     Reasons emitted (audit-stable strings):
       EXECUTABLE_CANDIDATE       — passes all checks
+      EXECUTABLE_CANDIDATE_TOEHOLD — toehold-doctrine intent (size
+                                     already clamped at the doctrine
+                                     layer); floor bypassed.
       SYMBOL_MISSING             — no symbol
       NON_DIRECTIONAL_OPINION    — HOLD/WAIT/NONE/NEUTRAL/empty
       UNKNOWN_DIRECTION:<X>      — direction is something other than BUY/SELL
@@ -79,6 +82,25 @@ def classify_brain_intent(
         intent.get("raw_confidence", intent.get("confidence", intent.get("effective_confidence", 0.0)))
     )
 
+    # 2026-02-20: toehold-doctrine intents bypass the floor.
+    # When the doctrine layer tagged the intent with
+    # `BASELINE_ONLY_TOEHOLD`, the governor has already clamped
+    # `risk_multiplier ≤ 0.20`. The confidence floor was originally a
+    # "filter low-conviction noise out of FULL-size orders" guard —
+    # but a toehold-size order at 0.20 conviction is the explicit
+    # design ("trade tiny, learn, don't repeat"). Skipping the floor
+    # here preserves the doctrine boundary: the doctrine decides
+    # whether to act, the seat sizes, and the contract no longer
+    # second-guesses either.
+    doctrine_labels = set()
+    try:
+        labels_field = (intent.get("doctrine_packet") or {}).get("base_labels") or {}
+        for lbl in (labels_field.get("labels") or []):
+            doctrine_labels.add(str(lbl).upper())
+    except Exception:  # noqa: BLE001
+        pass
+    is_toehold = "BASELINE_ONLY_TOEHOLD" in doctrine_labels
+
     if not symbol:
         return IntentClassification(False, True, "SYMBOL_MISSING", direction, confidence, lane, symbol, brain)
 
@@ -88,10 +110,11 @@ def classify_brain_intent(
     if direction not in DIRECTIONAL:
         return IntentClassification(False, True, f"UNKNOWN_DIRECTION:{direction}", direction, confidence, lane, symbol, brain)
 
-    if confidence < min_exec_conf:
+    if confidence < min_exec_conf and not is_toehold:
         return IntentClassification(False, True, "CONFIDENCE_BELOW_EXEC_FLOOR", direction, confidence, lane, symbol, brain)
 
     if lane not in {"equity", "crypto"}:
         return IntentClassification(False, True, "LANE_MISSING_OR_INVALID", direction, confidence, lane, symbol, brain)
 
-    return IntentClassification(True, False, "EXECUTABLE_CANDIDATE", direction, confidence, lane, symbol, brain)
+    reason = "EXECUTABLE_CANDIDATE_TOEHOLD" if is_toehold else "EXECUTABLE_CANDIDATE"
+    return IntentClassification(True, False, reason, direction, confidence, lane, symbol, brain)

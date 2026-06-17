@@ -37,11 +37,25 @@ def build_lane_doctrine_packet(
         # graduate (lane, seat, doctrine_version) slices indepedently.
         strategy = str(snapshot.get("strategy") or "").lower()
         market_cap_band = str(snapshot.get("market_cap_band") or "").lower()
-        # Large-cap dispatch (2026-02-18): mega-cap names like NVDA /
-        # AMZN / GOOGL never satisfy small-account thresholds. Route
-        # them to `large_cap_equity_v1` if the snapshot flags them as
-        # large/mega-cap or the brain explicitly picks the strategy.
-        if strategy == "large_cap" or market_cap_band in ("large", "mega"):
+        # 2026-02-20 (operator directive): INVERT the routing default.
+        # Brain runtime does not reliably set `market_cap_band` on
+        # snapshots, which previously routed every equity emission to
+        # the small-cap doctrine (`base_labels.py`), where any stock
+        # priced > $20 (i.e., the entire production watchlist:
+        # AAPL/MSFT/NVDA/MSTR/ABNB) auto-REJECTed at the
+        # `SMALL_ACCOUNT_PRICE_VALID` check.
+        #
+        # New default: equity → large_cap_doctrine UNLESS the snapshot
+        # explicitly flags small/micro-cap. Operators on a large-cap
+        # watchlist now route correctly even without a calibrated
+        # market_cap_band feed. Small-cap day-trade strategies opt IN
+        # via `strategy ∈ {gap_and_go, micro_pullback}` or
+        # `market_cap_band ∈ {small, micro, nano}`.
+        explicit_small_cap = (
+            strategy in ("gap_and_go", "micro_pullback")
+            or market_cap_band in ("small", "micro", "nano")
+        )
+        if not explicit_small_cap:
             from shared.doctrine.large_cap_doctrine import (  # noqa: WPS433
                 build_large_cap_doctrine_packet,
             )
