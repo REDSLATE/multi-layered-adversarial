@@ -81,7 +81,8 @@ def _now() -> datetime:
 
 
 def _expected_token_for(brain: str) -> str:
-    return os.environ.get(f"{brain.upper()}_INGEST_TOKEN", "")
+    from shared.brain_token import expected_ingest_token
+    return expected_ingest_token(brain)
 
 
 def _lane_of_role(role: str) -> str:

@@ -82,7 +82,8 @@ def _secret() -> str:
 
 def _expected_ingest_token(brain: str) -> str:
     """Per-brain ingest token from .env (same shape as sidecar-checkin)."""
-    return os.environ.get(f"{brain.upper()}_INGEST_TOKEN", "") or ""
+    from shared.brain_token import expected_ingest_token
+    return expected_ingest_token(brain)
 
 
 def _sign_wake_token(order_id: str, brain: str, ticker: str, issued_at: datetime, expires_at: datetime) -> str:

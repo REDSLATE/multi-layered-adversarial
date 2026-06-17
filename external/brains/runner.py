@@ -112,10 +112,15 @@ def _select_skills_for(lane: str, symbol: str, action: str, snapshot: dict) -> t
 # camaro/chevelle/redeye) are still accepted at ingress via
 # `shared.brain_identity.normalize_brain_id` for historical rows.
 BRAIN_ROSTER = [
-    ("camino",    "Camino",    "CAMINO_INGEST_TOKEN"),
-    ("barracuda", "Barracuda", "BARRACUDA_INGEST_TOKEN"),
-    ("hellcat",   "Hellcat",   "HELLCAT_INGEST_TOKEN"),
-    ("gto",       "GTO",       "GTO_INGEST_TOKEN"),
+    # (brain_id, display_name, primary_env, legacy_fallback_env)
+    # The legacy fallback lets the runner keep authenticating against MC
+    # even when the operator's deploy env config still has the
+    # pre-rename token names. Lets prod self-heal during a partial
+    # rename rollout — no manual env-var copy required.
+    ("camino",    "Camino",    "CAMINO_INGEST_TOKEN",    "ALPHA_INGEST_TOKEN"),
+    ("barracuda", "Barracuda", "BARRACUDA_INGEST_TOKEN", "CAMARO_INGEST_TOKEN"),
+    ("hellcat",   "Hellcat",   "HELLCAT_INGEST_TOKEN",   "CHEVELLE_INGEST_TOKEN"),
+    ("gto",       "GTO",       "GTO_INGEST_TOKEN",       "REDEYE_INGEST_TOKEN"),
 ]
 
 
@@ -1952,12 +1957,12 @@ async def start_neutral_brains() -> None:
     # can confirm prod is configured as prod (or spot the misconfig
     # immediately if env_name="preview" on the prod deploy).
     _log_identity_once()
-    for brain_id, display_name, token_env in BRAIN_ROSTER:
-        token = os.environ.get(token_env, "")
+    for brain_id, display_name, token_env, legacy_env in BRAIN_ROSTER:
+        token = os.environ.get(token_env, "") or os.environ.get(legacy_env, "")
         if not token:
             logger.warning(
-                "neutral_brains: %s has no %s set — skipping",
-                brain_id, token_env,
+                "neutral_brains: %s has neither %s nor %s set — skipping",
+                brain_id, token_env, legacy_env,
             )
             continue
         runner = BrainRunner(

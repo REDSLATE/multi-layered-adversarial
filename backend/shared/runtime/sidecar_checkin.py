@@ -114,8 +114,16 @@ def _now_iso() -> str:
 
 def _expected_token(brain: str) -> str:
     """Same shape as `shared/heartbeat_ping.py` — per-brain ingest
-    token from `.env`. Returns "" if unset so misconfiguration is loud."""
-    return os.environ.get(f"{brain.upper()}_INGEST_TOKEN", "") or ""
+    token from `.env`. Returns "" if unset so misconfiguration is loud.
+
+    2026-02-20 rename: routes the lookup through the shared
+    `expected_ingest_token` helper which tries the new canonical
+    env var first (CAMINO/BARRACUDA/HELLCAT/GTO_INGEST_TOKEN) and
+    falls back to the legacy slot (ALPHA/CAMARO/CHEVELLE/REDEYE_INGEST_TOKEN).
+    Lets prod auth survive a partial rename rollout.
+    """
+    from shared.brain_token import expected_ingest_token
+    return expected_ingest_token(brain)
 
 
 def _verdict_from_validation(validation: Dict[str, Any], mc_policy_hash: str) -> str:
