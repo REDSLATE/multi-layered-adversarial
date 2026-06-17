@@ -1,3 +1,84 @@
+## 2026-02-20 (Seat autonomy_mode promotion — the systemic "rejecting every intent" cause)
+
+### Root cause
+
+Operator question: "Why is it rejecting every intent? Every one, even the ones that pass, all day, regardless of time of day."
+
+Found in `shared/paradox_v2/evaluator.py:267-269`:
+
+```python
+elif seat_res["autonomy_mode"] in ("observe", "shadow"):
+    decision = "BLOCKED"
+    reason = f"seat_in_{seat_res['autonomy_mode']}_mode: decision logged, no order placed"
+```
+
+The Paradox v2 evaluator's *final* stage flips `decision="BLOCKED"` for any seat in `observe` or `shadow` mode — meaning every intent that passes every prior gate (brain emit → dry-run → council → governor → Shelly → RoadGuard → broker cap) is then deliberately not submitted because the seat is in shadow mode. This is the doctrinal "safety-first cascade prevention" the operator intuited.
+
+Seed defaults in `shared/paradox_v2/seed.py`:
+
+| Seat | autonomy_mode (seed default) |
+|---|---|
+| `webull_executor` (equity long) | `auto_execute` ← lived ones |
+| `crypto_executor` (Kraken USD) | `observe` ← shadow only |
+| `spot_short_executor` (equity shorts) | `observe` ← shadow only |
+| `options_executor` | `observe` ← shadow only |
+
+→ 3 of 4 seats were permanently shadow-logging, never firing. Combined with the equity-long market-hours gate, this is why production was rejecting essentially everything.
+
+### Two-track fix shipped today
+
+**(A) Per-seat hot promotion** — Existing `PATCH /api/v2/seat-policy/{seat_id}` already supports this. Operator can curl prod immediately, no redeploy needed.
+
+**(C) Bulk promote-all endpoint + ARM ALL wiring**
+
+New endpoint `POST /api/v2/promote-all-seats` accepts `{target_mode, reason}`. Idempotent (skips seats already at target). Audit-logged via `paradox_v2_seat_promotion_log`. Designed as the operator's "release the brakes" master button.
+
+`POST /api/admin/intents/system-arm` (ARM ALL) now flips a 6th switch as part of the master arm flow — calls the same seat-promotion logic inline, idempotent, audit-trailed. The single operator action "ARM ALL" now does:
+
+1. `trading_controls` → enabled
+2. `auto_router_enabled` → True + start loop
+3. Shelly auto-submit policy → enabled (with optional `confidence_min` override)
+4. Lane toggle: equity → enabled
+5. Lane toggle: crypto → enabled
+6. **NEW**: Paradox v2 seats → all promoted to `auto_execute`
+
+Per-switch failure isolation preserved (one switch failing doesn't cascade). Each switch reports `ok`/`error` independently in the response.
+
+### Verification (preview)
+
+- New endpoint smoke-tested via curl: promoted 3 seats from `observe` to `auto_execute`, idempotent re-run reports `unchanged`.
+- ARM ALL smoke-tested with 3 seats manually reset to `observe`: response shows `[✓] paradox_v2_seats: promoted 3/4 → auto_execute (crypto_executor, spot_short_executor, options_executor)`.
+- 145 tests still passing across governance, market-hours, webull-caps, broker-router, auto-submit, doctrine-alignment suites.
+
+### Files
+
+- `backend/routes/paradox_v2.py` (new `POST /promote-all-seats` endpoint)
+- `backend/routes/admin_intents_post_mortem.py` (6th switch in ARM ALL flow; added `uuid` import)
+
+### Production rollout
+
+**Right now (option A, no deploy):** 3 curl commands on prod.
+
+```bash
+# replace TOKEN with a fresh prod admin JWT
+for seat in crypto_executor spot_short_executor options_executor; do
+  curl -X PATCH https://mission.risedual.ai/api/v2/seat-policy/$seat \
+    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    -d '{"autonomy_mode":"auto_execute","reason":"operator release the brakes 2026-02-20"}'
+done
+```
+
+**After redeploy (option C):** Hit ARM ALL once. All 5 master switches + all 4 seats promoted in one click. Or hit the new `POST /api/v2/promote-all-seats` directly.
+
+### Tuning levers after live trading starts
+
+- Per-seat demotion via `PATCH /api/v2/seat-policy/{seat_id}` with `{"autonomy_mode": "observe"}` if a specific seat starts losing money.
+- Master "panic brake" inverse: `POST /api/v2/promote-all-seats` with `{"target_mode": "observe", "reason": "cascade event observed"}` flips everything back to shadow in one call.
+
+---
+
+
+
 ## 2026-02-20 (Dead-code cleanup)
 
 Deleted three confirmed-dead artifacts that were misleading operators and noise during gate audits:

@@ -222,6 +222,98 @@ async def patch_seat_policy(
     return {"ok": True, "policy": new}
 
 
+# ─── /v2/promote-all-seats ────────────────────────────────────────────
+
+
+class PromoteAllSeatsRequest(BaseModel):
+    """Bulk-promote every seat in `PARADOX_V2_SEAT_POLICY` to a target
+    autonomy mode in one call. Designed as the operator's "release the
+    brakes" master switch — the system was shipping seats in `observe`
+    mode by default (Paradox v2 doctrine), which was the systemic
+    cause of "rejecting every intent all day" symptoms: every seat
+    passed every gate, then died at the final autonomy_mode check.
+
+    `reason` is required (audit trail). `target_mode` defaults to
+    `auto_execute` but can be set to `observe` for an emergency-brake
+    inverse if a cascade event is observed.
+    """
+    target_mode: Literal["observe", "shadow", "toehold", "auto_execute"] = "auto_execute"
+    reason: str = Field(
+        ..., min_length=4,
+        description="Audit-trail reason. e.g. 'operator promote all to live after doctrine alignment'",
+    )
+
+
+@router.post("/promote-all-seats")
+async def post_promote_all_seats(
+    body: PromoteAllSeatsRequest,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Master promote — flip every seat's `autonomy_mode` to
+    `target_mode` in one operator action. Idempotent: seats already
+    at `target_mode` are left untouched (no spurious promotion-log
+    entries).
+
+    Returns a per-seat report:
+        {
+          "ok": true,
+          "target_mode": "auto_execute",
+          "promoted": [{seat_id, from_mode, to_mode}, ...],
+          "unchanged": [seat_id, ...],
+          "total": <int>,
+        }
+    """
+    now = _now()
+    actor = user.get("email") or "operator"
+    promoted: list[dict] = []
+    unchanged: list[str] = []
+
+    seats = await db[PARADOX_V2_SEAT_POLICY].find({}, {"_id": 0}).to_list(length=None)
+    if not seats:
+        raise HTTPException(
+            status_code=409,
+            detail="no seats in PARADOX_V2_SEAT_POLICY — run POST /api/v2/seed first",
+        )
+
+    for seat in seats:
+        seat_id = seat["seat_id"]
+        from_mode = seat.get("autonomy_mode")
+        if from_mode == body.target_mode:
+            unchanged.append(seat_id)
+            continue
+        await db[PARADOX_V2_SEAT_POLICY].update_one(
+            {"seat_id": seat_id},
+            {"$set": {
+                "autonomy_mode": body.target_mode,
+                "updated_at": now,
+                "updated_by": actor,
+            }},
+        )
+        await db[PARADOX_V2_PROMOTION_LOG].insert_one({
+            "promotion_id": str(uuid.uuid4()),
+            "seat_id": seat_id,
+            "from_mode": from_mode,
+            "to_mode": body.target_mode,
+            "reason": body.reason,
+            "triggered_by": actor,
+            "metrics_snapshot": {"bulk_master_promote": True},
+            "ts": now,
+        })
+        promoted.append({
+            "seat_id": seat_id,
+            "from_mode": from_mode,
+            "to_mode": body.target_mode,
+        })
+
+    return {
+        "ok": True,
+        "target_mode": body.target_mode,
+        "promoted": promoted,
+        "unchanged": unchanged,
+        "total": len(seats),
+    }
+
+
 # ─── /v2/roadguard ────────────────────────────────────────────────────
 
 

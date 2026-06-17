@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timezone, timedelta
+import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
@@ -968,6 +969,59 @@ async def system_arm(
             f"lane_execution_{lane}",
             set_lane_toggle(lane, True, actor),
         )
+
+    # 6. Paradox v2 seats — promote all to `auto_execute`. 2026-02-20:
+    # the systemic "rejecting every intent all day" cause was every
+    # seat sitting in `observe` mode by seed default. ARM ALL now
+    # promotes them as part of the master flip so the operator's
+    # one-button "go live" does the full release, not just the
+    # gate-chain master switches. Idempotent — already-auto_execute
+    # seats are left alone (no spurious promotion-log rows).
+    try:
+        from namespaces import (  # noqa: WPS433
+            PARADOX_V2_SEAT_POLICY,
+            PARADOX_V2_PROMOTION_LOG,
+        )
+        seat_docs = await db[PARADOX_V2_SEAT_POLICY].find({}, {"_id": 0}).to_list(length=None)
+        promoted_seats: list[str] = []
+        for seat in seat_docs:
+            seat_id = seat["seat_id"]
+            from_mode = seat.get("autonomy_mode")
+            if from_mode == "auto_execute":
+                continue
+            now_iso = datetime.now(timezone.utc).isoformat()
+            await db[PARADOX_V2_SEAT_POLICY].update_one(
+                {"seat_id": seat_id},
+                {"$set": {
+                    "autonomy_mode": "auto_execute",
+                    "updated_at": now_iso,
+                    "updated_by": actor,
+                }},
+            )
+            await db[PARADOX_V2_PROMOTION_LOG].insert_one({
+                "promotion_id": str(uuid.uuid4()),
+                "seat_id": seat_id,
+                "from_mode": from_mode,
+                "to_mode": "auto_execute",
+                "reason": f"ARM ALL: {reason}",
+                "triggered_by": actor,
+                "metrics_snapshot": {"bulk_master_promote": True, "via": "system_arm"},
+                "ts": now_iso,
+            })
+            promoted_seats.append(seat_id)
+        flipped.append({
+            "switch": "paradox_v2_seats",
+            "ok": True,
+            "detail": (
+                f"promoted {len(promoted_seats)}/{len(seat_docs)} → auto_execute"
+                + (f" ({', '.join(promoted_seats)})" if promoted_seats else " (all already auto_execute)")
+            ),
+        })
+    except Exception as e:  # noqa: BLE001
+        flipped.append({
+            "switch": "paradox_v2_seats", "ok": False,
+            "error": f"{type(e).__name__}: {e}"[:240],
+        })
 
     # Audit row — the batched ARM action itself, in addition to each
     # individual switch's own audit log.
