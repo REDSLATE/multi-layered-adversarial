@@ -372,6 +372,208 @@ async def intents_post_mortem(
 # broker caps — no bypass.
 
 
+# ─────────────────────── Funnel deltas tile (2026-02-20) ───────────────
+#
+# Operator pin (2026-02-20):
+#     "Not for convenience; for proof. Right after deploy, the question
+#      is simple: did the doctrine patch change behavior?"
+#
+# This endpoint computes the comparative funnel between two 24h windows:
+#   * `current`  — last 24h (post-deploy state)
+#   * `baseline` — 24h-48h ago (pre-deploy state, assuming deploy was
+#                  within the last day)
+#
+# Deltas the tile surfaces: action distribution (HOLD/BUY/SELL%),
+# doctrine quality (REJECT/C/B/A counts), submitted count, RoadGuard +
+# Broker reject counts. READ-ONLY. No toggles, no side effects.
+
+def _action_pcts(rows: List[dict]) -> Dict[str, float]:
+    total = max(1, len(rows))
+    counts = Counter((r.get("action") or "").upper() for r in rows)
+    return {
+        "hold_pct": round(100 * counts.get("HOLD", 0) / total, 2),
+        "buy_pct":  round(100 * counts.get("BUY", 0) / total, 2),
+        "sell_pct": round(100 * counts.get("SELL", 0) / total, 2),
+        "short_pct": round(100 * counts.get("SHORT", 0) / total, 2),
+        "cover_pct": round(100 * counts.get("COVER", 0) / total, 2),
+    }
+
+
+def _quality_counts(rows: List[dict]) -> Dict[str, int]:
+    counts = Counter()
+    for r in rows:
+        # doctrine_packet.base_labels.quality is the canonical quality
+        # field across both equity and crypto packets.
+        pkt = r.get("doctrine_packet") or {}
+        base = pkt.get("base_labels") or {}
+        q = (base.get("quality") or "UNKNOWN").upper()
+        counts[q] += 1
+    return {
+        "reject":    counts.get("REJECT", 0),
+        "c_quality": counts.get("C_QUALITY", 0),
+        "b_quality": counts.get("B_QUALITY", 0),
+        "a_quality": counts.get("A_QUALITY", 0),
+        "unknown":   counts.get("UNKNOWN", 0),
+    }
+
+
+def _execution_counts(rows: List[dict]) -> Dict[str, int]:
+    """Submission + reject classification.
+
+    Submitted: any intent with `executed=True` (broker fill landed).
+    RoadGuard rejects: gate reason contains structural-block markers
+    (kill switch, broker freeze, exposure, PDT, duplicate, lane off).
+    Broker rejects: explicit submit_error / broker_router_blocked /
+    submit_timeout markers, or Webull/Kraken cap rails firing.
+    """
+    submitted = 0
+    roadguard = 0
+    broker = 0
+    roadguard_markers = {
+        "KILL_SWITCH_ACTIVE", "BROKER_UNAVAILABLE", "AUTH_MISSING",
+        "MAX_EXPOSURE_EXCEEDED", "PDT_BLOCK", "DUPLICATE_POSITION",
+        "broker_frozen", "lane_disabled",
+    }
+    broker_markers = {
+        "broker_router_blocked", "submit_error", "submit_timeout",
+        "WEBULL_NOTIONAL_ABOVE_CAP", "WEBULL_NOTIONAL_BELOW_FLOOR",
+        "WEBULL_NOT_ARMED", "MC_RECEIPT_REJECTED",
+    }
+    for r in rows:
+        if r.get("executed"):
+            submitted += 1
+        reason = (r.get("execute_reason") or r.get("blocked_reason") or "")
+        gate_state = (r.get("gate_state") or "").lower()
+        haystack = f"{reason} {gate_state}"
+        if any(m in haystack for m in roadguard_markers):
+            roadguard += 1
+        elif any(m in haystack for m in broker_markers):
+            broker += 1
+    return {
+        "submitted": submitted,
+        "roadguard_rejects": roadguard,
+        "broker_rejects": broker,
+    }
+
+
+def _window_metrics(rows: List[dict]) -> Dict[str, Any]:
+    return {
+        "total_intents": len(rows),
+        **_action_pcts(rows),
+        **_quality_counts(rows),
+        **_execution_counts(rows),
+    }
+
+
+def _delta(current: Any, baseline: Any) -> Optional[float]:
+    """Return absolute delta (current - baseline). Caller formats.
+    Units match input — percentage points for pcts, counts for counts."""
+    if current is None or baseline is None:
+        return None
+    try:
+        return round(float(current) - float(baseline), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+@router.get("/funnel-deltas")
+async def get_funnel_deltas(
+    _user: dict = Depends(get_current_user),  # noqa: B008
+) -> Dict[str, Any]:
+    """Comparative funnel between last 24h and the prior 24h.
+
+    Read-only. Designed as the post-deploy "did the doctrine patch
+    change behavior?" tile. The frontend polls every 30s.
+    """
+    now = datetime.now(timezone.utc)
+    cur_start = now - timedelta(hours=24)
+    base_end = cur_start
+    base_start = base_end - timedelta(hours=24)
+
+    current_rows = await db[SHARED_INTENTS].find(
+        {"created_at": {"$gte": cur_start.isoformat()}},
+        {"_id": 0},
+    ).to_list(length=10_000)
+    baseline_rows = await db[SHARED_INTENTS].find(
+        {"created_at": {
+            "$gte": base_start.isoformat(),
+            "$lt": base_end.isoformat(),
+        }},
+        {"_id": 0},
+    ).to_list(length=10_000)
+
+    current = _window_metrics(current_rows)
+    baseline = _window_metrics(baseline_rows)
+
+    deltas = {
+        "hold_pct":        _delta(current["hold_pct"],    baseline["hold_pct"]),
+        "buy_pct":         _delta(current["buy_pct"],     baseline["buy_pct"]),
+        "sell_pct":        _delta(current["sell_pct"],    baseline["sell_pct"]),
+        "short_pct":       _delta(current["short_pct"],   baseline["short_pct"]),
+        "reject_count":    _delta(current["reject"],      baseline["reject"]),
+        "c_quality_count": _delta(current["c_quality"],   baseline["c_quality"]),
+        "b_quality_count": _delta(current["b_quality"],   baseline["b_quality"]),
+        "a_quality_count": _delta(current["a_quality"],   baseline["a_quality"]),
+        "submitted_count": _delta(current["submitted"],   baseline["submitted"]),
+        "roadguard_count": _delta(current["roadguard_rejects"], baseline["roadguard_rejects"]),
+        "broker_count":    _delta(current["broker_rejects"],    baseline["broker_rejects"]),
+        "total_intents":   _delta(current["total_intents"],     baseline["total_intents"]),
+    }
+
+    # ── interpretation: did the doctrine patch land as predicted? ──
+    notes: List[str] = []
+    hold_down = (deltas["hold_pct"] or 0) < 0
+    buy_sell_up = ((deltas["buy_pct"] or 0) + (deltas["sell_pct"] or 0)) > 0
+    cq_up = (deltas["c_quality_count"] or 0) > 0
+    submitted_up = (deltas["submitted_count"] or 0) > 0
+    roadguard_flat = abs(deltas["roadguard_count"] or 0) <= 5
+    broker_flat = abs(deltas["broker_count"] or 0) <= 5
+
+    if hold_down:
+        notes.append(f"HOLD% ↓ {deltas['hold_pct']}pp — brains emitting fewer HOLDs")
+    elif (deltas["hold_pct"] or 0) > 5:
+        notes.append(f"HOLD% ↑ {deltas['hold_pct']}pp — doctrine patch may not have landed")
+    if buy_sell_up:
+        notes.append(
+            f"BUY+SELL% ↑ {round((deltas['buy_pct'] or 0)+(deltas['sell_pct'] or 0), 2)}pp — directional flow recovered"
+        )
+    if cq_up:
+        notes.append(f"C_QUALITY ↑ {int(deltas['c_quality_count'])} — toehold trades appearing")
+    if submitted_up:
+        notes.append(f"Submitted ↑ {int(deltas['submitted_count'])} — orders reached the broker")
+    if not roadguard_flat:
+        notes.append(f"⚠ RoadGuard rejects shifted {int(deltas['roadguard_count'])} — investigate")
+    if not broker_flat:
+        notes.append(f"⚠ Broker rejects shifted {int(deltas['broker_count'])} — investigate")
+
+    healthy = (
+        hold_down and buy_sell_up and cq_up
+        and roadguard_flat and broker_flat
+    )
+
+    return {
+        "ok": True,
+        "windows": {
+            "current":  {
+                "start": cur_start.isoformat(),
+                "end": now.isoformat(),
+                "metrics": current,
+            },
+            "baseline": {
+                "start": base_start.isoformat(),
+                "end": base_end.isoformat(),
+                "metrics": baseline,
+            },
+        },
+        "deltas": deltas,
+        "interpretation": {
+            "healthy": healthy,
+            "notes": notes,
+        },
+        "fetched_at": now.isoformat(),
+    }
+
+
 @router.post("/replay-ghosts")
 async def replay_ghost_intents(
     hours: int = 24,

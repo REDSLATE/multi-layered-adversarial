@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Crosshair, ArrowsClockwise, Warning, CheckCircle, XCircle, MagnifyingGlass, Lightning, Power } from "@phosphor-icons/react";
+import FunnelDeltasTile from "./FunnelDeltasTile";
 
 /**
  * IntentPostMortemPanel — the smoking-gun tile.
@@ -392,6 +393,14 @@ export default function IntentPostMortemPanel() {
               </div>
             </div>
           </div>
+
+          {/* ─── Funnel deltas tile (2026-02-20) ─────────────────────
+              Post-deploy proof that the doctrine patch landed. Polls
+              every 30s. Sits directly under the headline because the
+              operator's first question after a deploy is "did this
+              actually change anything?" — answer it inline before
+              they scroll to the outcome distribution. */}
+          <FunnelDeltasTile />
 
           {/* Biggest funnel drop */}
           {data.biggest_funnel_drop && (

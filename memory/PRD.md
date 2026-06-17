@@ -1,3 +1,87 @@
+## 2026-02-20 (Funnel deltas tile — post-deploy proof, read-only)
+
+### Operator pin
+
+> "Not for convenience; for proof. Right after deploy, the question
+>  is simple: did the doctrine patch change behavior?"
+> "But keep it read-only. No new toggles yet. First deploy, promote
+>  seats, then watch the funnel move."
+
+### Backend — `GET /api/admin/intents/funnel-deltas`
+
+`routes/admin_intents_post_mortem.py` exposes a new read-only endpoint that compares two 24h windows over `shared_intents`:
+
+- **current**: last 24h (post-deploy state)
+- **baseline**: 24h-48h ago (pre-deploy state, assuming deploy was within the last day)
+
+Per-row metrics computed for each window:
+- Action distribution: `hold_pct`, `buy_pct`, `sell_pct`, `short_pct`, `cover_pct`
+- Doctrine quality counts: `reject`, `c_quality`, `b_quality`, `a_quality`, `unknown` (read from `intent.doctrine_packet.base_labels.quality`)
+- Execution: `submitted` (intents with `executed=True`), `roadguard_rejects` (KILL_SWITCH / BROKER_UNAVAILABLE / PDT_BLOCK / DUPLICATE / lane disabled markers), `broker_rejects` (Webull cap rails / MC receipt rejected / submit_error / submit_timeout markers)
+
+Response shape:
+```json
+{
+  "ok": true,
+  "windows": {"current": {...}, "baseline": {...}},
+  "deltas": {"hold_pct": -25.3, "buy_pct": +18.7, ...},
+  "interpretation": {
+    "healthy": true,
+    "notes": ["HOLD% ↓ -25.3pp — brains emitting fewer HOLDs", ...]
+  }
+}
+```
+
+`interpretation.healthy=True` iff HOLD% is down, BUY+SELL% is up, C_QUALITY count is up, AND RoadGuard/Broker rejects stay flat (delta within ±5). That's the literal mathematical predicate for "doctrine patch landed, execution plumbing untouched."
+
+### Frontend — `FunnelDeltasTile.jsx`
+
+New component lives directly under the headline metrics in `IntentPostMortemPanel`. Polls every 30s via the project's standard `api.get(...)` wrapper (re-uses the auth token plumbing, no localStorage shenanigans).
+
+Layout: 2-column grid of 10 delta rows. Each row renders:
+- Label (HOLD%, BUY%, REJECT count, etc.)
+- Arrow icon (↑ ↓ ↔) based on sign
+- Color: **green** when delta moves in the predicted-good direction for that metric, **red** when it moves the wrong way, **dim/warn** when expected-flat (RoadGuard/Broker rejects) drifts.
+
+Top-level container colors green when `interpretation.healthy=True`. Interpretation notes render below the grid in human-readable form (`"HOLD% ↓ -25.3pp — brains emitting fewer HOLDs"`).
+
+**Read-only by design**: no buttons, no toggles, no actions. Operator's first scan after a deploy answers "did this change anything?" in one glance.
+
+### Files
+
+- `backend/routes/admin_intents_post_mortem.py` (+150 LOC: helpers + endpoint)
+- `frontend/src/components/FunnelDeltasTile.jsx` (new, 220 LOC)
+- `frontend/src/components/IntentPostMortemPanel.jsx` (import + 1 JSX insertion under headline)
+
+### Verification
+
+- Backend smoke: `curl GET /api/admin/intents/funnel-deltas` returns full structured envelope with both windows + deltas + interpretation. Returns `0`/empty in preview (no intents) — expected.
+- Frontend smoke: tile renders live in preview at `/admin/intents`. All 10 delta rows visible. Header shows "FUNNEL DELTAS · 24H VS PRIOR 24H" with "Did the doctrine patch change behavior? Read-only proof. · current=0 · baseline=0" subtitle. Position confirmed: directly below the "TOTAL INTENTS / EXECUTED / EXECUTION RATE" headline strip, above "Biggest funnel drop" warning.
+- 172 backend tests still passing.
+- Lint clean for new file. Pre-existing react-hooks misfire on `IntentPostMortemPanel.jsx` line 204 is unchanged (was there before this session — comment in code documents it).
+
+### Production rollout
+
+1. Redeploy preview → prod.
+2. Promote the 4 seats via the 3 curl commands from the seat-promote step (or hit ARM ALL once after deploy).
+3. Open `/admin/intents`. The funnel-deltas tile auto-fetches every 30s; the operator should see HOLD% start drifting down, C_QUALITY count rising, and Submitted ticking up within the first hour as the doctrine patch takes effect.
+
+### Tile interpretation cheat sheet
+
+| Sign | Color | Meaning |
+|---|---|---|
+| HOLD% ↓ green | doctrine patch landed; fewer HOLDs |
+| BUY/SELL% ↑ green | directional flow recovered |
+| C_QUALITY ↑ green | toehold trades appearing |
+| Submitted ↑ green | orders reaching the broker (the whole point) |
+| RoadGuard ↔ green | execution plumbing untouched (proof the change was upstream) |
+| Broker ↔ green | broker rails untouched |
+| Any "expected flat" metric ↑/↓ > 5 → **warn yellow** | investigate before next change |
+
+---
+
+
+
 ## 2026-02-20 (Deterministic fractional auto-fill — closes the silent-failure gap)
 
 ### Operator pin
