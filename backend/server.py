@@ -159,6 +159,7 @@ from routes.intent_origin import router as intent_origin_router
 from routes.webull_admin import router as webull_admin_router
 from routes.admin_wrappers import router as admin_wrappers_router
 from routes.admin_intents_post_mortem import router as admin_intents_post_mortem_router
+from routes.intent_why import router as intent_why_router
 from routes.admin_auto_submit import router as admin_auto_submit_router
 from routes.admin_quiver import router as admin_quiver_router
 from routes.parabolic_phase_admin import router as parabolic_phase_admin_router
@@ -244,6 +245,16 @@ async def lifespan(app: FastAPI):
         logger.info("Paradox v2 seed: %s", v2_seed.get("seeded"))
     except Exception as e:  # noqa: BLE001
         logger.warning("Paradox v2 seed failed (non-fatal): %s", e)
+
+    # Unified pipeline (2026-02-20) — idempotent index ensurer for
+    # `pipeline_receipts`. Safe no-op when collection already has the
+    # indexes. Required for the /api/intents/{id}/why endpoint.
+    try:
+        from shared.pipeline.receipts import ensure_indexes as ensure_pipeline_indexes
+        await ensure_pipeline_indexes()
+        logger.info("pipeline_receipts indexes ensured")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("pipeline_receipts index ensure failed (non-fatal): %s", e)
 
     # Auto-submit policy — hydrate persisted override from Mongo so
     # the operator's toggle survives pod restarts. Without this,
@@ -768,6 +779,7 @@ api_router.include_router(seat_nudges_router)
 api_router.include_router(execution_router)
 api_router.include_router(admin_wrappers_router)
 api_router.include_router(admin_intents_post_mortem_router)
+api_router.include_router(intent_why_router)
 api_router.include_router(admin_auto_submit_router)
 api_router.include_router(admin_quiver_router)
 api_router.include_router(paradox_v2_router)

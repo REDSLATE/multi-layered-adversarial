@@ -106,9 +106,25 @@ async def _route_one(intent: dict) -> dict:
     defined below. Refactored 2026-05-17 from the original 194-line
     monolith; characterization-locked by
     tests/test_auto_router_helpers.py + the council diagnose tripwire.
+
+    2026-02-20: When `UNIFIED_PIPELINE_ENABLED=true`, the entire
+    decision is delegated to `shared.pipeline.execution_pipeline`.
+    Three blockers only: seat, roadguard, broker. One receipt written
+    per intent to `pipeline_receipts`. The 20-gate legacy chain below
+    is bypassed entirely; flip the flag back to false to roll back.
     """
     intent_id = intent["intent_id"]
     notional_raw = float(intent.get("requested_notional_usd") or AUTO_ROUTER_NOTIONAL_USD)
+
+    # ── UNIFIED PIPELINE shortcut (2026-02-20) ────────────────────
+    # Single source of truth for the three blockers (seat, roadguard,
+    # broker). When enabled, ALL legacy gate logic below is skipped.
+    from shared.pipeline.adapter import (  # noqa: WPS433
+        is_pipeline_enabled,
+        run_unified_for_intent,
+    )
+    if is_pipeline_enabled():
+        return await run_unified_for_intent(intent, notional_raw)
 
     # ── Phase 4 (2026-02-17): LADDER-FIRST routing ────────────────────
     # The ladder stage (per brain × lane) is now AUTHORITATIVE. We

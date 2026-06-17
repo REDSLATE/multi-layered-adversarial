@@ -1,3 +1,136 @@
+## 2026-02-20 (Unified Execution Pipeline — three blockers only)
+
+### Operator directive (verbatim)
+
+> "Code it as one single execution pipeline with only three blockers:
+>  Seat, RoadGuard, Broker."
+>
+> "Only these can block: seat_policy / roadguard / broker.
+>  These cannot block: brain / doctrine / governor / auditor / verifier."
+>
+> "Fewer veto points, every receipt stamped, and one endpoint that
+>  answers: who stopped the trade?"
+
+### Why we did it
+
+The legacy pipeline had ~20 independent veto points (`classify_brain_intent`
+floor, dry-run gate, sizing/ladder gate, doctrine packet, council, governor
+RR, Patent-G/J readiness, Shelly auto-submit policy, broker freeze, lane
+toggle, broker router caps, Webull cap evaluator, MC receipt seal, market
+hours, in-flight dedupe, exposure caps, position-aware reclassification,
+RoadGuard, and the broker itself). Production was emitting 3,547 intents
+in 24h, 100% killed before reaching the broker, with no single answer to
+"why?". The Funnel Deltas tile confirmed: `dry_run_passed: 778 →
+shelly_eligible: 0`.
+
+### New surface
+
+`/app/backend/shared/pipeline/`:
+
+- `models.py`         — `BrainOpinion`, `SeatVerdict`, `GovernorModifier`, `RoadGuardVerdict`, `PipelineReceipt` (dataclasses, frozen contract)
+- `seat_policy.py`    — reads `paradox_v2_seat_policy_config` + `paradox_v2_seat_trusted_brains` (so the Quick Seat Switches UI assignments flow into the pipeline without re-input)
+- `governor.py`       — modifier-only, clamps `risk_multiplier` to `[0.05, 1.0]`. CANNOT block.
+- `roadguard.py`      — binary stops: `zero_notional`, `market_closed`, `insufficient_buying_power`, `duplicate_order`. Falls back to `shared/market_hours.is_equity_rth()` when evidence doesn't carry `market_open`.
+- `receipts.py`       — single Mongo collection `pipeline_receipts` (unique index on `intent_id`, indexes on `ts` and `restriction_source`).
+- `execution_pipeline.py` — the orchestrator. Matches the operator spec verbatim.
+- `adapter.py`        — legacy `intent` dict → `BrainOpinion` translation + `route_order` wrapper. The ONLY translation layer.
+
+`/app/backend/routes/intent_why.py`:
+- `GET /api/intents/{intent_id}/why` — reads `pipeline_receipts`. Returns `final_status`, `final_reason`, `restriction_source`, `broker_called`, plus the evidence snapshot. Single-document answer.
+- `GET /api/intents/_pipeline/summary` — aggregate `restriction_source` distribution for the operator UI.
+
+### Wiring
+
+- **Feature flag**: `UNIFIED_PIPELINE_ENABLED=false` (default off). When `true`, `shared/auto_router._route_one` immediately delegates to `run_unified_for_intent` and skips the 20-gate legacy chain entirely.
+- Flag flip is the rollback button. The legacy chain stays in place for 48h burn-in before deletion.
+
+### Doctrine — only these can block
+
+| Source     | Blocks? | Block reasons surfaced                                               |
+|------------|---------|----------------------------------------------------------------------|
+| brain      | No*     | `*` HOLD/ABSTAIN → `NO_ORDER` (a "no", not a "block")                |
+| doctrine   | No      | Quality/labels → `evidence` only                                     |
+| seat       | **Yes** | `seat_missing`, `seat_disabled`, `brain_not_trusted_for_seat`, `below_seat_confidence_min`, `unknown_lane` |
+| governor   | No      | Modifier only — clamped to `[0.05, 1.0]`                             |
+| roadguard  | **Yes** | `zero_notional`, `market_closed`, `insufficient_buying_power`, `duplicate_order` |
+| auditor    | No      | Objections → evidence only                                           |
+| verifier   | No      | Promotes / demotes autonomy_mode out-of-band                         |
+| broker     | **Yes** | Exchange-raised exception → `BROKER_ERROR`                           |
+
+### Receipt shape
+
+Every intent run through the pipeline produces exactly ONE row in `pipeline_receipts`:
+
+```json
+{
+  "intent_id": "...",
+  "final_status": "NO_ORDER|BLOCKED|DECISION_LOGGED|SUBMITTED|BROKER_ERROR",
+  "final_reason": "<canonical short string>",
+  "restriction_source": "brain|seat|roadguard|broker",
+  "broker_called": false,
+  "requested_notional": 50.0,
+  "final_notional": 0.0,
+  "brain_id": "camaro", "lane": "crypto", "symbol": "BTC/USD",
+  "action": "BUY", "confidence": 0.95,
+  "autonomy_mode": "auto_execute",
+  "governor_multiplier": 1.0,
+  "evidence_snapshot": {...},
+  "ts": "2026-02-20T..."
+}
+```
+
+### Tests
+
+`/app/backend/tests/test_unified_pipeline_2026_02_20.py` — 11 tests, 100% pass:
+- HOLD / ABSTAIN → NO_ORDER (source=brain)
+- Seat BLOCK → BLOCKED (source=seat)
+- RoadGuard fails → BLOCKED (source=roadguard)
+- observe / shadow → DECISION_LOGGED (no broker call)
+- toehold → broker called, notional clamped at seat cap
+- auto_execute → broker called, governor multiplier applied
+- Broker exception → BROKER_ERROR (source=broker)
+- One-receipt-per-intent invariant across every branch
+- Governor cannot block (clamped at 0.05 floor)
+
+### Smoke test on preview
+
+Forced one intent through the new pipeline (camaro / BUY BTC/USD / 0.95 conf / $50):
+```
+final_status:        BLOCKED
+restriction_source:  seat
+final_reason:        brain_not_trusted_for_seat:camaro->crypto_executor
+broker_called:       false
+```
+`GET /api/intents/smoke-test-pipeline-2026-02-20/why` returns the same row.
+`GET /api/intents/_pipeline/summary` aggregates correctly.
+
+### Operator deployment
+
+1. Deploy this branch to prod.
+2. Confirm `pipeline_receipts` collection exists (index ensurer runs on boot).
+3. Set `UNIFIED_PIPELINE_ENABLED=true` in prod env, redeploy backend.
+4. Watch `/api/intents/_pipeline/summary?hours=1` — first auto-router tick should write a row.
+5. Hit `/api/intents/{any_recent_intent_id}/why` to see the canonical answer.
+6. If anything goes wrong, set `UNIFIED_PIPELINE_ENABLED=false` and redeploy — legacy chain resumes instantly.
+
+### Files
+
+- `shared/pipeline/__init__.py`
+- `shared/pipeline/models.py`
+- `shared/pipeline/seat_policy.py`
+- `shared/pipeline/governor.py`
+- `shared/pipeline/roadguard.py`
+- `shared/pipeline/receipts.py`
+- `shared/pipeline/execution_pipeline.py`
+- `shared/pipeline/adapter.py`
+- `routes/intent_why.py`
+- `shared/auto_router.py` (top-of-`_route_one` shortcut, behind flag)
+- `server.py` (router register + boot-time index ensurer)
+- `tests/test_unified_pipeline_2026_02_20.py`
+
+---
+
+
 ## 2026-02-20 (Funnel deltas tile — post-deploy proof, read-only)
 
 ### Operator pin
