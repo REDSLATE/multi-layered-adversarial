@@ -26,6 +26,14 @@ from shared.auto_submit_policy import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _bypass_market_hours(monkeypatch):
+    """These tests are about skip categorization, not the market-hours
+    gate (which has its own dedicated test suite). Bypass so the suite
+    passes regardless of wall-clock time."""
+    monkeypatch.setenv("RISEDUAL_BYPASS_MARKET_HOURS", "true")
+
+
 def test_categorize_hold():
     """HOLD is the dominant case — must surface separately so the
     operator sees 'Shelly correctly skipped 3500 HOLD signals' at a

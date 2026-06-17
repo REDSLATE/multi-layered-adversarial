@@ -28,7 +28,11 @@ from shared.intents import _run_dry_run_then_auto_submit
 
 
 @pytest.fixture
-async def clean():
+async def clean(monkeypatch):
+    # Bypass the market-hours gate for these tests — the suite runs
+    # at arbitrary clock times in CI and we want the chain audit
+    # behavior characterized regardless of whether US RTH is open.
+    monkeypatch.setenv("RISEDUAL_BYPASS_MARKET_HOURS", "true")
     await db[SHARED_INTENTS].delete_many({"intent_id": {"$regex": "^chain_audit_"}})
     await db[SHARED_GATE_RESULTS].delete_many({"intent_id": {"$regex": "^chain_audit_"}})
     reset_policy_for_tests()

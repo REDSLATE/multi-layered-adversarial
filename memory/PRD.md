@@ -1,3 +1,82 @@
+## 2026-02-20 (Doctrine alignment: brain veto removed from execution path)
+
+### Operator doctrine (pinned, code-enforced)
+
+    Brain      = opinion only
+    Seat       = restriction authority
+    Governor   = modifier
+    RoadGuard  = hard stop
+
+Translation: the brain that emits an intent must never grab the brake on its own intent. Only seat-policy (Shelly tier config, lane toggles, MC receipt seal, Webull caps) and RoadGuards (kill-switch, missing creds, PDT, exposure, broker errors) may hard-block. Brain-derived dissent downsizes; it never freezes the action space.
+
+### Council layer rewrite (`shared/council.py`)
+
+Removed three reasons from `FATAL_GOVERNOR_REASONS`, downgraded to RISK_DOWN_ONLY with per-reason sizing penalties:
+
+| Reason | Old behavior | New behavior |
+|---|---|---|
+| `GOVERNOR_HARD_VETO` | HARD_BLOCK | RISK_DOWN_ONLY · 0.20× size |
+| `GOVERNOR_SEAT_VACANT` | HARD_BLOCK | RISK_DOWN_ONLY · 0.50× size |
+| `SOFT_DISSENT_BELOW_FLOOR` | HARD_BLOCK | RISK_DOWN_ONLY · 0.20× size |
+
+RoadGuard reasons that still hard-block: `KILL_SWITCH_ACTIVE`, `BROKER_UNAVAILABLE`, `AUTH_MISSING`, `SYMBOL_UNRESOLVED`, `MAX_EXPOSURE_EXCEEDED`, `PDT_BLOCK`, `DUPLICATE_POSITION`. These are structural/legal stops, not brain opinion.
+
+Worst-case blast radius when governor is wrong: 5× downsized trade against the (already BP-scaled) Webull cap. On a $500 account at default 5% × 0.20× = $5 max blast.
+
+### `restriction_source` audit tag
+
+Every council verdict now stamps the layer that emitted the restriction: `brain | seat | governor | roadguard | broker`. Lets the post-mortem aggregator answer "who blocked this?" with one query instead of regex-matching reason strings.
+
+### Tier-1 default loosens (`shared/auto_submit_policy.py`)
+
+- `confidence_min`: 0.85 → **0.70**. Matches what the operator was hand-flipping on every prod deploy. 0.85 was suppressing actionable signals.
+- `notional_default_usd`: 5.0 → **10.0**. Webull cap is now BP-scaled, so $10 routinely fits inside the dynamic ceiling on any funded account. The brain's `preferred_notional_usd` still takes priority via `chosen_notional`.
+
+### Brain-name normalization
+
+`matches_tier_1` previously did a literal lowercase string compare against `allowed_brains`. If a brain emitted with `stack="Hellcat"` (display name) or `stack="hellcat"` (brain_id) instead of `stack="chevelle"` (stack code), it was silently filtered.
+
+New `_normalize_brain_to_stack()` helper resolves all three forms (stack code | brain_id | display name) to the canonical stack code before the allowed-list check. Audit reason on rejection now surfaces both the raw and normalized form: `brain 'GHOSTBRAIN' (normalized 'ghostbrain') not in allowed [...]`.
+
+### Files
+
+- `backend/shared/council.py` — FATAL list rewrite, per-reason multipliers, `restriction_source` tag
+- `backend/shared/auto_submit_policy.py` — defaults loosened, brain-name normalizer
+- `backend/tests/test_governance_verdict.py` — 14 tests rewritten to pin new doctrine
+- `backend/tests/test_doctrine_alignment_2026_02_20.py` — new, 16 tests pinning loosens + normalizer
+- `backend/tests/test_auto_submit_chain_audit_guarantee.py` — fixture forces RTH bypass
+- `backend/tests/test_auto_submit_skip_audit.py` — fixture forces RTH bypass
+
+### Verification
+
+145 tests passing across governance, market-hours, webull-caps, broker-router, auto-submit, dry-run, and doctrine-alignment suites. Smoke test confirms:
+- `GOVERNOR_HARD_VETO` → `allowed=True effect=RISK_DOWN_ONLY risk_mult=0.6 restriction_source=governor`
+- `GOVERNOR_SEAT_VACANT` → `allowed=True effect=RISK_DOWN_ONLY risk_mult=0.6`
+- `KILL_SWITCH_ACTIVE` → still hard-blocks (RoadGuard)
+- Display-name `Hellcat` now resolves to `chevelle` and passes Tier-1
+
+### Production rollout
+
+1. Redeploy preview → prod.
+2. No new env vars required (`RISEDUAL_BYPASS_MARKET_HOURS` already shipped 2026-02-20, kept off by default).
+3. Tier-1 defaults take effect on next `set_policy()` call (or any fresh deploy / disarm-then-arm).
+4. Monitor `post_mortem` for `RISK_DOWN_ONLY` rows tagged `restriction_source=governor` — these are intents that previously would have died at the council and are now firing at reduced size.
+
+### Tuning levers if behavior needs adjustment after live trading starts
+
+- Re-tighten `confidence_min` per Shelly's settings panel (preview UI).
+- Re-tighten `notional_default_usd` per Shelly's settings panel.
+- Per-reason governor sizing penalty constants in `shared/council.py`:
+  - `GOVERNOR_HARD_VETO_RISK_MULTIPLIER` (default 0.20)
+  - `GOVERNOR_VACANT_RISK_MULTIPLIER` (default 0.50)
+  - `GOVERNOR_SILENCE_RISK_MULTIPLIER` (default 0.50)
+  - `GOVERNOR_DISSENT_FLOOR_RISK_MULTIPLIER` (default 0.20)
+- To re-add a reason to FATAL, drop it back into `FATAL_GOVERNOR_REASONS` (single-line change).
+
+---
+
+
+
 ## 2026-02-20 (Market-hours gate + watchlist seed — 80 symbols armed)
 
 ### P2 — Market-hours gate (auto-submitter)

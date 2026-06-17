@@ -83,24 +83,37 @@ COUNCIL_POLICY: dict[str, dict] = {
 }
 
 
-# ─────────────── Governor-block taxonomy (2026-05-18) ──────────────────
+# ─────────────── Governor-block taxonomy (2026-02-20 rewrite) ──────────
 #
-# Operator patch: Chevelle's SILENCE must not become a global kill
-# switch. Distinguish:
-#   * Silence / offline / no-stance      → diagnostic + risk-down
-#   * Explicit HARD veto                 → true block
-#   * Structural / safety reasons        → true block
+# Operator doctrine (2026-02-20):
 #
-# Only reasons in FATAL_GOVERNOR_REASONS may stop execution. Reasons in
-# SILENCE_GOVERNOR_REASONS (and soft-dissent-below-floor) are
-# downgraded to RISK_DOWN_ONLY: allowed=True with a conservative risk
-# multiplier so the operator can still see "Chevelle silent" on the
-# ledger AND the trade can still proceed at reduced size if every
-# other gate passes.
+#     Brain      = opinion only
+#     Seat       = restriction authority
+#     Governor   = modifier
+#     RoadGuard  = hard stop
+#
+# Translation: the governor's job is to **size** an intent down or up,
+# never to kill it. Only seat-policy (Shelly tier config, lane toggles,
+# MC receipt seal, etc.) and RoadGuards (kill-switch, missing creds,
+# legal blocks like PDT) may hard-block. Brain-derived dissent
+# downsizes; it never freezes the action space.
+#
+# Prior to this patch, three governor reasons still hard-blocked:
+#   * GOVERNOR_HARD_VETO       — brain in the governor seat saying "no"
+#   * GOVERNOR_SEAT_VACANT     — no modifier appointed
+#   * SOFT_DISSENT_BELOW_FLOOR — governor dissent × brain conf < floor
+#
+# All three are now downgraded to RISK_DOWN_ONLY: the trade still
+# fires at a reduced size, the operator sees the governor signal in
+# the post-mortem, and seat-policy + RoadGuard remain the only stop
+# layers. Doctrine pin: "the brain is both pressing the gas and
+# grabbing the brake" — this patch removes the brake from the brain.
 
+# Only RoadGuards / structural blocks remain in FATAL. Governor-
+# derived reasons are gone from this list (moved to SILENCE below).
 FATAL_GOVERNOR_REASONS: frozenset[str] = frozenset({
-    "GOVERNOR_HARD_VETO",
     # Structural / safety stops the operator demanded keep blocking.
+    # These are RoadGuards, NOT brain-owned vetoes:
     "KILL_SWITCH_ACTIVE",
     "BROKER_UNAVAILABLE",
     "AUTH_MISSING",
@@ -108,41 +121,87 @@ FATAL_GOVERNOR_REASONS: frozenset[str] = frozenset({
     "MAX_EXPOSURE_EXCEEDED",
     "PDT_BLOCK",
     "DUPLICATE_POSITION",
-    # Doctrinally-unconfigured governor seat is also fatal — it means
-    # nobody has been appointed to gate the lane at all. Operator may
-    # move this to SILENCE if they decide an unconfigured seat is the
-    # same as a silent one.
-    "GOVERNOR_SEAT_VACANT",
 })
 
+# Reasons that were historically hard-blocks but per doctrine
+# downgrade to RISK_DOWN_ONLY. `governor_risk_multiplier()` returns
+# the sizing penalty for each. Operator can tune the multiplier per
+# reason if specific signals merit more / less suppression.
 SILENCE_GOVERNOR_REASONS: frozenset[str] = frozenset({
     "GOVERNOR_OFFLINE",
     "NO_STANCE_LOW_EFFECTIVE_CONF",
     "GOVERNOR_NO_STANCE",
+    # 2026-02-20: per operator doctrine, all of these become
+    # modifiers, not blockers.
+    "GOVERNOR_HARD_VETO",
+    "GOVERNOR_SEAT_VACANT",
+    "SOFT_DISSENT_BELOW_FLOOR",
 })
 
-# Risk-down multiplier applied when a non-fatal governor reason
-# previously would have hard-blocked.
-GOVERNOR_SILENCE_RISK_MULTIPLIER: float = 0.50
+# Per-reason sizing penalty. Stronger governor signals → smaller
+# size, but never zero. The hard-veto multiplier matches the
+# historical doctrine_reject softening (`risk_mult *= 0.20`).
+GOVERNOR_SILENCE_RISK_MULTIPLIER: float = 0.50    # offline / no stance
+GOVERNOR_HARD_VETO_RISK_MULTIPLIER: float = 0.20  # was hard-block
+GOVERNOR_VACANT_RISK_MULTIPLIER: float = 0.50     # no modifier → mild
+GOVERNOR_DISSENT_FLOOR_RISK_MULTIPLIER: float = 0.20  # was hard-block
 
 
 def governor_blocks_execution(reason: str | None) -> bool:
-    """Only true fatal governor reasons may stop execution.
-    Silence / offline / no-stance / soft-dissent-below-floor should
-    be surfaced and risk-reduced, not treated as a global kill switch.
+    """Only RoadGuard / structural reasons may stop execution. All
+    governor-derived reasons are modifiers (per 2026-02-20 doctrine).
     """
     return str(reason or "").upper().strip() in FATAL_GOVERNOR_REASONS
 
 
 def governor_risk_multiplier(reason: str | None) -> float:
-    """Conservative size penalty for governor silence / non-fatal
-    dissent. Keeps governance visible without freezing the system."""
+    """Per-reason sizing penalty for governor signals that previously
+    hard-blocked. Returns 1.00 (no penalty) for unknown reasons so
+    the council baseline isn't surprised by new reason strings."""
     r = str(reason or "").upper().strip()
+    if r == "GOVERNOR_HARD_VETO":
+        return GOVERNOR_HARD_VETO_RISK_MULTIPLIER
+    if r == "GOVERNOR_SEAT_VACANT":
+        return GOVERNOR_VACANT_RISK_MULTIPLIER
+    if r == "SOFT_DISSENT_BELOW_FLOOR":
+        return GOVERNOR_DISSENT_FLOOR_RISK_MULTIPLIER
     if r in SILENCE_GOVERNOR_REASONS:
         return GOVERNOR_SILENCE_RISK_MULTIPLIER
-    if r == "SOFT_DISSENT_BELOW_FLOOR":
-        return GOVERNOR_SILENCE_RISK_MULTIPLIER
     return 1.00
+
+
+# ─────────────── Restriction-source audit tag (2026-02-20) ─────────────
+#
+# Every gate result is now stamped with which layer emitted the
+# restriction. Lets the operator answer "who blocked this?" with a
+# single DB query rather than parsing reason strings.
+#
+#   brain      — brain opinion gate (advisory only; never blocks)
+#   seat       — seat-policy (Shelly tier, lane toggle, MC receipt)
+#   governor   — governor seat (now modifier-only per 2026-02-20)
+#   roadguard  — structural hard-stop (freeze, creds, PDT, exposure)
+#   broker     — broker-side response (Webull/Kraken rejection)
+
+RESTRICTION_SOURCE_BRAIN     = "brain"
+RESTRICTION_SOURCE_SEAT      = "seat"
+RESTRICTION_SOURCE_GOVERNOR  = "governor"
+RESTRICTION_SOURCE_ROADGUARD = "roadguard"
+RESTRICTION_SOURCE_BROKER    = "broker"
+
+
+def restriction_source_for_reason(reason: str | None) -> str:
+    """Bucket a gate reason string into one of the five layers. Used
+    by `_result()` to stamp every governor verdict, and by the
+    post-mortem aggregator to bucket non-council reasons too."""
+    r = str(reason or "").upper().strip()
+    if r in FATAL_GOVERNOR_REASONS:
+        return RESTRICTION_SOURCE_ROADGUARD
+    if r in SILENCE_GOVERNOR_REASONS or r in {
+        "SOFT_DISSENT_DOWNWEIGHTED", "GOVERNOR_NO_STANCE_SOFT_DOWNWEIGHT",
+        "NO_GOVERNOR_DISSENT",
+    }:
+        return RESTRICTION_SOURCE_GOVERNOR
+    return RESTRICTION_SOURCE_GOVERNOR  # default for council-emitted
 
 
 def _policy_for_lane(lane: Optional[str]) -> dict:
@@ -431,8 +490,8 @@ def _governance_verdict(
 
         if not allowed and not governor_blocks_execution(reason):
             # Non-fatal silence/dissent: downgrade to RISK_DOWN_ONLY.
-            # The trade can still proceed at half size if every other
-            # gate passes. Operator sees the cause on the ledger.
+            # The trade can still proceed at reduced size if every
+            # other gate passes. Operator sees the cause on the ledger.
             silence_mult = governor_risk_multiplier(reason)
             # If the rule path set size_mult=0 (legacy hard-block
             # semantics), use the silence multiplier as the absolute
@@ -447,6 +506,7 @@ def _governance_verdict(
                 "effective_conf": eff_conf,
                 "execution_effect": "RISK_DOWN_ONLY",
                 "display_status": "RISK_DOWN",
+                "restriction_source": RESTRICTION_SOURCE_GOVERNOR,
                 **audit_payload,
             }
 
@@ -460,6 +520,10 @@ def _governance_verdict(
             "effective_conf": eff_conf,
             "execution_effect": "ALLOW" if allowed else "HARD_BLOCK",
             "display_status": "ALLOW" if allowed else "BLOCK",
+            "restriction_source": (
+                RESTRICTION_SOURCE_ROADGUARD if not allowed
+                else RESTRICTION_SOURCE_GOVERNOR
+            ),
             **audit_payload,
         }
 

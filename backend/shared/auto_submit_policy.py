@@ -43,11 +43,21 @@ logger = logging.getLogger("risedual.auto_submit_policy")
 # trail with a typed reason).
 TIER_1_DEFAULTS: dict[str, Any] = {
     "tier_name": "tier_1_conservative",
-    "confidence_min": 0.85,
-    "notional_default_usd": 5.0,                       # operator-tunable per-order default
+    # 2026-02-20: operator has been hand-flipping 0.85 → 0.70 on every
+    # prod deploy. Bake the operator's preferred default into code so
+    # disarm-then-arm cycles don't reset to the conservative 0.85.
+    # Brain emits below 0.70 are typically noise; 0.85 was suppressing
+    # actionable signals.
+    "confidence_min": 0.70,
+    # 2026-02-20: notional default lifted $5 → $10. Webull cap is now
+    # buying-power-scaled (5% of BP), so $10 routinely fits inside the
+    # dynamic ceiling on any funded account. The brain's
+    # preferred_notional_usd still takes priority via `chosen_notional`
+    # — this only affects intents where the brain didn't size.
+    "notional_default_usd": 10.0,
     "notional_max_usd": 5000.0,                        # absolute hard cap
-    "allowed_lanes": ["equity", "crypto"],             # both lanes (was equity-only)
-    "allowed_actions": ["BUY", "SELL"],                # both directions (was BUY-only)
+    "allowed_lanes": ["equity", "crypto"],             # both lanes
+    "allowed_actions": ["BUY", "SELL"],                # both directions
     "allowed_brains": ["alpha", "camaro", "chevelle", "redeye"],
     "required_dry_run_state": "passed",
 }
@@ -248,6 +258,36 @@ def _categorize_skip(reason: str) -> str:
 
 
 
+def _normalize_brain_to_stack(raw: str) -> str:
+    """Normalize a brain identifier to its canonical stack code.
+
+    Intents may carry the brain identity in three forms across the
+    codebase's rename in flight:
+      * stack code  : alpha | camaro | chevelle | redeye  (legacy wire)
+      * brain_id    : camino | barracuda | hellcat | gto  (canonical)
+      * display name: Camino | Barracuda | Hellcat | GTO  (UI)
+
+    All three normalize to the stack code here so the `allowed_brains`
+    list (still keyed on stack codes for backwards compatibility) can
+    match any of them. Unknown identifiers are returned lowercased
+    unchanged so the audit reason carries the original token.
+    """
+    key = (raw or "").lower().strip()
+    if not key:
+        return key
+    # Already a stack code → done.
+    if key in {"alpha", "camaro", "chevelle", "redeye"}:
+        return key
+    # brain_id or display_name → resolve via brain_doctrine.
+    try:
+        from shared.brain_doctrine import BRAIN_ID_TO_STACK  # noqa: WPS433
+        if key in BRAIN_ID_TO_STACK:
+            return BRAIN_ID_TO_STACK[key]
+    except Exception:  # noqa: BLE001
+        pass
+    return key
+
+
 def matches_tier_1(intent: dict, policy: dict | None = None) -> tuple[bool, str]:
     """Returns (matches, reason). Reason describes the first failing
     criterion when matches=False so the audit trail can show WHY a
@@ -269,9 +309,19 @@ def matches_tier_1(intent: dict, policy: dict | None = None) -> tuple[bool, str]
         from shared.market_hours import is_equity_rth, market_hours_reason  # noqa: WPS433
         if not is_equity_rth():
             return False, market_hours_reason()
-    brain = (intent.get("stack") or "").lower()
+    # 2026-02-20: brain name normalization. Intents may arrive with
+    # the legacy stack code (alpha/camaro/chevelle/redeye), the
+    # canonical brain_id (camino/barracuda/hellcat/gto), or the UI
+    # display name (Camino/Barracuda/Hellcat/GTO). Normalize to the
+    # stack code so a brain rename or display-name drift doesn't
+    # silently filter every intent from that brain.
+    raw_brain = (intent.get("stack") or "").lower().strip()
+    brain = _normalize_brain_to_stack(raw_brain)
     if brain not in p["allowed_brains"]:
-        return False, f"brain {brain!r} not in allowed {p['allowed_brains']}"
+        return False, (
+            f"brain {raw_brain!r} (normalized {brain!r}) not in allowed "
+            f"{p['allowed_brains']}"
+        )
     conf = float(intent.get("confidence") or 0.0)
     if conf < p["confidence_min"]:
         return False, f"confidence {conf:.3f} < tier min {p['confidence_min']}"

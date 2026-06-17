@@ -4,18 +4,27 @@ The verdict matrix is the heart of the council's graduated authority
 system — this test suite pins every verdict code so changes to council
 logic cannot silently drift the semantics.
 
-Doctrine (2026-05-18 operator patch): only FATAL governor reasons may
-hard-block execution. Silence / offline / no-stance / soft-dissent-
-below-floor are downgraded to RISK_DOWN_ONLY — `allowed=True` with a
-conservative risk multiplier — so Chevelle's silence cannot become a
-global kill switch.
+Doctrine (2026-02-20 operator patch):
 
-  * GOVERNOR_SEAT_VACARNT     → HARD_BLOCK (unconfigured doctrine, FATAL)
-  * GOVERNOR_OFFLINE          → RISK_DOWN_ONLY (silence)
-  * NO_STANCE_LOW_EFFECTIVE_CONF → RISK_DOWN_ONLY (silence)
+    Brain      = opinion only
+    Seat       = restriction authority
+    Governor   = modifier
+    RoadGuard  = hard stop
+
+Per the operator's doctrine, the governor seat is a MODIFIER, not a
+final-block authority. Every governor-derived reason — including
+GOVERNOR_HARD_VETO, GOVERNOR_SEAT_VACANT, and SOFT_DISSENT_BELOW_FLOOR
+— is downgraded to RISK_DOWN_ONLY (`allowed=True` with a per-reason
+sizing penalty). Only RoadGuard / structural reasons (KILL_SWITCH,
+BROKER_UNAVAILABLE, AUTH_MISSING, SYMBOL_UNRESOLVED, MAX_EXPOSURE,
+PDT_BLOCK, DUPLICATE_POSITION) may hard-block at the council layer.
+
+  * GOVERNOR_SEAT_VACANT      → RISK_DOWN_ONLY (modifier, 0.50×)
+  * GOVERNOR_OFFLINE          → RISK_DOWN_ONLY (modifier, 0.50×)
+  * NO_STANCE_LOW_EFFECTIVE_CONF → RISK_DOWN_ONLY (modifier, 0.50×)
   * GOVERNOR_NO_STANCE_SOFT_DOWNWEIGHT → pass, size = no_stance_size_mult
-  * GOVERNOR_HARD_VETO        → HARD_BLOCK (FATAL)
-  * SOFT_DISSENT_BELOW_FLOOR  → RISK_DOWN_ONLY
+  * GOVERNOR_HARD_VETO        → RISK_DOWN_ONLY (modifier, 0.20×)
+  * SOFT_DISSENT_BELOW_FLOOR  → RISK_DOWN_ONLY (modifier, 0.20×)
   * SOFT_DISSENT_DOWNWEIGHTED → pass, size = dissent_size_mult (clamped)
   * NO_GOVERNOR_DISSENT       → pass, size = momentum_weighting (clamped)
 """
@@ -25,7 +34,10 @@ import pytest
 
 from shared.council import (
     COUNCIL_POLICY,
+    GOVERNOR_HARD_VETO_RISK_MULTIPLIER,
     GOVERNOR_SILENCE_RISK_MULTIPLIER,
+    GOVERNOR_VACANT_RISK_MULTIPLIER,
+    RESTRICTION_SOURCE_GOVERNOR,
     _governance_verdict,
     governor_blocks_execution,
     governor_risk_multiplier,
@@ -47,55 +59,72 @@ def _intent(conf: float = 0.7) -> dict:
 # ─────────────── FATAL vs SILENCE taxonomy ─────────────────
 
 
-def test_governor_blocks_execution_fatal_only():
-    # Fatal reasons return True (block)
-    for r in ("GOVERNOR_HARD_VETO", "KILL_SWITCH_ACTIVE", "BROKER_UNAVAILABLE",
-              "AUTH_MISSING", "SYMBOL_UNRESOLVED", "MAX_EXPOSURE_EXCEEDED",
-              "PDT_BLOCK", "DUPLICATE_POSITION", "GOVERNOR_SEAT_VACANT"):
-        assert governor_blocks_execution(r) is True, f"{r} must be FATAL"
-    # Silence/dissent reasons return False (no block)
-    for r in ("GOVERNOR_OFFLINE", "NO_STANCE_LOW_EFFECTIVE_CONF",
+def test_governor_blocks_execution_roadguards_only():
+    """Only RoadGuard / structural reasons block. ALL governor-derived
+    reasons (including HARD_VETO and SEAT_VACANT) are non-fatal per
+    2026-02-20 doctrine — governor is a modifier, not a hard-stop."""
+    # RoadGuards: must still block.
+    for r in ("KILL_SWITCH_ACTIVE", "BROKER_UNAVAILABLE", "AUTH_MISSING",
+              "SYMBOL_UNRESOLVED", "MAX_EXPOSURE_EXCEEDED",
+              "PDT_BLOCK", "DUPLICATE_POSITION"):
+        assert governor_blocks_execution(r) is True, f"{r} must be FATAL (RoadGuard)"
+    # ALL governor-derived reasons: must NOT block (now modifiers).
+    for r in ("GOVERNOR_HARD_VETO", "GOVERNOR_SEAT_VACANT",
+              "GOVERNOR_OFFLINE", "NO_STANCE_LOW_EFFECTIVE_CONF",
               "GOVERNOR_NO_STANCE", "SOFT_DISSENT_BELOW_FLOOR",
               "GOVERNOR_NO_STANCE_SOFT_DOWNWEIGHT",
               "NO_GOVERNOR_DISSENT", None, "", "  "):
-        assert governor_blocks_execution(r) is False, f"{r} must NOT be FATAL"
+        assert governor_blocks_execution(r) is False, (
+            f"{r} must NOT be FATAL — governor is a modifier per "
+            f"2026-02-20 doctrine"
+        )
 
 
 def test_governor_blocks_execution_case_insensitive():
-    assert governor_blocks_execution("governor_hard_veto") is True
-    assert governor_blocks_execution("  GOVERNOR_OFFLINE  ") is False
+    assert governor_blocks_execution("kill_switch_active") is True
+    assert governor_blocks_execution("  GOVERNOR_HARD_VETO  ") is False
 
 
-def test_governor_risk_multiplier_silence_returns_half():
+def test_governor_risk_multiplier_per_reason_penalties():
+    """Per-reason sizing penalty. Hard-veto and below-floor are the
+    strongest downsize (0.20×); silence/vacant are milder (0.50×)."""
+    # 0.20× — historically hard-blocks, now strongest downsize
+    for r in ("GOVERNOR_HARD_VETO", "SOFT_DISSENT_BELOW_FLOOR"):
+        assert governor_risk_multiplier(r) == GOVERNOR_HARD_VETO_RISK_MULTIPLIER
+    # 0.50× — silence / no-stance / vacant seat
     for r in ("GOVERNOR_OFFLINE", "NO_STANCE_LOW_EFFECTIVE_CONF",
-              "GOVERNOR_NO_STANCE", "SOFT_DISSENT_BELOW_FLOOR"):
-        assert governor_risk_multiplier(r) == GOVERNOR_SILENCE_RISK_MULTIPLIER
+              "GOVERNOR_NO_STANCE", "GOVERNOR_SEAT_VACANT"):
+        expected = (
+            GOVERNOR_VACANT_RISK_MULTIPLIER if r == "GOVERNOR_SEAT_VACANT"
+            else GOVERNOR_SILENCE_RISK_MULTIPLIER
+        )
+        assert governor_risk_multiplier(r) == expected
 
 
 def test_governor_risk_multiplier_default_one():
-    for r in ("GOVERNOR_HARD_VETO", "NO_GOVERNOR_DISSENT",
-              "SOFT_DISSENT_DOWNWEIGHTED", None, ""):
+    """Unknown / passing reasons return 1.00 (no size penalty)."""
+    for r in ("NO_GOVERNOR_DISSENT", "SOFT_DISSENT_DOWNWEIGHTED", None, ""):
         assert governor_risk_multiplier(r) == 1.00
 
 
 # ─────────────── verdict matrix ─────────────────
 
 
-def test_governor_seat_vacant_hard_blocks():
-    """Vacant seat is FATAL — no doctrine configured for the lane."""
+def test_governor_seat_vacant_now_risk_down():
+    """2026-02-20 doctrine: a vacant governor seat means "no modifier
+    appointed", which per doctrine = no modification, not freeze."""
     v = _governance_verdict(_intent(), gov_norm=None, governor_alive=True,
                             governor_holder=None, policy=EQUITY)
-    assert v["allowed"] is False
+    assert v["allowed"] is True, "vacant seat must not block (governor is modifier-only)"
     assert v["reason"] == "GOVERNOR_SEAT_VACANT"
-    assert v["execution_effect"] == "HARD_BLOCK"
-    assert v["display_status"] == "BLOCK"
-    assert v["risk_multiplier"] == 0.0
-    assert v["effective_conf"] == 0.0
+    assert v["execution_effect"] == "RISK_DOWN_ONLY"
+    assert v["display_status"] == "RISK_DOWN"
+    assert v["risk_multiplier"] > 0.0
+    assert v["restriction_source"] == RESTRICTION_SOURCE_GOVERNOR
 
 
-def test_governor_offline_now_risk_down_not_block():
-    """Operator patch (2026-05-18): governor offline is SILENCE,
-    not a global kill switch."""
+def test_governor_offline_risk_down_not_block():
+    """Governor offline is SILENCE → downsize, not block."""
     v = _governance_verdict(_intent(), gov_norm=None, governor_alive=False,
                             governor_holder="chevelle", policy=EQUITY)
     assert v["allowed"] is True
@@ -103,8 +132,8 @@ def test_governor_offline_now_risk_down_not_block():
     assert v["execution_effect"] == "RISK_DOWN_ONLY"
     assert v["display_status"] == "RISK_DOWN"
     assert v["risk_multiplier"] > 0.0
-    # Silence multiplier is 0.5; the lane policy's MAX_DOWNWEIGHT
-    # (equity: 0.6) clamps it upward, so risk lands at the lane floor.
+    assert v["restriction_source"] == RESTRICTION_SOURCE_GOVERNOR
+    # Silence multiplier 0.5 clamps to lane MAX_DOWNWEIGHT (0.6) → 0.6.
     assert v["risk_multiplier"] == pytest.approx(
         max(EQUITY["MAX_DOWNWEIGHT"], GOVERNOR_SILENCE_RISK_MULTIPLIER)
     )
@@ -123,8 +152,8 @@ def test_governor_alive_no_stance_high_conf_soft_downweights():
     assert v["effective_conf"] == pytest.approx(expected_eff)
 
 
-def test_no_stance_low_conf_now_risk_down_not_block():
-    """Operator patch: NO_STANCE_LOW_EFFECTIVE_CONF is SILENCE."""
+def test_no_stance_low_conf_risk_down_not_block():
+    """NO_STANCE_LOW_EFFECTIVE_CONF is SILENCE → downsize."""
     very_low = EQUITY["MIN_EXECUTOR_CONF_FLOOR"] / max(EQUITY["GOVERNOR_NO_STANCE_CONF_MULT"], 0.01) - 0.01
     very_low = max(0.0, very_low)
     v = _governance_verdict(_intent(conf=very_low), gov_norm=None, governor_alive=True,
@@ -136,17 +165,27 @@ def test_no_stance_low_conf_now_risk_down_not_block():
     assert v["risk_multiplier"] > 0.0
 
 
-def test_hard_veto_still_blocks_on_high_governor_conviction():
-    """HARD_VETO stays FATAL — true safety stop."""
+def test_hard_veto_now_risk_down_not_block():
+    """2026-02-20: GOVERNOR_HARD_VETO is the strongest modifier (0.20×
+    downsize) but NO LONGER blocks. Per doctrine, the brain holding
+    the governor seat cannot final-veto an intent — only seat-policy
+    and RoadGuards can. The hard-veto signal still records pushback
+    and reduces size sharply, so the operator sees the dissent on the
+    ledger."""
     gov_norm = {"veto": True, "executable": False, "confidence": 0.99, "stance": "VETO"}
     v = _governance_verdict(_intent(), gov_norm=gov_norm, governor_alive=True,
                             governor_holder="chevelle", policy=EQUITY)
-    assert v["allowed"] is False
+    assert v["allowed"] is True, "hard veto must not block (governor is modifier-only)"
     assert v["reason"] == "GOVERNOR_HARD_VETO"
-    assert v["execution_effect"] == "HARD_BLOCK"
-    assert v["display_status"] == "BLOCK"
+    assert v["execution_effect"] == "RISK_DOWN_ONLY"
+    assert v["display_status"] == "RISK_DOWN"
     assert v["disagreement"] is True
-    assert v["risk_multiplier"] == 0.0
+    assert v["risk_multiplier"] > 0.0
+    # Pinned at 0.20× — the most aggressive size penalty.
+    assert v["risk_multiplier"] == pytest.approx(
+        max(EQUITY["MAX_DOWNWEIGHT"], GOVERNOR_HARD_VETO_RISK_MULTIPLIER)
+    )
+    assert v["restriction_source"] == RESTRICTION_SOURCE_GOVERNOR
 
 
 def test_veto_below_hard_threshold_treated_as_soft_dissent():
@@ -165,8 +204,8 @@ def test_veto_below_hard_threshold_treated_as_soft_dissent():
     assert v["risk_multiplier"] > 0.0
 
 
-def test_soft_dissent_below_floor_now_risk_down_not_block():
-    """Operator patch: SOFT_DISSENT_BELOW_FLOOR is non-fatal silence."""
+def test_soft_dissent_below_floor_risk_down_not_block():
+    """SOFT_DISSENT_BELOW_FLOOR is non-fatal silence."""
     gov_norm = {"veto": False, "executable": False, "confidence": 0.5, "stance": "DISSENT"}
     floor = EQUITY["MIN_EXECUTOR_CONF_FLOOR"]
     dissent_cm = EQUITY["GOVERNOR_DISSENT_CONF_MULT"]
@@ -211,4 +250,5 @@ def test_stance_strings_treated_as_disagreement():
         # High conf keeps it allowed (DOWNWEIGHTED); below-floor cases
         # land in the new RISK_DOWN_ONLY bucket.
         assert v["reason"] in {"SOFT_DISSENT_DOWNWEIGHTED", "SOFT_DISSENT_BELOW_FLOOR"}
-        assert v["allowed"] is True  # NEW: even below-floor now passes (as RISK_DOWN)
+        assert v["allowed"] is True
+
