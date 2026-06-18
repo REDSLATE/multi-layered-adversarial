@@ -101,14 +101,16 @@ export default function WebullEntitlementsCard() {
                 >
                   <span className="opacity-90">{r.label}</span>
                   {live ? (
-                    /* 2026-02-19 — Brighter LIVE pill so it pops next
-                       to the EXEC ENABLED badges. The old 15% opacity
-                       background was washing out against the dark
-                       theme and the operator couldn't tell at a
-                       glance whether the entitlement was on. */
+                    /* 2026-02-21 — Bumped from 30% opacity emerald to
+                       a solid bright green with black text and a
+                       stronger glow. The previous 30% wash was reading
+                       as a dim outline on mobile in actual sunlight;
+                       operator couldn't tell at a glance which feeds
+                       were live. Solid `rd-success` + black text reads
+                       like an LED indicator. */
                     <Badge
                       data-testid={`webull-entitlement-${r.key}-live`}
-                      className="bg-emerald-400/30 text-emerald-100 border-emerald-300/60 gap-1 font-semibold shadow-[0_0_8px_rgba(16,185,129,0.35)]"
+                      className="bg-rd-success text-black border-rd-success gap-1 font-bold shadow-[0_0_12px_rgba(34,197,94,0.65)]"
                     >
                       <CheckCircle size={11} weight="fill" /> LIVE
                     </Badge>
@@ -116,12 +118,12 @@ export default function WebullEntitlementsCard() {
                     <Badge
                       className={
                         r.critical
-                          ? "bg-rose-500/25 text-rose-200 border-rose-400/50 gap-1"
-                          : "bg-zinc-500/20 text-zinc-300 border-zinc-500/40 gap-1"
+                          ? "bg-rd-danger text-white border-rd-danger gap-1 font-bold shadow-[0_0_10px_rgba(239,68,68,0.55)]"
+                          : "bg-rd-bg3 text-rd-dim border-rd-border gap-1"
                       }
                     >
                       <XCircle size={11} weight="fill" />{" "}
-                      {r.critical ? "not subscribed" : "off"}
+                      {r.critical ? "NOT SUBSCRIBED" : "OFF"}
                     </Badge>
                   )}
                 </div>

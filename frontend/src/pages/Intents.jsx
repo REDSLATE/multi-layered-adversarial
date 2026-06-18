@@ -641,15 +641,15 @@ export default function Intents() {
               onClick={() => setAutoRefresh((v) => !v)}
               data-testid="intents-autorefresh"
               className={
-                "px-2 py-1 text-[10px] font-mono uppercase tracking-wider border " +
+                "px-2 py-1 text-[10px] font-mono uppercase tracking-wider border font-bold " +
                 (autoRefresh
-                  ? "border-rd-success text-rd-success"
+                  ? "border-rd-success bg-rd-success text-black shadow-[0_0_10px_rgba(34,197,94,0.55)]"
                   : "border-rd-border text-rd-dim")
               }
               title="Auto-refresh every 8s"
             >
-              <Pulse size={10} weight="bold" className="inline mr-1" />
-              {autoRefresh ? "live · 8s" : "paused"}
+              <Pulse size={10} weight="fill" className="inline mr-1" />
+              {autoRefresh ? "LIVE · 8s" : "paused"}
             </button>
             <button
               onClick={load}
