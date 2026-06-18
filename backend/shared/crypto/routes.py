@@ -61,7 +61,24 @@ def _now_iso() -> str:
 # ──────────────────────── auto-poller task ────────────────────────
 
 _POLLER_TASK: asyncio.Task | None = None
-_POLLER_LAST_TICK: dict = {"ts": None, "bars_pushed": 0, "error": None}
+# 2026-06-18: split status into structured fields so the UI can
+# distinguish a fresh-but-failed attempt from a stale error left over
+# from a long-recovered Atlas pool pause. Without this split,
+# `tick error: loop: ... connection pool paused` would stay visible
+# on the Kraken card indefinitely even after the poller had been
+# happily pulling bars for an hour.
+#
+#   ts                — wall-clock of the last COMPLETED tick attempt
+#                       (success OR failure — anchors UI freshness)
+#   last_success_ts   — wall-clock of the last tick that pushed bars
+#   bars_pushed       — bars pushed in the most recent successful tick
+#   error             — most recent failure reason (None when current)
+_POLLER_LAST_TICK: dict = {
+    "ts": None,
+    "last_success_ts": None,
+    "bars_pushed": 0,
+    "error": None,
+}
 
 
 async def _poller_tick() -> None:
@@ -103,20 +120,43 @@ async def _poller_tick() -> None:
     _POLLER_LAST_TICK.update({
         "ts": _now_iso(),
         "bars_pushed": bars_pushed,
+        # Per-tick contract: a successful tick clears prior errors AND
+        # records its success time so the loop wrapper can suppress
+        # transient errors that have since recovered.
         "error": _POLLER_LAST_TICK.get("error") if bars_pushed == 0 else None,
+        "last_success_ts": _now_iso() if bars_pushed > 0 else _POLLER_LAST_TICK.get("last_success_ts"),
     })
 
 
 async def _poller_loop() -> None:
-    """Long-running task. Sleeps `poll_interval_seconds` (default 60) between ticks."""
+    """Long-running task. Sleeps `poll_interval_seconds` (default 60) between ticks.
+
+    Resilience pin (2026-06-18 — Prod "connection pool paused" UX bug):
+    on a loop-level db error (Atlas pool pause, server selection
+    timeout, etc.) we record the error AND bump `ts` so the operator
+    can see that we attempted recently. A subsequent successful tick
+    clears the error via _poller_tick's contract.
+    """
     while True:
         try:
             doc = await db[KRAKEN_CREDENTIALS].find_one({"_id": "singleton"}, {"_id": 0})
             if doc and doc.get("auto_poll_enabled", True):
                 await _poller_tick()
+            else:
+                # Idle iteration — explicitly mark it so the operator
+                # doesn't see a stale "error" from a long-recovered
+                # pool pause. We're polling fine, just nothing to do.
+                _POLLER_LAST_TICK.update({"ts": _now_iso(), "error": None})
             interval = (doc or {}).get("poll_interval_seconds", 60)
         except Exception as e:  # noqa: BLE001
-            _POLLER_LAST_TICK["error"] = f"loop: {e}"
+            # Loop-level failure (typically a transient Atlas pool
+            # pause or connection blip). Update ts so the UI shows
+            # this attempt is fresh, and tag the error string with
+            # the truncated exception type/message.
+            _POLLER_LAST_TICK.update({
+                "ts": _now_iso(),
+                "error": f"loop: {e}",
+            })
             interval = 60
         await asyncio.sleep(max(int(interval or 60), 15))
 

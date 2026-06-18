@@ -108,77 +108,12 @@ export default function IntentPostMortemPanel() {
     confidenceMin: 0.65,
   });
 
-  // 2026-02-21: Unified Pipeline toggle. The new execution pipeline
-  // (Seat → Governor → RoadGuard → Broker, only 3 hard blockers) is
-  // deployed but disabled by default — controlled by a Mongo flag at
-  // `runtime_flags._id="unified_pipeline_enabled"`. Operator needs a
-  // mobile-friendly button to flip it because they cannot ssh/curl
-  // from their phone. Lives next to ARM ALL because the canonical
-  // flow when trades aren't flowing is: open Intents page → ARM all
-  // → switch to unified pipeline → verify execution rate climbs.
-  const [pipelineState, setPipelineState] = useState({
-    loading: true, toggling: false,
-    enabled: false, sources: null, error: null,
-  });
-
-  const loadPipelineStatus = useCallback(async () => {
-    setPipelineState((s) => ({ ...s, loading: true, error: null }));
-    try {
-      const res = await api.get("/admin/unified-pipeline/status");
-      setPipelineState({
-        loading: false, toggling: false,
-        enabled: !!res.data.effective_enabled,
-        sources: res.data.sources || null,
-        error: null,
-      });
-    } catch (e) {
-      const d = e?.response?.data?.detail || e.message;
-      setPipelineState((s) => ({
-        ...s, loading: false,
-        error: typeof d === "string" ? d : JSON.stringify(d),
-      }));
-    }
-  }, []);
-
-  const togglePipeline = useCallback(async () => {
-    const turningOn = !pipelineState.enabled;
-    const msg = turningOn
-      ? "Switch execution to the UNIFIED PIPELINE?\n\n" +
-        "This routes intents through the new 3-blocker chain " +
-        "(Seat → Governor → RoadGuard → Broker). The legacy 20-gate " +
-        "chain is bypassed.\n\nProceed?"
-      : "Revert to the LEGACY 20-gate chain?\n\n" +
-        "Intents will route through the original execution chain " +
-        "(council, governor, gate-chain, broker-router).\n\nProceed?";
-    if (!window.confirm(msg)) return;
-    setPipelineState((s) => ({ ...s, toggling: true, error: null }));
-    try {
-      const path = turningOn ? "/admin/unified-pipeline/start" : "/admin/unified-pipeline/stop";
-      const res = await api.post(path);
-      setPipelineState((s) => ({
-        ...s,
-        toggling: false,
-        enabled: !!res.data.effective_enabled,
-      }));
-      // Re-read status to pick up updated_by / updated_at / env warnings.
-      await loadPipelineStatus();
-    } catch (e) {
-      const d = e?.response?.data?.detail || e.message;
-      setPipelineState((s) => ({
-        ...s, toggling: false,
-        error: typeof d === "string" ? d : JSON.stringify(d),
-      }));
-    }
-  }, [pipelineState.enabled, loadPipelineStatus]);
-
-  useEffect(() => { loadPipelineStatus(); }, [loadPipelineStatus]);
-
-  // 2026-02-21: Webull floor override. Same Mongo-flag pattern as
-  // unified pipeline. Operator declared "Webull min is $1" — Prod
-  // env had stayed at $3 and was blocking ~27 intents/day with
-  // WEBULL_NOTIONAL_BELOW_FLOOR. This UI flips the Mongo override
-  // (which wins over env) so the operator can drop the floor from
-  // their phone without a redeploy.
+  // 2026-06-18: Webull floor override. Same Mongo-flag pattern as
+  // the deleted unified-pipeline toggle. Operator declared "Webull
+  // min is $1" — Prod env had stayed at $3 and was blocking ~27
+  // intents/day with WEBULL_NOTIONAL_BELOW_FLOOR. This UI flips the
+  // Mongo override (which wins over env) so the operator can drop
+  // the floor from their phone without a redeploy.
   const [webullFloor, setWebullFloor] = useState({
     loading: true, saving: false,
     effective_floor: null,
@@ -566,91 +501,6 @@ export default function IntentPostMortemPanel() {
             <Power size={9} weight="bold" />
             Halt (confirm)
           </button>
-        </div>
-
-        {/* ─── UNIFIED PIPELINE TOGGLE (2026-02-21) ───────────────
-            Single mobile-friendly switch to flip the
-            `unified_pipeline_enabled` Mongo flag. When ON, intents
-            route through the 3-blocker pipeline (Seat / RoadGuard /
-            Broker); when OFF, the legacy 20-gate chain runs. Sits
-            inside the ARM block because the canonical flow is
-            ARM → switch pipeline → watch execution rate climb. */}
-        <div
-          className="pt-1 border-t border-rd-border/40 space-y-1"
-          data-testid="unified-pipeline-toggle-block"
-        >
-          <div className="flex items-center gap-2">
-            <div className="flex-1 min-w-0">
-              <div className="font-mono text-[10px] uppercase tracking-widest text-rd-text font-bold flex items-center gap-1.5">
-                Unified pipeline
-                {pipelineState.loading ? (
-                  <span className="text-rd-dim font-normal normal-case tracking-normal">
-                    · loading…
-                  </span>
-                ) : (
-                  <span
-                    className={
-                      "px-1.5 py-0.5 border font-mono text-[9px] " +
-                      (pipelineState.enabled
-                        ? "border-rd-success text-rd-success"
-                        : "border-rd-dim text-rd-dim")
-                    }
-                    data-testid="unified-pipeline-state-badge"
-                  >
-                    {pipelineState.enabled ? "ON" : "OFF"}
-                  </span>
-                )}
-              </div>
-              <div className="font-mono text-[9px] text-rd-dim mt-0.5">
-                {pipelineState.enabled
-                  ? "Routing through 3-blocker pipeline (Seat · RoadGuard · Broker)."
-                  : "Routing through legacy 20-gate chain. Flip ON to use the new pipeline."}
-              </div>
-            </div>
-            <button
-              onClick={togglePipeline}
-              disabled={pipelineState.loading || pipelineState.toggling}
-              className={
-                "px-3 py-1 border-2 font-mono text-[10px] uppercase tracking-widest font-bold disabled:opacity-40 disabled:cursor-not-allowed " +
-                (pipelineState.enabled
-                  ? "border-rd-danger text-rd-danger hover:bg-rd-danger hover:text-rd-bg"
-                  : "border-rd-accent bg-rd-accent text-black hover:opacity-90")
-              }
-              data-testid="unified-pipeline-toggle-button"
-              title={
-                pipelineState.enabled
-                  ? "Revert to the legacy 20-gate chain"
-                  : "Switch execution to the unified 3-blocker pipeline"
-              }
-            >
-              {pipelineState.toggling
-                ? "Flipping…"
-                : pipelineState.enabled
-                  ? "Switch OFF"
-                  : "Switch ON"}
-            </button>
-          </div>
-          {pipelineState.sources?.mongo?.updated_at && (
-            <div className="font-mono text-[9px] text-rd-dim">
-              last flip: {pipelineState.sources.mongo.updated_at}
-              {pipelineState.sources.mongo.updated_by
-                ? ` · by ${pipelineState.sources.mongo.updated_by}`
-                : ""}
-            </div>
-          )}
-          {pipelineState.sources?.env?.enabled && (
-            <div className="font-mono text-[9px] text-rd-warn">
-              ⚠ env var UNIFIED_PIPELINE_ENABLED=true is set in deploy
-              config — pipeline stays ON regardless of this toggle until
-              that env var is unset.
-            </div>
-          )}
-          {pipelineState.error && (
-            <div className="font-mono text-[10px] text-rd-danger flex items-start gap-1">
-              <XCircle size={10} weight="bold" className="mt-0.5 shrink-0" />
-              {pipelineState.error}
-            </div>
-          )}
         </div>
 
         {/* ─── WEBULL FLOOR OVERRIDE (2026-02-21) ────────────────

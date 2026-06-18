@@ -167,15 +167,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("seat_state migration failed (non-fatal): %s", e)
 
-    # Unified pipeline flag — refresh the in-memory cache from Mongo so
-    # the first auto-router tick after boot sees the latest operator
-    # toggle (no stale 5-second cache from before boot).
-    try:
-        from shared.pipeline.adapter import refresh_pipeline_flag_cache
-        enabled = await refresh_pipeline_flag_cache()
-        logger.info("unified_pipeline_enabled (from mongo) = %s", enabled)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("unified_pipeline flag refresh failed (non-fatal): %s", e)
+    # Unified pipeline flag — REMOVED 2026-06-18. The pipeline is now
+    # unconditional (legacy 20-gate chain deleted). Operator kill
+    # switches are `/api/admin/auto-router/stop` (full loop halt) and
+    # `/api/admin/trading/disable` (per-order RoadGuard hard stop).
 
     # Webull min-notional floor override — same pattern. 2026-02-21:
     # operator declared "Webull min is $1" but Prod env var stayed at

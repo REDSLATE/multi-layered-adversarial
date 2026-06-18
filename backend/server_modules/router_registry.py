@@ -128,7 +128,6 @@ from routes.admin_intents_post_mortem import (
 )
 from routes.intent_why import router as intent_why_router
 from routes.seat_state_diagnose import router as seat_state_diagnose_router
-from routes.unified_pipeline_admin import router as unified_pipeline_admin_router
 from routes.webull_caps_admin import router as webull_caps_admin_router
 from routes.exposure_caps_admin import router as exposure_caps_admin_router
 from routes.admin_auto_submit import router as admin_auto_submit_router
@@ -197,7 +196,6 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(admin_intents_post_mortem_router)
     api_router.include_router(intent_why_router)
     api_router.include_router(seat_state_diagnose_router)
-    api_router.include_router(unified_pipeline_admin_router)
     api_router.include_router(webull_caps_admin_router)
     api_router.include_router(exposure_caps_admin_router)
     api_router.include_router(admin_auto_submit_router)

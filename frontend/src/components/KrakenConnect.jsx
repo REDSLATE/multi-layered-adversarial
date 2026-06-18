@@ -323,9 +323,24 @@ function ConnectedView({ status, onChange, onClose }) {
             </span>
           )}
         </div>
-        {status.last_tick?.error && (
-          <div className="text-rd-danger mt-1">tick error: {status.last_tick.error}</div>
-        )}
+        {/* 2026-06-18: only show the error if it is FRESHER than the
+            last successful tick. A pool-paused error that has since
+            recovered (last_success_ts > recent) was leaving a red
+            "tick error: loop: ... connection pool paused" line up
+            on the Kraken card indefinitely even when the poller was
+            healthy. Hide the error if a more-recent success exists. */}
+        {status.last_tick?.error && (() => {
+          const errTs = status.last_tick.ts ? new Date(status.last_tick.ts).getTime() : 0;
+          const okTs = status.last_tick.last_success_ts
+            ? new Date(status.last_tick.last_success_ts).getTime()
+            : 0;
+          // Suppress when the most recent successful tick happened
+          // at-or-after the error-tagged tick.
+          if (okTs && okTs >= errTs) return null;
+          return (
+            <div className="text-rd-danger mt-1">tick error: {status.last_tick.error}</div>
+          );
+        })()}
       </Card>
 
       {/* Execution gate */}

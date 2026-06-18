@@ -459,7 +459,17 @@ export default function Intents() {
       setIntents(res.data?.items || []);
       setErr("");
     } catch (e) {
-      setErr(e?.response?.data?.detail || e.message);
+      // 2026-06-18: tag the error with the endpoint that failed so a
+      // bare "HTTP 500" on the page is at least actionable. Without
+      // this, the operator sees just "HTTP 500" with no clue which
+      // endpoint to grep for in backend logs.
+      const detail = e?.response?.data?.detail || e.message || "unknown";
+      const reqId = e?.response?.data?.request_id;
+      const status = e?.response?.status;
+      setErr(
+        `GET /api/intents → ${status ? `HTTP ${status}` : "(no response)"}: ${detail}` +
+        (reqId ? ` · request_id=${reqId}` : ""),
+      );
     }
   }, [stack, gateState, lane]);
 

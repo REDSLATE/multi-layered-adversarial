@@ -1,20 +1,26 @@
 """Adapter: legacy auto-router intent → unified pipeline call.
 
-When `UNIFIED_PIPELINE_ENABLED=true`, the auto-router delegates the
-entire decision to `shared.pipeline.execution_pipeline`. This module
-is the ONE place that translates between the legacy `intent` dict
-shape (from `shared_intents`) and the new `BrainOpinion` dataclass,
-and wraps the existing `route_order` so the pipeline can call it as
+The auto-router delegates the entire decision to
+`shared.pipeline.execution_pipeline`. This module is the ONE place
+that translates between the legacy `intent` dict shape (from
+`shared_intents`) and the new `BrainOpinion` dataclass, and wraps
+the existing `route_order` so the pipeline can call it as
 `broker.submit_market_order(...)`.
 
 Doctrine: this adapter does NOT add any new gating, sizing, or
 classification. It is a pure translation layer. The unified pipeline
 is the only authority on whether the broker is called.
+
+History (2026-06-18): the legacy `unified_pipeline_enabled` feature
+flag (env + Mongo + 5-second cache) was deleted in the same pass
+that removed the legacy 20-gate chain from auto_router.py. The
+pipeline is now unconditional — there is no fallback path. Operator
+kill switches are `/api/admin/auto-router/stop` (full loop halt) and
+`/api/admin/trading/disable` (per-order RoadGuard hard stop).
 """
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from typing import Any, Dict
 
@@ -31,53 +37,6 @@ from shared.pipeline.seat_policy import SeatPolicy
 
 
 logger = logging.getLogger("pipeline.adapter")
-
-
-async def is_pipeline_enabled() -> bool:
-    """Single source of truth for the feature flag. Async because it
-    may read from `runtime_flags` if the env var isn't set.
-
-    Two enable paths, either flips the pipeline on:
-        1. Env var `UNIFIED_PIPELINE_ENABLED=true` (deploy config)
-        2. `runtime_flags.unified_pipeline_enabled.enabled = True`
-           in Mongo — flipped from the admin UI via
-           `POST /api/admin/unified-pipeline/start` (no redeploy).
-
-    The Mongo read is cached for 5 seconds so the auto-router (up to
-    50 intents/tick) doesn't issue a DB read per intent.
-    """
-    if os.environ.get("UNIFIED_PIPELINE_ENABLED", "false").lower() == "true":
-        return True
-    global _CACHED_FLAG_VALUE, _CACHED_FLAG_TS
-    import time
-    now = time.time()
-    if _CACHED_FLAG_TS and (now - _CACHED_FLAG_TS) < _FLAG_CACHE_TTL_SEC:
-        return _CACHED_FLAG_VALUE
-    return await refresh_pipeline_flag_cache()
-
-
-_CACHED_FLAG_VALUE: bool = False
-_CACHED_FLAG_TS: float = 0.0
-_FLAG_CACHE_TTL_SEC: float = 5.0
-
-
-async def refresh_pipeline_flag_cache() -> bool:
-    """Force-refresh the in-memory flag cache from Mongo. Called from
-    the boot sequence and by the admin start/stop endpoints so the
-    cache is coherent with the operator's last action."""
-    global _CACHED_FLAG_VALUE, _CACHED_FLAG_TS
-    import time
-    from db import db
-    try:
-        doc = await db["runtime_flags"].find_one(
-            {"_id": "unified_pipeline_enabled"},
-            {"_id": 0, "enabled": 1},
-        )
-        _CACHED_FLAG_VALUE = bool((doc or {}).get("enabled", False))
-        _CACHED_FLAG_TS = time.time()
-        return _CACHED_FLAG_VALUE
-    except Exception:  # noqa: BLE001
-        return _CACHED_FLAG_VALUE
 
 
 def _opinion_from_intent(intent: Dict[str, Any], requested_notional: float) -> BrainOpinion:
