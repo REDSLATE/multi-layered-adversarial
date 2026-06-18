@@ -69,30 +69,28 @@ ROLES: tuple[str, ...] = (
 )
 BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("camino", "barracuda", "hellcat", "gto")
 
-# Default seat → brain assignment. Operator-pinned defaults captured
-# from Production on 2026-06-18 (eight-seat layout, both lanes fully
-# staffed). The previous defaults left the auditor + every crypto seat
-# vacant on a fresh deploy; Production has since assigned them and
-# this constant is the canonical source of truth so a clean rebuild
-# of preview seeds with the same roster Prod is running.
-#
-# Identity reminder (Paradox v2 doctrine): the seat decides who it
-# trusts, not the brain. These defaults document the operator's
-# CURRENT pick — they are not a claim that any specific brain
-# inherently belongs in any specific seat. The operator may swap any
-# non-governor cell at runtime via Quick Seat Switches.
-#
-# Governor exclusivity still applies: governor=hellcat,
-# crypto_governor=gto are pinned to Chevelle/RedEye respectively.
+# Default seat → brain assignment. Operator-pinned defaults for the
+# equity lane (strategist=camaro, executor=alpha, governor=chevelle);
+# auditor + every crypto seat start vacant so the operator slots them
+# explicitly. A brain MAY hold one equity seat AND one crypto seat
+# simultaneously — eligibility (below) only restricts Governor seats.
+# Default seat → brain assignment. Operator-pinned defaults for the
+# equity lane (strategist=camaro, executor=alpha, governor=chevelle).
+# All other seats start vacant. CRYPTO LANE INTENTIONALLY VACANT:
+# per Paradox v2 doctrine, restrictions belong to the SEAT (capital,
+# trust list, autonomy state) not to the BRAIN. The seat decides who
+# it trusts; defaulting a brain into a seat re-introduces the exact
+# coupling we're removing. Operator (or the seat's verifier-driven
+# promotion path) is the only way a brain enters the crypto seat.
 DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
-    "strategist":        "camino",
-    "executor":          "barracuda",
+    "strategist":        "barracuda",
+    "executor":          "camino",
     "governor":          "hellcat",
-    "auditor":           "gto",
-    "crypto_strategist": "hellcat",
-    "crypto":            "barracuda",
-    "crypto_governor":   "gto",
-    "crypto_auditor":    "camino",
+    "auditor":           None,
+    "crypto_strategist": None,
+    "crypto":            None,
+    "crypto_governor":   None,
+    "crypto_auditor":    None,
 }
 
 # ─── Default eligibility (2026-05-26 — operator doctrine, governor-exclusive) ──
