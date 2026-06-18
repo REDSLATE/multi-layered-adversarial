@@ -554,22 +554,8 @@ async def post_emit_vote(
     body: EmitVoteRequest,
     x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
 ) -> dict:
-    """Server-side calibrate + check + persist in one round-trip.
-
-    Steps:
-      1. Authenticate the brain via X-Runtime-Token.
-      2. Hydrate (cached) per-brain BrainCalibration + NegativeKnowledge
-         from Mongo on first use.
-      3. Check negative-knowledge — if a matching pattern fires, the
-         emitted vote becomes ABSTAIN (raw confidence preserved for
-         the verifier's audit).
-      4. Otherwise calibrate raw → calibrated via Bayesian shrinkage.
-      5. Build the immutable BrainVote (invariants enforced) and
-         persist. Returns the calibrated vote + which path fired
-         (calibrated|abstained).
-
-    Trading impact: zero. No seat, no broker, no order.
-    """
+    """HTTP route: verify token then delegate. In-process callers use
+    `submit_vote_in_process` below to skip auth."""
     if not x_runtime_token:
         raise HTTPException(status_code=401, detail="X-Runtime-Token required")
     from runtime_auth import verify_runtime_token
@@ -579,7 +565,17 @@ async def post_emit_vote(
         raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=401, detail=f"token verify failed: {e}")
+    return await _post_emit_vote_impl(body)
 
+
+async def submit_vote_in_process(body: EmitVoteRequest) -> dict:
+    """Direct in-process entrypoint for the brain runner. No auth."""
+    return await _post_emit_vote_impl(body)
+
+
+async def _post_emit_vote_impl(body: EmitVoteRequest) -> dict:
+    """Server-side calibrate + check + persist. Same body for HTTP
+    and in-process callers; the wrapper above does the auth."""
     # Lazy-hydrate per-brain stores (reuses the verifier-loop caches).
     from shared.paradox_v2.verifier_loop import _get_calibrator, _get_negative_knowledge
     cal = await _get_calibrator(body.brain)

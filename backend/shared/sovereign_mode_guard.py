@@ -434,18 +434,32 @@ async def post_sovereign_contribution(
     x_runtime_token: str | None = Header(default=None, alias="X-Runtime-Token"),
     x_client_request_id: str | None = Header(default=None, alias="X-Client-Request-Id"),
 ):
-    """Brain sidecar POSTs its current sovereign state to MC.
-
-    Auth: per-runtime ingest token (`X-Runtime-Token` header), same
-    scheme as opinions / stances. Returns the canonical stored snapshot
-    plus guard report (whether the delta was clamped).
-
-    Telemetry (2026-05-24): every attempt — successful OR rejected —
-    is logged to `sovereign_contribution_attempts` so the operator
-    panel can show split counters canonically. The optional
-    `X-Client-Request-Id` header is captured for correlation with the
-    brain's own counters."""
+    """HTTP route: verify token then delegate to `_post_sovereign_impl`.
+    In-process callers use `submit_sovereign_in_process` (no auth)."""
     verify_runtime_token(runtime, x_runtime_token or "")
+    return await _post_sovereign_impl(
+        body=body, runtime=runtime, x_client_request_id=x_client_request_id,
+    )
+
+
+async def submit_sovereign_in_process(
+    body: SovereignContribution,
+    runtime: str,
+    x_client_request_id: str | None = None,
+):
+    """Direct in-process entrypoint for the brain runner. No auth."""
+    return await _post_sovereign_impl(
+        body=body, runtime=runtime, x_client_request_id=x_client_request_id,
+    )
+
+
+async def _post_sovereign_impl(
+    body: SovereignContribution,
+    runtime: str,
+    x_client_request_id: str | None = None,
+):
+    """Real sovereign-contribution logic. Both the HTTP wrapper (after
+    auth) and the in-process runner call this directly."""
     if runtime not in DISCUSSION_PARTICIPANTS:
         # verify_runtime_token also checks this; double-check for clarity.
         raise HTTPException(

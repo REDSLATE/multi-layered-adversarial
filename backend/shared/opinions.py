@@ -255,14 +255,21 @@ async def post_opinion(
     body: OpinionIn,
     x_runtime_token: str | None = Header(default=None, alias="X-Runtime-Token"),
 ):
-    """A brain posts an opinion into the shared discussion layer.
-
-    The same X-Runtime-Token mechanism used by other ingest endpoints applies.
-    Reply threading is validated server-side: the `in_reply_to` chain is
-    walked to MAX_THREAD_DEPTH to detect cycles or runaway threads.
-    """
+    """HTTP route: verify token, then delegate. In-process callers use
+    `submit_opinion_in_process` below to bypass HTTP+token entirely."""
     verify_runtime_token(body.runtime, x_runtime_token or "")
+    return await _post_opinion_impl(body)
 
+
+async def submit_opinion_in_process(body: OpinionIn):
+    """Direct in-process entrypoint for the brain runner. No auth."""
+    return await _post_opinion_impl(body)
+
+
+async def _post_opinion_impl(body: OpinionIn):
+    """Real logic for posting a discussion-layer opinion. Same code
+    path serves both the HTTP route (after token auth) and the
+    in-process runner (no auth needed inside one process)."""
     # Validate reply target if present.
     if body.in_reply_to:
         parent = await db[SHARED_OPINIONS].find_one(

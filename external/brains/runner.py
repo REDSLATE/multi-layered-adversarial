@@ -1579,16 +1579,17 @@ class BrainRunner:
             },
             "may_execute": False,
         }
-        r = await http.post(
-            f"{MC_LOOPBACK_URL}/api/ingest/opinion",
-            json=body,
-            headers={"X-Runtime-Token": self.token},
-        )
-        if r.status_code // 100 != 2:
-            logger.debug(
-                "opinion rejected brain=%s sym=%s status=%s body=%s",
-                self.brain_id, intent.symbol, r.status_code, r.text[:200],
-            )
+        # 2026-02-20 — direct in-process call. No HTTP, no token.
+        from shared.opinions import submit_opinion_in_process, OpinionIn
+        try:
+            await submit_opinion_in_process(OpinionIn(**body))
+        except HTTPException as he:
+            logger.debug("in_process opinion rejected brain=%s sym=%s status=%s detail=%s",
+                         self.brain_id, intent.symbol, he.status_code, str(he.detail)[:160])
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("in_process opinion error brain=%s sym=%s: %s",
+                         self.brain_id, intent.symbol, exc)
             return
         # ── Track own stance so the discussion loop can detect
         #    direct contradictions from peers (P1, 2026-02-19). Only
@@ -1638,16 +1639,16 @@ class BrainRunner:
                 f"on {intent.symbol} (lane={intent.lane}, regime={regime})"
             ],
         }
-        r = await http.post(
-            f"{MC_LOOPBACK_URL}/api/v2/votes/emit",
-            json=body,
-            headers={"X-Runtime-Token": self.token},
-        )
-        if r.status_code // 100 != 2:
-            logger.debug(
-                "brain_vote rejected brain=%s sym=%s status=%s body=%s",
-                self.brain_id, intent.symbol, r.status_code, r.text[:200],
-            )
+        # 2026-02-20 — direct in-process call. No HTTP, no token.
+        from routes.paradox_v2 import submit_vote_in_process, EmitVoteRequest
+        try:
+            await submit_vote_in_process(EmitVoteRequest(**body))
+        except HTTPException as he:
+            logger.debug("in_process vote rejected brain=%s sym=%s status=%s detail=%s",
+                         self.brain_id, intent.symbol, he.status_code, str(he.detail)[:160])
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("in_process vote error brain=%s sym=%s: %s",
+                         self.brain_id, intent.symbol, exc)
 
     async def _discussion_loop(self) -> None:
         """Cross-brain discussion loop — lightweight dissent-only.
@@ -1809,16 +1810,16 @@ class BrainRunner:
             "in_reply_to": peer_op.get("opinion_id"),
             "may_execute": False,
         }
-        r = await http.post(
-            f"{MC_LOOPBACK_URL}/api/ingest/opinion",
-            json=body,
-            headers={"X-Runtime-Token": self.token},
-        )
-        if r.status_code // 100 != 2:
-            logger.debug(
-                "discussion reply rejected brain=%s sym=%s status=%s body=%s",
-                self.brain_id, symbol, r.status_code, r.text[:200],
-            )
+        # 2026-02-20 — direct in-process call. No HTTP, no token.
+        from shared.opinions import submit_opinion_in_process, OpinionIn
+        try:
+            await submit_opinion_in_process(OpinionIn(**body))
+        except HTTPException as he:
+            logger.debug("in_process discussion reply rejected brain=%s sym=%s status=%s detail=%s",
+                         self.brain_id, symbol, he.status_code, str(he.detail)[:160])
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("in_process discussion reply error brain=%s sym=%s: %s",
+                         self.brain_id, symbol, exc)
 
     async def _checkin_loop(self) -> None:
         """In-process direct-call checkin. No HTTP, no token.
@@ -1934,18 +1935,14 @@ class BrainRunner:
                 f"lanes={','.join(_enabled_lanes())}"
             )[:2048],
         }
-        r = await http.post(
-            f"{MC_LOOPBACK_URL}/api/runtime-discussion/sovereign/contribution",
-            params={"runtime": self.brain_id},
-            json=body,
-            headers={
-                "X-Runtime-Token": self.token,
-                "X-Client-Request-Id": (
-                    f"{self.brain_id}-sovereign-{int(time.time())}"
-                ),
-            },
-        )
-        if r.status_code // 100 == 2:
+        # 2026-02-20 — direct in-process call. No HTTP, no token.
+        from shared.sovereign_mode_guard import submit_sovereign_in_process, SovereignContribution
+        try:
+            await submit_sovereign_in_process(
+                body=SovereignContribution(**body),
+                runtime=self.brain_id,
+                x_client_request_id=f"{self.brain_id}-sovereign-{int(time.time())}",
+            )
             self._sovereign_count += 1
             if self._sovereign_count % 10 == 1:
                 logger.info(
@@ -1954,10 +1951,15 @@ class BrainRunner:
                     self.brain_id, self.display_name, len(tape),
                     self._sovereign_count,
                 )
-        else:
+        except HTTPException as he:
             logger.warning(
-                "neutral_brain sovereign rejected brain=%s status=%s body=%s",
-                self.brain_id, r.status_code, r.text[:300],
+                "in_process sovereign rejected brain=%s status=%s detail=%s",
+                self.brain_id, he.status_code, str(he.detail)[:300],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "in_process sovereign error brain=%s: %s",
+                self.brain_id, exc,
             )
 
 
@@ -1984,13 +1986,16 @@ async def start_neutral_brains() -> None:
     # immediately if env_name="preview" on the prod deploy).
     _log_identity_once()
     for brain_id, display_name, token_env, legacy_env in BRAIN_ROSTER:
-        token = os.environ.get(token_env, "") or os.environ.get(legacy_env, "")
-        if not token:
-            logger.warning(
-                "neutral_brains: %s has neither %s nor %s set — skipping",
-                brain_id, token_env, legacy_env,
-            )
-            continue
+        # 2026-02-20 — token is no longer used for in-process calls
+        # (Option C complete). Read it best-effort for the 0 remaining
+        # external HTTP paths the runner doesn't use, but DO NOT skip
+        # the brain if neither env var is set. The brain runs the same
+        # whether a token exists or not.
+        token = (
+            os.environ.get(token_env, "")
+            or os.environ.get(legacy_env, "")
+            or ""
+        )
         runner = BrainRunner(
             brain_id=brain_id, display_name=display_name, token=token,
         )

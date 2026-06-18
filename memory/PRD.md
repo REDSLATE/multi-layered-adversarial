@@ -1,3 +1,86 @@
+## 2026-02-20 (Option C complete — all 5 auth-gated endpoints go direct)
+
+### Operator pin
+
+> "Waitamin, C isn't done? Please finish C, please."
+
+### Resolution
+
+All five HTTP endpoints the in-process brain runner used to POST to
+have been refactored. The runner now calls the underlying business
+logic directly — no HTTP, no `X-Runtime-Token`, no env-var dependency
+for in-process auth.
+
+| Endpoint | Direct-call entrypoint | File |
+|---|---|---|
+| `POST /api/admin/runtime/sidecar-checkin/{brain}` | `sidecar_checkin_core()` | `shared/runtime/sidecar_checkin.py` |
+| `POST /api/intents` | `submit_intent_in_process()` | `shared/intents.py` |
+| `POST /api/ingest/opinion` | `submit_opinion_in_process()` | `shared/opinions.py` |
+| `POST /api/v2/votes/emit` | `submit_vote_in_process()` | `routes/paradox_v2.py` |
+| `POST /api/runtime-discussion/sovereign/contribution` | `submit_sovereign_in_process()` | `shared/sovereign_mode_guard.py` |
+
+Each HTTP route is now a thin auth-wrapper that delegates to its
+`_impl` core. The runner imports the `submit_X_in_process` entrypoint
+and calls it directly. The HTTP routes still defend the surface
+against any future external integrator.
+
+### Runner changes (`external/brains/runner.py`)
+
+All four httpx.post sites that targeted MC loopback are replaced with
+direct calls:
+
+1. `_submit_intent` → `submit_intent_in_process(IntentIn(**payload))`
+2. `_post_brain_opinion` → `submit_opinion_in_process(OpinionIn(**body))`
+3. `_post_brain_vote` → `submit_vote_in_process(EmitVoteRequest(**body))`
+4. `_post_discussion_reply` → `submit_opinion_in_process(OpinionIn(**body))`
+5. `_sovereign_post` → `submit_sovereign_in_process(SovereignContribution(**body), runtime=...)`
+6. `_checkin_loop` → `sidecar_checkin_core(brain=..., stamp=..., loop_status=...)`
+
+Boot-time guard also relaxed: the runner no longer SKIPS a brain
+when its `_INGEST_TOKEN` env var is missing. Token is unused for
+in-process calls, so the brain spawns regardless.
+
+### Verification (preview)
+
+Boot log after restart:
+```
+neutral_brains started: 4 runners lanes=['equity','crypto'] shadow_only=False —
+  camino=Camino, barracuda=Barracuda, hellcat=Hellcat, gto=GTO
+neutral_brain intent posted brain=gto display=GTO lane=equity sym=AAL action=HOLD conf=0.95
+neutral_brain sovereign posted brain=gto display=GTO tape_size=1 total=1
+```
+
+All 4 brains posting all 5 message types — no 401s anywhere.
+
+### Tests + lint
+
+- 36/36 regression tests pass.
+- Lint clean on all 5 touched files (`opinions.py`, `sovereign_mode_guard.py`, `paradox_v2.py`, `intents.py`, `sidecar_checkin.py`).
+
+### What this enables
+
+The 4 `*_INGEST_TOKEN` env vars are now **completely vestigial** for
+the in-process runner. They can be deleted from the deploy panel
+without affecting any code path the runner uses. The HTTP routes
+keep them as defense for any future external integrator.
+
+The token machinery itself (`runtime_auth.py`, `runtime_token_audit.py`,
+the `verify_runtime_token` calls) can be deleted in a follow-up once
+the operator confirms no external integrator exists and won't ever exist.
+
+### Files
+
+- Modified: `shared/runtime/sidecar_checkin.py` (already done previous pass)
+- Modified: `shared/intents.py` (already done previous pass)
+- Modified: `shared/opinions.py` (extracted `submit_opinion_in_process`)
+- Modified: `shared/sovereign_mode_guard.py` (extracted `submit_sovereign_in_process`)
+- Modified: `routes/paradox_v2.py` (extracted `submit_vote_in_process`)
+- Modified: `external/brains/runner.py` (all 5 callsites + boot-time token relaxation)
+- Updated: `/app/memory/PRD.md`
+
+---
+
+
 ## 2026-02-20 (Option C — in-process direct calls, no more loopback tokens)
 
 ### Operator pin
