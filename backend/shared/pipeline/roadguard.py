@@ -5,6 +5,8 @@ order. It is BINARY — passed or not — and the reason is a one-line
 canonical string.
 
 Stops checked, in order:
+  trading_controls_disabled   — operator-flipped Mongo kill switch
+                                (highest precedence; fail-CLOSED)
   zero_notional               — sizing collapsed to $0
   market_closed               — equity lane outside RTH (crypto skips)
   insufficient_buying_power   — broker BP < final_notional
@@ -25,6 +27,15 @@ class RoadGuard:
         opinion: BrainOpinion,
         notional_usd: float,
     ) -> RoadGuardVerdict:
+        # Operator kill switch (2026-06-18, ported from the legacy
+        # auto-router chain before its deletion). Reads a Mongo
+        # singleton flipped via /api/admin/trading/enable|disable.
+        # Highest precedence so an operator halt beats every other
+        # safety check; fail-CLOSED so a Mongo blip refuses orders.
+        from routes.trading_controls import is_trading_enabled  # noqa: WPS433
+        if not await is_trading_enabled():
+            return RoadGuardVerdict(False, "trading_controls_disabled")
+
         if notional_usd <= 0:
             return RoadGuardVerdict(False, "zero_notional")
 

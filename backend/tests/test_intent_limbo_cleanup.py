@@ -20,10 +20,35 @@ import pytest
 @pytest.mark.tripwire
 async def test_sweep_flips_seat_mismatched_pending_to_blocked():
     """An intent posted with `holds_executor_seat=False` and
-    `gate_state=pending` MUST be terminally disposed by the sweep."""
+    `gate_state=pending` MUST be terminally disposed by the sweep
+    when there is no current executor-seat holder for its lane.
+
+    To make this deterministic without depending on global roster
+    state (preview's roster has all crypto seats filled to match
+    Production), we temporarily vacate the crypto executor seats
+    around the sweep and restore them afterward.
+    """
     from db import db
-    from namespaces import SHARED_INTENTS
+    from namespaces import BRAIN_ROSTER, SHARED_INTENTS
     from shared.auto_router import _sweep_seat_mismatched_intents
+
+    # Snapshot + vacate the lane's executor seats for the test
+    # (the sweep checks `seats_with_execute('crypto')` which is the
+    # crypto executor seat — currently keyed `crypto` in canonical
+    # roster).
+    roster_before = await db[BRAIN_ROSTER].find_one(
+        {"_id": "current"}, {"_id": 0, "assignments": 1},
+    )
+    saved_holder = ((roster_before or {}).get("assignments") or {}).get("crypto")
+    await db[BRAIN_ROSTER].update_one(
+        {"_id": "current"}, {"$set": {"assignments.crypto": None}}, upsert=True,
+    )
+    # Bust the seat-state cache so the sweep sees the vacated seat.
+    try:
+        from shared.executor_seat import _invalidate_cache  # type: ignore
+        _invalidate_cache()
+    except Exception:  # noqa: BLE001
+        pass
 
     await db[SHARED_INTENTS].insert_one({
         "intent_id": "tw-limbo-1",
@@ -36,14 +61,22 @@ async def test_sweep_flips_seat_mismatched_pending_to_blocked():
         "ingest_ts": "2026-05-18T12:00:00+00:00",
     })
 
-    swept = await _sweep_seat_mismatched_intents()
-    assert swept >= 1
+    try:
+        swept = await _sweep_seat_mismatched_intents()
+        assert swept >= 1
 
-    after = await db[SHARED_INTENTS].find_one(
-        {"intent_id": "tw-limbo-1"}, {"_id": 0, "gate_state": 1},
-    )
-    assert after["gate_state"] == "blocked"
-    await db[SHARED_INTENTS].delete_one({"intent_id": "tw-limbo-1"})
+        after = await db[SHARED_INTENTS].find_one(
+            {"intent_id": "tw-limbo-1"}, {"_id": 0, "gate_state": 1},
+        )
+        assert after["gate_state"] == "blocked"
+    finally:
+        await db[SHARED_INTENTS].delete_one({"intent_id": "tw-limbo-1"})
+        # Restore the crypto executor seat.
+        if saved_holder is not None:
+            await db[BRAIN_ROSTER].update_one(
+                {"_id": "current"},
+                {"$set": {"assignments.crypto": saved_holder}},
+            )
 
 
 @pytest.mark.tripwire
