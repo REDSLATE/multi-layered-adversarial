@@ -246,6 +246,25 @@ export default function IntentPostMortemPanel() {
 
   useEffect(() => { loadWebullFloor(); }, [loadWebullFloor]);
 
+  // 2026-02-21: hydrate the conf_min input from the live auto-submit
+  // policy. Previously the input was seeded with a hardcoded `0.65`
+  // on every page mount, so even after a successful ARM the operator
+  // saw the default again and assumed nothing saved. Now we read the
+  // policy and reflect the actual stored value.
+  const loadPolicyConfMin = useCallback(async () => {
+    try {
+      const res = await api.get("/admin/auto-submit/policy");
+      const cur = res?.data?.policy?.confidence_min;
+      if (typeof cur === "number" && Number.isFinite(cur)) {
+        setArmState((s) => ({ ...s, confidenceMin: cur }));
+      }
+    } catch {
+      // Non-fatal — input retains whatever value it currently has.
+    }
+  }, []);
+
+  useEffect(() => { loadPolicyConfMin(); }, [loadPolicyConfMin]);
+
   const load = useCallback(async (h) => {
     setLoading(true);
     try {
@@ -300,6 +319,9 @@ export default function IntentPostMortemPanel() {
         ...s, running: false, result: res.data, confidenceMin: confMin,
       }));
       await load(hours);
+      // Re-read the policy so the input shows the canonical saved value
+      // (covers the case where the backend clamped or rounded confMin).
+      await loadPolicyConfMin();
     } catch (e) {
       const d = e?.response?.data?.detail || e.message;
       setArmState((s) => ({
@@ -307,7 +329,7 @@ export default function IntentPostMortemPanel() {
         error: typeof d === "string" ? d : JSON.stringify(d),
       }));
     }
-  }, [armState.reason, armState.confidenceMin, hours, load]);
+  }, [armState.reason, armState.confidenceMin, hours, load, loadPolicyConfMin]);
 
   const disarmAll = useCallback(async () => {
     // 2026-02-20: HALT now requires confirmation. The button sits
@@ -454,10 +476,10 @@ export default function IntentPostMortemPanel() {
           <button
             onClick={armAll}
             disabled={armState.running}
-            className="px-4 py-1 border-2 border-rd-accent bg-rd-accent text-black font-mono text-[10px] uppercase tracking-widest hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 font-bold"
+            className="px-5 py-2 border-2 border-rd-accent bg-rd-accent text-black font-mono text-[11px] uppercase tracking-widest hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 font-bold shadow-[0_0_18px_rgba(250,204,21,0.55)]"
             data-testid="system-arm-button"
           >
-            <Lightning size={11} weight="bold" />
+            <Lightning size={13} weight="fill" />
             {armState.running ? "Arming…" : "ARM ALL"}
           </button>
         </div>

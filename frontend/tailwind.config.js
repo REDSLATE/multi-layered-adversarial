@@ -30,6 +30,21 @@ module.exports = {
                     redeye: "#DC2626",
                     warn: "#FBBF24",
                     danger: "#EF4444",
+                    // 2026-02-21: `rd-accent` was referenced across the
+                    // codebase (ARM ALL button, Unified Pipeline toggle,
+                    // Webull floor button, plus 50+ other call sites)
+                    // but never defined here — so `bg-rd-accent`,
+                    // `border-rd-accent`, and `text-rd-accent` all
+                    // resolved to no color, leaving primary action
+                    // buttons as transparent outlines. Vibrant gold
+                    // matches the existing `rd-warn` family and is
+                    // high-contrast on the #0A0A0A dark background.
+                    accent: "#FACC15",
+                    // Success ack color used by ON/OFF badges and
+                    // confirmation tiles. Same green family as
+                    // `rd-chevelle` but slightly punchier for state
+                    // indicators that need to read at a glance.
+                    success: "#22C55E",
                 },
             },
             borderRadius: {
