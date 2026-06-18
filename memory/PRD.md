@@ -1,3 +1,80 @@
+## 2026-02-21 (Webull floor override — operator-controlled from UI)
+
+### Operator pin
+
+> "Webull min is $1. Go ahead with the fix."
+
+### Problem
+
+Production was blocking ~27 intents/day with
+`WEBULL_NOTIONAL_BELOW_FLOOR — $1.80 < $3.00 for EQ:AAPL`. Webull's
+actual fractional-share minimum is $1.00, but Production deploy env
+had `WEBULL_MIN_NOTIONAL_USD=3.00` pinned from earlier blast-radius
+doctrine. Operator on phone cannot ssh/curl to change deploy env vars.
+
+### Solution
+
+Added Mongo-backed floor override that **wins over env var**. Same
+pattern as the Unified Pipeline flag (5s in-memory cache, sync read,
+async refresh task).
+
+**Backend changes:**
+- `shared/broker/webull_caps.py` — added `_CACHED_FLOOR_OVERRIDE`,
+  `refresh_webull_floor_cache()`, and wired `_read_cached_floor_override()`
+  into `webull_notional_band()` ahead of the env-var read.
+- `routes/webull_caps_admin.py` (NEW) — three endpoints:
+  - `GET /api/admin/webull-caps/status` (effective floor + all sources)
+  - `POST /api/admin/webull-caps/set-floor` (body: `{floor_usd, reason}`)
+  - `POST /api/admin/webull-caps/clear` (revert to env/default)
+- `server.py` — registered the router and added a boot-time cache
+  refresh call alongside the existing pipeline-flag refresh.
+
+**Frontend changes:**
+- `IntentPostMortemPanel.jsx` — added a "WEBULL MIN-NOTIONAL FLOOR"
+  row inside the ARM block, directly under the Unified Pipeline
+  toggle. Shows effective floor + ceiling, source attribution
+  (mongo override / env / default), and a small `$[input]` + `SET
+  FLOOR` button. Confirmation dialog before applying.
+
+### Mongo doc
+
+```
+{
+  "_id": "webull_min_notional_floor",
+  "enabled": true,
+  "floor_usd": 1.0,
+  "updated_at": "2026-...",
+  "updated_by": "admin@risedual.io",
+  "reason": "..."
+}
+```
+
+### Verified in preview
+
+- Backend: GET status returns floor=$1, mongo override active
+- Backend: POST set-floor with $2 → status returns $2, then $1 → restored
+- Frontend: button → confirm dialog → mongo flag flipped → effective
+  floor + source label update without page reload
+- No HTTP 401 / 404 on Intents page
+
+### Files touched
+
+- `backend/shared/broker/webull_caps.py` (added Mongo cache layer)
+- `backend/routes/webull_caps_admin.py` (NEW)
+- `backend/server.py` (router + boot refresh)
+- `frontend/src/components/IntentPostMortemPanel.jsx` (UI block)
+
+### How operator will use it on Prod
+
+1. Save to GitHub → redeploy
+2. Open `/admin/intents` → scroll to ARM block
+3. Tap "SWITCH ON" under "UNIFIED PIPELINE" → confirm
+4. In "WEBULL MIN-NOTIONAL FLOOR" row → type `1.00` → tap "Set Floor" → confirm
+5. Watch execution rate climb as the $1.80 sizings start clearing the gate
+
+---
+
+
 ## 2026-02-21 (Unified Pipeline UI Toggle + 401 red-bar fix)
 
 ### Operator pin

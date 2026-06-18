@@ -28,6 +28,13 @@ Doctrine pin (operator, 2026-06-10):
            the playable universe without changing the blast-radius
            ceiling.
 
+           2026-02-21 (rev): added Mongo-backed override so the operator
+           can flip the floor from the admin UI without redeploying.
+           Mongo flag `runtime_flags._id="webull_min_notional_floor"`
+           wins over env var when present. This unblocks the case where
+           Production deploy env was set to $3.00 and the operator
+           cannot easily edit deploy env from their phone.
+
     These caps are ADDITIVE to the existing $500 exposure cap, the
     in-flight dedupe, and the position-misread detection — they do
     not replace any of them. They apply EXCLUSIVELY to orders that
@@ -39,6 +46,7 @@ flip the armed flag or widen the band without restarting supervisor.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -63,6 +71,59 @@ DEFAULT_MAX_NOTIONAL_USD = 10.00
 # dynamic cap will never exceed it (defense-in-depth).
 DEFAULT_PCT_OF_BUYING_POWER = 0.05  # 5% of buying power per order
 HARD_SANITY_CEILING_USD = 500.00    # absolute panic ceiling regardless of BP
+
+
+# ─── Mongo-backed floor override (2026-02-21) ──────────────────────
+# Same pattern as `shared.pipeline.adapter.refresh_pipeline_flag_cache`.
+# The Mongo override wins over env vars so the operator can flip the
+# floor from the admin UI without touching deploy config.
+_CACHED_FLOOR_OVERRIDE: Optional[float] = None
+_CACHED_FLOOR_TS: float = 0.0
+_FLOOR_CACHE_TTL_SEC: float = 5.0
+_FLOOR_FLAG_DOC_ID = "webull_min_notional_floor"
+
+
+def _read_cached_floor_override() -> Optional[float]:
+    """Return the cached Mongo override if recent, else None.
+
+    The cache is populated by `refresh_webull_floor_cache()` — called
+    at boot and by the admin set-floor endpoint. We keep the read sync
+    because `evaluate_webull_order()` is sync; the async refresh task
+    keeps the cache warm.
+    """
+    if _CACHED_FLOOR_TS == 0.0:
+        return None
+    if (time.time() - _CACHED_FLOOR_TS) > _FLOOR_CACHE_TTL_SEC * 30:
+        # Cache went stale (>150s). Return None so the next path
+        # (env / default) wins. Refresh task should be running.
+        return None
+    return _CACHED_FLOOR_OVERRIDE
+
+
+async def refresh_webull_floor_cache() -> Optional[float]:
+    """Force-refresh the in-memory floor cache from Mongo. Called at
+    boot and by `POST /api/admin/webull-caps/set-floor` so the cache is
+    coherent with the operator's last action."""
+    global _CACHED_FLOOR_OVERRIDE, _CACHED_FLOOR_TS
+    from db import db
+    try:
+        doc = await db["runtime_flags"].find_one(
+            {"_id": _FLOOR_FLAG_DOC_ID},
+            {"_id": 0, "floor_usd": 1, "enabled": 1},
+        )
+        if doc and bool(doc.get("enabled", True)):
+            raw = doc.get("floor_usd")
+            if isinstance(raw, (int, float)) and raw > 0:
+                _CACHED_FLOOR_OVERRIDE = float(raw)
+            else:
+                _CACHED_FLOOR_OVERRIDE = None
+        else:
+            _CACHED_FLOOR_OVERRIDE = None
+        _CACHED_FLOOR_TS = time.time()
+        return _CACHED_FLOOR_OVERRIDE
+    except Exception:  # noqa: BLE001
+        # Failed Mongo read leaves cache as-is; caller falls back to env.
+        return _CACHED_FLOOR_OVERRIDE
 
 
 class WebullCapBlocked(Exception):
@@ -150,6 +211,13 @@ def webull_notional_band(
     env_hi = _read_float_env(
         "WEBULL_MAX_NOTIONAL_USD", DEFAULT_MAX_NOTIONAL_USD,
     )
+    # 2026-02-21: Mongo override wins over env for the floor. This is
+    # how the operator flips $3 → $1 (or any value) from the admin UI
+    # without redeploying. The env var remains as a fallback for
+    # operators who prefer deploy-config control.
+    mongo_floor = _read_cached_floor_override()
+    if mongo_floor is not None:
+        lo = mongo_floor
     # Sanity rails — never let the floor invert.
     lo = max(0.01, lo)
 

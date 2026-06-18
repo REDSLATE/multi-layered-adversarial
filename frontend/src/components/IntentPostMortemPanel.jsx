@@ -173,6 +173,79 @@ export default function IntentPostMortemPanel() {
 
   useEffect(() => { loadPipelineStatus(); }, [loadPipelineStatus]);
 
+  // 2026-02-21: Webull floor override. Same Mongo-flag pattern as
+  // unified pipeline. Operator declared "Webull min is $1" — Prod
+  // env had stayed at $3 and was blocking ~27 intents/day with
+  // WEBULL_NOTIONAL_BELOW_FLOOR. This UI flips the Mongo override
+  // (which wins over env) so the operator can drop the floor from
+  // their phone without a redeploy.
+  const [webullFloor, setWebullFloor] = useState({
+    loading: true, saving: false,
+    effective_floor: null,
+    effective_ceiling: null,
+    sources: null,
+    inputValue: "1.00",
+    error: null,
+  });
+
+  const loadWebullFloor = useCallback(async () => {
+    setWebullFloor((s) => ({ ...s, loading: true, error: null }));
+    try {
+      const res = await api.get("/admin/webull-caps/status");
+      setWebullFloor((s) => ({
+        ...s, loading: false, saving: false,
+        effective_floor: res.data.effective_floor_usd,
+        effective_ceiling: res.data.effective_ceiling_usd,
+        sources: res.data.sources || null,
+        // Pre-populate input with current effective floor for easy edits
+        inputValue: (res.data.effective_floor_usd ?? 1.0).toFixed(2),
+        error: null,
+      }));
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      setWebullFloor((s) => ({
+        ...s, loading: false,
+        error: typeof d === "string" ? d : JSON.stringify(d),
+      }));
+    }
+  }, []);
+
+  const applyWebullFloor = useCallback(async () => {
+    const n = parseFloat(webullFloor.inputValue);
+    if (!Number.isFinite(n) || n <= 0 || n > 100) {
+      setWebullFloor((s) => ({
+        ...s, error: "floor_usd must be a number between 0 and 100",
+      }));
+      return;
+    }
+    const current = webullFloor.effective_floor;
+    if (current != null && Math.abs(current - n) < 0.005) {
+      // No-op; still re-read to keep UX consistent.
+      await loadWebullFloor();
+      return;
+    }
+    const msg = `Set Webull min-notional floor to $${n.toFixed(2)}?\n\n` +
+      `This Mongo override WINS over the deploy env var. Webull's ` +
+      `actual fractional minimum is $1.00.\n\nProceed?`;
+    if (!window.confirm(msg)) return;
+    setWebullFloor((s) => ({ ...s, saving: true, error: null }));
+    try {
+      await api.post("/admin/webull-caps/set-floor", {
+        floor_usd: n,
+        reason: "operator set via Intents page UI",
+      });
+      await loadWebullFloor();
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      setWebullFloor((s) => ({
+        ...s, saving: false,
+        error: typeof d === "string" ? d : JSON.stringify(d),
+      }));
+    }
+  }, [webullFloor.inputValue, webullFloor.effective_floor, loadWebullFloor]);
+
+  useEffect(() => { loadWebullFloor(); }, [loadWebullFloor]);
+
   const load = useCallback(async (h) => {
     setLoading(true);
     try {
@@ -486,6 +559,79 @@ export default function IntentPostMortemPanel() {
             <div className="font-mono text-[10px] text-rd-danger flex items-start gap-1">
               <XCircle size={10} weight="bold" className="mt-0.5 shrink-0" />
               {pipelineState.error}
+            </div>
+          )}
+        </div>
+
+        {/* ─── WEBULL FLOOR OVERRIDE (2026-02-21) ────────────────
+            Webull's actual fractional-order minimum is $1.00. The
+            deploy env var on Prod was pinned at $3.00, blocking
+            ~27 legit intents/day with WEBULL_NOTIONAL_BELOW_FLOOR.
+            This Mongo-backed override wins over env so the operator
+            can drop the floor from their phone without a redeploy. */}
+        <div
+          className="pt-1 border-t border-rd-border/40 space-y-1"
+          data-testid="webull-floor-override-block"
+        >
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex-1 min-w-0">
+              <div className="font-mono text-[10px] uppercase tracking-widest text-rd-text font-bold">
+                Webull min-notional floor
+              </div>
+              <div className="font-mono text-[9px] text-rd-dim mt-0.5">
+                Effective: {webullFloor.loading
+                  ? "loading…"
+                  : webullFloor.effective_floor != null
+                    ? `$${webullFloor.effective_floor.toFixed(2)} ≤ N ≤ $${(webullFloor.effective_ceiling ?? 0).toFixed(2)}`
+                    : "unknown"}
+                {webullFloor.sources?.mongo?.enabled
+                  ? " · source: mongo override"
+                  : webullFloor.sources?.env?.set
+                    ? ` · source: env (${webullFloor.sources.env.value})`
+                    : " · source: default"}
+              </div>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="font-mono text-[9px] text-rd-dim">$</span>
+              <input
+                type="number"
+                step="0.25"
+                min="0.01"
+                max="100"
+                value={webullFloor.inputValue}
+                onChange={(e) => setWebullFloor((s) => ({
+                  ...s, inputValue: e.target.value,
+                }))}
+                disabled={webullFloor.loading || webullFloor.saving}
+                className="w-16 bg-rd-bg border border-rd-border px-1 py-1 font-mono text-[10px] text-rd-text focus:outline-none focus:border-rd-accent"
+                data-testid="webull-floor-input"
+              />
+              <button
+                onClick={applyWebullFloor}
+                disabled={webullFloor.loading || webullFloor.saving}
+                className="px-3 py-1 border-2 border-rd-accent text-rd-accent font-mono text-[10px] uppercase tracking-widest font-bold hover:bg-rd-accent hover:text-rd-bg disabled:opacity-40 disabled:cursor-not-allowed"
+                data-testid="webull-floor-apply-button"
+                title="Apply this floor as the Mongo override (wins over env)"
+              >
+                {webullFloor.saving ? "Saving…" : "Set floor"}
+              </button>
+            </div>
+          </div>
+          {webullFloor.sources?.mongo?.updated_at && (
+            <div className="font-mono text-[9px] text-rd-dim">
+              last set: {webullFloor.sources.mongo.updated_at}
+              {webullFloor.sources.mongo.updated_by
+                ? ` · by ${webullFloor.sources.mongo.updated_by}`
+                : ""}
+              {webullFloor.sources.mongo.floor_usd != null
+                ? ` · override=$${webullFloor.sources.mongo.floor_usd.toFixed(2)}`
+                : ""}
+            </div>
+          )}
+          {webullFloor.error && (
+            <div className="font-mono text-[10px] text-rd-danger flex items-start gap-1">
+              <XCircle size={10} weight="bold" className="mt-0.5 shrink-0" />
+              {webullFloor.error}
             </div>
           )}
         </div>

@@ -158,6 +158,7 @@ from routes.admin_intents_post_mortem import router as admin_intents_post_mortem
 from routes.intent_why import router as intent_why_router
 from routes.seat_state_diagnose import router as seat_state_diagnose_router
 from routes.unified_pipeline_admin import router as unified_pipeline_admin_router
+from routes.webull_caps_admin import router as webull_caps_admin_router
 from routes.admin_auto_submit import router as admin_auto_submit_router
 from routes.admin_quiver import router as admin_quiver_router
 from routes.parabolic_phase_admin import router as parabolic_phase_admin_router
@@ -288,6 +289,18 @@ async def lifespan(app: FastAPI):
         logger.info("unified_pipeline_enabled (from mongo) = %s", enabled)
     except Exception as e:  # noqa: BLE001
         logger.warning("unified_pipeline flag refresh failed (non-fatal): %s", e)
+
+    # Webull min-notional floor override — same pattern. 2026-02-21:
+    # operator declared "Webull min is $1" but Prod env var stayed at
+    # $3, so blocking 27+ intents/day with WEBULL_NOTIONAL_BELOW_FLOOR.
+    # The Mongo flag wins over env so the operator can drop the floor
+    # to $1 from the admin UI without a redeploy.
+    try:
+        from shared.broker.webull_caps import refresh_webull_floor_cache
+        wf = await refresh_webull_floor_cache()
+        logger.info("webull_min_notional_floor override (from mongo) = %s", wf)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("webull_min_notional_floor refresh failed (non-fatal): %s", e)
 
     # Auto-submit policy — hydrate persisted override from Mongo so
     # the operator's toggle survives pod restarts. Without this,
@@ -814,6 +827,7 @@ api_router.include_router(admin_intents_post_mortem_router)
 api_router.include_router(intent_why_router)
 api_router.include_router(seat_state_diagnose_router)
 api_router.include_router(unified_pipeline_admin_router)
+api_router.include_router(webull_caps_admin_router)
 api_router.include_router(admin_auto_submit_router)
 api_router.include_router(admin_quiver_router)
 api_router.include_router(paradox_v2_router)
