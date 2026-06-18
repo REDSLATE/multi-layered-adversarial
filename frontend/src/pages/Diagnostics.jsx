@@ -12,7 +12,10 @@ import BracketOutcomeDistributionPanel from "@/components/BracketOutcomeDistribu
 import PromotionArtifactPanel from "@/components/PromotionArtifactPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import BrainDeepDiagnoseCard from "@/components/BrainDeepDiagnoseCard";
-import ImposterScanCard from "@/components/ImposterScanCard";
+// ImposterScanCard removed 2026-02-21: the sidecar HTTP brain plumbing
+// it monitored was deleted (brains run in-process now), and the
+// `/admin/runtime/sidecar-imposter-scan` endpoint went with it — the
+// stale tile was throwing HTTP 404 on every page load.
 // CompositeLivenessCard + the legacy runtimes table dropped (2026-02-19)
 //   — BrainHealthTile is the modern composite that absorbs both.
 
@@ -433,7 +436,7 @@ export default function Diagnostics() {
 
       <BrainDeepDiagnoseCard />
 
-      <ImposterScanCard />
+      {/* ImposterScanCard removed 2026-02-21 — see import-block note. */}
 
       {/* 2026-02-19 (prod incident): when a polling fetch fails on
           mobile (network blip, backend slow under Webull-SDK load,
@@ -607,9 +610,11 @@ export default function Diagnostics() {
           </div>
 
           {/* Sidecar check-ins — Lazy-mounted (2026-02-19). Deep
-              per-brain identity stamp inspection; ImposterScanCard
-              at the top of the page is the alert-level summary,
-              this is the on-demand inspector. */}
+              per-brain identity stamp inspection. The page-level
+              imposter alert tile that used to sit above this was
+              removed when the HTTP sidecar plumbing was retired
+              (2026-02-21); this on-demand inspector remains for any
+              residual in-process check-in trace work. */}
           <LazyDetails
             summary="Sidecar identity check-ins · stamps + verdicts (click to load)"
             testid="lazy-sidecar-checkin"
