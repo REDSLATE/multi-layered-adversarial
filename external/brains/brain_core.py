@@ -573,10 +573,29 @@ class NeutralAdversarialBrain:
             - risk_penalty * d.risk_weight * 0.10
             + liquidity * 0.05
         )
+        # 2026-02-21 (Move 3 — lane-calibration bug fix, surgical).
+        # `hold_composite` includes `spread_bps × 0.002` which was
+        # calibrated for equity (1-10 bps normal, 25+ broken). On crypto
+        # where spreads run 50-200 bps even on liquid pairs, this term
+        # pins hold_composite to ~0.95 → HOLD outranks every directional
+        # signal regardless of conviction. Replay on 584 crypto intents
+        # confirmed 100% HOLD even after OBSERVE was removed from the
+        # argmax (Move 1) and min_gap was dropped (Move 2). The HOLD
+        # spread weight is the demonstrated bottleneck.
+        #
+        # Scoped fix: crypto lane gets a softened coefficient (0.0008),
+        # equity stays at the original (0.002). The penalty still
+        # matters — 200 bps still adds +0.16 — it just no longer
+        # auto-wins against directional composites.
+        # `observe_composite` is NOT touched (OBSERVE is no longer a
+        # competing direction — it's surfaced as market_quality_score
+        # for the Governor's risk-multiplier layer).
+        hold_spread_coef = 0.0008 if self.lane == "crypto" else 0.002
+
         hold_composite = (
             0.45
             + volatility * 0.20
-            + spread_bps * 0.002
+            + spread_bps * hold_spread_coef
             + (1.0 - liquidity) * 0.15
             - abs(trend_signal) * d.trend_weight * 0.08
             - abs(momentum_signal) * d.momentum_weight * 0.05

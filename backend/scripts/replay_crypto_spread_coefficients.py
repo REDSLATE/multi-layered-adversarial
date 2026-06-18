@@ -50,7 +50,8 @@ def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, x))
 
 
-def _composites(snap: Dict[str, Any], brain_id: str) -> Dict[str, float]:
+def _composites(snap: Dict[str, Any], brain_id: str, *,
+                hold_spread_coef: float = 0.002) -> Dict[str, float]:
     """Compute the four composite scores for a brain on this snapshot."""
     d = get_doctrine(brain_id)
     trend = float(snap.get("trend_score", 0.0) or 0.0)
@@ -91,7 +92,7 @@ def _composites(snap: Dict[str, Any], brain_id: str) -> Dict[str, float]:
     hold_composite = (
         0.45
         + volatility * 0.20
-        + spread_bps * 0.002
+        + spread_bps * hold_spread_coef
         + (1.0 - liquidity) * 0.15
         - abs(trend_signal) * d.trend_weight * 0.08
         - abs(momentum_signal) * d.momentum_weight * 0.05
@@ -137,9 +138,10 @@ def _decide(scores: Dict[str, float], brain_id: str, *,
 
 
 CONFIGS = {
-    "OLD":      dict(include_observe_in_argmax=True,  min_gap_override=None),
-    "MOVE_1":   dict(include_observe_in_argmax=False, min_gap_override=None),
-    "MOVE_1_2": dict(include_observe_in_argmax=False, min_gap_override=0.03),
+    "OLD":         dict(include_observe_in_argmax=True,  min_gap_override=None, hold_spread_coef=0.002),
+    "MOVE_1":      dict(include_observe_in_argmax=False, min_gap_override=None, hold_spread_coef=0.002),
+    "MOVE_1_2":    dict(include_observe_in_argmax=False, min_gap_override=0.03, hold_spread_coef=0.002),
+    "MOVE_1_2_3":  dict(include_observe_in_argmax=False, min_gap_override=0.03, hold_spread_coef=0.0008),
 }
 
 
@@ -175,45 +177,61 @@ async def main(limit: int) -> int:
             skipped += 1
             continue
 
-        scores = _composites(snap, brain_id)
+        scores_default = _composites(snap, brain_id, hold_spread_coef=0.002)
+        scores_crypto  = _composites(snap, brain_id, hold_spread_coef=0.0008)
         for cfg_name, cfg in CONFIGS.items():
-            action = _decide(scores, brain_id, **cfg)
+            scores = scores_crypto if cfg["hold_spread_coef"] == 0.0008 else scores_default
+            action = _decide(
+                scores, brain_id,
+                include_observe_in_argmax=cfg["include_observe_in_argmax"],
+                min_gap_override=cfg["min_gap_override"],
+            )
             counters[cfg_name][action] += 1
             per_brain[brain_id][cfg_name][action] += 1
 
         sym = r.get("symbol", "?")
-        per_symbol_move12[sym][_decide(scores, brain_id, **CONFIGS["MOVE_1_2"])] += 1
+        scores_final = _composites(snap, brain_id, hold_spread_coef=0.0008)
+        per_symbol_move12[sym][_decide(
+            scores_final, brain_id,
+            include_observe_in_argmax=False, min_gap_override=0.03,
+        )] += 1
 
     print(f"Skipped (no snapshot or unsupported brain): {skipped}")
     print()
     total = {k: sum(c.values()) or 1 for k, c in counters.items()}
 
-    print("=" * 88)
-    print(f"{'Action':<10}  "
-          f"{'OLD':>10} {'OLD %':>7}  "
-          f"{'MOVE_1':>10} {'MOVE_1 %':>9}  "
-          f"{'MOVE_1_2':>10} {'M_1_2 %':>9}")
-    print("-" * 88)
+    print("=" * 100)
+    print(f"{'Action':<8}  "
+          f"{'OLD':>7} {'%':>6}  "
+          f"{'MOVE_1':>7} {'%':>6}  "
+          f"{'MOVE_1_2':>9} {'%':>6}  "
+          f"{'MOVE_1_2_3':>11} {'%':>6}")
+    print("-" * 100)
     for action in ("BUY", "SELL", "HOLD", "OBSERVE"):
-        o, m1, m12 = counters["OLD"][action], counters["MOVE_1"][action], counters["MOVE_1_2"][action]
+        cols = []
+        for cfg_name in ("OLD", "MOVE_1", "MOVE_1_2", "MOVE_1_2_3"):
+            n = counters[cfg_name][action]
+            cols.append((n, 100 * n / total[cfg_name]))
         print(
-            f"{action:<10}  "
-            f"{o:>10} {100*o/total['OLD']:>6.1f}%  "
-            f"{m1:>10} {100*m1/total['MOVE_1']:>8.1f}%  "
-            f"{m12:>10} {100*m12/total['MOVE_1_2']:>8.1f}%"
+            f"{action:<8}  "
+            f"{cols[0][0]:>7} {cols[0][1]:>5.1f}%  "
+            f"{cols[1][0]:>7} {cols[1][1]:>5.1f}%  "
+            f"{cols[2][0]:>9} {cols[2][1]:>5.1f}%  "
+            f"{cols[3][0]:>11} {cols[3][1]:>5.1f}%"
         )
-    print("=" * 88)
-    print(f"{'TOTAL':<10}  "
-          f"{total['OLD']:>10}          "
-          f"{total['MOVE_1']:>10}            "
-          f"{total['MOVE_1_2']:>10}")
+    print("=" * 100)
+    print(f"{'TOTAL':<8}  "
+          f"{total['OLD']:>7}         "
+          f"{total['MOVE_1']:>7}         "
+          f"{total['MOVE_1_2']:>9}         "
+          f"{total['MOVE_1_2_3']:>11}")
     print()
 
-    print("Per-brain action mix (under MOVE_1_2 — the proposed prod config):")
+    print("Per-brain action mix (under MOVE_1_2_3 — the proposed prod config):")
     print("-" * 88)
     for brain_id in ("barracuda", "gto", "camino", "hellcat"):
         d = get_doctrine(brain_id)
-        c = per_brain[brain_id]["MOVE_1_2"]
+        c = per_brain[brain_id]["MOVE_1_2_3"]
         n = sum(c.values()) or 1
         parts = " ".join(
             f"{a}={100*c[a]/n:.0f}%" for a in ("BUY", "SELL", "HOLD") if c[a]
