@@ -69,28 +69,30 @@ ROLES: tuple[str, ...] = (
 )
 BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("camino", "barracuda", "hellcat", "gto")
 
-# Default seat → brain assignment. Operator-pinned defaults for the
-# equity lane (strategist=camaro, executor=alpha, governor=chevelle);
-# auditor + every crypto seat start vacant so the operator slots them
-# explicitly. A brain MAY hold one equity seat AND one crypto seat
-# simultaneously — eligibility (below) only restricts Governor seats.
-# Default seat → brain assignment. Operator-pinned defaults for the
-# equity lane (strategist=camaro, executor=alpha, governor=chevelle).
-# All other seats start vacant. CRYPTO LANE INTENTIONALLY VACANT:
-# per Paradox v2 doctrine, restrictions belong to the SEAT (capital,
-# trust list, autonomy state) not to the BRAIN. The seat decides who
-# it trusts; defaulting a brain into a seat re-introduces the exact
-# coupling we're removing. Operator (or the seat's verifier-driven
-# promotion path) is the only way a brain enters the crypto seat.
+# Default seat → brain assignment. Operator-pinned defaults captured
+# from Production on 2026-06-18 (eight-seat layout, both lanes fully
+# staffed). The previous defaults left the auditor + every crypto seat
+# vacant on a fresh deploy; Production has since assigned them and
+# this constant is the canonical source of truth so a clean rebuild
+# of preview seeds with the same roster Prod is running.
+#
+# Identity reminder (Paradox v2 doctrine): the seat decides who it
+# trusts, not the brain. These defaults document the operator's
+# CURRENT pick — they are not a claim that any specific brain
+# inherently belongs in any specific seat. The operator may swap any
+# non-governor cell at runtime via Quick Seat Switches.
+#
+# Governor exclusivity still applies: governor=hellcat,
+# crypto_governor=gto are pinned to Chevelle/RedEye respectively.
 DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
-    "strategist":        "barracuda",
-    "executor":          "camino",
+    "strategist":        "camino",
+    "executor":          "barracuda",
     "governor":          "hellcat",
-    "auditor":           None,
-    "crypto_strategist": None,
-    "crypto":            None,
-    "crypto_governor":   None,
-    "crypto_auditor":    None,
+    "auditor":           "gto",
+    "crypto_strategist": "hellcat",
+    "crypto":            "barracuda",
+    "crypto_governor":   "gto",
+    "crypto_auditor":    "camino",
 }
 
 # ─── Default eligibility (2026-05-26 — operator doctrine, governor-exclusive) ──
@@ -159,6 +161,18 @@ _LEGACY_ROLE_REWRITES: dict[str, str] = {
     # responsibility — same brain, two time windows.
     "opponent": "auditor",
     "crypto_opponent": "crypto_auditor",
+    # 2026-06-18: `crypto_executor` was a legacy alias for the canonical
+    # `crypto` seat. `SEAT_ALIASES` in `seat_policy.py` already had
+    # this mapping, but `_LEGACY_ROLE_REWRITES` (the migration table
+    # `get_roster()` walks on every read to rewrite stored doc keys)
+    # was missing it. Symptom: Prod operator filled all 8 seats via
+    # QSS, the UI showed every brain pill highlighted, but the
+    # `SEAT REGISTRY DRIFT DETECTED — no executor assigned for
+    # lane=crypto` banner never cleared because the diagnose
+    # endpoint read `assignments.crypto` (None) while older roster
+    # docs had `assignments.crypto_executor`. This migration drops
+    # the legacy key on next read and persists the canonical one.
+    "crypto_executor": "crypto",
 }
 
 
