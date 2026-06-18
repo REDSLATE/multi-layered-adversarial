@@ -33,9 +33,16 @@ from shared.doctrine.base_labels import build_doctrine_labels
 
 
 # ── role → roster seat (equity lane) — same map as base_sidecars ──
+# Canonical 8-seat IP (2026-05-27 doctrine refresh). `decider` →
+# `strategist`, `opponent` → `auditor`. Labels reflect canonical
+# seats so the doctrine packet matches what the live roster stores.
+# Critical: `fetch_seat_holders()` returns holders keyed by canonical
+# seat names — these MUST match or every holder lookup returns None
+# and the UI shows "holder: vacant" even when seats are filled
+# (2026-06-18 Prod bug fix).
 EQUITY_SEAT_MAP = {
-    "strategist": "decider",
-    "adversary": "opponent",
+    "strategist": "strategist",
+    "adversary": "auditor",
     "governor": "governor",
     "execution_judge": "executor",
 }

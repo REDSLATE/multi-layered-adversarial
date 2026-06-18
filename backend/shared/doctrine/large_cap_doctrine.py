@@ -32,9 +32,16 @@ from typing import Any, Dict, List, Optional
 
 DOCTRINE_VERSION = "large_cap_equity_v1"
 
+# Canonical 8-seat IP (2026-05-27 doctrine refresh). `decider` →
+# `strategist`, `opponent` → `auditor`. Labels reflect canonical
+# seats so the doctrine packet matches what the live roster stores.
+# Critical: `fetch_seat_holders()` returns holders keyed by canonical
+# seat names — these MUST match or every holder lookup returns None
+# and the UI shows "holder: vacant" even when seats are filled
+# (2026-06-18 Prod bug fix).
 EQUITY_SEAT_MAP = {
-    "strategist": "decider",
-    "adversary": "opponent",
+    "strategist": "strategist",
+    "adversary": "auditor",
     "governor": "governor",
     "execution_judge": "executor",
 }
@@ -192,11 +199,11 @@ def build_large_cap_doctrine_packet(
     labels = set(base.labels)
     holders = seat_holders or {}
 
-    strategist = _build_strategist(base, labels, holders.get("decider"))
-    adversary = _build_adversary(base, labels, holders.get("opponent"))
-    governor = _build_governor(base, labels, holders.get("governor"), snapshot)
+    strategist = _build_strategist(base, labels, holders.get(EQUITY_SEAT_MAP["strategist"]))
+    adversary = _build_adversary(base, labels, holders.get(EQUITY_SEAT_MAP["adversary"]))
+    governor = _build_governor(base, labels, holders.get(EQUITY_SEAT_MAP["governor"]), snapshot)
     execution_judge = _build_execution_judge(
-        base, labels, holders.get("executor"),
+        base, labels, holders.get(EQUITY_SEAT_MAP["execution_judge"]),
     )
 
     return {
