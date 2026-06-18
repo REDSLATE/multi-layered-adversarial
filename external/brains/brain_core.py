@@ -60,6 +60,13 @@ class BrainIntent:
     order_action: Optional[str] = None
     position_evolution: Optional[str] = None
     risk_transition: Optional[str] = None
+    # ── Market quality layer (2026-02-21) ──
+    # OBSERVE was previously a competing direction hypothesis. It's
+    # now a market-quality modifier: score 0.90+ = POOR, 0.75-0.90 =
+    # WEAK, 0.55-0.75 = MODERATE, < 0.55 = NORMAL. Governor uses this
+    # to scale the per-order risk multiplier without overriding the
+    # brain's direction.
+    market_quality_score: Optional[float] = None
     # ── Doctrine + seat layer (operator directive, 2026-06-XX) ──
     # `doctrine` is bound to brain_id (immutable — Camino thinks like
     # a trend follower regardless of what job she's doing today).
@@ -103,6 +110,16 @@ class NeutralAdversarialBrain:
         if doctrine is not None:
             self.min_commitment = float(doctrine.min_confidence)
             self.min_gap = float(doctrine.min_gap)
+            # 2026-02-21 (Move 2 — lane-aware min_gap).
+            # The doctrine's min_gap (0.06-0.10) was calibrated on
+            # equity where the directional composites are clean and
+            # cluster apart. On crypto the composites cluster tighter
+            # (0.43-0.70 range) so the equity min_gap traps weak-but-
+            # real directional signals into HOLD via the conflict-gap
+            # rule. Crypto gets a compressed 0.03 floor so close-call
+            # directionals can commit. Equity behavior unchanged.
+            if lane == "crypto":
+                self.min_gap = 0.03
         else:
             self.min_commitment = min_commitment
             self.min_gap = min_gap
@@ -126,8 +143,36 @@ class NeutralAdversarialBrain:
             snapshot = {**snapshot, "position_context": ctx}
 
         hypotheses = self._build_hypotheses(snapshot)
+        # 2026-02-21 (operator directive — layered architecture fix).
+        # OBSERVE was competing in the same arena as BUY/SELL/HOLD and
+        # silently acting as a fifth veto. On crypto where spreads are
+        # structurally wide (100-200 bps), `observe_composite` pinned
+        # to 1.000 → won the argmax → forced HOLD even when the brain
+        # had clean directional conviction (e.g. ADA BUY=0.701).
+        #
+        # Doctrine separation:
+        #     Brain     → DIRECTION  (BUY / SELL / HOLD)
+        #     Seat      → SIZE       (confidence × risk multiplier)
+        #     Governor  → MODIFY     (per market state)
+        #     RoadGuard → HARD STOP  (spread > hard cap → block)
+        #
+        # OBSERVE belongs at the Governor layer (a sizing/quality
+        # modifier), not the direction layer. The brain now picks
+        # direction from BUY/SELL/HOLD only; OBSERVE.score is
+        # surfaced as `market_quality_score` on the BrainIntent so
+        # the Governor can scale risk_multiplier downstream.
+        direction_hypos = [
+            h for h in hypotheses if h.action in ("BUY", "SELL", "HOLD")
+        ]
+        observe_hypo = next(
+            (h for h in hypotheses if h.action == "OBSERVE"), None,
+        )
+        market_quality_score = (
+            float(observe_hypo.score) if observe_hypo is not None else 0.0
+        )
+
         winner, runner_up = sorted(
-            hypotheses, key=lambda h: h.score, reverse=True,
+            direction_hypos, key=lambda h: h.score, reverse=True,
         )[:2]
         gap = winner.score - runner_up.score
 
@@ -149,10 +194,13 @@ class NeutralAdversarialBrain:
         reasoning.append(f"Score gap: {gap:.3f}")
 
         if winner.score < self.min_commitment:
-            final_action: Action = "OBSERVE"
+            # 2026-02-21: was emitting OBSERVE here — but OBSERVE is no
+            # longer a direction action (it's a market_quality_score).
+            # Below-commitment means "no conviction" → HOLD instead.
+            final_action: Action = "HOLD"
             final_confidence = winner.score
             reasoning.append(
-                f"Commitment below floor {self.min_commitment:.2f}; emitting OBSERVE.",
+                f"Commitment below floor {self.min_commitment:.2f}; emitting HOLD.",
             )
         elif gap < self.min_gap:
             final_action = "HOLD"
@@ -164,6 +212,18 @@ class NeutralAdversarialBrain:
             final_action = winner.action
             final_confidence = winner.score
             reasoning.append(f"Resolved to {final_action}.")
+
+        # 2026-02-21: surface the market_quality signal so the Governor
+        # and Seat can use it to scale risk_multiplier downstream.
+        reasoning.append(f"market_quality_score: {market_quality_score:.3f}")
+        if market_quality_score >= 0.90:
+            reasoning.append("market_quality_flag: POOR (risk_multiplier should be heavily reduced)")
+        elif market_quality_score >= 0.75:
+            reasoning.append("market_quality_flag: WEAK (risk_multiplier should be modestly reduced)")
+        elif market_quality_score >= 0.55:
+            reasoning.append("market_quality_flag: MODERATE")
+        else:
+            reasoning.append("market_quality_flag: NORMAL")
 
         size = (
             0.0 if self.shadow_only
@@ -226,6 +286,7 @@ class NeutralAdversarialBrain:
             risk_transition=risk_transition,
             doctrine=(self.doctrine.doctrine if self.doctrine is not None else None),
             seat=seat,
+            market_quality_score=round(float(market_quality_score), 4),
         )
 
     @staticmethod
