@@ -207,6 +207,9 @@ async def main(limit: int) -> int:
     per_symbol: Dict[str, Dict[str, Counter]] = defaultdict(
         lambda: {"OLD": Counter(), "NEW": Counter()}
     )
+    per_brain: Dict[str, Dict[str, Counter]] = defaultdict(
+        lambda: {"OLD": Counter(), "NEW": Counter()}
+    )
     no_snapshot = 0
     for r in rows:
         snap = r.get("snapshot") or {}
@@ -233,6 +236,9 @@ async def main(limit: int) -> int:
         per_symbol[sym]["OLD"][old_action] += 1
         per_symbol[sym]["NEW"][new_action] += 1
 
+        per_brain[brain_id]["OLD"][old_action] += 1
+        per_brain[brain_id]["NEW"][new_action] += 1
+
     print(f"Rows skipped (no snapshot or unsupported brain): {no_snapshot}")
     print()
     print("=" * 76)
@@ -258,6 +264,38 @@ async def main(limit: int) -> int:
             f"{a}={100*new[a]/total:.0f}%" for a in ("BUY","SELL","HOLD","OBSERVE") if new[a]
         )
         print(f"  {sym:<12} n={total:<4}  {parts}")
+
+    # ─── PER-BRAIN BREAKDOWN ───────────────────────────────────────
+    # Operator wants to see whether the doctrine stagger holds under
+    # the new coefficients — i.e. Barracuda (mean-rev, threshold 0.43)
+    # should still be the most willing, Hellcat (breakout, 0.48) the
+    # most cautious. If the new coefficients flatten that gradient
+    # we've broken the adversarial spread.
+    print()
+    print("=" * 76)
+    print("Per-brain breakdown — OLD vs NEW:")
+    print("-" * 76)
+    print(f"{'Brain':<12} {'OLD action mix':<32} {'NEW action mix':<32}")
+    print("-" * 76)
+    for brain_id in ("barracuda", "gto", "camino", "hellcat"):
+        sides = per_brain.get(brain_id, {"OLD": Counter(), "NEW": Counter()})
+        old, new = sides["OLD"], sides["NEW"]
+        old_total = sum(old.values()) or 1
+        new_total = sum(new.values()) or 1
+        old_str = " ".join(
+            f"{a}={100*old[a]/old_total:.0f}%" for a in ("BUY","SELL","HOLD","OBSERVE") if old[a]
+        ) or "—"
+        new_str = " ".join(
+            f"{a}={100*new[a]/new_total:.0f}%" for a in ("BUY","SELL","HOLD","OBSERVE") if new[a]
+        ) or "—"
+        from shared.brain_doctrine import get_doctrine
+        d = get_doctrine(brain_id)
+        print(
+            f"{brain_id:<12} {old_str:<32} {new_str:<32}"
+            f"  (doctrine={d.doctrine}, min_conf={d.min_confidence:.2f})"
+        )
+        print(f"             n_old={old_total:<4} n_new={new_total:<4}")
+    print("=" * 76)
 
     cli.close()
     return 0
