@@ -65,7 +65,14 @@ DOCTRINES: dict[str, BrainDoctrine] = {
         doctrine="trend",
         lookback_short=20,
         lookback_long=50,
-        min_confidence=0.62,
+        # 2026-02-21 (operator directive): bumped down 0.62 → 0.46 as
+        # part of the staggered 0.43-0.48 spread. The original 0.58-
+        # 0.64 band was too conservative on crypto chop — brains were
+        # clustering at hypothesis scores ~0.43-0.48 (just below their
+        # own gates) and unanimously HOLDing. Staggering keeps the
+        # adversarial gap between doctrines while letting weaker setups
+        # surface BUY/SELL signals.
+        min_confidence=0.46,
         min_gap=0.08,
         trend_weight=1.40,
         mean_reversion_weight=0.60,
@@ -80,7 +87,10 @@ DOCTRINES: dict[str, BrainDoctrine] = {
         doctrine="mean_reversion",
         lookback_short=14,
         lookback_long=30,
-        min_confidence=0.58,
+        # 2026-02-21: 0.58 → 0.43. Most willing brain (mean-rev catches
+        # dips; lowest min_confidence in the stagger lets it fire first
+        # on weak setups others wait on).
+        min_confidence=0.43,
         min_gap=0.06,
         trend_weight=0.70,
         mean_reversion_weight=1.50,
@@ -95,7 +105,10 @@ DOCTRINES: dict[str, BrainDoctrine] = {
         doctrine="breakout",
         lookback_short=10,
         lookback_long=20,
-        min_confidence=0.64,
+        # 2026-02-21: 0.64 → 0.48. Most cautious brain (breakout needs
+        # a clean confirmed break; highest min_confidence in the
+        # stagger so it fires last — the "final agreement" voice).
+        min_confidence=0.48,
         min_gap=0.10,
         trend_weight=0.90,
         mean_reversion_weight=0.50,
@@ -110,7 +123,9 @@ DOCTRINES: dict[str, BrainDoctrine] = {
         doctrine="momentum",
         lookback_short=8,
         lookback_long=21,
-        min_confidence=0.60,
+        # 2026-02-21: 0.60 → 0.45. Second-most willing — momentum
+        # brain fires on building moves before they fully break out.
+        min_confidence=0.45,
         min_gap=0.07,
         trend_weight=1.00,
         mean_reversion_weight=0.50,

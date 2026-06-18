@@ -72,8 +72,17 @@ def test_legacy_stack_codes_map_to_canonical_brain_ids():
 
 
 def test_stack_brainid_maps_are_inverses():
-    for stack, bid in STACK_TO_BRAIN_ID.items():
-        assert BRAIN_ID_TO_STACK[bid] == stack
+    # 2026-02-21: STACK_TO_BRAIN_ID is many-to-one (alpha + camino both
+    # map to "camino"), so the dict-inverse cannot round-trip. What we
+    # actually need to guarantee is:
+    #   (a) every canonical brain_id appears as a key in BRAIN_ID_TO_STACK
+    #   (b) every value in BRAIN_ID_TO_STACK is itself a key in
+    #       STACK_TO_BRAIN_ID (so chains terminate)
+    canonical = {"camino", "barracuda", "hellcat", "gto"}
+    for bid in canonical:
+        assert bid in BRAIN_ID_TO_STACK
+        assert BRAIN_ID_TO_STACK[bid] in STACK_TO_BRAIN_ID
+        assert STACK_TO_BRAIN_ID[BRAIN_ID_TO_STACK[bid]] == bid
 
 
 def test_unknown_brain_id_raises():
@@ -166,8 +175,15 @@ def test_min_confidence_and_min_gap_come_from_doctrine():
         min_commitment=0.99, min_gap=0.99,   # nonsense values
         doctrine=get_doctrine("camino"),
     )
-    assert cam.min_commitment == pytest.approx(0.62)
-    assert cam.min_gap == pytest.approx(0.08)
+    # 2026-02-21: thresholds compressed to 0.43-0.48 stagger; this test
+    # just verifies the doctrine value overrides the constructor's
+    # nonsense input, not the specific numeric value (which the
+    # operator will keep tuning). Bind to whatever the doctrine says.
+    assert cam.min_commitment == pytest.approx(get_doctrine("camino").min_confidence)
+    assert cam.min_gap == pytest.approx(get_doctrine("camino").min_gap)
+    # And it must NOT be the constructor's nonsense value.
+    assert cam.min_commitment != pytest.approx(0.99)
+    assert cam.min_gap != pytest.approx(0.99)
 
 
 # ── Doctrine stamped on intent ────────────────────────────────────
