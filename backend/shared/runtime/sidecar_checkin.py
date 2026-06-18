@@ -322,49 +322,35 @@ class CheckinResponse(BaseModel):
     note: str
 
 
-# ────────────────────── POST: sidecar check-in ─────────────────────────
+async def sidecar_checkin_core(
+    *,
+    brain: str,
+    stamp: Dict[str, Any],
+    loop_status: Optional[Dict[str, Any]] = None,
+    source_ip: str = "in_process",
+) -> Dict[str, Any]:
+    """Core sidecar-checkin logic. No HTTP, no token verification, no
+    Pydantic parsing. Callable directly by the in-process brain runner
+    so it doesn't need to authenticate to itself over loopback.
 
+    The HTTP wrapper (`post_sidecar_checkin`) parses the request +
+    verifies the runtime token + extracts source IP, then calls this
+    function. External callers go through the HTTP wrapper; internal
+    callers (same process) call this directly.
 
-@router.post("/sidecar-checkin/{brain}", response_model=CheckinResponse)
-async def post_sidecar_checkin(
-    request: Request,
-    body: CheckinRequest,
-    brain: str = Path(..., description="brain id — alpha|camaro|chevelle|redeye"),
-    x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
-) -> CheckinResponse:
-    """Token-authed POST a sidecar makes on boot (and periodically) to
-    declare its identity. Persists the latest stamp + verdict and
-    returns the validation result so the sidecar can self-quarantine
-    if it drifted.
-
-    2026-05-30 — added source-IP + per-payload audit row. The
-    upserted `sidecar_checkins` doc is great for "what's the latest
-    stamp?" but it OVERWRITES on every checkin, which lost the
-    Alpha-preview-pod-impersonating-prod incident. The new
-    `sidecar_checkin_audit` collection appends one row per POST with
-    the full validated stamp + source IP + brain's self-reported
-    `process_identity` (if present). That lets the operator query
-    "how many distinct (pid, hostname) tuples ever checked in as
-    alpha?" and catch duplicate pods even after they've been fixed.
+    Returns the same shape `CheckinResponse` produces, as a plain dict:
+        {
+          "ok": bool, "runtime": str, "verdict": str,
+          "errors": list[str], "policy_hash_match": bool,
+          "mc_policy_hash": str, "note": str,
+        }
     """
     brain = brain.lower()
     if brain not in DISCUSSION_PARTICIPANTS:
-        raise HTTPException(status_code=404, detail=f"unknown brain {brain!r}")
+        raise ValueError(f"unknown brain {brain!r}")
 
-    expected = _expected_token(brain)
-    if not expected:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                f"no ingest token configured for {brain}; "
-                f"set {brain.upper()}_INGEST_TOKEN in backend/.env"
-            ),
-        )
-    if (x_runtime_token or "") != expected:
-        raise HTTPException(status_code=401, detail="invalid token")
-
-    validation = _validate_stamp_dict(body.stamp)
-    stamp = validation.get("stamp") or body.stamp
+    validation = _validate_stamp_dict(stamp)
+    stamp = validation.get("stamp") or stamp
     mc_hash = policy_hash()
     incoming_hash = (stamp or {}).get("policy_hash")
     policy_match = incoming_hash == mc_hash
@@ -373,21 +359,6 @@ async def post_sidecar_checkin(
     now = _now()
     now_iso = now.isoformat()
 
-    # ── audit-log first (append-only) ─────────────────────────────────
-    # Source IP at the EDGE — defense in depth per Alpha's request.
-    # Respects X-Forwarded-For if present (ingress/proxy) and falls
-    # back to the direct connection. Never trusted as authoritative,
-    # just useful for "which pod IP did this come from?" forensics.
-    xff = request.headers.get("x-forwarded-for")
-    source_ip = (
-        (xff.split(",")[0].strip() if xff else None)
-        or (request.client.host if request.client else None)
-        or "unknown"
-    )
-    # The brain may include `process_identity` in the stamp now —
-    # Alpha started including {pid, hostname, process_boot_at} in
-    # 2026-05-30. Extract if present, store as a sibling for easy
-    # querying. Backward compatible: missing → None.
     process_identity = (stamp or {}).get("process_identity")
     try:
         await db["sidecar_checkin_audit"].insert_one({
@@ -406,22 +377,9 @@ async def post_sidecar_checkin(
             "process_identity": process_identity,
         })
     except Exception:  # noqa: BLE001
-        # Audit is best-effort. NEVER block a checkin on it.
         pass
 
-    # Upsert. We keep `first_seen_at` and `checkin_count` ourselves
-    # (atomic $inc + $setOnInsert) so the panel can show uptime &
-    # how chatty each sidecar is.
-    #
-    # 2026-02-20: also persist the optional `loop_status` block and
-    # the derived `loop_health` band. Brain teams that ship the
-    # `loop_status` extension get fresh decision/opinion/intent/
-    # sovereign timestamps on the operator dashboard. Brains that
-    # don't ship it get `loop_health: "unknown"` — graceful default.
-    loop_status_dict: Optional[Dict[str, Any]] = (
-        body.loop_status.model_dump() if body.loop_status else None
-    )
-    loop_health = _loop_health_from(loop_status_dict, _now())
+    loop_health = _loop_health_from(loop_status, _now())
     await db[SIDECAR_CHECKINS].update_one(
         {"runtime": brain},
         {
@@ -438,7 +396,7 @@ async def post_sidecar_checkin(
                 "mc_policy_hash": mc_hash,
                 "last_checkin_at": now_iso,
                 "last_source_ip": source_ip,
-                "loop_status": loop_status_dict,
+                "loop_status": loop_status,
                 "loop_health": loop_health,
             },
             "$setOnInsert": {"first_checkin_at": now_iso},
@@ -447,19 +405,6 @@ async def post_sidecar_checkin(
         upsert=True,
     )
 
-    # 2026-02-19 — heartbeat side-effect.
-    # A sidecar check-in is unambiguous proof of life: a real process
-    # successfully authenticated with the per-brain token and posted
-    # its identity. Bump `shared_heartbeats.last_seen` so the
-    # LivePulse / Diagnostics LIVE/STALE/DEAD badge stays in sync
-    # with the Sidecar Imposter Scan. Before this side-effect, brains
-    # whose sidecars hit ONLY `/sidecar-checkin/{brain}` (and not
-    # `/heartbeat-ping/{brain}`) appeared DEAD on the runtime table
-    # even though their pod was healthy — the REDEYE silence pattern.
-    #
-    # Doctrine: best-effort. Failure here MUST NOT block the check-in
-    # response (which is the canonical identity-record path). Wrapped
-    # in try/except like the audit log above.
     try:
         await db[SHARED_HEARTBEATS].update_one(
             {"runtime": brain},
@@ -500,15 +445,61 @@ async def post_sidecar_checkin(
         ),
     }[verdict]
 
-    return CheckinResponse(
-        ok=validation.get("ok", False) and policy_match,
-        runtime=brain,
-        verdict=verdict,
-        errors=list(validation.get("errors", [])),
-        policy_hash_match=policy_match,
-        mc_policy_hash=mc_hash,
-        note=note,
+    return {
+        "ok": validation.get("ok", False) and policy_match,
+        "runtime": brain,
+        "verdict": verdict,
+        "errors": list(validation.get("errors", [])),
+        "policy_hash_match": policy_match,
+        "mc_policy_hash": mc_hash,
+        "note": note,
+    }
+
+
+# ────────────────────── POST: sidecar check-in ─────────────────────────
+
+
+@router.post("/sidecar-checkin/{brain}", response_model=CheckinResponse)
+async def post_sidecar_checkin(
+    request: Request,
+    body: CheckinRequest,
+    brain: str = Path(..., description="brain id — alpha|camaro|chevelle|redeye"),
+    x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
+) -> CheckinResponse:
+    """HTTP wrapper around `sidecar_checkin_core`. External callers
+    must present a valid `X-Runtime-Token`. The in-process brain
+    runner skips this endpoint entirely and calls
+    `sidecar_checkin_core` directly — see `external/brains/runner.py`."""
+    brain = brain.lower()
+    if brain not in DISCUSSION_PARTICIPANTS:
+        raise HTTPException(status_code=404, detail=f"unknown brain {brain!r}")
+
+    expected = _expected_token(brain)
+    if not expected:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"no ingest token configured for {brain}; "
+                f"set {brain.upper()}_INGEST_TOKEN in backend/.env"
+            ),
+        )
+    if (x_runtime_token or "") != expected:
+        raise HTTPException(status_code=401, detail="invalid token")
+
+    xff = request.headers.get("x-forwarded-for")
+    source_ip = (
+        (xff.split(",")[0].strip() if xff else None)
+        or (request.client.host if request.client else None)
+        or "unknown"
     )
+
+    result = await sidecar_checkin_core(
+        brain=brain,
+        stamp=body.stamp,
+        loop_status=body.loop_status.model_dump() if body.loop_status else None,
+        source_ip=source_ip,
+    )
+    return CheckinResponse(**result)
 
 
 # ────────────────────── GET: list all check-ins ────────────────────────

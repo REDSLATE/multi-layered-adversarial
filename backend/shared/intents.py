@@ -812,16 +812,40 @@ async def post_intent(
     body: IntentIn,
     x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
 ):
-    """Brain emits an intent envelope. MC stamps the safety fields.
-
-    Auth: `X-Runtime-Token` of the brain that matches `body.stack`. A
-    brain cannot post an intent as another brain. Operators use the
-    `/admin/intents` proxy below for that.
+    """HTTP route: verifies the per-brain runtime token then delegates
+    to `_post_intent_impl`. External callers (including any future
+    sidecar) MUST authenticate. The in-process brain runner uses
+    `submit_intent_in_process` below to skip auth entirely.
     """
     if not x_runtime_token:
         raise HTTPException(status_code=401, detail="X-Runtime-Token required")
     verify_runtime_token(body.stack, x_runtime_token)
+    return await _post_intent_impl(body, x_runtime_token=x_runtime_token)
 
+
+async def submit_intent_in_process(body: IntentIn):
+    """In-process direct-call entrypoint. The brain runner uses this
+    so it doesn't have to authenticate to itself over loopback.
+
+    2026-02-20 — part of the Option C refactor that removes the HTTP
+    + token roundtrip for same-process callers. Token verification
+    still gates the HTTP route for external integrators (none today,
+    but the surface stays defended).
+    """
+    return await _post_intent_impl(body, x_runtime_token=None)
+
+
+async def _post_intent_impl(
+    body: IntentIn,
+    x_runtime_token: Optional[str] = None,
+):
+    """The actual intent-submit logic. Reached two ways: via the
+    HTTP route (after auth) or via `submit_intent_in_process`.
+
+    `x_runtime_token` is threaded through because the legacy
+    `close_position` flow re-uses it; for in-process callers it
+    will be None, and `close_position` handles that.
+    """
     # ─── Symbol normalization (2026-02-19) ──────────────────────────
     # Strip any over-prefixed canonical form ("EQ:AAPL",
     # "CRYPTO:BTC-USD") down to the bare ticker BEFORE any downstream

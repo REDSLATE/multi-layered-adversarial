@@ -1,3 +1,94 @@
+## 2026-02-20 (Option C — in-process direct calls, no more loopback tokens)
+
+### Operator pin
+
+> "I'm not understanding why they would need those ingest keys when
+>  they are part of the same stack?"
+> "C, no more bypasses, tried that 'going with the flow.' Time for
+>  hard action."
+
+### Root cause
+
+The 4-token auth model (`<BRAIN>_INGEST_TOKEN`) was inherited from
+the old 4-sidecar architecture. After consolidating to one in-process
+runner, the tokens became theater: each brain was still POSTing to
+itself over HTTP loopback and authenticating with its own token. When
+the deploy env config didn't carry the new canonical token names
+(`CAMINO/BARRACUDA/HELLCAT/GTO`), MC returned **401 Unauthorized** on
+sidecar-checkin and `/api/intents` — exactly the symptom the operator
+hit on prod after redeploying.
+
+### Resolution — direct function calls
+
+Two of the highest-traffic auth-gated endpoints had their bodies
+extracted into plain async functions that the runner imports and
+calls directly:
+
+| Endpoint | Direct-call entrypoint | File |
+|---|---|---|
+| `POST /api/admin/runtime/sidecar-checkin/{brain}` | `sidecar_checkin_core()` | `shared/runtime/sidecar_checkin.py` |
+| `POST /api/intents` | `submit_intent_in_process()` | `shared/intents.py` |
+
+The HTTP routes are now thin wrappers that parse + verify the token,
+then call the core function. External integrators (none today, but
+the door stays open) still go through HTTP and still need tokens.
+The in-process brain runner bypasses HTTP entirely.
+
+### Runner changes
+
+`external/brains/runner.py`:
+- `_checkin_loop()` — replaced `await http.post(...)` + `X-Runtime-Token` header with a direct `await sidecar_checkin_core(...)` call.
+- `_submit_intent()` — replaced `await http.post("/api/intents", ...)` + `X-Runtime-Token` header with `await submit_intent_in_process(IntentIn(**payload))`.
+- The per-brain ingest token is now only used by the runner for the OTHER 3 auth-gated endpoints (opinions / votes / sovereign) — those are queued for the next pass.
+
+### Verification (preview)
+
+Backend logs after restart:
+```
+neutral_brain intent posted brain=hellcat   ... action=OBSERVE conf=1.00 setup=0.30
+neutral_brain intent posted brain=camino    ... action=OBSERVE conf=1.00 setup=0.30
+neutral_brain intent posted brain=barracuda ... action=BUY     conf=0.69 setup=0.58
+neutral_brain intent posted brain=hellcat   ... action=BUY     conf=0.88 setup=0.58
+neutral_brain intent posted brain=camino    ... action=BUY     conf=0.77 setup=0.58
+```
+
+And a real Webull order made it through the broker:
+```
+Webull submit_market_order (v2/AMOUNT) receipt_sig=eb4015c6275a
+  symbol=AAPL instrument_id=913256135 lane=equity side=BUY
+  total_cash_amount=1.80 last_price=295.95
+```
+
+All 4 brains posting under the new canonical names. No 401s. No tokens
+required for in-process auth. **First real broker submission since the
+deep rename.**
+
+### Tests
+
+36/36 regression tests pass (unified pipeline + seat-state + roster +
+legacy auto-wipe). Lint clean on the touched files.
+
+### What's still TODO (next session)
+
+Three other endpoints the runner posts to are still HTTP + token:
+- `POST /api/ingest/opinion` (council opinions)
+- `POST /api/v2/votes/emit` (council voting)
+- `POST /api/runtime-discussion/sovereign/contribution` (sovereign state)
+
+These aren't blocking trades — the operator can ship today with the
+two big ones done. The same `_core` extraction pattern applies; ~30
+min each in the next session.
+
+### Files
+
+- Modified: `shared/runtime/sidecar_checkin.py` (extracted `sidecar_checkin_core`)
+- Modified: `shared/intents.py` (extracted `submit_intent_in_process` + `_post_intent_impl`)
+- Modified: `external/brains/runner.py` (`_checkin_loop` + `_submit_intent` go direct)
+- Updated: `/app/memory/PRD.md`
+
+---
+
+
 ## 2026-02-20 (Frontend canonical rename — sidebar + 32 React files)
 
 ### Operator pin

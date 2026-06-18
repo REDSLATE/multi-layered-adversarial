@@ -1450,12 +1450,24 @@ class BrainRunner:
         except Exception as exc:  # noqa: BLE001
             logger.debug("broker selection lookup skipped: %s", exc)
 
-        r = await http.post(
-            f"{MC_LOOPBACK_URL}/api/intents",
-            json=payload,
-            headers={"X-Runtime-Token": self.token},
-        )
-        if r.status_code // 100 == 2:
+        # 2026-02-20 — direct in-process call instead of HTTP loopback.
+        # Same process, same trust boundary. No token, no JSON roundtrip,
+        # no 401 risk from env var drift.
+        from shared.intents import submit_intent_in_process, IntentIn
+        from fastapi import HTTPException
+        try:
+            intent_obj = IntentIn(**payload)
+            result = await submit_intent_in_process(intent_obj)
+            ok = True
+        except HTTPException as he:
+            logger.warning("in_process intent rejected brain=%s sym=%s status=%s detail=%s",
+                           self.brain_id, intent.symbol, he.status_code, str(he.detail)[:160])
+            ok = False
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("in_process intent error brain=%s sym=%s: %s",
+                           self.brain_id, intent.symbol, exc)
+            ok = False
+        if ok:
             self._intent_count += 1
             # Record onto the rolling tape so the sovereign loop has
             # real `recent_outcomes` to ship. We stamp `outcome=0`
@@ -1809,30 +1821,44 @@ class BrainRunner:
             )
 
     async def _checkin_loop(self) -> None:
-        async with _create_http_client() as http:
-            while not self._stop.is_set():
-                async def _iter():
-                    r = await http.post(
-                        f"{MC_LOOPBACK_URL}/api/admin/runtime/"
-                        f"sidecar-checkin/{self.brain_id}",
-                        json=_checkin_stamp(self.brain_id, self.display_name),
-                        headers={"X-Runtime-Token": self.token},
-                    )
-                    if r.status_code // 100 == 2:
-                        self._checkin_count += 1
-                try:
-                    await asyncio.wait_for(_iter(), timeout=WATCHDOG_ITER_TIMEOUT_SEC)
-                    self._last_checkin_success_at = datetime.now(timezone.utc)
-                except asyncio.TimeoutError:
-                    self._last_checkin_watchdog_trip_at = datetime.now(timezone.utc)
-                    logger.warning(
-                        "watchdog: checkin_loop iter exceeded %ss — "
-                        "abandoning brain=%s",
-                        WATCHDOG_ITER_TIMEOUT_SEC, self.brain_id,
-                    )
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("checkin error brain=%s: %s", self.brain_id, e)
-                await asyncio.sleep(CHECKIN_INTERVAL_SEC + random.uniform(-2, 2))
+        """In-process direct-call checkin. No HTTP, no token.
+
+        2026-02-20 — replaced the HTTP loopback POST with a direct
+        call to `sidecar_checkin_core`. Same process = same trust
+        boundary. The per-brain ingest token is irrelevant inside one
+        runtime, and the runner now bypasses MC's token-gated HTTP
+        endpoint entirely. External integrators (none today) still go
+        through the HTTP wrapper, which keeps its token check.
+        """
+        # Lazy import — `external/brains/runner.py` is imported by MC's
+        # own startup, but `shared.runtime.sidecar_checkin` pulls in
+        # collections that need the db client to be wired first.
+        from shared.runtime.sidecar_checkin import sidecar_checkin_core
+        while not self._stop.is_set():
+            async def _iter():
+                stamp = _checkin_stamp(self.brain_id, self.display_name)
+                # Stamp shape from `_checkin_stamp` is `{stamp: {...}, loop_status: {...}}`
+                # — flatten for the direct call.
+                await sidecar_checkin_core(
+                    brain=self.brain_id,
+                    stamp=stamp.get("stamp") or {},
+                    loop_status=stamp.get("loop_status"),
+                    source_ip="in_process",
+                )
+                self._checkin_count += 1
+            try:
+                await asyncio.wait_for(_iter(), timeout=WATCHDOG_ITER_TIMEOUT_SEC)
+                self._last_checkin_success_at = datetime.now(timezone.utc)
+            except asyncio.TimeoutError:
+                self._last_checkin_watchdog_trip_at = datetime.now(timezone.utc)
+                logger.warning(
+                    "watchdog: checkin_loop iter exceeded %ss — "
+                    "abandoning brain=%s",
+                    WATCHDOG_ITER_TIMEOUT_SEC, self.brain_id,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("checkin error brain=%s: %s", self.brain_id, e)
+            await asyncio.sleep(CHECKIN_INTERVAL_SEC + random.uniform(-2, 2))
 
     async def _sovereign_loop(self) -> None:
         """Periodically POSTs a substantive sovereign-state contribution
