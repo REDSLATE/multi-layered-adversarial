@@ -1,3 +1,70 @@
+## 2026-02-21 (Unified Pipeline UI Toggle + 401 red-bar fix)
+
+### Operator pin
+
+> "All holds are still there and other errors are now present." — user
+> is on a phone and cannot curl the backend to flip the pipeline ON.
+
+### What landed
+
+**1. Unified Pipeline toggle button** — added to the existing ARM-ALL
+block inside `IntentPostMortemPanel.jsx` (top of `/admin/intents`).
+Mobile-friendly switch wired to the existing
+`/api/admin/unified-pipeline/start|stop|status` endpoints. Includes:
+
+- ON/OFF state badge (green when ON, dim when OFF)
+- Confirm dialog before flipping (matches HALT pattern)
+- Dynamic description: legacy 20-gate chain vs 3-blocker pipeline
+- "last flip" timestamp + updated_by
+- Warning banner if `UNIFIED_PIPELINE_ENABLED=true` env var is set in
+  deploy config (env wins over Mongo flag)
+- `data-testid="unified-pipeline-toggle-block"` / `…-button` /
+  `…-state-badge` for testing
+
+**2. HTTP 401 red bar removed.** Root cause: `pages/Intents.jsx` was
+sending a stale `X-Runtime-Token: alpha-ingest-...` header to `GET
+/api/intents` — leftover from the deleted sidecar HTTP plumbing. The
+"alpha" runtime token was renamed to "camino" during the canonical
+rename, so the legacy token no longer validated and the backend
+returned 401.
+
+Fix:
+- Backend (`shared/intents.py` line 1218): `GET /api/intents` now
+  accepts operator JWT (cookie or Bearer) as the primary auth path,
+  falls back to runtime token for any brain still calling this
+  endpoint. Verified with curl: HTTP 200 + 3 items.
+- Frontend (`pages/Intents.jsx` line 454): removed the hardcoded
+  `X-Runtime-Token` header. Admin JWT is auto-attached by the `api`
+  client.
+
+### Verified in preview (smoke test)
+
+- Toggle renders, shows current state (OFF), with timestamp metadata
+- Click → confirm → Mongo flag flipped → badge updates to ON → button
+  swaps to "SWITCH OFF" → description updates to "3-blocker pipeline"
+- Click again → confirms → flips OFF
+- Page-wide check: no `HTTP 401` or `HTTP 404` red bars visible
+
+### What this unblocks on Production
+
+- Operator can now flip the unified pipeline from their phone with
+  one tap (no SSH/curl needed)
+- Once flipped ON, intents route through Seat → Governor → RoadGuard
+  → Broker (3 hard blockers only) instead of the legacy 20-gate chain
+- Next expected blocker: `WEBULL_NOTIONAL_BELOW_FLOOR` ($1.80 < $3.00).
+  Deferred per operator request — fix in next iteration after Prod
+  verification of the toggle.
+
+### Files touched
+
+- `backend/shared/intents.py` (1218-1262)
+- `frontend/src/components/IntentPostMortemPanel.jsx` (added 70 lines
+  of state + 90 lines of UI after the HALT row)
+- `frontend/src/pages/Intents.jsx` (447-456)
+
+---
+
+
 ## 2026-02-20 (Option C complete — all 5 auth-gated endpoints go direct)
 
 ### Operator pin

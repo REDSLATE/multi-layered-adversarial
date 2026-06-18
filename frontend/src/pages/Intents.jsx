@@ -451,14 +451,11 @@ export default function Intents() {
       if (gateState !== "all") params.gate_state = gateState;
       if (lane !== "all") params.lane = lane;
       // action filter happens client-side since the API doesn't expose it
-      const res = await api.get("/intents", {
-        params,
-        // Need any runtime token to read intents; use alpha by convention
-        // since admin JWT alone isn't accepted on this endpoint.
-        headers: {
-          "X-Runtime-Token": "alpha-ingest-2cf91b5e-3a44-4c1b-9e07-4e1b7d2c3a55",
-        },
-      });
+      // 2026-02-21: Stale `X-Runtime-Token: alpha-ingest-...` header
+      // removed — that token belonged to the deleted sidecar HTTP
+      // plumbing and caused an HTTP 401 red bar on this page. The
+      // backend `/intents` GET now accepts admin JWT directly.
+      const res = await api.get("/intents", { params });
       setIntents(res.data?.items || []);
       setErr("");
     } catch (e) {

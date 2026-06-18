@@ -34,7 +34,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
 from auth import get_current_user
@@ -1217,6 +1217,7 @@ async def post_intent_equity(
 
 @router.get("/intents")
 async def list_intents(
+    request: Request,
     stack: Optional[str] = Query(default=None),
     symbol: Optional[str] = Query(default=None),
     lane: Optional[Literal["equity", "crypto"]] = Query(default=None),
@@ -1224,23 +1225,39 @@ async def list_intents(
     limit: int = Query(default=50, ge=1, le=500),
     x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
 ):
-    """Read recent intents. Accepts either an operator JWT (via the admin
-    proxy below) or any runtime token (brains can read each other's
-    intents for council-context purposes — same doctrine as opinions).
+    """Read recent intents. Accepts either:
+      * an operator JWT (Authorization: Bearer <token> or cookie), or
+      * any runtime token (brains can read each other's intents for
+        council-context purposes — same doctrine as opinions).
+
+    2026-02-21: The frontend now uses admin JWT only — the legacy
+    `X-Runtime-Token: alpha-ingest-...` header was a leftover from the
+    sidecar HTTP architecture (since deleted). We accept it for any
+    brain still calling this endpoint, but operator JWT is the canonical
+    path now.
     """
-    if not x_runtime_token:
-        raise HTTPException(status_code=401, detail="X-Runtime-Token required")
-    # Token must match SOMEONE in the four-brain roster.
-    matched = False
-    for rt in RUNTIMES:
-        try:
-            verify_runtime_token(rt, x_runtime_token)
-            matched = True
-            break
-        except HTTPException:
-            continue
-    if not matched:
-        raise HTTPException(status_code=401, detail="invalid runtime ingest token")
+    # Try operator JWT first (cookie or bearer); fall back to runtime token.
+    try:
+        await get_current_user(request)
+        authed = True
+    except HTTPException:
+        authed = False
+
+    if not authed:
+        if not x_runtime_token:
+            raise HTTPException(
+                status_code=401,
+                detail="operator JWT or X-Runtime-Token required",
+            )
+        for rt in RUNTIMES:
+            try:
+                verify_runtime_token(rt, x_runtime_token)
+                authed = True
+                break
+            except HTTPException:
+                continue
+        if not authed:
+            raise HTTPException(status_code=401, detail="invalid runtime ingest token")
 
     q: dict = {}
     if stack:
