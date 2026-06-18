@@ -159,6 +159,7 @@ from routes.intent_why import router as intent_why_router
 from routes.seat_state_diagnose import router as seat_state_diagnose_router
 from routes.unified_pipeline_admin import router as unified_pipeline_admin_router
 from routes.webull_caps_admin import router as webull_caps_admin_router
+from routes.exposure_caps_admin import router as exposure_caps_admin_router
 from routes.admin_auto_submit import router as admin_auto_submit_router
 from routes.admin_quiver import router as admin_quiver_router
 from routes.parabolic_phase_admin import router as parabolic_phase_admin_router
@@ -301,6 +302,21 @@ async def lifespan(app: FastAPI):
         logger.info("webull_min_notional_floor override (from mongo) = %s", wf)
     except Exception as e:  # noqa: BLE001
         logger.warning("webull_min_notional_floor refresh failed (non-fatal): %s", e)
+
+    # Exposure caps override — same pattern. 2026-06-18 (live pilot):
+    # Prod hit cap_per_day=$50 two hours before market open with no
+    # way to flip the env var from a phone. Mongo override lets the
+    # operator raise/lower per_order/per_day/open_notional caps from
+    # the admin UI without a redeploy.
+    try:
+        from shared.exposure_caps import refresh_cap_overrides_cache
+        co = await refresh_cap_overrides_cache()
+        logger.info(
+            "exposure_caps_override (from mongo) = enabled=%s per_day=%s",
+            co.get("enabled"), co.get("per_day_usd"),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("exposure_caps refresh failed (non-fatal): %s", e)
 
     # Auto-submit policy — hydrate persisted override from Mongo so
     # the operator's toggle survives pod restarts. Without this,
@@ -828,6 +844,7 @@ api_router.include_router(intent_why_router)
 api_router.include_router(seat_state_diagnose_router)
 api_router.include_router(unified_pipeline_admin_router)
 api_router.include_router(webull_caps_admin_router)
+api_router.include_router(exposure_caps_admin_router)
 api_router.include_router(admin_auto_submit_router)
 api_router.include_router(admin_quiver_router)
 api_router.include_router(paradox_v2_router)

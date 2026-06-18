@@ -265,6 +265,74 @@ export default function IntentPostMortemPanel() {
 
   useEffect(() => { loadPolicyConfMin(); }, [loadPolicyConfMin]);
 
+  // 2026-06-18: exposure caps override (same Mongo-flag pattern).
+  // Operator hit cap_per_day=$50 two hours before market open on the
+  // first live-pilot day with no env-tweak path from a phone. This
+  // gives them a knob to bump per_order/per_day/open_notional caps
+  // from the admin UI without a redeploy.
+  const [caps, setCaps] = useState({
+    loading: true, saving: false,
+    effective: null, live_state: null, sources: null,
+    perDayInput: "",
+    error: null,
+  });
+
+  const loadCaps = useCallback(async () => {
+    setCaps((s) => ({ ...s, loading: true, error: null }));
+    try {
+      const res = await api.get("/admin/exposure-caps/status");
+      setCaps((s) => ({
+        ...s, loading: false, saving: false,
+        effective: res.data.effective,
+        live_state: res.data.live_state,
+        sources: res.data.sources,
+        perDayInput: String(res.data.effective?.per_day_usd ?? ""),
+        error: null,
+      }));
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      setCaps((s) => ({
+        ...s, loading: false,
+        error: typeof d === "string" ? d : JSON.stringify(d),
+      }));
+    }
+  }, []);
+
+  const applyDailyCap = useCallback(async () => {
+    const n = parseFloat(caps.perDayInput);
+    if (!Number.isFinite(n) || n <= 0 || n > 10_000_000) {
+      setCaps((s) => ({ ...s, error: "per_day_usd must be 0 < n ≤ 10,000,000" }));
+      return;
+    }
+    const cur = caps.effective?.per_day_usd;
+    if (cur != null && Math.abs(cur - n) < 0.005) {
+      await loadCaps();
+      return;
+    }
+    if (!window.confirm(
+      `Raise/lower the daily exposure cap to $${n.toFixed(2)}?\n\n` +
+      `Current effective cap: $${(cur ?? 0).toFixed(2)}\n` +
+      `24h spend so far: $${(caps.live_state?.daily_spend_usd ?? 0).toFixed(2)}\n\n` +
+      `Mongo override WINS over env. Proceed?`,
+    )) return;
+    setCaps((s) => ({ ...s, saving: true, error: null }));
+    try {
+      await api.post("/admin/exposure-caps/set", {
+        per_day_usd: n,
+        reason: "operator set via Intents ARM panel",
+      });
+      await loadCaps();
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      setCaps((s) => ({
+        ...s, saving: false,
+        error: typeof d === "string" ? d : JSON.stringify(d),
+      }));
+    }
+  }, [caps.perDayInput, caps.effective, caps.live_state, loadCaps]);
+
+  useEffect(() => { loadCaps(); }, [loadCaps]);
+
   const load = useCallback(async (h) => {
     setLoading(true);
     try {
@@ -654,6 +722,72 @@ export default function IntentPostMortemPanel() {
             <div className="font-mono text-[10px] text-rd-danger flex items-start gap-1">
               <XCircle size={10} weight="bold" className="mt-0.5 shrink-0" />
               {webullFloor.error}
+            </div>
+          )}
+        </div>
+
+        {/* ─── EXPOSURE CAPS · DAILY (2026-06-18) ────────────────
+            Operator hit cap_per_day=$50 two hours before market open
+            on the first live-pilot day. Mongo override lets them
+            bump the daily cap from a phone without a redeploy. */}
+        <div
+          className="pt-1 border-t border-rd-border/40 space-y-1"
+          data-testid="exposure-caps-daily-block"
+        >
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex-1 min-w-0">
+              <div className="font-mono text-[10px] uppercase tracking-widest text-rd-text font-bold">
+                Daily exposure cap
+              </div>
+              <div className="font-mono text-[9px] text-rd-dim mt-0.5">
+                {caps.loading ? "loading…" : (
+                  <>
+                    Spent: ${(caps.live_state?.daily_spend_usd ?? 0).toFixed(2)} /
+                    ${(caps.effective?.per_day_usd ?? 0).toFixed(2)} ·
+                    remaining: ${(caps.live_state?.remaining_per_day_usd ?? 0).toFixed(2)}
+                    {caps.sources?.mongo?.enabled
+                      ? " · source: mongo override"
+                      : caps.sources?.env?.RISEDUAL_CAP_PER_DAY_USD != null
+                        ? ` · source: env (${caps.sources.env.RISEDUAL_CAP_PER_DAY_USD})`
+                        : " · source: default"}
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="font-mono text-[9px] text-rd-dim">$</span>
+              <input
+                type="number"
+                step="25"
+                min="1"
+                max="10000000"
+                value={caps.perDayInput}
+                onChange={(e) => setCaps((s) => ({ ...s, perDayInput: e.target.value }))}
+                disabled={caps.loading || caps.saving}
+                className="w-20 bg-rd-bg border border-rd-border px-1 py-1 font-mono text-[10px] text-rd-text focus:outline-none focus:border-rd-accent"
+                data-testid="exposure-caps-daily-input"
+              />
+              <button
+                onClick={applyDailyCap}
+                disabled={caps.loading || caps.saving}
+                className="px-3 py-1 border-2 border-rd-accent text-rd-accent font-mono text-[10px] uppercase tracking-widest font-bold hover:bg-rd-accent hover:text-rd-bg disabled:opacity-40 disabled:cursor-not-allowed"
+                data-testid="exposure-caps-daily-apply-button"
+                title="Apply this daily cap as the Mongo override (wins over env)"
+              >
+                {caps.saving ? "Saving…" : "Set cap"}
+              </button>
+            </div>
+          </div>
+          {caps.sources?.mongo?.updated_at && (
+            <div className="font-mono text-[9px] text-rd-dim">
+              last set: {caps.sources.mongo.updated_at}
+              {caps.sources.mongo.updated_by ? ` · by ${caps.sources.mongo.updated_by}` : ""}
+            </div>
+          )}
+          {caps.error && (
+            <div className="font-mono text-[10px] text-rd-danger flex items-start gap-1">
+              <XCircle size={10} weight="bold" className="mt-0.5 shrink-0" />
+              {caps.error}
             </div>
           )}
         </div>

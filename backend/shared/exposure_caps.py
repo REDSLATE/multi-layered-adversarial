@@ -60,6 +60,67 @@ CAP_PER_ORDER_USD: float = _env_float("RISEDUAL_CAP_PER_ORDER_USD", 100_000.0)
 CAP_PER_DAY_USD: float = _env_float("RISEDUAL_CAP_PER_DAY_USD", 1_000_000.0)
 CAP_OPEN_NOTIONAL_USD: float = _env_float("RISEDUAL_CAP_OPEN_NOTIONAL_USD", 1_000_000.0)
 
+
+# ─── Mongo-backed cap overrides (2026-02-21) ───────────────────────
+# Same pattern as the Webull floor override: a Mongo doc wins over
+# env, which wins over module default. The operator can raise/lower
+# caps from the admin UI without touching deploy env. This was
+# motivated by the live-pilot $50/day cap blocking trades on a
+# Wednesday morning before market open, with no way to flip the env
+# var from a phone.
+#
+# Mongo doc:
+#   runtime_flags._id = "exposure_caps_override"
+#   { enabled: true, per_order_usd, per_day_usd, open_notional_usd,
+#     updated_at, updated_by, reason }
+import time as _time  # noqa: E402
+
+_CAPS_OVERRIDE_CACHE: dict = {}
+_CAPS_OVERRIDE_TS: float = 0.0
+_CAPS_CACHE_TTL_SEC: float = 5.0
+_CAPS_FLAG_DOC_ID = "exposure_caps_override"
+
+
+def _read_cap_override(field: str) -> Optional[float]:
+    """Return the cached Mongo override for `field`, or None if absent
+    or stale. Field is one of {per_order_usd, per_day_usd,
+    open_notional_usd}."""
+    if _CAPS_OVERRIDE_TS == 0.0:
+        return None
+    if (_time.time() - _CAPS_OVERRIDE_TS) > _CAPS_CACHE_TTL_SEC * 30:
+        return None
+    if not _CAPS_OVERRIDE_CACHE.get("enabled", False):
+        return None
+    v = _CAPS_OVERRIDE_CACHE.get(field)
+    return float(v) if isinstance(v, (int, float)) and v > 0 else None
+
+
+async def refresh_cap_overrides_cache() -> dict:
+    """Force-refresh the in-memory cap-override cache from Mongo."""
+    global _CAPS_OVERRIDE_CACHE, _CAPS_OVERRIDE_TS
+    try:
+        doc = await db["runtime_flags"].find_one(
+            {"_id": _CAPS_FLAG_DOC_ID},
+            {"_id": 0},
+        ) or {}
+        _CAPS_OVERRIDE_CACHE = doc
+        _CAPS_OVERRIDE_TS = _time.time()
+        return _CAPS_OVERRIDE_CACHE
+    except Exception:  # noqa: BLE001
+        return _CAPS_OVERRIDE_CACHE
+
+
+def effective_cap_per_order_usd() -> float:
+    return _read_cap_override("per_order_usd") or CAP_PER_ORDER_USD
+
+
+def effective_cap_per_day_usd() -> float:
+    return _read_cap_override("per_day_usd") or CAP_PER_DAY_USD
+
+
+def effective_cap_open_notional_usd() -> float:
+    return _read_cap_override("open_notional_usd") or CAP_OPEN_NOTIONAL_USD
+
 # Per-lane override. Set entries to None for "use the global cap".
 # These overrides apply to the per-order cap only — day/open caps
 # still use the globals above.
@@ -139,7 +200,13 @@ async def open_notional_usd() -> float:
 
 
 def evaluate_per_order(order_notional_usd: float, lane: Optional[str] = None) -> CapEvaluation:
-    cap = CAP_PER_ORDER_BY_LANE.get(lane or "", CAP_PER_ORDER_USD)
+    # 2026-02-21: Mongo override (when present) wins over the env/default
+    # global cap. Lane-specific overrides (CAP_PER_ORDER_BY_LANE) still
+    # take priority when set.
+    if lane in CAP_PER_ORDER_BY_LANE:
+        cap = CAP_PER_ORDER_BY_LANE[lane]
+    else:
+        cap = effective_cap_per_order_usd()
     passed = order_notional_usd <= cap
     label = f"cap_per_order_{lane}" if lane in CAP_PER_ORDER_BY_LANE else "cap_per_order"
     return CapEvaluation(
@@ -159,19 +226,20 @@ def evaluate_per_order(order_notional_usd: float, lane: Optional[str] = None) ->
 async def evaluate_daily(order_notional_usd: float) -> CapEvaluation:
     spent = await daily_spend_usd()
     projected = spent + order_notional_usd
-    passed = projected <= CAP_PER_DAY_USD
+    cap = effective_cap_per_day_usd()
+    passed = projected <= cap
     return CapEvaluation(
         name="cap_per_day",
-        cap_usd=CAP_PER_DAY_USD,
+        cap_usd=cap,
         current_usd=spent,
         projected_usd=projected,
         passed=passed,
         reason=(
             f"24h spend ${spent:.2f} + new ${order_notional_usd:.2f} = "
-            f"${projected:.2f} ≤ cap ${CAP_PER_DAY_USD:.2f}"
+            f"${projected:.2f} ≤ cap ${cap:.2f}"
             if passed else
             f"24h spend ${spent:.2f} + new ${order_notional_usd:.2f} = "
-            f"${projected:.2f} would exceed daily cap ${CAP_PER_DAY_USD:.2f}"
+            f"${projected:.2f} would exceed daily cap ${cap:.2f}"
         ),
     )
 
@@ -234,23 +302,24 @@ async def evaluate_open_notional(
         is_opening = (side or "").upper() in ("BUY", "SHORT")
 
     projected = current + (order_notional_usd if is_opening else 0.0)
-    passed = projected <= CAP_OPEN_NOTIONAL_USD
+    cap = effective_cap_open_notional_usd()
+    passed = projected <= cap
     grew = "grows" if is_opening else "no growth"
     src = position_evolution or "side-only"
     return CapEvaluation(
         name="cap_open_notional",
-        cap_usd=CAP_OPEN_NOTIONAL_USD,
+        cap_usd=cap,
         current_usd=current,
         projected_usd=projected,
         passed=passed,
         reason=(
             f"open notional ${current:.2f}"
             + (f" + new ${order_notional_usd:.2f}" if is_opening else "")
-            + f" = ${projected:.2f} ≤ cap ${CAP_OPEN_NOTIONAL_USD:.2f}"
+            + f" = ${projected:.2f} ≤ cap ${cap:.2f}"
             + f" ({grew}; source={src})"
             if passed else
             f"open notional ${current:.2f} + new ${order_notional_usd:.2f}"
-            f" = ${projected:.2f} would exceed open-notional cap ${CAP_OPEN_NOTIONAL_USD:.2f}"
+            + f" = ${projected:.2f} would exceed open-notional cap ${cap:.2f}"
             f" ({grew}; source={src})"
         ),
     )
