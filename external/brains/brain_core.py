@@ -512,38 +512,17 @@ class NeutralAdversarialBrain:
             - risk_penalty * d.risk_weight * 0.10
             + liquidity * 0.05
         )
-        # 2026-02-21 (operator directive — lane-specific spread coefficients).
-        # The original 0.002/0.003 spread weights were calibrated for
-        # equity, where spreads of 1-10 bps are normal and 25+ bps is
-        # broken data. Crypto markets structurally run 50-200 bps even
-        # on liquid pairs, so the equity-calibrated weights pin
-        # `hold_composite` and `observe_composite` to 1.000 on every
-        # crypto intent → `hypothesis_observe` always wins the argmax
-        # → forced HOLD regardless of directional conviction.
-        #
-        # The fix is to scale the spread coefficient by lane so equity
-        # behavior is unchanged but crypto's structurally wider
-        # spreads contribute proportionally. The penalty still matters
-        # — 200 bps still adds +0.16/+0.20 — it just doesn't
-        # dominate every directional hypothesis.
-        if self.lane == "crypto":
-            hold_spread_coef = 0.0008
-            observe_spread_coef = 0.001
-        else:  # equity (default): keep the original tighter penalty
-            hold_spread_coef = 0.002
-            observe_spread_coef = 0.003
-
         hold_composite = (
             0.45
             + volatility * 0.20
-            + spread_bps * hold_spread_coef
+            + spread_bps * 0.002
             + (1.0 - liquidity) * 0.15
             - abs(trend_signal) * d.trend_weight * 0.08
             - abs(momentum_signal) * d.momentum_weight * 0.05
         )
         observe_composite = (
             0.40
-            + spread_bps * observe_spread_coef
+            + spread_bps * 0.003
             + volatility * 0.12
             + (1.0 - liquidity) * 0.10
         )
