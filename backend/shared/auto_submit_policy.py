@@ -219,7 +219,16 @@ SKIP_CATEGORY_LOW_CONFIDENCE    = "low_confidence"        # < confidence_min
 SKIP_CATEGORY_LANE_FILTERED     = "lane_filtered"         # lane not in allowed list
 SKIP_CATEGORY_BRAIN_FILTERED    = "brain_filtered"        # brain not in allowed list
 SKIP_CATEGORY_ACTION_FILTERED   = "action_filtered"       # action not BUY/SELL/HOLD
-SKIP_CATEGORY_DRY_RUN_NOT_READY = "dry_run_not_ready"     # dry_run not passed yet
+# 2026-06-19 — was a single `dry_run_not_ready` bucket; split into
+# three so the operator can tell "gate chain blocked it" (doctrine-
+# correct rejection) apart from "dry-run pending" (benign race) and
+# "dry-run missing" (actual silent leak — needs investigation). The
+# old label is kept for backwards compatibility with stored audit
+# rows; new rows use the precise three.
+SKIP_CATEGORY_DRY_RUN_NOT_READY = "dry_run_not_ready"     # (legacy, kept for old audit rows)
+SKIP_CATEGORY_DRY_RUN_BLOCKED   = "dry_run_blocked"       # dry-run completed with verdict=blocked (correct rejection)
+SKIP_CATEGORY_DRY_RUN_PENDING   = "dry_run_pending"       # dry-run task running; benign race — auto-resolves
+SKIP_CATEGORY_DRY_RUN_MISSING   = "dry_run_missing"       # dry_run_state never set — silent leak, needs investigation
 SKIP_CATEGORY_ALREADY_EXECUTED  = "already_executed"      # raced ourselves
 SKIP_CATEGORY_AFTER_HOURS       = "equity_after_hours"    # equity intent outside US RTH
 SKIP_CATEGORY_OTHER             = "other"                 # anything not classified
