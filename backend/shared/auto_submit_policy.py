@@ -288,10 +288,14 @@ def _normalize_brain_to_stack(raw: str) -> str:
     return key
 
 
-def matches_tier_1(intent: dict, policy: dict | None = None) -> tuple[bool, str]:
+async def matches_tier_1(intent: dict, policy: dict | None = None) -> tuple[bool, str]:
     """Returns (matches, reason). Reason describes the first failing
     criterion when matches=False so the audit trail can show WHY a
-    given intent didn't auto-submit."""
+    given intent didn't auto-submit.
+
+    Async since 2026-06-19 so the equity market-hours gate can consult
+    the operator's Extended Hours Mongo toggle. Callers must `await`.
+    """
     p = policy or get_policy()
     if not p["enabled"]:
         return False, "auto_submit_policy_disabled"
@@ -305,9 +309,28 @@ def matches_tier_1(intent: dict, policy: dict | None = None) -> tuple[bool, str]
     # equity order placed outside US RTH; we hold those intents
     # rather than waste an MC receipt + API call + post-mortem row.
     # Crypto trades 24/7 on Kraken, so this gate is equity-only.
+    #
+    # 2026-06-19: respects the operator-flippable Extended Hours
+    # toggle (Mongo flag, set via `/api/admin/equity-extended-hours`).
+    # When ON, accepts equity intents during Webull's 4 AM – 8 PM ET
+    # extended-hours window M-F (still excludes weekends + holidays).
+    # Same flag RoadGuard consults — so the two layers stay coherent.
     if lane == "equity":
-        from shared.market_hours import is_equity_rth, market_hours_reason  # noqa: WPS433
-        if not is_equity_rth():
+        from shared.market_hours import (  # noqa: WPS433
+            is_equity_extended_hours,
+            is_equity_rth,
+            market_hours_reason,
+        )
+        # Async helper, but we're inside an async function (callers
+        # use `await _intent_passes_policy`).
+        from routes.equity_extended_hours_admin import (  # noqa: WPS433
+            get_equity_extended_hours_enabled,
+        )
+        extended = await get_equity_extended_hours_enabled()
+        if extended:
+            if not is_equity_extended_hours():
+                return False, "equity_after_hours_extended:" + market_hours_reason()
+        elif not is_equity_rth():
             return False, market_hours_reason()
     # 2026-02-20: brain name normalization. Intents may arrive with
     # the legacy stack code (alpha/camaro/chevelle/redeye), the
@@ -416,7 +439,7 @@ async def maybe_auto_submit(intent_id: str) -> dict[str, Any] | None:
             return None
 
         policy = get_policy()
-        ok, reason = matches_tier_1(intent, policy)
+        ok, reason = await matches_tier_1(intent, policy)
         if not ok:
             logger.debug("auto_submit skip %s: %s", intent_id, reason)
             await _write({

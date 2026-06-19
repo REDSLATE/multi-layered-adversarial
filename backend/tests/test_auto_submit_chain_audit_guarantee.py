@@ -48,7 +48,10 @@ async def _seed_eligible_intent(intent_id: str) -> None:
     set_policy(True)  # enable Shelly
     await db[SHARED_INTENTS].insert_one({
         "intent_id": intent_id,
-        "stack": "alpha",
+        # `camino` is the canonical brain_id in the live allowed_brains
+        # list (replaced legacy `alpha` 2026-02-19). Older tests still
+        # used `alpha` and broke silently once the rename landed.
+        "stack": "camino",
         "lane": "equity",
         "action": "BUY",
         "symbol": "AAL",
