@@ -41,8 +41,21 @@ class RoadGuard:
 
         # Market-hours check — equity only. Crypto is 24/7.
         if opinion.lane == "equity":
+            # Operator may have flipped on the extended-hours override
+            # via the Intents page (Mongo flag, no redeploy needed).
+            # When ON, RoadGuard accepts equity intents during Webull's
+            # full 4 AM – 8 PM ET window M-F (still excludes weekends
+            # and market holidays).
+            from routes.equity_extended_hours_admin import (  # noqa: WPS433
+                get_equity_extended_hours_enabled,
+            )
+            from shared.market_hours import is_equity_extended_hours  # noqa: WPS433
+            extended = await get_equity_extended_hours_enabled()
             market_open = self._is_market_open(opinion.evidence)
-            if market_open is False:  # explicit False, not "missing"
+            if extended:
+                if not is_equity_extended_hours():
+                    return RoadGuardVerdict(False, "market_closed_extended_hours_window")
+            elif market_open is False:  # explicit False, not "missing"
                 return RoadGuardVerdict(False, "market_closed")
 
         bp = opinion.evidence.get("buying_power")

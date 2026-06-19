@@ -23,6 +23,7 @@ import DoctrineStrip from "@/components/DoctrineStrip";
 import AutoRetireStrip from "@/components/AutoRetireStrip";
 import DoctrineHealthPanel from "@/components/DoctrineHealthPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
+import PipelineBlockerChip from "@/components/PipelineBlockerChip";
 import SeatRegistryDriftBanner from "@/components/SeatRegistryDriftBanner";
 import OperatorInjectIntent from "@/components/OperatorInjectIntent";
 import SubmitOrderModal from "@/components/SubmitOrderModal";
@@ -858,6 +859,13 @@ export default function Intents() {
           />
         </div>
       )}
+
+      {/* Pipeline blocker histogram — at-a-glance "why intents aren't
+          flowing" with one-tap fix links. Lives just above the filter
+          strip so it's the first thing the operator sees. */}
+      <PanelErrorBoundary panelName="Pipeline Blocker Chip" testid="panel-error-blocker-chip">
+        <PipelineBlockerChip />
+      </PanelErrorBoundary>
 
       {/* Filters */}
       <Card className="mb-4" testid="intents-filters">

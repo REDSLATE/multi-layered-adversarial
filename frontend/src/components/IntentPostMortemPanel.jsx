@@ -181,6 +181,65 @@ export default function IntentPostMortemPanel() {
 
   useEffect(() => { loadWebullFloor(); }, [loadWebullFloor]);
 
+  // ─── EXTENDED HOURS EQUITY TOGGLE (2026-06-19) ─────────────────
+  // Mongo flag. When ON, RoadGuard accepts equity intents during
+  // Webull's full 4 AM – 8 PM ET window M-F (still excludes weekends
+  // and market holidays). When OFF (default), only RTH (9:30-16:00 ET).
+  // Operator wanted this after watching a $1k short opportunity drift
+  // past at 8:12 PM ET with crypto firing fine but equity dead.
+  const [extHours, setExtHours] = useState({
+    loading: true, saving: false,
+    enabled: false, updated_at: null, updated_by: null, window_et: null,
+    error: null,
+  });
+
+  const loadExtHours = useCallback(async () => {
+    setExtHours((s) => ({ ...s, loading: true, error: null }));
+    try {
+      const res = await api.get("/admin/equity-extended-hours");
+      setExtHours({
+        loading: false, saving: false,
+        enabled: !!res.data.enabled,
+        updated_at: res.data.updated_at || null,
+        updated_by: res.data.updated_by || null,
+        window_et: res.data.window_et || null,
+        error: null,
+      });
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      setExtHours((s) => ({
+        ...s, loading: false,
+        error: typeof d === "string" ? d : JSON.stringify(d),
+      }));
+    }
+  }, []);
+
+  const toggleExtHours = useCallback(async () => {
+    const turningOn = !extHours.enabled;
+    const msg = turningOn
+      ? "Allow equity intents during EXTENDED HOURS (4 AM – 8 PM ET M-F)?\n\n" +
+        "Spreads are wider and liquidity is thinner outside RTH. " +
+        "Webull supports this window but will reject orders outside it.\n\n" +
+        "Proceed?"
+      : "Revert to RTH-ONLY (9:30 AM – 4:00 PM ET M-F)?\n\n" +
+        "Equity intents outside RTH will be blocked by RoadGuard with " +
+        "`market_closed`.\n\nProceed?";
+    if (!window.confirm(msg)) return;
+    setExtHours((s) => ({ ...s, saving: true, error: null }));
+    try {
+      await api.post("/admin/equity-extended-hours", { enabled: turningOn });
+      await loadExtHours();
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      setExtHours((s) => ({
+        ...s, saving: false,
+        error: typeof d === "string" ? d : JSON.stringify(d),
+      }));
+    }
+  }, [extHours.enabled, loadExtHours]);
+
+  useEffect(() => { loadExtHours(); }, [loadExtHours]);
+
   // 2026-02-21: hydrate the conf_min input from the live auto-submit
   // policy. Previously the input was seeded with a hardcoded `0.65`
   // on every page mount, so even after a successful ARM the operator
@@ -572,6 +631,82 @@ export default function IntentPostMortemPanel() {
             <div className="font-mono text-[10px] text-rd-danger flex items-start gap-1">
               <XCircle size={10} weight="bold" className="mt-0.5 shrink-0" />
               {webullFloor.error}
+            </div>
+          )}
+        </div>
+
+        {/* ─── EQUITY EXTENDED HOURS (2026-06-19) ────────────────
+            RoadGuard's RTH-only check blocks every equity intent
+            outside 9:30 AM – 4:00 PM ET — the operator missed a $1k
+            short opportunity at 8:12 PM ET because of this. This
+            toggle widens the window to Webull's full 4 AM – 8 PM ET
+            range M-F (still blocks weekends + market holidays).
+            Mongo-flippable, no redeploy. */}
+        <div
+          className="pt-1 border-t border-rd-border/40 space-y-1"
+          data-testid="extended-hours-toggle-block"
+        >
+          <div className="flex items-center gap-2">
+            <div className="flex-1 min-w-0">
+              <div className="font-mono text-[10px] uppercase tracking-widest text-rd-text font-bold flex items-center gap-1.5">
+                Equity extended hours
+                {extHours.loading ? (
+                  <span className="text-rd-dim font-normal normal-case tracking-normal">
+                    · loading…
+                  </span>
+                ) : (
+                  <span
+                    className={
+                      "px-1.5 py-0.5 border font-mono text-[9px] " +
+                      (extHours.enabled
+                        ? "border-rd-success text-rd-success"
+                        : "border-rd-dim text-rd-dim")
+                    }
+                    data-testid="extended-hours-state-badge"
+                  >
+                    {extHours.enabled ? "ON" : "OFF"}
+                  </span>
+                )}
+              </div>
+              <div className="font-mono text-[9px] text-rd-dim mt-0.5">
+                {extHours.enabled
+                  ? `Equity intents accepted ${extHours.window_et || "4 AM – 8 PM ET M-F"}. Spreads wider — risk is yours.`
+                  : "RTH only (9:30 AM – 4:00 PM ET M-F). Flip ON to trade pre-market / after-hours."}
+              </div>
+            </div>
+            <button
+              onClick={toggleExtHours}
+              disabled={extHours.loading || extHours.saving}
+              className={
+                "px-3 py-1 border-2 font-mono text-[10px] uppercase tracking-widest font-bold disabled:opacity-40 disabled:cursor-not-allowed " +
+                (extHours.enabled
+                  ? "border-rd-danger text-rd-danger hover:bg-rd-danger hover:text-rd-bg"
+                  : "border-rd-accent bg-rd-accent text-black hover:opacity-90")
+              }
+              data-testid="extended-hours-toggle-button"
+              title={
+                extHours.enabled
+                  ? "Revert to RTH-only equity trading"
+                  : "Widen equity to Webull's 4 AM – 8 PM ET window"
+              }
+            >
+              {extHours.saving
+                ? "Flipping…"
+                : extHours.enabled
+                  ? "Switch OFF"
+                  : "Switch ON"}
+            </button>
+          </div>
+          {extHours.updated_at && (
+            <div className="font-mono text-[9px] text-rd-dim">
+              last flip: {extHours.updated_at}
+              {extHours.updated_by ? ` · by ${extHours.updated_by}` : ""}
+            </div>
+          )}
+          {extHours.error && (
+            <div className="font-mono text-[10px] text-rd-danger flex items-start gap-1">
+              <XCircle size={10} weight="bold" className="mt-0.5 shrink-0" />
+              {extHours.error}
             </div>
           )}
         </div>

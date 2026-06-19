@@ -79,6 +79,11 @@ _MARKET_HOLIDAYS: frozenset[date] = frozenset({
 
 _RTH_OPEN = time(9, 30)
 _RTH_CLOSE = time(16, 0)
+# Webull supports extended-hours trading from 4:00 AM ET (pre-market open)
+# to 8:00 PM ET (after-hours close). Spreads are wider; risk is on the
+# operator. Gated by a Mongo flag — see `is_equity_extended_hours()`.
+_EXTENDED_OPEN = time(4, 0)
+_EXTENDED_CLOSE = time(20, 0)
 
 
 def _to_et(now_utc: Optional[datetime] = None) -> datetime:
@@ -117,6 +122,21 @@ def is_equity_rth(now_utc: Optional[datetime] = None) -> bool:
     if not _is_business_day(et.date()):
         return False
     return _RTH_OPEN <= et.time() < _RTH_CLOSE
+
+
+def is_equity_extended_hours(now_utc: Optional[datetime] = None) -> bool:
+    """True iff `now_utc` falls inside Webull's extended-hours window:
+    M-F 04:00–20:00 ET, excluding market holidays. Includes RTH.
+
+    Only consulted when the operator has flipped the
+    `runtime_flags.equity_extended_hours.enabled` Mongo flag ON via
+    the Intents page toggle. Default behavior remains RTH-only —
+    this function is the "wider window" boundary, NOT the toggle.
+    """
+    et = _to_et(now_utc)
+    if not _is_business_day(et.date()):
+        return False
+    return _EXTENDED_OPEN <= et.time() < _EXTENDED_CLOSE
 
 
 def next_rth_open_iso(now_utc: Optional[datetime] = None) -> str:
