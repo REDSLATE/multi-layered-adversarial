@@ -7,15 +7,30 @@ without re-input.
 Block reasons surfaced on PipelineReceipt.final_reason:
   seat_missing                  — no row for this lane's executor seat
   seat_disabled                 — operator flipped seat.enabled = False
+  brain_not_current_seat_holder — emitting brain is NOT the operator's
+                                  current pick in `brain_roster` (the
+                                  authoritative QSS surface). Trust
+                                  list is only a soft floor; the
+                                  roster is the hard authority.
   brain_not_trusted_for_seat    — emitting brain not in trust list
+                                  (defensive — kept as a second line
+                                  of defense in case the trust seed
+                                  drifts ahead of a roster swap)
   below_seat_confidence_min     — opinion.confidence < seat.confidence_min
+
+History (2026-06-19): added the current-seat-holder check after a
+Prod incident where Camino executed an equity SELL while Barracuda
+was the operator's pinned equity executor. Trust list still allowed
+Camino (legacy `roster_assign_mirror` rows accumulate but never
+revoke). The roster check closes that gap.
 """
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from db import db
 from namespaces import (
+    BRAIN_ROSTER,
     PARADOX_V2_SEAT_POLICY,
     PARADOX_V2_SEAT_TRUSTED,
 )
@@ -31,10 +46,39 @@ LANE_TO_EXECUTOR_SEAT: Dict[str, str] = {
     "crypto": "crypto_executor",
 }
 
+# Paradox v2 seat_id → canonical `brain_roster.assignments` key.
+# Bridges the two layers — the Paradox v2 trust/config uses
+# `equity_executor`/`crypto_executor`, while the canonical 8-seat
+# roster (which the operator's QSS panel writes) uses `executor` for
+# the equity executor and `crypto` for the crypto executor.
+SEAT_ID_TO_ROSTER_KEY: Dict[str, str] = {
+    "equity_executor": "executor",
+    "crypto_executor": "crypto",
+}
+
+
+async def _current_roster_holder(seat_id: str) -> Optional[str]:
+    """Return the brain currently pinned to the executor seat for this
+    lane in the canonical roster, or None if the slot is vacant.
+
+    This is the authoritative answer to "who may fire orders for this
+    lane right now?" — drives the hard `brain_not_current_seat_holder`
+    block in SeatPolicy.evaluate(). Read-only; never writes."""
+    roster_key = SEAT_ID_TO_ROSTER_KEY.get(seat_id)
+    if not roster_key:
+        return None
+    doc = await db[BRAIN_ROSTER].find_one(
+        {"_id": "current"}, {"_id": 0, "assignments": 1},
+    )
+    if not doc:
+        return None
+    return ((doc.get("assignments") or {}).get(roster_key)) or None
+
 
 class SeatPolicy:
     """Stateless wrapper around `paradox_v2_seat_policy_config` +
-    `paradox_v2_seat_trusted_brains`. Constructed once per request."""
+    `paradox_v2_seat_trusted_brains` + `brain_roster`. Constructed
+    once per request."""
 
     async def evaluate(self, opinion: BrainOpinion) -> SeatVerdict:
         seat_id = LANE_TO_EXECUTOR_SEAT.get(opinion.lane)
@@ -63,6 +107,33 @@ class SeatPolicy:
             return SeatVerdict(
                 decision="BLOCK",
                 reason="seat_disabled",
+                autonomy_mode=autonomy_mode,
+                notional_usd=0.0,
+            )
+
+        # 🔒 Hard authority check — the operator's CURRENT pick in
+        # `brain_roster` is the only brain that may fire orders for
+        # this lane's executor seat. Trust list is only a soft floor
+        # (kept as a defensive second check below). This was added
+        # 2026-06-19 after Camino executed a Prod equity SELL while
+        # Barracuda was the operator's pinned equity executor — the
+        # legacy `roster_assign_mirror` trust entries accumulate but
+        # never revoke, so SeatPolicy needed a roster-aware gate.
+        current_holder = await _current_roster_holder(seat_id)
+        if not current_holder:
+            return SeatVerdict(
+                decision="BLOCK",
+                reason=f"executor_seat_vacant:{seat_id}",
+                autonomy_mode=autonomy_mode,
+                notional_usd=0.0,
+            )
+        if current_holder != opinion.brain_id:
+            return SeatVerdict(
+                decision="BLOCK",
+                reason=(
+                    f"brain_not_current_seat_holder:"
+                    f"{opinion.brain_id}!={current_holder}@{seat_id}"
+                ),
                 autonomy_mode=autonomy_mode,
                 notional_usd=0.0,
             )
