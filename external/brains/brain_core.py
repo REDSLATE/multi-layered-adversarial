@@ -125,6 +125,13 @@ class NeutralAdversarialBrain:
             self.min_gap = min_gap
         self.max_shadow_size = max_shadow_size
         self.doctrine = doctrine  # may be None for legacy callers
+        # 2026-06-19 — operator-tunable overrides. The compiled defaults
+        # above are PRE-override values. Each evaluate() consults the
+        # in-process `brain_tuning_cache`; non-None values replace the
+        # compiled threshold for the lifetime of that call. The cache
+        # is refreshed by a 30s background task in lifespan, so a UI
+        # flip propagates within one tick. Defaults unchanged on a
+        # missing override.
 
     def evaluate(
         self,
@@ -193,20 +200,30 @@ class NeutralAdversarialBrain:
         reasoning.append(f"Top hypothesis: {winner.name}")
         reasoning.append(f"Score gap: {gap:.3f}")
 
-        if winner.score < self.min_commitment:
+        # 2026-06-19: resolve effective thresholds (operator override
+        # > compiled default). Lookup is sync + cached, ~zero cost.
+        try:
+            from shared.brain_tuning_cache import get_override  # noqa: WPS433
+            eff_min_commitment = get_override(self.lane, "min_confidence") or self.min_commitment
+            eff_min_gap = get_override(self.lane, "min_gap") or self.min_gap
+        except Exception:  # noqa: BLE001
+            eff_min_commitment = self.min_commitment
+            eff_min_gap = self.min_gap
+
+        if winner.score < eff_min_commitment:
             # 2026-02-21: was emitting OBSERVE here — but OBSERVE is no
             # longer a direction action (it's a market_quality_score).
             # Below-commitment means "no conviction" → HOLD instead.
             final_action: Action = "HOLD"
             final_confidence = winner.score
             reasoning.append(
-                f"Commitment below floor {self.min_commitment:.2f}; emitting HOLD.",
+                f"Commitment below floor {eff_min_commitment:.2f}; emitting HOLD.",
             )
-        elif gap < self.min_gap:
+        elif gap < eff_min_gap:
             final_action = "HOLD"
             final_confidence = winner.score
             reasoning.append(
-                f"Conflict gap below {self.min_gap:.2f}; emitting HOLD.",
+                f"Conflict gap below {eff_min_gap:.2f}; emitting HOLD.",
             )
         else:
             final_action = winner.action

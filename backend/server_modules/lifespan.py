@@ -199,6 +199,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("exposure_caps refresh failed (non-fatal): %s", e)
 
+    # Brain-tuning override cache (2026-06-19). Background refresher
+    # pulls the runtime_flags.brain_tuning override every 30s so
+    # brain_core sees operator threshold flips within one tick.
+    try:
+        from shared.brain_tuning_cache import (
+            refresh_cache as _refresh_brain_tuning,
+            start_refresher_if_needed as _start_brain_tuning_refresher,
+        )
+        await _refresh_brain_tuning()
+        _start_brain_tuning_refresher()
+        logger.info("brain_tuning cache refresher started (TTL=30s)")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("brain_tuning cache start failed (non-fatal): %s", e)
+
+
     # Auto-submit policy — hydrate persisted override from Mongo so
     # the operator's toggle survives pod restarts. Without this,
     # `_POLICY_OVERRIDE` resets to {} on every boot and Shelly
@@ -601,6 +616,11 @@ async def lifespan(app: FastAPI):
             stop_worker as _stop_shadow_close_cron,
         )
         await _stop_shadow_close_cron()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from shared.brain_tuning_cache import stop_refresher as _stop_brain_tuning_refresher
+        await _stop_brain_tuning_refresher()
     except Exception:  # noqa: BLE001
         pass
     client.close()

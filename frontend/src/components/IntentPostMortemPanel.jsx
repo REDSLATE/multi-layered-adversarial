@@ -240,6 +240,88 @@ export default function IntentPostMortemPanel() {
 
   useEffect(() => { loadExtHours(); }, [loadExtHours]);
 
+  // ─── BRAIN TUNING OVERRIDE (2026-06-19) ─────────────────────────
+  // The doctrine knobs the operator can flip from the phone when the
+  // brains are too HOLD-heavy. `min_gap` = how big the directional
+  // composite advantage must be to beat HOLD. `min_confidence` =
+  // floor below which HOLD is forced. Compiled defaults are
+  // equity{gap=0.06, conf=0.58} / crypto{gap=0.03, conf=0.58}.
+  // Lowering either widens the "fire" zone — more BUY/SELL intents.
+  const [brainTuning, setBrainTuning] = useState({
+    loading: true, saving: false, error: null,
+    overrides: {}, bounds: null, defaults_note: null,
+    updated_at: null, updated_by: null,
+    // Local edit buffers — keyed by lane:knob.
+    draftEqGap: "", draftEqConf: "",
+  });
+
+  const loadBrainTuning = useCallback(async () => {
+    setBrainTuning((s) => ({ ...s, loading: true, error: null }));
+    try {
+      const res = await api.get("/admin/brain-tuning");
+      const eq = (res.data?.overrides || {}).equity || {};
+      setBrainTuning((s) => ({
+        ...s,
+        loading: false, saving: false,
+        overrides: res.data?.overrides || {},
+        bounds: res.data?.bounds || null,
+        defaults_note: res.data?.defaults_note || null,
+        updated_at: res.data?.updated_at || null,
+        updated_by: res.data?.updated_by || null,
+        draftEqGap: eq.min_gap !== undefined ? String(eq.min_gap) : "",
+        draftEqConf: eq.min_confidence !== undefined ? String(eq.min_confidence) : "",
+      }));
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      setBrainTuning((s) => ({
+        ...s, loading: false,
+        error: typeof d === "string" ? d : JSON.stringify(d),
+      }));
+    }
+  }, []);
+
+  const saveBrainTuning = useCallback(async () => {
+    const eqGap = brainTuning.draftEqGap.trim();
+    const eqConf = brainTuning.draftEqConf.trim();
+    const body = { equity: {} };
+    if (eqGap !== "") {
+      const v = Number(eqGap);
+      if (Number.isFinite(v)) body.equity.min_gap = v;
+    }
+    if (eqConf !== "") {
+      const v = Number(eqConf);
+      if (Number.isFinite(v)) body.equity.min_confidence = v;
+    }
+    setBrainTuning((s) => ({ ...s, saving: true, error: null }));
+    try {
+      await api.post("/admin/brain-tuning", body);
+      await loadBrainTuning();
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      setBrainTuning((s) => ({
+        ...s, saving: false,
+        error: typeof d === "string" ? d : JSON.stringify(d),
+      }));
+    }
+  }, [brainTuning.draftEqGap, brainTuning.draftEqConf, loadBrainTuning]);
+
+  const resetBrainTuning = useCallback(async () => {
+    if (!window.confirm("Reset equity brain tuning to compiled defaults (gap=0.06, conf=0.58)?")) return;
+    setBrainTuning((s) => ({ ...s, saving: true, error: null }));
+    try {
+      await api.post("/admin/brain-tuning", { equity: {} });
+      await loadBrainTuning();
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      setBrainTuning((s) => ({
+        ...s, saving: false,
+        error: typeof d === "string" ? d : JSON.stringify(d),
+      }));
+    }
+  }, [loadBrainTuning]);
+
+  useEffect(() => { loadBrainTuning(); }, [loadBrainTuning]);
+
   // 2026-02-21: hydrate the conf_min input from the live auto-submit
   // policy. Previously the input was seeded with a hardcoded `0.65`
   // on every page mount, so even after a successful ARM the operator
@@ -707,6 +789,106 @@ export default function IntentPostMortemPanel() {
             <div className="font-mono text-[10px] text-rd-danger flex items-start gap-1">
               <XCircle size={10} weight="bold" className="mt-0.5 shrink-0" />
               {extHours.error}
+            </div>
+          )}
+        </div>
+
+        {/* ─── BRAIN TUNING OVERRIDE (2026-06-19) ─────────────────
+            "Too conservative" tuner. Compiled equity defaults are
+            min_gap=0.06 / min_confidence=0.58 — the brains' hold-vs-
+            fire thresholds. Lower either to widen the "fire" zone
+            so more BUY/SELL intents leave HOLD limbo. Backed by
+            runtime_flags.brain_tuning; brain_core hits a 30s cache
+            so a UI flip propagates within one tick. */}
+        <div
+          className="pt-1 border-t border-rd-border/40 space-y-1.5"
+          data-testid="brain-tuning-block"
+        >
+          <div className="flex items-baseline justify-between gap-2">
+            <div className="font-mono text-[10px] uppercase tracking-widest text-rd-text font-bold">
+              Brain tuning · equity
+            </div>
+            <div className="font-mono text-[9px] text-rd-dim">
+              defaults: gap 0.06 · conf 0.58
+            </div>
+          </div>
+          <div className="font-mono text-[9px] text-rd-dim">
+            Lower either to relax HOLD bias.{" "}
+            Bounds: gap 0.005–0.30, conf 0.30–0.95.
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="font-mono text-[9px] uppercase tracking-wider text-rd-dim">
+                min_gap
+              </span>
+              <input
+                type="number"
+                step="0.005"
+                min="0.005"
+                max="0.30"
+                value={brainTuning.draftEqGap}
+                placeholder="(use default)"
+                onChange={(e) => setBrainTuning((s) => ({ ...s, draftEqGap: e.target.value }))}
+                className="w-full mt-0.5 bg-rd-bg border border-rd-border px-2 py-1 text-rd-text font-mono text-[11px] placeholder:text-rd-dim focus:outline-none focus:border-rd-accent"
+                data-testid="brain-tuning-eq-min-gap-input"
+              />
+            </label>
+            <label className="block">
+              <span className="font-mono text-[9px] uppercase tracking-wider text-rd-dim">
+                min_confidence
+              </span>
+              <input
+                type="number"
+                step="0.01"
+                min="0.30"
+                max="0.95"
+                value={brainTuning.draftEqConf}
+                placeholder="(use default)"
+                onChange={(e) => setBrainTuning((s) => ({ ...s, draftEqConf: e.target.value }))}
+                className="w-full mt-0.5 bg-rd-bg border border-rd-border px-2 py-1 text-rd-text font-mono text-[11px] placeholder:text-rd-dim focus:outline-none focus:border-rd-accent"
+                data-testid="brain-tuning-eq-min-conf-input"
+              />
+            </label>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={saveBrainTuning}
+              disabled={brainTuning.loading || brainTuning.saving}
+              className="px-3 py-1 border-2 border-rd-accent bg-rd-accent text-black font-mono text-[10px] uppercase tracking-widest font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90"
+              data-testid="brain-tuning-save-button"
+            >
+              {brainTuning.saving ? "Saving…" : "Save override"}
+            </button>
+            <button
+              onClick={resetBrainTuning}
+              disabled={brainTuning.loading || brainTuning.saving}
+              className="px-3 py-1 border border-rd-border text-rd-dim hover:text-rd-text hover:border-rd-accent font-mono text-[10px] uppercase tracking-widest disabled:opacity-40"
+              data-testid="brain-tuning-reset-button"
+              title="Reset equity tuning to compiled defaults"
+            >
+              Reset to defaults
+            </button>
+          </div>
+          {(brainTuning.overrides?.equity?.min_gap !== undefined ||
+            brainTuning.overrides?.equity?.min_confidence !== undefined) && (
+            <div className="font-mono text-[9px] text-rd-accent">
+              ✓ active override:
+              {brainTuning.overrides?.equity?.min_gap !== undefined &&
+                ` gap=${brainTuning.overrides.equity.min_gap}`}
+              {brainTuning.overrides?.equity?.min_confidence !== undefined &&
+                ` conf=${brainTuning.overrides.equity.min_confidence}`}
+            </div>
+          )}
+          {brainTuning.updated_at && (
+            <div className="font-mono text-[9px] text-rd-dim">
+              last flip: {brainTuning.updated_at}
+              {brainTuning.updated_by ? ` · by ${brainTuning.updated_by}` : ""}
+            </div>
+          )}
+          {brainTuning.error && (
+            <div className="font-mono text-[10px] text-rd-danger flex items-start gap-1">
+              <XCircle size={10} weight="bold" className="mt-0.5 shrink-0" />
+              {brainTuning.error}
             </div>
           )}
         </div>
