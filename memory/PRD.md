@@ -1,3 +1,55 @@
+## 2026-02-20 (Camino + Barracuda crypto bridges — full 4×2 matrix locked)
+
+### Operator question (verbatim)
+> "Add equity bridges for Camino and barracuda on crypto. Are GTO
+> and Hellcat locked in on both lanes as well?"
+
+### Answer (audit)
+| Brain | Crypto | Equity |
+|-------|--------|--------|
+| camino    | NEW: /api/admin/camino/crypto-bridge    | /api/admin/camino/equity-bridge |
+| barracuda | NEW: /api/admin/barracuda/crypto-bridge | /api/admin/barracuda/equity-bridge |
+| hellcat   | /api/admin/hellcat/bridge (legacy)      | /api/admin/hellcat/equity-bridge |
+| gto       | /api/admin/redeye/bridge  (legacy)      | /api/admin/gto/equity-bridge |
+
+Yes — GTO + Hellcat were already locked on both lanes before this
+patch (legacy crypto bridges plus the factory-generated equity
+bridges). Camino + Barracuda needed the two crypto bridges added,
+which closes the matrix.
+
+### What shipped
+- `shared/crypto_intent_bridges.py` — factory-generated bridges for
+  camino (`alpha-crypto-` prefix) + barracuda (`camaro-crypto-`).
+  GTO/Hellcat intentionally NOT regenerated here to avoid route
+  collisions with the legacy bridges.
+- Routes wired in `server_modules/router_registry.py` via a single
+  loop over `CRYPTO_ROUTERS`.
+
+### Tests
+- New: `tests/test_crypto_intent_bridges_2026_02_20.py` (5 tests).
+- Coverage: research evidence on each brain, lane-scoped authority
+  rotation (stub camino-seat → both intents route to camino), HOLD
+  refusal, equity-symbol refusal.
+- 47 tests green across the entire research + bridge + priority +
+  dry-run sweep.
+
+### Live verification — full 4×2 matrix emitted in one pass
+- camino × crypto (BTC/USD SELL): kraken_pro/1h/120 ✓
+- barracuda × crypto (ETH/USD SELL): kraken_pro/1h/120 ✓
+- hellcat × equity (A BUY): finnhub_equity/1d/120, score 0.7 ✓
+- gto × equity (A BUY): finnhub_equity/1d/120, score 0.7 ✓
+- camino × equity (A BUY): finnhub_equity/1d/120, score 0.7 ✓
+- barracuda × equity (A BUY): finnhub_equity/1d/120, score 0.7 ✓
+- GTO legacy crypto bridge regression: stamps barracuda authority ✓
+
+Every intent stamped `requires_final_authority: barracuda` (current
+holder of BOTH execute seats). Lane-scoped routing confirmed across
+all eight bridges. Brain identity (stack) and execution authority
+remain independent — exactly the doctrine the operator pinned.
+
+---
+
+
 ## 2026-02-20 (bar source priority — brokers primary, alts back up)
 
 ### Operator pin (verbatim)
