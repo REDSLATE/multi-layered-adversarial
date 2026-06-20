@@ -1,3 +1,72 @@
+## 2026-02-20 (GTO/BTC research evidence wiring — first runtime live)
+
+### Operator pin
+> "GTO runtime builds features → Scores research strategies → Attaches
+> research_signals to intent evidence → Intent row displays strategy
+> chips → Post-mortem can explain brain score + research score."
+
+### What shipped
+
+**Backend — GTO/redeye crypto bridge:**
+- `shared/redeye_crypto_intent_bridge.py::build_redeye_crypto_intent`
+  now calls `_attach_research_evidence(intent)` by default. The helper:
+  - Loads 120 most-recent 1h bars via `shared.research.bar_source.load_recent_bars`
+  - Builds a `MarketFeatureFrame` (reuses spread_bps if the brain's
+    `source_doc` carries one)
+  - Runs every strategy in `STRATEGIES["crypto"]` (today: `crypto_breakdown_v1`)
+  - Stamps the signals into `intent["evidence"]["research_signals"]`
+- Best-effort: bar source crash / no bars on file → `research_status`
+  set to `error` / `no_bars_on_file`, signals=[], intent flows
+  cleanly. Research is evidence, never a blocker.
+- New `attach_research=False` opt-out for tests that don't want to
+  mock the bar source.
+
+**Backend — bar source extracted:**
+- New `shared/research/bar_source.py` holds the single load helper.
+  Both `routes/research.py` and the GTO bridge use it.
+
+**Frontend — chips in the post-mortem trace view:**
+- New `frontend/src/components/ResearchSignalsBlock.jsx` renders
+  research evidence as colored chips (green BUY, red SELL, slate HOLD)
+  with strategy_id, score, and reason tags.
+- `IntentPostMortemPanel.jsx` mounts the block beneath the intent
+  summary inside the per-intent trace view. Visible for any intent
+  whose `evidence.research_signals` is populated; absent (zero render)
+  for older intents that pre-date the wiring.
+- `data-testid="research-signals-block"` + per-chip testids
+  (`research-chip-<strategy_id>`) for downstream test automation.
+
+### Doctrine (pinned by tests)
+- Strategy Lab can score → Research Layer module produces signals.
+- Brains can opine → bridge writes ONLY into `evidence.research_signals`.
+  `action`, `confidence`, `executed`, `gate_state` never touched.
+- Seats can execute → bridge still requires the crypto seat holder;
+  research evidence does not influence `requires_final_authority`.
+- RoadGuard can stop → research never sets a pipeline key.
+
+### Tests
+- New: `tests/test_redeye_bridge_research_evidence_2026_02_20.py` (5 tests).
+- Covers: normal attach, no-bars fallback, exception containment,
+  `attach_research=False` opt-out, contrarian-action isolation
+  (SELL evidence does not mutate a BUY intent).
+- 39 research + auto-submit tests green together.
+
+### Live smoke
+- `POST /api/admin/redeye/bridge/emit BTC/USD SELL conf=0.69`
+  → `allowed:true`, intent persisted, evidence contains
+  `crypto_breakdown_v1 HOLD score=0.45 reasons=[below_vwap, weak_rsi]`.
+- `GET /api/admin/intents/<intent_id>/trace`
+  → returns the research evidence cleanly under `intent.evidence`.
+
+### Next phase
+- Wire Hellcat/ETH runtime next (the user noted that's where the
+  live crypto SELL signal appeared).
+- Render chips on aggregated post-mortem rows (currently only on the
+  per-intent trace) when the aggregator exposes the latest signal.
+
+---
+
+
 ## 2026-02-20 (Research Layer — read-only Strategy Lab feeding Paradox)
 
 ### Operator pin

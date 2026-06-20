@@ -65,6 +65,7 @@ async def build_redeye_crypto_intent(
     confidence: float,
     thesis: str,
     source_doc: Optional[dict] = None,
+    attach_research: bool = True,
 ) -> dict:
     """Compose a properly-shaped MC intent for REDEYE on the crypto
     lane. Returns the dict — does NOT persist.
@@ -75,6 +76,13 @@ async def build_redeye_crypto_intent(
       * action='HOLD' is forbidden — bridge refuses to promote HOLDs.
       * `may_execute=False` and `requires_gate_pass=True` are pinned;
         the gate chain still owns the execute decision.
+      * `attach_research=True` (default) stamps the Research Layer's
+        Strategy Lab evidence onto `intent["evidence"]["research_signals"]`.
+        Read-only by construction — see shared/research/paradox_bridge.
+        The intent's `action` / `confidence` / pipeline fields are NEVER
+        touched by the research call. If bar loading fails for any
+        reason, the intent still emits cleanly — research evidence is
+        nice-to-have, not load-bearing.
     """
     sym = symbol.upper().strip()
     if action.upper() == "HOLD":
@@ -90,7 +98,7 @@ async def build_redeye_crypto_intent(
 
     final_authority = await _crypto_final_authority()
     now = _now_iso()
-    return {
+    intent = {
         "intent_id": f"redeye-crypto-{action.lower()}-{uuid.uuid4().hex}",
         "stack": "gto",                  # MC's emitting-brain field
         "source": "gto",                 # snippet alias
@@ -133,6 +141,65 @@ async def build_redeye_crypto_intent(
         "ingest_ts": now,
         "ingest_method": "redeye_crypto_bridge",
     }
+
+    if attach_research:
+        await _attach_research_evidence(intent)
+
+    return intent
+
+
+async def _attach_research_evidence(intent: dict) -> None:
+    """Stamp Research Layer evidence onto `intent["evidence"]["research_signals"]`.
+
+    Best-effort: any failure during bar loading / feature build /
+    scoring is swallowed and logged into the evidence block as a
+    `research_error` field. The intent still flows — we never block
+    emit on the read-only research surface.
+    """
+    import logging
+    logger = logging.getLogger("risedual.redeye_crypto_intent_bridge")
+    try:
+        from shared.research import (
+            attach_research_to_intent,
+            build_features,
+            score_strategies,
+        )
+        from shared.research.bar_source import load_recent_bars
+
+        bars, src = await load_recent_bars(intent["symbol"], tf="1h", limit=120)
+        if not bars:
+            intent.setdefault("evidence", {})["research_signals"] = []
+            intent["evidence"]["research_status"] = "no_bars_on_file"
+            return
+
+        # Spread snippet — the gate chain may have set a spread on the
+        # intent (via doctrine snapshot enrichment); if so we honor it
+        # so the wide-spread penalty in `crypto_breakdown` activates.
+        spread_bps = (
+            intent.get("evidence", {}).get("source_doc", {}).get("spread_bps")
+            or intent.get("spread_bps")
+        )
+        try:
+            spread_bps = float(spread_bps) if spread_bps is not None else None
+        except (TypeError, ValueError):
+            spread_bps = None
+
+        features = build_features(
+            intent["symbol"], intent["lane"], bars, spread_bps=spread_bps,
+        )
+        signals = score_strategies(features)
+        attach_research_to_intent(intent, signals)
+        intent["evidence"]["research_status"] = "ok"
+        intent["evidence"]["research_source"] = src
+        intent["evidence"]["research_bars_used"] = len(bars)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "redeye bridge: research evidence attach failed symbol=%s err=%s",
+            intent.get("symbol"), e,
+        )
+        intent.setdefault("evidence", {})["research_signals"] = []
+        intent["evidence"]["research_status"] = "error"
+        intent["evidence"]["research_error"] = str(e)[:200]
 
 
 CRYPTO_BASES = {

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Crosshair, ArrowsClockwise, Warning, CheckCircle, XCircle, MagnifyingGlass, Lightning, Power } from "@phosphor-icons/react";
 import FunnelDeltasTile from "./FunnelDeltasTile";
+import { ResearchSignalsBlock } from "./ResearchSignalsBlock";
 
 /**
  * IntentPostMortemPanel — the smoking-gun tile.
@@ -1245,6 +1246,10 @@ export default function IntentPostMortemPanel() {
                     lane={traceState.result.intent.lane} executed={String(traceState.result.intent.executed)}
                   </div>
                 )}
+                <ResearchSignalsBlock
+                  evidence={traceState.result.intent?.evidence}
+                  data-testid="intent-trace-research-signals"
+                />
                 <div className="text-rd-dim text-[9px] uppercase mt-1">timeline</div>
                 <div className="space-y-0.5 max-h-60 overflow-y-auto">
                   {(traceState.result.timeline || []).map((ev, i) => (

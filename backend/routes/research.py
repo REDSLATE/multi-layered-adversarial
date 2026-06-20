@@ -18,9 +18,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth import get_current_user
-from db import db
-from namespaces import SHARED_OHLCV_BARS
 from shared.research.backtest import backtest_strategy
+from shared.research.bar_source import load_recent_bars
 from shared.research.features import build_features
 from shared.research.strategy_lab import (
     STRATEGIES,
@@ -33,33 +32,12 @@ from shared.research.strategy_lab import (
 router = APIRouter(prefix="/research", tags=["research"])
 
 
-_SOURCE_PRIORITY = ["kraken_pro", "thinkorswim", "manual"]
 _VALID_TFS = frozenset({"1m", "5m", "15m", "1h", "4h", "1d"})
 _VALID_LANES = frozenset({"equity", "crypto"})
 
 
-async def _pick_source(symbol: str, tf: str) -> Optional[str]:
-    sources = await db[SHARED_OHLCV_BARS].distinct(
-        "source", {"symbol": symbol, "tf": tf},
-    )
-    if not sources:
-        return None
-    for s in _SOURCE_PRIORITY:
-        if s in sources:
-            return s
-    return sources[0]
-
-
 async def _load_bars(symbol: str, tf: str, limit: int) -> tuple[list[dict], Optional[str]]:
-    src = await _pick_source(symbol, tf)
-    if not src:
-        return [], None
-    rows = await db[SHARED_OHLCV_BARS].find(
-        {"symbol": symbol, "tf": tf, "source": src},
-        {"_id": 0, "ts": 1, "o": 1, "h": 1, "l": 1, "c": 1, "v": 1},
-    ).sort("ts", -1).to_list(limit)
-    rows.reverse()
-    return rows, src
+    return await load_recent_bars(symbol, tf=tf, limit=limit)
 
 
 def _validate_lane_tf(lane: str, tf: str) -> None:
@@ -82,6 +60,8 @@ async def research_health(
     """Smoke check — module imports + reachable bar source distinct
     list. Cheap enough to be polled by the frontend on panel mount.
     """
+    from db import db
+    from namespaces import SHARED_OHLCV_BARS
     try:
         any_source = await db[SHARED_OHLCV_BARS].find_one(
             {}, {"_id": 0, "source": 1},
