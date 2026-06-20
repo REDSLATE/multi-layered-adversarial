@@ -141,7 +141,20 @@ async def _run_dry_run_then_auto_submit(intent_id: str, actor: str) -> None:
         submit_attempted = True
         await maybe_auto_submit(intent_id)
     except Exception as e:  # noqa: BLE001
-        logger.warning("auto_submit chain failed for %s: %s", intent_id, e)
+        # 2026-02-20: capture STRUCTURED receipt instead of just the
+        # `repr(e)` blob. Operator can now group the 61 `internal_error`
+        # rows by `exception_type` and see which Python error is
+        # actually killing trades.
+        from shared.auto_submit_receipt import build_receipt
+        receipt = build_receipt(
+            intent_id,
+            stage=("post_dry_run" if submit_attempted else "in_dry_run"),
+            exc=e,
+        )
+        logger.warning(
+            "auto_submit chain failed intent=%s stage=%s type=%s msg=%s",
+            intent_id, receipt.stage, receipt.exception_type, receipt.exception_message,
+        )
         # Only write the catch-all when the failure happened *outside*
         # maybe_auto_submit's own audit envelope. If submit_attempted
         # is True the failure was inside maybe_auto_submit, which has
@@ -153,15 +166,13 @@ async def _run_dry_run_then_auto_submit(intent_id: str, actor: str) -> None:
         try:
             from db import db as _db  # noqa: WPS433
             from namespaces import SHARED_GATE_RESULTS  # noqa: WPS433
-            await _db[SHARED_GATE_RESULTS].insert_one({
-                "intent_id": intent_id,
-                "kind": "auto_submit_failed",
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "by": "auto_submit_tier_1",
-                "reason": f"chain raised before audit: {type(e).__name__}: {str(e)[:400]}",
-                "skip_category": "internal_error",
-                "phase": "post_dry_run" if submit_attempted else "in_dry_run",
-            })
+            await _db[SHARED_GATE_RESULTS].insert_one(
+                receipt.to_row(
+                    kind="auto_submit_failed",
+                    skip_category="internal_error",
+                    actor="auto_submit_tier_1",
+                ) | {"phase": receipt.stage}
+            )
         except Exception:  # noqa: BLE001
             # last-ditch — if even the audit write fails, we accept
             # the loss; logs still carry the exception.

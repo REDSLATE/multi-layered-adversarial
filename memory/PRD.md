@@ -1,3 +1,92 @@
+## 2026-02-20 (Auto-submit receipts + RoadGuard Webull close-buffer)
+
+### Operator pin
+> "internal_error is useless. You need internal_error: KeyError: broker_id"
+> "REPLAY 1 GHOST INTENTS → REPLAY 61 FAILURES"
+> "That should become a RoadGuard pre-submit block, not a Webull
+> adapter surprise."
+
+### What shipped
+
+**Structured AutoSubmitReceipt (the biggest debugging win)**
+- New `shared/auto_submit_receipt.py::AutoSubmitReceipt` dataclass:
+  `intent_id`, `stage`, `exception_type`, `exception_message`,
+  `traceback`. Persisted as top-level columns on the
+  `shared_gate_results` row so the aggregator can group by
+  `exception_type` natively.
+- Both catch-all sites in the auto-submit chain now write structured
+  receipts:
+  * `shared/auto_submit_policy.py::maybe_auto_submit` — `stage="submit_call"`
+    + `submit_raised` skip_category (the Webull HTTP-error path).
+  * `shared/auto_submit_policy.py::maybe_auto_submit` outer catch —
+    `stage="auto_submit_body"` + `internal_error`.
+  * `shared/intents.py::_run_dry_run_then_auto_submit` chain
+    catch-all — `stage="post_dry_run"` or `"in_dry_run"` +
+    `internal_error`.
+- Traceback tail captured (max 2000 chars) — the per-intent trace
+  endpoint surfaces it for one-click root-cause.
+
+**Failure breakdown + batch replay**
+- New `GET /api/admin/intents/auto-submit-failures/breakdown?hours=`
+  groups failures by `exception_type` / `skip_category` / `stage`.
+  Operator can see at a glance: "337 × HTTP 417 Webull" vs
+  "8 × TypeError tuple-unpack" — TWO different bugs, not one
+  mystery blob.
+- New `POST /api/admin/intents/replay-auto-submit-failures` —
+  re-runs the chain on every failed intent in the last N hours so
+  legacy-row failures get re-stamped with structured receipts.
+- Post-mortem aggregator extended: when a row carries
+  `exception_type`, it gets a SECOND `top_blockers` bucket keyed by
+  that type (`auto_submit_fail_exc:KeyError`). One-line legacy
+  rows still group under the legacy bucket.
+
+**RoadGuard Webull close-buffer (eliminates 337-failure cluster)**
+- `shared/pipeline/roadguard.py::_within_webull_core_close_buffer()`
+  helper — true when the wall clock is within
+  `WEBULL_CLOSE_BUFFER_SECONDS` (default 90) of regular equity close.
+- New verdict: `WEBULL_CORE_MARKET_ORDER_CLOSE_BUFFER`. Fires after
+  the existing market_closed check, BEFORE the broker submit.
+- Skipped for crypto lane (24/7) and when Extended Hours toggle is
+  ON (LIMIT orders outside CORE don't trip Webull's clock check).
+- Adapter-level guard (added earlier in the same session) REMOVED
+  — per operator pin "RoadGuard pre-submit block, not a Webull
+  adapter surprise."
+- Configurable: `WEBULL_CLOSE_BUFFER_SECONDS=120` widens the buffer
+  without a redeploy. `WEBULL_CLOSE_BUFFER_SECONDS=0` disables.
+
+### Tests
+- New: `tests/test_auto_submit_receipt_2026_02_20.py` (8 tests).
+- New: `tests/test_roadguard_webull_close_buffer_2026_02_20.py` (7 tests).
+- Existing fractional-order tests still green (no RTH stub needed
+  now that the guard lives in RoadGuard, not the adapter).
+- 120 tests green across the full sweep.
+
+### Live verification
+- `GET /api/admin/intents/auto-submit-failures/breakdown?hours=72`
+  surfaced the exact breakdown in production data:
+    `submit_raised: 337` (Webull HTTP 417)
+    `internal_error: 8` (TypeError tuple-unpack)
+- After this patch:
+  * The 337 Webull failures will now be PREVENTED upstream by
+    RoadGuard with verdict `WEBULL_CORE_MARKET_ORDER_CLOSE_BUFFER` —
+    visible cleanly in the post-mortem instead of a broker-roundtrip
+    HTTP 417.
+  * The 8 TypeErrors keep failing with their existing traceback
+    capture — operator can chase them one-by-one with the new
+    structured `exception_type` + `traceback` fields.
+
+### Doctrine pins
+- `WEBULL_CLOSE_BUFFER_SECONDS` defaults to 90s (operator pin:
+  "Better to miss one late $1 trade than throw hundreds of broker
+  rejects").
+- RoadGuard owns the time gate; the adapter trusts what RoadGuard
+  let through.
+- Receipt writer's `exception_type` and `stage` are TOP-LEVEL
+  columns so the aggregator can group on them without parsing.
+
+---
+
+
 ## 2026-02-20 (Verifier Rule Sheet + Brain Report Cards + Setup Memory)
 
 ### Operator pin

@@ -522,15 +522,17 @@ async def maybe_auto_submit(intent_id: str) -> dict[str, Any] | None:
         try:
             result = await execution_submit(submit_body, user=auto_user)
         except Exception as e:  # noqa: BLE001
+            from shared.auto_submit_receipt import build_receipt
+            receipt = build_receipt(intent_id, stage="submit_call", exc=e)
             logger.warning(
-                "auto_submit submit-stage raised intent=%s err=%s", intent_id, e,
+                "auto_submit submit-stage raised intent=%s err=%s:%s",
+                intent_id, receipt.exception_type, receipt.exception_message,
             )
-            await _write({
-                "kind": "auto_submit_failed",
-                "reason": str(e)[:500],
-                "tier": "tier_1_conservative",
-                "skip_category": "submit_raised",
-            })
+            await _write(receipt.to_row(
+                kind="auto_submit_failed",
+                skip_category="submit_raised",
+                actor="auto_submit_tier_1",
+            ) | {"tier": "tier_1_conservative"})
             return None
 
         # ─── Explicit "eligible but no submit path" guard ──────────
@@ -571,12 +573,15 @@ async def maybe_auto_submit(intent_id: str) -> dict[str, Any] | None:
         # mapped to a terminal row above. Operator directive: re-raise
         # AFTER writing the row so the chain's outer try/except can
         # also see + log the failure.
+        from shared.auto_submit_receipt import build_receipt
+        receipt = build_receipt(intent_id, stage="auto_submit_body", exc=e)
         logger.error(
-            "auto_submit unexpected exception intent=%s err=%r", intent_id, e,
+            "auto_submit unexpected exception intent=%s type=%s msg=%s",
+            intent_id, receipt.exception_type, receipt.exception_message,
         )
-        await _write({
-            "kind": "auto_submit_exception",
-            "reason": repr(e)[:500],
-            "skip_category": "internal_error",
-        })
+        await _write(receipt.to_row(
+            kind="auto_submit_exception",
+            skip_category="internal_error",
+            actor="auto_submit_tier_1",
+        ))
         raise

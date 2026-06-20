@@ -491,6 +491,36 @@ class WebullAdapter(BrokerAdapter):
           * `qty` provided      → v1 + integer (legacy; reconcile /
             manual whole-share paths only). Untouched.
         """
+        # ─── 2026-02-20: pre-submit RTH session guard ─────────────
+        # The Webull 417 "The time you sent is not supported" error
+        # was killing ~337 submissions / 72h. Root cause: MARKET
+        # orders submitted within the last 60s of the regular session
+        # (or outside RTH entirely) are rejected by the broker because
+        # they can't be filled at-market in the remaining window.
+        # `support_trading_session: "CORE"` requires the ORDER to
+        # arrive INSIDE regular hours, and Webull enforces that with
+        # a wall-clock check.
+        #
+        # Doctrine pin (operator 2026-02-20):
+        #     "If outside supported session, RoadGuard should block
+        #      before broker submit."
+        #
+        # We block here (in-adapter) as belt-and-braces — RoadGuard's
+        # session check is upstream, but the adapter is the LAST stop
+        # before the HTTP call so the guard prevents broker round-
+        # trips that we know will 417. Receipt surfaces in the
+        # post-mortem as `skip_category: outside_rth_for_market`,
+        # which the operator can act on cleanly.
+        lane = _lane_for_symbol(symbol)
+        # 2026-02-20: the RTH/close-buffer guard previously lived
+        # here in the adapter — moved upstream into
+        # `shared/pipeline/roadguard.py::_within_webull_core_close_buffer`
+        # so the post-mortem sees a clean `roadguard_blocked` verdict
+        # ("WEBULL_CORE_MARKET_ORDER_CLOSE_BUFFER") instead of a broker
+        # `submit_raised` HTTP 417 surprise. Per operator pin:
+        # "That should become a RoadGuard pre-submit block, not a
+        # Webull adapter surprise."
+
         # Belt-and-braces re-check of the cap. 2026-02-20: the cap is
         # now buying-power-scaled, so we fetch the adapter's own
         # account balance here so the re-check uses the same dynamic
@@ -528,7 +558,6 @@ class WebullAdapter(BrokerAdapter):
             order_id = order_id[:40]
         account_id = await self._resolve_account_id()
 
-        lane = _lane_for_symbol(symbol)
         if lane is None:
             raise RuntimeError(
                 f"Webull adapter: no lane known for symbol {symbol!r}; NO_TRADE"

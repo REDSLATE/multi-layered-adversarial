@@ -58,6 +58,24 @@ class RoadGuard:
             elif market_open is False:  # explicit False, not "missing"
                 return RoadGuardVerdict(False, "market_closed")
 
+            # 2026-02-20: Webull CORE-session MARKET-order close buffer.
+            # Webull rejects MARKET orders submitted within the final
+            # N seconds before regular close with HTTP 417 "The time
+            # you sent is not supported." Block these UPSTREAM so the
+            # post-mortem sees a clean RoadGuard verdict instead of
+            # 337 submit_raised broker rejects.
+            #
+            # Doctrine pin (operator 2026-02-20):
+            #     "Better to miss one late $1 trade than throw
+            #      hundreds of broker rejects."
+            # Default 90s — configurable via env. Extended-hours mode
+            # skips the buffer because LIMIT orders submitted outside
+            # CORE don't trip this clock-check.
+            if not extended and self._within_webull_core_close_buffer():
+                return RoadGuardVerdict(
+                    False, "WEBULL_CORE_MARKET_ORDER_CLOSE_BUFFER",
+                )
+
         bp = opinion.evidence.get("buying_power")
         if bp is not None:
             try:
@@ -89,3 +107,36 @@ class RoadGuard:
             return is_equity_rth()
         except Exception:  # noqa: BLE001
             return None
+
+    @staticmethod
+    def _within_webull_core_close_buffer(now=None) -> bool:
+        """True if the wall clock is within
+        `WEBULL_CLOSE_BUFFER_SECONDS` (default 90) of the regular
+        equity close. Outside RTH → False (the prior `market_closed`
+        check already covered that).
+
+        Tunable via env so the operator can dial wider (120s when
+        Webull's clock-check gets racier) or narrower (60s for tight
+        markets) without a redeploy of this module.
+        """
+        import os
+        from datetime import datetime, timedelta, timezone
+        try:
+            buf = int(os.environ.get("WEBULL_CLOSE_BUFFER_SECONDS", "90"))
+        except (TypeError, ValueError):
+            buf = 90
+        if buf <= 0:
+            return False
+        now = now or datetime.now(timezone.utc)
+        try:
+            from shared.market_hours import is_equity_rth
+        except Exception:  # noqa: BLE001
+            return False
+        # If we're not in RTH at all, the close-buffer concept doesn't
+        # apply (other checks block us). Returning False keeps the
+        # downstream `market_closed` verdict intact.
+        if not is_equity_rth(now):
+            return False
+        # If we're in RTH NOW but won't be `buf` seconds from now,
+        # we're inside the close buffer.
+        return not is_equity_rth(now + timedelta(seconds=buf))

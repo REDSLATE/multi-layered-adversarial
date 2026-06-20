@@ -33,7 +33,7 @@ fractional but ETH/USD never makes it".
 """
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
 import uuid
 from typing import Any, Dict, List, Optional
@@ -229,13 +229,27 @@ async def intents_post_mortem(
                     # `submit_raised`) over the raw exception string.
                     # Groups all chain-raised failures into actionable
                     # buckets the operator can chase.
+                    #
+                    # 2026-02-20 (later): when the row carries a
+                    # structured `exception_type` (new AutoSubmitReceipt
+                    # writer), surface a SECOND, more-actionable bucket
+                    # keyed by the Python exception type. So a generic
+                    # `[auto_submit_fail] internal_error` (61) breaks
+                    # down to `[auto_submit_fail] KeyError` (47) plus
+                    # `[auto_submit_fail] ValueError` (10) plus
+                    # `[auto_submit_fail] ConnectionError` (4) — one
+                    # bug-fix ticket per row instead of one giant
+                    # mystery.
                     cat = row.get("skip_category")
+                    exc_type = row.get("exception_type")
                     if cat:
                         top_blockers[("auto_submit_fail", cat)] += 1
                         auto_skipped_by_category[f"failed_{cat}"] += 1
                     else:
                         reason = (row.get("reason") or "auto_submit raised")[:120]
                         top_blockers[("broker", reason)] += 1
+                    if exc_type:
+                        top_blockers[("auto_submit_fail_exc", exc_type)] += 1
                 # ─── New audit-completeness kinds (2026-02-20) ─────
                 # Every maybe_auto_submit call now writes ONE of:
                 # skipped / failed / submitted / exception. The first
@@ -677,6 +691,191 @@ async def replay_ghost_intents(
         "remaining_ghosts_estimate": max(
             0,
             len(candidates) - len(already_audited) - replayed,
+        ),
+    }
+
+
+# ─── Auto-submit FAILURE replay (2026-02-20 operator directive) ─────
+# Distinct from ghost-replay above:
+#   * ghost replay = intents with NO audit row at all
+#   * failure replay = intents WITH `auto_submit_failed` audit row
+#
+# The screenshot showed 61 `[auto_submit_fail] internal_error` —
+# replaying them re-runs the chain so the new structured receipt
+# captures the exception type. After one click, the operator can
+# group by `exception_type` and chase the bug-fix tickets.
+
+@router.get("/auto-submit-failures/breakdown")
+async def auto_submit_failure_breakdown(
+    hours: int = 24,
+    _user: dict = Depends(get_current_user),  # noqa: B008
+) -> Dict[str, Any]:
+    """Aggregate recent `auto_submit_failed` / `auto_submit_exception`
+    rows by exception_type so the operator sees the real bug-fix
+    queue, not a single `internal_error` blob.
+
+    Returned shape:
+        {
+          "window_hours": 24,
+          "total_failures": 61,
+          "by_exception_type": {"KeyError": 47, "ValueError": 10, ...},
+          "by_skip_category": {"internal_error": 59, "submit_raised": 2},
+          "by_stage": {"submit_call": 47, "auto_submit_body": 14},
+          "untyped_legacy": 12,    # rows from BEFORE the receipt writer
+                                   # — cleared once a fresh replay runs
+          "recent_samples": [{intent_id, exception_type,
+                              exception_message, stage, ts}, ...]
+        }
+    """
+    hours = max(1, min(int(hours or 24), 168))
+    cutoff_iso = (
+        datetime.now(timezone.utc) - timedelta(hours=hours)
+    ).isoformat()
+
+    rows = await db[SHARED_GATE_RESULTS].find(
+        {
+            "ts": {"$gte": cutoff_iso},
+            "kind": {"$in": ["auto_submit_failed", "auto_submit_exception"]},
+        },
+        {
+            "_id": 0, "intent_id": 1, "ts": 1, "kind": 1,
+            "skip_category": 1, "exception_type": 1, "exception_message": 1,
+            "stage": 1, "reason": 1,
+        },
+    ).sort("ts", -1).to_list(2000)
+
+    by_exc: Dict[str, int] = defaultdict(int)
+    by_cat: Dict[str, int] = defaultdict(int)
+    by_stage: Dict[str, int] = defaultdict(int)
+    untyped_legacy = 0
+    samples: List[Dict[str, Any]] = []
+
+    for r in rows:
+        et = r.get("exception_type")
+        if et:
+            by_exc[et] += 1
+        else:
+            untyped_legacy += 1
+        cat = r.get("skip_category") or "unknown"
+        by_cat[cat] += 1
+        stage = r.get("stage") or "unknown"
+        by_stage[stage] += 1
+        if len(samples) < 10:
+            samples.append({
+                "intent_id": r.get("intent_id"),
+                "ts": r.get("ts"),
+                "exception_type": et,
+                "exception_message": (r.get("exception_message") or r.get("reason") or "")[:200],
+                "stage": stage,
+                "skip_category": cat,
+            })
+
+    return {
+        "window_hours": hours,
+        "total_failures": len(rows),
+        "by_exception_type": dict(by_exc),
+        "by_skip_category": dict(by_cat),
+        "by_stage": dict(by_stage),
+        "untyped_legacy": untyped_legacy,
+        "recent_samples": samples,
+    }
+
+
+@router.post("/replay-auto-submit-failures")
+async def replay_auto_submit_failures(
+    hours: int = 24,
+    limit: int = 500,
+    _user: dict = Depends(get_current_user),  # noqa: B008
+) -> Dict[str, Any]:
+    """Replay intents that have an `auto_submit_failed` /
+    `auto_submit_exception` audit row in the last N hours. Each
+    replay runs the full `run_auto_submit_chain` so the NEW
+    structured receipt writer captures `exception_type` +
+    `exception_message` + `traceback`.
+
+    After one click on a 61-failure backlog, the operator sees
+    exactly which Python errors are blocking trades.
+
+    Safety:
+      * Operator-auth required.
+      * Goes through the same chain real intents do — gates run,
+        caps enforced, audit rows written.
+      * `limit` caps the per-call replay count; successive calls
+        drain a deeper backlog.
+    """
+    hours = max(1, min(int(hours or 24), 168))
+    limit = max(1, min(int(limit or 500), 2000))
+    cutoff_iso = (
+        datetime.now(timezone.utc) - timedelta(hours=hours)
+    ).isoformat()
+
+    rows = await db[SHARED_GATE_RESULTS].find(
+        {
+            "ts": {"$gte": cutoff_iso},
+            "kind": {"$in": ["auto_submit_failed", "auto_submit_exception"]},
+        },
+        {"_id": 0, "intent_id": 1},
+    ).sort("ts", -1).to_list(limit * 4)
+
+    seen: set = set()
+    ids: List[str] = []
+    for r in rows:
+        iid = r.get("intent_id")
+        if not iid or iid in seen:
+            continue
+        seen.add(iid)
+        ids.append(iid)
+        if len(ids) >= limit:
+            break
+
+    from shared.intents import _run_dry_run_then_auto_submit as run_auto_submit_chain
+
+    replayed = 0
+    errors = 0
+    by_terminal_kind: Dict[str, int] = {
+        "auto_submit_skipped": 0,
+        "auto_submit_failed": 0,
+        "auto_submit_submitted": 0,
+        "auto_submit_exception": 0,
+    }
+
+    for intent_id in ids:
+        try:
+            await run_auto_submit_chain(intent_id, actor="replay_failures")
+            replayed += 1
+        except Exception:  # noqa: BLE001
+            # The chain's own catch-all wrote the row already; we
+            # only count the loop-level error here.
+            errors += 1
+            replayed += 1
+
+    if ids:
+        terminals = await db[SHARED_GATE_RESULTS].find(
+            {
+                "intent_id": {"$in": ids},
+                "kind": {"$in": list(by_terminal_kind.keys())},
+            },
+            {"_id": 0, "intent_id": 1, "kind": 1, "ts": 1},
+        ).to_list(len(ids) * 2)
+        latest: Dict[str, str] = {}
+        for r in sorted(terminals, key=lambda x: x.get("ts") or ""):
+            latest[r["intent_id"]] = r["kind"]
+        for kind in latest.values():
+            if kind in by_terminal_kind:
+                by_terminal_kind[kind] += 1
+
+    return {
+        "window_hours": hours,
+        "limit": limit,
+        "matched_failures": len(rows),
+        "unique_replayed": len(ids),
+        "replayed": replayed,
+        "errors": errors,
+        "by_terminal_kind": by_terminal_kind,
+        "note": (
+            "Latest receipts now carry exception_type / exception_message "
+            "/ traceback. Hit GET /api/admin/intents/auto-submit-failures/"
+            "breakdown to see the structured breakdown."
         ),
     }
 
