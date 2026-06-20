@@ -17,11 +17,25 @@ from db import db
 from namespaces import SHARED_OHLCV_BARS
 
 
-# Same preferred-source order as `/api/public/bars` and the heatmap
-# deduper. Lane-aware: crypto bars come from kraken_pro by default,
-# equity bars from polygon / finnhub. Falls through to any other
-# source if the preferred one is absent for a (symbol, tf) pair.
-SOURCE_PRIORITY = ["kraken_pro", "polygon", "finnhub_equity", "thinkorswim", "manual"]
+# Bar source priority — operator doctrine: the broker is the source
+# of truth for what we'd actually trade against. Polygon/finnhub are
+# BACKUPS, only consulted when the broker has no bars for that
+# (symbol, tf) on file. Operator pinned this 2026-02-20:
+#     "the primary sources should be the broker themselves.
+#      Polygon and finnhub should be back up."
+#
+# Order: webull (equity broker) and kraken_pro (crypto broker) first,
+# then the alt-data backups, then last-resort manual ingest.
+SOURCE_PRIORITY = [
+    "webull",           # equity broker (primary, when bars start flowing)
+    "webull_equity",    # in case the ingest channel uses the longer name
+    "kraken_pro",       # crypto broker (primary)
+    "kraken",           # alt kraken channel name (defensive)
+    "polygon",          # equity backup
+    "finnhub_equity",   # equity backup-of-backup
+    "thinkorswim",      # legacy equity backup
+    "manual",           # operator-inserted, last resort
+]
 VALID_TFS = frozenset({"1m", "5m", "15m", "1h", "4h", "1d"})
 
 # Default timeframe per lane — crypto is intraday-active (1h) while
@@ -34,39 +48,63 @@ DEFAULT_TF_BY_LANE = {
 }
 
 
+# When a source has fewer than this many bars on file for a given
+# (symbol, tf), treat it as "shallow" — fine for the broker (we
+# always trust the broker), but for backup sources we'll skip past
+# them in favor of the next backup with deeper history. Tuned to
+# 50 because that's the warmup floor for SMA-50 / MACD-26 inside
+# `large_cap_momentum_v1` and `crypto_breakdown_v1`.
+_SHALLOW_BACKUP_THRESHOLD = 50
+
+# Sources we consider "broker primary" — these are NEVER skipped for
+# being shallow. If the broker shows 9 bars on a freshly-listed
+# symbol, that's what we trade against; backups don't get a vote.
+_BROKER_SOURCES = frozenset({
+    "webull", "webull_equity", "kraken_pro", "kraken",
+})
+
+
 async def pick_source(symbol: str, tf: str) -> Optional[str]:
     """Best available bar source for (symbol, tf), or None if no bars
     are on file at all.
 
-    Selection rule: pick the source with the DEEPEST history. This
-    matters because the same (symbol, tf) can land in multiple
-    collections at very different depths — e.g. AAPL/1d has 9 bars
-    via polygon-trial but 2500+ via finnhub_equity. The Strategy Lab
-    needs warm SMA-50 / MACD-26 history to score; biasing toward
-    bar count produces materially better evidence than biasing toward
-    a named source.
-
-    Tie-broken by `SOURCE_PRIORITY` order so behavior is deterministic
-    when two sources hold the same depth.
+    Selection rule (operator-pinned 2026-02-20):
+        1. Walk `SOURCE_PRIORITY` in order — brokers first, then alt
+           backups (polygon, finnhub_equity, thinkorswim), then
+           manual ingest.
+        2. Brokers are taken whenever they have ANY bars on file —
+           the broker is the source of truth even if shallow.
+        3. Non-broker backups are skipped if they have fewer than
+           `_SHALLOW_BACKUP_THRESHOLD` bars (avoids the polygon-trial
+           "9 bars on AAPL" trap that starved the Strategy Lab of
+           warmup history). The next backup in priority order is
+           tried.
+        4. Last resort: any source on file, even shallow, so research
+           never silently returns "no_bars" when SOMETHING exists.
     """
     pipeline = [
         {"$match": {"symbol": symbol, "tf": tf}},
         {"$group": {"_id": "$source", "n": {"$sum": 1}}},
-        {"$sort": {"n": -1}},
     ]
     rows = await db[SHARED_OHLCV_BARS].aggregate(pipeline).to_list(None)
     if not rows:
         return None
-    # Highest bar count first; tie-broken by SOURCE_PRIORITY index.
-    def _key(r: dict) -> tuple:
-        src = r["_id"]
-        try:
-            pri = SOURCE_PRIORITY.index(src)
-        except ValueError:
-            pri = len(SOURCE_PRIORITY)
-        return (-int(r["n"]), pri)
-    rows.sort(key=_key)
-    return rows[0]["_id"]
+    by_source = {r["_id"]: int(r["n"]) for r in rows}
+
+    # Priority walk — return the first match that clears the depth
+    # floor (or is a broker, which bypasses the floor).
+    for src in SOURCE_PRIORITY:
+        n = by_source.get(src, 0)
+        if n == 0:
+            continue
+        if src in _BROKER_SOURCES or n >= _SHALLOW_BACKUP_THRESHOLD:
+            return src
+
+    # Nothing cleared the depth floor — fall back to whatever has the
+    # most bars, even if it's a shallow backup. Still better than no
+    # evidence at all.
+    deepest = max(by_source.items(), key=lambda kv: kv[1])
+    return deepest[0]
 
 
 async def load_recent_bars(

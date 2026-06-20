@@ -1,3 +1,53 @@
+## 2026-02-20 (bar source priority — brokers primary, alts back up)
+
+### Operator pin (verbatim)
+> "the primary sources should be the broker themselves. Polygon and
+> finnhub should be back up."
+
+### What changed
+- `shared/research/bar_source.py::SOURCE_PRIORITY` reordered to put
+  brokers FIRST: webull / webull_equity → kraken_pro / kraken →
+  polygon → finnhub_equity → thinkorswim → manual.
+- `pick_source` selection rule rewritten:
+  * Walk `SOURCE_PRIORITY` in order.
+  * **Brokers win whenever they have any bars** — never skipped for
+    being shallow. The broker is the source of truth for what we'd
+    actually trade against; alt-data backups don't get a vote when
+    the broker is present.
+  * Non-broker sources are skipped when they have <50 bars
+    (shallow-backup threshold matches the SMA-50 / MACD-26 warmup
+    floor inside the strategies). Selection moves to the next backup
+    in priority order.
+  * Last resort: if every source is shallow, return whichever has
+    the most bars rather than starving research entirely.
+
+### Why this matters
+- Today no `webull` bars are persisted yet (equity broker feed not
+  flowing into `shared_ohlcv_bars`). Crypto broker `kraken_pro` IS
+  primary and already feeds every crypto intent's evidence.
+- When the Webull bar ingest comes online, equity intents will
+  automatically switch from finnhub_equity to webull with no code
+  change — the priority table already lists it first.
+- The shallow-backup skip stays in place to handle the
+  polygon-trial regression (AAPL/1d had 9 polygon bars but 2511
+  finnhub bars; we now correctly prefer finnhub for that case
+  while still preferring webull/kraken when the broker has any
+  bars at all).
+
+### Tests
+- New: `tests/test_bar_source_priority_2026_02_20.py` (7 tests).
+  Pins broker-wins-even-shallow, alt-priority order, shallow-skip,
+  empty-DB, unknown-source fall-through.
+- 42 tests green across research + bridges + priority sweep.
+
+### Live verification
+- BTC/USD via crypto bridge: source=`kraken_pro` ✓ (broker primary)
+- 'A' via equity bridge: source=`finnhub_equity`, bars=120, signal
+  fires BUY @ 0.7 ✓ (shallow polygon skipped, deep finnhub picked)
+
+---
+
+
 ## 2026-02-20 (Equity bridges for ALL four brains — generic factory)
 
 ### Operator pin
