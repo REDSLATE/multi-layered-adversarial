@@ -1,3 +1,86 @@
+## 2026-02-20 (Equity bridges for ALL four brains — generic factory)
+
+### Operator pin
+> "Technically, they all should be both… try wiring them for the
+> equity lane the way GTO and Hellcat are wired on the crypto lane.
+> I eventually want them all to be able to work equity and crypto."
+
+### What shipped
+
+**Backend — generic bridge factory:**
+- New `shared/intent_bridge_factory.py::make_intent_bridge(BridgeConfig)`.
+  Produces a (build_fn, emit_fn, router) triple for any (brain, lane)
+  combo. Lane symbol predicates (`looks_like_crypto`,
+  `looks_like_equity`) live in the factory so the doctrine guard
+  ("crypto_only" / "equity_only") is enforced in ONE place.
+- Lane-scoped final authority: every intent stamps
+  `requires_final_authority` from `seats_with_execute(lane)` — never
+  hardcoded to the emitting brain. Brain identity (stack) and
+  executing authority remain independent.
+- Lifted `_EmitBody` Pydantic model to module scope (FastAPI can't
+  resolve body schemas defined inside factory closures — produces
+  spurious 422 "Field required" otherwise).
+
+**Backend — equity bridges instantiated for all four brains:**
+- New `shared/equity_intent_bridges.py` — generates camino, barracuda,
+  hellcat, gto equity bridges via the factory.
+- Routes:
+    POST /api/admin/{brain}/equity-bridge/emit
+    GET  /api/admin/{brain}/equity-bridge/authority
+- Each carries a distinct `intent_id` prefix
+  (alpha-equity-, camaro-equity-, chevelle-equity-, redeye-equity-)
+  for easy log-grep separation.
+- Routers wired in `server_modules/router_registry.py` via a single
+  loop over `EQUITY_ROUTERS`.
+
+**Backend — lane-aware bar source:**
+- `shared/research/bar_source.py::DEFAULT_TF_BY_LANE` —
+  crypto → 1h, equity → 1d. The shared `attach_research_evidence`
+  helper now picks the right tf per intent's lane automatically.
+- `pick_source(symbol, tf)` switched from "first-match by priority
+  order" to "deepest-history-wins, priority-order tie-break". Real
+  reason: AAPL/1d had 9 bars in polygon vs 2511 in finnhub_equity;
+  the old picker chose polygon by name and starved the strategy of
+  warmup history. New picker now consistently feeds the Strategy Lab
+  120 fresh bars on equity symbols too.
+- `SOURCE_PRIORITY` extended to include `polygon` and
+  `finnhub_equity` for tie-break determinism.
+- New field on attached evidence: `research_tf` so the operator can
+  see which cadence the Lab scored on.
+
+### Tests
+- New: `tests/test_equity_intent_bridges_2026_02_20.py` (10 tests).
+- Coverage: symbol predicates (lane-scoped, not pair-scoped); lane
+  authority routing; seat rotation respect; all four brains produce
+  consistent shape; refusal of HOLD + crypto symbols; factory
+  rejects unknown lanes at construction time.
+- 64 tests green across the full research/bridge/dry-run sweep.
+
+### Live smoke
+- All four brains emit `A` (Agilent) at `BUY conf=0.65`:
+  - HTTP 200, distinct intent IDs (`{alias}-equity-buy-...`)
+  - `requires_final_authority: barracuda` (current equity seat
+    holder) on every intent — lane-scoped routing confirmed
+  - Research evidence: `large_cap_momentum_v1 BUY score=0.7
+    reasons=[above_vwap, macd_bullish, volume_confirmed]` on 120
+    fresh finnhub_equity 1d bars.
+- BTC/USD via the legacy GTO crypto bridge still picks
+  `kraken_pro / 1h / 120 bars` — zero regression on the crypto path.
+
+### Where this lands the doctrine
+| Layer        | Crypto              | Equity              |
+| ------------ | ------------------- | ------------------- |
+| Strategy Lab | crypto_breakdown_v1 | large_cap_momentum_v1 |
+| Brains       | camino/barracuda/hellcat/gto (all 4 wired) | camino/barracuda/hellcat/gto (all 4 wired) |
+| Seat lookup  | seats_with_execute("crypto") | seats_with_execute("equity") |
+| RoadGuard    | CryptoRoadGuard      | EquityRoadGuard      |
+
+Every brain × every lane can now author intents. Execute authority is
+seat-resident, not brain-resident.
+
+---
+
+
 ## 2026-02-20 (Hellcat/ETH research evidence wiring — second runtime live)
 
 ### Operator pin

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 
-from .bar_source import load_recent_bars
+from .bar_source import DEFAULT_TF_BY_LANE, load_recent_bars
 from .features import build_features
 from .paradox_bridge import attach_research_to_intent
 from .strategy_lab import score_strategies
@@ -29,8 +29,14 @@ from .strategy_lab import score_strategies
 _log = logging.getLogger("risedual.research.intent_evidence")
 
 
-async def attach_research_evidence(intent: dict, tf: str = "1h", limit: int = 120) -> None:
+async def attach_research_evidence(
+    intent: dict, tf: str | None = None, limit: int = 120,
+) -> None:
     """Stamp Research Layer evidence onto the given intent dict.
+
+    Lane-aware: when `tf` is None, picks the default for the intent's
+    lane from `DEFAULT_TF_BY_LANE` (crypto→1h, equity→1d). Operator
+    can override per-call if a different cadence is needed.
 
     Mutates `intent` in place (best-effort) and returns None. Callers
     should treat this as side-effecting and idempotent — running it
@@ -39,12 +45,11 @@ async def attach_research_evidence(intent: dict, tf: str = "1h", limit: int = 12
     symbol = intent.get("symbol")
     lane = intent.get("lane")
     if not symbol or not lane:
-        # Intent is malformed enough that research can't add evidence
-        # — leave it alone and let the gate chain handle it.
         return
+    effective_tf = tf or DEFAULT_TF_BY_LANE.get(lane, "1h")
 
     try:
-        bars, src = await load_recent_bars(symbol, tf=tf, limit=limit)
+        bars, src = await load_recent_bars(symbol, tf=effective_tf, limit=limit)
         if not bars:
             ev = intent.setdefault("evidence", {})
             ev["research_signals"] = []
@@ -70,6 +75,7 @@ async def attach_research_evidence(intent: dict, tf: str = "1h", limit: int = 12
         ev["research_status"] = "ok"
         ev["research_source"] = src
         ev["research_bars_used"] = len(bars)
+        ev["research_tf"] = effective_tf
     except Exception as e:  # noqa: BLE001
         _log.warning(
             "research evidence attach failed symbol=%s lane=%s err=%s",
