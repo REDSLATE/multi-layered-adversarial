@@ -257,6 +257,37 @@ def _categorize_skip(reason: str) -> str:
     if r.startswith("confidence "):
         return SKIP_CATEGORY_LOW_CONFIDENCE
     if r.startswith("dry_run_state "):
+        # 2026-06-19: the legacy `dry_run_not_ready` bucket lumped three
+        # different operational states together — split them so the
+        # operator can act on the right signal:
+        #   * 'blocked' / 'dry_run_blocked' / 'fail' / 'failed'
+        #     → dry-run gate ran and correctly refused. Doctrine
+        #       working as designed. Don't investigate — investigate
+        #       the intent's source if the volume is high.
+        #   * 'pending' / 'running' / 'queued'
+        #     → dry-run task hasn't finished. Benign race; the finalizer
+        #       will re-trigger auto-submit when the verdict lands.
+        #   * '' (empty) / None / 'unknown'
+        #     → dry_run_state was never set. Silent leak in the emit
+        #       path — needs investigation.
+        # We parse the quoted state out of the reason
+        # ("dry_run_state 'pending' != required 'passed'") so future
+        # rename of the state literals doesn't desync this mapper.
+        try:
+            first_quote = r.index("'") + 1
+            second_quote = r.index("'", first_quote)
+            state = r[first_quote:second_quote].lower()
+        except ValueError:
+            state = ""
+        if state in {"blocked", "dry_run_blocked", "fail", "failed", "rejected_at_ingest"}:
+            return SKIP_CATEGORY_DRY_RUN_BLOCKED
+        if state in {"pending", "running", "queued", "dry_run_pending"}:
+            return SKIP_CATEGORY_DRY_RUN_PENDING
+        if state in {"", "unknown", "none"}:
+            return SKIP_CATEGORY_DRY_RUN_MISSING
+        # Future state literal we haven't catalogued yet — fall back to
+        # the legacy bucket rather than misclassify into one of the
+        # three actionable ones.
         return SKIP_CATEGORY_DRY_RUN_NOT_READY
     if r == "intent already executed":
         return SKIP_CATEGORY_ALREADY_EXECUTED

@@ -87,6 +87,10 @@ async def test_categorize_brain_filtered():
 
 
 async def test_categorize_dry_run_not_ready():
+    # 2026-02-20: the legacy `dry_run_not_ready` bucket was split into
+    # blocked / pending / missing. A `dry_run_state='pending'` intent
+    # now lands in the precise `dry_run_pending` bucket; the legacy
+    # constant is reserved for state literals we haven't catalogued.
     ok, reason = await matches_tier_1(
         {"action": "BUY", "lane": "equity", "stack": "alpha", "confidence": 0.9, "dry_run_state": "pending"},
         {"enabled": True, "allowed_actions": ["BUY", "SELL"], "allowed_lanes": ["equity", "crypto"],
@@ -94,7 +98,8 @@ async def test_categorize_dry_run_not_ready():
          "tier_name": "tier_1_conservative"},
     )
     assert ok is False
-    assert _categorize_skip(reason) == SKIP_CATEGORY_DRY_RUN_NOT_READY
+    from shared.auto_submit_policy import SKIP_CATEGORY_DRY_RUN_PENDING
+    assert _categorize_skip(reason) == SKIP_CATEGORY_DRY_RUN_PENDING
 
 
 async def test_categorize_disabled():

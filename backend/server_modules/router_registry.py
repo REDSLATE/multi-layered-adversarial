@@ -155,6 +155,7 @@ from routes.runtime_cross_brain_memories import (
     router as cross_brain_memories_router,
 )
 from routes.admin_brackets import router as admin_brackets_router
+from routes.research import router as research_router
 
 from runtimes.alpha.routes import router as alpha_router
 from runtimes.camaro.routes import router as camaro_router
@@ -300,3 +301,6 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(shadow_outcome_admin_router)
     api_router.include_router(scorecard_by_brain_router)
     api_router.include_router(safety_gates_audit_router)
+    # Research Layer — read-only Strategy Lab. NEVER routes orders;
+    # only enriches intents with evidence the brain can opine on.
+    api_router.include_router(research_router)

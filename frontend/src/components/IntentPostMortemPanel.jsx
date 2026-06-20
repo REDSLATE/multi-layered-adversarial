@@ -37,7 +37,14 @@ const OUTCOME_LABELS = {
   auto_submit_skipped_lane_filtered:      { label: "Skipped by Shelly · lane not allowed",   color: "#64748B" },
   auto_submit_skipped_action_filtered:    { label: "Skipped by Shelly · action not allowed", color: "#64748B" },
   auto_submit_skipped_brain_filtered:     { label: "Skipped by Shelly · brain not allowed",  color: "#64748B" },
-  auto_submit_skipped_dry_run_not_ready:  { label: "Skipped by Shelly · dry-run not ready",  color: "#64748B" },
+  // 2026-06-19: legacy single `dry_run_not_ready` bucket split into
+  // three actionable buckets so operators can tell a correct refusal
+  // (doctrine working) apart from a benign race (auto-resolves) and
+  // a silent leak (real bug worth chasing).
+  auto_submit_skipped_dry_run_not_ready:  { label: "Skipped by Shelly · dry-run not ready (legacy)",  color: "#64748B" },
+  auto_submit_skipped_dry_run_blocked:    { label: "Skipped by Shelly · dry-run refused (doctrine OK)", color: "#A78BFA" },
+  auto_submit_skipped_dry_run_pending:    { label: "Skipped by Shelly · dry-run still running",        color: "#94A3B8" },
+  auto_submit_skipped_dry_run_missing:    { label: "Skipped by Shelly · dry-run never ran (LEAK)",     color: "#DC2626" },
   auto_submit_skipped_policy_disabled:    { label: "Skipped by Shelly · policy disabled",    color: "#64748B" },
   auto_submit_skipped_already_executed:   { label: "Skipped by Shelly · already executed",   color: "#64748B" },
   auto_submit_skipped_other:              { label: "Skipped by Shelly · other reason",       color: "#64748B" },

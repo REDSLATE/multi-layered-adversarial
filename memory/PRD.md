@@ -1,3 +1,94 @@
+## 2026-02-20 (Research Layer — read-only Strategy Lab feeding Paradox)
+
+### Operator pin
+> "Strategy Lab can score. Brains can opine. Seats can execute. RoadGuard can stop."
+
+### Why
+The brains lacked a shared analytical surface — every runtime was
+re-deriving its own indicator math, and the post-mortem could see
+*that* a brain emitted HOLD but not *what evidence it had on hand*.
+The operator asked for a thinkorswim-style analytical layer that
+sits beside Paradox and produces evidence, NOT decisions.
+
+### What shipped
+**New package** `/app/backend/shared/research/`:
+- `schemas.py`  — `MarketFeatureFrame`, `StrategySignal` frozen dataclasses.
+- `indicators.py` — VWAP + 20-bar rvol (pure Python; the rest of the
+  indicator math is reused from `shared/indicators.py` to avoid
+  pandas/numpy drift).
+- `features.py` — `build_features(symbol, lane, bars, spread_bps)`.
+- `strategy_lab.py` — `large_cap_momentum_v1` (equity) +
+  `crypto_breakdown_v1` (crypto); `STRATEGIES` registry; `score_strategies(f)`.
+- `backtest.py` — bar-by-bar harness with 1-bar forward look;
+  returns hit-rate + avg forward-return-bps (never a P&L number).
+- `paradox_bridge.py` — `attach_research_to_intent(intent, signals)`;
+  idempotent; writes ONLY to `intent["evidence"]["research_signals"]`.
+
+**New route** `/app/backend/routes/research.py` (`/api/research/*`):
+- `GET /api/research/health`   — surface + bar source check.
+- `GET /api/research/signal`   — live features + strategy signals.
+- `GET /api/research/backtest` — historical hit-rate of a strategy.
+
+Wired into `server_modules/router_registry.py`.
+
+### Doctrine guard rails (pinned by tests)
+- The package exports zero symbols containing `submit`, `broker`,
+  `route`, `execute`, or `place_order` (lint test in
+  `tests/test_research_layer_2026_02_20.py`).
+- `attach_research_to_intent` never touches `action`, `confidence`,
+  `executed`, `gate_state`, `dry_run_state`, or `pipeline_receipt`.
+- HTTP surface is read-only (`/api/research/submit` 404s).
+
+### Tests
+13 unit tests in `/app/backend/tests/test_research_layer_2026_02_20.py`
+covering strategy firing, cold-start safety, wide-spread penalty,
+lane dispatch, bridge isolation, surface lock, and backtest sanity.
+All green.
+
+### Live smoke
+- `/api/research/signal?symbol=BTC/USD&lane=crypto` → 200, returns
+  RSI=41.7, MACD=−309 (bullish-crossover), HOLD verdict on current
+  Kraken bars (score 0.45 — below the 0.55 sell threshold).
+- `/api/research/backtest?...&limit=300` → 95 historical sell signals,
+  46.3% win rate, −1.94 bps avg forward return. Useful evidence for
+  the brain that this strategy isn't a free-money rule.
+
+---
+
+## 2026-02-20 (dry-run skip category split)
+
+### Operator pin
+> "🪜 dry run, please."
+
+### Why
+`_categorize_skip` in `auto_submit_policy.py` collapsed three
+operationally-distinct dry-run states into a single
+`dry_run_not_ready` bucket, making the post-mortem panel useless
+for triage. Operator couldn't tell "doctrine refused this trade"
+from "dry-run task is still spinning" from "dry-run never ran at
+all (silent leak)".
+
+### What shipped
+- `shared/auto_submit_policy.py::_categorize_skip` now parses the
+  quoted state literal out of the reason and routes to one of:
+  - `dry_run_blocked` (blocked / fail / failed / rejected_at_ingest)
+  - `dry_run_pending` (pending / running / queued)
+  - `dry_run_missing` ('' / unknown / none)
+  - `dry_run_not_ready` (legacy bucket — only for uncatalogued literals)
+- UI labels added in `frontend/src/components/IntentPostMortemPanel.jsx`
+  (dynamic prettyLabelFor still fallback-handles them, but explicit
+  labels carry operator semantics: e.g. "dry-run never ran (LEAK)" in red).
+- UI chip labels added in `frontend/src/components/TunablesStrip.jsx`.
+
+### Tests
+- New: `tests/test_auto_submit_dry_run_categories_2026_02_20.py` (13 tests).
+- Updated: `tests/test_auto_submit_skip_audit.py` (legacy "pending→not_ready"
+  case rewritten to assert the new `dry_run_pending` bucket).
+- All 21 auto-submit categorization tests green.
+
+---
+
+
 ## 2026-02-21 (Webull floor override — operator-controlled from UI)
 
 ### Operator pin
