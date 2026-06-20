@@ -7,7 +7,7 @@ import { ResearchSignalsBlock } from "./ResearchSignalsBlock";
 /**
  * IntentPostMortemPanel — the smoking-gun tile.
  *
- * Answers ONE question: "Why are we not trading?"
+ * Answers ONE question: "Where did this intent die?"
  *
  * Pulls `/admin/intents/post-mortem` and surfaces:
  *   * Total intents in window vs. how many actually executed
@@ -523,11 +523,14 @@ export default function IntentPostMortemPanel() {
   const executePct = total > 0 ? (100 * executedCount / total) : 0;
 
   return (
-    <div className="border-2 border-rd-accent bg-rd-bg2 p-3 space-y-3" data-testid="intent-post-mortem-panel">
+    <div className="border-2 border-rd-accent bg-rd-bg2 p-3 space-y-3" data-testid="intent-receipts-panel">
       <div className="flex items-center gap-2">
         <Crosshair size={14} weight="bold" className="text-rd-accent" />
-        <span className="text-[11px] font-mono uppercase tracking-widest text-rd-text font-bold">
-          Why are we not trading?
+        <span className="text-[11px] font-mono uppercase tracking-widest text-rd-text font-bold" data-testid="receipts-panel-title">
+          Receipts
+        </span>
+        <span className="text-[9px] font-mono uppercase tracking-wider text-rd-dim hidden sm:inline">
+          where did this intent die?
         </span>
         <div className="ml-auto flex items-center gap-1.5">
           {WINDOWS.map((h) => (

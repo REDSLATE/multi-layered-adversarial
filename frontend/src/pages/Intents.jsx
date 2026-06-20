@@ -689,8 +689,8 @@ export default function Intents() {
           the dominant failure mode + top blockers ranked by frequency
           so we stop guessing. Always visible at the top — this is
           the single most important panel for diagnosing prod. */}
-      <div className="mb-4" data-testid="intents-post-mortem-mount">
-        <PanelErrorBoundary label="Intent Post-Mortem">
+      <div className="mb-4" data-testid="intents-receipts-mount">
+        <PanelErrorBoundary label="Receipts">
           <IntentPostMortemPanel />
         </PanelErrorBoundary>
       </div>
