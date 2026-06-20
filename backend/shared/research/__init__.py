@@ -21,3 +21,4 @@ from .strategy_lab import (  # noqa: F401
     score_strategies,
 )
 from .paradox_bridge import attach_research_to_intent  # noqa: F401
+from .intent_evidence import attach_research_evidence  # noqa: F401

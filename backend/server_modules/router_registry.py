@@ -50,6 +50,7 @@ from shared.execution import router as execution_router
 from shared.live_positions import router as live_positions_router
 from shared.brain_lane_policy import router as brain_lane_policy_router
 from shared.redeye_crypto_intent_bridge import router as redeye_bridge_router
+from shared.chevelle_crypto_intent_bridge import router as chevelle_bridge_router
 from shared.risk.routes import router as risk_router
 from shared.vrl import router as vrl_router
 from shared.quantum_routes import router as quantum_router
@@ -213,6 +214,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(live_positions_router)
     api_router.include_router(brain_lane_policy_router)
     api_router.include_router(redeye_bridge_router)
+    api_router.include_router(chevelle_bridge_router)
     api_router.include_router(risk_router)
     api_router.include_router(vrl_router)
     api_router.include_router(hypothesis_router)

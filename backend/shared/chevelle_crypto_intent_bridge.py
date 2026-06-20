@@ -1,25 +1,25 @@
-"""REDEYE crypto intent bridge.
+"""CHEVELLE/HELLCAT crypto intent bridge.
 
-Doctrine (2026-02-16):
-    Bridges REDEYE's decision output to MC's intent ledger. The
-    intent's final-authority recipient is whoever currently holds the
-    crypto execute seat — NOT a hardcoded brain name. This keeps the
-    bridge correct across roster rotations.
-
-    The snippet originally proposed `get_executor_holder(lane="crypto")`
-    but MC's lane-aware seat helpers are `seats_with_execute(lane)` +
-    `get_seat_holder(seat)`. We use the real API.
+Doctrine (2026-02-20):
+    Bridges HELLCAT's decision output to MC's intent ledger. Mirrors
+    `redeye_crypto_intent_bridge.py` exactly — same shape, same guard
+    rails, same research-evidence attach. The only differences are
+    the brain identifier (`hellcat`/`chevelle`) and the route prefix
+    (`/api/admin/hellcat/bridge`).
 
     Two surfaces:
-      * build_redeye_crypto_intent(...)   — pure builder (returns dict)
-      * emit_redeye_crypto_intent(...)    — persists into shared_intents
-      * POST /api/admin/redeye/bridge/emit — operator/REDEYE-sidecar entry
+      * build_hellcat_crypto_intent(...)   — pure builder (returns dict)
+      * emit_hellcat_crypto_intent(...)    — persists into shared_intents
+      * POST /api/admin/hellcat/bridge/emit — operator/HELLCAT-sidecar entry
 
-    Doctrine guards preserved from the snippet:
+    Doctrine guards preserved:
       * crypto_only — bridge refuses non-crypto symbols
       * intent_only — `may_execute=False`, `requires_gate_pass=True`
       * hold_not_promotable — HOLD action is rejected
       * seat_based_final_authority — recipient = current crypto seat
+      * research_is_evidence — Research Layer signals stamped on
+        `evidence.research_signals` ONLY; brain decision fields are
+        never overwritten.
 """
 from __future__ import annotations
 
@@ -46,9 +46,8 @@ def _norm(x: Optional[str]) -> str:
 
 async def _crypto_final_authority() -> str:
     """Return the brain currently holding an execute-capable seat in
-    the crypto lane. Falls back to the literal string "crypto_executor"
-    if the seat is vacant — that's an audit marker, not a routable
-    target. (Mirrors the snippet's contract.)"""
+    the crypto lane. Falls back to the literal string `crypto_executor`
+    if the seat is vacant — audit marker, not routable."""
     for seat_name in seats_with_execute("crypto"):
         holder = await get_seat_holder(seat_name)
         if holder:
@@ -58,7 +57,7 @@ async def _crypto_final_authority() -> str:
 
 # ──────────────────────── intent builder ────────────────────────
 
-async def build_redeye_crypto_intent(
+async def build_hellcat_crypto_intent(
     *,
     symbol: str,
     action: Literal["BUY", "SELL", "SHORT", "COVER"],
@@ -67,22 +66,11 @@ async def build_redeye_crypto_intent(
     source_doc: Optional[dict] = None,
     attach_research: bool = True,
 ) -> dict:
-    """Compose a properly-shaped MC intent for REDEYE on the crypto
+    """Compose a properly-shaped MC intent for HELLCAT on the crypto
     lane. Returns the dict — does NOT persist.
 
-    Doctrine guards:
-      * Symbol must look crypto (contains '/' OR ends with USD/USDT/USDC
-        OR matches a known crypto base like BTC/ETH/SOL/etc.).
-      * action='HOLD' is forbidden — bridge refuses to promote HOLDs.
-      * `may_execute=False` and `requires_gate_pass=True` are pinned;
-        the gate chain still owns the execute decision.
-      * `attach_research=True` (default) stamps the Research Layer's
-        Strategy Lab evidence onto `intent["evidence"]["research_signals"]`.
-        Read-only by construction — see shared/research/paradox_bridge.
-        The intent's `action` / `confidence` / pipeline fields are NEVER
-        touched by the research call. If bar loading fails for any
-        reason, the intent still emits cleanly — research evidence is
-        nice-to-have, not load-bearing.
+    Same contract as `build_redeye_crypto_intent`. See its docstring
+    for full doctrine notes.
     """
     sym = symbol.upper().strip()
     if action.upper() == "HOLD":
@@ -99,25 +87,25 @@ async def build_redeye_crypto_intent(
     final_authority = await _crypto_final_authority()
     now = _now_iso()
     intent = {
-        "intent_id": f"redeye-crypto-{action.lower()}-{uuid.uuid4().hex}",
-        "stack": "gto",                  # MC's emitting-brain field
-        "source": "gto",                 # snippet alias
+        "intent_id": f"chevelle-crypto-{action.lower()}-{uuid.uuid4().hex}",
+        "stack": "hellcat",                   # MC's emitting-brain field
+        "source": "hellcat",                  # snippet alias
         "lane": "crypto",
         "asset_class": "crypto",
         "symbol": sym,
         "action": action.upper(),
-        "direction": action.upper(),        # snippet alias
+        "direction": action.upper(),             # snippet alias
         "confidence": float(confidence),
-        "rationale": thesis,                # MC's canonical field
-        "thesis": thesis,                   # snippet alias
+        "rationale": thesis,                     # MC's canonical field
+        "thesis": thesis,                        # snippet alias
         "evidence": {
             "source_doc": source_doc or {},
-            "bridge": "redeye_crypto_intent_bridge",
+            "bridge": "chevelle_crypto_intent_bridge",
         },
         # ── MC safety invariants (pinned) ──
         "may_execute": False,
         "requires_gate_pass": True,
-        # ── Doctrine (mirrors snippet) ──
+        # ── Doctrine (mirrors redeye bridge) ──
         "requires_final_authority": final_authority,
         "authority_model": "seat_based",
         "requires_roadguard": True,
@@ -139,7 +127,7 @@ async def build_redeye_crypto_intent(
         "created_at": now,
         "updated_at": now,
         "ingest_ts": now,
-        "ingest_method": "redeye_crypto_bridge",
+        "ingest_method": "chevelle_crypto_bridge",
     }
 
     if attach_research:
@@ -149,18 +137,13 @@ async def build_redeye_crypto_intent(
     return intent
 
 
-# `_attach_research_evidence` was inlined here in the first pass; the
-# logic now lives in `shared.research.intent_evidence` so every brain
-# bridge (redeye/GTO, chevelle/Hellcat, ...) uses the same code path
-# and the doctrine guard ("research is evidence, not authority") is
-# enforced in exactly one place.
+# ──────────────────────── crypto symbol predicate ────────────────────────
 
-
-CRYPTO_BASES = {
-    "BTC", "ETH", "SOL", "ADA", "DOGE", "ATOM", "XRP", "DOT", "AVAX",
-    "MATIC", "LINK", "LTC", "BCH", "UNI", "FIL", "TRX", "ALGO", "XLM",
-    "NEAR", "APT", "ARB", "OP", "INJ", "SUI", "TIA", "RUNE",
-}
+CRYPTO_BASES = frozenset({
+    "BTC", "ETH", "SOL", "XRP", "ADA", "DOT", "AVAX", "LINK", "MATIC",
+    "LTC", "BCH", "DOGE", "ATOM", "FIL", "ETC", "NEAR", "ALGO", "SAND",
+    "MANA", "AAVE", "UNI", "COMP", "MKR", "SNX", "CRV", "SUSHI",
+})
 
 
 def _looks_like_crypto(symbol: str) -> bool:
@@ -174,7 +157,7 @@ def _looks_like_crypto(symbol: str) -> bool:
 
 # ──────────────────────── persistence ────────────────────────
 
-async def emit_redeye_crypto_intent(
+async def emit_hellcat_crypto_intent(
     *,
     symbol: str,
     action: Literal["BUY", "SELL", "SHORT", "COVER"],
@@ -184,14 +167,10 @@ async def emit_redeye_crypto_intent(
 ) -> dict:
     """Build, validate authority, and persist into shared_intents.
 
-    Validates that the intent's `requires_final_authority` matches the
-    crypto seat holder at ingest time. If the seat is vacant or the
-    authority lookup somehow disagrees with itself between build and
-    insert (rotation race), returns a structured error and skips the
-    insert. The gate chain will re-validate seat-holding again at
-    execution time — this is a fast-fail check only.
+    Mirrors `emit_redeye_crypto_intent`. The seat-vacant and
+    rotation-race fast-fail checks are identical.
     """
-    intent = await build_redeye_crypto_intent(
+    intent = await build_hellcat_crypto_intent(
         symbol=symbol,
         action=action,
         confidence=confidence,
@@ -201,8 +180,6 @@ async def emit_redeye_crypto_intent(
     expected_authority = _norm(await _crypto_final_authority())
     actual_authority = _norm(intent.get("requires_final_authority"))
     if actual_authority != expected_authority:
-        # Should never trigger unless the roster rotates inside this
-        # function — surface as a structured rejection.
         return {
             "allowed": False,
             "reason": "FINAL_AUTHORITY_SEAT_MISMATCH",
@@ -211,7 +188,6 @@ async def emit_redeye_crypto_intent(
             "intent": intent,
         }
     if expected_authority == "crypto_executor":
-        # Marker value from _crypto_final_authority — seat is vacant.
         return {
             "allowed": False,
             "reason": "CRYPTO_SEAT_VACANT",
@@ -223,7 +199,7 @@ async def emit_redeye_crypto_intent(
 
 # ──────────────────────── REST surface ────────────────────────
 
-router = APIRouter(prefix="/admin/redeye/bridge", tags=["redeye_bridge"])
+router = APIRouter(prefix="/admin/hellcat/bridge", tags=["hellcat_bridge"])
 
 
 class EmitBody(BaseModel):
@@ -239,10 +215,10 @@ async def emit_endpoint(
     body: EmitBody,
     _user: dict = Depends(get_current_user),  # noqa: B008
 ):
-    """REDEYE's crypto decision → MC intent. Pasted intent dict has the
-    crypto seat holder stamped as `requires_final_authority`. Refuses
-    if seat is vacant (CRYPTO_SEAT_VACANT) or non-crypto symbol."""
-    return await emit_redeye_crypto_intent(
+    """HELLCAT's crypto decision → MC intent. Same shape as the
+    REDEYE bridge; the only operational difference is the emitting
+    brain identifier."""
+    return await emit_hellcat_crypto_intent(
         symbol=body.symbol,
         action=body.action,
         confidence=body.confidence,
@@ -253,7 +229,7 @@ async def emit_endpoint(
 
 @router.get("/authority")
 async def get_authority(_user: dict = Depends(get_current_user)):  # noqa: B008
-    """Returns the brain that any new REDEYE crypto intent will be
+    """Returns the brain that any new HELLCAT crypto intent will be
     addressed to. Returns `'crypto_executor'` (marker) if the seat is
     vacant — bridge will refuse to emit until operator assigns."""
     holder = await _crypto_final_authority()

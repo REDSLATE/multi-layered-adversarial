@@ -1,3 +1,55 @@
+## 2026-02-20 (Hellcat/ETH research evidence wiring — second runtime live)
+
+### Operator pin
+> "Hellcat is next. Same way. Then we can look at equity."
+
+### What shipped
+
+**Backend — Hellcat/chevelle crypto bridge:**
+- New `shared/chevelle_crypto_intent_bridge.py` — mirror of the GTO
+  bridge with `stack="hellcat"`, `intent_id` prefix
+  `chevelle-crypto-`, route prefix `/api/admin/hellcat/bridge`,
+  `ingest_method="chevelle_crypto_bridge"`.
+- Same doctrine guards: crypto_only, intent_only, hold_not_promotable,
+  seat_based_final_authority, research_is_evidence.
+- Two surfaces: `POST /api/admin/hellcat/bridge/emit` +
+  `GET /api/admin/hellcat/bridge/authority`.
+
+**Backend — shared research evidence helper (refactor):**
+- Extracted the bar-load → score → attach flow out of the GTO bridge
+  into `shared/research/intent_evidence.py::attach_research_evidence`.
+- Both GTO and Hellcat bridges now call the shared helper. New brains
+  wire in with one import + one call.
+- Doctrine ("research is evidence, not authority") is now enforced in
+  exactly ONE place — single point of audit.
+- Helper also exported from `shared.research.__init__` for ergonomic
+  imports.
+
+### Tests
+- New: `tests/test_chevelle_bridge_research_evidence_2026_02_20.py`
+  (7 tests — same shape as the GTO bridge tests plus two extra:
+  HOLD-action refusal and non-crypto-symbol refusal).
+- All 37 research + bridge + dry-run tests green together.
+
+### Live smoke
+- `POST /api/admin/hellcat/bridge/emit ETH/USD SELL conf=0.71`
+  → `allowed:true`, `stack: hellcat`, evidence stamped:
+  `crypto_breakdown_v1 HOLD score=0.45 reasons=[below_vwap, weak_rsi]`
+  from 120 fresh Kraken bars.
+- `/api/admin/intents/<intent_id>/trace` returns the research
+  evidence cleanly — the existing `ResearchSignalsBlock` UI chips
+  render Hellcat's evidence with no frontend changes.
+
+### Next phase
+- **Equity**: wire the equity brains (camino + barracuda) the same
+  way. `large_cap_momentum_v1` is already registered for
+  `STRATEGIES["equity"]`; the brains just need their respective
+  bridges (or the canonical `_post_intent_impl` path) to call
+  `attach_research_evidence`.
+
+---
+
+
 ## 2026-02-20 (GTO/BTC research evidence wiring — first runtime live)
 
 ### Operator pin

@@ -60,7 +60,7 @@ async def test_build_stamps_research_signals_on_evidence():
     async def _load(symbol, tf="1h", limit=120, source=None):
         return _bear_breakdown(), "kraken_pro"
 
-    with patch("shared.research.bar_source.load_recent_bars", new=_load):
+    with patch("shared.research.intent_evidence.load_recent_bars", new=_load):
         intent = await build_redeye_crypto_intent(
             symbol="BTC/USD",
             action="SELL",
@@ -88,7 +88,7 @@ async def test_build_no_bars_still_emits_with_status_marker():
     async def _empty(symbol, tf="1h", limit=120, source=None):
         return [], None
 
-    with patch("shared.research.bar_source.load_recent_bars", new=_empty):
+    with patch("shared.research.intent_evidence.load_recent_bars", new=_empty):
         intent = await build_redeye_crypto_intent(
             symbol="BTC/USD",
             action="SELL",
@@ -109,7 +109,7 @@ async def test_build_research_error_is_swallowed():
     async def _boom(symbol, tf="1h", limit=120, source=None):
         raise RuntimeError("mongo timed out")
 
-    with patch("shared.research.bar_source.load_recent_bars", new=_boom):
+    with patch("shared.research.intent_evidence.load_recent_bars", new=_boom):
         intent = await build_redeye_crypto_intent(
             symbol="ETH/USD",
             action="SELL",
@@ -131,7 +131,7 @@ async def test_build_attach_research_false_skips_layer():
     async def _explode(*a, **kw):
         raise AssertionError("research layer must not be called when attach_research=False")
 
-    with patch("shared.research.bar_source.load_recent_bars", new=_explode):
+    with patch("shared.research.intent_evidence.load_recent_bars", new=_explode):
         intent = await build_redeye_crypto_intent(
             symbol="BTC/USD",
             action="SELL",
@@ -151,7 +151,7 @@ async def test_research_never_overwrites_brain_decision_fields():
     async def _load(symbol, tf="1h", limit=120, source=None):
         return _bear_breakdown(), "kraken_pro"
 
-    with patch("shared.research.bar_source.load_recent_bars", new=_load):
+    with patch("shared.research.intent_evidence.load_recent_bars", new=_load):
         intent = await build_redeye_crypto_intent(
             symbol="BTC/USD",
             action="BUY",   # opposite of what the strategy will say
