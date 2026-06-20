@@ -1138,6 +1138,20 @@ async def _post_intent_impl(
             "_post_intent_impl: research evidence attach failed intent_id=%s err=%s",
             intent_id, _research_err,
         )
+    # 2026-02-20: setup memory feedback loop. Reads `(brain, setup_id)`
+    # report-card history and adjusts `confidence` accordingly. Kill
+    # switch on `runtime_flags.setup_memory_enabled` — default OFF
+    # so operator can review the report cards before letting them
+    # actually pull brain confidence. Stamps the audit trail on
+    # `evidence.setup_memory` either way.
+    try:
+        from shared.setup_memory import apply_setup_memory
+        await apply_setup_memory(doc)
+    except Exception as _sm_err:  # noqa: BLE001
+        logger.warning(
+            "_post_intent_impl: setup_memory apply failed intent_id=%s err=%s",
+            intent_id, _sm_err,
+        )
     await db[SHARED_INTENTS].insert_one(doc)
     # so the brain never waits on bookkeeping.
     from shared.mc_shelly import record_async  # noqa: WPS433
@@ -1501,6 +1515,16 @@ async def admin_post_intent(
         logger.warning(
             "admin_post_intent: research evidence attach failed intent_id=%s err=%s",
             doc.get("intent_id"), _research_err,
+        )
+    # 2026-02-20: setup memory feedback loop. Same hook as the runtime
+    # path. Kill switch on `runtime_flags.setup_memory_enabled`.
+    try:
+        from shared.setup_memory import apply_setup_memory
+        await apply_setup_memory(doc)
+    except Exception as _sm_err:  # noqa: BLE001
+        logger.warning(
+            "admin_post_intent: setup_memory apply failed intent_id=%s err=%s",
+            doc.get("intent_id"), _sm_err,
         )
     await db[SHARED_INTENTS].insert_one(doc)
 

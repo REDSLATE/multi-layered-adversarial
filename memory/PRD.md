@@ -1,3 +1,108 @@
+## 2026-02-20 (Verifier Rule Sheet + Brain Report Cards + Setup Memory)
+
+### Operator pin
+> "Every intent becomes a labeled lesson. Train from the verifier,
+> not vibes."
+> Best next modules: 1. Verifier Rule Sheet  2. Brain Report Cards
+> 3. Setup Memory.
+
+### What shipped — three phases in one batch
+
+**Phase 1 — Verifier Rule Sheet (labeled lessons)**
+- `shared/lessons/__init__.py` + `schemas.py` + `setup_classifier.py`
+  + `mae_mfe.py` + `builder.py`.
+- `Lesson` dataclass: brain layer, research layer, market context,
+  gate layer, execution layer, position layer, verdict (setup_id +
+  outcome). Pure read-only join over `shared_intents`,
+  `execution_receipts`, `shared_brain_outcomes`, and the bracket
+  resolver's `doctrine_sidecars.outcome_join`.
+- `setup_classifier.classify_setup(action, signals)` —
+  `large_cap_momentum_v1:BUY` / `crypto_breakdown_v1:SELL` /
+  `contrarian:BUY` (brain disagrees with strongest research signal) /
+  `unscored:BUY` (no research) / `abstain` (HOLD).
+- `mae_mfe.compute_mae_mfe_bps(...)` — side-aware max adverse /
+  favorable excursion in bps from the bar window between fill_ts
+  and exit_ts. Uses `shared.research.bar_source` so the data
+  priority (broker first) matches what the brain saw.
+
+**Phase 2 — Brain Report Cards**
+- `shared/report_cards.py::build_report_card(stack, lane, setup_id,
+  regime)` — per-brain × per-setup × per-regime KPIs over labeled
+  lessons. Headline KPIs: win_rate, avg_pnl_bps, avg_mae_bps,
+  avg_mfe_bps, profit_factor, executed_pct, plus by_setup /
+  by_regime / by_symbol_top breakdowns.
+- `build_setup_aggregate(setup_id, lane)` — cross-brain view of one
+  setup ("who's strongest on `crypto_breakdown_v1:SELL`?").
+- Resolved-only window (excludes "pending" outcomes) so a fresh
+  setup doesn't get biased toward "unknown".
+
+**Phase 3 — Setup Memory (feedback loop with KILL SWITCH default OFF)**
+- `shared/setup_memory.py::compute_adjustment(...)` — reads
+  report-card history for (brain, setup) and maps win-rate to a
+  multiplier bucketed:
+      win_rate >= 0.60  →  1.10× (proven)
+      win_rate >= 0.45  →  1.00× (neutral)
+      win_rate >= 0.30  →  0.80× (weak)
+      win_rate <  0.30  →  0.50× (broken)
+  Bounded to [0.50, 1.20]. < 5 resolved samples → 1.00× (no signal).
+- `apply_setup_memory(intent)` mutates `intent["confidence"]` and
+  stamps `intent["evidence"]["setup_memory"]` with the full lookup
+  result + pre/post values. NEVER touches action / gate_state /
+  pipeline keys.
+- **Kill switch** at `runtime_flags.setup_memory_enabled`
+  (default False). When OFF the helper stamps an audit marker
+  (`applied: false, reason: kill_switch_off`) and returns without
+  reading the report card.
+- Wired into BOTH `shared/intents.py::_post_intent_impl` (runtime
+  token path) AND `admin_post_intent` (admin proxy path), AFTER
+  the research evidence hook and BEFORE the `insert_one` — so
+  bridge emits, runtime emits, and admin proxy emits all carry
+  identical `setup_memory` audit shape.
+
+**Routes** (`routes/verifier.py`, prefix `/api`):
+- `GET  /api/lessons/{intent_id}`
+- `GET  /api/lessons?stack=&lane=&symbol=&setup_id=&outcome=&limit=`
+- `GET  /api/report-cards/{brain}?lane=&setup_id=&regime=`
+- `GET  /api/report-cards/setup/{setup_id:path}?lane=`
+- `GET  /api/setup-memory/preview?brain=&lane=&action=`
+- `GET  /api/admin/setup-memory/status`
+- `POST /api/admin/setup-memory/toggle` `{enabled: bool}`
+
+### Tests
+- New: `tests/test_verifier_rule_sheet_2026_02_20.py` (17 tests).
+  Covers setup classifier (agreement / contrarian / unscored /
+  abstain / multi-signal pick), MAE/MFE side-aware excursions,
+  report-card summarize (win/loss/scratch/pending split), setup
+  memory (kill switch off, insufficient samples, proven boost,
+  broken throttle, doctrine guard on pipeline fields).
+- 68 tests green across the entire Verifier + Research + Bridge +
+  Dry-run sweep.
+
+### Live verification
+- Camino emit (runtime-token) → lesson endpoint returns:
+  `setup_id="large_cap_momentum_v1:BUY"`,
+  `research_strongest_direction="BUY"`, `research_score=0.7`,
+  `outcome="pending"`, `executed=false`, `confidence=0.65`.
+- Toggled kill switch ON → next emit stamped
+  `setup_memory.applied:true, multiplier:1.0,
+   reason:insufficient_samples` (correctly neutral with zero
+  resolved lessons in the fresh window).
+- Kill switch restored OFF after smoke.
+
+### Doctrine guard rails (pinned)
+1. **READ-ONLY** lessons / report cards / preview endpoints.
+2. **Setup memory ONLY mutates** `intent["evidence"]["setup_memory"]`
+   and `intent["confidence"]`. Action, executed, gate_state,
+   pipeline_receipt all untouched (tested).
+3. **Kill switch defaults OFF.** Operator must explicitly toggle on.
+4. **Bounded multiplier** — [0.50, 1.20]. Setup Memory cannot silently
+   zero a brain or run away with confidence boosts.
+5. **Failure-contained** — bar source crash / compute error stamps
+   `applied: false, reason: compute_error` and emits unchanged.
+
+---
+
+
 ## 2026-02-20 (Canonical ingest research hook — doctrine loop closed)
 
 ### Operator pin
