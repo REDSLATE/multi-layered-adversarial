@@ -1,3 +1,63 @@
+## 2026-02-20 (Canonical ingest research hook — doctrine loop closed)
+
+### Operator pin
+> "wire research into the canonical runtime path so live autonomous
+> emissions and admin bridge emissions carry the same evidence. After
+> that, the dashboard diagnostics will be comparing apples to apples."
+
+### What shipped
+- `shared/intents.py::_post_intent_impl` — calls
+  `attach_research_evidence(doc)` just before the
+  `db[SHARED_INTENTS].insert_one(doc)` line. Wrapped in a local
+  try/except that logs but never blocks emit on a research outage.
+- `shared/intents.py::admin_post_intent` — same hook at the matching
+  call site so admin-proxy intents share the runtime intent shape.
+- Both hooks call the same `shared.research.intent_evidence`
+  helper as the bridges — the doctrine guard ("research is evidence,
+  never authority") lives in exactly one module across the entire
+  ingest surface.
+
+### Tests
+- New: `tests/test_canonical_intent_research_hook_2026_02_20.py`
+  (4 tests). Pins: research evidence stamps on the `_post_intent_impl`
+  doc shape, brain decision fields never mutate, bar-source crash is
+  contained, no-lane fallback is a safe no-op. Plus a structural
+  guard that both ingest paths import from the same module.
+- 63 tests green across the full research + bridge + dry-run sweep.
+
+### Live verification
+- `POST /api/intents` with `X-Runtime-Token: $CAMINO_INGEST_TOKEN`
+  → 200 OK; subsequent trace shows
+  `research_signals: [large_cap_momentum_v1 BUY score=0.7
+  reasons=[above_vwap, macd_bullish, volume_confirmed]]` on
+  finnhub_equity/1d/120.
+- `POST /api/admin/intents` → identical research evidence shape.
+- All eight admin bridges → same shape.
+- Side-by-side: runtime intent and bridge intent for the same
+  (brain, symbol, lane) at the same time are now structurally
+  identical in `shared_intents`.
+
+### Surface coverage after this patch
+| Emit path                              | Research evidence |
+|----------------------------------------|-------------------|
+| Runtime-token `/api/intents`           | YES (new)         |
+| Runtime-token `/api/intents/crypto`    | YES (new, via _post_intent_impl) |
+| Runtime-token `/api/intents/equity`    | YES (new, via _post_intent_impl) |
+| Admin proxy `/api/admin/intents`       | YES (new)         |
+| Admin proxy `/api/admin/intents/crypto`| YES (new, via admin_post_intent) |
+| Admin proxy `/api/admin/intents/equity`| YES (new, via admin_post_intent) |
+| GTO legacy crypto bridge               | YES (prior)       |
+| Hellcat legacy crypto bridge           | YES (prior)       |
+| 4× factory equity bridges              | YES (prior)       |
+| 2× factory crypto bridges (camino/barracuda) | YES (prior) |
+
+Every intent in `shared_intents` going forward carries
+`evidence.research_signals` — dashboard diagnostics now compare apples
+to apples regardless of which path produced the intent.
+
+---
+
+
 ## 2026-02-20 (Camino + Barracuda crypto bridges — full 4×2 matrix locked)
 
 ### Operator question (verbatim)

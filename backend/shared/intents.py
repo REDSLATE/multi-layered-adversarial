@@ -1123,6 +1123,21 @@ async def _post_intent_impl(
     }
     if memory_modulator_info is not None:
         doc["memory_modulator"] = memory_modulator_info
+    # 2026-02-20: stamp Research Layer evidence onto the canonical
+    # runtime ingest. Best-effort (helper internally try/excepts the
+    # bar source) so production brain emissions never block on a
+    # research outage. This is the doctrine-enforcement point that
+    # makes admin-bridge intents and runtime-token intents carry the
+    # same `evidence.research_signals` shape — comparable apples to
+    # apples in the post-mortem.
+    try:
+        from shared.research.intent_evidence import attach_research_evidence
+        await attach_research_evidence(doc)
+    except Exception as _research_err:  # noqa: BLE001
+        logger.warning(
+            "_post_intent_impl: research evidence attach failed intent_id=%s err=%s",
+            intent_id, _research_err,
+        )
     await db[SHARED_INTENTS].insert_one(doc)
     # so the brain never waits on bookkeeping.
     from shared.mc_shelly import record_async  # noqa: WPS433
@@ -1475,6 +1490,18 @@ async def admin_post_intent(
         receipt["mc_validated"] = True
         receipt["mc_bounds"] = {"min": -0.25, "max": 0.10}
         doc["memory_modulator"] = receipt
+    # 2026-02-20: same research evidence hook as the runtime path
+    # (`_post_intent_impl`). Admin-proxied intents go through this
+    # branch; keep them shape-compatible with runtime intents so the
+    # post-mortem and the bridge-health tile compare apples to apples.
+    try:
+        from shared.research.intent_evidence import attach_research_evidence
+        await attach_research_evidence(doc)
+    except Exception as _research_err:  # noqa: BLE001
+        logger.warning(
+            "admin_post_intent: research evidence attach failed intent_id=%s err=%s",
+            doc.get("intent_id"), _research_err,
+        )
     await db[SHARED_INTENTS].insert_one(doc)
 
     # MC Shelly — record this admin-proxied ingest too. Tagged with the
