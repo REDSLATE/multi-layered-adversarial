@@ -211,6 +211,10 @@ def test_router_sends_crypto_to_crypto_packet():
 
 
 def test_router_sends_equity_to_equity_packet():
+    """2026-02-20 directive: equity defaults to LARGE-cap doctrine
+    unless the snapshot explicitly opts into small-cap via
+    `strategy` or `market_cap_band`. This snapshot leaves both
+    blank → must route to `large_cap_equity_v1`."""
     packet = build_lane_doctrine_packet({
         "lane": "equity",
         "symbol": "NVDA",
@@ -218,9 +222,29 @@ def test_router_sends_equity_to_equity_packet():
         "has_news": True, "float_millions": 10, "pattern": "pullback",
         "market_regime": "strong", "spread_bps": 40,
     })
-    assert packet["doctrine_version"] == "small_account_sidecar_v1"
+    assert packet["doctrine_version"] == "large_cap_equity_v1"
     assert packet["lane"] == "equity"
     assert "seats" in packet
+
+
+def test_router_sends_small_cap_strategy_to_small_account_sidecar():
+    """When the snapshot explicitly opts into a small-cap strategy
+    (`gap_and_go` here), the router MUST honour that and dispatch
+    to the small-account sidecar — not the large-cap default."""
+    packet = build_lane_doctrine_packet({
+        "lane": "equity",
+        "symbol": "TINY",
+        "strategy": "gap_and_go",
+        "market_cap_band": "small",
+        "price": 7.5, "gap_pct": 22, "relative_volume": 8,
+        "has_news": True, "float_millions": 10, "pattern": "pullback",
+        "market_regime": "strong", "spread_bps": 40,
+    })
+    assert packet["lane"] == "equity"
+    assert "seats" in packet
+    # The strategy doctrine OR the small-account sidecar is acceptable
+    # — what matters is that we did NOT fall through to large-cap.
+    assert packet["doctrine_version"] != "large_cap_equity_v1"
 
 
 def test_router_rejects_unknown_lane():
@@ -260,12 +284,16 @@ def test_hoist_works_for_crypto_packet():
 
 
 def test_hoist_works_for_equity_packet():
+    # Under large-cap doctrine (the 2026-02-20 default for equity),
+    # SPREAD_TIGHT requires spread_bps ≤ 25. The original test used
+    # 40 bps which routes to SPREAD_TOO_WIDE → execution_ready=False
+    # — that's a snapshot quality problem, not a hoister bug.
     eq_pkt = build_lane_doctrine_packet({
         "lane": "equity",
         "symbol": "NVDA",
         "price": 7.5, "gap_pct": 22, "relative_volume": 8,
         "has_news": True, "float_millions": 10, "pattern": "pullback",
-        "market_regime": "strong", "spread_bps": 40,
+        "market_regime": "strong", "spread_bps": 15,
     })
     hoisted = hoist_packet_audit_fields(eq_pkt)
     assert hoisted["quality"] == "A_QUALITY"

@@ -1,3 +1,120 @@
+## 2026-02-21d (Pre-existing test-suite cleanup)
+
+### Operator pin
+> "Can we get those 3 bugs as well?"
+
+### What shipped
+
+Three pre-existing failing tests fixed (none were regressions
+introduced by this session — they were broken on master before the
+Kraken-first enrichment work). Each fix preserves the original
+intent of the test against the *current* doctrine.
+
+**1. `test_returns_base_when_client_missing`**
+   *(tests/test_crypto_doctrine_enricher.py)*
+   - Was: `assert out == base` (impossibly strict — the enricher
+     adds audit-metadata fields like `snapshot_source` and
+     `snapshot_age_ms` even when the Webull client is None).
+   - Now: asserts the **actual contract** — base fields are
+     preserved unchanged, NO market-data fields (price / bid / ask
+     / spread_bps / volume) get fabricated when there's no
+     upstream client, and the `snapshot_source` tag tells the
+     operator exactly why (`base_only_no_webull_client`).
+
+**2. `test_router_sends_equity_to_equity_packet`**
+   *(tests/test_crypto_doctrine_sidecar.py)*
+   - Was: asserted `doctrine_version == "small_account_sidecar_v1"`.
+   - Operator directive 2026-02-20 INVERTED the equity default to
+     large-cap (the production watchlist is AAPL/MSFT/NVDA/MSTR
+     /ABNB; the old default rejected all of them on
+     SMALL_ACCOUNT_PRICE_VALID).
+   - Now: asserts `doctrine_version == "large_cap_equity_v1"` (the
+     correct new behavior). BONUS — added
+     `test_router_sends_small_cap_strategy_to_small_account_sidecar`
+     that pins the opt-IN path (when `strategy=gap_and_go` or
+     `market_cap_band=small`, the router MUST still route to
+     small-cap doctrine).
+
+**3. `test_hoist_works_for_equity_packet`**
+   *(tests/test_crypto_doctrine_sidecar.py)*
+   - Was: snapshot used `spread_bps: 40` which large-cap doctrine
+     labels as `SPREAD_TOO_WIDE` (≤25 bps is the gate). That
+     correctly produced `execution_ready=False` — the test
+     assertion was off, not the doctrine.
+   - Now: snapshot uses `spread_bps: 15` (inside the large-cap
+     envelope). The hoister contract is verified end-to-end:
+     `quality=A_QUALITY`, `camaro_execution_ready=True`,
+     `chevelle_governor_action=modulate`.
+
+### Test totals after this pass
+- 92/92 passing across: crypto_doctrine, sidecar, kraken
+  enrichment, intent funnel, post-mortem, broker router, chevelle
+  bridge research evidence, symbol normalization.
+- 0 known regressions.
+
+### Frozen files (unchanged)
+- `routes/admin_intents_post_mortem.py`
+- `shared/pipeline/*`
+- `shared/auto_submit_policy.py`
+- `shared/broker/webull.py`
+
+---
+
+
+## 2026-02-21c (Kraken-first crypto spread enrichment)
+
+### Operator pin
+> "Is there a way to keep Webull on equities and Kraken on crypto?" → "A & B"
+
+### What shipped
+
+**A — broker_selection singleton equity flip**
+- MongoDB write: `broker_selection.equity` changed from `"public"`
+  → `"webull"`. Equity intents previously routed to the deprecated
+  Public.com adapter (which returned None for missing creds and
+  silently NO_TRADEd everything). Now matches the
+  `LANE_BROKER_REGISTRY` truth + the 2026-02-19 operator directive
+  that Webull is the sole equity broker. Zero code change.
+
+**B — Kraken-first crypto spread enrichment**
+- New module `shared/snapshot_enrich/kraken_feed.py::kraken_bidask`
+  hits Kraken's PUBLIC Ticker endpoint (no auth) with a 5s
+  per-pair process cache. Returns `{bid, ask, price, spread_bps,
+  src}` or None on any failure. Fail-soft by design.
+- `shared/snapshot_enrich/crypto_doctrine.py::enrich_crypto_doctrine_snapshot`
+  now consults `broker_selection.crypto` (cached 15s). When it's
+  `"kraken"` (default), Kraken bid/ask is fetched BEFORE the Webull
+  executor enricher. If Kraken delivers, the resulting snapshot has
+  `bid`/`ask`/`spread_bps`/`spread_bps_source="kraken_public_ticker"`/
+  `primary_source="kraken"` REPLACING the Webull-derived fields.
+  Webull stays available as the fail-through path.
+- Live validation against production Kraken:
+  * ETH/USD: 0.06 bps (was Webull-fallback 30 bps → 500× exaggerated)
+  * BTC/USD: 0.02 bps (1500× exaggerated)
+  * SOL/USD: 1.37 bps
+  The spread doctrine gate now reads the same book the broker
+  router will execute against. The 30 bps fallback band-aid is no
+  longer the operative number for major pairs.
+
+### Tests
+- 9 new pytest cases in `test_kraken_crypto_enrichment_2026_02_21.py`:
+  fetcher happy-path / empty result / kraken error / missing fields
+  / 5s cache / exception fail-soft, plus 3 wiring tests for the
+  doctrine enricher (kraken wins, kraken-none fall-through, webull
+  selection skips kraken).
+- Pre-existing `test_btc_usd_enriched_with_webull_snapshot`
+  protected with an autouse mock that pins Kraken to None so the
+  legacy Webull-only assertions still pass.
+
+### Frozen files (unchanged)
+- `routes/admin_intents_post_mortem.py`
+- `shared/pipeline/*`
+- `shared/auto_submit_policy.py`
+- `shared/broker/webull.py`
+
+---
+
+
 ## 2026-02-21b (Stage-shift anomaly detection)
 
 ### Operator pin

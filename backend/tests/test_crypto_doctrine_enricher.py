@@ -7,6 +7,25 @@ import pytest
 from shared.snapshot_enrich import crypto_doctrine as cd
 
 
+@pytest.fixture(autouse=True)
+def _mock_kraken_off(monkeypatch):
+    """Pin tests to the Webull-only path (Kraken-first is covered in
+    test_kraken_crypto_enrichment_2026_02_21.py). Returning None from
+    kraken_bidask + selection-is-not-kraken keeps these legacy tests
+    exercising the original Webull enrichment they were written for.
+    """
+    async def _no_kraken(*_a, **_k):
+        return None
+
+    async def _not_primary():
+        return False
+
+    monkeypatch.setattr(
+        "shared.snapshot_enrich.kraken_feed.kraken_bidask", _no_kraken,
+    )
+    monkeypatch.setattr(cd, "_crypto_primary_is_kraken", _not_primary)
+
+
 class _FakeClient:
     def __init__(self, crypto_snap=None):
         self._snap = crypto_snap
@@ -35,13 +54,28 @@ def _run(coro):
 
 
 def test_returns_base_when_client_missing(monkeypatch):
+    """When the Webull client is unavailable, the enricher must NOT
+    invent market data. It may stamp audit-metadata fields
+    (`snapshot_source`, `snapshot_age_ms`) so the operator can see
+    *why* the snapshot is bare, but it must NOT inject price / bid /
+    ask / spread_bps."""
     monkeypatch.setattr(
         "shared.market_data.webull_quotes.get_quotes_client",
         lambda: None,
     )
     base = {"symbol": "BTC/USD", "lane": "crypto"}
     out = _run(cd.enrich_crypto_doctrine_snapshot("BTC/USD", base))
-    assert out == base
+    # Base fields preserved unchanged.
+    assert out["symbol"] == "BTC/USD"
+    assert out["lane"] == "crypto"
+    # No fabricated market-data fields.
+    for forbidden in ("price", "bid", "ask", "spread_bps", "volume"):
+        assert forbidden not in out, (
+            f"enricher fabricated {forbidden!r} with no upstream client"
+        )
+    # Audit metadata is allowed (and useful) — but the source tag
+    # must make the missing client obvious.
+    assert out.get("snapshot_source") == "base_only_no_webull_client"
 
 
 def test_btc_usd_enriched_with_webull_snapshot(monkeypatch):

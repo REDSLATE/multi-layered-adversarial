@@ -1,19 +1,23 @@
-"""Crypto doctrine enricher — Webull as hot-failover for Kraken.
+"""Crypto doctrine enricher — Kraken primary, Webull hot-failover.
 
-Operator directive (2026-06-11):
-    Kraken creds aren't persisted in this DB yet. Crypto lane has been
-    emitting on cold-start data, producing REJECT-quality intents. The
-    operator wants to flip selectively between brokers per lane — and
-    needs the data feed to follow. Webull's crypto entitlement (spot
-    BTCUSD / ETHUSD bid/ask) is already free under the base subscription;
-    this module uses it as the primary feed when Kraken's poller is
-    not running, and as a cross-check when it is.
+Operator directive timeline:
+    2026-06-11: Kraken creds weren't persisted; Webull was the only
+        feed available. Module shipped as Webull-primary with a
+        hardcoded `spread_bps = 30.0` fallback for the price-only
+        case.
+    2026-02-21: 20,570 crypto intents · 0 executed. The spread
+        doctrine was reading Webull's thin / often-bid/ask-less feed
+        while execution was routing to Kraken — a feed mismatch
+        masked by the 30 bps band-aid. Fix: when broker_selection
+        says `crypto = "kraken"`, fetch bid/ask from Kraken's public
+        Ticker FIRST (no auth needed, 5s cache). Webull becomes the
+        cross-check / fallback.
 
 Source-of-truth selection:
     Reads the `broker_selection` singleton from MongoDB. If
-    `crypto = "webull"`, Webull is treated as primary. If
-    `crypto = "kraken"`, Kraken stays primary and Webull is the
-    council-of-last-resort cross-check.
+    `crypto = "kraken"` (the new default), Kraken is primary; Webull
+    fills in only when Kraken returns nothing. If `crypto =
+    "webull"`, the prior path holds.
 
 Fail-soft: any error returns the base snapshot unchanged.
 """
@@ -134,12 +138,86 @@ def _enrich_sync(symbol: str, base: Dict[str, Any]) -> Dict[str, Any]:
 async def enrich_crypto_doctrine_snapshot(
     symbol: str, base_snapshot: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Async wrapper. Returns base snapshot unchanged on any error."""
+    """Async wrapper. Returns base snapshot unchanged on any error.
+
+    2026-02-21: Kraken-first path. When `broker_selection.crypto =
+    "kraken"`, fetch bid/ask from Kraken's public Ticker before
+    falling through to the Webull executor enricher. If Kraken
+    returns good bid/ask, the gates evaluate against the book the
+    Kraken adapter will actually hit — eliminating the
+    Webull-snapshot ↔ Kraken-execution mismatch that produced the
+    `spread_bps = 30.0` fallback.
+    """
     if not symbol:
         return base_snapshot
     try:
+        kraken_data: Optional[Dict[str, Any]] = None
+        if await _crypto_primary_is_kraken():
+            from shared.snapshot_enrich.kraken_feed import kraken_bidask  # noqa: WPS433
+            try:
+                kraken_data = await kraken_bidask(symbol)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("kraken_bidask raised sym=%s err=%s", symbol, e)
+                kraken_data = None
+
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, _enrich_sync, symbol, base_snapshot)
+        enriched = await loop.run_in_executor(
+            None, _enrich_sync, symbol, base_snapshot,
+        )
+
+        # If Kraken delivered authentic bid/ask, OVERWRITE the spread
+        # block on the enriched snapshot. The doctrine gates read
+        # `spread_bps`, `bid`, `ask`, `primary_source`, `snapshot_source`
+        # — we replace exactly those fields and tag the source.
+        if kraken_data:
+            enriched["bid"] = kraken_data["bid"]
+            enriched["ask"] = kraken_data["ask"]
+            enriched["spread_bps"] = kraken_data["spread_bps"]
+            enriched["spread_bps_source"] = "kraken_public_ticker"
+            enriched["primary_source"] = "kraken"
+            enriched["snapshot_source"] = "kraken"
+            enriched["real_market_data"] = True
+            enriched["kraken_enriched"] = True
+            # Don't clobber price if Webull already had one;
+            # Kraken's `last` is a fine substitute though.
+            enriched.setdefault("price", kraken_data["price"])
+            council = enriched.setdefault("data_council", [])
+            if "kraken" not in council:
+                council.append("kraken")
+        return enriched
     except Exception as e:  # noqa: BLE001
         logger.warning("crypto enricher failed sym=%s err=%s", symbol, e)
         return base_snapshot
+
+
+# ── broker_selection lookup ─────────────────────────────────────────
+# Tiny in-process cache to avoid hammering Mongo on every intent.
+_BROKER_SEL_CACHE: Dict[str, Any] = {"value": None, "fetched_at": 0.0}
+_BROKER_SEL_TTL_SEC = 15.0
+
+
+async def _crypto_primary_is_kraken() -> bool:
+    """Return True iff `broker_selection.crypto == "kraken"`.
+
+    Defaults to True (Kraken is the lane-default per
+    LANE_BROKER_REGISTRY) when the singleton is missing or the
+    lookup fails. Doctrine: fail-open toward the lane default — a
+    Mongo blip must not silently revert to the deprecated Webull
+    crypto feed.
+    """
+    now = time.monotonic()
+    if (now - float(_BROKER_SEL_CACHE.get("fetched_at") or 0)) < _BROKER_SEL_TTL_SEC:
+        cached = _BROKER_SEL_CACHE.get("value")
+        if cached is not None:
+            return bool(cached)
+    try:
+        from db import db  # noqa: WPS433
+        doc = await db["broker_selection"].find_one({"_id": "singleton"})
+        choice = (doc or {}).get("crypto", "kraken")
+        is_kraken = (str(choice).strip().lower() == "kraken")
+        _BROKER_SEL_CACHE["value"] = is_kraken
+        _BROKER_SEL_CACHE["fetched_at"] = now
+        return is_kraken
+    except Exception as e:  # noqa: BLE001
+        logger.warning("broker_selection lookup failed (defaulting Kraken=True): %s", e)
+        return True
