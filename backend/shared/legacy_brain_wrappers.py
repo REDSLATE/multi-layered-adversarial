@@ -955,6 +955,21 @@ def apply_legacy_wrapper(intent: dict[str, Any]) -> dict[str, Any]:
     If the brain's wrapper is operator-disabled (env var OR runtime
     override), returns the intent unchanged with audit fields stamped
     so the Intents feed shows which rows skipped the wrapper.
+
+    ── Camino committee pre-pass (2026-02-21) ──
+    Before any brain-specific wrapper runs, if the intent carries
+    sub-agent votes at `evidence.committee_votes`, run the Alpha-
+    weighted committee aggregator (see `shared/brains/camino_committee
+    .py`). It REPLACES the intent's `confidence` with the calibrated
+    weighted-mean of the votes (war_room 91.7% > signal_dispatcher
+    66.4%, etc.) and stamps `evidence.committee_verdict` for audit.
+    Downstream wrappers then do their normal discipline tweaks on
+    top of the new confidence — net effect: the entire emit chain
+    inherits Alpha's priors automatically.
+
+    Kill switch: `RISEDUAL_CAMINO_COMMITTEE_DISABLED=1` env var.
+    When no votes are attached, this pre-pass no-ops — existing
+    Camino behaviour is bit-identical.
     """
 
     brain_id = str(intent.get("brain_id", "")).lower().strip()
@@ -962,6 +977,19 @@ def apply_legacy_wrapper(intent: dict[str, Any]) -> dict[str, Any]:
 
     if not wrapper_name:
         return intent
+
+    # Committee pre-pass — only when (a) this is Camino, (b) the kill
+    # switch isn't tripped, and (c) the intent actually carries votes.
+    if brain_id == "camino" and not _committee_kill_switch_tripped():
+        try:
+            from shared.brains.camino_committee import apply_committee_to_intent
+            intent = apply_committee_to_intent(intent)
+        except Exception as exc:  # noqa: BLE001
+            # Committee MUST be fail-soft. If anything goes wrong,
+            # stamp the audit field and let the legacy wrapper run
+            # on the original confidence.
+            ev = intent.setdefault("evidence", {})
+            ev.setdefault("committee_error", repr(exc))
 
     disabled, reason = is_wrapper_disabled(brain_id)
     if disabled:
@@ -980,3 +1008,11 @@ def apply_legacy_wrapper(intent: dict[str, Any]) -> dict[str, Any]:
 
     wrapper = WRAPPER_REGISTRY[wrapper_name]
     return wrapper(intent)
+
+
+def _committee_kill_switch_tripped() -> bool:
+    """Sync env-var lookup for the Camino committee kill switch.
+    Operator sets `RISEDUAL_CAMINO_COMMITTEE_DISABLED=1` to disable.
+    """
+    val = _os.environ.get("RISEDUAL_CAMINO_COMMITTEE_DISABLED", "").strip().lower()
+    return val in {"1", "true", "yes", "on"}

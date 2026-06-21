@@ -1,3 +1,88 @@
+## 2026-02-21e (Alpha → Camino merge — confidence priors only)
+
+### Operator pin (verbatim)
+> "I kind of want them to merge into one. I want to bring Alpha's
+> stats and build up Camino."
+> "I don't want the trades just want the confidence for better
+> choices."
+
+### What shipped
+
+**`shared/brains/alpha_engine.py`** — faithful port of the operator's
+standalone Alpha kernel. Bull/Bear adversarial agents, toxic-spike
+seal (`cap_confidence`, ceiling 0.95), narrative enrichment (options
+PCR / catalyst sentiment, additive-only), Commander
+(`resolve_adversarial`) using `score = confidence × expected_R`,
+`Alpha` orchestrator. Stateless, no Mongo, no async, no network.
+
+**`shared/brains/camino_committee.py`** — six-member committee with
+Alpha's empirical win rates as Bayesian weights:
+
+| Sub-agent | Win rate | n | Enabled |
+|---|---|---|---|
+| war_room | 0.917 | 48 | ✓ |
+| market_prediction | 0.879 | 83 | ✓ |
+| hypothesis | 0.855 | 69 | ✓ |
+| signal_dispatcher | 0.664 | 532 | ✓ |
+| paper_trader | 0.200 | 5 | ✗ (Alpha disabled it) |
+| pg_agent | 1.000 | 3 | ✗ (n too small) |
+
+`aggregate_committee(votes)` returns a `CommitteeVerdict` whose
+confidence is the weight-aware mean across the winning-side votes
+(capped at 0.95). Weighted score = `confidence × win_rate` per vote;
+side with highest summed weighted score wins. A single
+`signal_dispatcher` vote at 0.80 confidence has weighted_score
+0.531 — automatic calibration even with one vote.
+
+**Integration** — `apply_legacy_wrapper` now runs the committee
+pre-pass for `brain_id == "camino"` BEFORE the legacy executor
+discipline. When `intent.evidence.committee_votes` is present, the
+committee REPLACES `intent.confidence` with its calibrated value
+and stamps `intent.evidence.committee_verdict` for audit. When no
+votes are attached, the pre-pass no-ops — existing Camino behaviour
+is bit-identical.
+
+**Kill switch** — `RISEDUAL_CAMINO_COMMITTEE_DISABLED=1` env var
+short-circuits the entire pre-pass. No DB call required.
+
+**Fail-soft** — any exception inside the committee logic is caught;
+`evidence.committee_error` is stamped and the legacy wrapper runs
+on the original confidence. The merge cannot break Camino.
+
+### Doctrine version
+`camino_committee_v1_2026_02_21` — bumped whenever priors are
+re-pulled from Alpha's `/api/ai-core/stats`.
+
+### Tests
+- 21 new pytest cases (`test_camino_committee_2026_02_21.py`):
+  cap_confidence, three Alpha reference scenarios (LONG / SHORT /
+  NO_TRADE), commander score formula, prior values pinned, NO_QUORUM,
+  weighted-mean, war_room beats signal_dispatcher on disagreement,
+  unknown agent excluded, toxic cap respected, enabled override,
+  doctrine version, intent mutator no-op, intent mutator replaces
+  confidence, side-match flag, integration with legacy wrapper,
+  confidence inflation via committee, env kill switch, non-Camino
+  brains untouched, fail-soft on aggregator exception.
+- 164 pre-existing tests still pass (24 failures in
+  `test_brain_identity_normalization.py` are pre-existing — verified
+  identical failure count on `git stash`).
+
+### Frozen files (unchanged)
+- `routes/admin_intents_post_mortem.py`
+- `shared/pipeline/*`
+- `shared/auto_submit_policy.py`
+- `shared/broker/webull.py`
+
+### Operational note
+Today nothing upstream of `apply_legacy_wrapper` attaches
+`committee_votes`. The committee ships LIVE but is operationally
+dormant until a future task wires sub-agent emitters (war_room,
+market_prediction, hypothesis) to stamp their votes on Camino's
+candidate intents. The architecture is fully ready for that.
+
+---
+
+
 ## 2026-02-21d (Pre-existing test-suite cleanup)
 
 ### Operator pin
