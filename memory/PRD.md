@@ -1,3 +1,38 @@
+## 2026-02-21b (Stage-shift anomaly detection)
+
+### Operator pin
+> "Go with your improvement."
+
+### What shipped
+**Stage-shift detection on the funnel endpoint**
+- New collection `funnel_drop_snapshots`. Each `GET /api/admin/intents/funnel`
+  call now appends a snapshot row `(window_hours, biggest_drop_to,
+  captured_at)` and compares against the previous snapshot for the
+  same window.
+- Response gains a `stage_shift` field — non-null iff the
+  biggest-drop stage changed AND the previous snapshot is ≥ 60s old
+  (anti-flap). Shape: `{ from_stage, to_stage, prev_captured_at,
+  gap_seconds }`.
+- Best-effort retention prune at 72h on each call.
+
+**UI surfacing**
+- `IntentFunnelTile.jsx` now renders an inline warning banner above
+  the funnel ("Leak shifted: {from} → {to} — was at {from} {n}s ago.
+  New bug?").
+- One sonner toast per *new* shift signature (de-duped via
+  `lastShiftSigRef`) so the operator gets a one-shot alert without
+  re-firing on every 30s poll.
+
+**Tests**
+- 3 new pytest cases (`test_intent_funnel_2026_02_21.py`):
+  * `test_funnel_stage_shift_none_on_first_call`
+  * `test_funnel_stage_shift_none_when_stage_unchanged`
+  * `test_funnel_stage_shift_fires_when_biggest_drop_moves`
+- All 11 funnel tests pass.
+
+---
+
+
 ## 2026-02-21 (7-stage Intent Funnel + 2-pane Receipts UI)
 
 ### Operator pin

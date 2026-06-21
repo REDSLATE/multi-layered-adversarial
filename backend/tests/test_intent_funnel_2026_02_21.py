@@ -201,3 +201,70 @@ async def test_funnel_shape_has_seven_stages():
     bd = body["biggest_drop"]
     if bd is not None:
         assert {"from", "to", "lost", "drop_pct"} <= set(bd.keys())
+
+
+# ── Stage-shift detection tests ─────────────────────────────────────
+from datetime import timedelta
+from routes.admin_intents_funnel import FUNNEL_SNAPSHOTS_COLL
+
+
+@pytest.fixture
+async def clean_snapshots():
+    """Wipe stage-shift snapshots so shift detection is deterministic."""
+    await db[FUNNEL_SNAPSHOTS_COLL].delete_many({})
+    yield
+    await db[FUNNEL_SNAPSHOTS_COLL].delete_many({})
+
+
+@pytest.mark.asyncio
+async def test_funnel_stage_shift_none_on_first_call(clean_snapshots):
+    """No prior snapshot → stage_shift is None."""
+    body = (await _get_funnel()).json()
+    assert body["stage_shift"] is None
+
+
+@pytest.mark.asyncio
+async def test_funnel_stage_shift_none_when_stage_unchanged(clean_snapshots):
+    """Two consecutive calls with the same biggest-drop → no shift."""
+    await _get_funnel()
+    body = (await _get_funnel()).json()
+    # The data hasn't changed; biggest_drop.to should be identical.
+    assert body["stage_shift"] is None
+
+
+@pytest.mark.asyncio
+async def test_funnel_stage_shift_fires_when_biggest_drop_moves(
+    brain_id, cleanup, clean_snapshots,
+):
+    """Plant a snapshot pointing at a different stage > 60s ago,
+    then call the endpoint and expect a stage_shift payload."""
+    # Seed at least one intent so biggest_drop is well-defined.
+    iid = f"ft_{uuid.uuid4().hex[:8]}"
+    await _seed_intent(iid, brain_id)
+    await _seed_receipt(iid, final_status="BLOCKED",
+                        restriction_source="seat")
+    # First, take a real snapshot so we have one in the collection.
+    body0 = (await _get_funnel()).json()
+    real_to = body0["biggest_drop"]["to"]
+
+    # Backdate the snapshot and pretend the prior leak was elsewhere.
+    different_stage = "Broker accepted" if real_to != "Broker accepted" \
+        else "Filled"
+    await db[FUNNEL_SNAPSHOTS_COLL].update_one(
+        {},
+        {"$set": {
+            "biggest_drop_to": different_stage,
+            "captured_at": datetime.now(timezone.utc) - timedelta(seconds=120),
+        }},
+        upsert=False,
+    )
+    # Wipe any other snapshots so this is unambiguously the latest.
+    keep_id = (await db[FUNNEL_SNAPSHOTS_COLL].find_one({}))["_id"]
+    await db[FUNNEL_SNAPSHOTS_COLL].delete_many({"_id": {"$ne": keep_id}})
+
+    body = (await _get_funnel()).json()
+    shift = body["stage_shift"]
+    assert shift is not None, "Expected stage_shift to fire"
+    assert shift["from_stage"] == different_stage
+    assert shift["to_stage"] == real_to
+    assert shift["gap_seconds"] >= 60

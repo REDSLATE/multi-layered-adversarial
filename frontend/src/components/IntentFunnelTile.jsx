@@ -17,8 +17,9 @@
  *
  * READ-ONLY. No toggles, no actions.
  */
-import { useCallback, useEffect, useState } from "react";
-import { ArrowsClockwise, FunnelSimple, Warning, XCircle } from "@phosphor-icons/react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowsClockwise, ArrowsLeftRight, FunnelSimple, Warning, XCircle } from "@phosphor-icons/react";
+import { toast } from "sonner";
 import { api } from "@/lib/api";
 
 const POLL_MS = 30_000;
@@ -68,6 +69,9 @@ export default function IntentFunnelTile() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(false);
+  // Remember the last shift signature we've toasted on so we don't
+  // re-fire the same toast on every 30s poll.
+  const lastShiftSigRef = useRef(null);
 
   const load = useCallback(async (h) => {
     setLoading(true);
@@ -75,6 +79,19 @@ export default function IntentFunnelTile() {
       const res = await api.get(`/admin/intents/funnel?hours=${h}`);
       setData(res.data);
       setErr(null);
+      // Surface a non-blocking toast the first time we see a new
+      // stage shift. The banner stays visible inside the tile too.
+      const shift = res.data?.stage_shift;
+      if (shift) {
+        const sig = `${h}:${shift.from_stage}>${shift.to_stage}:${shift.prev_captured_at}`;
+        if (lastShiftSigRef.current !== sig) {
+          lastShiftSigRef.current = sig;
+          toast.warning(
+            `Funnel leak shifted: ${shift.from_stage} → ${shift.to_stage}`,
+            { description: `Last seen at ${shift.from_stage} ${shift.gap_seconds}s ago. New bug?`, duration: 12000 },
+          );
+        }
+      }
     } catch (e) {
       const d = e?.response?.data?.detail || e.message;
       setErr(typeof d === "string" ? d : JSON.stringify(d));
@@ -149,6 +166,26 @@ export default function IntentFunnelTile() {
 
       {data && (
         <>
+          {data.stage_shift && (
+            <div
+              className="border-2 border-rd-warn bg-rd-warn/10 p-2 font-mono text-[11px] text-rd-warn flex items-start gap-1.5"
+              data-testid="funnel-stage-shift"
+            >
+              <ArrowsLeftRight size={12} weight="bold" className="mt-0.5 shrink-0" />
+              <span>
+                <span className="font-bold uppercase tracking-wider">Leak shifted:</span>{" "}
+                <span className="font-bold">{data.stage_shift.from_stage}</span>
+                {" → "}
+                <span className="font-bold">{data.stage_shift.to_stage}</span>
+                <span className="text-rd-dim">
+                  {" — was at "}
+                  <span className="font-bold">{data.stage_shift.from_stage}</span>{" "}
+                  {data.stage_shift.gap_seconds}s ago. New bug?
+                </span>
+              </span>
+            </div>
+          )}
+
           <div className="grid grid-cols-3 gap-2 text-center" data-testid="funnel-headline">
             <div className="border border-rd-border bg-rd-bg p-1.5">
               <div className="font-mono text-[9px] uppercase text-rd-dim">Emitted</div>

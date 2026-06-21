@@ -24,15 +24,23 @@ the UI tile:
 The endpoint also surfaces the biggest stage-to-stage drop so the
 operator can see WHERE the funnel is leaking without scrolling.
 
-Doctrine: this endpoint is READ-ONLY. It does NOT modify
-`admin_intents_post_mortem.py` (which is frozen during the production
-market-day observation window). It is a NEW companion route.
+Stage-shift detection (2026-02-21 enhancement): each call snapshots
+the current biggest-drop stage to `funnel_drop_snapshots`. If the
+stage changed vs the previous snapshot for the same window AND the
+previous snapshot is at least `MIN_SHIFT_GAP_SECONDS` old, the
+response includes a `stage_shift` field. Operator sees a banner the
+moment the leak moves from Seat to RoadGuard (or wherever) — that's
+almost always a new bug.
+
+Doctrine: this endpoint is READ-ONLY w.r.t. the execution path. It
+does NOT modify `admin_intents_post_mortem.py` (which is frozen
+during the production market-day observation window). It is a NEW
+companion route.
 """
 from __future__ import annotations
 
-from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
 
@@ -43,6 +51,15 @@ from shared.pipeline.receipts import PIPELINE_RECEIPTS_COLL
 
 
 router = APIRouter(prefix="/admin/intents", tags=["admin-intents"])
+
+# ── Stage-shift snapshot config ─────────────────────────────────────
+FUNNEL_SNAPSHOTS_COLL = "funnel_drop_snapshots"
+# Minimum age of the previous snapshot before we'll consider its
+# stage stale enough to flag a shift. Filters out two-polls-in-quick-
+# succession noise where the underlying data hasn't actually moved.
+MIN_SHIFT_GAP_SECONDS = 60
+# Hard cap on retained snapshot history (best-effort; index handles it).
+SNAPSHOT_RETENTION_HOURS = 72
 
 
 # ── Stage classification per pipeline_receipt ───────────────────────
@@ -270,8 +287,75 @@ async def intents_funnel(
         "total_intents": total,
         "stages": stages,
         "biggest_drop": biggest_drop,
+        "stage_shift": await _record_and_detect_shift(hours, biggest_drop),
         "by_lane": _bucket_dict(by_lane),
         "by_brain": _bucket_dict(by_brain),
         "no_receipt_count": no_receipt,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ── Stage-shift detection ───────────────────────────────────────────
+async def _record_and_detect_shift(
+    hours: int,
+    biggest_drop: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Snapshot the current biggest-drop stage and return a
+    `stage_shift` payload iff the to-stage changed vs the previous
+    snapshot for this window AND the previous snapshot is at least
+    `MIN_SHIFT_GAP_SECONDS` old.
+
+    Why a gap requirement? Two polls 5 seconds apart can flap on
+    very small populations. The gap forces a genuine change.
+    """
+    now = datetime.now(timezone.utc)
+    current_to = (biggest_drop or {}).get("to")
+
+    # Read latest prior snapshot for this window.
+    prev = await db[FUNNEL_SNAPSHOTS_COLL].find_one(
+        {"window_hours": hours},
+        sort=[("captured_at", -1)],
+    )
+
+    # Always write the new snapshot, even when the stage didn't shift.
+    # This gives us a continuous history the operator can audit later.
+    await db[FUNNEL_SNAPSHOTS_COLL].insert_one({
+        "window_hours": hours,
+        "biggest_drop_to": current_to,
+        "biggest_drop_from": (biggest_drop or {}).get("from"),
+        "biggest_drop_lost": (biggest_drop or {}).get("lost"),
+        "biggest_drop_pct": (biggest_drop or {}).get("drop_pct"),
+        "captured_at": now,
+    })
+
+    # Best-effort retention prune (cheap, no race risk on read).
+    try:
+        cutoff = now - timedelta(hours=SNAPSHOT_RETENTION_HOURS)
+        await db[FUNNEL_SNAPSHOTS_COLL].delete_many(
+            {"captured_at": {"$lt": cutoff}}
+        )
+    except Exception:
+        # Retention is housekeeping — never fail the request for it.
+        pass
+
+    if not prev or not current_to or not prev.get("biggest_drop_to"):
+        return None
+    if prev["biggest_drop_to"] == current_to:
+        return None
+    # Tolerate naive vs aware datetime values defensively.
+    prev_ts = prev.get("captured_at")
+    if isinstance(prev_ts, datetime):
+        if prev_ts.tzinfo is None:
+            prev_ts = prev_ts.replace(tzinfo=timezone.utc)
+        gap = (now - prev_ts).total_seconds()
+    else:
+        gap = MIN_SHIFT_GAP_SECONDS  # unknown → permit
+    if gap < MIN_SHIFT_GAP_SECONDS:
+        return None
+
+    return {
+        "from_stage": prev["biggest_drop_to"],
+        "to_stage": current_to,
+        "prev_captured_at": prev_ts.isoformat() if isinstance(prev_ts, datetime) else None,
+        "gap_seconds": int(gap),
     }
