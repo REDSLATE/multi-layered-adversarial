@@ -1,3 +1,65 @@
+## 2026-02-21 (7-stage Intent Funnel + 2-pane Receipts UI)
+
+### Operator pin
+> "P0 would be the best thing right now. We have 2 days before the
+> equity market opens."
+
+### What shipped
+
+**7-stage Intent Funnel endpoint (`GET /api/admin/intents/funnel`)**
+- New route: `/app/backend/routes/admin_intents_funnel.py` (kept
+  separate from the frozen `admin_intents_post_mortem.py`).
+- Stages: Emitted → Seat approved → Governor sized → RoadGuard passed
+  → Auto-submit attempted → Broker accepted → Filled.
+- Sources canonical truth from `pipeline_receipts` (the unified
+  pipeline's single receipt per intent) with executed=True fallback
+  for legacy non-unified paths.
+- Returns: `stages[]` with count + pct_of_total + drop_from_prev +
+  drop_pct, `biggest_drop` summary, `by_lane`, `by_brain`,
+  `no_receipt_count`. Defensive monotonicity enforced so Filled ≤
+  Broker accepted ≤ Auto-submit attempted ≤ RoadGuard passed ≤
+  Governor sized ≤ Seat approved ≤ Emitted always holds.
+- Test coverage: 8 pytest cases pin every stage classification
+  (`/app/backend/tests/test_intent_funnel_2026_02_21.py`).
+
+**Funnel UI tile (`IntentFunnelTile.jsx`)**
+- Mounted near the top of the Receipts panel, polls every 30s and on
+  window switch (1h / 6h / 24h / 72h).
+- Headline strip: Emitted · Filled · Fill rate.
+- Red "Biggest leak" banner names the from→to stages + count + %.
+- 7 horizontal stage bars, biggest-drop stage outlined in red.
+- Collapsible `Breakdown by lane + brain` section.
+
+**2-pane Receipts layout**
+- Existing receipts content reorganized into a `lg:grid-cols-2` grid
+  inside the `Receipts` panel:
+  * Left pane (`receipts-left-pane`): outcome distribution, top
+    blockers, ghost-replay button, by-lane/by-brain breakdown,
+    recent executions list.
+  * Right pane (`receipts-right-pane`): single-intent trace block
+    (paste any intent_id → see Brain → Seat → Governor → RoadGuard
+    → AutoSubmit → Broker timeline + verdict).
+- Stacks vertically below `lg` for mobile operators.
+- All existing data-testids preserved; new testids added:
+  `intent-funnel-tile`, `funnel-stage-*`, `funnel-biggest-drop`,
+  `funnel-by-lane`, `funnel-by-brain`, `receipts-two-pane`,
+  `receipts-left-pane`, `receipts-right-pane`.
+
+### Production observation (preview)
+The new funnel surfaced an immediate insight: 1991 of 1991 intents in
+the last 24h had **no pipeline_receipt row** — meaning the legacy
+non-unified path is still emitting them. Filled count remains driven
+by `executed=True` so this is observability-only, not a regression.
+
+### Frozen files (unchanged)
+- `routes/admin_intents_post_mortem.py`
+- `shared/pipeline/*`
+- `shared/auto_submit_policy.py`
+- `shared/broker/webull.py`
+
+---
+
+
 ## 2026-02-20 (Auto-submit receipts + RoadGuard Webull close-buffer)
 
 ### Operator pin

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Crosshair, ArrowsClockwise, Warning, CheckCircle, XCircle, MagnifyingGlass, Lightning, Power } from "@phosphor-icons/react";
 import FunnelDeltasTile from "./FunnelDeltasTile";
+import IntentFunnelTile from "./IntentFunnelTile";
 import { ResearchSignalsBlock } from "./ResearchSignalsBlock";
 
 /**
@@ -1033,6 +1034,13 @@ export default function IntentPostMortemPanel() {
               they scroll to the outcome distribution. */}
           <FunnelDeltasTile />
 
+          {/* ─── 7-stage Intent Funnel (2026-02-21) ─────────────────
+              Brain → Seat → Governor → RoadGuard → AutoSubmit →
+              Broker → Fill. Visual leak detector — outlines the
+              biggest stage-to-stage drop in red so the operator sees
+              the bottleneck at a glance. */}
+          <IntentFunnelTile />
+
           {/* Biggest funnel drop */}
           {data.biggest_funnel_drop && (
             <div className="border border-rd-warn bg-rd-warn/5 p-2 font-mono text-[11px] text-rd-warn flex items-start gap-1.5" data-testid="post-mortem-funnel-drop">
@@ -1082,6 +1090,16 @@ export default function IntentPostMortemPanel() {
             </div>
           )}
 
+          {/* ─── 2-PANE RECEIPTS LAYOUT (2026-02-21) ────────────────
+              Left pane: aggregate blockers (outcome distribution +
+              top blockers + breakdowns + recent executions).
+              Right pane: single intent timeline trace.
+              On <lg screens both panes stack vertically. */}
+          <div
+            className="grid grid-cols-1 lg:grid-cols-2 gap-3"
+            data-testid="receipts-two-pane"
+          >
+            <div className="space-y-3" data-testid="receipts-left-pane">
           {/* Outcome distribution */}
           <div>
             <div className="font-mono text-[9px] uppercase text-rd-dim mb-1">Outcome distribution</div>
@@ -1166,6 +1184,9 @@ export default function IntentPostMortemPanel() {
             </div>
           )}
 
+            </div> {/* /receipts-left-pane */}
+
+            <div className="space-y-3" data-testid="receipts-right-pane">
           {/* ─── Per-intent TRACE block (2026-02-20) ─────────────────
               "Show me a single intent and trace every step until it
               became a broker order or died." Hit GET /admin/intents/
@@ -1276,6 +1297,8 @@ export default function IntentPostMortemPanel() {
               </div>
             )}
           </div>
+            </div> {/* /receipts-right-pane */}
+          </div> {/* /receipts-two-pane */}
         </>
       )}
     </div>
