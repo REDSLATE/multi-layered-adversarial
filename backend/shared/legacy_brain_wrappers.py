@@ -991,6 +991,23 @@ def apply_legacy_wrapper(intent: dict[str, Any]) -> dict[str, Any]:
             ev = intent.setdefault("evidence", {})
             ev.setdefault("committee_error", repr(exc))
 
+    # Camaro-weights pre-pass — Barracuda only. Mirrors the Camino
+    # committee pre-pass: extracts council/regime/risk inputs from
+    # the intent envelope, runs the upgraded `build_weighted_decision`
+    # engine, writes back authoritative confidence + size_multiplier +
+    # vetoes + conviction_score. Existing `apply_camaro_legacy_strategist`
+    # then runs its position-aware refinements on top.
+    if brain_id == "barracuda":
+        try:
+            from shared.brains.camaro_weights_adapter import (
+                apply_camaro_weights_to_intent, kill_switch_tripped,
+            )
+            if not kill_switch_tripped():
+                intent = apply_camaro_weights_to_intent(intent)
+        except Exception as exc:  # noqa: BLE001
+            ev = intent.setdefault("evidence", {})
+            ev.setdefault("camaro_weights_import_error", repr(exc))
+
     disabled, reason = is_wrapper_disabled(brain_id)
     if disabled:
         # Don't mutate the caller's dict — return a copy with the

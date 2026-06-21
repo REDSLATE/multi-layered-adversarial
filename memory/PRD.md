@@ -1,3 +1,113 @@
+## 2026-02-21f (Camaro → Barracuda transplant — IP construction)
+
+### Operator framing (verbatim)
+> "Camaro was more unrestricted than any of the others. And it was
+> paying off until the update crash. It hit Camaro harder because of
+> the of less blockers than Alpha it had."
+> "All of the original brains have the same but slightly different
+> make up. What I'm trying to do is make two of the brains in this
+> stack more like the most successful external brains from the
+> original stacks. If I can get those to work in this stack it
+> would be great and a chance to have a functional IP."
+
+### Strategic context
+The codebase is being assembled as defensible IP by transplanting
+the two most successful external brains into two of the four
+in-stack identities. **Camino ← Alpha** shipped earlier today.
+**Barracuda ← Camaro** ships now. Hellcat and GTO remain native.
+
+### What shipped
+
+**`shared/brains/camaro_weights.py`** — faithful port of the
+operator's upgraded Camaro decision engine. Five improvements over
+the original Barracuda strategist wrapper:
+
+  1. **Dead-zone bands**: NANO_LIVE (×0.10 at conf ≥ 0.62) and
+     SEED_LIVE (×0.05 at conf ≥ 0.58) fill the 0.58–0.65 gap. Original
+     threw away all edge in that range.
+  2. **Graduated loss-streak dampener**: `×0.85 / ×0.70 / ×0.50 /
+     ×0.25` instead of a hard cliff at streak ≥ 4. Brain
+     recalibrates progressively.
+  3. **Scaled leader penalty**: `3_1 → ×0.90`, `2_2 → ×0.82`,
+     `no_quorum → ×0.70`. Original applied flat ×0.82 regardless of
+     disagreement severity.
+  4. **Regime-aware RR floor**: 1.35 in BULL/BEAR (trending), 1.80
+     in HIGH_VOL, 1.50 in NEUTRAL. Original hardcoded 1.50.
+  5. **`conviction_score`**: 0.0–1.0 composite of raw confidence
+     (0.50 weight), regime confidence (0.25), council quality (0.25).
+     Decision-process quality metric, not outcome prediction.
+
+**Three faithful-port fixes** (PDF source had three Python-level
+bugs that would have prevented the self-test from running):
+  * Dataclass missing `confidence` field — added.
+  * f-string `{{rr_ratio:.2f}}` (escaped braces) → `{rr_ratio:.2f}`.
+  * `vetoes` / `reasons` parameter mutation — defensive `list(...)`
+    copies prevent caller-list growth across calls. This last fix
+    matters specifically because Camaro has *fewer downstream
+    blockers* — accumulated phantom vetoes would compound silently.
+
+**`shared/brains/camaro_weights_adapter.py`** — Barracuda envelope
+adapter:
+  * Extracts council/regime/risk inputs from `intent.evidence`.
+  * Calls `build_weighted_decision(...)`.
+  * Writes back authoritative `confidence`, multiplies `size_bias`
+    by `size_multiplier`, appends vetoes to warnings, stamps full
+    `WeightedDecision` to `evidence.camaro_weights` (JSON-safe via
+    `str, Enum` mixin), surfaces `conviction_score` and
+    `camaro_band` for UI access.
+  * Regime alias map: chop/sideways/range → NEUTRAL,
+    parabolic/overbought → HIGH_VOL, calm_bull/risk_on → BULL,
+    crisis/risk_off → BEAR. Anything unknown → NEUTRAL (baseline).
+  * Default `rr_ratio = 1.50` so missing data doesn't fire
+    spurious LOW_RR vetoes — preserves Camaro's intentional looseness.
+
+**Integration** — `apply_legacy_wrapper` now runs the Camaro
+pre-pass for `brain_id == "barracuda"` BEFORE the existing
+`apply_camaro_legacy_strategist`. Existing position-aware wrapper
+runs on top of the new authoritative confidence/sizing — two layers
+of cognition, both Camaro-flavoured.
+
+**Kill switch** — `RISEDUAL_BARRACUDA_CAMARO_WEIGHTS_DISABLED=1`
+env var, sync check, no DB call.
+
+**Fail-soft** — any exception during the pre-pass stamps
+`evidence.camaro_weights_error` and lets the legacy wrapper run on
+the original confidence. Cannot break Barracuda.
+
+### Tests
+- 27 new pytest cases (`test_camaro_weights_2026_02_21.py`):
+  * 4 covering Improvement 1 (dead-zone bands).
+  * 2 covering Improvement 2 (graduated loss streak).
+  * 2 covering Improvement 3 (scaled leader penalty + split resolution).
+  * 3 covering Improvement 4 (regime RR floor — HIGH_VOL veto,
+    trending pass).
+  * 3 covering Improvement 5 (conviction score range + falls with
+    split + falls with vetoes).
+  * 8 adapter cases (no-evidence looseness preserved, regime alias
+    mapping, size_bias compounding, JSON-safety, vetoes → warnings,
+    fail-soft on garbage input, kill switch).
+  * 5 integration cases (Barracuda gets pre-pass, kill switch,
+    Camino untouched, Hellcat untouched, bull-regime size inflation).
+- 183 tests passing across the full brain/wrapper/doctrine/funnel
+  suite. Zero regressions.
+
+### IP status — two transplants live
+| Brain | Native role | Transplant | Status |
+|---|---|---|---|
+| Camino | executor | Alpha (committee weights) | Shipped 2026-02-21 |
+| **Barracuda** | strategist | **Camaro (sizing+RR+conviction)** | **Shipped 2026-02-21** |
+| Hellcat | governor | — | native |
+| GTO | adversary | — | native |
+
+### Frozen files (unchanged)
+- `routes/admin_intents_post_mortem.py`
+- `shared/pipeline/*`
+- `shared/auto_submit_policy.py`
+- `shared/broker/webull.py`
+
+---
+
+
 ## 2026-02-21e (Alpha → Camino merge — confidence priors only)
 
 ### Operator pin (verbatim)
