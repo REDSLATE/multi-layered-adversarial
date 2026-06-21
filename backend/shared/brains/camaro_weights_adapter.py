@@ -6,8 +6,8 @@ Operator pin:
     was paying off until the update crash."
 
 Architectural intent:
-    Camaro is Barracuda's pre-existing strategist temperament (see
-    `apply_camaro_legacy_strategist` in legacy_brain_wrappers.py).
+    Barracuda is currently configured to run through
+    `apply_camaro_legacy_strategist` (see legacy_brain_wrappers.py).
     The operator brought in an upgraded `camaro_weights.py` decision
     engine — sizing bands, regime-aware RR floors, graduated loss
     streak dampening, leader-penalty scaling, conviction score, and
@@ -15,14 +15,13 @@ Architectural intent:
     Those vetoes are the missing safety net that hit Camaro harder
     than Alpha during the last update crash.
 
-    This adapter sits as a PRE-PASS before
-    `apply_camaro_legacy_strategist`:
+    This adapter sits as a PRE-PASS before the legacy Camaro wrapper:
       1. Extract council/regime/risk inputs from the intent envelope.
       2. Call `build_weighted_decision(...)` to produce the
          authoritative WeightedDecision.
       3. Overwrite intent confidence with the weighted confidence.
       4. Multiply intent size_bias by the weighted size_multiplier
-         (preserves upstream sizing intent, then layers Camaro's
+         (preserves upstream sizing intent, then layers the
          band-based authority on top).
       5. Append vetoes to warnings.
       6. Stamp full decision into `evidence.camaro_weights` for
@@ -30,7 +29,13 @@ Architectural intent:
 
     The existing legacy wrapper then runs ON TOP, applying its
     position-aware refinements (FLIP penalties, current_side
-    continuation). Two layers of cognition, both Camaro-flavoured.
+    continuation).
+
+    Note on terminology: titles ("strategist", "executor",
+    "governor", "auditor") belong to SEATS, not brains. Brains
+    are cognitive temperaments routed into seats by lane policy.
+    This module is bound to the brain identity `barracuda` — not
+    to any title.
 
 Kill switch: `RISEDUAL_BARRACUDA_CAMARO_WEIGHTS_DISABLED=1` env var.
 Failure mode: fail-soft. Any exception stamps `evidence.

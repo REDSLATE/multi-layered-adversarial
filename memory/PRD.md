@@ -92,12 +92,16 @@ the original confidence. Cannot break Barracuda.
   suite. Zero regressions.
 
 ### IP status — two transplants live
-| Brain | Native role | Transplant | Status |
-|---|---|---|---|
-| Camino | executor | Alpha (committee weights) | Shipped 2026-02-21 |
-| **Barracuda** | strategist | **Camaro (sizing+RR+conviction)** | **Shipped 2026-02-21** |
-| Hellcat | governor | — | native |
-| GTO | adversary | — | native |
+| Brain | Transplant | Status |
+|---|---|---|
+| Camino | Alpha (committee weights) | Shipped 2026-02-21 |
+| **Barracuda** | **Camaro (sizing+RR+conviction)** | **Shipped 2026-02-21** |
+| Hellcat | — | native |
+| GTO | — | native |
+
+Note: titles (Executor / Strategist / Governor / Auditor) belong
+to SEATS, not brains. The brain rows above are temperaments routed
+into seats by lane policy — they are not pinned to any title.
 
 ### Frozen files (unchanged)
 - `routes/admin_intents_post_mortem.py`
