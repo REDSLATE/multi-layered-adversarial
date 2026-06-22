@@ -69,7 +69,13 @@ DEFAULT_MAX_NOTIONAL_USD = 10.00
 # Static env-var ceiling is kept as a hard upper rail — if the operator
 # ever pins `WEBULL_MAX_NOTIONAL_USD` to a literal dollar value, the
 # dynamic cap will never exceed it (defense-in-depth).
-DEFAULT_PCT_OF_BUYING_POWER = 0.05  # 5% of buying power per order
+DEFAULT_PCT_OF_BUYING_POWER = 0.10  # 10% of buying power per order
+# Raised from 0.05 → 0.10 on 2026-02-23 (Monday) after operator observed
+# WEBULL_NOTIONAL_ABOVE_CAP rejecting every equity intent: 5% of a
+# $470 buying power account ≈ $23.55, which sat below the $25 min
+# notional floor → 100% equity submit rejection. 10% gives $47 headroom
+# on the same account and leaves room for the min-notional floor.
+# Operator can still override via `WEBULL_PCT_OF_BUYING_POWER` runtime flag.
 HARD_SANITY_CEILING_USD = 500.00    # absolute panic ceiling regardless of BP
 
 
