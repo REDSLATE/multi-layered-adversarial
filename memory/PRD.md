@@ -1,3 +1,98 @@
+## 2026-02-21g (Hot-Brain Router — kernel ships, dormant)
+
+### Operator pin
+> "Go with your recommendation."
+> (Recommendation was: ship kernel + regime classifier + Mongo perf
+> store + tests, all DORMANT, no execution wiring. Activate after
+> Monday once perf data populates.)
+
+### What shipped
+
+**`shared/regime/classifier.py`** — faithful port of the operator's
+deterministic regime classifier. Nine regimes (LOW_VOL, NORMAL,
+HIGH_VOL, TREND_UP/DOWN, CHOP, SQUEEZE, BREAKOUT, NEWS_DRIVEN) from
+ATR / ADX / Bollinger / volume / gap indicators. Stateless, no ML,
+no Mongo, no network. Reusable input for ANY downstream consumer
+(Camaro weights, future doctrine surfaces, Hot Brain Router).
+
+**`shared/brains/hot_brain_router.py`** — faithful port of the
+operator's router. Classifies brains as HOT / NEUTRAL / COLD /
+UNKNOWN; recommends BLOCK / REDUCE / PASS_THROUGH / ELEVATE; emits
+a `size_multiplier_delta`. 30-day half-life decay. Hard stops on
+RoadGuard + locked seats. Only swap from the operator's source:
+`datetime.utcnow()` → `datetime.now(timezone.utc)` to match the
+rest of the codebase's tz-aware convention.
+
+**`shared/brains/brain_performance_store.py`** — REWRITE of the
+operator's JSONL design as a Mongo aggregator over the existing
+`doctrine_sidecars` collection. Same `BrainPerformance` return
+shape; same lookback semantics (20 trades default, 90-day window);
+fail-soft to UNKNOWN defaults so the router REDUCES (probes) new
+brains instead of BLOCKING them. No `/var/lib/risedual/` JSONL,
+no systemd, no parallel store — K8s-pod compatible.
+
+**`execution_wiring_patch.py` from the operator's drop is
+intentionally NOT applied.** The router is DORMANT in production
+until the operator explicitly activates it. Architecture docs in
+both modules say so.
+
+### Why dormant?
+
+Five reasons enumerated in the read I gave before building:
+  1. Sixth penalty layer risk — could re-compress the looseness
+     Camaro intentionally has.
+  2. `overrides_governor=True` on HOT brains is a trust-hierarchy
+     change that should be an explicit operator opt-in, not
+     implicit.
+  3. Cold-streak death spiral — COLD-with-no-lane-edge → BLOCK →
+     no trades → never updates → permanent lockout. Needs an escape
+     valve before activation.
+  4. Monday's session has zero closed positions on production yet
+     (the doctrine 0/100 dashboard confirmed this). The perf store
+     will return UNKNOWN for every brain right now, so the router
+     would `REDUCE -0.50` on every intent — net effect: silent
+     production strangulation.
+  5. Better to validate the model offline: write a separate
+     observability surface (next task) showing what the router
+     WOULD have decided over the last 30 days, before letting it
+     touch live sizing.
+
+### Tests
+- 35 new pytest cases (`test_hot_brain_router_2026_02_21.py`):
+  * 5 classification (HOT/COLD/NEUTRAL/UNKNOWN/below-threshold).
+  * 3 HOT routing (elevate, vote-required, heat-reduced).
+  * 1 NEUTRAL routing (pass-through).
+  * 2 COLD routing (block, reduce-with-lane-edge).
+  * 2 UNKNOWN routing (reduce-not-block, plus roadguard
+    precedence).
+  * 3 hard stops (roadguard, locked seat with HOT, locked seat
+    with UNKNOWN).
+  * 3 score computation (decay, streak asymmetry, lane edge).
+  * 3 final-size formula (exact value, clamp-at-zero, clamp-at-two).
+  * 9 regime classifier (each regime + helpers).
+  * 4 Mongo perf store (UNKNOWN default, win/loss aggregation,
+    lane filter, lookback cap).
+- 174 tests passing across the full new-IP suite. Zero regressions.
+
+### Frozen files (unchanged)
+- `routes/admin_intents_post_mortem.py`
+- `shared/pipeline/*`
+- `shared/auto_submit_policy.py`
+- `shared/broker/webull.py`
+
+### What this unblocks
+
+Once Monday's data populates `doctrine_sidecars.outcome_join`, the
+perf store starts returning real BrainPerformance. An offline
+"would-have-routed-X" report can be built without activating the
+router. If the model looks sound, flip the activation flag and
+wire `execute_with_hot_brain_routing(...)` into the pipeline.
+If the model looks like it would have killed too many good trades,
+tune the thresholds before activation.
+
+---
+
+
 ## 2026-02-21f (Camaro → Barracuda transplant — IP construction)
 
 ### Operator framing (verbatim)
@@ -13,7 +108,7 @@
 ### Strategic context
 The codebase is being assembled as defensible IP by transplanting
 the two most successful external brains into two of the four
-in-stack identities. **Camino ← Alpha** shipped earlier today.
+in-stack identities. **Camino ← Alpha** shipped earli er today.
 **Barracuda ← Camaro** ships now. Hellcat and GTO remain native.
 
 ### What shipped
