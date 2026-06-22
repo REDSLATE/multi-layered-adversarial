@@ -22,12 +22,20 @@ A wrapper NEVER:
     * forces a seat assignment
     * changes the brain's doctrine
 
-Assignment (operator-pinned):
+Assignment (operator-pinned — brain → wrapper, seat-agnostic):
 
-    Camino    → alpha_legacy_executor       (executor discipline)
-    Hellcat   → chevelle_legacy_governor    (risk compression)
-    Barracuda → camaro_legacy_strategist    (tape-reading)
-    GTO       → redeye_legacy_adversary     (adversary / opponent)
+    Camino    → alpha_legacy_doctrine       (executor discipline)
+    Hellcat   → chevelle_legacy_doctrine    (risk compression)
+    Barracuda → camaro_legacy_doctrine      (tape-reading)
+    GTO       → redeye_legacy_doctrine      (adversary / opponent)
+
+    NOTE (2026-06-22): names previously carried a seat title suffix
+    (`_executor`, `_governor`, `_strategist`, `_adversary`). The
+    suffix was misleading — a wrapper's doctrine doesn't change when
+    the brain takes a different seat tomorrow. Seat assignment lives
+    in SeatPolicy at runtime; wrappers carry the LEGACY DOCTRINE of
+    the named brain only. Backward-compat aliases for the old names
+    remain in `WRAPPER_REGISTRY` so historical audit rows resolve.
 
 Final matrix:
     Camino    = trend          + Alpha executor discipline
@@ -210,10 +218,10 @@ def _finalise_size_and_confidence(
 
 
 WrapperName = Literal[
-    "alpha_legacy_executor",
-    "chevelle_legacy_governor",
-    "camaro_legacy_strategist",
-    "redeye_legacy_adversary",
+    "alpha_legacy_doctrine",
+    "chevelle_legacy_doctrine",
+    "camaro_legacy_doctrine",
+    "redeye_legacy_doctrine",
 ]
 
 
@@ -269,12 +277,12 @@ def _base_fields(intent: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def apply_alpha_legacy_executor(intent: dict[str, Any]) -> dict[str, Any]:
+def apply_alpha_legacy_doctrine(intent: dict[str, Any]) -> dict[str, Any]:
     """
-    Alpha wrapper.
+    Alpha legacy-doctrine wrapper.
 
     Purpose:
-    - executor discipline
+    - executor-style discipline (legacy Alpha temperament)
     - stronger commitment when position-transition is clean
     - reduce confidence when position state is unknown
     - reward OPEN / ADD / SCALE_IN only when confidence already supports it
@@ -339,7 +347,7 @@ def apply_alpha_legacy_executor(intent: dict[str, Any]) -> dict[str, Any]:
         warnings.append("ALPHA_WRAPPER_FLIP_REQUIRES_STRONG_CONFIRMATION")
 
     evidence["legacy_wrapper"] = {
-        "name": "alpha_legacy_executor",
+        "name": "alpha_legacy_doctrine",
         "parent_brain": "alpha",
         "effect": "executor_commitment_and_position_discipline",
     }
@@ -357,7 +365,7 @@ def apply_alpha_legacy_executor(intent: dict[str, Any]) -> dict[str, Any]:
     wrapped = WrappedIntent(
         brain_id=x["brain_id"],
         display_name=x["display_name"],
-        wrapper="alpha_legacy_executor",
+        wrapper="alpha_legacy_doctrine",
         parent_brain="alpha",
         doctrine="executor_confirming",
         action=action,
@@ -375,12 +383,12 @@ def apply_alpha_legacy_executor(intent: dict[str, Any]) -> dict[str, Any]:
     return asdict(wrapped)
 
 
-def apply_chevelle_legacy_governor(intent: dict[str, Any]) -> dict[str, Any]:
+def apply_chevelle_legacy_doctrine(intent: dict[str, Any]) -> dict[str, Any]:
     """
-    Chevelle wrapper.
+    Chevelle legacy-doctrine wrapper.
 
     Purpose:
-    - governor/risk temperament
+    - governor/risk temperament (legacy Chevelle compression instincts)
     - compresses size before blocking
     - penalizes risky transitions in stressed regimes
     - rewards reductions/covers during RISK_OFF
@@ -439,7 +447,7 @@ def apply_chevelle_legacy_governor(intent: dict[str, Any]) -> dict[str, Any]:
         size_bias = 0.0
 
     evidence["legacy_wrapper"] = {
-        "name": "chevelle_legacy_governor",
+        "name": "chevelle_legacy_doctrine",
         "parent_brain": "chevelle",
         "effect": "risk_compression_and_governor_temperament",
     }
@@ -457,7 +465,7 @@ def apply_chevelle_legacy_governor(intent: dict[str, Any]) -> dict[str, Any]:
     wrapped = WrappedIntent(
         brain_id=x["brain_id"],
         display_name=x["display_name"],
-        wrapper="chevelle_legacy_governor",
+        wrapper="chevelle_legacy_doctrine",
         parent_brain="chevelle",
         doctrine="adaptive_governor",
         action=action,
@@ -474,12 +482,12 @@ def apply_chevelle_legacy_governor(intent: dict[str, Any]) -> dict[str, Any]:
 
     return asdict(wrapped)
 
-def apply_camaro_legacy_strategist(intent: dict[str, Any]) -> dict[str, Any]:
+def apply_camaro_legacy_doctrine(intent: dict[str, Any]) -> dict[str, Any]:
     """
-    Camaro wrapper.
+    Camaro legacy-doctrine wrapper.
 
     Purpose:
-    - live-market strategist temperament
+    - live-market strategist temperament (legacy Camaro tape-reading)
     - rewards clean directional tape
     - avoids tiny BUY/SELL gaps
     - favors continuation with position-aware transitions
@@ -603,7 +611,7 @@ def apply_camaro_legacy_strategist(intent: dict[str, Any]) -> dict[str, Any]:
         warnings.append("CAMARO_WRAPPER_SQUEEZE_WIDE_SPREAD_COMPRESSED")
 
     evidence["legacy_wrapper"] = {
-        "name": "camaro_legacy_strategist",
+        "name": "camaro_legacy_doctrine",
         "parent_brain": "camaro",
         "effect": "live_market_tape_reading_and_continuation_bias",
     }
@@ -621,7 +629,7 @@ def apply_camaro_legacy_strategist(intent: dict[str, Any]) -> dict[str, Any]:
     wrapped = WrappedIntent(
         brain_id=x["brain_id"],
         display_name=x["display_name"],
-        wrapper="camaro_legacy_strategist",
+        wrapper="camaro_legacy_doctrine",
         parent_brain="camaro",
         doctrine="live_market_strategist",
         action=action,
@@ -641,12 +649,12 @@ def apply_camaro_legacy_strategist(intent: dict[str, Any]) -> dict[str, Any]:
 
 
 
-def apply_redeye_legacy_adversary(intent: dict[str, Any]) -> dict[str, Any]:
+def apply_redeye_legacy_doctrine(intent: dict[str, Any]) -> dict[str, Any]:
     """
-    RedEye wrapper.
+    RedEye legacy-doctrine wrapper.
 
     Purpose:
-    - adversarial/opponent temperament
+    - adversarial/opponent temperament (legacy RedEye contrarian instincts)
     - challenges weak consensus
     - rewards downside / short continuation when tape supports it
     - penalizes crowded or low-gap longs
@@ -783,7 +791,7 @@ def apply_redeye_legacy_adversary(intent: dict[str, Any]) -> dict[str, Any]:
         warnings.append("REDEYE_WRAPPER_SQUEEZE_DATA_ERROR_OR_STALE")
 
     evidence["legacy_wrapper"] = {
-        "name": "redeye_legacy_adversary",
+        "name": "redeye_legacy_doctrine",
         "parent_brain": "redeye",
         "effect": "adversarial_short_pressure_and_consensus_challenge",
     }
@@ -801,7 +809,7 @@ def apply_redeye_legacy_adversary(intent: dict[str, Any]) -> dict[str, Any]:
     wrapped = WrappedIntent(
         brain_id=x["brain_id"],
         display_name=x["display_name"],
-        wrapper="redeye_legacy_adversary",
+        wrapper="redeye_legacy_doctrine",
         parent_brain="redeye",
         doctrine="opponent_adversary",
         action=action,
@@ -821,18 +829,40 @@ def apply_redeye_legacy_adversary(intent: dict[str, Any]) -> dict[str, Any]:
 
 
 WRAPPER_REGISTRY = {
-    "alpha_legacy_executor": apply_alpha_legacy_executor,
-    "chevelle_legacy_governor": apply_chevelle_legacy_governor,
-    "camaro_legacy_strategist": apply_camaro_legacy_strategist,
-    "redeye_legacy_adversary": apply_redeye_legacy_adversary,
+    # Canonical wrapper names (2026-06-22 rename — seat title stripped).
+    # Each wrapper carries a legacy BRAIN's doctrine; what seat the
+    # CURRENT brain holds is a runtime concern owned by SeatPolicy,
+    # not by the wrapper. Old function names (apply_alpha_legacy_executor
+    # etc.) baked the seat assignment into the symbol and made the
+    # "Legacy Wrapper A/B Switch" UI fire 4 wrappers in parallel
+    # regardless of who held the seat — a chronic source of confusion
+    # in the dashboard.
+    "alpha_legacy_doctrine":    apply_alpha_legacy_doctrine,
+    "chevelle_legacy_doctrine": apply_chevelle_legacy_doctrine,
+    "camaro_legacy_doctrine":   apply_camaro_legacy_doctrine,
+    "redeye_legacy_doctrine":   apply_redeye_legacy_doctrine,
+
+    # ── Backward-compat aliases (KEEP — read-only) ───────────────────
+    # Existing intent audit rows in Mongo carry the OLD wrapper name
+    # string on `evidence.legacy_wrapper.applied_wrapper`. Resolving
+    # those rows in the post-mortem / replay UIs requires the old
+    # strings to map to the same function for at least one full
+    # rolling window (operator can purge once the audit retention
+    # cycles past the rename date — see PRD 2026-06-22). Do NOT use
+    # these names for NEW writes — `apply_legacy_wrapper` only emits
+    # canonical names.
+    "alpha_legacy_executor":    apply_alpha_legacy_doctrine,
+    "chevelle_legacy_governor": apply_chevelle_legacy_doctrine,
+    "camaro_legacy_strategist": apply_camaro_legacy_doctrine,
+    "redeye_legacy_adversary":  apply_redeye_legacy_doctrine,
 }
 
 
 BRAIN_WRAPPER_ASSIGNMENTS = {
-    "camino": "alpha_legacy_executor",
-    "barracuda": "camaro_legacy_strategist",
-    "hellcat": "chevelle_legacy_governor",
-    "gto": "redeye_legacy_adversary",
+    "camino":    "alpha_legacy_doctrine",
+    "barracuda": "camaro_legacy_doctrine",
+    "hellcat":   "chevelle_legacy_doctrine",
+    "gto":       "redeye_legacy_doctrine",
 }
 
 
@@ -995,7 +1025,7 @@ def apply_legacy_wrapper(intent: dict[str, Any]) -> dict[str, Any]:
     # committee pre-pass: extracts council/regime/risk inputs from
     # the intent envelope, runs the upgraded `build_weighted_decision`
     # engine, writes back authoritative confidence + size_multiplier +
-    # vetoes + conviction_score. Existing `apply_camaro_legacy_strategist`
+    # vetoes + conviction_score. Existing `apply_camaro_legacy_doctrine`
     # then runs its position-aware refinements on top.
     if brain_id == "barracuda":
         try:

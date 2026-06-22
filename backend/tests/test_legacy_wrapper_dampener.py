@@ -31,10 +31,10 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from shared.legacy_brain_wrappers import (  # noqa: E402
-    apply_alpha_legacy_executor,
-    apply_camaro_legacy_strategist,
-    apply_chevelle_legacy_governor,
-    apply_redeye_legacy_adversary,
+    apply_alpha_legacy_doctrine,
+    apply_camaro_legacy_doctrine,
+    apply_chevelle_legacy_doctrine,
+    apply_redeye_legacy_doctrine,
     _finalise_size_and_confidence,
 )
 
@@ -195,7 +195,7 @@ def test_alpha_wrapper_dampener_disabled_recovers_size(monkeypatch):
     below the base intent — operator can run "wrapper-bypass" mode
     when they suspect the legacy penalties are stale."""
     monkeypatch.setenv("RISEDUAL_WRAPPER_PENALTY_STRENGTH", "0.0")
-    result = apply_alpha_legacy_executor(_heavy_penalty_buy_intent())
+    result = apply_alpha_legacy_doctrine(_heavy_penalty_buy_intent())
     assert result["action"] == "BUY"
     assert result["size_bias"] == pytest.approx(1.0), (
         "strength=0 must restore the base size_bias"
@@ -211,7 +211,7 @@ def test_alpha_wrapper_floor_protects_directional(monkeypatch):
     crush size_bias) is clamped UP — the intent gets a minimum
     executable footprint instead of being functionally muted."""
     monkeypatch.setenv("RISEDUAL_WRAPPER_MIN_SIZE_BIAS_NONZERO", "0.3")
-    result = apply_alpha_legacy_executor(_heavy_penalty_buy_intent())
+    result = apply_alpha_legacy_doctrine(_heavy_penalty_buy_intent())
     assert result["size_bias"] >= 0.3, (
         f"floor must clamp BUY size_bias UP to 0.3 (got {result['size_bias']})"
     )
@@ -228,7 +228,7 @@ def test_alpha_wrapper_default_floors_directional_intents(monkeypatch):
     monkeypatch.delenv("RISEDUAL_WRAPPER_PENALTY_STRENGTH", raising=False)
     monkeypatch.delenv("RISEDUAL_WRAPPER_MIN_SIZE_BIAS_NONZERO", raising=False)
     intent = _heavy_penalty_buy_intent()
-    result = apply_alpha_legacy_executor(intent)
+    result = apply_alpha_legacy_doctrine(intent)
     # 1.0 × 0.70 × 0.85 = 0.595, above the 0.3 floor.
     assert result["size_bias"] == pytest.approx(0.595, abs=0.001), (
         "alpha's stacked penalty (0.595) is above the 0.3 floor → unchanged"
@@ -252,7 +252,7 @@ def test_chevelle_heavy_penalty_floored_by_default(monkeypatch):
         "risk_transition": "RISK_OFF",  # adds another penalty leg
         "evidence": {},
     }
-    result = apply_chevelle_legacy_governor(intent)
+    result = apply_chevelle_legacy_doctrine(intent)
     assert result["size_bias"] >= 0.3, (
         f"chevelle's heavy FLIP+RISK_OFF stack must be floored at 0.3 by "
         f"default (got {result['size_bias']})"
@@ -273,7 +273,7 @@ def test_chevelle_wrapper_dampener_works(monkeypatch):
         "position_evolution": None, "risk_transition": None,
         "evidence": {},
     }
-    result = apply_chevelle_legacy_governor(intent)
+    result = apply_chevelle_legacy_doctrine(intent)
     # FLIP penalty: 1.0 × 0.35 = 0.35; at strength=0.5 the deviation
     # (-0.65) is halved → 1.0 + (-0.325) = 0.675.
     assert result["size_bias"] == pytest.approx(0.675, abs=0.001)
@@ -291,7 +291,7 @@ def test_camaro_wrapper_hold_stays_zero_under_dampener(monkeypatch):
         "position_evolution": None, "risk_transition": None,
         "evidence": {"market_regime": "chop"},
     }
-    result = apply_camaro_legacy_strategist(intent)
+    result = apply_camaro_legacy_doctrine(intent)
     assert result["action"] == "HOLD"
     assert result["size_bias"] == 0.0, (
         "HOLD must stay 0 — floor only applies to BUY/SELL"
@@ -312,7 +312,7 @@ def test_redeye_wrapper_diagnostics_stamped(monkeypatch):
         "evidence": {"buy_score": 0.5, "sell_score": 0.5,
                      "flow_imbalance": -0.30},
     }
-    result = apply_redeye_legacy_adversary(intent)
+    result = apply_redeye_legacy_doctrine(intent)
     damp = result["evidence"]["legacy_wrapper"]["dampener"]
     assert damp["penalty_strength"] == pytest.approx(0.7)
     assert "pre_dampener_size_bias" in damp
@@ -327,10 +327,10 @@ def test_all_four_wrappers_default_unchanged_by_dampener(monkeypatch):
     monkeypatch.delenv("RISEDUAL_WRAPPER_PENALTY_STRENGTH", raising=False)
     monkeypatch.delenv("RISEDUAL_WRAPPER_MIN_SIZE_BIAS_NONZERO", raising=False)
     for wrapper in (
-        apply_alpha_legacy_executor,
-        apply_chevelle_legacy_governor,
-        apply_camaro_legacy_strategist,
-        apply_redeye_legacy_adversary,
+        apply_alpha_legacy_doctrine,
+        apply_chevelle_legacy_doctrine,
+        apply_camaro_legacy_doctrine,
+        apply_redeye_legacy_doctrine,
     ):
         result = wrapper(_heavy_penalty_buy_intent())
         damp = result["evidence"]["legacy_wrapper"]["dampener"]

@@ -2,7 +2,7 @@
 
 Doctrine pin (operator directive, 2026-06-10, P1):
 Before this module, every brain snapshot carried `market_regime="calm"`
-hardcoded. That made `legacy_brain_wrappers.apply_camaro_legacy_strategist`
+hardcoded. That made `legacy_brain_wrappers.apply_camaro_legacy_doctrine`
 mis-attribute every market state as calm — the chop-detection logic in
 particular never engaged. With this module the regime is derived from
 the brain runner's own universe scan: the same symbols the brain is

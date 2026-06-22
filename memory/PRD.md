@@ -1,3 +1,159 @@
+## 2026-06-22c — Hot-Brain Router dry-run endpoint (P1) + alias reminder test
+
+### Operator pin
+> "P1: Hot-Brain Router dry-run endpoint — Because that lets you see
+> what the new learning layer would have done without touching live
+> execution... That endpoint becomes your truth serum."
+> "Keep the backward-compatible keys through the full audit retention
+> window. Add the dated TODO and regression test, but make it a
+> reminder test, not something that suddenly breaks production."
+
+### What shipped
+
+**1. `GET /api/admin/hot-brain-router/dry-run?days=N` (1 ≤ N ≤ 7)**
+
+New route at `routes/admin_hot_brain_router.py`, registered through
+`server_modules/router_registry.py`. Read-only. The dormant Hot-Brain
+Router is replayed against every `BUY/SELL/SHORT/COVER` intent in
+`shared_intents` over the window. Returns:
+
+  - `window_days`, `total_intents`
+  - `would_block`, `would_reduce`, `would_pass`, `would_elevate`
+    (the four operator-facing buckets — sum to `total_intents`)
+  - `by_brain.<name>.{hot,neutral,cold,unknown}` (state taxonomy)
+  - `examples[]` — up to 20 representative rows spread across the
+    four route-actions (cap 5 per bucket so the operator never gets
+    20 ELEVATEs in a row). Each example has `intent_id`, `brain`,
+    `symbol`, `regime`, `kernel_adjusted_score`, `route_action`,
+    `reason`.
+  - `dry_run_context` — the neutral `RouterContext` used (so
+    operator can sanity-check vs live governor)
+  - `router_status` — literal `"DORMANT — read-only dry-run only;
+    not wired into live execution"` so dashboards can't mistake
+    dry-run for wiring.
+
+Doctrine: NO writes to `shared_intents`. NO broker calls. NO audit
+rows emitted. The router's own classifier and the perf-store query
+are reused as-is. Per-key (brain, lane, symbol) perf lookups are
+cached within a single request to keep response time sub-second.
+
+**Live smoke (preview, 850 intents in last 24h):**
+
+```
+total_intents: 850 | would_reduce: 850 | rest: 0
+by_brain: each brain → unknown (no verified trades in perf store)
+reason: insufficient_verified_trades_reduced_probe
+```
+
+This is the operator's first data point: "the Kernel needs verified
+trade outcomes in `doctrine_sidecars.outcome_join.pnl_usd` before it
+can hot-flag any brain." The truth serum is already working.
+
+**2. `tests/test_hot_brain_router_dry_run_2026_06_22.py` (4 tests)**
+
+Pins:
+  - Response schema (window_days, four totals, by_brain shape,
+    examples shape, dry_run_context, router_status banner)
+  - Bucket counts sum to processed intents; HOLD/ABSTAIN filtered out
+  - Examples spread across action buckets (per-bucket cap = 5)
+  - `days` query param bounded `[1, 7]` via OpenAPI metadata
+  - **Read-only doctrine**: any attempt to call `update_one` /
+    `insert_one` / `replace_one` on `shared_intents` fails the test
+
+**3. `tests/test_legacy_wrapper_alias_reminder_2026_06_22.py`
+    (2 tests — non-breaking reminder)**
+
+Two tests:
+  - `test_legacy_aliases_still_present` — SAFETY: confirms the four
+    old-name aliases (`alpha_legacy_executor`, etc.) still resolve
+    to the same canonical function. Fails IF an operator
+    accidentally retires an alias before the retention window
+    closes.
+  - `test_alias_cleanup_reminder` — INFORMATIONAL: after the
+    review date `2026-09-22` (90 days post-rename), prints a
+    visible banner via stderr + emits a `UserWarning`. **Always
+    passes.** Per operator pin — "reminder, not a timebomb."
+
+Cleanup procedure baked into the docstring:
+  1. Confirm audit-row retention cycle has passed `ALIAS_REVIEW_DATE`
+  2. Delete the four alias entries from `WRAPPER_REGISTRY`
+  3. Delete the reminder test file
+
+### Touched
+  - NEW: `backend/routes/admin_hot_brain_router.py`
+  - NEW: `backend/tests/test_hot_brain_router_dry_run_2026_06_22.py`
+  - NEW: `backend/tests/test_legacy_wrapper_alias_reminder_2026_06_22.py`
+  - EDIT: `backend/server_modules/router_registry.py` (router include)
+
+### Regression
+217/217 P0+P1-related tests pass. Backend reload clean. Live
+endpoint returns 850-intent dry-run in <1s.
+
+---
+
+
+## 2026-06-22b — Legacy-wrapper rename: drop seat titles
+
+### Operator pin
+> "Can you just rename the wrappers instead?"
+
+### What changed
+
+Renamed all four legacy-doctrine wrappers in
+`shared/legacy_brain_wrappers.py` to drop the seat-title suffix:
+
+  `apply_alpha_legacy_executor`     → `apply_alpha_legacy_doctrine`
+  `apply_chevelle_legacy_governor`  → `apply_chevelle_legacy_doctrine`
+  `apply_camaro_legacy_strategist`  → `apply_camaro_legacy_doctrine`
+  `apply_redeye_legacy_adversary`   → `apply_redeye_legacy_doctrine`
+
+Registry keys and the `BRAIN_WRAPPER_ASSIGNMENTS` map updated to the
+canonical names. The `WrapperName` Literal type updated. Inline
+`evidence.legacy_wrapper.name` and `wrapper=` strings inside each
+function updated so NEW intents are tagged with the canonical name.
+
+### Why this matters
+
+A wrapper carries the LEGACY DOCTRINE of a specific brain (Alpha,
+Chevelle, Camaro, RedEye). Seat assignment (executor / governor /
+strategist / adversary) is a RUNTIME concern owned by SeatPolicy
+and can change at any moment when the operator rotates roster
+slots. Baking the seat title into the function symbol gave the
+dashboard's "Legacy Wrapper A/B Switch" UI a false signal that
+each brain was hard-coded to one seat, and was a chronic source of
+operator confusion at the end of the 2026-06-22 session.
+
+### Backward-compat
+
+`WRAPPER_REGISTRY` keeps the four OLD key strings
+(`alpha_legacy_executor`, etc.) as aliases pointing to the same
+canonical function. Existing audit rows in Mongo carry the old
+strings on `evidence.legacy_wrapper.name`; the post-mortem / replay
+UIs will resolve them transparently for one full retention window.
+
+### Touched
+
+  - `shared/legacy_brain_wrappers.py` (core rename + alias)
+  - `shared/market_regime.py` (docstring)
+  - `shared/brains/camino_committee.py` (docstring)
+  - `shared/brains/camaro_weights_adapter.py` (docstring)
+  - 6 test files (`test_legacy_brain_wrappers.py`,
+    `test_legacy_wrapper_toggle.py`, `test_legacy_wrapper_dampener.py`,
+    `test_camaro_weights_2026_02_21.py`,
+    `test_squeeze_wrapper_integration.py`,
+    `test_camino_committee_2026_02_21.py`)
+  - `frontend/src/components/LegacyWrapperTogglePanel.jsx` (docstring)
+
+### Regression
+146/146 wrapper-related tests pass. 215/215 broader suite pass.
+Backend boots clean with all 4 neutral brains running. Smoke test
+confirms (a) new intents emit canonical `alpha_legacy_doctrine`-style
+names, and (b) the legacy `alpha_legacy_executor` registry key still
+resolves to the same function.
+
+---
+
+
 ## 2026-06-22 — P0 Triage: Seat-Drift Funnel-Leak + brain_vote NameError + auto_submit traceback
 
 ### Operator pin

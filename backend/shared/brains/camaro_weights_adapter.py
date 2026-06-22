@@ -7,7 +7,7 @@ Operator pin:
 
 Architectural intent:
     Barracuda is currently configured to run through
-    `apply_camaro_legacy_strategist` (see legacy_brain_wrappers.py).
+    `apply_camaro_legacy_doctrine` (see legacy_brain_wrappers.py).
     The operator brought in an upgraded `camaro_weights.py` decision
     engine — sizing bands, regime-aware RR floors, graduated loss
     streak dampening, leader-penalty scaling, conviction score, and

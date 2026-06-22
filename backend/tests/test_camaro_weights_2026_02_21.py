@@ -336,7 +336,7 @@ def test_integration_camaro_runs_before_legacy_wrapper_for_barracuda():
     assert "conviction_score" in out["evidence"]
     # Legacy strategist wrapper also ran (audit field stamped).
     assert "legacy_wrapper" in out["evidence"]
-    assert out["evidence"]["legacy_wrapper"]["name"] == "camaro_legacy_strategist"
+    assert out["evidence"]["legacy_wrapper"]["name"] == "camaro_legacy_doctrine"
 
 
 def test_integration_kill_switch_short_circuits_camaro(monkeypatch):

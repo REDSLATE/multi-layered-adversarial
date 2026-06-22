@@ -244,7 +244,7 @@ def apply_committee_to_intent(
 
     if verdict.side != "NO_QUORUM":
         # Replace the base confidence with the committee-calibrated
-        # value. The downstream `apply_alpha_legacy_executor` will
+        # value. The downstream `apply_alpha_legacy_doctrine` will
         # then do position-discipline tweaks on top of THIS number,
         # so the entire emit pipeline ends up inheriting Alpha's
         # priors automatically.

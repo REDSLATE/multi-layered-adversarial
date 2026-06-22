@@ -10,7 +10,7 @@ Three layers:
      intent-mutator no-ops when no votes are present.
   3. Integration with `legacy_brain_wrappers.apply_legacy_wrapper` —
      committee pre-pass mutates confidence BEFORE
-     `apply_alpha_legacy_executor` runs; env-var kill switch works;
+     `apply_alpha_legacy_doctrine` runs; env-var kill switch works;
      non-Camino brains are untouched.
 """
 from __future__ import annotations
@@ -255,7 +255,7 @@ def test_integration_committee_runs_before_legacy_wrapper():
     assert out["evidence"]["committee_verdict"]["side"] == "LONG"
     # Legacy wrapper should ALSO have stamped its own audit field.
     assert "legacy_wrapper" in out["evidence"]
-    assert out["evidence"]["legacy_wrapper"]["name"] == "alpha_legacy_executor"
+    assert out["evidence"]["legacy_wrapper"]["name"] == "alpha_legacy_doctrine"
 
 
 def test_integration_committee_inflates_low_confidence_for_camino():

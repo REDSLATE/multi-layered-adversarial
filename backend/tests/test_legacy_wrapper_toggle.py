@@ -92,7 +92,7 @@ def test_disabled_wrapper_skips_application():
     set_wrapper_disabled("gto", True, "diagnostic skip")
     disabled_out = apply_legacy_wrapper(dict(intent_in))
     assert disabled_out["wrapper_disabled_by_operator"] is True
-    assert disabled_out["wrapper_skipped"] == "redeye_legacy_adversary"
+    assert disabled_out["wrapper_skipped"] == "redeye_legacy_doctrine"
     assert disabled_out["wrapper_disabled_reason"] == "diagnostic skip"
     # And critically: size_bias was NOT compressed by the wrapper.
     assert disabled_out["size_bias"] == intent_in["size_bias"]

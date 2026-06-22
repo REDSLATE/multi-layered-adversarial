@@ -11,10 +11,10 @@ import {
  *
  * Per-brain switch for the legacy personality wrappers. Each brain
  * (camino / barracuda / hellcat / gto) has one wrapper applied:
- *   * camino    → alpha_legacy_executor
- *   * barracuda → camaro_legacy_strategist
- *   * hellcat   → chevelle_legacy_governor
- *   * gto       → redeye_legacy_adversary
+ *   * camino    → alpha_legacy_doctrine
+ *   * barracuda → camaro_legacy_doctrine
+ *   * hellcat   → chevelle_legacy_doctrine
+ *   * gto       → redeye_legacy_doctrine
  *
  * When the operator suspects the penalty-stacking wrappers are
  * compressing `size_bias` toward zero (causing the downstream

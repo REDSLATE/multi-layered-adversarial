@@ -28,11 +28,11 @@ sys.path.insert(0, "/app/backend")
 
 from shared.legacy_brain_wrappers import (  # noqa: E402
     BRAIN_WRAPPER_ASSIGNMENTS,
-    apply_alpha_legacy_executor,
-    apply_camaro_legacy_strategist,
-    apply_chevelle_legacy_governor,
+    apply_alpha_legacy_doctrine,
+    apply_camaro_legacy_doctrine,
+    apply_chevelle_legacy_doctrine,
     apply_legacy_wrapper,
-    apply_redeye_legacy_adversary,
+    apply_redeye_legacy_doctrine,
     clamp,
     safe_float,
 )
@@ -42,25 +42,25 @@ from shared.legacy_brain_wrappers import (  # noqa: E402
 
 
 def test_camino_assigned_alpha_wrapper():
-    assert BRAIN_WRAPPER_ASSIGNMENTS["camino"] == "alpha_legacy_executor"
+    assert BRAIN_WRAPPER_ASSIGNMENTS["camino"] == "alpha_legacy_doctrine"
 
 
 def test_hellcat_assigned_chevelle_wrapper():
-    assert BRAIN_WRAPPER_ASSIGNMENTS["hellcat"] == "chevelle_legacy_governor"
+    assert BRAIN_WRAPPER_ASSIGNMENTS["hellcat"] == "chevelle_legacy_doctrine"
 
 
 def test_barracuda_assigned_camaro_wrapper():
     """Barracuda's mean-reversion doctrine gets tape-reading
     instinct from the Camaro wrapper — prevents pure fading from
     fighting strong tape too aggressively."""
-    assert BRAIN_WRAPPER_ASSIGNMENTS["barracuda"] == "camaro_legacy_strategist"
+    assert BRAIN_WRAPPER_ASSIGNMENTS["barracuda"] == "camaro_legacy_doctrine"
 
 
 def test_gto_assigned_redeye_wrapper():
     """GTO's momentum doctrine gets RedEye adversary instincts —
     challenges weak consensus, rewards short pressure in risk-off,
     punishes crowded long adds against bearish flow."""
-    assert BRAIN_WRAPPER_ASSIGNMENTS["gto"] == "redeye_legacy_adversary"
+    assert BRAIN_WRAPPER_ASSIGNMENTS["gto"] == "redeye_legacy_doctrine"
 
 
 def test_apply_legacy_wrapper_passthrough_for_unassigned():
@@ -96,21 +96,21 @@ def _base_intent(**overrides):
 
 
 def test_alpha_wrapper_never_flips_action():
-    out = apply_alpha_legacy_executor(_base_intent(action="BUY"))
+    out = apply_alpha_legacy_doctrine(_base_intent(action="BUY"))
     assert out["action"] == "BUY"
-    out = apply_alpha_legacy_executor(_base_intent(action="SELL"))
+    out = apply_alpha_legacy_doctrine(_base_intent(action="SELL"))
     assert out["action"] == "SELL"
 
 
 def test_chevelle_wrapper_never_flips_action():
-    out = apply_chevelle_legacy_governor(_base_intent(action="BUY", brain_id="hellcat"))
+    out = apply_chevelle_legacy_doctrine(_base_intent(action="BUY", brain_id="hellcat"))
     assert out["action"] == "BUY"
-    out = apply_chevelle_legacy_governor(_base_intent(action="SELL", brain_id="hellcat"))
+    out = apply_chevelle_legacy_doctrine(_base_intent(action="SELL", brain_id="hellcat"))
     assert out["action"] == "SELL"
 
 
 def test_chevelle_wrapper_zeros_size_on_hold():
-    out = apply_chevelle_legacy_governor(_base_intent(
+    out = apply_chevelle_legacy_doctrine(_base_intent(
         action="HOLD", brain_id="hellcat",
     ))
     assert out["action"] == "HOLD"
@@ -119,8 +119,8 @@ def test_chevelle_wrapper_zeros_size_on_hold():
 
 def test_neither_wrapper_creates_a_trade_from_hold():
     """The wrapper must not promote HOLD to BUY/SELL."""
-    a = apply_alpha_legacy_executor(_base_intent(action="HOLD"))
-    c = apply_chevelle_legacy_governor(_base_intent(action="HOLD", brain_id="hellcat"))
+    a = apply_alpha_legacy_doctrine(_base_intent(action="HOLD"))
+    c = apply_chevelle_legacy_doctrine(_base_intent(action="HOLD", brain_id="hellcat"))
     assert a["action"] == "HOLD"
     assert c["action"] == "HOLD"
 
@@ -131,7 +131,7 @@ def test_neither_wrapper_creates_a_trade_from_hold():
 def test_alpha_rewards_strong_open_long_commitment():
     """Clean ADD_LONG + confidence >= 0.68 → confidence lifted,
     size_bias boosted, reason logged."""
-    out = apply_alpha_legacy_executor(_base_intent(
+    out = apply_alpha_legacy_doctrine(_base_intent(
         confidence=0.70, transition_intent="ADD_LONG",
     ))
     assert out["confidence"] > 0.70
@@ -140,7 +140,7 @@ def test_alpha_rewards_strong_open_long_commitment():
 
 
 def test_alpha_penalizes_weak_open_commitment():
-    out = apply_alpha_legacy_executor(_base_intent(
+    out = apply_alpha_legacy_doctrine(_base_intent(
         confidence=0.55, transition_intent="OPEN_LONG",
     ))
     assert out["confidence"] < 0.55
@@ -151,28 +151,28 @@ def test_alpha_penalizes_weak_open_commitment():
 def test_alpha_penalizes_unknown_position_state():
     """The AAPL-incident lesson: if current_side is unknown, Alpha
     instinct says compress and warn — don't act blind."""
-    out = apply_alpha_legacy_executor(_base_intent(current_side=None))
+    out = apply_alpha_legacy_doctrine(_base_intent(current_side=None))
     assert out["confidence"] < 0.70
     assert out["size_bias"] < 1.0
     assert any("POSITION_STATE_UNKNOWN" in w for w in out["warnings"])
 
 
 def test_alpha_rewards_confirmed_scale_in():
-    out = apply_alpha_legacy_executor(_base_intent(
+    out = apply_alpha_legacy_doctrine(_base_intent(
         confidence=0.75, position_evolution="SCALE_IN",
     ))
     assert any("SCALE_IN_CONFIRMED" in r for r in out["reasons"])
 
 
 def test_alpha_warns_on_unconfirmed_scale_in():
-    out = apply_alpha_legacy_executor(_base_intent(
+    out = apply_alpha_legacy_doctrine(_base_intent(
         confidence=0.65, position_evolution="SCALE_IN",
     ))
     assert any("SCALE_IN_NOT_CONFIRMED" in w for w in out["warnings"])
 
 
 def test_alpha_compresses_flip_heavily():
-    out = apply_alpha_legacy_executor(_base_intent(
+    out = apply_alpha_legacy_doctrine(_base_intent(
         transition_intent="FLIP_LONG_TO_SHORT",
     ))
     assert out["size_bias"] <= 0.50
@@ -180,11 +180,11 @@ def test_alpha_compresses_flip_heavily():
 
 
 def test_alpha_stamps_provenance_block():
-    out = apply_alpha_legacy_executor(_base_intent())
+    out = apply_alpha_legacy_doctrine(_base_intent())
     lw = out["evidence"]["legacy_wrapper"]
-    assert lw["name"] == "alpha_legacy_executor"
+    assert lw["name"] == "alpha_legacy_doctrine"
     assert lw["parent_brain"] == "alpha"
-    assert out["wrapper"] == "alpha_legacy_executor"
+    assert out["wrapper"] == "alpha_legacy_doctrine"
     assert out["parent_brain"] == "alpha"
 
 
@@ -193,7 +193,7 @@ def test_alpha_stamps_provenance_block():
 
 def test_chevelle_compresses_exposure_in_risk_off():
     """RISK_OFF + ADD_LONG → confidence dropped, size halved, warn."""
-    out = apply_chevelle_legacy_governor(_base_intent(
+    out = apply_chevelle_legacy_doctrine(_base_intent(
         brain_id="hellcat", risk_transition="RISK_OFF",
         transition_intent="ADD_LONG",
     ))
@@ -203,7 +203,7 @@ def test_chevelle_compresses_exposure_in_risk_off():
 
 
 def test_chevelle_approves_reductions_in_risk_off():
-    out = apply_chevelle_legacy_governor(_base_intent(
+    out = apply_chevelle_legacy_doctrine(_base_intent(
         brain_id="hellcat", risk_transition="RISK_OFF",
         position_evolution="SCALE_OUT", transition_intent="REDUCE_LONG",
     ))
@@ -212,7 +212,7 @@ def test_chevelle_approves_reductions_in_risk_off():
 
 
 def test_chevelle_allows_exposure_in_risk_on():
-    out = apply_chevelle_legacy_governor(_base_intent(
+    out = apply_chevelle_legacy_doctrine(_base_intent(
         brain_id="hellcat", risk_transition="RISK_ON",
         transition_intent="OPEN_LONG",
     ))
@@ -223,7 +223,7 @@ def test_chevelle_allows_exposure_in_risk_on():
 def test_chevelle_compresses_scale_in_size():
     """Hellcat-as-governor instinct: SCALE_IN gets size compressed
     even when conditions allow it. Risk discipline first."""
-    out = apply_chevelle_legacy_governor(_base_intent(
+    out = apply_chevelle_legacy_doctrine(_base_intent(
         brain_id="hellcat", position_evolution="SCALE_IN",
     ))
     assert out["size_bias"] < 1.0
@@ -231,7 +231,7 @@ def test_chevelle_compresses_scale_in_size():
 
 
 def test_chevelle_heavily_compresses_flip():
-    out = apply_chevelle_legacy_governor(_base_intent(
+    out = apply_chevelle_legacy_doctrine(_base_intent(
         brain_id="hellcat", transition_intent="FLIP_SHORT_TO_LONG",
     ))
     assert out["size_bias"] <= 0.35
@@ -239,7 +239,7 @@ def test_chevelle_heavily_compresses_flip():
 
 
 def test_chevelle_penalizes_unknown_position_state():
-    out = apply_chevelle_legacy_governor(_base_intent(
+    out = apply_chevelle_legacy_doctrine(_base_intent(
         brain_id="hellcat", current_side=None,
     ))
     assert out["confidence"] < 0.70
@@ -251,15 +251,15 @@ def test_chevelle_penalizes_unknown_position_state():
 
 def test_confidence_clamped_to_0_1():
     """Even with extreme inputs, confidence must stay in [0,1]."""
-    out = apply_alpha_legacy_executor(_base_intent(confidence=2.5))
+    out = apply_alpha_legacy_doctrine(_base_intent(confidence=2.5))
     assert 0.0 <= out["confidence"] <= 1.0
-    out = apply_alpha_legacy_executor(_base_intent(confidence=-0.5))
+    out = apply_alpha_legacy_doctrine(_base_intent(confidence=-0.5))
     assert 0.0 <= out["confidence"] <= 1.0
 
 
 def test_size_bias_clamped_to_0_2():
     """size_bias must stay in [0, 2.0]."""
-    out = apply_chevelle_legacy_governor(_base_intent(
+    out = apply_chevelle_legacy_doctrine(_base_intent(
         brain_id="hellcat", size_bias=99.0,
     ))
     assert 0.0 <= out["size_bias"] <= 2.0
@@ -309,27 +309,27 @@ def _barracuda_intent(**overrides):
 
 
 def test_camaro_never_flips_action():
-    out = apply_camaro_legacy_strategist(_barracuda_intent(action="BUY"))
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(action="BUY"))
     assert out["action"] == "BUY"
-    out = apply_camaro_legacy_strategist(_barracuda_intent(action="SELL"))
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(action="SELL"))
     assert out["action"] == "SELL"
 
 
 def test_camaro_zeros_size_on_hold():
-    out = apply_camaro_legacy_strategist(_barracuda_intent(action="HOLD"))
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(action="HOLD"))
     assert out["action"] == "HOLD"
     assert out["size_bias"] == 0.0
 
 
 def test_camaro_never_creates_trade_from_hold():
-    out = apply_camaro_legacy_strategist(_barracuda_intent(action="HOLD"))
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(action="HOLD"))
     assert out["action"] == "HOLD"
 
 
 def test_camaro_penalizes_tiny_score_gap_chop():
     """Camaro hates indecision — a tiny BUY/SELL score gap triggers
     chop warning and compresses size."""
-    out = apply_camaro_legacy_strategist(_barracuda_intent(
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(
         evidence={
             "market_regime": "bull",
             "buy_score": 0.700,
@@ -342,7 +342,7 @@ def test_camaro_penalizes_tiny_score_gap_chop():
 
 def test_camaro_rewards_long_continuation_in_bull_regime():
     """Bull regime + BUY OPEN_LONG → confidence lifted, size boosted."""
-    out = apply_camaro_legacy_strategist(_barracuda_intent(
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(
         action="BUY", transition_intent="OPEN_LONG",
         evidence={"market_regime": "bull", "buy_score": 0.75, "sell_score": 0.50},
     ))
@@ -354,7 +354,7 @@ def test_camaro_rewards_long_continuation_in_bull_regime():
 def test_camaro_warns_on_short_against_bull():
     """SELL against a bull regime — Camaro's experience says don't
     fight the tape, even for a mean-reverter."""
-    out = apply_camaro_legacy_strategist(_barracuda_intent(
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(
         action="SELL", transition_intent="OPEN_SHORT",
         current_side="FLAT",
         evidence={"market_regime": "bull", "buy_score": 0.40, "sell_score": 0.65},
@@ -365,7 +365,7 @@ def test_camaro_warns_on_short_against_bull():
 
 
 def test_camaro_rewards_short_continuation_in_bear_regime():
-    out = apply_camaro_legacy_strategist(_barracuda_intent(
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(
         action="SELL", transition_intent="OPEN_SHORT",
         current_side="FLAT",
         evidence={"market_regime": "bear", "buy_score": 0.40, "sell_score": 0.72},
@@ -375,7 +375,7 @@ def test_camaro_rewards_short_continuation_in_bear_regime():
 
 
 def test_camaro_warns_on_long_against_bear():
-    out = apply_camaro_legacy_strategist(_barracuda_intent(
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(
         action="BUY", transition_intent="OPEN_LONG",
         evidence={"market_regime": "crisis", "buy_score": 0.72, "sell_score": 0.45},
     ))
@@ -387,7 +387,7 @@ def test_camaro_compresses_exposure_in_chop():
     """Chop / sideways / unknown regime → exposure-increasing
     transitions are compressed."""
     for regime in ("chop", "sideways", "unknown"):
-        out = apply_camaro_legacy_strategist(_barracuda_intent(
+        out = apply_camaro_legacy_doctrine(_barracuda_intent(
             transition_intent="OPEN_LONG",
             evidence={"market_regime": regime, "buy_score": 0.70, "sell_score": 0.50},
         ))
@@ -398,7 +398,7 @@ def test_camaro_compresses_exposure_in_chop():
 def test_camaro_approves_position_management():
     """SCALE_OUT / PARTIAL_COVER / FULL_COVER → small confidence
     lift, reason logged."""
-    out = apply_camaro_legacy_strategist(_barracuda_intent(
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(
         position_evolution="SCALE_OUT",
         evidence={"market_regime": "bull", "buy_score": 0.65, "sell_score": 0.60},
     ))
@@ -406,7 +406,7 @@ def test_camaro_approves_position_management():
 
 
 def test_camaro_rejects_low_confidence_flip_by_temperament():
-    out = apply_camaro_legacy_strategist(_barracuda_intent(
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(
         confidence=0.60, transition_intent="FLIP_LONG_TO_SHORT",
     ))
     assert out["confidence"] < 0.60
@@ -419,7 +419,7 @@ def test_camaro_rejects_low_confidence_flip_by_temperament():
 
 def test_camaro_compresses_high_confidence_flip():
     """Even at high confidence, Camaro shrinks size on flips."""
-    out = apply_camaro_legacy_strategist(_barracuda_intent(
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(
         confidence=0.80, transition_intent="FLIP_SHORT_TO_LONG",
     ))
     # Confidence preserved or lifted; size compressed.
@@ -429,7 +429,7 @@ def test_camaro_compresses_high_confidence_flip():
 
 def test_camaro_rewards_confirmed_long_continuation():
     """LONG + ADD_LONG + confidence >= 0.68 → continuation reward."""
-    out = apply_camaro_legacy_strategist(_barracuda_intent(
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(
         confidence=0.72, current_side="LONG", transition_intent="ADD_LONG",
         evidence={"market_regime": "bull", "buy_score": 0.72, "sell_score": 0.45},
     ))
@@ -437,7 +437,7 @@ def test_camaro_rewards_confirmed_long_continuation():
 
 
 def test_camaro_rewards_confirmed_short_continuation():
-    out = apply_camaro_legacy_strategist(_barracuda_intent(
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(
         confidence=0.72, current_side="SHORT", transition_intent="ADD_SHORT",
         action="SELL",
         evidence={"market_regime": "bear", "buy_score": 0.40, "sell_score": 0.72},
@@ -446,17 +446,17 @@ def test_camaro_rewards_confirmed_short_continuation():
 
 
 def test_camaro_stamps_provenance_block():
-    out = apply_camaro_legacy_strategist(_barracuda_intent())
+    out = apply_camaro_legacy_doctrine(_barracuda_intent())
     lw = out["evidence"]["legacy_wrapper"]
-    assert lw["name"] == "camaro_legacy_strategist"
+    assert lw["name"] == "camaro_legacy_doctrine"
     assert lw["parent_brain"] == "camaro"
-    assert out["wrapper"] == "camaro_legacy_strategist"
+    assert out["wrapper"] == "camaro_legacy_doctrine"
     assert out["parent_brain"] == "camaro"
 
 
 def test_camaro_clamps_confidence_and_size():
     """Bound invariants hold for Camaro too."""
-    out = apply_camaro_legacy_strategist(_barracuda_intent(
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(
         confidence=5.0, size_bias=10.0,
     ))
     assert 0.0 <= out["confidence"] <= 1.0
@@ -466,7 +466,7 @@ def test_camaro_clamps_confidence_and_size():
 def test_camaro_handles_missing_market_regime_as_chop():
     """If market_regime is missing entirely, Camaro treats it as
     unclear and compresses exposure — fail-closed default."""
-    out = apply_camaro_legacy_strategist(_barracuda_intent(
+    out = apply_camaro_legacy_doctrine(_barracuda_intent(
         transition_intent="OPEN_LONG",
         evidence={"buy_score": 0.70, "sell_score": 0.50},  # no market_regime
     ))
@@ -485,7 +485,7 @@ def test_apply_legacy_wrapper_routes_barracuda_to_camaro():
         "transition_intent": "OPEN_LONG",
         "evidence": {"market_regime": "bull", "buy_score": 0.72, "sell_score": 0.50},
     })
-    assert out.get("wrapper") == "camaro_legacy_strategist"
+    assert out.get("wrapper") == "camaro_legacy_doctrine"
 
 
 # ── RedEye adversary behavior ─────────────────────────────────────
@@ -519,27 +519,27 @@ def _gto_intent(**overrides):
 def test_redeye_never_flips_action():
     """RedEye wrapper preserves BUY/SELL exactly — adversarial bias
     lives in confidence + size, never in flipping the direction."""
-    out = apply_redeye_legacy_adversary(_gto_intent(action="BUY"))
+    out = apply_redeye_legacy_doctrine(_gto_intent(action="BUY"))
     assert out["action"] == "BUY"
-    out = apply_redeye_legacy_adversary(_gto_intent(action="SELL"))
+    out = apply_redeye_legacy_doctrine(_gto_intent(action="SELL"))
     assert out["action"] == "SELL"
 
 
 def test_redeye_zeros_size_on_hold():
-    out = apply_redeye_legacy_adversary(_gto_intent(action="HOLD"))
+    out = apply_redeye_legacy_doctrine(_gto_intent(action="HOLD"))
     assert out["action"] == "HOLD"
     assert out["size_bias"] == 0.0
 
 
 def test_redeye_never_creates_trade_from_hold():
-    out = apply_redeye_legacy_adversary(_gto_intent(action="HOLD"))
+    out = apply_redeye_legacy_doctrine(_gto_intent(action="HOLD"))
     assert out["action"] == "HOLD"
 
 
 def test_redeye_challenges_weak_consensus():
     """Score gap < 0.04 → confidence dropped, size compressed,
     challenge warning logged. RedEye distrusts crowd indecision."""
-    out = apply_redeye_legacy_adversary(_gto_intent(
+    out = apply_redeye_legacy_doctrine(_gto_intent(
         evidence={
             "market_regime": "calm",
             "buy_score": 0.700,
@@ -557,7 +557,7 @@ def test_redeye_compresses_long_against_risk_off():
     """BUY while RISK_OFF → heavy compression. The 2026-06-09
     AAPL-style trap pattern is exactly this: brain wants to add
     long into a bid-failure tape."""
-    out = apply_redeye_legacy_adversary(_gto_intent(
+    out = apply_redeye_legacy_doctrine(_gto_intent(
         action="BUY", transition_intent="OPEN_LONG",
         risk_transition="RISK_OFF",
         evidence={
@@ -573,7 +573,7 @@ def test_redeye_compresses_long_against_risk_off():
 def test_redeye_rewards_short_pressure_in_bear_regime():
     """SELL OPEN_SHORT in bear regime → confidence lifted, size
     boosted, confirmation reason logged."""
-    out = apply_redeye_legacy_adversary(_gto_intent(
+    out = apply_redeye_legacy_doctrine(_gto_intent(
         action="SELL", transition_intent="OPEN_SHORT",
         evidence={
             "market_regime": "bear", "buy_score": 0.40, "sell_score": 0.72,
@@ -588,7 +588,7 @@ def test_redeye_rewards_short_pressure_in_bear_regime():
 def test_redeye_rewards_short_continuation_with_real_confidence():
     """current_side=SHORT + ADD_SHORT + confidence >= 0.66 →
     continuation reward."""
-    out = apply_redeye_legacy_adversary(_gto_intent(
+    out = apply_redeye_legacy_doctrine(_gto_intent(
         action="SELL", current_side="SHORT",
         transition_intent="ADD_SHORT", confidence=0.72,
         evidence={
@@ -602,7 +602,7 @@ def test_redeye_rewards_short_continuation_with_real_confidence():
 def test_redeye_compresses_weak_short_add():
     """current_side=SHORT + ADD_SHORT + confidence < 0.66 →
     weak add compression."""
-    out = apply_redeye_legacy_adversary(_gto_intent(
+    out = apply_redeye_legacy_doctrine(_gto_intent(
         action="SELL", current_side="SHORT",
         transition_intent="ADD_SHORT", confidence=0.55,
         evidence={
@@ -618,7 +618,7 @@ def test_redeye_compresses_weak_short_add():
 def test_redeye_warns_on_early_cover_during_downside():
     """current_side=SHORT + cover during bearish flow → don't cover
     too early, the pressure is still on."""
-    out = apply_redeye_legacy_adversary(_gto_intent(
+    out = apply_redeye_legacy_doctrine(_gto_intent(
         action="BUY", current_side="SHORT",
         position_evolution="PARTIAL_COVER",
         transition_intent="REDUCE_SHORT",
@@ -632,7 +632,7 @@ def test_redeye_warns_on_early_cover_during_downside():
 
 def test_redeye_punishes_long_adds_against_bearish_flow():
     """BUY ADD_LONG with flow_imbalance < -0.20 → compression."""
-    out = apply_redeye_legacy_adversary(_gto_intent(
+    out = apply_redeye_legacy_doctrine(_gto_intent(
         action="BUY", current_side="LONG",
         transition_intent="ADD_LONG",
         evidence={
@@ -648,7 +648,7 @@ def test_redeye_punishes_long_adds_against_bearish_flow():
 def test_redeye_supports_sell_on_bearish_news_shock():
     """High news_zscore + bearish sentiment + SELL → confidence
     nudge, support reason logged."""
-    out = apply_redeye_legacy_adversary(_gto_intent(
+    out = apply_redeye_legacy_doctrine(_gto_intent(
         action="SELL", transition_intent="OPEN_SHORT",
         evidence={
             "market_regime": "calm", "buy_score": 0.45, "sell_score": 0.70,
@@ -662,7 +662,7 @@ def test_redeye_supports_sell_on_bearish_news_shock():
 def test_redeye_compresses_buy_against_bearish_news_shock():
     """High news_zscore + bearish sentiment + BUY → confidence
     dropped, size compressed, warning logged."""
-    out = apply_redeye_legacy_adversary(_gto_intent(
+    out = apply_redeye_legacy_doctrine(_gto_intent(
         action="BUY", current_side="FLAT", transition_intent="OPEN_LONG",
         evidence={
             "market_regime": "calm", "buy_score": 0.70, "sell_score": 0.50,
@@ -676,7 +676,7 @@ def test_redeye_compresses_buy_against_bearish_news_shock():
 
 
 def test_redeye_compresses_low_confidence_flip():
-    out = apply_redeye_legacy_adversary(_gto_intent(
+    out = apply_redeye_legacy_doctrine(_gto_intent(
         confidence=0.55, transition_intent="FLIP_LONG_TO_SHORT",
     ))
     assert out["confidence"] < 0.55
@@ -687,7 +687,7 @@ def test_redeye_compresses_low_confidence_flip():
 def test_redeye_allows_high_confidence_flip_with_compression():
     """High-conf flips are allowed but size is still trimmed —
     RedEye is adversarial, not reckless."""
-    out = apply_redeye_legacy_adversary(_gto_intent(
+    out = apply_redeye_legacy_doctrine(_gto_intent(
         confidence=0.82, transition_intent="FLIP_SHORT_TO_LONG",
     ))
     assert out["size_bias"] < 1.0
@@ -695,19 +695,19 @@ def test_redeye_allows_high_confidence_flip_with_compression():
 
 
 def test_redeye_stamps_provenance_block():
-    out = apply_redeye_legacy_adversary(_gto_intent())
+    out = apply_redeye_legacy_doctrine(_gto_intent())
     lw = out["evidence"]["legacy_wrapper"]
-    assert lw["name"] == "redeye_legacy_adversary"
+    assert lw["name"] == "redeye_legacy_doctrine"
     assert lw["parent_brain"] == "redeye"
     assert lw["effect"] == "adversarial_short_pressure_and_consensus_challenge"
-    assert out["wrapper"] == "redeye_legacy_adversary"
+    assert out["wrapper"] == "redeye_legacy_doctrine"
     assert out["parent_brain"] == "redeye"
     assert out["doctrine"] == "opponent_adversary"
 
 
 def test_redeye_clamps_confidence_and_size():
     """Bound invariants hold for RedEye too."""
-    out = apply_redeye_legacy_adversary(_gto_intent(
+    out = apply_redeye_legacy_doctrine(_gto_intent(
         confidence=5.0, size_bias=10.0,
     ))
     assert 0.0 <= out["confidence"] <= 1.0
@@ -729,5 +729,5 @@ def test_apply_legacy_wrapper_routes_gto_to_redeye():
             "flow_imbalance": -0.30,
         },
     })
-    assert out.get("wrapper") == "redeye_legacy_adversary"
+    assert out.get("wrapper") == "redeye_legacy_doctrine"
     assert out.get("parent_brain") == "redeye"
