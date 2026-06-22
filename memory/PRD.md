@@ -1,3 +1,88 @@
+## 2026-06-22d — Prod-only `/api/intents` 500 root cause + UI label refresh
+
+### Operator pin
+> "Already deployed @5:58pm CST" — operator shared 5 post-deploy
+> screenshots of mission.risedual.ai.
+
+### What the deploy bought (good)
+- Brain split balanced 25/25/26/24 (was wildly skewed before).
+- **16 executed in 24h** (was 2 in prior look — fills are landing).
+- Master switch ARMED, Kraken connected ($1,845 USDC), both lanes
+  routing live.
+
+### What was still bleeding on prod
+1. `GET /api/intents → HTTP 500` red banner persisted.
+2. Funnel still showing 6,424/6,440 EMITTED→SEAT_APPROVED leak
+   (24h window — most of that is pre-deploy legacy backlog; auto-
+   router terminal-writeback fix only kicked in at 5:58pm).
+3. Legacy Wrapper A/B Switch UI still labeled with old seat-title
+   strings (`ALPHA · executor`, `CAMARO · strategist`, etc.) —
+   visible byproduct of yesterday's rename which only touched
+   docstrings, not the hardcoded React label map.
+
+### Root cause of the prod-only 500
+
+`/api/intents` (route in `shared/intents.py`) does:
+
+    db.shared_intents.find(q, {"_id": 0}).sort("ingest_ts", -1).to_list(limit)
+
+When no filter is supplied (the default on the Intents page first
+load), `q = {}`. The existing compound index
+`(stack, symbol, ingest_ts -1)` is leading-on-`stack` so the planner
+can NOT use it for an unfiltered query. The sort fell back to a
+**blocking in-memory sort**, which on prod (~100k+ intents) tripped
+MongoDB's 32MB sort limit and surfaced as HTTP 500. Preview never
+reproduced it because preview has <1k intents.
+
+### Fix
+
+`backend/db.py` — added a solo descending index on `ingest_ts`:
+
+    await db.shared_intents.create_index(
+        [("ingest_ts", -1)],
+        name="shared_intents_ingest_ts_idx",
+    )
+
+Verified live on preview Mongo via `list_indexes()`. Boot-time
+index creation is idempotent; on prod redeploy the index will be
+built once (background, non-blocking on Mongo 4.4+).
+
+### Legacy Wrapper UI label refresh
+
+`frontend/src/components/LegacyWrapperTogglePanel.jsx` — updated the
+`BRAIN_LABELS` map to mirror canonical doctrine names:
+
+    camino:    "ALPHA · legacy doctrine"
+    barracuda: "CAMARO · legacy doctrine"
+    hellcat:   "CHEVELLE · legacy doctrine"
+    gto:       "REDEYE · legacy doctrine"
+
+Now the dashboard pill matches the wrapper-registry key, so a
+grep of the audit log lines up 1:1 with what's on screen.
+
+### Touched
+  - EDIT: `backend/db.py` (solo ingest_ts index)
+  - EDIT: `frontend/src/components/LegacyWrapperTogglePanel.jsx`
+    (BRAIN_LABELS rename)
+
+### Verification on preview
+  - `/api/intents?limit=100` → HTTP 200 (was already 200 on preview)
+  - `shared_intents.list_indexes()` confirms
+    `shared_intents_ingest_ts_idx` exists.
+  - Backend boots clean; no lint errors.
+
+### Deploy expectations
+After the next prod redeploy:
+  - The 500 banner on Intents should clear within ~30s of pod boot
+    (index build time on a 100k-row collection is sub-second).
+  - The Legacy Wrapper panel will show the new labels immediately.
+  - The auto-router terminal-writeback fix is already deployed and
+    visibly draining the funnel; the 24h funnel-leak metric will
+    decay as the 6,424 stuck-intents rotate out of the window.
+
+---
+
+
 ## 2026-06-22c — Hot-Brain Router dry-run endpoint (P1) + alias reminder test
 
 ### Operator pin

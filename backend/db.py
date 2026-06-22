@@ -66,6 +66,18 @@ async def ensure_indexes() -> None:
     # bounded lookups. Profile-driven (see /api/hypothesis/_perf for p50/p95/p99).
     await db.shared_intents.create_index([("stack", 1), ("symbol", 1), ("ingest_ts", -1)])
     await db.shared_intents.create_index([("stack", 1), ("executed", 1), ("executed_at", -1)])
+    # 2026-06-22 (P0 prod hotfix): `/api/intents` lists are filtered
+    # by `stack`/`symbol`/`lane`/`gate_state` (all optional). When the
+    # operator clears all filters — which the default Intents page
+    # does on first load — the query becomes `find({}).sort("ingest_ts",
+    # -1)`. The compound index above is leading-on-`stack` so the
+    # mongo planner CAN'T use it for the unfiltered case; the sort
+    # falls back to an in-memory blocking sort which on prod (~100k+
+    # intents) trips the 32MB sort limit and returns HTTP 500.
+    # Preview never reproduced it because preview has ≤1k intents.
+    # Solo index on `ingest_ts` is the surgical fix — bounded
+    # memory, indexed sort.
+    await db.shared_intents.create_index([("ingest_ts", -1)], name="shared_intents_ingest_ts_idx")
     await db.shared_brain_opinions.create_index([("runtime", 1), ("topic", 1), ("posted_at", -1)])
     await db.shared_brain_outcomes.create_index([("opinion_id", 1), ("resolved_at", -1)])
     # Shelly memory regex search was the worst offender (~25-40ms scan);

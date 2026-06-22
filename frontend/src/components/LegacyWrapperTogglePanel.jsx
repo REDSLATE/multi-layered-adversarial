@@ -28,10 +28,14 @@ import {
  * recoverable.
  */
 const BRAIN_LABELS = {
-  camino: { display: "CAMINO", wrapperShort: "ALPHA · executor" },
-  barracuda: { display: "BARRACUDA", wrapperShort: "CAMARO · strategist" },
-  hellcat: { display: "HELLCAT", wrapperShort: "CHEVELLE · governor" },
-  gto: { display: "GTO", wrapperShort: "REDEYE · adversary" },
+  // 2026-06-22 — wrappers renamed to drop the seat-title suffix.
+  // Display label now mirrors the canonical wrapper-registry key so
+  // operators can grep the audit log without translating between the
+  // dashboard pill and the Python symbol.
+  camino:    { display: "CAMINO",    wrapperShort: "ALPHA · legacy doctrine" },
+  barracuda: { display: "BARRACUDA", wrapperShort: "CAMARO · legacy doctrine" },
+  hellcat:   { display: "HELLCAT",   wrapperShort: "CHEVELLE · legacy doctrine" },
+  gto:       { display: "GTO",       wrapperShort: "REDEYE · legacy doctrine" },
 };
 
 function BrainToggleRow({ row, onToggle, busy }) {
