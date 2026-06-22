@@ -151,7 +151,16 @@ async def _run_dry_run_then_auto_submit(intent_id: str, actor: str) -> None:
             stage=("post_dry_run" if submit_attempted else "in_dry_run"),
             exc=e,
         )
-        logger.warning(
+        # 2026-06-22 (P0): bump the chain-failure log line to
+        # `exception()` so the FULL traceback lands in the supervisor
+        # log alongside the structured Mongo receipt. Prod has been
+        # bleeding `TypeError: cannot unpack non-iterable coroutine
+        # object` for days without a single stack frame to anchor the
+        # fix — the audit row carried it but operators only see the
+        # rolled-up label in the post-mortem panel. With this, the
+        # very next occurrence drops a full traceback into
+        # `/var/log/supervisor/backend.err.log` for instant triage.
+        logger.exception(
             "auto_submit chain failed intent=%s stage=%s type=%s msg=%s",
             intent_id, receipt.stage, receipt.exception_type, receipt.exception_message,
         )

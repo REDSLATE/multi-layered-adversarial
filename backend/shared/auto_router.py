@@ -289,6 +289,53 @@ async def _tick() -> list[dict]:
                     intent.get("stack"), intent.get("action"), intent.get("symbol"),
                     r.get("final_notional") or r.get("notional_usd") or 0,
                 )
+            else:
+                # 2026-06-22 (P0 — Seat Drift / Funnel-leak fix):
+                # The Unified Pipeline writes its own receipt to
+                # `pipeline_receipts`, but it does NOT update the
+                # canonical `shared_intents.gate_state`. Without this
+                # writeback, every BLOCKED/NO_ORDER intent stayed at
+                # `gate_state=pending` and got re-evaluated on every
+                # 30s tick — forever. Production funnel showed 6,459
+                # of 6,464 intents (100% leak) dropped between
+                # EMITTED→SEAT_APPROVED because the same 5 stuck
+                # TRIPWIRE intents looped through camaro at 5/tick.
+                #
+                # Fix: stamp the pipeline's terminal verdict back onto
+                # `shared_intents.gate_state` so the next tick skips
+                # it via the existing `gate_state $nin [blocked,
+                # no_trade, advisory_only]` filter on line 239.
+                verdict = (r.get("verdict") or "").lower()
+                terminal_state = None
+                if verdict in ("no_trade", "blocked"):
+                    terminal_state = "blocked"
+                elif verdict == "advisory_only":
+                    terminal_state = "advisory_only"
+                elif verdict == "error":
+                    # Broker / pipeline error — DON'T terminally
+                    # block. Pod restarts / broker reconnections
+                    # should let the intent retry on the next tick.
+                    terminal_state = None
+                if terminal_state:
+                    try:
+                        await db[SHARED_INTENTS].update_one(
+                            {"intent_id": intent.get("intent_id")},
+                            {"$set": {
+                                "gate_state": terminal_state,
+                                "last_submit_ts": _now_iso(),
+                                "last_submit_by": AUTO_ROUTER_EMAIL,
+                                "last_pipeline_verdict": verdict,
+                                "last_pipeline_reason": r.get("reason"),
+                            }},
+                        )
+                    except Exception as upd_err:  # noqa: BLE001
+                        # Never let the audit-write failure crash
+                        # the tick — better to re-process the intent
+                        # next time than to nuke the whole loop.
+                        logger.warning(
+                            "auto-router terminal state writeback failed intent=%s err=%s",
+                            intent.get("intent_id"), upd_err,
+                        )
         except Exception as e:  # noqa: BLE001
             logger.exception("auto-router error on intent %s: %s", intent.get("intent_id"), e)
     return results

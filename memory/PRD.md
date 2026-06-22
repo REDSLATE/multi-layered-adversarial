@@ -1,3 +1,82 @@
+## 2026-06-22 — P0 Triage: Seat-Drift Funnel-Leak + brain_vote NameError + auto_submit traceback
+
+### Operator pin
+> "P0s for now. Will look at what happens afterwards."
+
+### What was fixed
+
+**1. Auto-router infinite-loop bug (THE Seat-Drift root cause)**
+
+`shared/auto_router.py::_tick()` — added terminal `gate_state`
+writeback after every non-executed pipeline verdict.
+
+The Unified Pipeline writes its own receipt to `pipeline_receipts`
+but NEVER updated the canonical `shared_intents.gate_state`. Result:
+5 stuck TRIPWIRE intents (emitted by `camaro` while `barracuda` held
+the equity executor seat) looped through the 30s tick at 5/tick —
+forever. Production funnel showed 6,459 of 6,464 intents (100% leak)
+dropped between EMITTED→SEAT_APPROVED. That was NOT seat-policy drift
+— the seat policy was working correctly. The auto-router was just
+re-processing the SAME 5 intent_ids every 30 seconds.
+
+Fix: after `_route_one()`, stamp the terminal verdict back onto the
+intent so the next tick skips it via the existing `gate_state $nin
+[blocked, no_trade, advisory_only]` filter.
+
+Live preview proof (post-fix):
+  - Tick 1 (22:11:45) — 5 intent_ids: A, B, C, D, E
+  - Tick 2 (22:12:15) — 5 intent_ids: F, G, H, I, J  (all new)
+  - Tick 3 (22:12:45) — 5 intent_ids: K, L, M, N, O  (all new)
+
+Backlog is now draining instead of looping.
+
+**2. `HTTPException` NameError in neutral_brains runner**
+
+`external/brains/runner.py` — hoisted `from fastapi import
+HTTPException` to module scope. Was previously declared INSIDE
+`_emit_intent` only, but four sibling fire-and-forget posters
+referenced the name at function scope. Every 4xx triggered
+`NameError: name 'HTTPException' is not defined`, masking the real
+rejection reason and flooding logs at ~5 warnings/min.
+
+Post-fix: zero `HTTPException is not defined` warnings in 5 minutes
+of preview logs.
+
+**3. Defensive traceback logging on `_run_dry_run_then_auto_submit`**
+
+`shared/intents.py` — bumped chain-failure log line from `warning()`
+to `exception()`. Production had been bleeding 928 instances of
+`TypeError: cannot unpack non-iterable coroutine object` over the
+last week with the structured Mongo receipt capturing the type but
+NO stack-frame for triage. Next occurrence will drop a full
+traceback into `/var/log/supervisor/backend.err.log` alongside the
+existing audit row.
+
+### Tests added
+- `tests/test_auto_router_terminal_writeback_2026_06_22.py` — pins
+  the gate_state writeback contract (BLOCKED→blocked,
+  ADVISORY→advisory_only, EXECUTED→no writeback, ERROR→no writeback)
+- `tests/test_runner_httpexception_import_2026_06_22.py` — pins
+  `HTTPException` at module scope so a future "tidy imports" pass
+  can't silently re-localize it.
+
+### Regression suite
+133/133 P0-relevant tests pass. Touched files lint clean.
+
+### Deployment note (PROD)
+Same PREVIEW → PROD manual-deploy pathway as before. Operator
+deploys these three changes when ready. The visible signal will be:
+  - Funnel `EMITTED→SEAT_APPROVED` drop collapses from ~100% to
+    whatever the real (legitimate) seat-rejection rate is.
+  - `auto-router/status` `last_tick_results` count drops as the
+    backlog drains (each tick processes 5 NEW intents instead of
+    the same 5 stuck ones).
+  - `brain_vote post failed... HTTPException is not defined` warnings
+    disappear from the supervisor log.
+
+---
+
+
 ## 2026-02-21g (Hot-Brain Router — kernel ships, dormant)
 
 ### Operator pin

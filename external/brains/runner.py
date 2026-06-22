@@ -49,6 +49,14 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
+# 2026-06-22 — `HTTPException` was previously imported only inside
+# `_emit_intent`, but four sibling `except HTTPException as he:` blocks
+# (in `_post_directional_opinion`, `_post_brain_vote`, and two other
+# fire-and-forget posters) reference the name at MODULE scope. That
+# silently raised `NameError: name 'HTTPException' is not defined`
+# every time one of those calls hit a 422/4xx, masking the real
+# rejection reason. Hoisting the import here is the minimal fix.
+from fastapi import HTTPException
 
 from .brain_core import BrainIntent, NeutralAdversarialBrain
 from .personality import apply_personality_confidence, get_personality
@@ -1453,8 +1461,10 @@ class BrainRunner:
         # 2026-02-20 — direct in-process call instead of HTTP loopback.
         # Same process, same trust boundary. No token, no JSON roundtrip,
         # no 401 risk from env var drift.
+        # 2026-06-22 — `HTTPException` is now hoisted to module scope
+        # (sibling fire-and-forget posters need it too). Local import
+        # removed; the name is in scope from the top-level import.
         from shared.intents import submit_intent_in_process, IntentIn
-        from fastapi import HTTPException
         try:
             intent_obj = IntentIn(**payload)
             result = await submit_intent_in_process(intent_obj)
