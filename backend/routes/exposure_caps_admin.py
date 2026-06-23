@@ -6,12 +6,20 @@ env var so the operator can flip caps from the admin UI without
 touching deploy config.
 
 Endpoints:
-    GET  /api/admin/exposure-caps/status   — effective caps + sources
-    POST /api/admin/exposure-caps/set      — set one or more overrides
-    POST /api/admin/exposure-caps/clear    — disable overrides
+    GET  /api/admin/exposure-caps/status              — effective caps + sources
+    POST /api/admin/exposure-caps/set                 — set one or more overrides
+    POST /api/admin/exposure-caps/clear               — disable overrides
+    POST /api/admin/exposure-caps/reset-daily-spend   — wipe the rolling 24h tally to $0
 
 The 2026-06-18 motivation: Prod was hitting `cap_per_day=$50` two
 hours before market open with no env-tweak path from a phone.
+
+The 2026-06-22 reset addition: the rolling 24h spend includes
+historical fills that the operator doesn't want counted (e.g., they
+just lowered the cap, so the *previous* high-cap fills now block
+all new trades for the rest of the rolling window). The reset
+button writes a baseline timestamp; `daily_spend_usd()` excludes
+receipts before that timestamp from the sum. Audit rows untouched.
 """
 from __future__ import annotations
 
@@ -29,10 +37,12 @@ from shared.exposure_caps import (
     CAP_PER_DAY_USD,
     CAP_PER_ORDER_USD,
     _CAPS_FLAG_DOC_ID,
+    _DAILY_SPEND_RESET_DOC_ID,
     daily_spend_usd,
     effective_cap_open_notional_usd,
     effective_cap_per_day_usd,
     effective_cap_per_order_usd,
+    get_daily_spend_reset_at,
     refresh_cap_overrides_cache,
 )
 
@@ -67,6 +77,9 @@ async def status(_user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     """Return effective caps + all source contributions + 24h spend."""
     await refresh_cap_overrides_cache()
     doc = await db[_COLL].find_one({"_id": _CAPS_FLAG_DOC_ID}, {"_id": 0}) or {}
+    reset_doc = await db[_COLL].find_one(
+        {"_id": _DAILY_SPEND_RESET_DOC_ID}, {"_id": 0},
+    ) or {}
     spent = await daily_spend_usd()
     return {
         "effective": {
@@ -79,6 +92,9 @@ async def status(_user: dict = Depends(get_current_user)) -> Dict[str, Any]:
             "remaining_per_day_usd": round(
                 max(0.0, effective_cap_per_day_usd() - spent), 2,
             ),
+            "daily_spend_reset_at": reset_doc.get("reset_at"),
+            "daily_spend_reset_by": reset_doc.get("reset_by"),
+            "daily_spend_reset_reason": reset_doc.get("reason"),
         },
         "sources": {
             "mongo": {
@@ -172,5 +188,43 @@ async def clear_caps(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
             "per_order_usd": effective_cap_per_order_usd(),
             "per_day_usd": effective_cap_per_day_usd(),
             "open_notional_usd": effective_cap_open_notional_usd(),
+        },
+    }
+
+
+class ResetDailySpendRequest(BaseModel):
+    reason: Optional[str] = Field(None, max_length=200)
+
+
+@router.post("/reset-daily-spend")
+async def reset_daily_spend(
+    body: Optional[ResetDailySpendRequest] = None,
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Wipe the rolling 24h spend tally to $0 by writing a baseline
+    timestamp. After this call, `daily_spend_usd()` only sums
+    receipts whose `executed_at` is AFTER the reset moment. Audit
+    rows in `execution_receipts` are NEVER deleted — this is a
+    baseline shift, not a data mutation."""
+    now_iso = _now()
+    reason = (body.reason if body else None) or "reset via /admin/exposure-caps/reset-daily-spend"
+    await db[_COLL].update_one(
+        {"_id": _DAILY_SPEND_RESET_DOC_ID},
+        {"$set": {
+            "reset_at": now_iso,
+            "reset_by": user.get("email") or "operator",
+            "reason": reason,
+        }},
+        upsert=True,
+    )
+    spent = await daily_spend_usd()
+    return {
+        "ok": True,
+        "reset_at": now_iso,
+        "live_state": {
+            "daily_spend_usd": round(spent, 2),
+            "remaining_per_day_usd": round(
+                max(0.0, effective_cap_per_day_usd() - spent), 2,
+            ),
         },
     }

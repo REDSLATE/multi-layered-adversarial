@@ -79,6 +79,35 @@ _CAPS_OVERRIDE_CACHE: dict = {}
 _CAPS_OVERRIDE_TS: float = 0.0
 _CAPS_CACHE_TTL_SEC: float = 5.0
 _CAPS_FLAG_DOC_ID = "exposure_caps_override"
+# 2026-06-22 — operator-pinned 24h spend reset. When the operator
+# wants to "start over" mid-window (e.g., they hit the cap from
+# pre-pilot fills but want the rest of the day's budget back), they
+# call POST /admin/exposure-caps/reset-daily-spend. That writes
+# `runtime_flags._id="daily_spend_reset"` with `reset_at = now`.
+# `daily_spend_usd()` then only sums receipts AFTER `reset_at`,
+# which is mathematically equivalent to "wipe the 24h tally to $0".
+# The reset naturally ages out: once `now - reset_at >= 24h`, all
+# pre-reset receipts are outside the window anyway, so the reset
+# doc becomes a no-op and the normal rolling behavior resumes.
+_DAILY_SPEND_RESET_DOC_ID = "daily_spend_reset"
+
+
+async def get_daily_spend_reset_at() -> Optional[str]:
+    """Return the ISO timestamp of the most recent 24h spend reset,
+    or None if no reset has been requested (or the reset has aged
+    out past the 24h window). Doctrine: the reset is a baseline
+    timestamp, never a delete — audit rows in execution_receipts
+    are untouched."""
+    doc = await db["runtime_flags"].find_one(
+        {"_id": _DAILY_SPEND_RESET_DOC_ID},
+        {"_id": 0, "reset_at": 1},
+    )
+    if not doc:
+        return None
+    reset_at = doc.get("reset_at")
+    if not isinstance(reset_at, str) or not reset_at:
+        return None
+    return reset_at
 
 
 def _read_cap_override(field: str) -> Optional[float]:
@@ -161,8 +190,22 @@ def _now() -> datetime:
 
 
 async def daily_spend_usd(window_hours: int = 24) -> float:
-    """Sum of executed order notional in the last `window_hours`."""
-    since = (_now() - timedelta(hours=window_hours)).isoformat()
+    """Sum of executed order notional in the last `window_hours`.
+
+    Honors the operator's `daily_spend_reset` flag: if a reset
+    timestamp exists AND it falls inside the rolling window, the
+    floor for the sum moves up to the reset time. This effectively
+    wipes the 24h tally to $0 at reset time and lets fresh spend
+    accumulate from there. Receipts older than the reset still live
+    in `execution_receipts` for audit — they're just excluded from
+    cap math.
+    """
+    window_start = (_now() - timedelta(hours=window_hours)).isoformat()
+    reset_at = await get_daily_spend_reset_at()
+    # Floor the lookback at the more recent of (window_start,
+    # reset_at). If the reset was MORE than 24h ago, it's already
+    # outside the window and has no effect — naturally aged out.
+    since = max(window_start, reset_at) if reset_at else window_start
     cursor = db[EXECUTION_RECEIPTS].find(
         {"executed_at": {"$gte": since}, "side": {"$in": ["BUY", "SELL"]}},
         {"_id": 0, "notional_usd": 1, "side": 1},

@@ -416,6 +416,30 @@ export default function IntentPostMortemPanel() {
     }
   }, [caps.perDayInput, caps.effective, caps.live_state, loadCaps]);
 
+  const resetDailySpend = useCallback(async () => {
+    const spent = caps.live_state?.daily_spend_usd ?? 0;
+    if (!window.confirm(
+      `Reset the rolling 24h spend tally to $0?\n\n` +
+      `Currently tracked: $${spent.toFixed(2)}\n\n` +
+      `This does NOT delete any audit rows — it writes a baseline\n` +
+      `timestamp so fills before this moment stop counting against\n` +
+      `the daily cap. Proceed?`,
+    )) return;
+    setCaps((s) => ({ ...s, saving: true, error: null }));
+    try {
+      await api.post("/admin/exposure-caps/reset-daily-spend", {
+        reason: "operator reset via Intents ARM panel",
+      });
+      await loadCaps();
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      setCaps((s) => ({
+        ...s, saving: false,
+        error: typeof d === "string" ? d : JSON.stringify(d),
+      }));
+    }
+  }, [caps.live_state, loadCaps]);
+
   useEffect(() => { loadCaps(); }, [loadCaps]);
 
   const load = useCallback(async (h) => {
@@ -955,8 +979,28 @@ export default function IntentPostMortemPanel() {
               >
                 {caps.saving ? "Saving…" : "Set cap"}
               </button>
+              <button
+                onClick={resetDailySpend}
+                disabled={caps.loading || caps.saving}
+                className="px-3 py-1 border-2 border-rd-warning text-rd-warning font-mono text-[10px] uppercase tracking-widest font-bold hover:bg-rd-warning hover:text-rd-bg disabled:opacity-40 disabled:cursor-not-allowed"
+                data-testid="exposure-caps-daily-reset-button"
+                title="Wipe the rolling 24h spend tally to $0 (audit rows untouched)"
+              >
+                Reset 24h
+              </button>
             </div>
           </div>
+          {caps.live_state?.daily_spend_reset_at && (
+            <div
+              className="font-mono text-[9px] text-rd-dim"
+              data-testid="exposure-caps-daily-reset-stamp"
+            >
+              last reset: {caps.live_state.daily_spend_reset_at}
+              {caps.live_state.daily_spend_reset_by
+                ? ` · by ${caps.live_state.daily_spend_reset_by}`
+                : ""}
+            </div>
+          )}
           {caps.sources?.mongo?.updated_at && (
             <div className="font-mono text-[9px] text-rd-dim">
               last set: {caps.sources.mongo.updated_at}
