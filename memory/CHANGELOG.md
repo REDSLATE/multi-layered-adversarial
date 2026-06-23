@@ -1,3 +1,58 @@
+## 2026-06-22 — Camaro wrap HOLD-rescue tape tie-breaker
+
+### What shipped
+Carve-out from the global "wrappers NEVER create trades from HOLD"
+rule, applied to `apply_camaro_legacy_doctrine` ONLY. The other three
+wrappers (alpha, chevelle, redeye) remain bound by the strict rule.
+
+When Barracuda (which wears Camaro's tape-reading doctrine) emits
+`HOLD` but BOTH (a) the tape is decisive (`score_gap ≥ 0.25`) AND
+(b) the brain's own confidence is at least moderate (`≥ 0.55`), the
+wrap promotes the HOLD into a directional trade matching the tape
+direction (BUY if `buy_score > sell_score`, else SELL).
+
+### Guardrails (code-enforced)
+* Only HOLD is rescuable. **Never** flips BUY ↔ SELL.
+* Both thresholds must clear together — neither alone fires.
+* Output confidence is **capped** at 0.68 (default) — a rescued
+  trade can never claim high-conviction status.
+* `size_bias` set conservatively to 0.40 (default) — this is tape-
+  only, not brain conviction; downstream sizers treat accordingly.
+* Provenance stamped on `evidence.camaro_tape_override` so the
+  verifier can isolate this trade's P&L lineage.
+* Env kill switch + 4 tunable thresholds — no redeploy needed to
+  tighten / loosen / disable:
+    * `CAMARO_TIEBREAK_HOLD_RESCUE_ENABLED` (default `true`)
+    * `CAMARO_TIEBREAK_HOLD_RESCUE_CONFIDENCE_FLOOR` (default 0.55)
+    * `CAMARO_TIEBREAK_HOLD_RESCUE_TAPE_GAP_MIN` (default 0.25)
+    * `CAMARO_TIEBREAK_HOLD_RESCUE_OUTPUT_CONFIDENCE` (default 0.68)
+    * `CAMARO_TIEBREAK_HOLD_RESCUE_SIZE_BIAS` (default 0.40)
+
+### Verification window — 4 weeks
+Track `CAMARO_TAPE_OVERRIDE`-tagged trades' P&L separately. If
+average return is positive and the win rate is meaningfully above
+the no-rescue baseline, keep it. If not, set
+`CAMARO_TIEBREAK_HOLD_RESCUE_ENABLED=false` and revisit. The
+isolation filter for the verifier:
+`evidence.camaro_tape_override.fired == true`.
+
+### Files
+* `shared/legacy_brain_wrappers.py` — module docstring updated with
+  the carve-out clause, env helpers added, rescue branch in
+  `apply_camaro_legacy_doctrine`, evidence stamp.
+* `tests/test_camaro_hold_rescue_2026_06_22.py` (new) — 10 cases
+  pinning: rescue-fires (BUY + SELL), never-flips-BUY, conf-floor-
+  blocks, tape-gap-blocks, kill-switch-disables, env-threshold-
+  honoured, env-conf-override-honoured, evidence-stamp-complete,
+  equal-scores-no-rescue.
+
+### Verified
+* `pytest tests/test_camaro_hold_rescue_2026_06_22.py` → 10/10 passed
+* Full camaro/legacy-wrapper regression suite (64 tests) → 64/64 passed
+
+---
+
+
 ## 2026-06-22 — Intent Firewall wired into pipeline (Stage 0)
 
 ### What shipped

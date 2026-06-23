@@ -17,10 +17,40 @@ BEFORE the intent is posted to MC. Each wrapper:
 
 A wrapper NEVER:
 
-    * creates a trade from HOLD
+    * creates a trade from HOLD  (see Camaro carve-out below)
     * flips BUY ↔ SELL
     * forces a seat assignment
     * changes the brain's doctrine
+
+Camaro carve-out (2026-06-22 — operator directive, "narrow-envelope
+HOLD rescue"):
+
+    `apply_camaro_legacy_doctrine` is the ONLY wrapper permitted to
+    promote a HOLD into a directional trade. The carve-out exists
+    because Camaro's legacy edge was specifically its tape-reading
+    tie-breaker — when the brain's council was muddled but the
+    tape was decisive, the strategist voice would resolve the
+    ambiguity. The carve-out lives in the wrap (not in the brain)
+    so the rescue is fully audited as a wrap-layer decision rather
+    than a brain-internal override.
+
+    Guardrails (hard rules — code-enforced, not operator discipline):
+
+      * Only HOLD can be rescued. Never reverses BUY ↔ SELL.
+      * Decisive tape required (score_gap ≥ 0.25 by default).
+      * Moderate brain confidence required (≥ 0.55 by default).
+      * Rescued trades stamp `CAMARO_TAPE_OVERRIDE` in evidence so
+        the verifier can isolate their P&L from organic trades.
+      * Rescued confidence is capped (0.68 default) — the wrap
+        will not output a "highly confident" trade from a HOLD.
+      * Single env kill-switch (`CAMARO_TIEBREAK_HOLD_RESCUE_ENABLED
+        =false`) to disable without code change.
+
+    Verification window: track CAMARO_TAPE_OVERRIDE trades' P&L
+    separately for four weeks. Keep if edge holds, remove if not.
+
+    All other wrappers (alpha, chevelle, redeye) retain the strict
+    "no HOLD rescue" rule.
 
 Assignment (operator-pinned — brain → wrapper, seat-agnostic):
 
@@ -143,6 +173,53 @@ def _wrapper_min_size_bias_nonzero() -> float:
     except (TypeError, ValueError):
         return _WRAPPER_MIN_SIZE_BIAS_NONZERO_DEFAULT
     return max(0.0, min(1.0, v))
+
+
+# ── Camaro HOLD-rescue tie-breaker (2026-06-22 operator directive) ──
+# The carve-out: when the brain emits HOLD but the tape is decisive
+# AND brain confidence is at least moderate, the camaro wrap may
+# promote the HOLD to a directional trade matching the tape. All
+# defaults below are deliberately conservative — the operator can
+# loosen via env without redeploy. See module docstring for the
+# guardrails.
+_CAMARO_HOLD_RESCUE_ENABLED_DEFAULT = True
+_CAMARO_HOLD_RESCUE_CONFIDENCE_FLOOR_DEFAULT = 0.55
+_CAMARO_HOLD_RESCUE_TAPE_GAP_MIN_DEFAULT = 0.25
+_CAMARO_HOLD_RESCUE_OUTPUT_CONFIDENCE_DEFAULT = 0.68
+_CAMARO_HOLD_RESCUE_SIZE_BIAS_DEFAULT = 0.40
+
+
+def _camaro_hold_rescue_enabled() -> bool:
+    """Kill switch — flip `CAMARO_TIEBREAK_HOLD_RESCUE_ENABLED=false`
+    to disable HOLD rescue without redeploy. Any value that doesn't
+    parse to a truthy string disables (defensive)."""
+    raw = os.environ.get(
+        "CAMARO_TIEBREAK_HOLD_RESCUE_ENABLED",
+        str(_CAMARO_HOLD_RESCUE_ENABLED_DEFAULT),
+    )
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _camaro_hold_rescue_thresholds() -> tuple[float, float, float, float]:
+    """Return `(conf_floor, tape_gap_min, output_conf, size_bias)`
+    for the HOLD-rescue branch. All four are env-tunable so the
+    operator can tighten or loosen without code change."""
+    def _read(key: str, default: float) -> float:
+        raw = os.environ.get(key, str(default))
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return default
+    return (
+        _read("CAMARO_TIEBREAK_HOLD_RESCUE_CONFIDENCE_FLOOR",
+              _CAMARO_HOLD_RESCUE_CONFIDENCE_FLOOR_DEFAULT),
+        _read("CAMARO_TIEBREAK_HOLD_RESCUE_TAPE_GAP_MIN",
+              _CAMARO_HOLD_RESCUE_TAPE_GAP_MIN_DEFAULT),
+        _read("CAMARO_TIEBREAK_HOLD_RESCUE_OUTPUT_CONFIDENCE",
+              _CAMARO_HOLD_RESCUE_OUTPUT_CONFIDENCE_DEFAULT),
+        _read("CAMARO_TIEBREAK_HOLD_RESCUE_SIZE_BIAS",
+              _CAMARO_HOLD_RESCUE_SIZE_BIAS_DEFAULT),
+    )
 
 
 def _finalise_size_and_confidence(
@@ -492,11 +569,14 @@ def apply_camaro_legacy_doctrine(intent: dict[str, Any]) -> dict[str, Any]:
     - avoids tiny BUY/SELL gaps
     - favors continuation with position-aware transitions
     - compresses size in chop / unclear regime
+    - rescues borderline HOLDs when the tape is decisive (carve-out
+      from the global "no HOLD rescue" rule — see module docstring)
 
     Does NOT:
-    - create trades from HOLD
     - flip BUY/SELL
     - force a seat
+    - rescue HOLDs outside the narrow envelope (env-tunable; see
+      `_camaro_hold_rescue_thresholds`)
     """
 
     x = _base_fields(intent)
@@ -578,6 +658,60 @@ def apply_camaro_legacy_doctrine(intent: dict[str, Any]) -> dict[str, Any]:
         confidence += 0.03
         reasons.append("CAMARO_WRAPPER_SHORT_CONTINUATION_CONFIRMED")
 
+    # ── Camaro HOLD-rescue tape tie-breaker ──────────────────────
+    # Carve-out from the global wrapper rule "NEVER creates a trade
+    # from HOLD". When the brain emits HOLD but BOTH (a) the tape is
+    # decisive (score_gap ≥ threshold) AND (b) the brain's own
+    # confidence was at least moderate (≥ floor), promote the HOLD
+    # into a directional trade matching the tape. The brain almost
+    # got there — Camaro's tape-reading legacy is precisely the
+    # voice that breaks that kind of tie.
+    #
+    # Guardrails (also enforced by the module docstring):
+    #   * Only HOLD is rescuable. BUY/SELL never reverse.
+    #   * Both thresholds must clear together — neither alone fires.
+    #   * Output confidence is CAPPED (not boosted past the cap) so
+    #     a rescued trade can never claim high-conviction status.
+    #   * size_bias is set conservatively — this is tape-only, not
+    #     brain conviction; downstream sizers will treat accordingly.
+    #   * Provenance is stamped on `evidence.camaro_tape_override`
+    #     so the verifier can isolate this trade's P&L lineage.
+    #   * Env kill switch + 4 tunable thresholds for runtime control.
+    rescue_evidence: dict[str, Any] | None = None
+    if action == "HOLD" and _camaro_hold_rescue_enabled():
+        conf_floor, tape_gap_min, out_conf, out_size = (
+            _camaro_hold_rescue_thresholds()
+        )
+        if confidence >= conf_floor and score_gap >= tape_gap_min:
+            # Decisive tape direction picks the rescued action.
+            tape_dir: str | None = None
+            if buy_score > sell_score:
+                tape_dir = "BUY"
+            elif sell_score > buy_score:
+                tape_dir = "SELL"
+            if tape_dir is not None:
+                original_action = action
+                original_confidence = round(confidence, 4)
+                action = tape_dir
+                confidence = out_conf
+                size_bias = out_size
+                reasons.append("CAMARO_TAPE_OVERRIDE")
+                rescue_evidence = {
+                    "fired": True,
+                    "original_action": original_action,
+                    "original_confidence": original_confidence,
+                    "rescued_to": tape_dir,
+                    "rescued_confidence": out_conf,
+                    "rescued_size_bias": out_size,
+                    "buy_score": round(buy_score, 4),
+                    "sell_score": round(sell_score, 4),
+                    "score_gap": round(score_gap, 4),
+                    "thresholds": {
+                        "confidence_floor": conf_floor,
+                        "tape_gap_min": tape_gap_min,
+                    },
+                }
+
     if action == "HOLD":
         size_bias = 0.0
 
@@ -615,6 +749,11 @@ def apply_camaro_legacy_doctrine(intent: dict[str, Any]) -> dict[str, Any]:
         "parent_brain": "camaro",
         "effect": "live_market_tape_reading_and_continuation_bias",
     }
+    if rescue_evidence is not None:
+        # Top-level stamp so the verifier and dashboards can index on
+        # `evidence.camaro_tape_override.fired` without digging.
+        evidence["camaro_tape_override"] = rescue_evidence
+        evidence["legacy_wrapper"]["hold_rescue"] = "fired"
 
     # ── Penalty-stacking dampener (2026-02-19 operator directive) ──
     size_bias, confidence, _damp = _finalise_size_and_confidence(
