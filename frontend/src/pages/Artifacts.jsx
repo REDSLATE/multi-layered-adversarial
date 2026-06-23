@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { api, RUNTIME_META, fmtTime } from "@/lib/api";
+import { api, getRuntimeMeta, fmtTime } from "@/lib/api";
 import { PageHeader, Card, EmptyState, LoadingRow } from "@/components/ui-bits";
 
 export default function Artifacts() {
@@ -30,7 +30,7 @@ export default function Artifacts() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
         {Object.keys(grouped).map((rt) => {
-          const meta = RUNTIME_META[rt];
+          const meta = getRuntimeMeta(rt);
           return (
             <Card key={rt} accentColor={meta.color} testid={`artifacts-group-${rt}`}>
               <div className="flex items-baseline justify-between mb-4">

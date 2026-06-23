@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { subscribeMcStream } from "@/hooks/useMcStream";
-import { RUNTIME_META } from "@/lib/api";
+import { getRuntimeMeta } from "@/lib/api";
 
 /**
  * Ephemeral position-misread toast host (P1, 2026-06-10).
@@ -69,7 +69,7 @@ function Toast({ toast, onDismiss }) {
     };
   }, [paused, toast.id, onDismiss]);
 
-  const meta = RUNTIME_META[(toast.brain || "").toLowerCase()];
+  const meta = getRuntimeMeta(toast.brain);
   // Operator-facing brand (Camino / Barracuda / Hellcat / GTO) — never
   // leak the internal slot code (alpha/camaro/chevelle/redeye) to the
   // dashboard. Fall back to a capitalized raw value if an unknown

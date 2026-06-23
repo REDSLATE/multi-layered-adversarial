@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { api, RUNTIME_META, fmtTime, relTime } from "@/lib/api";
+import { api, getRuntimeMeta, fmtTime, relTime } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 import { CheckCircle, XCircle, ShieldCheck, Gavel, Lock, Users } from "@phosphor-icons/react";
@@ -121,7 +121,7 @@ export default function Promotion() {
           {/* Ladder per runtime */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-6" data-testid="authority-ladders">
             {states.items.map((item) => {
-              const meta = RUNTIME_META[item.runtime];
+              const meta = getRuntimeMeta(item.runtime);
               const isGov = item.authority_state === "governor";
               const myIdx = LADDER.indexOf(item.authority_state);
               const r = readiness[item.runtime];
@@ -260,7 +260,7 @@ export default function Promotion() {
             {artifacts && artifacts.items.length > 0 && (
               <div className="space-y-2">
                 {artifacts.items.slice(0, 8).map((a) => {
-                  const meta = RUNTIME_META[a.runtime];
+                  const meta = getRuntimeMeta(a.runtime);
                   return (
                     <div key={a.artifact_id} className="border border-rd-border p-3" data-testid={`artifact-${a.artifact_id}`}>
                       <div className="flex items-center justify-between mb-2">
@@ -319,7 +319,7 @@ function ProposalsTable({ items, onCountersign, onReject, busy, currentUserEmail
         </thead>
         <tbody>
           {items.map((p) => {
-            const meta = RUNTIME_META[p.runtime];
+            const meta = getRuntimeMeta(p.runtime);
             // Single-sign across all tiers (2026-05-26 doctrine; solo
             // operator). Any legacy `required_signatures > 1` row is
             // auto-normalised on the server side by list_proposals'

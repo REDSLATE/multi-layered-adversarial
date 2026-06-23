@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { api, RUNTIME_META } from "@/lib/api";
+import { api, getRuntimeMeta } from "@/lib/api";
 import { Card } from "@/components/ui-bits";
 
 // Per-loop liveness card — surfaces MC's `composite_liveness` block
@@ -92,7 +92,7 @@ function LoopRow({ loopKey, loop }) {
 }
 
 function BrainColumn({ brain, data }) {
-  const meta = RUNTIME_META[brain];
+  const meta = getRuntimeMeta(brain);
   const cl = data?.composite_liveness;
   if (!cl) {
     return (

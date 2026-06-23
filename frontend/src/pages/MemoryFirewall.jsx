@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { api, RUNTIME_META, fmtTime } from "@/lib/api";
+import { api, getRuntimeMeta, fmtTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 
 const RT = ["all", "camino", "barracuda", "hellcat", "gto"];
@@ -78,8 +78,8 @@ export default function MemoryFirewall() {
               >
                 <div className="col-span-3 text-rd-muted">{fmtTime(m.timestamp)}</div>
                 <div className="col-span-2">
-                  <span style={{ color: RUNTIME_META[m.runtime]?.color }} className="font-bold">
-                    {RUNTIME_META[m.runtime]?.label || m.runtime}
+                  <span style={{ color: getRuntimeMeta(m.runtime).color }} className="font-bold">
+                    {getRuntimeMeta(m.runtime).label}
                   </span>
                 </div>
                 <div className="col-span-2">

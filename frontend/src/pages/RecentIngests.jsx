@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from "react";
-import { api, RUNTIME_META, relTime } from "@/lib/api";
+import { api, getRuntimeMeta, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
 
 export default function RecentIngests() {
@@ -79,7 +79,7 @@ export default function RecentIngests() {
         <Card className="p-0 overflow-hidden" testid="tail-card">
           <div className="font-mono text-xs">
             {items.map((e, i) => {
-              const meta = RUNTIME_META[e.runtime];
+              const meta = getRuntimeMeta(e.runtime);
               const color = meta?.color || "#A1A1AA";
               const tone = e.kind === "promotion_artifact"
                 ? "#FBBF24"

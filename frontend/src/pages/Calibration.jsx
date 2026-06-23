@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { api, RUNTIME_META, fmtTime } from "@/lib/api";
+import { api, getRuntimeMeta, fmtTime } from "@/lib/api";
 import { PageHeader, Card, EmptyState, LoadingRow } from "@/components/ui-bits";
 
 export default function Calibration() {
@@ -30,14 +30,11 @@ export default function Calibration() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
         {Object.keys(grouped).map((rt) => {
-          // Defensive lookup: legacy DB rows may carry slot codes
-          // (alpha/camaro/chevelle/redeye) that aren't in RUNTIME_META.
-          // Same fallback shape used in Overview.jsx — keeps the
-          // panel rendering instead of crashing the whole page.
-          const meta = RUNTIME_META[rt] || {
-            color: "#A1A1AA",
-            label: (rt || "unknown").toUpperCase(),
-          };
+          // Defensive lookup via getRuntimeMeta — handles legacy slot
+          // codes (alpha/camaro/chevelle/redeye) AND unknown runtimes
+          // by returning a fallback shape with .color and .label so
+          // this page can't crash on an unexpected runtime value.
+          const meta = getRuntimeMeta(rt);
           return (
             <Card key={rt} accentColor={meta.color} testid={`calibration-group-${rt}`}>
               <div className="flex items-baseline justify-between mb-4">

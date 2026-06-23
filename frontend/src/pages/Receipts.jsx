@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { api, RUNTIME_META, fmtTime } from "@/lib/api";
+import { api, getRuntimeMeta, fmtTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 
 const RT_FILTERS = ["all", "camino", "barracuda", "hellcat", "gto"];
@@ -33,7 +33,7 @@ export default function Receipts() {
           <div className="flex gap-2" data-testid="receipts-filter-bar">
             {RT_FILTERS.map((rt) => {
               const active = filter === rt;
-              const color = rt === "all" ? "#FBBF24" : RUNTIME_META[rt]?.color;
+              const color = rt === "all" ? "#FBBF24" : getRuntimeMeta(rt).color;
               return (
                 <button
                   key={rt}
@@ -80,7 +80,7 @@ export default function Receipts() {
               </thead>
               <tbody>
                 {data.items.map((r, i) => {
-                  const meta = RUNTIME_META[r.runtime];
+                  const meta = getRuntimeMeta(r.runtime);
                   return (
                     <tr
                       key={r.id}

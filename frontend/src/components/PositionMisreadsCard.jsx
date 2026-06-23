@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from "react";
-import { api, fmtTime, relTime, RUNTIME_META } from "@/lib/api";
+import { api, fmtTime, relTime, getRuntimeMeta } from "@/lib/api";
 import { Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 import { useMcStream } from "@/hooks/useMcStream";
 
@@ -190,7 +190,7 @@ export default function PositionMisreadsCard() {
                   </td>
                   <td className="py-2">
                     {(() => {
-                      const m = RUNTIME_META[(r.brain || "").toLowerCase()];
+                      const m = getRuntimeMeta(r.brain);
                       const name = m?.roleTitle || r.brain || "—";
                       return (
                         <span style={{ color: m?.color || undefined }}>{name}</span>

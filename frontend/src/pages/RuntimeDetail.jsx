@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { api, RUNTIME_META, fmtTime, relTime } from "@/lib/api";
+import { api, getRuntimeMeta, fmtTime, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 import SovereignTile from "@/components/SovereignTile";
 import LivePulse from "@/components/LivePulse";
@@ -14,7 +14,7 @@ const SUB_ENDPOINT = {
 
 export default function RuntimeDetail() {
   const { runtime } = useParams();
-  const meta = RUNTIME_META[runtime];
+  const meta = getRuntimeMeta(runtime);
   const sub = SUB_ENDPOINT[runtime];
   const [status, setStatus] = useState(null);
   const [rows, setRows] = useState(null);

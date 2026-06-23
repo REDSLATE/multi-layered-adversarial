@@ -247,6 +247,40 @@ export const RUNTIME_META = {
   },
 };
 
+// ─── Legacy slot-code → canonical brand alias map ───
+// Historical Mongo rows (audit logs, calibrators, artifacts,
+// promotion artifacts, etc.) carry the pre-rename slot codes:
+//   alpha → camino   |   camaro → barracuda
+//   chevelle → hellcat   |   redeye → gto
+// Mirror of `LEGACY_TO_CANONICAL` in `shared/brain_identity.py`.
+// Per the doctrine pin, the DB aliases are NEVER deleted — we
+// translate them on read instead. Keep this map in sync with the
+// backend if either side adds a new alias.
+export const RUNTIME_LEGACY_ALIAS = {
+  alpha:    "camino",
+  camaro:   "barracuda",
+  chevelle: "hellcat",
+  redeye:   "gto",
+};
+
+// Safe RUNTIME_META lookup. Use this EVERYWHERE instead of
+// `RUNTIME_META[rt]` so legacy slot codes and unknown brand IDs
+// can't crash a page with `Cannot read properties of undefined`.
+// Returns a fallback shape with the same keys RUNTIME_META has so
+// callers can read `.color` and `.label` unconditionally.
+export function getRuntimeMeta(rt) {
+  if (!rt) {
+    return { color: "#A1A1AA", label: "UNKNOWN", note: "" };
+  }
+  const key = String(rt).toLowerCase();
+  const canonical = RUNTIME_LEGACY_ALIAS[key] || key;
+  return RUNTIME_META[canonical] || {
+    color: "#A1A1AA",
+    label: String(rt).toUpperCase(),
+    note: "",
+  };
+}
+
 export function fmtTime(iso) {
   if (!iso) return "—";
   const d = new Date(iso);

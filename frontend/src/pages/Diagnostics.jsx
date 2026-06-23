@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { api, RUNTIME_META, fmtTime, relTime } from "@/lib/api";
+import { api, getRuntimeMeta, fmtTime, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
 import VRLScorecardsPanel from "@/components/VRLScorecardsPanel";
 import LiveTradeDiagnose from "@/components/LiveTradeDiagnose";
@@ -115,7 +115,7 @@ function DecisionsFeed() {
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           {BRAINS_FOR_FILTER.map((b) => {
             const active = b === brain;
-            const meta = b === "all" ? null : RUNTIME_META[b];
+            const meta = b === "all" ? null : getRuntimeMeta(b);
             return (
               <button
                 key={b}
@@ -179,7 +179,7 @@ function DecisionsFeed() {
             <tbody>
               {items.map((r, i) => {
                 const rowKey = r.id || `${r.ts}-${r.source || r.brain || "x"}-${i}`;
-                const meta = r.brain && RUNTIME_META[r.brain];
+                const meta = r.brain ? getRuntimeMeta(r.brain) : null;
                 const isOpen = expanded === rowKey;
                 const isSkeleton = (r.summary || "").includes("(no substance") || (r.summary || "").includes("(empty payload)");
                 return (
