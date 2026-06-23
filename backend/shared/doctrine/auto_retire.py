@@ -88,7 +88,14 @@ async def retirement_candidates(
                                (block catches losers; if it doesn't,
                                the block heuristic is noise).
         * adversary.challenge_required SHOULD have higher loss_rate than .quiet
+
+    QUARANTINED (2026-06-23) — does not produce candidates:
         * execution_judge.ready SHOULD have LOWER loss_rate than .not_ready
+          The scorecard showed the signal was selecting WORSE outcomes
+          (`ready_loss_rate=1.00` vs `not_ready_loss_rate=0.37`). Until
+          the heuristic itself is rebuilt, the holder is NEVER blamed
+          for the field. See the operator pin in the expectations list
+          below.
 
     Each candidate carries:
         - lane, seat, doctrine_version  (the canonical scoring axis)
@@ -119,14 +126,29 @@ async def retirement_candidates(
         rdv = r.get("doctrine_version") or "unknown"
         rows_by_lane_dv.setdefault((rl, rdv), []).append(r)
 
-    # The doctrinal expectations for each branch comparison
+    # The doctrinal expectations for each branch comparison.
+    # ─── 2026-06-23 — operator-pinned heuristic quarantine ──────────
+    # `execution_judge.ready` was demoted from a hard auto-retire
+    # signal to ADVISORY-ONLY after the scorecard showed:
+    #     ready_loss_rate     = 1.00
+    #     not_ready_loss_rate = 0.37
+    # i.e. the "ready" branch was actively SELECTING WORSE outcomes
+    # than "not ready." A field that inverts its own meaning cannot
+    # earn an auto-retire vote until the heuristic itself is rebuilt.
+    # The check is preserved (advisory) for visibility — see the
+    # advisory pass in `_advisory_expectations` and `scorecard.py`'s
+    # `_promotion_advisories`. The doctrine pin is: **the failure
+    # belongs to the heuristic, not the seat holder** — never use
+    # this signal to retire a seat holder.
+    #
+    # direction = "branch_higher_loss" → branch SHOULD have higher loss_rate
+    # direction = "branch_lower_loss"  → branch SHOULD have lower loss_rate
     expectations = [
         # (seat, branch, comparator, direction)
-        # direction = "branch_higher_loss" → branch SHOULD have higher loss_rate
-        # direction = "branch_lower_loss"  → branch SHOULD have lower loss_rate
         ("governor", "block", "modulate", "branch_higher_loss"),
         ("adversary", "challenge_required", "quiet", "branch_higher_loss"),
-        ("execution_judge", "ready", "not_ready", "branch_lower_loss"),
+        # ("execution_judge", "ready", "not_ready", "branch_lower_loss"),
+        #   ↑ moved to ADVISORY only. See pin above.
     ]
 
     candidates = []

@@ -157,12 +157,18 @@ def test_governor_block_underperformance_emits_candidate(auth_client):
         _cleanup(prefix)
 
 
-def test_execution_judge_ready_signal_failure_emits_candidate(auth_client):
-    """execution_judge.ready should have LOWER loss_rate than .not_ready.
-    Invert that → candidate.
+def test_execution_judge_ready_signal_is_quarantined(auth_client):
+    """`execution_judge.ready` was demoted to ADVISORY-ONLY on
+    2026-06-23 after the scorecard showed it was selecting WORSE
+    outcomes than its inverse (ready_loss_rate=1.00 vs
+    not_ready_loss_rate=0.37). Even when the data is maximally
+    inverted, the auto-retire endpoint must NOT propose retiring
+    the seat holder — the failure belongs to the heuristic, not
+    the seat holder.
 
-    2026-02-19: same isolation fix as the governor test above. Unique
-    doctrine_version per run prevents prod data pollution.
+    Pre-quarantine, this test asserted the OPPOSITE (that the
+    inversion produced a candidate). The flip is intentional and
+    documents the doctrine change.
     """
     prefix = f"art-judge-{os.getpid()}-{uuid.uuid4().hex[:8]}"
     doctrine_v = f"crypto_sidecar_v1_test_{prefix}"
@@ -200,9 +206,11 @@ def test_execution_judge_ready_signal_failure_emits_candidate(auth_client):
              and c["doctrine_version"] == doctrine_v),
             None,
         )
-        assert cand is not None, body
-        assert cand["severity"] == "BLAZING"
-        assert cand["lane"] == "crypto"
+        assert cand is None, (
+            f"execution_judge.ready is QUARANTINED — auto-retire must "
+            f"never produce candidates for this seat regardless of "
+            f"data inversion. Got candidate: {cand!r}"
+        )
     finally:
         _cleanup(prefix)
 

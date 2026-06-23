@@ -1,3 +1,50 @@
+## 2026-02 — Paradox v3 Intent Envelope PRD (DRAFT, code untouched)
+
+### Why
+Operator concluded that the `action: BUY | SELL | HOLD` (+ SHORT/COVER/
+OPEN/CLOSE) vocabulary is the root cause of the doctrine grading
+issues that forced quarantining `execution_judge.ready`. Brains that
+correctly identify a setup but want to wait for a trigger have no
+way to express that without being coerced to HOLD (and then penalized
+by doctrine when the breakout fires without them).
+
+### What shipped (this iteration)
+**Documentation only — no code changes.**
+- `/app/memory/PARADOX_V3_INTENT_ENVELOPE_PRD.md` — full PRD covering:
+    - Doctrine principles (planning separated from execution,
+      WAIT_FOR_TRIGGER as first-class state, plan-scoring).
+    - v3 envelope schema (`plan{}` + `execution{}` + `intent_version`).
+    - New `gate_state` values (`waiting_for_trigger`,
+      `plan_invalidated`, `plan_expired`, `trigger_fired`).
+    - Doctrine layer changes (plan-scored KPIs, `plan_discipline`
+      axis, conditional un-quarantine of `execution_judge.ready`).
+    - Pipeline behavior (new `trigger_watcher` worker, TTL'd
+      `intent_watch_queue` collection, RoadGuard untouched).
+    - Backward compatibility plan (v2 reads via `normalize_intent`
+      lifter, opt-in v3 emit per-brain via env flag).
+    - 9-step rollout sequence with explicit operator gates.
+    - 7 open questions awaiting operator input before any code
+      is written.
+
+### Status
+PRD is DRAFT pending operator review of:
+  1. §3 schema (the field set)
+  2. §4 doctrine scoring changes
+  3. §8 open questions (target_prices required?, setup enum vs
+     string?, Hot-Brain Router interaction?, etc.)
+
+### Strict doctrine
+**No code is to be written until the operator approves the PRD AND
+confirms the 24h observation phase has concluded.** This matches
+the operator's pin: "let Paradox trade for a day, write the v3 PRD,
+THEN code the schema."
+
+### Files
+- NEW: `/app/memory/PARADOX_V3_INTENT_ENVELOPE_PRD.md`
+
+---
+
+
 ## 2026-06-23 — Webull pct-of-buying-power Mongo override
 
 ### Why

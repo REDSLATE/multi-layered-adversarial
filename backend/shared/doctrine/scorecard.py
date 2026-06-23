@@ -144,7 +144,9 @@ async def doctrine_scorecard(
     seat_occupancy = _seat_occupancy_metadata(rows)
 
     # ── (5) promotion gate (doctrine roadmap step 5) ──────────────
-    blockers = _promotion_blockers(quality_report, by_seat)
+    blockers, advisories = _promotion_blockers_and_advisories(
+        quality_report, by_seat,
+    )
     samples_with_outcome = sum(b["samples"] for b in by_quality.values())
     if samples_with_outcome < 100:
         blockers.insert(0, f"min_samples<100 (have {samples_with_outcome})")
@@ -160,6 +162,11 @@ async def doctrine_scorecard(
         "seat_occupancy": seat_occupancy,
         "ready_for_promotion": len(blockers) == 0 and samples_with_outcome >= 100,
         "promotion_blockers": blockers,
+        # ─── 2026-06-23 advisories — observability only, never gate
+        # promotion. Currently used to surface the quarantined
+        # execution_judge.ready heuristic so the operator sees it's
+        # still inverted without being blocked on it. ──────────────
+        "promotion_advisories": advisories,
         "scoring_axis_doctrine": (
             "Performance is keyed on (lane, seat, doctrine_version). "
             "Holders are metadata only. A seat's doctrine, not a brain's "
@@ -422,7 +429,13 @@ def _seat_occupancy_metadata(rows: list, only_seat: Optional[str] = None) -> dic
     return final
 
 
-def _promotion_blockers(quality_report: dict, by_seat: dict) -> list:
+def _promotion_blockers_and_advisories(
+    quality_report: dict, by_seat: dict,
+) -> tuple[list, list]:
+    """Return (blockers, advisories).
+    Blockers gate promotion. Advisories are observability-only —
+    surface the failure but don't block. See the execution_judge
+    quarantine pin below."""
     blockers: list[str] = []
     a = quality_report.get("A_QUALITY", {})
     c = quality_report.get("C_QUALITY", {})
@@ -465,15 +478,34 @@ def _promotion_blockers(quality_report: dict, by_seat: dict) -> list:
 
     j_ready = by_seat["execution_judge"]["ready"]
     j_not = by_seat["execution_judge"]["not_ready"]
+    # ─── 2026-06-23 — operator-pinned heuristic quarantine ──────────
+    # `execution_judge.ready` is ADVISORY-ONLY. It used to be a hard
+    # promotion blocker, but the scorecard showed the signal was
+    # actively selecting worse outcomes (`ready_loss_rate=1.00` vs
+    # `not_ready_loss_rate=0.37`). A heuristic that inverts its own
+    # meaning cannot block promotion until it's rebuilt. The check is
+    # preserved here in `advisories` for visibility, never in
+    # `blockers`. See the matching pin in `auto_retire.py`.
+    advisories: list[str] = []
     if (
         j_ready["loss_rate"] is not None
         and j_not["loss_rate"] is not None
         and j_ready["loss_rate"] >= j_not["loss_rate"]
     ):
-        blockers.append(
+        advisories.append(
             f"execution_judge seat: ready loss_rate ({j_ready['loss_rate']}) "
-            f"≥ not_ready loss_rate ({j_not['loss_rate']}) — "
-            f"ready signal not useful"
+            f"≥ not_ready loss_rate ({j_not['loss_rate']}) — heuristic "
+            f"quarantined (advisory only, not a blocker)"
         )
 
+    return blockers, advisories
+
+
+def _promotion_blockers(quality_report: dict, by_seat: dict) -> list:
+    """Backwards-compat shim — callers that only want the hard
+    blocker list. Drops the advisories returned by the underlying
+    implementation."""
+    blockers, _advisories = _promotion_blockers_and_advisories(
+        quality_report, by_seat,
+    )
     return blockers
