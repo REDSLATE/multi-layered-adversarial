@@ -30,7 +30,14 @@ export default function Calibration() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
         {Object.keys(grouped).map((rt) => {
-          const meta = RUNTIME_META[rt];
+          // Defensive lookup: legacy DB rows may carry slot codes
+          // (alpha/camaro/chevelle/redeye) that aren't in RUNTIME_META.
+          // Same fallback shape used in Overview.jsx — keeps the
+          // panel rendering instead of crashing the whole page.
+          const meta = RUNTIME_META[rt] || {
+            color: "#A1A1AA",
+            label: (rt || "unknown").toUpperCase(),
+          };
           return (
             <Card key={rt} accentColor={meta.color} testid={`calibration-group-${rt}`}>
               <div className="flex items-baseline justify-between mb-4">
