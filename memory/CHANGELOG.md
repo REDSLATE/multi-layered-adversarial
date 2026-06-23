@@ -1,3 +1,47 @@
+## 2026-06-23 — Webull pct-of-buying-power Mongo override
+
+### Why
+Operator hit `WEBULL_NOTIONAL_ABOVE_CAP — $100.00 > $47.10 for EQ:AMZN
+(cap = 10% of $470.96 buying power)`. The 10% default was rejecting
+every equity intent the brain sized at $100. Phone-only operator
+needed a runtime knob — env-var bump requires a redeploy, too slow
+for a live market.
+
+### What shipped
+Mongo-backed override mirroring the existing `webull_min_notional_floor`
+pattern. Precedence: **Mongo > env > default (10%)**. 5s cache TTL on
+the in-memory read. Hard sanity ceiling ($500/order) unchanged.
+
+### API
+- `GET  /api/admin/webull-caps/status` — extended with
+  `effective_pct_of_buying_power` + `pct_sources` (mongo/env/default).
+- `POST /api/admin/webull-caps/set-pct {pct, reason?}` — write the
+  Mongo override. Validates 0 < pct ≤ 1.0.
+- `POST /api/admin/webull-caps/clear-pct` — disable override, fall
+  back to env / default.
+
+### UI
+- `IntentPostMortemPanel.jsx` — new "Webull pct-of-buying-power" row
+  added directly below the existing min-notional floor row in the
+  ARM panel. Phone-friendly: small numeric input + Set button.
+
+### Files
+- `shared/broker/webull_caps.py` — `_PCT_FLAG_DOC_ID`, in-memory
+  cache, `refresh_webull_pct_cache()`, updated `webull_pct_of_buying_power()`
+  to consult Mongo first.
+- `routes/webull_caps_admin.py` — extended /status + 2 new endpoints.
+- `components/IntentPostMortemPanel.jsx` — UI row.
+- `tests/test_webull_pct_override_2026_06_23.py` (new) — 6 cases
+  including the exact prod AMZN-blocked scenario.
+
+### Verified
+- 6/6 backend tests pass
+- E2E smoke test (login → GET status → set 0.25 → re-read → clear → re-read)
+- Python + JS lint clean
+
+---
+
+
 ## 2026-06-23 — Inline "Reset 24h cap" button on Diagnostics blocked panels
 
 ### What shipped

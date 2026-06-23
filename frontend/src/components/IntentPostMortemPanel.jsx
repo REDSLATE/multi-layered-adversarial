@@ -127,8 +127,11 @@ export default function IntentPostMortemPanel() {
     loading: true, saving: false,
     effective_floor: null,
     effective_ceiling: null,
+    effective_pct: null,
     sources: null,
+    pct_sources: null,
     inputValue: "1.00",
+    pctInputValue: "0.25",
     error: null,
   });
 
@@ -140,9 +143,12 @@ export default function IntentPostMortemPanel() {
         ...s, loading: false, saving: false,
         effective_floor: res.data.effective_floor_usd,
         effective_ceiling: res.data.effective_ceiling_usd,
+        effective_pct: res.data.effective_pct_of_buying_power,
         sources: res.data.sources || null,
-        // Pre-populate input with current effective floor for easy edits
+        pct_sources: res.data.pct_sources || null,
+        // Pre-populate inputs with current effective values for easy edits
         inputValue: (res.data.effective_floor_usd ?? 1.0).toFixed(2),
+        pctInputValue: (res.data.effective_pct_of_buying_power ?? 0.10).toFixed(2),
         error: null,
       }));
     } catch (e) {
@@ -187,6 +193,40 @@ export default function IntentPostMortemPanel() {
       }));
     }
   }, [webullFloor.inputValue, webullFloor.effective_floor, loadWebullFloor]);
+
+  const applyWebullPct = useCallback(async () => {
+    const n = parseFloat(webullFloor.pctInputValue);
+    if (!Number.isFinite(n) || n <= 0 || n > 1.0) {
+      setWebullFloor((s) => ({
+        ...s, error: "pct must be between 0 and 1.0 (e.g. 0.25 = 25%)",
+      }));
+      return;
+    }
+    const current = webullFloor.effective_pct;
+    if (current != null && Math.abs(current - n) < 0.001) {
+      await loadWebullFloor();
+      return;
+    }
+    const msg = `Set Webull pct-of-buying-power to ${(n * 100).toFixed(1)}%?\n\n` +
+      `Per-order max = buying power × ${n.toFixed(2)}.\n` +
+      `Hard sanity ceiling ($500/order) still applies regardless.\n\n` +
+      `Mongo override WINS over env. Proceed?`;
+    if (!window.confirm(msg)) return;
+    setWebullFloor((s) => ({ ...s, saving: true, error: null }));
+    try {
+      await api.post("/admin/webull-caps/set-pct", {
+        pct: n,
+        reason: "operator set via Intents page UI",
+      });
+      await loadWebullFloor();
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      setWebullFloor((s) => ({
+        ...s, saving: false,
+        error: typeof d === "string" ? d : JSON.stringify(d),
+      }));
+    }
+  }, [webullFloor.pctInputValue, webullFloor.effective_pct, loadWebullFloor]);
 
   useEffect(() => { loadWebullFloor(); }, [loadWebullFloor]);
 
@@ -749,6 +789,67 @@ export default function IntentPostMortemPanel() {
                 : ""}
               {webullFloor.sources.mongo.floor_usd != null
                 ? ` · override=$${webullFloor.sources.mongo.floor_usd.toFixed(2)}`
+                : ""}
+            </div>
+          )}
+          {/* ─── WEBULL PCT-OF-BUYING-POWER OVERRIDE (2026-06-23) ──
+              Per-order ceiling = buying_power × pct. The default 10%
+              kept clipping the operator's $100 intents on a $470 BP
+              account (cap = $47). Mongo override lets them tune the
+              pct from a phone without a redeploy. Hard sanity ceiling
+              ($500/order) still wraps this regardless. */}
+          <div className="flex items-center gap-2 flex-wrap mt-1 pt-1 border-t border-rd-border/30">
+            <div className="flex-1 min-w-0">
+              <div className="font-mono text-[10px] uppercase tracking-widest text-rd-text font-bold">
+                Webull pct-of-buying-power
+              </div>
+              <div className="font-mono text-[9px] text-rd-dim mt-0.5">
+                Effective: {webullFloor.loading
+                  ? "loading…"
+                  : webullFloor.effective_pct != null
+                    ? `${(webullFloor.effective_pct * 100).toFixed(1)}% of BP per order`
+                    : "unknown"}
+                {webullFloor.pct_sources?.mongo?.enabled
+                  ? " · source: mongo override"
+                  : webullFloor.pct_sources?.env?.set
+                    ? ` · source: env (${webullFloor.pct_sources.env.value})`
+                    : " · source: default"}
+              </div>
+            </div>
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                step="0.05"
+                min="0.01"
+                max="1.0"
+                value={webullFloor.pctInputValue}
+                onChange={(e) => setWebullFloor((s) => ({
+                  ...s, pctInputValue: e.target.value,
+                }))}
+                disabled={webullFloor.loading || webullFloor.saving}
+                className="w-16 bg-rd-bg border border-rd-border px-1 py-1 font-mono text-[10px] text-rd-text focus:outline-none focus:border-rd-accent"
+                data-testid="webull-pct-input"
+                title="Fraction of buying power per order (0.25 = 25%)"
+              />
+              <button
+                onClick={applyWebullPct}
+                disabled={webullFloor.loading || webullFloor.saving}
+                className="px-3 py-1 border-2 border-rd-accent text-rd-accent font-mono text-[10px] uppercase tracking-widest font-bold hover:bg-rd-accent hover:text-rd-bg disabled:opacity-40 disabled:cursor-not-allowed"
+                data-testid="webull-pct-apply-button"
+                title="Apply this pct as the Mongo override (wins over env)"
+              >
+                {webullFloor.saving ? "Saving…" : "Set pct"}
+              </button>
+            </div>
+          </div>
+          {webullFloor.pct_sources?.mongo?.updated_at && (
+            <div className="font-mono text-[9px] text-rd-dim">
+              last set: {webullFloor.pct_sources.mongo.updated_at}
+              {webullFloor.pct_sources.mongo.updated_by
+                ? ` · by ${webullFloor.pct_sources.mongo.updated_by}`
+                : ""}
+              {webullFloor.pct_sources.mongo.pct != null
+                ? ` · override=${(webullFloor.pct_sources.mongo.pct * 100).toFixed(1)}%`
                 : ""}
             </div>
           )}

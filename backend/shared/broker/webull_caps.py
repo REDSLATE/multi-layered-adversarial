@@ -88,6 +88,18 @@ _CACHED_FLOOR_TS: float = 0.0
 _FLOOR_CACHE_TTL_SEC: float = 5.0
 _FLOOR_FLAG_DOC_ID = "webull_min_notional_floor"
 
+# ─── Mongo-backed pct-of-buying-power override (2026-06-23) ────────
+# Mirrors the floor-override pattern above. Default rollout is 10% of
+# buying power (DEFAULT_PCT_OF_BUYING_POWER); but on a small account
+# (~$470 BP) that's $47/order, which clips intents the brain sized at
+# $100. The operator wanted a phone-friendly dial — no redeploy — so
+# we add a Mongo override that wins over env. Doc id mirrors the
+# floor's: `webull_pct_of_buying_power`, fields `pct` + `enabled`.
+_CACHED_PCT_OVERRIDE: Optional[float] = None
+_CACHED_PCT_TS: float = 0.0
+_PCT_CACHE_TTL_SEC: float = 5.0
+_PCT_FLAG_DOC_ID = "webull_pct_of_buying_power"
+
 
 def _read_cached_floor_override() -> Optional[float]:
     """Return the cached Mongo override if recent, else None.
@@ -130,6 +142,41 @@ async def refresh_webull_floor_cache() -> Optional[float]:
     except Exception:  # noqa: BLE001
         # Failed Mongo read leaves cache as-is; caller falls back to env.
         return _CACHED_FLOOR_OVERRIDE
+
+
+def _read_cached_pct_override() -> Optional[float]:
+    """Cached read of the Mongo pct-of-buying-power override. Sync so
+    `evaluate_webull_order()` (sync) can call it without await."""
+    if _CACHED_PCT_TS == 0.0:
+        return None
+    if (time.time() - _CACHED_PCT_TS) > _PCT_CACHE_TTL_SEC * 30:
+        return None
+    return _CACHED_PCT_OVERRIDE
+
+
+async def refresh_webull_pct_cache() -> Optional[float]:
+    """Force-refresh the in-memory pct cache from Mongo. Called at
+    boot and by `POST /api/admin/webull-caps/set-pct` so the cache
+    reflects the operator's last action immediately."""
+    global _CACHED_PCT_OVERRIDE, _CACHED_PCT_TS
+    from db import db
+    try:
+        doc = await db["runtime_flags"].find_one(
+            {"_id": _PCT_FLAG_DOC_ID},
+            {"_id": 0, "pct": 1, "enabled": 1},
+        )
+        if doc and bool(doc.get("enabled", True)):
+            raw = doc.get("pct")
+            if isinstance(raw, (int, float)) and 0 < float(raw) <= 1.0:
+                _CACHED_PCT_OVERRIDE = float(raw)
+            else:
+                _CACHED_PCT_OVERRIDE = None
+        else:
+            _CACHED_PCT_OVERRIDE = None
+        _CACHED_PCT_TS = time.time()
+        return _CACHED_PCT_OVERRIDE
+    except Exception:  # noqa: BLE001
+        return _CACHED_PCT_OVERRIDE
 
 
 class WebullCapBlocked(Exception):
@@ -177,11 +224,18 @@ def is_webull_armed() -> bool:
 def webull_pct_of_buying_power() -> float:
     """Per-order budget as a fraction of Webull buying power.
 
-    Operator-tunable via `WEBULL_PCT_OF_BUYING_POWER` (e.g. `0.05` =
-    5% of cash per order). Falls back to `DEFAULT_PCT_OF_BUYING_POWER`
-    on missing/malformed input. Clamped to (0, 1.0] — anything ≤ 0
-    or > 1 is nonsensical and reverts to default.
+    Lookup order (highest precedence first):
+      1. Mongo override (`runtime_flags._id="webull_pct_of_buying_power"`)
+         — operator's phone-friendly dial. Set via admin endpoint.
+      2. Env var `WEBULL_PCT_OF_BUYING_POWER` (e.g. `0.05` = 5%).
+      3. `DEFAULT_PCT_OF_BUYING_POWER` (10%).
+
+    Returns the first value in (0, 1.0]; anything outside that range
+    or malformed reverts to the next source.
     """
+    override = _read_cached_pct_override()
+    if override is not None and 0 < override <= 1.0:
+        return override
     pct = _read_float_env(
         "WEBULL_PCT_OF_BUYING_POWER", DEFAULT_PCT_OF_BUYING_POWER,
     )
