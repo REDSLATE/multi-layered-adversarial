@@ -63,6 +63,60 @@ TIER_1_DEFAULTS: dict[str, Any] = {
 }
 
 
+# Tier 2 — aggressive preset (2026-06-22, operator pin):
+#
+# > "Keep Tier 1 as the known stable baseline. Add Tier 2 as a
+# > clearly labeled operator choice. That gives you Conservative =
+# > stable, Aggressive = deliberate switch — rather than silently
+# > turning Tier 1 into something it was not designed to be."
+#
+# Doctrine: Tier 2 is the SAME shape as Tier 1 (same allowed
+# lanes / actions / brains, dry_run must still pass) — only the
+# emit-floor and default size loosen. Every other rail stays:
+#   • daily exposure cap
+#   • RoadGuard (incl. live spread-quality guard)
+#   • Webull close buffer
+#   • dry_run_state = passed
+#   • notional_max_usd hard cap
+#
+# Switching is a DELIBERATE operator click with a typed reason —
+# audit row records the tier transition, not just the parameter
+# delta. See `routes/admin_auto_submit.py::policy_toggle`.
+TIER_2_AGGRESSIVE: dict[str, Any] = {
+    "tier_name": "tier_2_aggressive",
+    "confidence_min": 0.45,
+    "notional_default_usd": 25.0,
+    "notional_max_usd": 5000.0,                        # hard cap unchanged
+    "allowed_lanes": ["equity", "crypto"],             # same as Tier 1
+    "allowed_actions": ["BUY", "SELL"],                # same as Tier 1
+    "allowed_brains": ["camino", "barracuda", "hellcat", "gto"],
+    "required_dry_run_state": "passed",                # rail preserved
+}
+
+
+# Tier registry — single source of truth for the admin route, the
+# UI dropdown, and the regression test. Keys are stable strings the
+# operator sees on the dashboard; do NOT rename without a migration
+# (audit rows reference these strings).
+TIER_REGISTRY: dict[str, dict[str, Any]] = {
+    "tier_1_conservative": TIER_1_DEFAULTS,
+    "tier_2_aggressive":   TIER_2_AGGRESSIVE,
+}
+
+
+def get_tier_defaults(tier_name: str) -> dict[str, Any]:
+    """Lookup a tier preset by name. Raises ValueError on unknown
+    tier — defensive so the admin route can return a clean 400
+    instead of silently falling through to Tier 1.
+    """
+    if tier_name not in TIER_REGISTRY:
+        raise ValueError(
+            f"unknown tier_name={tier_name!r}; valid: "
+            f"{sorted(TIER_REGISTRY.keys())!r}"
+        )
+    return dict(TIER_REGISTRY[tier_name])
+
+
 # ── Runtime override (toggled via admin endpoint) ────────────────────
 #
 # Persistence story (2026-02-19, post-incident):
@@ -161,16 +215,39 @@ def get_policy() -> dict[str, Any]:
     }
 
 
-async def set_policy_async(enabled: bool, **overrides: Any) -> dict[str, Any]:
+async def set_policy_async(
+    enabled: bool,
+    tier_name: str | None = None,
+    **overrides: Any,
+) -> dict[str, Any]:
     """Operator API — persist enabled flag + optional overrides to
     Mongo AND update the in-memory cache. This is the entrypoint the
     admin route MUST use so the toggle survives pod restarts.
 
-    `overrides` must be a subset of TIER_1_DEFAULTS keys.
+    `tier_name` (2026-06-22): when supplied, loads the named tier's
+    preset values into the override before applying the explicit
+    `overrides` kwargs. This lets the operator click "switch to
+    tier_2_aggressive" in the UI and get every field flipped in one
+    atomic write. Unknown tier_name raises ValueError (admin route
+    converts to HTTP 400).
+
+    `overrides` must be a subset of TIER_1_DEFAULTS keys (the
+    schema is shared across tiers).
     """
+    # Resolve the tier preset first (if any) so explicit overrides
+    # can fine-tune ON TOP of it. Order: tier preset → explicit
+    # overrides → in-memory dict.
+    preset_overrides: dict[str, Any] = {}
+    if tier_name is not None:
+        preset = get_tier_defaults(tier_name)
+        for k, v in preset.items():
+            if k in TIER_1_DEFAULTS:
+                preset_overrides[k] = v
     with _POLICY_LOCK:
         _POLICY_OVERRIDE.clear()
         _POLICY_OVERRIDE["enabled"] = bool(enabled)
+        for k, v in preset_overrides.items():
+            _POLICY_OVERRIDE[k] = v
         for k, v in overrides.items():
             if k in TIER_1_DEFAULTS:
                 _POLICY_OVERRIDE[k] = v

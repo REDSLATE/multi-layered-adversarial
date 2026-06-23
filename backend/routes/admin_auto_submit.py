@@ -16,7 +16,9 @@ from auth import get_current_user
 from db import db
 from shared.auto_submit_policy import (
     TIER_1_DEFAULTS,
+    TIER_REGISTRY,
     get_policy,
+    get_tier_defaults,
     hydrate_from_mongo,
     set_policy_async,
 )
@@ -28,8 +30,21 @@ router = APIRouter(prefix="/admin/auto-submit", tags=["admin-auto-submit"])
 POLICY_AUDIT = "shared_auto_submit_policy_audit"
 
 
+# Tier name allowlist — keeps the Pydantic validator in sync with the
+# code-level registry. Operator pin (2026-06-22): "Conservative =
+# stable, Aggressive = deliberate switch." The audit row records the
+# tier transition by name so the post-mortem panel can show
+# "tier_1_conservative → tier_2_aggressive" instead of just a fields
+# diff.
+_TIER_NAMES = tuple(TIER_REGISTRY.keys())
+
+
 class PolicyBody(BaseModel):
     enabled: bool
+    # 2026-06-22 — operator can pick a tier preset by name in one
+    # click. Explicit overrides below still take precedence for
+    # fine-tuning on top of the preset.
+    tier_name: str | None = Field(default=None, max_length=64)
     confidence_min: float | None = Field(default=None, ge=0.0, le=1.0)
     notional_default_usd: float | None = Field(default=None, gt=0.0)
     reason: str = Field(default="", max_length=400)
@@ -40,13 +55,23 @@ async def policy_status(_user: dict = Depends(get_current_user)) -> dict:
     """Current effective policy + defaults snapshot.
 
     Lazy-hydrates from Mongo on first access if the lifespan hook
-    hasn't already (safety net for fork pods / scripts)."""
+    hasn't already (safety net for fork pods / scripts).
+
+    2026-06-22: also surfaces the full tier registry so the UI
+    dropdown can render presets without having to fetch a separate
+    endpoint. `available_tiers` carries the per-tier preset values
+    so the panel can preview "what would change" before the operator
+    commits.
+    """
     from shared.auto_submit_policy import _HYDRATED
     if not _HYDRATED:
         await hydrate_from_mongo()
     return {
         "policy": get_policy(),
         "defaults": TIER_1_DEFAULTS,
+        "available_tiers": {
+            name: preset for name, preset in TIER_REGISTRY.items()
+        },
     }
 
 
@@ -63,16 +88,52 @@ async def policy_toggle(
                 "(audit-trail requirement)"
             ),
         )
+    # Validate tier_name early so a typo returns a clean 400 instead
+    # of being silently ignored downstream.
+    if body.tier_name is not None and body.tier_name not in _TIER_NAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"unknown tier_name={body.tier_name!r}; valid: "
+                f"{list(_TIER_NAMES)!r}"
+            ),
+        )
+    # Switching tiers (esp. → tier_2_aggressive) is a DELIBERATE
+    # operator action — require the typed reason even when toggling
+    # within an already-enabled state. Audit-row clarity: a tier
+    # switch with no reason is indistinguishable from "I clicked the
+    # wrong dropdown by accident."
+    if body.tier_name is not None and len(body.reason.strip()) < 4:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"switching to tier_name={body.tier_name!r} requires a "
+                f"`reason` of ≥4 characters (audit-trail requirement)"
+            ),
+        )
     overrides = {}
     if body.confidence_min is not None:
         overrides["confidence_min"] = body.confidence_min
     if body.notional_default_usd is not None:
         overrides["notional_default_usd"] = body.notional_default_usd
+
+    # Snapshot the PREVIOUS tier so the audit row records a clean
+    # transition string ("tier_1_conservative → tier_2_aggressive")
+    # instead of an opaque diff.
+    prev_policy = get_policy()
+    prev_tier = prev_policy.get("tier_name", "tier_1_conservative")
+
     # set_policy_async PERSISTS the override to Mongo — this is the
     # fix for the 2026-02-19 incident where the toggle was wiped on
     # every K8s pod restart because we only had an in-memory dict.
-    policy = await set_policy_async(enabled=body.enabled, **overrides)
-    await db[POLICY_AUDIT].insert_one({
+    policy = await set_policy_async(
+        enabled=body.enabled,
+        tier_name=body.tier_name,
+        **overrides,
+    )
+    new_tier = policy.get("tier_name", "tier_1_conservative")
+
+    audit_row: dict = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "event": "toggle_enabled" if body.enabled else "toggle_disabled",
         "by": user.get("email"),
@@ -81,7 +142,22 @@ async def policy_toggle(
         "reason": body.reason.strip(),
         "overrides": overrides,
         "persisted": True,
-    })
+    }
+    # Record the tier transition explicitly when it changed. The
+    # post-mortem panel renders this string verbatim so the operator
+    # can scan "who flipped to aggressive last week and why?" in
+    # one glance.
+    if prev_tier != new_tier:
+        audit_row["tier_transition"] = f"{prev_tier} → {new_tier}"
+        audit_row["prev_tier"] = prev_tier
+        audit_row["new_tier"] = new_tier
+    elif body.tier_name is not None:
+        # Operator explicitly re-applied the same tier — record it
+        # so the audit log isn't confusing ("why is the tier_name
+        # field set but no transition?").
+        audit_row["tier_reapplied"] = body.tier_name
+
+    await db[POLICY_AUDIT].insert_one(audit_row)
     return {"ok": True, "policy": policy}
 
 

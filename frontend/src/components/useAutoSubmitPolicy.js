@@ -16,6 +16,12 @@ export function useAutoSubmitPolicy() {
     defaults: null,
     audit: [],
     recent: [],
+    // 2026-06-22 — tier registry surfaced by the backend
+    // (`/admin/auto-submit/policy.available_tiers`). Always an
+    // object keyed by tier_name; empty object means the backend
+    // pre-dates the tier-picker patch and the UI degrades to its
+    // pre-tier behaviour gracefully.
+    availableTiers: {},
   });
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -33,6 +39,7 @@ export function useAutoSubmitPolicy() {
         defaults: p.data.defaults,
         audit: a.data.audit || [],
         recent: r.data.receipts || [],
+        availableTiers: p.data.available_tiers || {},
       });
       setErr(null);
     } catch (e) {

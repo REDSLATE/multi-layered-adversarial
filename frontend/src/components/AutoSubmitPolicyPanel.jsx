@@ -48,10 +48,23 @@ export default function AutoSubmitPolicyPanel() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [confMinDraft, setConfMinDraft] = useState("");
   const [notionalDraft, setNotionalDraft] = useState("");
+  // 2026-06-22 — operator-pinned tier picker. `tierDraft` is the
+  // dropdown's current selection; empty string means "don't change
+  // the tier when I submit." When the operator picks a non-empty
+  // tier, the submit handler passes `tier_name` to the backend,
+  // which atomically swaps every field to that tier's preset
+  // values. Explicit overrides in `confMinDraft`/`notionalDraft`
+  // still take precedence so the operator can fine-tune on top.
+  const [tierDraft, setTierDraft] = useState("");
 
-  const { policy, defaults, audit, recent } = data;
+  const { policy, defaults, audit, recent, availableTiers } = data;
   const enabled = policy ? !!policy.enabled : false;
   const reasonValid = reason.trim().length >= 4;
+  const currentTier = policy?.tier_name || "tier_1_conservative";
+  // A tier "switch" is in flight whenever the dropdown points to
+  // a DIFFERENT tier than the currently-applied one. Used to gate
+  // the "reason required" UX and to colour the submit button.
+  const tierSwitchPending = !!tierDraft && tierDraft !== currentTier;
 
   function buildOverrides() {
     const out = {};
@@ -67,6 +80,16 @@ export default function AutoSubmitPolicyPanel() {
       toast.error("Reason ≥ 4 chars required to enable auto-submit");
       return;
     }
+    // A tier switch is a DELIBERATE operator action — require the
+    // same audit reason even when toggling within already-enabled.
+    // Mirror of the backend's hard gate at line 70-77 of
+    // routes/admin_auto_submit.py.
+    if (tierSwitchPending && !reasonValid) {
+      toast.error(
+        `Switching to ${tierDraft} requires a typed reason (≥4 chars) — audit trail`
+      );
+      return;
+    }
     setBusy(true);
     try {
       const body = {
@@ -74,14 +97,28 @@ export default function AutoSubmitPolicyPanel() {
         reason: reason.trim() || (nextEnabled ? "operator enable" : "operator disable"),
         ...buildOverrides(),
       };
+      // Only thread tier_name when the operator picked one. Leaving
+      // it unset keeps the backend's "honour explicit overrides on
+      // top of the EXISTING tier" path — matters when the operator
+      // just wants to tweak confidence_min without changing tiers.
+      if (tierDraft) body.tier_name = tierDraft;
       const res = await api.post("/admin/auto-submit/policy", body);
       setPolicy(res.data.policy);
       setReason("");
-      toast.success(
-        nextEnabled
-          ? "Auto-submit ENABLED — Tier 1 intents will now auto-route"
-          : "Auto-submit DISABLED — back to manual-click mode"
-      );
+      setTierDraft("");
+      const newTier = res.data.policy?.tier_name || currentTier;
+      if (newTier !== currentTier) {
+        toast.success(
+          `Tier switched: ${currentTier} → ${newTier}` +
+            (nextEnabled ? " (auto-submit ENABLED)" : "")
+        );
+      } else {
+        toast.success(
+          nextEnabled
+            ? "Auto-submit ENABLED — Tier 1 intents will now auto-route"
+            : "Auto-submit DISABLED — back to manual-click mode"
+        );
+      }
       load();
     } catch (e) {
       const d = e?.response?.data?.detail || e.message;
@@ -193,6 +230,66 @@ export default function AutoSubmitPolicyPanel() {
           className="w-full bg-rd-bg2 border border-rd-border px-2 py-1 font-mono text-xs text-rd-text"
           data-testid="auto-submit-reason-input"
         />
+        {/*
+         * Tier picker (2026-06-22 — operator pin: "Conservative =
+         * stable, Aggressive = deliberate switch"). Only render when
+         * the backend returned an `availableTiers` map; older API
+         * versions or rolling-deploy windows don't carry it and the
+         * panel must degrade gracefully to its pre-tier behaviour.
+         */}
+        {availableTiers && Object.keys(availableTiers).length > 1 && (
+          <div className="space-y-1 pt-1 border-t border-rd-border">
+            <div className="font-mono text-[9px] uppercase text-rd-dim">
+              Tier preset
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={tierDraft || currentTier}
+                onChange={(e) => setTierDraft(e.target.value)}
+                className="bg-rd-bg2 border border-rd-border px-2 py-1 font-mono text-xs text-rd-text flex-1"
+                data-testid="auto-submit-tier-select"
+              >
+                {Object.keys(availableTiers).map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                    {name === currentTier ? "  (current)" : ""}
+                  </option>
+                ))}
+              </select>
+              {tierSwitchPending && (
+                <span
+                  className="font-mono text-[10px] text-rd-warn"
+                  data-testid="auto-submit-tier-pending"
+                >
+                  → switch pending
+                </span>
+              )}
+            </div>
+            {/* Preview the target tier's values inline so the
+             * operator sees EXACTLY what will change before
+             * committing — important for the "deliberate switch"
+             * doctrine.  Shows the deltas vs current. */}
+            {tierSwitchPending && availableTiers[tierDraft] && (
+              <div
+                className="grid grid-cols-2 gap-x-3 gap-y-0 font-mono text-[10px] pt-1"
+                data-testid="auto-submit-tier-preview"
+              >
+                <div className="text-rd-dim">confidence_min →</div>
+                <div className="text-rd-warn text-right">
+                  {availableTiers[tierDraft].confidence_min}
+                </div>
+                <div className="text-rd-dim">notional_default_usd →</div>
+                <div className="text-rd-warn text-right">
+                  ${availableTiers[tierDraft].notional_default_usd}
+                </div>
+                <div className="text-rd-dim">required_dry_run_state</div>
+                <div className="text-rd-text text-right">
+                  {availableTiers[tierDraft].required_dry_run_state}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <button
           type="button"
           onClick={() => setShowAdvanced((s) => !s)}
@@ -243,16 +340,34 @@ export default function AutoSubmitPolicyPanel() {
               {busy ? "…" : "ENABLE AUTO-SUBMIT"}
             </button>
           ) : (
-            <button
-              onClick={() => toggle(false)}
-              disabled={busy}
-              className="px-3 py-1 border-2 border-rd-warn text-rd-warn font-mono text-xs uppercase tracking-wider disabled:opacity-40 hover:bg-rd-warn/10"
-              data-testid="auto-submit-disable-btn"
-            >
-              {busy ? "…" : "DISABLE AUTO-SUBMIT"}
-            </button>
+            <>
+              {tierSwitchPending && (
+                /* While enabled, a tier switch is a single
+                 * "re-arm with new tier" POST that keeps
+                 * auto-submit ON. Separate button so the operator
+                 * never accidentally disarms when they only wanted
+                 * to swap presets. */
+                <button
+                  onClick={() => toggle(true)}
+                  disabled={busy || !reasonValid}
+                  className="px-3 py-1 border-2 border-rd-warn text-rd-warn font-mono text-xs uppercase tracking-wider disabled:opacity-40 hover:bg-rd-warn/10"
+                  data-testid="auto-submit-tier-switch-btn"
+                >
+                  {busy ? "…" : `SWITCH → ${tierDraft}`}
+                </button>
+              )}
+              <button
+                onClick={() => toggle(false)}
+                disabled={busy}
+                className="px-3 py-1 border-2 border-rd-warn text-rd-warn font-mono text-xs uppercase tracking-wider disabled:opacity-40 hover:bg-rd-warn/10"
+                data-testid="auto-submit-disable-btn"
+              >
+                {busy ? "…" : "DISABLE AUTO-SUBMIT"}
+              </button>
+            </>
           )}
-          {!enabled && !reasonValid && (
+          {((!enabled && !reasonValid) ||
+            (tierSwitchPending && !reasonValid)) && (
             <span className="font-mono text-[10px] text-rd-warn flex items-center gap-1">
               <Warning size={10} weight="bold" />
               ≥4 char reason required

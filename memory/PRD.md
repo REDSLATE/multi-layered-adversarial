@@ -1,3 +1,128 @@
+## 2026-06-22g — Auto-submit Tier 2 (Aggressive) preset + tier picker
+
+### Operator pin (verbatim)
+> "Keep Tier 1 as the known stable baseline. Add Tier 2 as a
+> clearly labeled operator choice. That gives you Conservative =
+> stable, Aggressive = deliberate switch — rather than silently
+> turning Tier 1 into something it was not designed to be."
+> "build the preset + dropdown + audit reason. Don't just keep
+> loosening Tier 1."
+
+### What shipped
+
+**1. `TIER_2_AGGRESSIVE` preset** (`shared/auto_submit_policy.py`):
+
+```
+tier_name: "tier_2_aggressive"
+confidence_min: 0.45              ← only field loosened from Tier 1
+notional_default_usd: $25         ← only field loosened from Tier 1
+notional_max_usd: $5,000          ← rail preserved
+allowed_lanes: [equity, crypto]   ← rail preserved
+allowed_actions: [BUY, SELL]      ← rail preserved
+allowed_brains: [camino, barracuda, hellcat, gto]   ← rail preserved
+required_dry_run_state: passed    ← rail preserved
+```
+
+All other rails (daily exposure cap, RoadGuard incl. spread-quality
+guard, Webull close buffer) live OUTSIDE the policy doctrine and
+remain untouched — they apply identically to Tier 1 and Tier 2.
+
+**2. `TIER_REGISTRY` + `get_tier_defaults(name)` helper** — single
+source of truth used by the admin route, the UI dropdown, and the
+regression test. Unknown tier names raise `ValueError` →
+HTTP 400 (never silently fall through).
+
+**3. `set_policy_async(enabled, tier_name=None, **overrides)`** —
+backwards-compatible extension. When `tier_name` is passed, the
+named tier's preset is applied as the override base, then explicit
+kwargs override on top (so an operator can pin "Tier 2 baseline
+but with confidence_min=0.50"). When `tier_name` is None, the
+function behaves exactly as before (preserves the "tweak
+confidence_min in place" workflow).
+
+**4. Admin route extensions** (`routes/admin_auto_submit.py`):
+
+`GET /api/admin/auto-submit/policy` now returns:
+```
+{
+  "policy": {...},
+  "defaults": {Tier 1 defaults},
+  "available_tiers": {
+    "tier_1_conservative": {...},
+    "tier_2_aggressive":   {...}
+  }
+}
+```
+UI consumes `available_tiers` for the dropdown without needing a
+second round-trip.
+
+`POST /api/admin/auto-submit/policy` accepts a new `tier_name`
+field. Validation:
+  - Unknown name → HTTP 400 with the valid list
+  - Tier switch requires `reason ≥ 4 chars` (same as enable —
+    audit-trail clarity)
+
+Audit row records the transition explicitly:
+```
+{
+  "tier_transition": "tier_1_conservative → tier_2_aggressive",
+  "prev_tier": "tier_1_conservative",
+  "new_tier": "tier_2_aggressive",
+  ...
+}
+```
+The post-mortem panel can render this verbatim for at-a-glance
+"who flipped to aggressive when and why?"
+
+**5. UI: tier dropdown in `AutoSubmitPolicyPanel.jsx`**
+
+- Selector populated from `available_tiers` (degrades gracefully
+  if the backend pre-dates the patch).
+- Inline preview of the target tier's `confidence_min` and
+  `notional_default_usd` BEFORE the operator commits — the
+  "deliberate switch" doctrine in the UX.
+- When enabled, a separate `SWITCH → tier_2_aggressive` button
+  appears so the operator never accidentally disarms while just
+  wanting to swap presets.
+- Toast confirms the transition string on success.
+
+### Regression
+40/40 auto-submit-suite tests pass. 8 new regression tests pin:
+  - Tier 2 thresholds (0.45 / $25) — exact match, no drift
+  - Tier 2 preserves every rail from Tier 1
+  - Tier registry contains both tiers
+  - `get_tier_defaults` rejects unknown names (defensive)
+  - `set_policy_async(tier_name=…)` applies the preset atomically
+  - Explicit kwargs override the tier preset
+  - Round-trip Tier 1 → Tier 2 → Tier 1 restores full Tier 1 state
+  - `tier_name=None` preserves pre-2026-06-22 contract (no swap)
+
+### Live smoke (preview)
+- `GET /admin/auto-submit/policy` → `available_tiers` carries both presets ✓
+- `POST tier_name=tier_2_aggressive` → all 8 fields swapped atomically ✓
+- Audit row records `"tier_1_conservative → tier_2_aggressive"` ✓
+- `POST tier_name=tier_1_conservative` → full Tier 1 baseline restored ✓
+
+### Operator's "check before switching" reminder
+Per the pin: "Before switching to Tier 2, check below_confidence_floor count."
+
+The existing tunables simulator already exposes this:
+`GET /api/admin/auto-submit/tunables-simulator?hours=24`
+→ `by_skip_category.low_confidence` is the count of intents
+skipped purely because they were below the current floor. If it's
+large, Tier 2 will move the needle materially. If small, Tier 2 is
+mostly a default-notional bump.
+
+### Touched
+  - EDIT: `backend/shared/auto_submit_policy.py`
+  - EDIT: `backend/routes/admin_auto_submit.py`
+  - EDIT: `frontend/src/components/AutoSubmitPolicyPanel.jsx`
+  - EDIT: `frontend/src/components/useAutoSubmitPolicy.js`
+  - NEW:  `backend/tests/test_auto_submit_tier_2_2026_06_22.py`
+
+---
+
+
 ## 2026-06-22f — Spread-quality breakdown endpoint + universal quality tagging
 
 ### Operator pin (verbatim)
