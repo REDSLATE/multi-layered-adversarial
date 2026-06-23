@@ -434,6 +434,89 @@ class WebullAdapter(BrokerAdapter):
         self._instrument_cache[sym_u] = (iid, price, frac)
         return iid, price, frac
 
+    @staticmethod
+    def _extended_hours_branch(
+        *,
+        lane: str,
+        last_price: float,
+        side: str,
+    ) -> tuple[str, Optional[str], str, bool]:
+        """Return `(order_type, limit_price_str, session, ext_hours_flag)`
+        for the Webull v2 stock_order body, picking between the MARKET
+        (RTH) and LIMIT (extended hours) paths.
+
+        Doctrine (2026-06-22 — operator-pinned):
+          * RTH or any non-equity lane → MARKET, CORE session.
+          * Equity lane outside RTH but inside the extended window
+            (RoadGuard already approved us; we're in pre/post-market)
+            → LIMIT with a buy/sell-adjusted slippage band on the
+            current last_price. Webull rejects MARKET orders during
+            pre/post; LIMIT is the only path the broker accepts.
+
+        Tunable via env (no redeploy):
+          * `WEBULL_EXTENDED_HOURS_SLIPPAGE_BPS` (default 50 = 0.5%) —
+            the price band the LIMIT walks away from last_price on the
+            aggressive side (BUY → above, SELL → below) so the order
+            still fills against the inside book during the thinner
+            pre/post session.
+          * `WEBULL_EXTENDED_HOURS_SESSION` (default "ALL") — the
+            value Webull uses to flag extended-hours-eligible orders.
+            Webull's documented session values include `CORE` (RTH
+            only) and `ALL` (RTH + extended). Configurable so we can
+            flip to broker-specific values without a redeploy if
+            Webull changes them.
+
+        Returns the tuple in the exact shape `submit_market_order`
+        needs to assemble the v2 stock_order body.
+        """
+        # Non-equity lanes (crypto) never apply RTH semantics —
+        # Webull crypto trades 24/7 against MARKET orders.
+        if lane != "equity":
+            return "MARKET", None, "CORE", False
+
+        # If we're inside RTH RIGHT NOW, the MARKET path is still
+        # the right choice. Only switch to LIMIT when we're
+        # genuinely in the pre/post-market window. RoadGuard's
+        # extended-hours guard already approved us reaching here;
+        # this helper just picks the right order kind.
+        try:
+            from shared.market_hours import is_equity_rth  # noqa: WPS433
+            in_rth = is_equity_rth()
+        except Exception:  # noqa: BLE001
+            # Defensive: if the helper raises (it shouldn't), prefer
+            # the safer MARKET/CORE path so we don't accidentally
+            # promote to LIMIT during a state we can't classify.
+            in_rth = True
+        if in_rth:
+            return "MARKET", None, "CORE", False
+
+        # Extended-hours LIMIT branch.
+        try:
+            slippage_bps = float(
+                os.environ.get("WEBULL_EXTENDED_HOURS_SLIPPAGE_BPS", "50")
+            )
+        except (TypeError, ValueError):
+            slippage_bps = 50.0
+        slippage_bps = max(0.0, slippage_bps)
+        session = (
+            os.environ.get("WEBULL_EXTENDED_HOURS_SESSION") or "ALL"
+        ).upper().strip()
+
+        if last_price <= 0:
+            # No reference price → fail safe back to MARKET so the
+            # caller's downstream broker reject (417) becomes the
+            # observable error, rather than us sending a degenerate
+            # limit_price of 0.
+            return "MARKET", None, "CORE", False
+
+        adj = slippage_bps / 10_000.0  # bps → fraction
+        if side == "BUY":
+            limit_price = last_price * (1.0 + adj)
+        else:  # SELL
+            limit_price = last_price * (1.0 - adj)
+        # Webull documents US-equity prices at 2 decimals.
+        return "LIMIT", f"{limit_price:.2f}", session, True
+
     async def submit_market_order(
         self,
         symbol: str,
@@ -579,29 +662,42 @@ class WebullAdapter(BrokerAdapter):
             # request body matches the doc example exactly.
             cash_amt_str = f"{effective_notional:.2f}"
 
+            # 2026-06-22 — Extended-hours LIMIT-with-slippage branch.
+            # Webull rejects MARKET orders submitted outside RTH
+            # (the broker requires LIMIT during pre/post-market). When
+            # RoadGuard allows the order through during extended hours
+            # (operator flipped EQUITY_EXTENDED_HOURS=ON and we're
+            # inside the 04:00-20:00 ET window but NOT inside RTH),
+            # we promote the leg to LIMIT and compute a buy/sell-
+            # adjusted limit price from last_price using a configurable
+            # slippage band. This removes the operator's need to
+            # toggle EQUITY_EXTENDED_HOURS OFF manually during the
+            # pre/post-market window.
+            order_kind, limit_price_str, session_str, ext_flag = (
+                self._extended_hours_branch(
+                    lane=lane,
+                    last_price=last_price,
+                    side=side_str,
+                )
+            )
+
             stock_order = {
                 "client_order_id": order_id,
                 "symbol": sym_u,
                 "instrument_id": instrument_id,
                 "instrument_type": "EQUITY",
                 "market": "US",
-                "order_type": "MARKET",
+                "order_type": order_kind,
                 "side": side_str,
                 "time_in_force": "DAY",
                 "entrust_type": "AMOUNT",
                 "total_cash_amount": cash_amt_str,
-                # 2026-02-20: extended-hours flags reverted to RTH-only
-                # after Webull docs confirmed MARKET orders are NOT
-                # eligible for extended sessions (extended hours
-                # require LIMIT). Keeping CORE/False matches the
-                # behaviour the council + caps were tuned against.
-                # If extended-hours becomes a target, add a LIMIT
-                # branch with a slippage band — see /app/memory/PRD.md
-                # under "Future / Backlog".
-                "support_trading_session": "CORE",
+                "support_trading_session": session_str,
                 "account_tax_type": "GENERAL",
-                "extended_hours_trading": False,
+                "extended_hours_trading": ext_flag,
             }
+            if order_kind == "LIMIT" and limit_price_str is not None:
+                stock_order["limit_price"] = limit_price_str
 
             # Log MC receipt provenance (signature prefix only).
             if mc_receipt:
@@ -661,8 +757,10 @@ class WebullAdapter(BrokerAdapter):
                 "qty": float(body.get("filledQuantity") or est_qty),
                 "notional": effective_notional,
                 "side": side_str,
-                "type": "market",
-                "limit_price": None,
+                "type": order_kind.lower(),
+                "limit_price": (
+                    float(limit_price_str) if limit_price_str else None
+                ),
                 "time_in_force": "DAY",
                 "status": str(body.get("status") or "SUBMITTED"),
                 "submitted_at": body.get("createTime") or body.get("submitted_at"),
