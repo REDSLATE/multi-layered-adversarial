@@ -35,7 +35,10 @@ async def clean_state(monkeypatch):
         _DAILY_SPEND_RESET_DOC_ID,
     )
     await db["runtime_flags"].delete_many({
-        "_id": {"$in": [_CAPS_FLAG_DOC_ID, _DAILY_SPEND_RESET_DOC_ID]},
+        "$or": [
+            {"_id": {"$in": [_CAPS_FLAG_DOC_ID, _DAILY_SPEND_RESET_DOC_ID]}},
+            {"_id": {"$regex": f"^{_DAILY_SPEND_RESET_DOC_ID}:"}},
+        ],
     })
     await db["execution_receipts"].delete_many({
         "_test_marker": "daily_spend_reset_test",
@@ -43,7 +46,10 @@ async def clean_state(monkeypatch):
     yield db
     # Cleanup AFTER the test so other tests don't inherit our docs.
     await db["runtime_flags"].delete_many({
-        "_id": {"$in": [_CAPS_FLAG_DOC_ID, _DAILY_SPEND_RESET_DOC_ID]},
+        "$or": [
+            {"_id": {"$in": [_CAPS_FLAG_DOC_ID, _DAILY_SPEND_RESET_DOC_ID]}},
+            {"_id": {"$regex": f"^{_DAILY_SPEND_RESET_DOC_ID}:"}},
+        ],
     })
     await db["execution_receipts"].delete_many({
         "_test_marker": "daily_spend_reset_test",
@@ -170,3 +176,132 @@ async def test_no_reset_doc_uses_normal_24h_window(clean_state):
 
     total = await daily_spend_usd()
     assert total == pytest.approx(250.0, abs=0.01)
+
+
+# ── per-brain reset: scoped wipe + breakdown ─────────────────────
+
+
+async def _insert_receipt_with_brain(db, executed_at, notional, stack):
+    """Like _insert_receipt but also stamps the brain id (Mongo
+    field is `stack`, same as production receipts)."""
+    await db["execution_receipts"].insert_one({
+        "executed_at": executed_at.isoformat(),
+        "side": "BUY",
+        "notional_usd": notional,
+        "stack": stack,
+        "_test_marker": "daily_spend_reset_test",
+    })
+
+
+@pytest.mark.asyncio
+async def test_per_brain_reset_only_drops_that_brains_fills(clean_state):
+    """Per-brain reset must wipe ONLY that brain's contribution to
+    the global sum — other brains' fills still count.
+    Use case: operator promotes Camino to hot. They want Camino's
+    history reset so it gets fresh runway, but Barracuda's history
+    must NOT vanish from audit visibility."""
+    from shared.exposure_caps import (
+        daily_spend_usd, daily_spend_per_brain,
+        _daily_spend_reset_doc_id,
+    )
+    db = clean_state
+    now = datetime.now(timezone.utc)
+    # Pre-reset fills from two brains: Camino $300, Barracuda $500.
+    # (Use canonical IDs directly — alias normalization is tested
+    # separately below.)
+    await _insert_receipt_with_brain(db, now - timedelta(hours=4), 300.0, "camino")
+    await _insert_receipt_with_brain(db, now - timedelta(hours=4), 500.0, "barracuda")
+    # Sanity: total $800.
+    pre = await daily_spend_usd()
+    assert pre == pytest.approx(800.0, abs=0.01)
+
+    # Reset camino only.
+    await db["runtime_flags"].update_one(
+        {"_id": _daily_spend_reset_doc_id("camino")},
+        {"$set": {"reset_at": now.isoformat(), "reset_by": "test"}},
+        upsert=True,
+    )
+    # Total must drop by $300 (Camino's contribution) — NOT $800.
+    post = await daily_spend_usd()
+    assert post == pytest.approx(500.0, abs=0.01), (
+        f"Per-brain reset must drop only that brain's contribution. "
+        f"Expected $500 (Barracuda remains), got ${post:.2f}"
+    )
+    breakdown = await daily_spend_per_brain()
+    assert breakdown.get("camino", 0.0) == pytest.approx(0.0, abs=0.01)
+    assert breakdown.get("barracuda", 0.0) == pytest.approx(500.0, abs=0.01)
+
+
+@pytest.mark.asyncio
+async def test_per_brain_reset_honors_legacy_aliases(clean_state):
+    """DB receipts may carry the legacy slot code (`stack="camaro"`)
+    even after the rename. A reset issued against the canonical
+    name (`brain="barracuda"`) MUST match those legacy-tagged
+    receipts via the LEGACY_TO_CANONICAL map. Otherwise the
+    operator's reset would silently fail to drop the right rows."""
+    from shared.exposure_caps import (
+        daily_spend_usd, daily_spend_per_brain,
+        _daily_spend_reset_doc_id,
+    )
+    db = clean_state
+    now = datetime.now(timezone.utc)
+    # Fill tagged with the legacy slot code on stack.
+    await _insert_receipt_with_brain(db, now - timedelta(hours=2), 400.0, "camaro")
+    # Reset the canonical (barracuda).
+    await db["runtime_flags"].update_one(
+        {"_id": _daily_spend_reset_doc_id("barracuda")},
+        {"$set": {"reset_at": now.isoformat(), "reset_by": "test"}},
+        upsert=True,
+    )
+    total = await daily_spend_usd()
+    assert total == pytest.approx(0.0, abs=0.01), (
+        f"Canonical per-brain reset must drop legacy-tagged fills "
+        f"via alias mapping. Got ${total:.2f}"
+    )
+    # Breakdown bucket should be canonical too.
+    breakdown = await daily_spend_per_brain()
+    assert "camaro" not in breakdown, (
+        f"Breakdown buckets must be canonical IDs. Got {breakdown}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_global_and_per_brain_resets_compose(clean_state):
+    """Global reset moves the floor; per-brain reset adds an extra
+    exclusion ON TOP. Both must compose without one cancelling the
+    other."""
+    from shared.exposure_caps import (
+        daily_spend_usd, _DAILY_SPEND_RESET_DOC_ID,
+        _daily_spend_reset_doc_id,
+    )
+    db = clean_state
+    now = datetime.now(timezone.utc)
+    # Older Barracuda fill before any reset.
+    await _insert_receipt_with_brain(db, now - timedelta(hours=10), 200.0, "barracuda")
+    # Global reset at -8h: clears the older Barracuda fill.
+    await db["runtime_flags"].update_one(
+        {"_id": _DAILY_SPEND_RESET_DOC_ID},
+        {"$set": {
+            "reset_at": (now - timedelta(hours=8)).isoformat(),
+            "reset_by": "test",
+        }},
+        upsert=True,
+    )
+    # Post-global-reset fills from both brains.
+    await _insert_receipt_with_brain(db, now - timedelta(hours=4), 100.0, "camino")
+    await _insert_receipt_with_brain(db, now - timedelta(hours=4), 150.0, "barracuda")
+    # Sanity: with only global reset, post-reset fills sum to $250.
+    pre_per_brain = await daily_spend_usd()
+    assert pre_per_brain == pytest.approx(250.0, abs=0.01)
+    # Now also reset camino specifically.
+    await db["runtime_flags"].update_one(
+        {"_id": _daily_spend_reset_doc_id("camino")},
+        {"$set": {"reset_at": now.isoformat(), "reset_by": "test"}},
+        upsert=True,
+    )
+    # Camino's $100 drops out → $150 left.
+    post = await daily_spend_usd()
+    assert post == pytest.approx(150.0, abs=0.01), (
+        f"Global + per-brain resets must compose. Expected $150, "
+        f"got ${post:.2f}"
+    )

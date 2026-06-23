@@ -83,23 +83,46 @@ _CAPS_FLAG_DOC_ID = "exposure_caps_override"
 # wants to "start over" mid-window (e.g., they hit the cap from
 # pre-pilot fills but want the rest of the day's budget back), they
 # call POST /admin/exposure-caps/reset-daily-spend. That writes
-# `runtime_flags._id="daily_spend_reset"` with `reset_at = now`.
-# `daily_spend_usd()` then only sums receipts AFTER `reset_at`,
-# which is mathematically equivalent to "wipe the 24h tally to $0".
-# The reset naturally ages out: once `now - reset_at >= 24h`, all
-# pre-reset receipts are outside the window anyway, so the reset
-# doc becomes a no-op and the normal rolling behavior resumes.
+# `runtime_flags._id="daily_spend_reset"` (global) or
+# `runtime_flags._id="daily_spend_reset:{brain}"` (per-brain) with
+# `reset_at = now`. `daily_spend_usd()` then only sums receipts
+# AFTER the relevant reset_at, which is mathematically equivalent
+# to "wipe the 24h tally to $0" for that scope. The reset naturally
+# ages out: once `now - reset_at >= 24h`, all pre-reset receipts
+# are outside the window anyway, so the reset doc becomes a no-op
+# and the normal rolling behavior resumes.
+#
+# Per-brain doctrine (2026-06-23): when the operator switches to a
+# hot brain, they may want that brain's tally reset without losing
+# audit visibility into the other brains' history. The per-brain
+# reset is scoped to the receipts where `stack == <canonical brain>
+# OR <legacy alias>` — so resetting "camino" excludes Camino's
+# contribution from the global sum without affecting Barracuda /
+# Hellcat / GTO contributions to that same global sum.
 _DAILY_SPEND_RESET_DOC_ID = "daily_spend_reset"
 
 
-async def get_daily_spend_reset_at() -> Optional[str]:
-    """Return the ISO timestamp of the most recent 24h spend reset,
-    or None if no reset has been requested (or the reset has aged
-    out past the 24h window). Doctrine: the reset is a baseline
-    timestamp, never a delete — audit rows in execution_receipts
-    are untouched."""
+def _daily_spend_reset_doc_id(brain: Optional[str]) -> str:
+    """Return the runtime_flags doc id used to track the reset for
+    the given brain (or the global doc id if `brain` is None)."""
+    if not brain:
+        return _DAILY_SPEND_RESET_DOC_ID
+    return f"{_DAILY_SPEND_RESET_DOC_ID}:{brain.lower()}"
+
+
+async def get_daily_spend_reset_at(brain: Optional[str] = None) -> Optional[str]:
+    """Return the ISO timestamp of the most recent 24h spend reset
+    for the given scope (global if `brain` is None, otherwise that
+    brain's per-brain doc), or None if no reset has been requested.
+    Doctrine: the reset is a baseline timestamp, never a delete —
+    audit rows in execution_receipts are untouched."""
+    from shared.brain_identity import LEGACY_TO_CANONICAL  # local: avoid cycles
+    canonical = (
+        LEGACY_TO_CANONICAL.get(brain.lower(), brain.lower())
+        if brain else None
+    )
     doc = await db["runtime_flags"].find_one(
-        {"_id": _DAILY_SPEND_RESET_DOC_ID},
+        {"_id": _daily_spend_reset_doc_id(canonical)},
         {"_id": 0, "reset_at": 1},
     )
     if not doc:
@@ -192,30 +215,90 @@ def _now() -> datetime:
 async def daily_spend_usd(window_hours: int = 24) -> float:
     """Sum of executed order notional in the last `window_hours`.
 
-    Honors the operator's `daily_spend_reset` flag: if a reset
-    timestamp exists AND it falls inside the rolling window, the
-    floor for the sum moves up to the reset time. This effectively
-    wipes the 24h tally to $0 at reset time and lets fresh spend
-    accumulate from there. Receipts older than the reset still live
-    in `execution_receipts` for audit — they're just excluded from
-    cap math.
+    Honors BOTH the global `daily_spend_reset` baseline AND any
+    per-brain `daily_spend_reset:{brain}` baselines. Per-brain
+    resets exclude that brain's pre-reset fills from the global
+    sum without affecting other brains' contributions. Audit rows
+    in `execution_receipts` are never mutated — this is a
+    baseline filter, not a delete.
     """
+    from shared.brain_identity import LEGACY_TO_CANONICAL  # local: cycle-safe
     window_start = (_now() - timedelta(hours=window_hours)).isoformat()
-    reset_at = await get_daily_spend_reset_at()
-    # Floor the lookback at the more recent of (window_start,
-    # reset_at). If the reset was MORE than 24h ago, it's already
-    # outside the window and has no effect — naturally aged out.
-    since = max(window_start, reset_at) if reset_at else window_start
-    cursor = db[EXECUTION_RECEIPTS].find(
-        {"executed_at": {"$gte": since}, "side": {"$in": ["BUY", "SELL"]}},
-        {"_id": 0, "notional_usd": 1, "side": 1},
+
+    global_reset = await get_daily_spend_reset_at(brain=None)
+    floor = max(window_start, global_reset) if global_reset else window_start
+
+    # Pull every per-brain reset doc so we can filter in Python on
+    # the way through. Doc count is bounded by the number of brains
+    # (currently 4) — cheap.
+    per_brain_resets = {}
+    cursor = db["runtime_flags"].find(
+        {"_id": {"$regex": f"^{_DAILY_SPEND_RESET_DOC_ID}:"}},
+        {"_id": 1, "reset_at": 1},
+    )
+    async for d in cursor:
+        canonical = d["_id"].split(":", 1)[1]
+        ra = d.get("reset_at")
+        if isinstance(ra, str) and ra:
+            per_brain_resets[canonical] = ra
+
+    receipts = db[EXECUTION_RECEIPTS].find(
+        {"executed_at": {"$gte": floor}, "side": {"$in": ["BUY", "SELL"]}},
+        {"_id": 0, "notional_usd": 1, "side": 1, "executed_at": 1, "stack": 1},
     )
     total = 0.0
-    async for row in cursor:
-        # Treat BUY notional as "spend" and SELL notional as "spend" too —
-        # we cap *trading throughput* per day, not just net inflow.
-        total += float(row.get("notional_usd") or 0.0)
+    async for doc in receipts:
+        # Per-brain reset check — exclude this fill if its brain has
+        # a reset AND this fill happened before that reset.
+        stack = (doc.get("stack") or "").lower()
+        canonical = LEGACY_TO_CANONICAL.get(stack, stack)
+        brain_reset = per_brain_resets.get(canonical)
+        if brain_reset and doc.get("executed_at", "") < brain_reset:
+            continue
+        notional = float(doc.get("notional_usd") or 0.0)
+        # Conservative interpretation: cap counts both sides — BUYs
+        # *and* SELLs both consume capacity in the rolling window
+        # (matches pre-existing behavior; do NOT subtract sells).
+        total += notional
     return total
+
+
+async def daily_spend_per_brain(window_hours: int = 24) -> dict[str, float]:
+    """Per-brain breakdown of the 24h spend sum. Returns a dict
+    `{canonical_brain_id: spend_usd}` covering every brain that
+    contributed at least one fill within the (reset-honored)
+    rolling window. Used by the admin status endpoint so the UI
+    can show "Camino: $300 · Barracuda: $710" alongside the total."""
+    from shared.brain_identity import LEGACY_TO_CANONICAL  # local: cycle-safe
+    window_start = (_now() - timedelta(hours=window_hours)).isoformat()
+
+    global_reset = await get_daily_spend_reset_at(brain=None)
+    floor = max(window_start, global_reset) if global_reset else window_start
+
+    per_brain_resets = {}
+    cursor = db["runtime_flags"].find(
+        {"_id": {"$regex": f"^{_DAILY_SPEND_RESET_DOC_ID}:"}},
+        {"_id": 1, "reset_at": 1},
+    )
+    async for d in cursor:
+        canonical = d["_id"].split(":", 1)[1]
+        ra = d.get("reset_at")
+        if isinstance(ra, str) and ra:
+            per_brain_resets[canonical] = ra
+
+    receipts = db[EXECUTION_RECEIPTS].find(
+        {"executed_at": {"$gte": floor}, "side": {"$in": ["BUY", "SELL"]}},
+        {"_id": 0, "notional_usd": 1, "executed_at": 1, "stack": 1},
+    )
+    out: dict[str, float] = {}
+    async for doc in receipts:
+        stack = (doc.get("stack") or "").lower() or "unknown"
+        canonical = LEGACY_TO_CANONICAL.get(stack, stack)
+        brain_reset = per_brain_resets.get(canonical)
+        if brain_reset and doc.get("executed_at", "") < brain_reset:
+            continue
+        out[canonical] = out.get(canonical, 0.0) + float(doc.get("notional_usd") or 0.0)
+    return out
 
 
 async def open_notional_usd() -> float:

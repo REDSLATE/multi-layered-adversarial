@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, getRuntimeMeta } from "@/lib/api";
 import { Crosshair, ArrowsClockwise, Warning, CheckCircle, XCircle, MagnifyingGlass, Lightning, Power } from "@phosphor-icons/react";
 import FunnelDeltasTile from "./FunnelDeltasTile";
 import IntentFunnelTile from "./IntentFunnelTile";
@@ -416,19 +416,26 @@ export default function IntentPostMortemPanel() {
     }
   }, [caps.perDayInput, caps.effective, caps.live_state, loadCaps]);
 
-  const resetDailySpend = useCallback(async () => {
-    const spent = caps.live_state?.daily_spend_usd ?? 0;
+  const resetDailySpend = useCallback(async (brain = null) => {
+    const spent = brain
+      ? (caps.live_state?.per_brain_spend_usd?.[brain] ?? 0)
+      : (caps.live_state?.daily_spend_usd ?? 0);
+    const scopeLabel = brain ? brain.toUpperCase() : "ALL BRAINS";
     if (!window.confirm(
-      `Reset the rolling 24h spend tally to $0?\n\n` +
+      `Reset ${scopeLabel} 24h spend tally to $0?\n\n` +
       `Currently tracked: $${spent.toFixed(2)}\n\n` +
       `This does NOT delete any audit rows — it writes a baseline\n` +
       `timestamp so fills before this moment stop counting against\n` +
-      `the daily cap. Proceed?`,
+      `the daily cap.${brain ? "\n\nOther brains keep their history." : ""}\n\n` +
+      `Proceed?`,
     )) return;
     setCaps((s) => ({ ...s, saving: true, error: null }));
     try {
       await api.post("/admin/exposure-caps/reset-daily-spend", {
-        reason: "operator reset via Intents ARM panel",
+        brain: brain || undefined,
+        reason: brain
+          ? `operator per-brain reset (${brain}) via Intents ARM panel`
+          : "operator global reset via Intents ARM panel",
       });
       await loadCaps();
     } catch (e) {
@@ -980,11 +987,11 @@ export default function IntentPostMortemPanel() {
                 {caps.saving ? "Saving…" : "Set cap"}
               </button>
               <button
-                onClick={resetDailySpend}
+                onClick={() => resetDailySpend(null)}
                 disabled={caps.loading || caps.saving}
                 className="px-3 py-1 border-2 border-rd-warning text-rd-warning font-mono text-[10px] uppercase tracking-widest font-bold hover:bg-rd-warning hover:text-rd-bg disabled:opacity-40 disabled:cursor-not-allowed"
                 data-testid="exposure-caps-daily-reset-button"
-                title="Wipe the rolling 24h spend tally to $0 (audit rows untouched)"
+                title="Wipe the rolling 24h spend tally to $0 across ALL brains (audit rows untouched)"
               >
                 Reset 24h
               </button>
@@ -995,12 +1002,72 @@ export default function IntentPostMortemPanel() {
               className="font-mono text-[9px] text-rd-dim"
               data-testid="exposure-caps-daily-reset-stamp"
             >
-              last reset: {caps.live_state.daily_spend_reset_at}
+              last reset (global): {caps.live_state.daily_spend_reset_at}
               {caps.live_state.daily_spend_reset_by
                 ? ` · by ${caps.live_state.daily_spend_reset_by}`
                 : ""}
             </div>
           )}
+          {/* Per-brain breakdown + per-brain reset buttons. Surfaced
+              when there's any per-brain spend OR any per-brain reset
+              doc — keeps the row hidden when nothing's traded yet. */}
+          {(() => {
+            const perBrain = caps.live_state?.per_brain_spend_usd || {};
+            const perBrainResets = caps.live_state?.per_brain_resets || {};
+            const allBrains = Array.from(new Set([
+              ...Object.keys(perBrain),
+              ...Object.keys(perBrainResets),
+            ])).sort();
+            if (allBrains.length === 0) return null;
+            return (
+              <div
+                className="mt-2 border-t border-rd-line/30 pt-2 space-y-1"
+                data-testid="exposure-caps-per-brain-breakdown"
+              >
+                <div className="font-mono text-[9px] uppercase tracking-widest text-rd-dim">
+                  per-brain 24h spend (resettable independently)
+                </div>
+                {allBrains.map((b) => {
+                  const meta = getRuntimeMeta(b);
+                  const spend = perBrain[b] ?? 0;
+                  const stamp = perBrainResets[b]?.reset_at;
+                  return (
+                    <div
+                      key={b}
+                      className="flex items-center justify-between gap-2"
+                      data-testid={`exposure-caps-brain-row-${b}`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span
+                          className="font-mono text-[10px] font-bold"
+                          style={{ color: meta.color }}
+                        >
+                          {meta.label}
+                        </span>
+                        <span className="font-mono text-[10px] text-rd-text">
+                          ${spend.toFixed(2)}
+                        </span>
+                        {stamp && (
+                          <span className="font-mono text-[9px] text-rd-dim truncate">
+                            · reset {stamp}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => resetDailySpend(b)}
+                        disabled={caps.loading || caps.saving}
+                        className="px-2 py-0.5 border border-rd-warning/60 text-rd-warning font-mono text-[9px] uppercase tracking-widest hover:bg-rd-warning hover:text-rd-bg disabled:opacity-40 disabled:cursor-not-allowed"
+                        data-testid={`exposure-caps-brain-reset-${b}`}
+                        title={`Reset ${meta.label} 24h spend only (other brains unaffected)`}
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
           {caps.sources?.mongo?.updated_at && (
             <div className="font-mono text-[9px] text-rd-dim">
               last set: {caps.sources.mongo.updated_at}

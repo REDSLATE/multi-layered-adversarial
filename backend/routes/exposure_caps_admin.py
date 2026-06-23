@@ -38,6 +38,8 @@ from shared.exposure_caps import (
     CAP_PER_ORDER_USD,
     _CAPS_FLAG_DOC_ID,
     _DAILY_SPEND_RESET_DOC_ID,
+    _daily_spend_reset_doc_id,
+    daily_spend_per_brain,
     daily_spend_usd,
     effective_cap_open_notional_usd,
     effective_cap_per_day_usd,
@@ -45,6 +47,7 @@ from shared.exposure_caps import (
     get_daily_spend_reset_at,
     refresh_cap_overrides_cache,
 )
+from shared.brain_identity import LEGACY_TO_CANONICAL
 
 
 router = APIRouter(prefix="/admin/exposure-caps", tags=["exposure-caps-admin"])
@@ -81,6 +84,21 @@ async def status(_user: dict = Depends(get_current_user)) -> Dict[str, Any]:
         {"_id": _DAILY_SPEND_RESET_DOC_ID}, {"_id": 0},
     ) or {}
     spent = await daily_spend_usd()
+    per_brain = await daily_spend_per_brain()
+    # Pull all per-brain reset docs in one shot so the UI can show
+    # "last reset" stamps for each brain without N round-trips.
+    per_brain_resets: Dict[str, Dict[str, Any]] = {}
+    cursor = db[_COLL].find(
+        {"_id": {"$regex": f"^{_DAILY_SPEND_RESET_DOC_ID}:"}},
+        {"_id": 1, "reset_at": 1, "reset_by": 1, "reason": 1},
+    )
+    async for d in cursor:
+        canonical = d["_id"].split(":", 1)[1]
+        per_brain_resets[canonical] = {
+            "reset_at": d.get("reset_at"),
+            "reset_by": d.get("reset_by"),
+            "reset_reason": d.get("reason"),
+        }
     return {
         "effective": {
             "per_order_usd": effective_cap_per_order_usd(),
@@ -95,6 +113,10 @@ async def status(_user: dict = Depends(get_current_user)) -> Dict[str, Any]:
             "daily_spend_reset_at": reset_doc.get("reset_at"),
             "daily_spend_reset_by": reset_doc.get("reset_by"),
             "daily_spend_reset_reason": reset_doc.get("reason"),
+            "per_brain_spend_usd": {
+                k: round(v, 2) for k, v in per_brain.items()
+            },
+            "per_brain_resets": per_brain_resets,
         },
         "sources": {
             "mongo": {
@@ -193,6 +215,14 @@ async def clear_caps(user: dict = Depends(get_current_user)) -> Dict[str, Any]:
 
 
 class ResetDailySpendRequest(BaseModel):
+    brain: Optional[str] = Field(
+        None, max_length=32,
+        description=(
+            "Canonical brain id (camino/barracuda/hellcat/gto) or "
+            "legacy alias (alpha/camaro/chevelle/redeye). Omit for "
+            "the global reset that wipes the tally for all brains."
+        ),
+    )
     reason: Optional[str] = Field(None, max_length=200)
 
 
@@ -201,30 +231,56 @@ async def reset_daily_spend(
     body: Optional[ResetDailySpendRequest] = None,
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Wipe the rolling 24h spend tally to $0 by writing a baseline
-    timestamp. After this call, `daily_spend_usd()` only sums
-    receipts whose `executed_at` is AFTER the reset moment. Audit
-    rows in `execution_receipts` are NEVER deleted — this is a
-    baseline shift, not a data mutation."""
+    """Wipe the rolling 24h spend tally to $0 — globally or per-brain.
+
+    GLOBAL (no `brain` in body):
+      writes `runtime_flags._id="daily_spend_reset"`. All brains'
+      pre-reset fills stop counting against the cap.
+
+    PER-BRAIN (`brain` set in body):
+      writes `runtime_flags._id="daily_spend_reset:{canonical}"`.
+      Only that brain's pre-reset fills stop counting; the other
+      brains' contributions to the global tally are preserved. Use
+      this when switching to a hot brain — wipe just that brain's
+      history without losing audit visibility into the others.
+
+    Audit rows in `execution_receipts` are NEVER deleted — this is
+    a baseline shift, not a data mutation."""
     now_iso = _now()
-    reason = (body.reason if body else None) or "reset via /admin/exposure-caps/reset-daily-spend"
+    brain_in = (body.brain if body else None) or None
+    if brain_in:
+        canonical = LEGACY_TO_CANONICAL.get(brain_in.lower(), brain_in.lower())
+        doc_id = _daily_spend_reset_doc_id(canonical)
+        scope = canonical
+        scope_label = f"brain={canonical}"
+    else:
+        doc_id = _DAILY_SPEND_RESET_DOC_ID
+        scope = None
+        scope_label = "global"
+    reason = (body.reason if body else None) or (
+        f"reset via /admin/exposure-caps/reset-daily-spend ({scope_label})"
+    )
     await db[_COLL].update_one(
-        {"_id": _DAILY_SPEND_RESET_DOC_ID},
+        {"_id": doc_id},
         {"$set": {
             "reset_at": now_iso,
             "reset_by": user.get("email") or "operator",
             "reason": reason,
+            "scope": scope,
         }},
         upsert=True,
     )
     spent = await daily_spend_usd()
+    per_brain = await daily_spend_per_brain()
     return {
         "ok": True,
+        "scope": scope or "global",
         "reset_at": now_iso,
         "live_state": {
             "daily_spend_usd": round(spent, 2),
             "remaining_per_day_usd": round(
                 max(0.0, effective_cap_per_day_usd() - spent), 2,
             ),
+            "per_brain_spend_usd": {k: round(v, 2) for k, v in per_brain.items()},
         },
     }
