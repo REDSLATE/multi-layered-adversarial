@@ -128,7 +128,7 @@ _STRONG: tuple[Pattern, ...] = (
     # "disregard all prior" — sibling phrasing.
     Pattern(Tier.STRONG, "disregard_prior",
             re.compile(
-                r"\bdisregard\s+(?:all\s+|every\s+|any\s+)?"
+                r"\bdisregard\s+(?:all\s+|every\s+|any\s+|the\s+|your\s+)?"
                 r"(?:prior|previous|earlier|above)\b",
                 re.IGNORECASE,
             ),
