@@ -8,8 +8,20 @@ the existing `route_order` so the pipeline can call it as
 `broker.submit_market_order(...)`.
 
 Doctrine: this adapter does NOT add any new gating, sizing, or
-classification. It is a pure translation layer. The unified pipeline
-is the only authority on whether the broker is called.
+classification beyond the Intent Firewall security pre-check. It is
+a pure translation layer plus a thin security gate. The unified
+pipeline is the only authority on whether the broker is called.
+
+Pipeline doctrine (2026-06-22, operator-pinned 5-stage model)::
+
+    Brain → Intent Firewall → Seat → Trade Governor → RoadGuard → Broker
+
+The Intent Firewall (`shared.security.intent_firewall`) sits between
+the brain emit and the seat. It blocks ONLY for security violations
+(prompt injection, secret exfiltration, broker directives, etc.) —
+never for trading logic. Default deploy phase is OBSERVE (stamp
+receipt, do not block) — set `MYTHOS_DEPLOY_PHASE=BLOCK` once the
+false-positive rate is baselined.
 
 History (2026-06-18): the legacy `unified_pipeline_enabled` feature
 flag (env + Mongo + 5-second cache) was deleted in the same pass
@@ -22,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from shared.broker_router import route_order
@@ -34,9 +47,77 @@ from shared.pipeline.governor import Governor
 from shared.pipeline.receipts import ReceiptStore
 from shared.pipeline.roadguard import RoadGuard
 from shared.pipeline.seat_policy import SeatPolicy
+from shared.security.intent_firewall import intent_firewall_check
 
 
 logger = logging.getLogger("pipeline.adapter")
+
+
+def _intent_dict_for_firewall(intent: Dict[str, Any]) -> Dict[str, Any]:
+    """Project the legacy intent dict into the shape the Intent
+    Firewall expects. The firewall reads brain_id, runtime_origin,
+    action, lane, broker_directive plus any HIGH_RISK_FIELDS
+    (reasoning, metadata, tool_payload, memory_write, freeform_notes,
+    broker_directive) that happen to be on the intent.
+
+    Doctrine: this is a read-only projection. The firewall MUST NOT
+    mutate the intent; we only pass the fields it cares about so a
+    legacy intent missing `runtime_origin` is treated as in-process
+    (the auto-router runs in-process).
+    """
+    out: Dict[str, Any] = {
+        "brain_id": str(
+            intent.get("brain_id") or intent.get("stack") or ""
+        ).lower(),
+        "runtime_origin": intent.get("runtime_origin") or "in_process",
+        "lane": str(intent.get("lane") or "").lower(),
+        "action": str(intent.get("action") or "HOLD").upper(),
+        "broker_directive": intent.get("broker_directive"),
+    }
+    # HIGH_RISK_FIELDS — pass through if present so the scanner can
+    # inspect them. Missing fields are simply skipped.
+    for field in ("reasoning", "metadata", "memory_write",
+                  "tool_payload", "freeform_notes", "signed_source",
+                  "research_ts"):
+        if field in intent and intent[field] is not None:
+            out[field] = intent[field]
+    return out
+
+
+def _firewall_blocked_receipt(
+    intent: Dict[str, Any],
+    requested_notional: float,
+    fw_receipt: Dict[str, Any],
+) -> PipelineReceipt:
+    """Build a PipelineReceipt for an intent the firewall refused.
+    Mirrors the shape `run_execution_pipeline` produces so downstream
+    consumers (auto-router status, /why endpoint, UI) don't need a
+    special case for firewall blocks."""
+    return PipelineReceipt(
+        intent_id=str(intent.get("intent_id") or uuid.uuid4()),
+        brain_id=str(intent.get("stack") or intent.get("brain_id") or "").lower(),
+        lane=str(intent.get("lane") or "").lower(),
+        symbol=str(intent.get("symbol") or "").upper(),
+        action=str(intent.get("action") or "HOLD").upper(),
+        confidence=float(intent.get("confidence") or 0.0),
+        final_status="BLOCKED",
+        final_reason=str(fw_receipt.get("reason") or "MYTHOS_BLOCKED"),
+        restriction_source="firewall",
+        requested_notional=float(requested_notional or 0.0),
+        final_notional=0.0,
+        broker_called=False,
+        autonomy_mode="",
+        governor_multiplier=1.0,
+        evidence_snapshot={
+            "firewall": {
+                "severity": fw_receipt.get("severity"),
+                "deploy_phase": fw_receipt.get("deploy_phase"),
+                "lockdown_triggered": fw_receipt.get("lockdown_triggered"),
+                "would_have_severity": fw_receipt.get("would_have_severity"),
+            },
+        },
+        ts=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 def _opinion_from_intent(intent: Dict[str, Any], requested_notional: float) -> BrainOpinion:
@@ -144,8 +225,42 @@ async def run_unified_for_intent(
     requested_notional: float,
 ) -> Dict[str, Any]:
     """Top-level entry point used by the auto-router when the flag
-    is on. Returns the legacy verdict dict."""
+    is on. Returns the legacy verdict dict.
+
+    Stage 0 (Intent Firewall): security pre-check. Blocks ONLY for
+    security violations — never for trading logic. In OBSERVE phase
+    (the default), blocks are downgraded to WARN and the intent
+    proceeds; the would-have-blocked reason is preserved on the
+    receipt for audit. In BLOCK phase, a firewall block short-
+    circuits the pipeline and writes a BLOCKED receipt with
+    `restriction_source="firewall"`.
+    """
+    # Stage 0 — Intent Firewall (security only).
+    fw_receipt = intent_firewall_check(_intent_dict_for_firewall(intent))
+    if not fw_receipt.get("allowed", True):
+        receipt = _firewall_blocked_receipt(intent, requested_notional, fw_receipt)
+        await ReceiptStore().write(receipt)
+        logger.warning(
+            "intent_firewall_blocked intent=%s brain=%s lane=%s symbol=%s "
+            "reason=%s severity=%s phase=%s",
+            receipt.intent_id, receipt.brain_id, receipt.lane, receipt.symbol,
+            receipt.final_reason, fw_receipt.get("severity"),
+            fw_receipt.get("deploy_phase"),
+        )
+        return _verdict_from_receipt(receipt)
+
     opinion = _opinion_from_intent(intent, requested_notional)
+    # Stamp the firewall receipt onto the opinion's evidence so the
+    # /why endpoint can surface "passed firewall in OBSERVE mode"
+    # even when the firewall didn't block. Cheap, audit-grade.
+    opinion.evidence["firewall"] = {
+        "allowed": fw_receipt.get("allowed"),
+        "reason": fw_receipt.get("reason"),
+        "severity": fw_receipt.get("severity"),
+        "deploy_phase": fw_receipt.get("deploy_phase"),
+        "would_have_severity": fw_receipt.get("would_have_severity"),
+    }
+
     receipt = await run_execution_pipeline(
         opinion,
         seat_policy=SeatPolicy(),

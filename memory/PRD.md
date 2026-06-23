@@ -11090,6 +11090,37 @@ File: `shared/learning_ladder.py`.
   surfacing), Stripe-flow telemetry from risedual.ai → MC, dashboard for per-tier
   request rates against `/api/public/*`.
 
+## 5-Stage Pipeline Doctrine (locked 2026-06-22)
+
+The unified execution pipeline runs the following stages in strict order. Each
+stage emits exactly one verdict; the receipt's `restriction_source` field
+identifies which stage stopped the trade (or which one signed off on it).
+
+    Brain  →  Intent Firewall  →  Seat  →  Trade Governor  →  RoadGuard  →  Broker
+    (HOLD)    (security only)    (auth.)   (size modifier)    (safety)     (exec.)
+
+| Stage           | Module                                   | Can block? | What it owns                                                    |
+| :-------------- | :--------------------------------------- | :--------- | :-------------------------------------------------------------- |
+| Brain           | `shared/brains/`                         | No (HOLD)  | Opinion, confidence, requested notional, reasoning              |
+| Intent Firewall | `shared/security/intent_firewall.py`     | Yes        | Prompt injection, secret exfil, broker directives, memory pois. |
+| Seat            | `shared/pipeline/seat_policy.py`         | Yes        | ALLOW/BLOCK on authority; autonomy_mode (observe/shadow/etc.)   |
+| Trade Governor  | `shared/pipeline/governor.py`            | No (mod.)  | `risk_multiplier` based on regime + brain doctrine packet       |
+| RoadGuard       | `shared/pipeline/roadguard.py`           | Yes        | Spread quality, close buffer, hard-stop safety binary checks    |
+| Broker          | `shared/broker_router.py`                | Yes (err.) | Webull / Kraken submission; broker errors → BROKER_ERROR        |
+
+**Stage 0 (Intent Firewall) rollout discipline (2026-06-22)**:
+- Default deploy phase: `OBSERVE` (no blocking; receipts stamped only).
+  Controlled by `MYTHOS_DEPLOY_PHASE` env var; valid values `OBSERVE | BLOCK | LOCKDOWN`.
+- Once the OBSERVE-phase false-positive rate is baselined from logs, flip to
+  `BLOCK`. `LOCKDOWN` is reserved for confirmed live incidents.
+- Wired in `shared/pipeline/adapter.py::run_unified_for_intent` — Stage 0 runs
+  on the raw legacy intent dict (where `reasoning`, `metadata`, `tool_payload`
+  etc. live) BEFORE the dict is projected into a `BrainOpinion`. This lets the
+  firewall scan the prose fields without polluting the typed pipeline contract.
+- Integration tests: `tests/test_intent_firewall_pipeline_integration_2026_06_22.py`
+  (5 cases — BLOCK-on-injection, OBSERVE-no-block, LOCKDOWN-severity, clean
+  pass-through, evidence-stamp).
+
 ## User Personas
 - **Operator (Admin)** — single seeded role today. Reads dashboards, observes
   receipts, validates that all stacks remain in observation mode.

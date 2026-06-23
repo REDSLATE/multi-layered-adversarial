@@ -1,3 +1,44 @@
+## 2026-06-22 — Intent Firewall wired into pipeline (Stage 0)
+
+### What shipped
+1. **`shared/pipeline/adapter.py`** — `run_unified_for_intent` now runs Stage 0
+   (Intent Firewall) on the raw legacy intent dict BEFORE projecting into
+   `BrainOpinion`. Firewall blocks short-circuit the pipeline with a receipt
+   whose `restriction_source="firewall"`. Firewall WARNs/CLEARs are stamped
+   onto `opinion.evidence["firewall"]` for the /why endpoint.
+2. **`shared/pipeline/models.py`** — `RestrictionSource` Literal extended with
+   `"firewall"` so the typed contract reflects the new stage.
+3. **`tests/test_intent_firewall_2026_06_22.py`** — final failing case fixed
+   (`test_structured_field_substring_match_blocks_even_midstring` — replaced
+   non-matching vocabulary "override all checks" with the action pattern
+   "override the brain" so the test exercises the actual compound rule).
+   All 11 cases now pass.
+4. **`tests/test_intent_firewall_pipeline_integration_2026_06_22.py`** (new) —
+   5 cases locking the pipeline wiring: BLOCK-phase injection short-circuits,
+   OBSERVE-phase does NOT block, LOCKDOWN-severity blocks under BLOCK phase,
+   clean intent reaches downstream pipeline, firewall verdict stamped on
+   evidence even when not blocking.
+
+### Rollout discipline
+- Default phase: `OBSERVE` (set via `MYTHOS_DEPLOY_PHASE` env var). No blocking;
+  intents are stamped only. Use this to baseline false-positive rate.
+- Flip to `BLOCK` once OBSERVE logs show the false-positive rate is acceptable.
+- `LOCKDOWN` reserved for confirmed live incidents.
+
+### Verified
+- `pytest tests/test_intent_firewall_2026_06_22.py
+         tests/test_intent_firewall_pipeline_integration_2026_06_22.py
+         tests/test_unified_pipeline_2026_02_20.py
+         tests/test_auto_router_terminal_writeback_2026_06_22.py
+         tests/test_auto_submit_chain_audit_guarantee.py
+         tests/test_seat_policy_current_holder_2026_06_19.py
+         tests/test_roadguard_webull_close_buffer_2026_02_20.py`
+  → 47 passed.
+- Backend `/api/health` returns 200 with the wired firewall.
+
+---
+
+
 ## 2026-02-19 (root-cause analysis) — "Why are we not trading?" smoking gun
 
 ### Operator pain point

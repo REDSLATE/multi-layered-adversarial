@@ -23,7 +23,7 @@ FinalStatus = Literal[
     "SUBMITTED",           # broker accepted
     "BROKER_ERROR",        # broker raised
 ]
-RestrictionSource = Literal["brain", "seat", "roadguard", "broker"]
+RestrictionSource = Literal["brain", "firewall", "seat", "roadguard", "broker"]
 
 
 @dataclass
