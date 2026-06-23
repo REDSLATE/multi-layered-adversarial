@@ -1,3 +1,92 @@
+## 2026-06-22e — Spread-quality-aware RoadGuard (sentinel poison fix)
+
+### Operator pin (verbatim)
+> "Do not let 9999 bps enter doctrine, governor, or RoadGuard as if
+> it's real. That's sentinel poison. The fix is not to raise the
+> equity spread cap. The fix is to make spread data trustworthy
+> before RoadGuard sees it."
+> "if spread_quality == 'live': block_if(spread_bps > cap)
+>  else: warn_only('spread_untrusted')"
+
+### Why this exists
+
+Investigation revealed 1,523 equity intents (24% of dry-run blocks
+in 72h) failed `roadguard_spread_floor`. Sampled spreads:
+  - NVDA: 121 bps consistently (real intraday <3 bps)
+  - AAPL: 195 bps (real <2 bps)
+  - AAL: 1,332 bps (13% wide — implausible)
+  - ABNB: 4,002 bps (40% wide)
+  - A (Agilent): **9,999 bps** — Webull's no-quote sentinel
+
+By-hour analysis showed 85% of blocks happen during extended hours
+when bid-ask widens 10–100x, and the same five symbols return the
+exact same spread across hundreds of intents → not real market
+structure, but stale or sentinel data.
+
+### Doctrine implemented
+
+**Enricher** (`shared/snapshot_enrich/equity_doctrine.py`):
+
+Every equity spread is now tagged with one of three qualities:
+
+  - `sentinel` — `spread_bps >= 999.0` (≥10% bid-ask is implausible
+    during any session; matches Webull's no-quote pattern)
+  - `stale`    — `quote_age_seconds > 15.0` OR no timestamp on the
+    snapshot (live-trading doctrine: untimed data is untrusted)
+  - `live`     — fresh, plausible quote — RoadGuard owns the kill
+
+Snapshot rows now carry `spread_quality`, `quote_age_sec`, and a
+`spread_quality_emitted_at` epoch. `_quote_age_seconds(snap)`
+parses Webull's `mkTradeTimeTs` (ms-epoch) and `mkTradeTime` (ET
+ISO/string) formats. Sentinel detection emits a loud
+`SENTINEL_SPREAD` log warning.
+
+**RoadGuard** (`shared/execution.py:roadguard_spread_floor`):
+
+```
+if lane == "equity" and spread_quality in (None, "stale", "sentinel"):
+    pass with spread_untrusted=true, spread_quality=...
+else:
+    block if spread_bps > cap (live quotes only)
+```
+
+Audit row preserves the wide-spread signal via
+`spread_untrusted: true` so operators still see the issue without
+losing the trade to a number that isn't real. RoadGuard remains
+authoritative for genuinely-bad market structure (live spreads >
+50 bps still hard-block).
+
+### Net effect
+
+Previously: 1,523 spread-poisoned intents hard-blocked at the dry-
+run gate. Now: those same intents pass `roadguard_spread_floor`
+with `spread_untrusted: true`, flow into Governor + RoadGuard's
+other gates, and either execute or fail on a real reason.
+
+Genuine wide-but-live spreads (regular hours, NVDA actually showing
+60 bps in a flash-crash moment) still hard-block — the quality tag
+is not a bypass, only a quality gate on the upstream signal.
+
+### Touched
+  - EDIT: `backend/shared/snapshot_enrich/equity_doctrine.py`
+    (added `_quote_age_seconds`, tagged spread output)
+  - EDIT: `backend/shared/execution.py`
+    (RoadGuard now reads `spread_quality` and warn-passes when
+    not `live`)
+  - NEW:  `backend/tests/test_roadguard_spread_quality_2026_06_22.py`
+    (7 tests pinning the doctrine)
+
+### Regression
+7/7 new tests pass. Equity-doctrine-enricher suite 11/11 pass.
+Unified-pipeline suite 11/11 pass. Auto-submit chain suite 23/23
+pass. Funnel/seat-policy/legacy-wrapper/auto-router/hot-brain
+suite 89/89 pass.
+
+Backend reload clean.
+
+---
+
+
 ## 2026-06-22d — Prod-only `/api/intents` 500 root cause + UI label refresh
 
 ### Operator pin

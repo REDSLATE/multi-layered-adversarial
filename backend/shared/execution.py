@@ -517,6 +517,18 @@ async def _evaluate_gates(
     # (not killed) so the system can still learn from marginal fills.
     snapshot = intent.get("snapshot") or {}
     spread_bps_raw = snapshot.get("spread_bps")
+    # 2026-06-22 — operator directive: "Do not let 9999 bps enter
+    # doctrine, governor, or RoadGuard as if it's real. That's
+    # sentinel poison." The enricher now tags every spread with one
+    # of {"live", "stale", "sentinel"}. RoadGuard only hard-blocks
+    # when the upstream data quality is `live`; otherwise it
+    # warn-passes so the operator sees the issue without losing the
+    # trade to a number that probably isn't real. RoadGuard remains
+    # authoritative for actually-bad market structure — it just
+    # refuses to take orders from poisoned data.
+    spread_quality_tag = (
+        snapshot.get("spread_quality") or ""
+    ).strip().lower() or None
     LANE_SPREAD_CAP = {
         "crypto": 200.0,   # 2.00% — only kill truly broken crypto markets
         "equity": 50.0,    # 0.50% — equities should be much tighter
@@ -586,18 +598,45 @@ async def _evaluate_gates(
                 "reason": f"roadguard inactive for lane={lane_for_roadguard!r}",
             })
         else:
-            passed = spread_bps_val <= spread_cap
-            gates.append({
-                "name": "roadguard_spread_floor",
-                "passed": passed,
-                "reason": (
-                    f"spread {spread_bps_val:.2f} bps ≤ {spread_cap:.0f} bps cap "
-                    f"(lane={lane_for_roadguard})"
-                    if passed else
-                    f"ROADGUARD_SPREAD_CAP — spread {spread_bps_val:.2f} bps > "
-                    f"{spread_cap:.0f} bps cap (lane={lane_for_roadguard})"
-                ),
-            })
+            # ── Quality-aware cap evaluation (2026-06-22) ──────────
+            # Only `live` quotes are authoritative. `stale` and
+            # `sentinel` quotes degrade RoadGuard to warn-only — the
+            # operator still sees the wide-spread signal in the audit
+            # row (`spread_untrusted: true`), but the intent is NOT
+            # killed on data we can't trust. The 9999-bps sentinel
+            # was killing ~1,500 equity intents/72h with what was
+            # essentially Webull's "no quote" placeholder.
+            if (
+                lane_for_roadguard == "equity"
+                and spread_quality_tag in (None, "stale", "sentinel")
+            ):
+                gates.append({
+                    "name": "roadguard_spread_floor",
+                    "passed": True,
+                    "spread_untrusted": True,
+                    "spread_quality": spread_quality_tag or "unknown",
+                    "reason": (
+                        f"roadguard warn-only — spread {spread_bps_val:.2f} "
+                        f"bps from {spread_quality_tag or 'untimed'} quote; "
+                        f"RoadGuard hard-blocks only on `live` quotes "
+                        f"(lane={lane_for_roadguard}). Operator: investigate "
+                        f"Webull snapshot freshness if this persists."
+                    ),
+                })
+            else:
+                passed = spread_bps_val <= spread_cap
+                gates.append({
+                    "name": "roadguard_spread_floor",
+                    "passed": passed,
+                    "spread_quality": spread_quality_tag or "live",
+                    "reason": (
+                        f"spread {spread_bps_val:.2f} bps ≤ {spread_cap:.0f} bps cap "
+                        f"(lane={lane_for_roadguard}, quality=live)"
+                        if passed else
+                        f"ROADGUARD_SPREAD_CAP — spread {spread_bps_val:.2f} bps > "
+                        f"{spread_cap:.0f} bps cap (lane={lane_for_roadguard}, quality=live)"
+                    ),
+                })
 
     # ─── 6.0b R:R floor (2026-05-27, Phase A — equity-only, 3:1) ─────
     # Doctrine: every equity entry intent (BUY / SHORT) must clear a

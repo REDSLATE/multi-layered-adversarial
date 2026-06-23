@@ -206,6 +206,48 @@ def _spread_bps(bid: float, ask: float, mid: float) -> Optional[float]:
     return (ask - bid) / mid * 10000.0
 
 
+def _quote_age_seconds(snap: Dict[str, Any]) -> Optional[float]:
+    """Best-effort quote age in seconds from a Webull equity_snapshot
+    row.
+
+    Webull's snapshot payload exposes several timestamp fields
+    depending on session: `tradeTime`, `mkTradeTime`, `mkTradeTimeTs`
+    (ms epoch). We trust any of them when present. ABSENCE means the
+    snapshot didn't carry a timestamp — the caller should treat the
+    quote as untimed (downgraded to `stale` so RoadGuard refuses to
+    hard-block on it).
+    """
+    import time as _time
+    if not isinstance(snap, dict):
+        return None
+    # ms-epoch field (preferred — least ambiguity)
+    ts_ms = snap.get("mkTradeTimeTs") or snap.get("tradeTimeTs")
+    if ts_ms:
+        try:
+            return max(0.0, _time.time() - float(ts_ms) / 1000.0)
+        except (TypeError, ValueError):
+            pass
+    # ISO/string field — Webull historically formats as
+    # "2026-06-22 15:43:21" in America/New_York.
+    iso = snap.get("mkTradeTime") or snap.get("tradeTime")
+    if iso:
+        try:
+            from datetime import datetime as _dt
+            # Try ISO first
+            try:
+                parsed = _dt.fromisoformat(str(iso).replace("Z", "+00:00"))
+            except ValueError:
+                # Fallback: Webull "YYYY-MM-DD HH:MM:SS" in ET; treat
+                # as UTC-4 (EDT) — see _hour_et() rationale above.
+                from datetime import timezone, timedelta
+                parsed = _dt.strptime(str(iso), "%Y-%m-%d %H:%M:%S")
+                parsed = parsed.replace(tzinfo=timezone(timedelta(hours=-4)))
+            return max(0.0, _time.time() - parsed.timestamp())
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
 def _enrich_sync(symbol: str, base: Dict[str, Any]) -> Dict[str, Any]:
     """Synchronous core. Called from thread pool by the async wrapper."""
     from shared.market_data.webull_quotes import get_quotes_client  # noqa: WPS433
@@ -249,6 +291,52 @@ def _enrich_sync(symbol: str, base: Dict[str, Any]) -> Dict[str, Any]:
         sp = _spread_bps(bid, ask, price)
         if sp is not None:
             out["spread_bps"] = round(sp, 2)
+            # ── Spread-source quality tag (2026-06-22 operator pin) ──
+            # "Do not let 9999 bps enter doctrine, governor, or
+            # RoadGuard as if it's real. That's sentinel poison."
+            #
+            # Tag every spread with one of three qualities so the
+            # downstream RoadGuard gate can decide whether to BLOCK
+            # (live data is wide) or WARN (data itself is suspect):
+            #
+            #   sentinel  – obvious nonsense (≥999 bps = ≥10% wide;
+            #               Webull's no-quote sentinel returns ~9999)
+            #   stale     – snapshot returned a value but the quote
+            #               timestamp is >15s old (live trading
+            #               doctrine: anything older than 15s is
+            #               not actionable for spread-cap decisions)
+            #   live      – fresh, plausible quote — RoadGuard owns
+            #               the kill in this case
+            #
+            # The quote_ts is best-effort from Webull's snapshot
+            # `tradeTime` / `mkTradeTime` if present; absence
+            # downgrades to "stale" rather than "live" so we never
+            # falsely promote an untimed snapshot to authoritative.
+            import time as _time
+            sentinel_threshold_bps = 999.0
+            stale_threshold_sec = 15.0
+            quote_age_sec = _quote_age_seconds(snap)
+            if sp >= sentinel_threshold_bps:
+                quality = "sentinel"
+            elif quote_age_sec is None or quote_age_sec > stale_threshold_sec:
+                quality = "stale"
+            else:
+                quality = "live"
+            out["spread_quality"] = quality
+            out["quote_age_sec"] = (
+                round(quote_age_sec, 2) if quote_age_sec is not None else None
+            )
+            out["spread_quality_emitted_at"] = _time.time()
+            # Loud diagnostic when sentinel detected — operator
+            # explicitly requested visibility into "9999 bps poison".
+            if quality == "sentinel":
+                logger.warning(
+                    "SENTINEL_SPREAD detected sym=%s bid=%.4f ask=%.4f "
+                    "mid=%.4f spread_bps=%.1f — degrading RoadGuard to "
+                    "warn-only; investigate Webull snapshot quality "
+                    "for this symbol",
+                    sym, bid, ask, price, sp,
+                )
 
     instr = client.instrument(sym)
     out["market_cap_band"] = _market_cap_band(sym, instr)
