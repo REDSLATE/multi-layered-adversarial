@@ -220,12 +220,56 @@ async def enrich_snapshot_spread(
 
     enriched = dict(snapshot or {})
 
+    # ── Spread-quality tagger (2026-06-22, operator pin) ──────────
+    # "Do not let 9999 bps enter doctrine, governor, or RoadGuard
+    # as if it's real." Every code path below sets `spread_quality`
+    # on the enriched snapshot so RoadGuard can refuse to authorize
+    # a hard-block on untrusted data. The taxonomy is:
+    #
+    #   live      — fresh, source-authoritative quote (Kraken
+    #               public ticker, or an upstream Webull snapshot
+    #               that already self-tagged `live`)
+    #   stale     — known-old or cache-derived (indicator cache hit)
+    #   sentinel  — value >= 999 bps OR fallback ladder exhausted
+    #
+    # Sentinel detection runs at the END as a defense-in-depth
+    # against any positive value that's still >= 999 (Webull's
+    # no-quote pattern). Preserved quality tags from upstream
+    # (e.g. equity_doctrine.py's Webull-timestamp-aware tagger)
+    # take precedence — we do not downgrade an authoritative
+    # "live" or "stale" already set by the caller.
+    def _finalize_quality(src: str) -> None:
+        # Upstream caller already tagged → respect it unless it's
+        # demonstrably wrong (>=999 with a non-sentinel tag).
+        existing = enriched.get("spread_quality")
+        sb = enriched.get("spread_bps")
+        if isinstance(sb, (int, float)) and sb >= 999.0:
+            enriched["spread_quality"] = "sentinel"
+            return
+        if existing in ("live", "stale", "sentinel"):
+            return
+        if src == SRC_SENTINEL:
+            enriched["spread_quality"] = "sentinel"
+        elif src == SRC_MC_KRAKEN:
+            enriched["spread_quality"] = "live"
+        elif src == SRC_MC_INDICATOR_CACHE:
+            enriched["spread_quality"] = "stale"
+        elif src in (SRC_BRAIN, SRC_MC_DERIVED):
+            # No timestamp on the brain-supplied or bid/ask path —
+            # operator's spec defaults to "live" when age is
+            # unknown. RoadGuard still hard-blocks if the *value*
+            # exceeds the lane cap.
+            enriched["spread_quality"] = "live"
+        else:
+            enriched["spread_quality"] = "live"
+
     # Step 1 — brain-supplied.
     v = _from_brain_snapshot(enriched)
     diag["attempts"].append({"source": SRC_BRAIN, "got": v})
     if v is not None:
         enriched["spread_bps"] = v
         enriched["spread_source"] = SRC_BRAIN
+        _finalize_quality(SRC_BRAIN)
         diag["elapsed_ms"] = round((time.monotonic() - t0) * 1000.0, 2)
         return enriched, diag
 
@@ -235,6 +279,7 @@ async def enrich_snapshot_spread(
     if v is not None:
         enriched["spread_bps"] = v
         enriched["spread_source"] = SRC_MC_DERIVED
+        _finalize_quality(SRC_MC_DERIVED)
         diag["elapsed_ms"] = round((time.monotonic() - t0) * 1000.0, 2)
         return enriched, diag
 
@@ -244,6 +289,7 @@ async def enrich_snapshot_spread(
     if v is not None:
         enriched["spread_bps"] = v
         enriched["spread_source"] = SRC_MC_INDICATOR_CACHE
+        _finalize_quality(SRC_MC_INDICATOR_CACHE)
         diag["elapsed_ms"] = round((time.monotonic() - t0) * 1000.0, 2)
         return enriched, diag
 
@@ -254,13 +300,15 @@ async def enrich_snapshot_spread(
         if v is not None:
             enriched["spread_bps"] = v
             enriched["spread_source"] = SRC_MC_KRAKEN
+            _finalize_quality(SRC_MC_KRAKEN)
             diag["elapsed_ms"] = round((time.monotonic() - t0) * 1000.0, 2)
             return enriched, diag
 
-    # Step 5 — sentinel. RoadGuard will fail closed with a specific
-    # source tag; the operator can see MC tried but no source had data.
+    # Step 5 — sentinel. RoadGuard will warn-pass with
+    # spread_untrusted=true (see roadguard_spread_floor branch).
     enriched["spread_bps"] = SPREAD_BPS_UNKNOWN
     enriched["spread_source"] = SRC_SENTINEL
+    _finalize_quality(SRC_SENTINEL)
     diag["attempts"].append({"source": SRC_SENTINEL, "got": SPREAD_BPS_UNKNOWN})
     diag["elapsed_ms"] = round((time.monotonic() - t0) * 1000.0, 2)
     return enriched, diag

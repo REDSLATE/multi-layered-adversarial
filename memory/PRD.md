@@ -1,3 +1,111 @@
+## 2026-06-22f — Spread-quality breakdown endpoint + universal quality tagging
+
+### Operator pin (verbatim)
+> "Yes — add the /api/admin/spread-quality/breakdown endpoint.
+>  That turns this from a hidden data poison issue into an observable
+>  feed-health signal."
+> "Webull data bad everywhere vs Webull data bad only on
+>  thin/unsupported symbols."
+> "That explains why it wasn't going after easily made wins."
+
+### Why this matters
+
+The earlier diagnosis showed RoadGuard was rejecting the most-liquid
+intraday names (NVDA 329 blocks, AAPL 72, AAL 127) because Webull
+was returning poisoned spread data. The 2026-06-22e patch stopped
+the kill, but the operator still couldn't see WHICH symbols had
+bad feeds and WHEN — that's what this endpoint surfaces.
+
+### What shipped
+
+**1. Universal quality tagging in `spread_enrichment.py`**
+
+The earlier 2026-06-22e patch only tagged spreads inside the
+`equity_doctrine.py` enricher (called from one admin route). The
+actual hot path is `enrich_snapshot_spread()` which runs on EVERY
+intent submission. Added `_finalize_quality(src)` that stamps
+`spread_quality` based on the source ladder:
+
+  - `SRC_SENTINEL` or `spread_bps >= 999` → `"sentinel"`
+  - `SRC_MC_INDICATOR_CACHE` → `"stale"` (cache could be old)
+  - `SRC_MC_KRAKEN` (crypto only) → `"live"` (live ticker)
+  - `SRC_BRAIN` / `SRC_MC_DERIVED` → `"live"` (no timestamp on
+    these paths; per operator spec, missing-age defaults to live)
+  - Upstream tags from `equity_doctrine.py` (timestamp-aware)
+    take precedence — never demote a `live` already set.
+
+**2. New endpoint: `GET /api/admin/spread-quality/breakdown`**
+
+Query params: `hours=24` (≤168), `top=25` (≤500), `lane=equity|crypto|all`
+
+Read-only aggregation over `shared_intents.snapshot.spread_quality`.
+Returns:
+
+  - `totals: {live, stale, sentinel}` — global feed-health snapshot
+  - `untagged_pre_patch` — count of pre-2026-06-22 legacy rows
+    (gives the operator a denominator for "is my window seeing
+    enough new intents yet?")
+  - `intents_observed` — total in window
+  - `by_symbol[]` — ranked DESC by (stale+sentinel, total) so the
+    worst feed-health offenders appear first. Each row carries
+    `live/stale/sentinel/total/untrusted_pct`.
+
+Operator's stated diagnostic flow now works:
+  - All symbols 100% untrusted → Webull-wide outage
+  - Only thin names 100% untrusted → expected (no quote coverage)
+  - NVDA suddenly 50% untrusted → escalate to "is Webull rate
+    limiting me?"
+
+**3. Regression test (`test_spread_quality_breakdown_2026_06_22.py`)**
+
+6 tests pinning:
+  - Schema (totals, by_symbol, untagged_pre_patch, intents_observed)
+  - Per-symbol ranking by combined-untrusted
+  - Lane filter exclusion
+  - `top` truncation (large-prod safety)
+  - Unrecognized quality strings → bucketed as untagged (not
+    silently dropped into a real bucket)
+  - Read-only doctrine (write methods raise an AssertionError)
+  - Query-param bounds (hours/top/lane via OpenAPI schema)
+
+### Live smoke (preview, 24h)
+
+```
+totals: {live: 0, stale: 63, sentinel: 3}
+untagged_pre_patch: 1214
+intents_observed: 1280
+top by symbol:
+  NVDA  stale=36 sentinel=0 → 100% untrusted (36 intents)
+  AAL   stale=14 sentinel=0 → 100% untrusted (14 intents)
+  AAPL  stale=7  sentinel=0 → 100% untrusted (7 intents)
+  ABNB  stale=4  sentinel=0 → 100% untrusted (4 intents)
+  AII   stale=0  sentinel=1 → 100% untrusted (1 intent)
+```
+
+Preview reports 0 `live` because preview's brains don't ship
+real-time bid/ask; on prod with `SRC_BRAIN` carrying live data,
+the `live` count should populate immediately after deploy.
+
+### Touched
+  - EDIT: `backend/shared/market_data/spread_enrichment.py`
+    (universal `_finalize_quality` tagger)
+  - NEW:  `backend/routes/admin_spread_quality.py`
+  - EDIT: `backend/server_modules/router_registry.py` (include)
+  - NEW:  `backend/tests/test_spread_quality_breakdown_2026_06_22.py`
+
+### Regression
+32/32 spread-quality + roadguard + sovereign-rollup tests pass.
+Backend reload clean.
+
+### Deploy ordering (per operator)
+1. Deploy 2026-06-22e (RoadGuard quality fix) first.
+2. Confirm `SENTINEL_SPREAD` warnings appear / disappear in
+   prod logs as expected.
+3. Then deploy this batch (universal tagger + breakdown endpoint).
+
+---
+
+
 ## 2026-06-22e — Spread-quality-aware RoadGuard (sentinel poison fix)
 
 ### Operator pin (verbatim)
