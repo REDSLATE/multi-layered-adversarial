@@ -1,3 +1,43 @@
+## 2026-06-23 — Inline "Reset 24h cap" button on Diagnostics blocked panels
+
+### What shipped
+When a LIVE TRADE: BLOCKED panel on the Diagnostics page shows
+`cap_per_day` as the first blocker, a **Reset 24h cap** button is now
+rendered directly inside the First Blocker card. One tap, one
+confirm, the global 24h spend baseline moves to now → the cap
+unblocks immediately.
+
+### Why
+The reset button previously lived only on the Intents ARM panel.
+When the operator sees the cap_per_day block on Diagnostics, they
+shouldn't have to navigate to a different page to unblock — the
+unblock control should be co-located with the block message.
+
+### Scope
+- **Global reset only** (no per-brain selector here). Rationale:
+  the BLOCKED panel reflects the *global* cap math, and the lane
+  (equity / crypto) doesn't map cleanly to a single brain. Per-brain
+  resets remain on the Intents ARM panel where the operator is
+  making brain-level decisions.
+- Audit rows in `execution_receipts` are untouched. Reset doc is
+  stamped with `reason = "operator reset via {lane} LIVE TRADE:
+  BLOCKED panel"` for traceability.
+
+### Files
+- `components/LiveTradeDiagnose.jsx` — added `CapPerDayResetButton`
+  component, rendered inside the First Blocker card when
+  `first_blocker.name === "cap_per_day"`. After reset, the panel
+  re-fetches via the existing `load()` callback so the operator
+  sees the new state immediately.
+
+### Verified
+- JS lint clean
+- Backend `/api/health` 200; reset endpoint still works end-to-end
+  (verified earlier in the session)
+
+---
+
+
 ## 2026-06-22 — Camaro wrap HOLD-rescue tape tie-breaker
 
 ### What shipped

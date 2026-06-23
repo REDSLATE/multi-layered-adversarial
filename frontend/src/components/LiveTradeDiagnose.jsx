@@ -34,6 +34,61 @@ function GateRow({ gate }) {
   );
 }
 
+
+// One-tap inline reset for the daily cap. Only rendered when the
+// first blocker on a LIVE TRADE: BLOCKED panel is `cap_per_day` —
+// the operator sees the block and the unblock button in the same
+// place, no scrolling to a separate ARM panel.
+//
+// Doctrine: posts to `/admin/exposure-caps/reset-daily-spend` with
+// no `brain` field → global reset. This is the right scope here
+// because the BLOCKED panel reflects the global cap math (lane is
+// equity / crypto, not brain). Per-brain resets live in the ARM
+// panel where the operator is making brain-level decisions.
+function CapPerDayResetButton({ lane, onReset }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const handle = useCallback(async () => {
+    if (!window.confirm(
+      "Reset the rolling 24h spend tally to $0?\n\n" +
+      "This is the GLOBAL reset (clears all brains' contributions).\n" +
+      "Audit rows in execution_receipts are NEVER deleted — only the\n" +
+      "baseline used by cap math moves to now. Proceed?",
+    )) return;
+    setBusy(true);
+    setErr("");
+    try {
+      await api.post("/admin/exposure-caps/reset-daily-spend", {
+        reason: `operator reset via ${lane} LIVE TRADE: BLOCKED panel`,
+      });
+      onReset && onReset();
+    } catch (e) {
+      setErr(e?.response?.data?.detail || e.message || "reset failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [lane, onReset]);
+
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      <button
+        onClick={handle}
+        disabled={busy}
+        className="px-3 py-1 border-2 border-rd-warning text-rd-warning font-mono text-[10px] uppercase tracking-widest font-bold hover:bg-rd-warning hover:text-rd-bg disabled:opacity-40 disabled:cursor-not-allowed"
+        data-testid={`live-trade-cap-per-day-reset-${lane}`}
+        title="Wipe the rolling 24h spend tally to $0 (audit rows untouched)"
+      >
+        {busy ? "Resetting…" : "Reset 24h cap"}
+      </button>
+      {err && (
+        <span className="font-mono text-[9px] text-rd-danger break-words">
+          {String(err)}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function LaneCard({ lane, notional }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
@@ -121,6 +176,14 @@ function LaneCard({ lane, notional }) {
               <div className="label-eyebrow text-rd-danger mb-1">First blocker</div>
               <div className="font-mono text-[11px] text-rd-text">{data.first_blocker.name}</div>
               <div className="font-mono text-[10px] text-rd-dim mt-0.5">{data.first_blocker.reason}</div>
+              {/* Operator one-tap unblock: when the first blocker is
+                  the daily cap, surface a Reset 24h button right
+                  here on the panel. Doctrine matches the global
+                  reset on the Intents ARM panel — writes a baseline
+                  timestamp, audit rows untouched. */}
+              {String(data.first_blocker.name || "").toLowerCase() === "cap_per_day" && (
+                <CapPerDayResetButton lane={lane} onReset={load} />
+              )}
             </div>
           )}
 
