@@ -81,6 +81,40 @@ function buildUrl(path, params) {
   return url;
 }
 
+// ── 401 auto-refresh plumbing ────────────────────────────────────
+// In-flight refresh promise. Concurrent 401s share ONE refresh call
+// rather than firing N parallel /auth/refresh requests against the
+// same refresh cookie (which would be wasteful and could trigger
+// downstream rate limits). The first 401 wins; the rest await its
+// resolution.
+let _refreshInFlight = null;
+
+async function tryRefresh() {
+  if (_refreshInFlight) return _refreshInFlight;
+  _refreshInFlight = (async () => {
+    try {
+      const resp = await fetch(`${API}/auth/refresh`, {
+        method: "POST",
+        credentials: "include",   // refresh_token cookie rides here
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!resp.ok) return null;
+      const data = await resp.json().catch(() => null);
+      const newTok = data && data.access_token;
+      if (!newTok) return null;
+      setToken(newTok);
+      return newTok;
+    } catch {
+      return null;
+    } finally {
+      // Single-shot: clear the gate on the next tick so a new 401
+      // wave can trigger a fresh refresh.
+      setTimeout(() => { _refreshInFlight = null; }, 0);
+    }
+  })();
+  return _refreshInFlight;
+}
+
 async function request(method, path, body, cfg = {}) {
   const url = buildUrl(path, cfg.params);
   const headers = { ...(cfg.headers || {}) };
@@ -93,12 +127,42 @@ async function request(method, path, body, cfg = {}) {
     resp = await fetch(url, {
       method,
       headers,
+      // `credentials: include` is REQUIRED so the httpOnly
+      // `refresh_token` cookie set on /api/auth/login rides along
+      // with the implicit refresh attempt on 401 (see `tryRefresh`
+      // below). Without this the refresh round-trip can't see the
+      // refresh cookie and the operator gets stuck in the
+      // post-60-min 401 cascade.
+      credentials: "include",
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (e) {
     const err = new Error(e.message || "Network error");
     err.response = null;
     throw err;
+  }
+
+  // ── 401 auto-refresh + retry ────────────────────────────────────
+  // Doctrine pin (2026-06-24): the access token has a 60-min TTL
+  // (see auth.py `_create_access`). When it expires, every panel on
+  // the dashboard renders inline `HTTP 401` while the sidebar still
+  // shows the operator signed in — visually the operator is "locked
+  // out" without any redirect to /login. Auto-refresh closes that
+  // gap: on a 401, we try /api/auth/refresh once (using the 7-day
+  // httpOnly refresh cookie set at login), persist the new access
+  // token, and retry the original request transparently. If refresh
+  // fails OR we've already retried this request, the 401 surfaces
+  // normally and the caller can decide to redirect.
+  if (resp.status === 401 && !cfg._isRefreshRetry && !path.startsWith("/auth/")) {
+    const newToken = await tryRefresh();
+    if (newToken) {
+      const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` };
+      return request(method, path, body, {
+        ...cfg,
+        headers: retryHeaders,
+        _isRefreshRetry: true,
+      });
+    }
   }
 
   const ct = resp.headers.get("content-type") || "";

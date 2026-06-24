@@ -214,7 +214,14 @@ async def refresh(request: Request, response: Response):
     new_access = _create_access(user["id"], user["email"])
     response.set_cookie("access_token", new_access, httponly=True, secure=True,
                         samesite="none", max_age=3600, path="/")
-    return {"ok": True}
+    # Return the new access token in the response body so the
+    # localStorage-based client can update its bearer copy. Cookie
+    # alone is not enough because the frontend uses
+    # `Authorization: Bearer <token>` (read from localStorage) for
+    # API calls, not the cookie path. Without this, after the 60-min
+    # access token expires the operator sees a 401 cascade across
+    # the entire dashboard — exactly the 2026-06-24 prod symptom.
+    return {"ok": True, "access_token": new_access, "token_type": "bearer"}
 
 
 # ---------- Seeder ----------
