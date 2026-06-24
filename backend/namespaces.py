@@ -124,6 +124,20 @@ KRAKEN_AUDIT_LOG = "kraken_audit_log"
 # demand by the operator.
 BRAIN_ROSTER = "brain_roster"
 ROSTER_AUDIT_LOG = "roster_audit_log"
+
+# Consensus boost (2026-06-24). Non-executor brains' opinions land
+# in `intent_consensus_pool` (TTL'd, 15-min default). When the
+# executor for the same (lane, symbol) later emits, the pool is read
+# and the executor's `confidence` is shifted by ±0.05 per
+# agreeing/disagreeing advisor, capped at ±0.15. The shifted value
+# is what the seat's `confidence_min` floor check uses. Doctrine:
+# fire authority is unchanged (only the executor seat-holder may
+# trigger orders); the boost only affects the floor check.
+# `intent_consensus_telemetry` is the sidecar the post-mortem reads
+# to render the boost story per-executor-intent.
+INTENT_CONSENSUS_POOL = "intent_consensus_pool"
+INTENT_CONSENSUS_TELEMETRY = "intent_consensus_telemetry"
+
 # Per-(brain, role) eligibility matrix. Singleton doc keyed "current".
 # Doctrine: operator-controlled access list deciding WHICH seats each
 # brain is allowed to hold. Like the roster itself, this is descriptive

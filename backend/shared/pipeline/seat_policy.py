@@ -36,6 +36,11 @@ from namespaces import (
 )
 
 from .models import BrainOpinion, SeatVerdict
+from .consensus_pool import (
+    compute_consensus_boost,
+    record_advisory_opinion,
+    record_telemetry,
+)
 
 
 # Lane → executor seat id. Only executor seats place real orders.
@@ -128,12 +133,22 @@ class SeatPolicy:
                 notional_usd=0.0,
             )
         if current_holder != opinion.brain_id:
+            # Non-executor brain. Block as before (fire authority is
+            # unchanged) BUT capture the opinion into the consensus
+            # pool so the actual executor's confidence_min check can
+            # incorporate the non-executor's agreement/disagreement.
+            # Doctrine pin (2026-06-24): the operator is keeping the
+            # 4-seat structure; consensus boost lets all 4 brains
+            # contribute analytically without granting fire authority
+            # to anyone but the pinned executor.
+            block_reason = (
+                f"brain_not_current_seat_holder:"
+                f"{opinion.brain_id}!={current_holder}@{seat_id}"
+            )
+            await record_advisory_opinion(opinion, block_reason)
             return SeatVerdict(
                 decision="BLOCK",
-                reason=(
-                    f"brain_not_current_seat_holder:"
-                    f"{opinion.brain_id}!={current_holder}@{seat_id}"
-                ),
+                reason=block_reason,
                 autonomy_mode=autonomy_mode,
                 notional_usd=0.0,
             )
@@ -151,18 +166,52 @@ class SeatPolicy:
             )
 
         conf_min = float(seat.get("confidence_min", 0.0) or 0.0)
-        if opinion.confidence < conf_min:
+
+        # ── Consensus boost ─────────────────────────────────────────
+        # The executor for this (lane, symbol) is now identified.
+        # Read the consensus pool (15-min window) and shift
+        # `confidence` by ±0.05 per agreeing/disagreeing non-executor
+        # advisor, capped at ±0.15. The shifted value is what we
+        # actually compare against the floor. See
+        # `shared/pipeline/consensus_pool.py` for the full doctrine.
+        consensus = await compute_consensus_boost(opinion)
+        effective_conf = consensus.effective_confidence
+        await record_telemetry(
+            opinion.intent_id, consensus, applied=(consensus.delta != 0.0)
+        )
+
+        if effective_conf < conf_min:
             return SeatVerdict(
                 decision="BLOCK",
-                reason=f"below_seat_confidence_min:{opinion.confidence:.3f}<{conf_min:.3f}",
+                reason=(
+                    f"below_seat_confidence_min:"
+                    f"{effective_conf:.3f}<{conf_min:.3f}"
+                    + (
+                        f" (base {opinion.confidence:.3f} "
+                        f"{'+' if consensus.delta >= 0 else ''}{consensus.delta:.3f} "
+                        f"consensus: {consensus.agree_count}↑/{consensus.disagree_count}↓)"
+                        if consensus.advisor_count > 0
+                        else ""
+                    )
+                ),
                 autonomy_mode=autonomy_mode,
                 notional_usd=0.0,
             )
 
         max_notional = float(seat.get("max_notional_usd", 0.0) or 0.0)
+        # Encode the boost into the verdict reason so the operator
+        # can see at a glance whether consensus moved the floor.
+        if consensus.advisor_count > 0:
+            consensus_suffix = (
+                f" (consensus {consensus.agree_count}↑/"
+                f"{consensus.disagree_count}↓ "
+                f"Δ{'+' if consensus.delta >= 0 else ''}{consensus.delta:.3f})"
+            )
+        else:
+            consensus_suffix = ""
         return SeatVerdict(
             decision="ALLOW",
-            reason="seat_policy_passed",
+            reason="seat_policy_passed" + consensus_suffix,
             autonomy_mode=autonomy_mode,
             notional_usd=max_notional,
         )

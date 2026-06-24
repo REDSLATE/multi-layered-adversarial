@@ -9,8 +9,29 @@ db = client[os.environ["DB_NAME"]]
 
 
 async def ensure_indexes() -> None:
-    # Auth
-    await db.users.create_index("email", unique=True)
+    # ── Consensus pool indexes (2026-06-24) ───────────────────────
+    # Non-executor brains' opinions land in `intent_consensus_pool`.
+    # The seat policy reads it by (lane, symbol, ts) and writes by
+    # appending. TTL 900s = 15 min matches the lookup window.
+    await db.intent_consensus_pool.create_index(
+        [("lane", 1), ("symbol", 1), ("ts", -1)],
+        name="consensus_pool_lookup_idx",
+    )
+    await db.intent_consensus_pool.create_index(
+        "ts",
+        expireAfterSeconds=900,
+        name="consensus_pool_ttl_15m",
+    )
+    # Sidecar telemetry (per-executor-intent boost record). Same TTL.
+    await db.intent_consensus_telemetry.create_index(
+        "intent_id",
+        name="consensus_telemetry_intent_idx",
+    )
+    await db.intent_consensus_telemetry.create_index(
+        "ts",
+        expireAfterSeconds=900,
+        name="consensus_telemetry_ttl_15m",
+    )
     await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
 
     # ── login_attempts (brute-force tracker) ──────────────────────
