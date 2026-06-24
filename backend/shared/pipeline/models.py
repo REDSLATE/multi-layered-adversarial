@@ -10,7 +10,7 @@ analytics, the /why endpoint, and the UI can rely on stable contracts.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Literal
+from typing import Any, Dict, Literal, Optional
 
 
 Action = Literal["BUY", "SELL", "HOLD", "ABSTAIN"]
@@ -46,6 +46,12 @@ class SeatVerdict:
     reason: str
     autonomy_mode: Mode
     notional_usd: float
+    # Consensus provenance (2026-06-24). Populated by SeatPolicy.evaluate
+    # for both ALLOW and BLOCK paths so the receipt can show "we boosted
+    # the floor by +0.10 because Barracuda+Hellcat agreed". None when
+    # consensus didn't apply (e.g. HOLD executor, brain-not-current-
+    # seat-holder reject before the floor check is reached).
+    consensus: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -86,4 +92,15 @@ class PipelineReceipt:
     autonomy_mode: str = ""
     governor_multiplier: float = 1.0
     evidence_snapshot: Dict[str, Any] = field(default_factory=dict)
+    # Consensus provenance (2026-06-24). Carries the five fields the
+    # operator pinned for receipts:
+    #   base_confidence, advisor_boost (= delta), effective_confidence,
+    #   advisor_votes_used (= agree + disagree, HOLD opinions excluded),
+    #   advisor_window_seconds.
+    # `applied: bool` is true iff delta != 0 (operator-friendly flag).
+    # `agree_brains` and `disagree_brains` are list[str] for the
+    # post-mortem detail panel. None on rows where the seat didn't
+    # reach the floor check (e.g. brain_not_current_seat_holder
+    # rejects).
+    consensus: Optional[Dict[str, Any]] = None
     ts: str = ""

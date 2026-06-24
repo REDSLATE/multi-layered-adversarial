@@ -322,9 +322,16 @@ class TestTelemetry:
         row = await db[INTENT_CONSENSUS_TELEMETRY].find_one({"intent_id": "exec1"})
         assert row is not None
         assert row["applied"] is True
-        assert row["delta"] == pytest.approx(0.05)
+        # Doctrine pin (operator spec 2026-06-24): the field is named
+        # `advisor_boost` in the receipt/telemetry, not `delta`.
+        assert row["advisor_boost"] == pytest.approx(0.05)
         assert row["agree_count"] == 1
         assert "barracuda" in row["agree_brains"]
+        # Operator-pinned provenance set:
+        assert row["base_confidence"] == 0.7
+        assert row["effective_confidence"] == pytest.approx(0.75)
+        assert row["advisor_votes_used"] == 1
+        assert row["advisor_window_seconds"] == 900
 
 
 # ── End-to-end through SeatPolicy.evaluate ─────────────────────────
@@ -457,4 +464,7 @@ class TestSeatPolicyIntegration:
         assert row is not None
         assert row["agree_count"] == 1
         assert row["base_confidence"] == 0.9
-        assert row["delta"] == pytest.approx(0.05)
+        assert row["advisor_boost"] == pytest.approx(0.05)
+        assert row["effective_confidence"] == pytest.approx(0.95)
+        assert row["advisor_votes_used"] == 1
+        assert row["advisor_window_seconds"] == 900

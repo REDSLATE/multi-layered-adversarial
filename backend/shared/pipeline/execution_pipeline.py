@@ -93,6 +93,7 @@ async def run_execution_pipeline(
             broker_called=False,
             autonomy_mode=seat.autonomy_mode,
             governor_multiplier=1.0,
+            consensus=seat.consensus,
         )
         await receipt_store.write(receipt)
         return receipt
@@ -107,6 +108,16 @@ async def run_execution_pipeline(
     )
 
     # 5. RoadGuard hard stop.
+    # ──────────────────────────────────────────────────────────────
+    # Doctrine pin (2026-06-24 operator guardrail): consensus advisor
+    # boost CANNOT bypass RoadGuard. RoadGuard checks
+    # trading_controls_disabled / zero_notional / market_closed /
+    # insufficient_buying_power / duplicate_order — NONE of these
+    # consume `confidence`. The advisor boost only moves the seat's
+    # `confidence_min` floor check. A boosted-past-floor intent still
+    # has to clear every RoadGuard stop on its own merit.
+    # See test_roadguard_unaffected_by_consensus_boost_2026_06_24.py
+    # for the explicit regression that pins this.
     road = await roadguard.check(opinion, final_notional)
     if not road.passed:
         receipt = PipelineReceipt(
@@ -118,6 +129,7 @@ async def run_execution_pipeline(
             broker_called=False,
             autonomy_mode=seat.autonomy_mode,
             governor_multiplier=mod.risk_multiplier,
+            consensus=seat.consensus,
         )
         await receipt_store.write(receipt)
         return receipt
@@ -133,6 +145,7 @@ async def run_execution_pipeline(
             broker_called=False,
             autonomy_mode=seat.autonomy_mode,
             governor_multiplier=mod.risk_multiplier,
+            consensus=seat.consensus,
         )
         await receipt_store.write(receipt)
         return receipt
@@ -160,6 +173,7 @@ async def run_execution_pipeline(
             broker_called=broker_called,
             autonomy_mode=seat.autonomy_mode,
             governor_multiplier=mod.risk_multiplier,
+            consensus=seat.consensus,
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception(
@@ -175,6 +189,7 @@ async def run_execution_pipeline(
             broker_called=broker_called,
             autonomy_mode=seat.autonomy_mode,
             governor_multiplier=mod.risk_multiplier,
+            consensus=seat.consensus,
         )
 
     await receipt_store.write(receipt)

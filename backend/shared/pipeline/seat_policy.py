@@ -188,7 +188,7 @@ class SeatPolicy:
                     f"{effective_conf:.3f}<{conf_min:.3f}"
                     + (
                         f" (base {opinion.confidence:.3f} "
-                        f"{'+' if consensus.delta >= 0 else ''}{consensus.delta:.3f} "
+                        f"{'+' if consensus.advisor_boost >= 0 else ''}{consensus.advisor_boost:.3f} "
                         f"consensus: {consensus.agree_count}↑/{consensus.disagree_count}↓)"
                         if consensus.advisor_count > 0
                         else ""
@@ -196,6 +196,7 @@ class SeatPolicy:
                 ),
                 autonomy_mode=autonomy_mode,
                 notional_usd=0.0,
+                consensus=consensus.to_dict(),
             )
 
         max_notional = float(seat.get("max_notional_usd", 0.0) or 0.0)
@@ -205,7 +206,7 @@ class SeatPolicy:
             consensus_suffix = (
                 f" (consensus {consensus.agree_count}↑/"
                 f"{consensus.disagree_count}↓ "
-                f"Δ{'+' if consensus.delta >= 0 else ''}{consensus.delta:.3f})"
+                f"Δ{'+' if consensus.advisor_boost >= 0 else ''}{consensus.advisor_boost:.3f})"
             )
         else:
             consensus_suffix = ""
@@ -214,4 +215,5 @@ class SeatPolicy:
             reason="seat_policy_passed" + consensus_suffix,
             autonomy_mode=autonomy_mode,
             notional_usd=max_notional,
+            consensus=consensus.to_dict(),
         )

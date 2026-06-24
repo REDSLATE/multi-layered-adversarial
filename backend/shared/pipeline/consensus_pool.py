@@ -38,8 +38,11 @@ DEFAULT_BOOST_CAP = 0.15
 DEFAULT_WINDOW_SECONDS = 900   # 15 min — pool TTL AND lookup window
 
 
-# Cache for one request — the seat is constructed per-request so this
-# in-memory cache is request-scoped and never stale.
+# Process-global runtime-flag cache. Survives across requests until
+# `clear_runtime_flags_cache()` is called or the backend restarts.
+# Operator can override any of the three flags via Mongo (no redeploy);
+# the value will then be read on the next cache miss (next request
+# after a backend restart OR explicit cache flush).
 _RUNTIME_FLAGS_CACHE: Dict[str, Any] = {}
 
 
@@ -60,21 +63,44 @@ async def _load_runtime_flag(name: str, default: float) -> float:
 @dataclass
 class ConsensusResult:
     """The seat reads this and uses `effective_confidence` for the
-    floor check. The post-mortem reads it for telemetry."""
+    floor check. The post-mortem reads it for telemetry.
+
+    Field naming (2026-06-24 operator pin for receipt provenance):
+      * base_confidence       — brain's original confidence
+      * advisor_boost         — delta applied (signed; clamped to cap)
+      * effective_confidence  — base + delta, clamped to [0, 1]
+      * advisor_votes_used    — agree + disagree counts (HOLD votes
+                                are present in the pool but DO NOT
+                                count as votes, by doctrine)
+      * advisor_window_seconds— the window the pool was queried for
+    Plus debug detail (agree_brains, disagree_brains) for the
+    post-mortem.
+    """
     base_confidence: float
-    delta: float
+    advisor_boost: float                  # was: delta
     effective_confidence: float
+    advisor_votes_used: int               # agree + disagree (excludes HOLD)
+    advisor_window_seconds: int
     agree_count: int
     disagree_count: int
     agree_brains: List[str] = field(default_factory=list)
     disagree_brains: List[str] = field(default_factory=list)
-    advisor_count: int = 0   # total advisors in window (agree + disagree + other)
+    advisor_count: int = 0                # total advisors in window (incl. HOLD)
+
+    # Backward-compat alias for the older `delta` name still referenced
+    # by tests written against the first cut. Kept as a property so we
+    # don't break the regression suite while the rename settles.
+    @property
+    def delta(self) -> float:
+        return self.advisor_boost
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "base_confidence": round(self.base_confidence, 4),
-            "delta": round(self.delta, 4),
+            "advisor_boost": round(self.advisor_boost, 4),
             "effective_confidence": round(self.effective_confidence, 4),
+            "advisor_votes_used": self.advisor_votes_used,
+            "advisor_window_seconds": self.advisor_window_seconds,
             "agree_count": self.agree_count,
             "disagree_count": self.disagree_count,
             "agree_brains": self.agree_brains,
@@ -133,10 +159,13 @@ async def compute_consensus_boost(
       - executor HOLD → no boost (no directional reference)
     """
     base = float(opinion.confidence)
+    no_boost_window = int(DEFAULT_WINDOW_SECONDS)
     no_boost = ConsensusResult(
         base_confidence=base,
-        delta=0.0,
+        advisor_boost=0.0,
         effective_confidence=base,
+        advisor_votes_used=0,
+        advisor_window_seconds=no_boost_window,
         agree_count=0,
         disagree_count=0,
         advisor_count=0,
@@ -149,11 +178,15 @@ async def compute_consensus_boost(
         "consensus_boost_per_brain", DEFAULT_BOOST_PER_BRAIN
     )
     cap = await _load_runtime_flag("consensus_boost_cap", DEFAULT_BOOST_CAP)
-    window_s = await _load_runtime_flag(
+    window_s = int(await _load_runtime_flag(
         "consensus_window_seconds", DEFAULT_WINDOW_SECONDS
-    )
+    ))
 
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_s)
+    # `.sort('ts', -1)` makes the dedup-by-brain deterministic: when a
+    # brain emitted multiple advisories in the window, the MOST RECENT
+    # one wins (operator-visible: "brain X reversed BUY→SELL → only
+    # SELL counts").
     rows = await db[INTENT_CONSENSUS_POOL].find(
         {
             "lane": opinion.lane,
@@ -163,27 +196,24 @@ async def compute_consensus_boost(
             # (e.g. if the executor seat changed within the window).
             "brain_id": {"$ne": opinion.brain_id},
         },
-        {"_id": 0, "brain_id": 1, "action": 1},
-    ).to_list(length=100)
+        {"_id": 0, "brain_id": 1, "action": 1, "ts": 1},
+    ).sort("ts", -1).to_list(length=100)
 
     opposite = {"BUY": "SELL", "SELL": "BUY"}[opinion.action]
     seen_brain_actions: Dict[str, str] = {}
-    # If a brain emitted multiple advisories in the window, take the
-    # MOST RECENT one as their latest read. The query above doesn't
-    # sort; we iterate and overwrite. Simpler than a $group aggregation
-    # for what is typically <10 rows.
+    # Iterate newest-first; first occurrence per brain wins.
     for r in rows:
         b = r.get("brain_id")
         a = r.get("action")
-        if b and a:
+        if b and a and b not in seen_brain_actions:
             seen_brain_actions[b] = a
 
-    agree_brains = [b for b, a in seen_brain_actions.items() if a == opinion.action]
-    disagree_brains = [b for b, a in seen_brain_actions.items() if a == opposite]
-
-    # Sort for deterministic telemetry output.
-    agree_brains.sort()
-    disagree_brains.sort()
+    agree_brains = sorted(
+        [b for b, a in seen_brain_actions.items() if a == opinion.action]
+    )
+    disagree_brains = sorted(
+        [b for b, a in seen_brain_actions.items() if a == opposite]
+    )
 
     raw_delta = per_brain * (len(agree_brains) - len(disagree_brains))
     delta = max(-cap, min(cap, raw_delta))
@@ -191,8 +221,10 @@ async def compute_consensus_boost(
 
     return ConsensusResult(
         base_confidence=base,
-        delta=delta,
+        advisor_boost=delta,
         effective_confidence=effective,
+        advisor_votes_used=len(agree_brains) + len(disagree_brains),
+        advisor_window_seconds=window_s,
         agree_count=len(agree_brains),
         disagree_count=len(disagree_brains),
         agree_brains=agree_brains,
