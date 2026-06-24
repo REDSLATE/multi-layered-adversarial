@@ -1,3 +1,103 @@
+## 2026-02-24 — Brain Metrics tile (5-KPI multi-day observation surface)
+
+### Operator pin (verbatim)
+> "We need to track these over the next few days
+>  HOLD count, Entropy average, Reason-code distribution,
+>  Lane-specific decisions, Probability spread"
+
+### What shipped
+**Backend: `shared/brain_metrics.py` + `routes/admin_brain_metrics.py`**
+- Pure computation module + admin route. Five operator KPIs computed
+  over the last N hours of `shared_intents` (cross-joined with
+  `pipeline_receipts.final_reason`).
+
+The five metrics:
+  1. **HOLD count** — v2 `action="HOLD"` + v3 `plan.intent IN
+     {WATCH, DEFER, ABSTAIN}`, with per-brain breakdown. v3 columns
+     pre-wired so they light up the moment v3 emits ship.
+  2. **Entropy average** — Shannon entropy of each brain's action
+     distribution, normalized to [0, 1] by log2(global K). Then
+     meaned + median'd across brains. High = brains mixed; low =
+     committed. Live preview: 0.981 with K=3 (near-uniform mix).
+  3. **Reason-code distribution** — Top-15 leaderboard of BOTH
+     `gate_state` (high-level) AND `final_reason` (specific
+     blocker). Surfaces the operator's "where do they die" leader
+     instantly. Live preview: 100% `dry_run_blocked` (preview has
+     EQ + CR lanes OFF — expected; on prod this surfaces the
+     real top blockers).
+  4. **Lane-specific decisions** — Action histogram split by lane,
+     with v3 `plan.intent` preferred over v2 `action` when present.
+  5. **Probability spread** — `max - min` confidence across brains
+     within (symbol, 1-hour) buckets. Mean / median / max +
+     top-10 widest-disagreement buckets. Multi-brain bucket
+     requirement (skip single-brain buckets — no disagreement
+     signal). Live preview: mean 0.185, max 0.374, 139 buckets.
+
+### Routes
+- `GET /api/admin/brain-metrics?hours={1..168}` — current window
+  payload. Side-effect: appends a row to `brain_metrics_snapshots`
+  (same call-driven snapshot pattern the funnel uses; the UI's 60s
+  poll IS the scheduler).
+- `GET /api/admin/brain-metrics/history?hours={1..168}&window_hours=24`
+  — timeseries of snapshots for sparkline-trend rendering.
+- 72h retention, best-effort prune on every call.
+
+### Frontend
+- NEW `BrainMetricsTile.jsx` mounted at top of Diagnostics page
+  (right under BrainDeepDiagnoseCard).
+- Top row: 3 KPI cards (HOLD / Entropy / Prob-spread) each with an
+  inline sparkline of the last 72h.
+- Lane-decisions strip (equity vs crypto, top action per lane).
+- Two-column reason-codes: top 8 `gate_states` + top 8
+  `final_reasons` (operator can spot the WHY in two seconds).
+- Collapsible "Per-brain entropy" and "Top probability-disagreement
+  buckets" details for deep-dive without cluttering the hero row.
+- Window selector (1h / 6h / 24h / 72h), 60s autopoll.
+- Phone-friendly (the operator works from mobile).
+
+### Tests
+- NEW `tests/test_brain_metrics_2026_02.py` — 23 tests, all green.
+- Pins: pure-HOLD v2, pure-WATCH/DEFER/ABSTAIN v3, mixed v2+v3
+  (double-count by design — the operator wants visibility into
+  the transition), single-action zero-entropy, uniform-one-entropy,
+  skewed math, mean-across-brains, v3 plan.intent preferred over v2
+  action in entropy calc, reason-code top-N ranking + truncation,
+  pipeline_receipts join, lane split, v3 plan.intent preferred in
+  lane decisions, single-brain bucket excluded from prob-spread,
+  multi-brain spread math, separate symbols → separate buckets,
+  separate hours → separate buckets, top-disagreement ordering,
+  invalid-ts skipped, hour-bucket alignment helper.
+
+### Live smoke (preview, 24h window)
+- 2,457 intents observed.
+- HOLD: 682 (28%), balanced across 4 brains.
+- Entropy mean: 0.981 with K=3 → brains genuinely undecided.
+- Prob spread mean: 0.185 across 139 disagreement buckets, max 0.374.
+- Lane: equity 1,530 (BUY 702 / HOLD 653 / SELL 175), crypto 927
+  (SELL 877 / BUY 24 / HOLD 26).
+- Top gate state: `dry_run_blocked` at 100% (preview has lanes
+  OFF — expected).
+
+The 100% `dry_run_blocked` finding immediately explains why no
+equity trades are firing on preview. On prod (with lanes ON), this
+same metric will surface the real top blockers in seconds.
+
+### Files
+- NEW: `backend/shared/brain_metrics.py`
+- NEW: `backend/routes/admin_brain_metrics.py`
+- EDIT: `backend/server_modules/router_registry.py` (router include)
+- NEW: `backend/tests/test_brain_metrics_2026_02.py` (23 tests)
+- NEW: `frontend/src/components/BrainMetricsTile.jsx`
+- EDIT: `frontend/src/pages/Diagnostics.jsx` (mount tile)
+
+### Regression
+23/23 new tests pass. All linters clean (Python + JS). Both
+endpoints HTTP 200 on preview auth. Tile renders on Diagnostics
+with all data-testids resolving.
+
+---
+
+
 ## 2026-02 — Paradox v3 Intent Envelope PRD (DRAFT, code untouched)
 
 ### Why
