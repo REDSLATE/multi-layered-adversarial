@@ -1,3 +1,116 @@
+## 2026-06-24 (later) — Consensus-boost operator guardrails (pass 2)
+
+### Operator pins (verbatim)
+> "Advisor boost never bypasses RoadGuard."
+> "And stamp receipts with: base_confidence, advisor_boost,
+>  effective_confidence, advisor_votes_used, advisor_window_seconds.
+>  That way if a trade passes because of advisors, Receipts can show
+>  exactly why."
+
+### What shipped
+**Models** (`shared/pipeline/models.py`)
+- `SeatVerdict` + `PipelineReceipt` each gained
+  `consensus: Optional[Dict[str, Any]] = None`. Default None for paths
+  that never run the seat (pre-seat HOLD/ABSTAIN, firewall block).
+
+**Consensus pool** (`shared/pipeline/consensus_pool.py`)
+- Renamed `delta` → `advisor_boost` on the wire / persisted payload
+  (operator spec). The in-process `.delta` property is kept as a
+  backward-compat alias for code reads; it is intentionally NOT in
+  `to_dict()` output.
+- Added `advisor_votes_used` (= agree + disagree counts; HOLD/ABSTAIN
+  opinions in the pool DON'T count as votes by doctrine).
+- Added `advisor_window_seconds` (the runtime-overridable window the
+  pool was queried for).
+- Pool find now uses `.sort('ts', -1)` for deterministic dedup-by-brain
+  when a brain reversed within the window (most recent wins).
+- Docstring on `_RUNTIME_FLAGS_CACHE` corrected from "request-scoped"
+  to "process-global" (iter7 testing-agent code-review nit).
+
+**Seat policy** (`shared/pipeline/seat_policy.py`)
+- Both ALLOW and BLOCK-at-floor verdicts now stamp
+  `consensus=consensus.to_dict()` onto the SeatVerdict.
+
+**Execution pipeline** (`shared/pipeline/execution_pipeline.py`)
+- Every PipelineReceipt construction site that runs AFTER the seat
+  (5 sites: seat-block, roadguard-block, observe/shadow, broker-
+  submit, broker-error) now carries `consensus=seat.consensus`.
+- Added explicit doctrine pin comment at the RoadGuard call point:
+  consensus advisor boost CANNOT bypass RoadGuard.
+
+### Guardrail #1: Boost can never bypass RoadGuard
+
+**Architectural truth:** RoadGuard checks
+`trading_controls_disabled` / `zero_notional` / `market_closed` /
+`insufficient_buying_power` / `duplicate_order` — none of these
+consume `confidence`. The advisor boost only moves the seat's
+`confidence_min` floor check. A boosted-past-floor intent must
+still clear every RoadGuard stop on its own merit.
+
+**Regression pin (`test_consensus_guardrails_2026_06_24.py`):**
+- `test_zero_notional_still_blocks_even_with_full_boost` — seeds
+  +0.15 boost, sends zero-notional intent, asserts RoadGuard blocks
+  with `restriction_source='roadguard'`, `final_reason='zero_notional'`.
+  Broker stub raises on call (would surface a regression loudly).
+  Consensus dict STILL stamped on the blocked receipt so operator
+  can see "boost applied, RoadGuard refused independently".
+- `test_trading_controls_disabled_still_blocks_with_full_boost` —
+  operator kill switch beats every boost.
+
+### Guardrail #2: Receipts stamp the 5 named provenance fields
+
+**Regression pin:**
+- `test_submitted_receipt_carries_full_provenance` — happy path with
+  3 agreeing advisors, asserts all 5 fields on `receipt.consensus`
+  with correct values (base=0.70, boost=+0.15, effective=0.85,
+  votes_used=3, window=900, agree_brains=['camino','gto','hellcat']).
+- `test_seat_blocked_receipt_carries_provenance` — disagreement path,
+  asserts disagree_count=3, advisor_boost=-0.15.
+- `test_zero_advisors_zero_boost_but_provenance_still_present` —
+  shape-stability for the post-mortem UI: the 5 fields are stamped
+  with defaults (boost=0.0, votes_used=0, window=900) even when no
+  advisors emitted in the window. Means the UI never has to defend
+  against a missing key.
+
+### Testing
+- 5 new tests in `test_consensus_guardrails_2026_06_24.py` → 5/5.
+- 2 existing tests in `test_consensus_boost_2026_06_24.py` updated
+  to the new field name + 4 new operator-pinned assertions → 23/23.
+- Full session regression: **66/66 across 6 suites.**
+- Testing agent (iteration_8.json) independently verified: 100%
+  pass, code-review pass, no critical/minor issues.
+
+### Files
+- EDIT: `shared/pipeline/models.py` (SeatVerdict + PipelineReceipt
+  consensus field)
+- EDIT: `shared/pipeline/consensus_pool.py` (rename + 2 new fields +
+  sort('ts',-1) + docstring)
+- EDIT: `shared/pipeline/seat_policy.py` (verdict stamping)
+- EDIT: `shared/pipeline/execution_pipeline.py` (receipt stamping +
+  RoadGuard doctrine comment)
+- NEW: `tests/test_consensus_guardrails_2026_06_24.py` (5 tests)
+- EDIT: `tests/test_consensus_boost_2026_06_24.py` (field rename + 4
+  new assertions)
+
+### Operator spec → implementation map
+| Operator spec | Where it lives |
+|---|---|
+| Advisor boost never bypasses RoadGuard | `execution_pipeline.py` L112 (doctrine comment); the 5 RoadGuard checks; `_UnreachableBroker` regression |
+| base_confidence | `consensus_pool.py` `ConsensusResult.base_confidence` → `to_dict()` |
+| advisor_boost | renamed from `delta`; `ConsensusResult.advisor_boost` → `to_dict()` |
+| effective_confidence | `consensus_pool.py` clamped to [0,1] |
+| advisor_votes_used | agree + disagree count (HOLD excluded) |
+| advisor_window_seconds | runtime-flag-overridable window |
+
+### Deploy required
+Lives in PREVIEW. Production needs a redeploy to absorb the model
++ pipeline changes. After redeploy, every executor receipt on prod
+will stamp the 5 provenance fields and the operator can read why
+any boosted trade passed (or didn't).
+
+---
+
+
 ## 2026-06-24 (later) — 401 cascade + auth-expired redirect
 
 ### Symptom (operator-reported)
