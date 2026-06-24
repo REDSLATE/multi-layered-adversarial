@@ -115,10 +115,13 @@ These are the rails this rewrite has to honor.
 
   // --- PLANNING LAYER (NEW) -------------------------------------
   "plan": {
-    "stance":           "BULLISH | BEARISH | NEUTRAL | UNCERTAIN",
+    "stance":           "BULLISH | LONG_BIAS | NEUTRAL | SHORT_BIAS | BEARISH | UNCERTAIN",
     "setup":            "bull_flag | bear_flag | breakout | breakdown | mean_revert | gap_fill | range_play | trend_continuation | trend_exhaustion | news_driven | other",
-    "intent":           "ENTER | EXIT | SCALE_IN | SCALE_OUT | WAIT_FOR_TRIGGER | OBSERVE | ABSTAIN",
+    "intent":           "ENTER | EXIT | SCALE_IN | SCALE_OUT | HEDGE | WAIT_FOR_TRIGGER | WAIT_CONFIRMATION | DEFER | WATCH | ABSTAIN | NO_EDGE",
     "execution_style":  "MARKET_NOW | LIMIT | STOP | TRIGGERED_LIMIT | PATIENT | SCALED",
+    "size_posture":     "STANDARD | REDUCED | ELEVATED",
+    "portfolio_posture":"RISK_ON | NEUTRAL | RISK_OFF",
+    "hedge_against_symbol": null | "string",   // required iff intent == HEDGE
     "trigger_price":     null | number,    // price level that flips intent → executable
     "invalidation_price": null | number,   // price level that kills the plan
     "target_prices":     null | number[],  // ordered list, primary first
@@ -152,10 +155,13 @@ These are the rails this rewrite has to honor.
 | Field | Type | Why |
 |---|---|---|
 | `intent_version` | `"v2"` \| `"v3"` | Discriminator. Lets the funnel, post-mortem, verifier, etc. branch on version without inferring from missing keys. Old rows stay `"v2"` (back-fill is one-shot). |
-| `plan.stance` | enum | The brain's directional read. Decoupled from order side. A BULLISH plan can still have `execution.action = null` (waiting for trigger). |
+| `plan.stance` | enum | The brain's directional read. Decoupled from order side. A BULLISH plan can still have `execution.action = null` (waiting for trigger). `LONG_BIAS` / `SHORT_BIAS` are softer leans (not fully committed); `UNCERTAIN` = directional read attempted but inconclusive. |
 | `plan.setup` | enum (extensible) | Categorical tag for the verifier rule sheet & report-cards. Already partially present in `evidence` via `signals` — promote it to first-class. |
-| `plan.intent` | enum | What the brain wants done. `WAIT_FOR_TRIGGER` is the headline new value. `OBSERVE` = "I'm tracking but no plan yet". `ABSTAIN` = "explicit no opinion". |
+| `plan.intent` | enum | What the brain wants done. Headline new values: `WAIT_FOR_TRIGGER` (price-level wait), `WAIT_CONFIRMATION` (signal-confirmation wait — 2nd-bar close, volume tag, MACD cross), `DEFER` (pass this turn, re-evaluate when ttl elapses), `WATCH` (passive tracking, no immediate plan — explicitly NOT named OBSERVE to avoid collision with the seat-layer `autonomy_mode: observe` which is the shadow-learning mode), `NO_EDGE` (has a read but stat edge isn't there — distinct from ABSTAIN which is "no opinion"), `HEDGE` (open offsetting exposure; requires `hedge_against_symbol`). |
 | `plan.execution_style` | enum | How the brain wants the order placed when it triggers. `PATIENT` = "don't market into this, work it on the bid/ask". `TRIGGERED_LIMIT` = limit at trigger_price, valid for ttl_seconds. |
+| `plan.size_posture` | enum | Sizing modifier orthogonal to `intent`. `STANDARD` = normal sizing; `REDUCED` = ×0.5 default (brain wants in, but smaller); `ELEVATED` = ×1.2 default (high-conviction). Final multiplier owned by Governor — `size_posture` is the brain's request, not a guarantee. |
+| `plan.portfolio_posture` | enum | Brain's READ of overall portfolio risk environment (NOT a per-symbol intent). When set to `RISK_OFF`, seat policy applies a global ×0.5 across every active plan from that brain. `RISK_ON` applies ×1.0 baseline (can be configured to ×1.2). Defaults to `NEUTRAL` when omitted. |
+| `plan.hedge_against_symbol` | string / null | Required iff `intent = HEDGE`. Names the symbol whose exposure this plan offsets. Used by Governor's correlation-adjusted notional sizing. |
 | `plan.trigger_price` | number / null | Threshold that promotes the plan from WAIT → executable. Seat policy reads this when re-evaluating. |
 | `plan.invalidation_price` | number / null | Hard kill. If price prints through this, the plan auto-retires. |
 | `plan.target_prices` | number[] / null | Primary target = first element. Used by RR computation in the verifier. |
@@ -225,16 +231,28 @@ The doctrine scorecard (`shared/doctrine/scorecard.py`) gets a new
 axis: **plan_discipline**. Today every non-executed intent is implicitly
 "missed opportunity" or "noise". In v3:
 
-- `plan.intent = WAIT_FOR_TRIGGER` + trigger fired + correct direction
-  → **positive contribution** to discipline_score (brain called it).
-- `plan.intent = WAIT_FOR_TRIGGER` + invalidation_price fired first
-  → **positive contribution** to discipline_score (brain correctly
-   stayed out of a losing trade).
-- `plan.intent = WAIT_FOR_TRIGGER` + nothing happened, ttl expired
+- `plan.intent = WAIT_FOR_TRIGGER` or `WAIT_CONFIRMATION` + trigger /
+  confirmation fired + correct direction → **positive contribution**
+  to discipline_score (brain called it).
+- `plan.intent = WAIT_FOR_TRIGGER` / `WAIT_CONFIRMATION` +
+  invalidation_price fired first → **positive contribution** to
+  discipline_score (brain correctly stayed out of a losing trade).
+- `plan.intent = WAIT_*` + nothing happened, ttl expired
   → **neutral** (no signal either way).
+- `plan.intent = DEFER` + ttl expires → **neutral** (defer is by
+  design non-committal; re-stamping DEFER repeatedly without ever
+  committing IS flagged as "brain is dithering" — a separate
+  `dither_rate` KPI tracks this).
+- `plan.intent = NO_EDGE` + market moved through brain's implied
+  direction inside the horizon window → **positive contribution**
+  (brain correctly called out the lack-of-edge zone).
 - `plan.intent = ENTER` + filled + winning → **same as today**.
 - `plan.intent = ABSTAIN` → **excluded from scoring entirely** (the
   brain explicitly opted out, doesn't deserve credit or blame).
+- `plan.intent = WATCH` → **excluded from scoring** (passive
+  tracking only, no committal of any kind).
+- `plan.intent = HEDGE` → scored against the PAIR's net P&L, not
+  the hedge leg in isolation.
 
 ### 4.3 Execution-judge gets unquarantined (eventually)
 
@@ -319,7 +337,7 @@ This is the most operationally sensitive part of v3.
 |---|---|---|
 | `action: "BUY"` | `execution.action = "BUY"`, `plan.stance = "BULLISH"`, `plan.intent = "ENTER"`, `plan.execution_style = "MARKET_NOW"` | Fast-path inferred |
 | `action: "SELL"` | `execution.action = "SELL"`, `plan.stance = "BEARISH"`, `plan.intent = "EXIT"` if position-held else `"ENTER"`, `plan.execution_style = "MARKET_NOW"` | Position-held inferred from sidecar |
-| `action: "HOLD"` | `execution.action = null`, `plan.stance = "NEUTRAL"`, `plan.intent = "OBSERVE"` | Critical mapping — this is the field whose doctrine grading was broken in v2 |
+| `action: "HOLD"` | `execution.action = null`, `plan.stance = "NEUTRAL"`, `plan.intent = "WATCH"` | Critical mapping — this is the field whose doctrine grading was broken in v2. Using `WATCH` (not OBSERVE) to avoid collision with seat-layer `autonomy_mode: "observe"`. |
 | `action: "OPEN"` | `execution.action = "OPEN"`, `plan.intent = "ENTER"` | |
 | `action: "CLOSE"` | `execution.action = "CLOSE"`, `plan.intent = "EXIT"` | |
 | `confidence` | `plan.confidence`, also `execution`-side confidence on receipts | Single source for v2 |
@@ -454,7 +472,20 @@ When operator approves, the work breakdown becomes:
 
 ---
 
-## 11. Sign-off
+## 11. Locked decisions (2026-02 operator review pass 1)
+
+| Decision | Value | Source |
+|---|---|---|
+| OBSERVE vs WATCH | **WATCH only.** Avoid collision with seat-layer `autonomy_mode: "observe"` which IS the shadow-learning mode. | Operator 2026-02 |
+| REDUCE_SIZE placement | **New field `plan.size_posture`** (`STANDARD | REDUCED | ELEVATED`). NOT collapsed into `plan.intent`. | Operator 2026-02 |
+| DEFER semantics | **Auto-expire on `ttl_seconds`** for v3 ship. Brain-controlled re-stamp / extension is a follow-up (separate field `defer_strategy` if/when added). | Operator 2026-02 |
+| Portfolio-posture axis | **Added** — `RISK_ON | NEUTRAL | RISK_OFF` as separate top-level `plan.portfolio_posture`. | Operator 2026-02 (implied by RISK_ON / RISK_OFF vocab) |
+| Stance softening | **LONG_BIAS / SHORT_BIAS added** between BULLISH/BEARISH and NEUTRAL. | Operator 2026-02 (implied by SHORT_BIAS vocab) |
+| WAIT taxonomy | **Two forms**: `WAIT_FOR_TRIGGER` (price-level) + `WAIT_CONFIRMATION` (signal-confirmation). Doctrine treats both as discipline-scored. | Operator 2026-02 |
+| NO_EDGE | **First-class** plan.intent value, distinct from ABSTAIN. Scored when realized move proves brain right. | Operator 2026-02 |
+| HEDGE | **First-class** plan.intent with required `hedge_against_symbol`. Scored against pair net P&L. | Operator 2026-02 |
+
+## 12. Sign-off
 
 | Role | Name | Approved | Date |
 |---|---|---|---|
