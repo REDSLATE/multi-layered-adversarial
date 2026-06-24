@@ -152,7 +152,11 @@ async function request(method, path, body, cfg = {}) {
   // httpOnly refresh cookie set at login), persist the new access
   // token, and retry the original request transparently. If refresh
   // fails OR we've already retried this request, the 401 surfaces
-  // normally and the caller can decide to redirect.
+  // normally and we ALSO clear the stale token + emit a
+  // `risedual:auth-expired` window event so AuthContext can drop
+  // `user` to null and React Router can redirect the operator back
+  // to /login. (Without that final step the operator gets stuck on
+  // a page rendering "HTTP 401" inline with no way out.)
   if (resp.status === 401 && !cfg._isRefreshRetry && !path.startsWith("/auth/")) {
     const newToken = await tryRefresh();
     if (newToken) {
@@ -162,6 +166,19 @@ async function request(method, path, body, cfg = {}) {
         headers: retryHeaders,
         _isRefreshRetry: true,
       });
+    }
+    // Refresh failed — refresh cookie is missing, expired, or the
+    // backend rejected it. Drop the stale local token and notify
+    // the React tree so it can redirect to /login.
+    setToken(null);
+    if (typeof window !== "undefined") {
+      try {
+        window.dispatchEvent(new CustomEvent("risedual:auth-expired", {
+          detail: { path, status: 401 },
+        }));
+      } catch {
+        // Older browsers without CustomEvent; intentionally swallow.
+      }
     }
   }
 

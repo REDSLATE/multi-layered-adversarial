@@ -100,6 +100,25 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
+  // ── Global auth-expired listener ─────────────────────────────────
+  // Doctrine pin (2026-06-24): when the api.js 401-interceptor
+  // attempts /auth/refresh and refresh ALSO returns 401 (refresh
+  // cookie missing/expired/rejected), it clears the local token
+  // and dispatches a `risedual:auth-expired` window event. We
+  // listen for it and drop `user` to null — that flips App.js's
+  // `<Navigate to="/login" />` and bounces the operator to the
+  // login screen instead of leaving them stuck on a page rendering
+  // "HTTP 401" inline. WITHOUT this listener, the api.js side of
+  // the fix is half-done and the operator's prod symptom returns.
+  useEffect(() => {
+    const handler = () => {
+      setUser(null);
+      setStatus("ready");
+    };
+    window.addEventListener("risedual:auth-expired", handler);
+    return () => window.removeEventListener("risedual:auth-expired", handler);
+  }, []);
+
   const login = useCallback(async (email, password) => {
     try {
       const { data } = await api.post("/auth/login", { email, password });

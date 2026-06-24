@@ -1,3 +1,109 @@
+## 2026-06-24 (later) — 401 cascade + auth-expired redirect
+
+### Symptom (operator-reported)
+Prod screenshots at 5:10 PM showed every admin panel rendering inline
+`HTTP 401` while the sidebar still showed the operator signed in.
+Brain Metrics tile, Webull entitlements, seat roster, receipts, all
+of `/api/intents` — every endpoint dead, but no redirect to login.
+Operator manually re-authenticated at 5:18 PM and everything came
+back. Classic "sidebar says signed in but API is dead" zombie state.
+
+### Root cause
+Three compounding gaps in the auth flow:
+
+1. **`/api/auth/refresh` returned only `{ok: true}`** — the new access
+   token was set ONLY in the httpOnly cookie. The frontend uses
+   localStorage (`risedual_access_token`) for its Bearer header, so
+   the cookie was irrelevant to the request path.
+2. **No 401 interceptor in `api.js`** — every component just rendered
+   the raw `HTTP 401` inline.
+3. **No redirect-to-login fallback** — even if (1) and (2) were
+   patched, a hard refresh failure (refresh cookie expired after 7
+   days) left the operator stuck on a 401-rendering page.
+
+### Fix shipped
+**Backend** (`/app/backend/auth.py`)
+- `/refresh` now returns `{ok: true, access_token: <jwt>, token_type:
+  "bearer"}` in addition to setting the httpOnly cookie. Dual-write
+  serves both cookie-aware and Bearer-localStorage clients cleanly.
+- Cookie path / TTL / signature path unchanged.
+
+**Frontend** (`/app/frontend/src/lib/api.js`)
+- New `tryRefresh()` helper — single-flight de-duped via an
+  `_refreshInFlight` shared promise. Concurrent 401s across ≥5 panels
+  (real operator scenario) all await ONE refresh round-trip rather
+  than firing N parallel calls.
+- New 401-interceptor in `request()`: on `resp.status === 401`,
+  attempt refresh, persist the new token via `setToken()`, retry the
+  original request with the new bearer. Recursion guarded by
+  `cfg._isRefreshRetry = true` on the retry; `/auth/*` paths are
+  excluded entirely.
+- `credentials: "include"` set on every fetch so the httpOnly refresh
+  cookie rides along on the implicit refresh attempt.
+- **NEW (operator spec gap #4)**: on hard refresh failure
+  (`tryRefresh()` returns null), clear the local token (`setToken(null)`)
+  and dispatch a `risedual:auth-expired` window event so the React
+  tree can drop the operator out of zombie state.
+
+**Frontend** (`/app/frontend/src/context/AuthContext.js`)
+- New `useEffect` listener for `risedual:auth-expired` — sets
+  `user=null` + `status="ready"`, which flips App.js's `<Navigate
+  to="/login" />` and bounces the operator to the login screen.
+
+### Operator spec → implementation map
+The operator specced this fix verbatim. Locking the mapping in case
+of future regressions:
+
+| Operator spec | Implementation |
+|---|---|
+| `401 → call /api/auth/refresh` | `api.js` `tryRefresh()` |
+| `store returned access_token` | `setToken(newTok)` in `tryRefresh()` |
+| `retry original request once` | `_isRefreshRetry: true` guard in `request()` |
+| `if refresh fails, logout/redirect` | `setToken(null)` + `risedual:auth-expired` event → AuthContext clears `user` → App.js routes to /login |
+| Backend `{access_token, token_type}` body | `auth.py` `/refresh` return block |
+| `still setting the cookie` | `response.set_cookie(...)` retained |
+| `single shared refreshPromise` | `_refreshInFlight` in `api.js` |
+| `originalRequest._retry = true` | `_isRefreshRetry: true` in `cfg` |
+
+### Verification
+- **Backend**: 5 new pytest cases in `test_refresh_token_hotfix_2026_06_24.py`.
+  - `/refresh` returns `access_token` in body (the regression pin).
+  - `/refresh` without cookie → 401.
+  - `/refresh` with ACCESS token in refresh slot → 401 (type guard).
+  - `/refresh` with expired refresh → 401.
+  - End-to-end: login → extract refresh cookie → refresh → use new
+    bearer against `/api/admin/roster` → 200.
+- **35/35 backend tests pass** (5 refresh + 7 login + 23 brain metrics).
+- **Live preview curl** confirmed `/refresh` returns
+  `{ok:true, access_token:..., token_type:"bearer"}`.
+- **Live preview Playwright** confirmed end-to-end:
+  - Login → land on `/admin/hypothesis`.
+  - Dispatch `risedual:auth-expired` event → URL redirects to `/login`.
+  - Zero console errors.
+- **Testing agent (iteration_6.json)** verified the refresh interceptor
+  contract end-to-end — 100% pass rate, explicitly flagged the
+  redirect-on-hard-fail gap that was then closed in this iteration.
+
+### Doctrine pin
+60-min access-token TTL is intentional doctrine — NOT bumped. The
+auto-refresh + 7-day refresh cookie is the correct mechanism. Short
+access lifetime limits the blast radius of a leaked bearer; the
+operator never sees the expiry because refresh fires transparently.
+
+### Files
+- EDIT: `/app/backend/auth.py` (`/refresh` body)
+- EDIT: `/app/frontend/src/lib/api.js` (tryRefresh + 401 interceptor + auth-expired event)
+- EDIT: `/app/frontend/src/context/AuthContext.js` (auth-expired listener)
+- NEW: `/app/backend/tests/test_refresh_token_hotfix_2026_06_24.py` (5 tests)
+
+### Deploy required
+Lives in PREVIEW. Production needs a redeploy to absorb both halves.
+The frontend bundle MUST be redeployed for the api.js + AuthContext
+changes to take effect on prod.
+
+---
+
+
 ## 2026-06-24 — Login path prod hotfix (HTTP 502 cascade)
 
 ### Symptom (operator-reported)
