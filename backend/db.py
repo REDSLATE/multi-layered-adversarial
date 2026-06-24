@@ -22,16 +22,46 @@ async def ensure_indexes() -> None:
         expireAfterSeconds=900,
         name="consensus_pool_ttl_15m",
     )
-    # Sidecar telemetry (per-executor-intent boost record). Same TTL.
+    # Sidecar telemetry (per-executor-intent boost record).
+    # TTL doctrine pin (2026-06-24 op-spec): the Brain Metrics tile's
+    # consensus_boost_applied_rate KPI queries this sidecar over the
+    # operator-chosen window (1-168h). The pool itself stays at 15min
+    # because it drives the actual boost; the sidecar is observability
+    # so it lives 7d to support the full metric window range.
     await db.intent_consensus_telemetry.create_index(
         "intent_id",
         name="consensus_telemetry_intent_idx",
     )
+    # Drop the legacy 15-min TTL if present (idempotent — Mongo can't
+    # mutate expireAfterSeconds on an existing index, so we have to
+    # drop+recreate when the value changes).
+    try:
+        idx_info = await db.intent_consensus_telemetry.index_information()
+        legacy = idx_info.get("consensus_telemetry_ttl_15m")
+        if legacy and legacy.get("expireAfterSeconds") != 604800:
+            await db.intent_consensus_telemetry.drop_index(
+                "consensus_telemetry_ttl_15m"
+            )
+    except Exception:  # noqa: BLE001
+        pass
     await db.intent_consensus_telemetry.create_index(
         "ts",
-        expireAfterSeconds=900,
-        name="consensus_telemetry_ttl_15m",
+        expireAfterSeconds=604800,    # 7 days
+        name="consensus_telemetry_ttl_7d",
     )
+    # Also drop the legacy name if the new one already exists with
+    # the right TTL (cleanup for any partial-migration state).
+    try:
+        idx_info = await db.intent_consensus_telemetry.index_information()
+        if (
+            "consensus_telemetry_ttl_7d" in idx_info
+            and "consensus_telemetry_ttl_15m" in idx_info
+        ):
+            await db.intent_consensus_telemetry.drop_index(
+                "consensus_telemetry_ttl_15m"
+            )
+    except Exception:  # noqa: BLE001
+        pass
     await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
 
     # ── login_attempts (brute-force tracker) ──────────────────────

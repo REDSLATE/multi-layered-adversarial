@@ -31,6 +31,7 @@ from db import db
 from namespaces import SHARED_INTENTS
 from shared.pipeline.receipts import PIPELINE_RECEIPTS_COLL
 from shared.brain_metrics import (
+    consensus_boost_applied_rate,
     count_holds,
     entropy_average,
     lane_specific_decisions,
@@ -78,6 +79,7 @@ async def _compute_metrics_for_window(hours: int) -> Dict[str, Any]:
         "reason_codes": reason_code_distribution(intents, receipts_by_id),
         "lane_decisions": lane_specific_decisions(intents),
         "probability_spread": probability_spread(intents),
+        "consensus_boost": await consensus_boost_applied_rate(db, hours),
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -111,6 +113,11 @@ def _snapshot_doc(payload: Dict[str, Any]) -> Dict[str, Any]:
         "prob_spread_median": payload["probability_spread"]["median_spread"],
         "prob_spread_max": payload["probability_spread"]["max_spread"],
         "prob_spread_buckets": payload["probability_spread"]["n_disagreement_buckets"],
+        # Consensus boost applied rate (operator KPI 2026-06-24).
+        "consensus_applied_rate": payload["consensus_boost"]["applied_rate"],
+        "consensus_applied_count": payload["consensus_boost"]["applied_count"],
+        "consensus_total_evaluated": payload["consensus_boost"]["total_evaluated"],
+        "consensus_health_band": payload["consensus_boost"]["health_band"],
         "captured_at": datetime.now(timezone.utc),
     }
 

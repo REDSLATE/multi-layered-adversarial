@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 
@@ -353,4 +353,97 @@ def probability_spread(
         "max_spread": round(mx, 4) if mx is not None else None,
         "bucket_seconds": bucket_seconds,
         "top_disagreement": spreads[:10],
+    }
+
+
+
+# ── 6. Consensus boost applied rate ─────────────────────────────────
+# Operator pin (2026-06-24): answers "are advisors actually
+# influencing executor decisions?"
+#   0–5%   → advisors mostly noise / not lining up
+#   5–25%  → healthy selective influence
+#   25–50% → executor leaning on advisors a lot
+#   50%+   → executor may be too dependent on advisor boost
+# Computed from `intent_consensus_telemetry` (the sidecar written by
+# seat_policy on every executor seat-floor evaluation). TTL on that
+# collection was bumped to 7d to support the full metric window.
+APPLIED_RATE_HEALTH_BANDS = (
+    ("noise", 0.0, 0.05),
+    ("healthy", 0.05, 0.25),
+    ("heavy", 0.25, 0.50),
+    ("over_dependent", 0.50, 1.01),
+)
+
+
+def _classify_applied_rate(rate: Optional[float]) -> str:
+    """Operator-pinned health band for the applied rate.
+    Returns 'no_data' when the denominator is zero so the UI can
+    distinguish 'nothing happened yet' from 'happens 0% of the time'."""
+    if rate is None:
+        return "no_data"
+    for label, lo, hi in APPLIED_RATE_HEALTH_BANDS:
+        if lo <= rate < hi:
+            return label
+    return "noise"
+
+
+async def consensus_boost_applied_rate(
+    db,
+    window_hours: int,
+) -> Dict[str, Any]:
+    """% of executor seat-floor evaluations where the boost moved
+    confidence non-zero.
+
+    Denominator: every executor intent that reached the seat floor
+    check in the window (= every row in `intent_consensus_telemetry`
+    in the window). Note: this is NOT 'all intents' — non-executor
+    brains never reach the floor check and therefore aren't counted.
+    This is the right denominator for the question "when consensus
+    COULD apply, how often did it?".
+
+    Numerator: rows where `applied = True` (set by seat_policy when
+    `advisor_boost != 0`).
+
+    Returned shape:
+      {
+        "applied_rate":     float | None,   # 0.0 — 1.0
+        "applied_count":    int,
+        "total_evaluated":  int,
+        "health_band":      "no_data" | "noise" | "healthy" | "heavy" | "over_dependent",
+        "window_hours":     int,
+        "positive_boost_count": int,        # advisor_boost > 0
+        "negative_boost_count": int,        # advisor_boost < 0
+      }
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+    cursor = db["intent_consensus_telemetry"].find(
+        {"ts": {"$gte": cutoff}},
+        {"_id": 0, "applied": 1, "advisor_boost": 1},
+    )
+    total = 0
+    applied = 0
+    pos = 0
+    neg = 0
+    async for row in cursor:
+        total += 1
+        boost = row.get("advisor_boost")
+        if row.get("applied") is True or (
+            isinstance(boost, (int, float)) and boost != 0
+        ):
+            applied += 1
+        if isinstance(boost, (int, float)):
+            if boost > 0:
+                pos += 1
+            elif boost < 0:
+                neg += 1
+
+    rate: Optional[float] = (applied / total) if total > 0 else None
+    return {
+        "applied_rate": round(rate, 4) if rate is not None else None,
+        "applied_count": applied,
+        "total_evaluated": total,
+        "health_band": _classify_applied_rate(rate),
+        "window_hours": int(window_hours),
+        "positive_boost_count": pos,
+        "negative_boost_count": neg,
     }

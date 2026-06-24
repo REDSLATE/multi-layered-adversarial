@@ -111,12 +111,38 @@ export default function BrainMetricsTile() {
   const holdSeries = (history?.snapshots || [])
     .map((s) => s.hold_combined)
     .filter((v) => typeof v === "number");
+  const consensusSeries = (history?.snapshots || [])
+    .map((s) => s.consensus_applied_rate)
+    .filter((v) => typeof v === "number");
 
   const holds = data?.holds;
   const entropy = data?.entropy;
   const reasons = data?.reason_codes;
   const lanes = data?.lane_decisions;
   const spread = data?.probability_spread;
+  const consensus = data?.consensus_boost;
+
+  // Operator-pinned color mapping for the consensus health bands.
+  //   noise (0-5%)     → dim/yellow  — advisors not aligning
+  //   healthy (5-25%)  → green       — sweet spot
+  //   heavy (25-50%)   → amber       — leaning on advisors a lot
+  //   over_dependent (50%+) → red    — executor too dependent
+  const consensusBandColor =
+    {
+      no_data: "text-rd-dim",
+      noise: "text-rd-warn",
+      healthy: "text-rd-success",
+      heavy: "text-rd-warn",
+      over_dependent: "text-rd-danger",
+    }[consensus?.health_band] || "text-rd-dim";
+  const consensusBandLabel =
+    {
+      no_data: "no data",
+      noise: "noise · advisors not aligning",
+      healthy: "healthy · selective influence",
+      heavy: "heavy · executor leaning on advisors",
+      over_dependent: "over-dependent · executor too reliant",
+    }[consensus?.health_band] || "—";
 
   return (
     <div
@@ -225,6 +251,43 @@ export default function BrainMetricsTile() {
                 <Sparkline values={spreadSeries} color="#A855F7" />
               }
             />
+          </div>
+
+          {/* Consensus boost applied rate — operator-pinned KPI (2026-06-24) */}
+          <div
+            className="border-2 border-rd-border bg-rd-bg p-2"
+            data-testid="metric-consensus-applied-rate"
+          >
+            <div className="flex items-center justify-between">
+              <div className="font-mono text-[9px] uppercase tracking-widest text-rd-dim">
+                Consensus boost applied rate
+              </div>
+              <Sparkline values={consensusSeries} color="#22D3EE" />
+            </div>
+            <div className="flex items-baseline gap-2 mt-0.5">
+              <div
+                className={`font-mono text-lg font-bold ${consensusBandColor}`}
+                data-testid="metric-consensus-rate-value"
+              >
+                {consensus?.applied_rate !== null && consensus?.applied_rate !== undefined
+                  ? `${(consensus.applied_rate * 100).toFixed(1)}%`
+                  : "—"}
+              </div>
+              <div
+                className={`font-mono text-[10px] uppercase ${consensusBandColor}`}
+                data-testid="metric-consensus-band"
+              >
+                {consensusBandLabel}
+              </div>
+            </div>
+            <div className="font-mono text-[9px] text-rd-dim mt-0.5">
+              {consensus
+                ? `${consensus.applied_count}/${consensus.total_evaluated} executor evals · +boost ${consensus.positive_boost_count} · −boost ${consensus.negative_boost_count}`
+                : "—"}
+            </div>
+            <div className="font-mono text-[9px] text-rd-dim mt-0.5 opacity-70">
+              Bands: 0-5% noise · 5-25% healthy · 25-50% heavy · 50%+ over-dependent
+            </div>
           </div>
 
           {/* Lane-specific decisions */}
