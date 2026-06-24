@@ -12,7 +12,51 @@ async def ensure_indexes() -> None:
     # Auth
     await db.users.create_index("email", unique=True)
     await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
-    await db.login_attempts.create_index("identifier")
+
+    # ── login_attempts (brute-force tracker) ──────────────────────
+    # Doctrine pin (2026-06-24): two prod hotfixes here.
+    #
+    # 1. The login route reads with the filter
+    #       {identifier, success=False, ts >= cutoff}
+    #    and we ONLY had `identifier_1` before. Within each bucket the
+    #    other two fields were filtered in memory — fine when fresh,
+    #    catastrophic after weeks of bot scans against the admin
+    #    email. As the bucket grew the count_documents call started
+    #    exceeding the gateway request deadline, surfacing as the
+    #    operator-visible "intermittent HTTP 502 on sign-in that
+    #    gets worse over time" symptom. The compound index below
+    #    covers the read in full.
+    #
+    # 2. We did NOT have a TTL index, so rows lived forever. The
+    #    `ts` field was previously stored as an ISO STRING (not a
+    #    BSON Date), so even adding a TTL would have been a no-op
+    #    (TTL only works on Date fields). We now write `ts` as a
+    #    Date in auth.py, prune any legacy string-typed rows below,
+    #    and add the TTL index here. 900s = 15min, matching the
+    #    brute-force window itself; anything older is useless.
+    try:
+        # Legacy single-field index — keep around for safe migration;
+        # the new compound index supersedes it for the read query.
+        await db.login_attempts.create_index("identifier")
+    except Exception:  # noqa: BLE001
+        pass
+    await db.login_attempts.create_index(
+        [("identifier", 1), ("success", 1), ("ts", 1)],
+        name="login_attempts_lockout_idx",
+    )
+    await db.login_attempts.create_index(
+        "ts",
+        expireAfterSeconds=900,
+        name="login_attempts_ttl_15m",
+    )
+    # One-shot: purge legacy string-typed `ts` rows. TTL doesn't apply
+    # to them (TTL only works on Date), so without this they'd persist
+    # forever and continue dragging the bucket. Idempotent — once the
+    # collection has no string-ts rows, future calls are no-ops.
+    try:
+        await db.login_attempts.delete_many({"ts": {"$type": "string"}})
+    except Exception:  # noqa: BLE001
+        pass
 
     # Shared infrastructure
     await db.shared_adl_receipts.create_index([("runtime", 1), ("timestamp", -1)])

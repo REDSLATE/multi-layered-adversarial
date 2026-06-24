@@ -137,13 +137,20 @@ async def login(req: LoginRequest, response: Response, request: Request):
     ip = request.client.host if request.client else "unknown"
     identifier = f"{ip}:{email}"
 
-    # Brute force: 5 fails in 15min = lockout
+    # Brute force: 5 fails in 15min = lockout.
+    # `ts` is stored as a BSON Date (not ISO string) so the TTL index
+    # in db.py can auto-prune rows older than the 15-min window.
+    # count_documents capped at 5 — we only need to know if we've hit
+    # the lockout threshold, not the precise count.
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
-    fails = await db.login_attempts.count_documents({
-        "identifier": identifier,
-        "ts": {"$gte": cutoff.isoformat()},
-        "success": False,
-    })
+    fails = await db.login_attempts.count_documents(
+        {
+            "identifier": identifier,
+            "success": False,
+            "ts": {"$gte": cutoff},
+        },
+        limit=5,
+    )
     if fails >= 5:
         raise HTTPException(status_code=429, detail="Too many failed attempts. Try again later.")
 
@@ -159,7 +166,7 @@ async def login(req: LoginRequest, response: Response, request: Request):
     if not user or not pw_ok:
         await db.login_attempts.insert_one({
             "identifier": identifier,
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(timezone.utc),
             "success": False,
         })
         raise HTTPException(status_code=401, detail="Invalid email or password")
