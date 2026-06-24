@@ -1,3 +1,100 @@
+## 2026-06-24 — Login path prod hotfix (HTTP 502 cascade)
+
+### Symptom (operator-reported)
+> "It gets worse, and now it more robust with blocking me from signing in."
+
+Prod `mission.risedual.ai/login` was returning `HTTP 502 Bad Gateway`
+intermittently and progressively more often. The 502 is a gateway-
+proxy timeout, not an auth block — credentials never even got
+evaluated.
+
+### Root cause (verified by testing agent + live preview)
+Two compounding bugs in the login path that produce exactly the
+"gets worse over time" pattern:
+
+**Bug 1: `login_attempts.ts` was stored as an ISO STRING.**
+TTL indexes in MongoDB ONLY work on BSON Date fields. So even if
+a TTL existed (it didn't), rows would never expire. Storage grew
+forever.
+
+**Bug 2: No compound index covered the lockout read.**
+The only index was `identifier_1`. The query
+`{identifier, success=False, ts >= cutoff}` had to filter the
+other two fields IN MEMORY within each identifier bucket. Bots
+scanning `/api/auth/login` against the admin email constantly
+created rows that never expired (per bug 1) → matched bucket
+grew unbounded → `count_documents` exceeded the gateway request
+deadline → 502.
+
+### Fix shipped
+**`/app/backend/auth.py`**
+- `ts` now written as a `datetime` object (BSON Date), not an ISO
+  string.
+- `count_documents` cap added: `limit=5`. We only need to know if
+  the lockout threshold is reached, not the precise count —
+  defensive against any future regression that re-adds the
+  unbounded scan.
+- Read query reordered `(identifier, success, ts)` to align with
+  the new compound index for plan stability.
+
+**`/app/backend/db.py` `ensure_indexes()`**
+- New compound index `login_attempts_lockout_idx` keyed
+  `[(identifier, 1), (success, 1), (ts, 1)]` — fully covers the
+  lockout query.
+- New TTL index `login_attempts_ttl_15m` on `ts` with
+  `expireAfterSeconds=900`. 15-min retention matches the brute-
+  force window; anything older is useless.
+- One-shot startup cleanup: `delete_many({"ts": {"$type":
+  "string"}})` purges legacy string-typed rows (TTL ignores them
+  otherwise; they'd persist forever).
+- Legacy `identifier_1` index kept idempotently for safe
+  migration.
+
+### Tests
+- NEW `/app/backend/tests/test_login_hotfix_2026_06_24.py` — 7
+  pytest regressions, ALL PASS:
+  - Compound + TTL indexes exist with correct shape.
+  - Legacy string-typed rows purged on startup.
+  - Failed login writes `ts` as BSON Date (not string).
+  - 5-fail lockout still triggers at exactly 5 (no off-by-one).
+  - Successful login clears the identifier's bucket.
+  - `count_documents` limit=5 cap holds even with 50 matching rows.
+- Testing agent added 6 live-preview tests (`test_live_preview_
+  login_hotfix.py`) — all 6 pass against the live preview backend.
+- 13/13 total. 100% pass.
+
+### Verified on live preview Mongo
+```
+db.login_attempts.index_information() →
+  login_attempts_lockout_idx : [(identifier,1),(success,1),(ts,1)]
+  login_attempts_ttl_15m      : [(ts,1)]  expireAfterSeconds=900
+  identifier_1                : (legacy, kept)
+db.login_attempts.count({"ts": {"$type": "string"}}) → 0
+```
+
+### Future hardening (flagged by testing agent, NOT in scope)
+- `identifier = f"{ip}:{email}"` uses `request.client.host`. Behind
+  Cloudflare / a reverse proxy, that's the proxy IP, so users
+  sharing an egress IP share a lockout bucket. Honoring
+  `X-Forwarded-For` (with strict trust list) is the next hardening
+  step but was not the prod blocker — punted to a separate ticket.
+
+### Files
+- EDIT: `/app/backend/auth.py`
+- EDIT: `/app/backend/db.py`
+- NEW: `/app/backend/tests/test_login_hotfix_2026_06_24.py`
+- NEW (added by testing agent): `/app/backend/tests/test_live_preview_login_hotfix.py`
+
+### Deploy required
+Code lives in PREVIEW. **Production needs a redeploy to receive
+the fix** — the new `ensure_indexes()` creates the TTL + compound
+index on prod Mongo at next backend startup, and the one-shot
+string-ts purge runs at the same moment. After redeploy the prod
+502 cascade ends.
+
+---
+
+
 ## 2026-02-24 — Brain Metrics tile (5-KPI multi-day observation surface)
 
 ### Operator pin (verbatim)
