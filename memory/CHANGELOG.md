@@ -1,3 +1,80 @@
+## 2026-06-24 (later) — Brain Metrics: consensus_boost_applied_rate KPI
+
+### Operator pin (verbatim)
+> "Add consensus_boost_applied_rate to Brain Metrics. That metric
+>  answers the right question: Are advisors actually influencing
+>  executor decisions?
+>    0–5%   → advisors mostly noise / not lining up
+>    5–25%  → healthy selective influence
+>    50%+   → executor may be too dependent on advisor boost"
+
+### What shipped
+**Computation** (`shared/brain_metrics.py`)
+- `APPLIED_RATE_HEALTH_BANDS` tuple — operator's exact boundaries:
+  `noise [0,5%)`, `healthy [5,25%)`, `heavy [25,50%)`,
+  `over_dependent [50,100%]`. I added the `heavy` middle band so the
+  UI has 4 colors (transition signal between healthy and
+  over_dependent).
+- `_classify_applied_rate()` — returns `no_data` when total=0
+  (distinguished from `noise`); else maps rate → band label.
+- `consensus_boost_applied_rate(db, window_hours)` — queries
+  `intent_consensus_telemetry` and returns:
+  `{applied_rate, applied_count, total_evaluated, health_band,
+   window_hours, positive_boost_count, negative_boost_count}`.
+
+**Storage TTL** (`db.py`)
+- `intent_consensus_telemetry` TTL bumped **15min → 7d**
+  (`expireAfterSeconds=604800`). Required to support the full
+  metric window range (max 168h). Idempotent drop+recreate handles
+  the migration cleanly. **Pool itself** (which drives actual
+  consensus) **stays at 15min** — only the observability sidecar
+  got the long TTL.
+
+**Route + snapshot** (`routes/admin_brain_metrics.py`)
+- `GET /api/admin/brain-metrics?hours=N` payload gains the
+  `consensus_boost` block (always present, even with zero rows).
+- Snapshot writer flattens 4 consensus fields onto
+  `brain_metrics_snapshots` rows so the history endpoint can
+  sparkline-trend `consensus_applied_rate` alongside the other 5 KPIs.
+
+**UI tile** (`frontend/src/components/BrainMetricsTile.jsx`)
+- Full-width KPI card under the 3-card top row.
+- Big % number colored by operator band: green=healthy,
+  amber=noise/heavy, red=over_dependent, dim=no_data.
+- Inline sparkline (last 72h) using the snapshot history.
+- Breakdown line: `N/M executor evals · +boost X · −boost Y`.
+- Legend line at the bottom shows all 4 bands so the operator
+  doesn't have to remember them.
+- Verified rendering on live preview: showed `14.3% · HEALTHY ·
+  SELECTIVE INFLUENCE` in green.
+
+### Tests
+- 15 new pytest cases in
+  `test_consensus_applied_rate_metric_2026_06_24.py` — all green.
+- Band-boundary pin (frozen tuple shape against future drift).
+- TTL migration verified at index_information() level.
+- Defensive legacy-row handling (missing `applied` flag with
+  non-zero boost → still counted).
+- 81/81 across session test files.
+- Testing agent (iter9.json): 100% pass, code-review pass, zero
+  critical/minor issues.
+
+### Files
+- EDIT: `shared/brain_metrics.py` (3 new public symbols)
+- EDIT: `db.py` (TTL bump with idempotent migration)
+- EDIT: `routes/admin_brain_metrics.py` (payload + snapshot)
+- EDIT: `frontend/src/components/BrainMetricsTile.jsx` (new KPI card)
+- NEW: `tests/test_consensus_applied_rate_metric_2026_06_24.py` (15)
+
+### Deploy required
+PREVIEW. Production needs a redeploy. After redeploy, the new KPI
+will populate within 60s of the first executor evaluation post-
+redeploy. Sparkline trend fills in over the next few hours as
+snapshots accumulate.
+
+---
+
+
 ## 2026-06-24 (later) — Consensus-boost operator guardrails (pass 2)
 
 ### Operator pins (verbatim)
