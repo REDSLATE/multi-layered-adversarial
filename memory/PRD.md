@@ -1,3 +1,100 @@
+## 2026-02-22 — Paradox v3 Step 7+ (execution_style_outcomes + Rollout Tile + Step 8 doctrine pin)
+
+### Operator pin (verbatim)
+> "I'm fine with your recommendations" → (c → a → b) + bands
+> `LEARNING≥30, READY≥50, STRONG≥100, HIGH_CONVICTION≥200`
+> + Step 8 doctrine: "retired but callable" (not deleted)
+
+### What shipped
+
+**c. Step 8 doctrine update** (PRD §13)
+v2 fast-path emit will NOT be deleted after the 90d retention
+window. Instead it becomes a **dormant/callable** code path used
+for historical replay (running new v3 doctrine against old v2
+behaviour years later). Bridges switch to v3 as default emitter;
+v2 stays available for back-testing + audit replay.
+
+**a. NEW `GET /api/admin/paradox-v3/execution-style-outcomes`**
+Per-execution-style win-rate + avg-PnL for v3 plans with resolved
+outcomes. Reads `doctrine_sidecars` filtered to `intent_version="v3"`,
+groups by `plan_execution_style`, emits one row per style:
+  * `trades`, `wins`, `losses`
+  * `win_rate` = wins / (wins+losses), null when none resolved
+  * `avg_pnl_usd` = mean pnl across resolved rows
+  * `state` ∈ {INSUFFICIENT, LEARNING, READY, STRONG, HIGH_CONVICTION}
+
+**Bands locked** (operator pin — DON'T LOWER):
+| Band              | Min samples |
+|-------------------|-------------|
+| INSUFFICIENT      | < 30        |
+| LEARNING          | ≥ 30        |
+| READY             | ≥ 50        |
+| STRONG            | ≥ 100       |
+| HIGH_CONVICTION   | ≥ 200       |
+
+Doctrine note in the response: *"Execution heuristics are notoriously
+noisy. Don't replace a heuristic until at least STRONG."*
+
+6 tests pin: per-style buckets correct, v2 rows excluded, band
+thresholds, response shape, empty-DB safety, per-style state
+assignment.
+
+**b. NEW `ParadoxV3RolloutTile` (frontend)**
+Single-glance Diagnostics tile (polls every 10s):
+  * **Brains on v3**: ✓/○ per brain (camino, barracuda, hellcat, gto)
+  * **Patient outcomes**: progress bar `N / 50` (READY threshold)
+  * **Execution Style Outcomes table**: Style × Trades × Win% ×
+    Avg PnL × State badge
+  * **Footer**: Execution Judge state (LEARNING/READY/TRIPPED) +
+    retirement candidates (v3 PATIENT scope) + Watcher/Refire flag
+    posture
+Mounted in `pages/Diagnostics.jsx` between `AdvisorPerformanceTile`
+and the bracket-outcome panel. READ-ONLY. Soft-fails on the
+retirement-candidates endpoint so the tile doesn't break in deploys
+where that route isn't mounted.
+
+### Live verification
+- 235 tests green across all v3 suites; zero regressions.
+- Backend restarted clean. Endpoint returns correct shape with
+  empty styles list (no v3 plans have resolved outcomes yet in
+  preview).
+- Lint clean on `routes/admin_paradox_v3.py` +
+  `components/ParadoxV3RolloutTile.jsx`.
+
+### Operator framing applied
+> "Step 7 is RISEDUAL beginning to learn execution style."
+> "PATIENT, AGGRESSIVE, LIMIT, TRIGGER can be graded separately."
+> "Don't lower the 50 sample threshold."
+
+Both pinned in code:
+- The endpoint bands enforce the 30-floor + conservative
+  graduation.
+- The tile shows the PATIENT/50 progress bar so the operator can
+  watch the threshold approach without being tempted to lower it.
+- Tests pin the band tuple via `_BANDS` assertion — a future cleanup
+  pass can't quietly shuffle them.
+
+### Touched
+- EDIT: `memory/PARADOX_V3_INTENT_ENVELOPE_PRD.md` (§13 Step 8
+        doctrine pin: dormant/callable, not deleted)
+- EDIT: `backend/routes/admin_paradox_v3.py`
+        (NEW `execution_style_outcomes` endpoint + `_BANDS` +
+        `_band_for_samples`)
+- NEW:  `backend/tests/test_execution_style_outcomes_endpoint.py`
+        (6 tests)
+- NEW:  `frontend/src/components/ParadoxV3RolloutTile.jsx`
+- EDIT: `frontend/src/pages/Diagnostics.jsx` (mount the new tile)
+
+### Deploy ordering
+Backward-compatible. Deploy whenever. Tile renders an empty
+"styles" table until v3 PATIENT plans accumulate enough resolved
+outcomes — the progress bar is the operator's signal that data is
+building.
+
+---
+
+
+
 ## 2026-02-22 — Paradox v3 Steps 6 + 7 (multi-brain rollout + execution_judge un-quarantine)
 
 ### Operator pin (verbatim)

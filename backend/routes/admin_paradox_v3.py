@@ -143,3 +143,109 @@ async def paradox_v3_watch_queue(
     flag on.
     """
     return await watch_queue_snapshot(limit=limit)
+
+
+# ── Step 7+ execution_style_outcomes (operator pin 2026-02-22) ─────
+# Confidence bands per operator's recommended thresholds. The endpoint
+# returns the per-style state alongside the raw counts so the
+# frontend tile can colour rows by band without re-implementing the
+# thresholds. Bands are intentionally CONSERVATIVE — execution
+# heuristics are noisy; 200 trades for HIGH_CONVICTION before
+# replacing a heuristic mirrors the doctrine pin at PRD §13 step 7.
+_BANDS = (
+    ("HIGH_CONVICTION", 200),
+    ("STRONG",          100),
+    ("READY",            50),
+    ("LEARNING",         30),
+)
+
+
+def _band_for_samples(n: int) -> str:
+    for name, floor in _BANDS:
+        if n >= floor:
+            return name
+    return "INSUFFICIENT"
+
+
+@router.get("/execution-style-outcomes")
+async def execution_style_outcomes(
+    _user: dict = Depends(get_current_user),  # noqa: B008
+) -> Dict[str, Any]:
+    """Per-execution-style win-rate + avg-return for v3 plans.
+
+    Reads `doctrine_sidecars` (audit rows joined with bracket outcomes
+    via `outcome_join`), filters to `intent_version="v3"`, groups by
+    `plan_execution_style`, and emits one row per style with:
+
+        * trades          — count of resolved outcomes
+        * wins            — count of outcome_label="win"
+        * losses          — count of outcome_label∈{loss,stopped_out}
+        * win_rate        — wins / (wins+losses), null when none resolved
+        * avg_pnl_usd     — mean pnl_usd across resolved rows
+        * state           — confidence band (per `_BANDS`)
+
+    Doctrine pin (operator 2026-02-22): bands are CONSERVATIVE.
+    Execution heuristics are notoriously noisy; `HIGH_CONVICTION`
+    requires ≥200 trades before any heuristic replacement signal is
+    considered strong. The hard floor is 30 — below that a style
+    reads `INSUFFICIENT`.
+
+    Read-only. Safe to call frequently — the tile polls every 10s.
+    """
+    from db import db
+    from namespaces import DOCTRINE_SIDECARS
+
+    cursor = db[DOCTRINE_SIDECARS].find(
+        {
+            "intent_version": "v3",
+            "outcome_join": {"$exists": True},
+        },
+        {
+            "_id": 0,
+            "plan_execution_style": 1,
+            "outcome_join.outcome_label": 1,
+            "outcome_join.pnl_usd": 1,
+        },
+    )
+
+    bucket: Dict[str, Dict[str, Any]] = {}
+    async for row in cursor:
+        style = (row.get("plan_execution_style") or "UNKNOWN").upper()
+        oj = row.get("outcome_join") or {}
+        label = (oj.get("outcome_label") or "").lower()
+        pnl = float(oj.get("pnl_usd") or 0.0)
+        b = bucket.setdefault(style, {
+            "trades": 0, "wins": 0, "losses": 0, "pnl_sum": 0.0,
+        })
+        b["trades"] += 1
+        b["pnl_sum"] += pnl
+        if label == "win":
+            b["wins"] += 1
+        elif label in ("loss", "stopped_out"):
+            b["losses"] += 1
+
+    styles_out = []
+    for style, b in sorted(bucket.items()):
+        resolved = b["wins"] + b["losses"]
+        win_rate = (b["wins"] / resolved) if resolved else None
+        avg_pnl = (b["pnl_sum"] / b["trades"]) if b["trades"] else 0.0
+        styles_out.append({
+            "execution_style": style,
+            "trades":          b["trades"],
+            "wins":            b["wins"],
+            "losses":          b["losses"],
+            "win_rate":        (round(win_rate, 4) if win_rate is not None else None),
+            "avg_pnl_usd":     round(avg_pnl, 4),
+            "state":           _band_for_samples(b["trades"]),
+        })
+
+    return {
+        "styles": styles_out,
+        "bands": {name: floor for name, floor in _BANDS},
+        "hard_floor": 30,
+        "doctrine_note": (
+            "Execution heuristics are notoriously noisy. Conservative "
+            "bands: LEARNING≥30, READY≥50, STRONG≥100, HIGH_CONVICTION"
+            "≥200. Don't replace a heuristic until at least STRONG."
+        ),
+    }
