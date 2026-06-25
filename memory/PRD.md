@@ -1,3 +1,54 @@
+## 2026-02-23 — P3 COMPLETE: Execution Lifecycle Funnel tile
+
+### What shipped
+Read-only tile on `/admin/diagnostics` that answers the next operational blind spot after Phase A/B/C closed identity drift: **"What happened AFTER the broker accepted the order?"**
+
+**5-bucket canonical taxonomy** (`shared/broker_status_classifier.py`):
+- `filled` — fully filled at broker (terminal success)
+- `partially_filled` — broker reports fill < ordered_qty
+- `working` — accepted, no fill yet, still alive on the book
+- `canceled` — canceled / rejected / expired (terminal, no PnL)
+- `unknown` — no broker_orders row found (poller lagging, or order off-pipeline)
+
+Maps every status string we've seen across Webull / Alpaca / Kraken / Public adapters (FILLED, CLOSED, COMPLETE, EXECUTED, PARTIALLY_FILLED, PARTIAL_FILL, CANCELED, CANCELLED, REJECTED, EXPIRED, FAILED, WORKING, OPEN, NEW, ACCEPTED, PENDING, PENDING_NEW, SUBMITTED, ACTIVE, QUEUED). Defensive partial-qty refinement (FILLED + filled_qty < ordered_qty → downgrade to partially_filled).
+
+**New endpoint** `GET /api/admin/execution-lifecycle/funnel?hours={1-720}&lane={equity|crypto}` (admin auth):
+- Joins `shared_intents{executed:True}` ⨝ `broker_orders` by `broker_order_id`
+- Falls back to `execution_receipts` when broker_orders row is missing
+- Returns bucket_counts + bucket_percentages + by_lane + by_brain (canonical) + unknown_samples (capped 10) + doctrine_note
+- Returns 422 on unknown lane values (operator-friendly typo surfacing)
+
+**New tile** `components/ExecutionLifecycleFunnelTile.jsx`:
+- Defaults to `lane=equity / hours=24` matching the operator's debugging plan
+- Stacked color-coded bar (emerald=filled, amber=partial, blue=working, slate=canceled, red=unknown)
+- Per-lane + per-brain breakdown tables
+- Unknown samples list (visibility-gap intent_ids with broker-status diagnostic flags)
+- 30s polling, lane/window button switching
+
+### Test coverage
+- `tests/test_broker_status_classifier.py` — 36 parametrized tests across all known broker statuses + defensive edge cases
+- testing_agent (iter_16) verified: 8/8 API contract tests + 12/12 UI assertions, 100% pass
+- 44/44 P3 tests all green
+
+### Files
+- Created: `shared/broker_status_classifier.py`, `routes/admin_execution_lifecycle_funnel.py`, `components/ExecutionLifecycleFunnelTile.jsx`, `tests/test_broker_status_classifier.py`
+- Updated: `server_modules/router_registry.py` (imported + mounted), `pages/Diagnostics.jsx` (mounted between SeatStageDrops and PerBrainExecutionStyleProfile)
+
+### Operator debugging plan alignment
+Tile pre-filtered to `equity` lane out of the box for the equity-only baseline observation period (crypto disabled until Saturday). When operator enables crypto Saturday, switching the lane filter or "All" gives the same 5-bucket view per-lane immediately.
+
+### Next Action Items (operator decision after observation window)
+- **Operator Override Audit Feed tile** (read-only stream of intents executed where `intent_author != seat_holder`)
+- **Brain Identity Legend card on Diagnostics** (documentation, low priority)
+- Production deploy of all Feb 23 work (dual-field migration + 3-mode noise cleanup + Phase C reads + lifecycle funnel)
+
+### Backlog (P2)
+- Kraken spread poller, Hot-Brain Router into pipeline, Mongo aggregation caching
+- Refactor: split Webull/Kraken pollers into separate worker (520 mitigation)
+
+---
+
+
 ## 2026-02-23 — Phase C complete: read paths migrated to stack_canonical + regression lint
 
 ### What Phase C added on top of the dual-field migration

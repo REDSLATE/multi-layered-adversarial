@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth import get_current_user
 from db import db
@@ -56,7 +56,22 @@ async def execution_lifecycle_funnel(
     `lane` (optional): filter to `equity` or `crypto` only — the
     funnel often diverges per lane (different brokers, different
     market hours), so the per-lane view is operationally important.
+    Unknown lane values return 422 so operators see the typo
+    immediately instead of getting silently-unfiltered results.
+
+    Note on the time filter: `executed_at` is stored as an ISO-8601
+    string (set via `_now_iso()` in `shared/execution.py:71`), so
+    the `$gte` comparison against `since.isoformat()` is a
+    lexicographic string compare — correct for sortable ISO timestamps.
     """
+    if lane is not None and lane not in ("equity", "crypto"):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"lane must be 'equity' or 'crypto' (or omitted for all); "
+                f"got {lane!r}"
+            ),
+        )
     since = (_now() - timedelta(hours=hours)).isoformat()
 
     # 1. Pull every executed intent in the window. Project only the
