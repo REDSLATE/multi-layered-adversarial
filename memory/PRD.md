@@ -1,3 +1,40 @@
+## 2026-02-23 — api.js panel-level retry-with-backoff for transient 5xx (PROD HOTFIX)
+
+### Operator pain (continued)
+Prod `mission.risedual.ai` was rendering inline `HTTP 520` on multiple panels simultaneously — Intents feed, Master Trading Switch, OTOCO orders, Parabolic Phase Map, Seat Roster, Tunables Simulator, `/api/intents`. Auth resilience was holding (no logouts) but each panel-level GET that hit a transient 520 had no recovery — operator saw permanent inline errors.
+
+User observation: "It's supposed to be better, connection wise, than it is. At this point it has had a better connection when it was 5 stacks." Consolidation traded natural isolation (5 pods, 5 event loops, 5 Mongo pools) for one pod where heavy + light requests now share the same CPU/loop/pool. While infra-side mitigation (bigger pod, query caching, pollers split off) is the long-term path, the immediate code-side fix is to absorb transient Cloudflare blips at the request layer.
+
+### What shipped
+**`api.js` global GET retry-with-backoff for transient 5xx**
+
+- New constants: `TRANSIENT_STATUS_CODES = {502, 503, 504, 520, 522, 523, 524}` and `READ_RETRY_DELAYS_MS = [400, 1200, 2500]` (~4s total window).
+- `request()` now branches on transient status codes BEFORE the `!resp.ok` error decode. If the response is in `TRANSIENT_STATUS_CODES` AND the method is `GET`, recurse with `cfg._readAttempt + 1` after the backoff delay. Up to 3 retries.
+- **Idempotency safety**: POST/PUT/PATCH/DELETE NEVER auto-retry. Doctrine-pinned in tripwire. Silently double-firing an ARM ALL, seat assignment, or flag flip would be catastrophic — the operator gets the inline error and must manually retry, which is the right behavior for side effects.
+- **Network-error path**: `fetch` throw (DNS / TCP reset / TLS) on a GET takes the same retry path. Network blips also self-recover.
+- **Termination**: `cfg._readAttempt` counter threaded through recursion; bounded by `READ_RETRY_DELAYS_MS.length`. No infinite-retry footgun.
+
+### Test coverage
+
+- `backend/tests/test_api_js_transient_5xx_retry.py` — 6 source-level tripwires (all 7 Cloudflare codes present; total retry window > 3s; `method !== "GET"` guard; network catch invokes retry helper; counter threaded; transient branch before `!resp.ok` decode).
+- Testing agent iter13: 6/6 tripwires + 5/5 behavioural invariants (verified via node + mocked-fetch harness loading the real api.js) + happy-path GETs unaffected + e2e on `/admin/diagnostics` confirms v3 toggle round-trip still works.
+
+### Expected operator-visible improvement on prod after deploy
+- Panels that previously showed `HTTP 520` on first poll now silently re-fetch and show data within ~4s.
+- Persistent prod-down conditions (e.g., 4+ consecutive 520s on the same endpoint) still surface the error to the panel — operator sees the real issue rather than spinning forever.
+- POST actions (ARM, seat assign, flag flip) behave exactly as before — no silent retries.
+- v3 brain toggle + watcher/refire toggles continue to work end-to-end (POSTs not retried, GETs that follow are retried — covers any post-flip refresh hitting a 520).
+
+### Files
+- `frontend/src/lib/api.js` — `TRANSIENT_STATUS_CODES`, `READ_RETRY_DELAYS_MS`, retry branch in `request()`, network-error retry path
+- `backend/tests/test_api_js_transient_5xx_retry.py` — 6 new tripwire tests
+
+### Pre-existing minor noted by testing agent (out of scope)
+`/api/admin/brain-metrics/health` returned 404 — testing agent guessed wrong path. The brain-metrics tile clearly works on prod (operator's screenshot shows HOLD count 3014, entropy, etc.). Path used by the tile is different from the one the testing agent tried.
+
+---
+
+
 ## 2026-02-23 — Runtime system flags: flip Paradox v3 / Watcher / Refire from the dashboard (PROD HOTFIX)
 
 ### Operator-reported pain
