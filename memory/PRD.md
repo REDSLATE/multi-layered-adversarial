@@ -1,3 +1,82 @@
+## 2026-02-23 — Runtime system flags: flip Paradox v3 / Watcher / Refire from the dashboard (PROD HOTFIX)
+
+### Operator-reported pain
+> "I deployed this hours ago and I don't see any way of changing env to camino."
+
+Paradox v3 rollout, trigger_watcher, and trigger_refire were env-var gated — flipping any of them required SSH into the prod pod + a backend restart. Not operational, especially from mobile.
+
+### What shipped
+
+**Backend — DB-backed system flags with sync read API**
+
+- New collection `system_flags` (single doc `_id="current"` with `paradox_v3_brains: []`, `trigger_watcher_enabled: bool`, `trigger_refire_enabled: bool`, `updated_at`, `updated_by`).
+- New collection `system_flag_changes` — append-only audit: `{flag, before, after, actor, ts}`.
+- New module `shared/system_flags.py` with:
+  - `SystemFlagsSnapshot` dataclass (immutable read view).
+  - `refresh_system_flags()` async — hydrates the cache from Mongo.
+  - `get_system_flags()` **sync** — process-local cache with 5s TTL. Sync because the brain runner's `v3_brain_enabled()` is a hot, sync code path; turning it async would ripple to every emit.
+  - Background refresher task (started in `lifespan.py`) refreshes the cache every 5s.
+  - `set_paradox_v3_brains() / set_trigger_watcher() / set_trigger_refire()` — write the row + audit + force-refresh the cache.
+  - `effective_*()` helpers — DB wins, env-var falls back when DB-null.
+- `shared/intent_envelope_v3.py:v3_brain_enabled` — DB-first, env-var fallback.
+- `shared/pipeline/trigger_watcher.py:is_watcher_enabled / is_refire_enabled` — same DB-first pattern.
+- `routes/admin_paradox_v3.py:/status` — now includes a `db_flags` block alongside `flags` (env) so operator can diagnose "is this on because of DB or env" from a single GET.
+
+**Backend — admin endpoints**
+
+- `routes/admin_system_flags.py` mounted at `/api/admin/system-flags`:
+  - `GET /api/admin/system-flags` — returns `{raw, effective, allowed_brains, doctrine_note}`
+  - `POST /api/admin/system-flags/paradox-v3-brains` body `{brains: ["camino"]}` — validates against `ALLOWED_BRAINS = {camino, barracuda, hellcat, gto}`, rejects unknowns with HTTP 400
+  - `POST /api/admin/system-flags/trigger-watcher` body `{enabled: bool}`
+  - `POST /api/admin/system-flags/trigger-refire` body `{enabled: bool}`
+  - `GET /api/admin/system-flags/changes?limit=N` — reverse-chronological audit feed
+- All routes admin-gated (403 without role=admin).
+
+**Frontend — ParadoxV3RolloutTile.jsx**
+
+- Brain "circles" are now clickable buttons. Tap → confirm modal → POST → tile refreshes with the flipped brain showing filled-green within ~3s.
+- New `W:on/off` and `R:on/off` toggle buttons replace the static "off/off" indicator.
+- Refire modal is **danger-styled** (border-rd-warn) when enabling, with explicit "ACTUAL BROKER ORDERS" warning text. Disable-refire renders neutral (disabling is safe).
+- Confirm modal supports overlay-click + Cancel button + Confirm button.
+- New "Recent flips" audit feed on the tile footer — last 5 flag changes, reverse-chronological, format `mm/dd, HH:MM  flag_name  before → after`.
+
+**Sibling fix discovered + patched in same session**
+
+- `PerBrainExecutionStyleProfileTile.jsx` had the same `api.get` unwrap bug from the previous session — every cell silently showed empty state because `setData(out)` got the `{data, status}` wrapper instead of `out.data`. Fixed.
+
+### Test coverage
+
+- `backend/tests/test_system_flags.py` — 10 unit tests covering DB write/read, env-fallback, empty-list ≠ env-fallback semantics, audit feed ordering, idempotent sets, sync helpers honour DB cache. Autouse fixture isolates each test (reset before AND after) so the new code doesn't pollute legacy v3 tests.
+- Testing agent iter11: backend 21/21 green (10 unit + 11 live API). Iter12 retest: frontend 5/5 green (brain pill fills, W/R labels reflect DB, audit feed renders, per-brain matrix mounts cleanly, modal/cancel/danger-styling intact). DB cleaned to count=0 after testing.
+
+### How the operator uses this on prod
+
+1. Save to Github / Deploy preview to prod.
+2. On `mission.risedual.ai/admin/diagnostics`, scroll to Paradox V3 Rollout.
+3. Tap "camino" → Confirm. Within ~3s the circle fills green, audit feed shows the flip.
+4. Watch the v3 envelope count grow over the next few minutes. PATIENT outcomes accumulate toward 50.
+5. After camino looks clean (1-2 trading days), tap "gto" same way. Stagger as usual.
+6. When ready to engage WAIT_FOR_TRIGGER plans: tap `W:off` → enable Watcher. Watch the queue.
+7. Only after watcher is producing clean fires: tap `R:off` → enable Refire (the danger-styled modal). This is when fires translate into live broker calls.
+
+Env vars are still honoured if the DB row is null — fully backwards compatible. Any existing PROD env vars continue to work; DB simply wins when set.
+
+### Files
+- `backend/namespaces.py` — added `SYSTEM_FLAGS` + `SYSTEM_FLAG_CHANGES`
+- `backend/shared/system_flags.py` — new
+- `backend/routes/admin_system_flags.py` — new
+- `backend/shared/intent_envelope_v3.py` — v3_brain_enabled now DB-first
+- `backend/shared/pipeline/trigger_watcher.py` — is_watcher_enabled / is_refire_enabled now DB-first
+- `backend/routes/admin_paradox_v3.py` — /status now includes db_flags block
+- `backend/server_modules/router_registry.py` — register admin_system_flags router
+- `backend/server_modules/lifespan.py` — start system_flags background refresher
+- `backend/tests/test_system_flags.py` — new 10-test suite
+- `frontend/src/components/ParadoxV3RolloutTile.jsx` — clickable brain buttons, watcher/refire toggle buttons, confirm modal, audit feed, api.get unwrap fix
+- `frontend/src/components/PerBrainExecutionStyleProfileTile.jsx` — api.get unwrap fix (sibling bug)
+
+---
+
+
 ## 2026-02-23 — Auth resilience: stop logging operators out on Cloudflare 520s (PROD HOTFIX)
 
 ### User-reported symptoms (mission.risedual.ai PROD, mobile + desktop)
