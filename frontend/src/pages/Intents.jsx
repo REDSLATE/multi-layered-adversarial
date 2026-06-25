@@ -545,6 +545,11 @@ export default function Intents() {
         intent_id: intentId,
         order_notional_usd: payload.order_notional_usd,
         confirm: "execute",
+        // 2026-02-23: brain_name is REQUIRED on every submit body.
+        // The backend re-validates it against shared_intents.stack
+        // so a mismatch (wrong-row click, stale state) hard-fails
+        // BEFORE the broker call. Use the intent's emitting brain.
+        brain_name: submitModal.intent?.stack || "",
       };
       if (payload.operator_override) {
         body.operator_override = true;
@@ -553,7 +558,18 @@ export default function Intents() {
       if (payload.action_override) {
         body.action_override = payload.action_override;
       }
-      const res = await api.post("/execution/submit", body);
+      // 2026-02-23 — if the dry-run flagged this intent as requiring
+      // operator override (non-seat-holder author), route through
+      // the dedicated /execution/submit-override endpoint so the
+      // override is explicit + audited under its own request kind.
+      const requiresOverride = !!(
+        submitModal.intent?.requires_operator_override
+        || submitModal.intent?.seat_authority === "requires_override"
+      );
+      const submitPath = (requiresOverride && payload.operator_override)
+        ? "/execution/submit-override"
+        : "/execution/submit";
+      const res = await api.post(submitPath, body);
       setSubmitByIntent((m) => ({ ...m, [intentId]: res.data }));
       const sideLabel = payload.action_override || submitModal.intent?.action || "";
       const overrideTag = payload.operator_override ? " · OVERRIDE" : "";

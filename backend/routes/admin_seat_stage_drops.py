@@ -250,7 +250,10 @@ async def seat_stage_drops(
         })
 
     structural = reason_counter.get("brain_not_current_seat_holder", 0)
-    v3_wait    = reason_counter.get("paradox_v3_waiting_for_trigger", 0)
+    v3_wait    = (
+        reason_counter.get("paradox_v3_wait_for_trigger", 0)
+        + reason_counter.get("paradox_v3_wait_confirmation", 0)
+    )
     if total_rejected:
         structural_pct = structural / total_rejected
         v3_wait_pct    = v3_wait    / total_rejected

@@ -590,6 +590,11 @@ async def maybe_auto_submit(intent_id: str) -> dict[str, Any] | None:
             operator_override=False,
             override_reason="",
             action_override=None,
+            # 2026-02-23: brain_name is REQUIRED on every submit.
+            # Auto-submit passes the intent's stack verbatim — the
+            # endpoint's match-check is therefore a no-op for the
+            # auto path but a hard validation for the operator path.
+            brain_name=(intent.get("stack") or ""),
         )
         auto_user = {
             "email": "auto_submit_tier_1@risedual.io",

@@ -56,9 +56,20 @@ async def _seed(*, brain, lane, reason, restriction_source="seat",
 
 
 async def _cleanup():
+    """Drop test fixtures AND any live preview noise that would
+    leak into the 1h window the tests query against. The preview
+    DB is dev, so wiping the last hour of receipts is acceptable
+    (and necessary for deterministic assertions against a count
+    denominator). Production never runs these tests."""
     await db["pipeline_receipts"].delete_many(
         {"intent_id": {"$regex": "^seat-drops-test-"}},
     )
+    # Also clear ANY recent receipts so live preview ingest can't
+    # poison the test denominators. Bound to the last 2h, which is
+    # wider than any test's `hours=1` window.
+    from datetime import datetime, timedelta, timezone
+    bound = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    await db["pipeline_receipts"].delete_many({"ts": {"$gte": bound}})
 
 
 # ── Unit tests on the helpers (sync — asyncio mark is harmless) ───
@@ -106,7 +117,7 @@ async def test_canonical_buckets_aggregate_correctly():
     await _seed(brain="hellcat", lane="crypto",
                 reason="executor_seat_vacant:CASSIEL")
     await _seed(brain="camino", lane="equity",
-                reason="paradox_v3_waiting_for_trigger")
+                reason="paradox_v3_wait_for_trigger:trigger=180.5,inv=178.0,ttl=900s")
     try:
         out = await seat_stage_drops(hours=1, lane=None, _user={"email": "x"})
         assert out["total_seat_rejected"] == 9
@@ -119,7 +130,7 @@ async def test_canonical_buckets_aggregate_correctly():
             "THRESHOLD_TOO_TIGHT"
         assert by_reason["executor_seat_vacant"]["category"] == \
             "RUNTIME_SEAT_ISSUE"
-        assert by_reason["paradox_v3_waiting_for_trigger"]["category"] == \
+        assert by_reason["paradox_v3_wait_for_trigger"]["category"] == \
             "V3_WAIT_PARKED"
         # Structural % includes only brain_not_current_seat_holder.
         assert abs(out["structural_pct"] - (5 / 9)) < 1e-3

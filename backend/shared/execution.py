@@ -12,6 +12,7 @@ Doctrine:
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -54,6 +55,14 @@ from shared.council import (
 from shared.exposure_caps import caps_snapshot, evaluate_all
 from shared.mc_shelly import record_async
 from shared.runtime.paradox_record import write_paradox_record
+
+
+# Pre-existing module logger (added 2026-02-23 to satisfy the
+# `logger.warning(...)` call at line 957 inside the auto-submit
+# fallback path — that line had been latent since at least the
+# auto-dry-run-drain commit. F821 surfaced once ruff re-analyzed
+# the file after the seat-authority changes.)
+logger = logging.getLogger("risedual.execution")
 
 
 router = APIRouter(tags=["execution"])
@@ -356,6 +365,65 @@ async def _evaluate_gates(
             f"(or roster assignment for crypto seats)."
         )
     gates.append({"name": "executor_seat_check", "passed": seat_pass, "reason": seat_reason})
+
+    # ─── Seat-authority classification (2026-02-23, operator pin) ──
+    # Closes the long-standing doctrine drift between this gate chain
+    # (position-only authority — "any held seat passes") and the
+    # unified pipeline's `seat_policy.evaluate()` (brain-bound — "only
+    # the seat holder's emits pass"). Without this classification an
+    # intent emitted by a non-seat-holder brain (e.g. Camino emits an
+    # equity intent while Barracuda holds PASCHAR) would show "would
+    # pass" here, the operator's SUBMIT button would fire it, and the
+    # broker would execute Camino's intent under Barracuda's seat —
+    # the EXACT operator-reported symptom of 2026-02-23.
+    #
+    # Three classes (mirroring the user-proposed doctrine):
+    #
+    #   seat_bound        intent.stack == current_holder
+    #                     Auto-submit OK. Default operator submit OK.
+    #
+    #   requires_override seat held + lane allowed, BUT intent.stack
+    #                     != current_holder. NOT a free pass. Auto-
+    #                     submit MUST refuse. Operator submit MUST
+    #                     go through the `operator_override=true`
+    #                     flag — typically via the dedicated
+    #                     `/execution/submit-override` endpoint so
+    #                     the override is explicit + audited.
+    #
+    #   vacant            no holder for the lane. Always block.
+    #
+    # The gate chain still emits `executor_seat_check passed=True` on
+    # the `requires_override` case so the rest of the chain runs and
+    # the operator can see ALL gate verdicts (cap checks, council,
+    # roadguard, etc.) before deciding whether to override. The
+    # `requires_operator_override` flag on the result dict is the
+    # operative signal — `execution_submit` reads it and refuses the
+    # broker call unless the operator has explicitly overridden.
+    intent_author = (intent_stack or "").strip().lower()
+    seat_holder_lc = (current_holder or "").strip().lower()
+    if not holds_now or not lane_allowed:
+        seat_authority = "vacant"
+    elif intent_author and seat_holder_lc and intent_author == seat_holder_lc:
+        seat_authority = "seat_bound"
+    else:
+        seat_authority = "requires_override"
+    requires_operator_override = (seat_authority == "requires_override")
+    # Stamp the seat-authority gate as informational (always passes)
+    # so the operator sees it in the gates list. The actual blocking
+    # decision lives in `execution_submit` via the
+    # `requires_operator_override` flag — keeping it out of the gate
+    # list avoids double-counting "would_block" verdicts for what is
+    # really an "override required" state.
+    if requires_operator_override:
+        gates.append({
+            "name":   "seat_authority_classification",
+            "passed": True,
+            "reason": (
+                f"intent author {intent_author!r} != current seat holder "
+                f"{seat_holder_lc!r}; mode=requires_override. Operator may "
+                f"submit via /execution/submit-override with operator_override=true."
+            ),
+        })
 
     # 4. Live-trading-disabled (DEFANGED 2026-02-17).
     #    This gate used to assert "LIVE_TRADING_ENABLED stays False" and
@@ -785,6 +853,13 @@ async def _evaluate_gates(
         "operator_override": operator_override,
         "override_reason": override_reason if operator_override else None,
         "overridden_gate_names": overridden_names if operator_override else [],
+        # 2026-02-23 seat-authority three-mode model — see the
+        # `seat_authority_classification` block above for the doctrine.
+        "seat_authority":              seat_authority,
+        "requires_operator_override":  requires_operator_override,
+        "intent_author":               intent_author or None,
+        "seat_holder":                 seat_holder_lc or None,
+        "matched_seat":                matched_seat,
     }
 
 
@@ -1114,6 +1189,22 @@ class SubmitBody(BaseModel):
         default=None,
         description="optional BUY/SELL override; receipt stamps original action",
     )
+    # ─── Brain-name confirmation (2026-02-23, operator pin) ──────
+    # REQUIRED. The operator must explicitly name the brain whose
+    # intent is being submitted — defeats "wrong intent ID in the
+    # body" accidents AND removes any ambiguity in the audit trail
+    # about which brain's authority a non-seat-holder override is
+    # being authorized for. Auto-submit passes intent["stack"]
+    # programmatically; the operator UI must surface the brain name
+    # as a type-to-confirm input. The handler RE-VALIDATES the value
+    # against `shared_intents.stack` on the actual intent doc — a
+    # mismatch is a hard 400 (NOT a soft warning).
+    brain_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=40,
+        description="REQUIRED. Brain that emitted this intent (must match shared_intents.stack)",
+    )
 
 
 @router.post("/execution/submit")
@@ -1167,6 +1258,42 @@ async def execution_submit(
             detail=f"intent {body.intent_id} already executed at {intent.get('executed_at')}",
         )
 
+    # ─── Brain-name confirmation (2026-02-23, operator pin) ───────
+    # Reject if the caller-supplied brain name doesn't match the
+    # intent's actual `stack` field. Case-insensitive. This is the
+    # type-to-confirm gesture for the SUBMIT button + a programmatic
+    # invariant for auto-submit. A mismatch indicates either:
+    #   (a) operator clicked submit on the wrong intent row,
+    #   (b) frontend stale state (intent re-keyed),
+    #   (c) caller bug propagating a stale brain id.
+    # All three are bad enough to refuse the broker call.
+    intent_stack = (intent.get("stack") or "").strip().lower()
+    claimed_brain = (body.brain_name or "").strip().lower()
+    if not intent_stack:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"intent {body.intent_id} has no `stack` field — cannot "
+                "confirm brain authorship; refusing submit."
+            ),
+        )
+    if claimed_brain != intent_stack:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "blocked_by": "brain_name_mismatch",
+                "reason": (
+                    f"submit body claimed brain_name={claimed_brain!r} but "
+                    f"intent {body.intent_id} was emitted by "
+                    f"{intent_stack!r}. Type the EMITTING brain's name to "
+                    "confirm this is the intent you want to submit."
+                ),
+                "claimed_brain":   claimed_brain,
+                "intent_author":   intent_stack,
+                "intent_id":       body.intent_id,
+            },
+        )
+
     # Apply the action override BEFORE the gate chain runs so every
     # downstream check (action_routable, council, broker_router) sees
     # the operator's chosen side, not the brain's. Mutate a working
@@ -1199,6 +1326,65 @@ async def execution_submit(
         operator_override=body.operator_override,
         override_reason=body.override_reason.strip() if body.operator_override else "",
     )
+
+    # ─── Seat-authority override gate (2026-02-23 doctrine fix) ────
+    # When `_evaluate_gates` returns `requires_operator_override=True`
+    # the intent's emitting brain is NOT the current seat holder. The
+    # gate chain otherwise reads "would_pass" because the seat is
+    # occupied — but firing the broker on a non-seat-holder intent
+    # would silently route Camino's intent under Barracuda's seat
+    # authority. That's the exact bypass the operator reported.
+    #
+    # Block here unless the caller has explicitly opted into the
+    # operator-override doctrine via `body.operator_override = True`
+    # (typically supplied by the `/execution/submit-override`
+    # endpoint with a non-empty `override_reason` describing why
+    # the operator is authorizing the non-seat-holder execution).
+    #
+    # `maybe_auto_submit` always passes `operator_override=False`, so
+    # auto-submit naturally inherits the block — fixing the
+    # "non-seat-holder brain executes via auto path" leak.
+    if result.get("requires_operator_override") and not body.operator_override:
+        await db[SHARED_GATE_RESULTS].insert_one({
+            "intent_id": body.intent_id,
+            "kind":      "submit_requires_override",
+            "ts":        _now_iso(),
+            "by":        user.get("email"),
+            "order_notional_usd": body.order_notional_usd,
+            "verdict":   "requires_operator_override",
+            "intent_author": result.get("intent_author"),
+            "seat_holder":   result.get("seat_holder"),
+            "matched_seat":  result.get("matched_seat"),
+        })
+        await db[SHARED_INTENTS].update_one(
+            {"intent_id": body.intent_id},
+            {"$set": {
+                "gate_state": "requires_operator_override",
+                "last_submit_ts": _now_iso(),
+                "last_submit_by": user.get("email"),
+            }},
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "blocked_by":  "seat_authority_classification",
+                "reason": (
+                    f"intent author {result.get('intent_author')!r} != current "
+                    f"seat holder {result.get('seat_holder')!r}; mode="
+                    f"requires_override. Use POST /api/execution/submit-override "
+                    f"with operator_override=true AND a non-empty override_reason "
+                    f"to authorize this non-seat-holder execution under the "
+                    f"current seat holder's authority."
+                ),
+                "seat_authority":              result.get("seat_authority"),
+                "intent_author":               result.get("intent_author"),
+                "seat_holder":                 result.get("seat_holder"),
+                "matched_seat":                result.get("matched_seat"),
+                "requires_operator_override":  True,
+                "gates":                       result["gates"],
+            },
+        )
+
     if result["verdict"] != "would_pass":
         # Audit-log the block so the operator can see why on the page.
         await db[SHARED_GATE_RESULTS].insert_one({
@@ -1393,6 +1579,19 @@ async def execution_submit(
         "overridden_gate_names": result.get("overridden_gate_names") or [],
         "action_overridden": bool(action_override and action_override != original_action),
         "original_action": original_action,
+        # 2026-02-23 seat-authority audit. Stamp the mode each
+        # broker call ran under so post-mortem can answer "did this
+        # trade execute as a seat-bound intent or as an operator-
+        # authorized override of a non-seat-holder intent?".
+        "execution_authority_mode": (
+            "operator_override"
+            if (result.get("requires_operator_override") and body.operator_override)
+            else "seat_bound"
+        ),
+        "intent_author": result.get("intent_author"),
+        "seat_holder":   result.get("seat_holder"),
+        "matched_seat":  result.get("matched_seat"),
+        "operator_confirmed": bool(body.operator_override),
     })
 
     # PARADOX audit — the executor's call passed every gate AND
@@ -1454,6 +1653,123 @@ async def execution_submit(
         "verdict": "executed",
         "live_position": live_pos,
     }
+
+
+# ─── Operator override submit (2026-02-23) ─────────────────────────
+# Dedicated endpoint for the seat-authority override doctrine. Same
+# broker-call mechanics as `/execution/submit` BUT:
+#
+#   * forces `operator_override=True` (caller cannot leave it false)
+#   * requires a non-empty `override_reason` (≥ 12 chars, audit trail)
+#   * REJECTS if the intent does NOT require an override — keeps the
+#     two endpoints distinct from a doctrine standpoint (operator
+#     can't accidentally call the override endpoint on a seat-bound
+#     intent and have it look like an override when none was needed)
+#   * writes an explicit `override_submit_request` audit row BEFORE
+#     the broker call, so the request itself is logged even if the
+#     submit fails downstream
+#
+# The frontend SUBMIT button should:
+#   * show "OVERRIDE REQUIRED" badge when dry-run returns
+#     `requires_operator_override=true` in the result
+#   * call this endpoint (NOT `/execution/submit`) with a reason
+@router.post("/execution/submit-override")
+async def execution_submit_override(
+    body: SubmitBody,
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Operator-authorized submit of a non-seat-holder intent.
+
+    The operator is explicitly authorizing the current seat holder
+    to execute an intent that was emitted by a DIFFERENT brain. The
+    seat holder remains the authority of record; the override
+    captures the operator's confirmation that this specific cross-
+    brain execution is intentional.
+
+    Audit row shape (under `kind: "override_submit_request"`):
+
+        {
+          "execution_authority_mode": "operator_override",
+          "intent_author":            "<emitting brain>",
+          "seat_holder":              "<current seat holder>",
+          "matched_seat":             "<seat id>",
+          "operator_confirmed":       true,
+          "operator_reason":          "<override_reason>"
+        }
+    """
+    reason = (body.override_reason or "").strip()
+    if len(reason) < 12:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "execution/submit-override requires `override_reason` of at "
+                "least 12 characters describing WHY a non-seat-holder intent "
+                "is being authorized under the current seat holder's "
+                "authority (audit-trail requirement)."
+            ),
+        )
+
+    # Validate that this intent actually NEEDS an override. If it
+    # doesn't, route the operator back to `/execution/submit` — the
+    # override endpoint should never be used as a "submit but
+    # quieter" alias.
+    intent = await db[SHARED_INTENTS].find_one(
+        {"intent_id": body.intent_id}, {"_id": 0},
+    )
+    if not intent:
+        raise HTTPException(
+            status_code=404,
+            detail=f"intent {body.intent_id} not found",
+        )
+
+    precheck = await _evaluate_gates(intent, body.order_notional_usd)
+    if not precheck.get("requires_operator_override"):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "blocked_by": "seat_authority_classification",
+                "reason": (
+                    "This intent does NOT require an operator override. "
+                    f"seat_authority={precheck.get('seat_authority')!r}. "
+                    "Use POST /api/execution/submit instead."
+                ),
+                "seat_authority": precheck.get("seat_authority"),
+                "intent_author":  precheck.get("intent_author"),
+                "seat_holder":    precheck.get("seat_holder"),
+            },
+        )
+
+    # Audit the request itself BEFORE the broker call — so a downstream
+    # broker failure doesn't lose the override authorization record.
+    await db[SHARED_GATE_RESULTS].insert_one({
+        "intent_id":  body.intent_id,
+        "kind":       "override_submit_request",
+        "ts":         _now_iso(),
+        "by":         user.get("email"),
+        "order_notional_usd": body.order_notional_usd,
+        "execution_authority_mode": "operator_override",
+        "intent_author":      precheck.get("intent_author"),
+        "seat_holder":        precheck.get("seat_holder"),
+        "matched_seat":       precheck.get("matched_seat"),
+        "operator_confirmed": True,
+        "operator_reason":    reason,
+    })
+
+    # Delegate to the standard submit flow with operator_override
+    # forced True. `execution_submit` will see
+    # `requires_operator_override=True AND body.operator_override=
+    # True`, take the success path, and audit-stamp the broker
+    # receipt with `execution_authority_mode="operator_override"`.
+    forced = SubmitBody(
+        intent_id=body.intent_id,
+        order_notional_usd=body.order_notional_usd,
+        confirm=body.confirm,
+        operator_override=True,
+        override_reason=reason,
+        action_override=body.action_override,
+        brain_name=body.brain_name,
+    )
+    return await execution_submit(forced, user=user)
 
 
 # ───────────────────────────── receipts ─────────────────────────────

@@ -120,6 +120,11 @@ export default function OperatorInjectIntent({ onSubmitted }) {
         intent_id,
         order_notional_usd: Number(notional),
         confirm: "execute",
+        // 2026-02-23: brain_name is REQUIRED. We just posted the
+        // intent with `stack: holder.holder`, so the brain name is
+        // the current seat holder by construction. The backend
+        // re-validates against shared_intents.stack.
+        brain_name: holder.holder,
       });
       setResult({ ok: true, intent_id, ...sub.data });
       toast.success(`Order routed · ${sub.data?.order?.status || "submitted"}`);
