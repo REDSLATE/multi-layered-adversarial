@@ -142,6 +142,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("pipeline_receipts index ensure failed (non-fatal): %s", e)
 
+    # System flags (2026-02-23) — DB-backed runtime feature toggles.
+    # Boot the background refresher so the brain runner's sync reads
+    # of `v3_brain_enabled()`, `is_watcher_enabled()`, and
+    # `is_refire_enabled()` see DB state without an env-var edit +
+    # restart. Operator can now flip from the dashboard.
+    try:
+        from shared.system_flags import start_background_refresher
+        await start_background_refresher()
+        logger.info("system_flags refresher started")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("system_flags refresher failed to start (non-fatal): %s", e)
+
     # Seat-state single-source-of-truth migration (2026-02-20). Copies
     # the legacy `shared_auditor_seat.holder` into the canonical
     # `brain_roster.assignments.auditor` if the roster slot is empty.

@@ -55,11 +55,14 @@ async def paradox_v3_status(
     `lane_executor_seats` surfaces the current holder so the operator
     knows which lanes are eligible for v3 WAIT plans.
     """
-    brains_csv = os.environ.get("PARADOX_V3_BRAINS", "").strip()
-    brains_on_v3 = (
-        sorted({b.strip().lower() for b in brains_csv.split(",") if b.strip()})
-        if brains_csv else []
+    # Effective brain list — DB wins, env fallback (2026-02-23).
+    from shared.system_flags import (
+        effective_paradox_v3_brains,
+        get_system_flags,
     )
+    brains_on_v3 = effective_paradox_v3_brains()
+    brains_csv = os.environ.get("PARADOX_V3_BRAINS", "").strip()
+    db_snap = get_system_flags()
 
     # Lane-aware seat-holder posture (read-only, defensive).
     from db import db
@@ -94,6 +97,12 @@ async def paradox_v3_status(
             "PARADOX_V3_TRIGGER_REFIRE": (
                 os.environ.get("PARADOX_V3_TRIGGER_REFIRE") or None
             ),
+        },
+        "db_flags": {
+            "paradox_v3_brains":       db_snap.paradox_v3_brains,
+            "trigger_watcher_enabled": db_snap.trigger_watcher_enabled,
+            "trigger_refire_enabled":  db_snap.trigger_refire_enabled,
+            "hydrated":                db_snap.hydrated,
         },
         "rollout_step": _infer_rollout_step(
             brains_on_v3, is_watcher_enabled(), is_refire_enabled(),

@@ -825,3 +825,26 @@ PARADOX_V2_FAILURE_ATTRIBUTIONS = "paradox_v2_failure_attributions"
 # chevelle/redeye, NOT seats). Quorum ≥2, abstain counts for quorum
 # but NOT majority, ties REJECT, 3-min timeout REJECT.
 PARADOX_V2_VOTE_SESSIONS      = "paradox_v2_vote_sessions"
+
+
+# ─── Runtime system flags (2026-02-23) ──────────────────────────────────
+# DB-backed mutable feature flags so the operator can flip Paradox v3
+# rollout (paradox_v3_brains), trigger_watcher, and trigger_refire from
+# the UI WITHOUT a backend restart or env-var edit. Replaces the
+# env-only gating that required a deploy ceremony for every flip.
+#
+# Layout:
+#   SYSTEM_FLAGS — single doc `{_id: "current", paradox_v3_brains: [],
+#                  trigger_watcher_enabled: false,
+#                  trigger_refire_enabled: false,
+#                  updated_at, updated_by}`
+#   SYSTEM_FLAG_CHANGES — append-only audit:
+#                  `{flag, before, after, actor, ts}`
+#
+# Read-side: `shared/system_flags.py` keeps a 5s-TTL process-local
+# cache so `v3_brain_enabled()`, `is_watcher_enabled()`, and
+# `is_refire_enabled()` can stay sync (no asyncio rip across every
+# caller). When the cache is unset (None), legacy env-var behaviour
+# applies — backwards-compatible by design.
+SYSTEM_FLAGS         = "system_flags"
+SYSTEM_FLAG_CHANGES  = "system_flag_changes"

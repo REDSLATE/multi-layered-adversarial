@@ -56,8 +56,22 @@ SAFETY_TTL_SECONDS = 30 * 86_400  # 30 days
 def is_watcher_enabled(env_var: str = "PARADOX_V3_TRIGGER_WATCHER") -> bool:
     """True iff the operator has opted INTO trigger-watching.
 
-    Default OFF. Pinned in two tests (`test_trigger_watcher_dormant_*`)
-    so a future env-cleanup pass can't quietly flip the default."""
+    Source of truth, in order:
+      1. `system_flags.trigger_watcher_enabled` (DB-backed, flippable
+         from the admin UI without restart — 2026-02-23 operator fix)
+      2. env var fallback
+
+    Default OFF on both empty. Pinned in two tests
+    (`test_trigger_watcher_dormant_*`) so a future env-cleanup pass
+    can't quietly flip the default.
+    """
+    try:
+        from shared.system_flags import get_system_flags
+        snap = get_system_flags()
+        if snap.trigger_watcher_enabled is not None:
+            return bool(snap.trigger_watcher_enabled)
+    except Exception:  # noqa: BLE001
+        pass
     val = os.environ.get(env_var, "0").strip().lower()
     return val in {"1", "true", "yes", "on"}
 
@@ -66,6 +80,11 @@ def is_refire_enabled(env_var: str = "PARADOX_V3_TRIGGER_REFIRE") -> bool:
     """True iff the operator has opted INTO live re-firing of fired
     plans through the unified pipeline.
 
+    Source of truth, in order:
+      1. `system_flags.trigger_refire_enabled` (DB-backed, flippable
+         from the admin UI without restart — 2026-02-23 operator fix)
+      2. env var fallback
+
     Default OFF — the operator may want to run the watcher in
     observability-only mode first (Step 5 ship) before letting trigger
     fires translate into actual broker calls. This second flag exists
@@ -73,6 +92,13 @@ def is_refire_enabled(env_var: str = "PARADOX_V3_TRIGGER_REFIRE") -> bool:
     drain TTL'd rows; (2) flip refire on, watch a fired plan actually
     reach the broker.
     """
+    try:
+        from shared.system_flags import get_system_flags
+        snap = get_system_flags()
+        if snap.trigger_refire_enabled is not None:
+            return bool(snap.trigger_refire_enabled)
+    except Exception:  # noqa: BLE001
+        pass
     val = os.environ.get(env_var, "0").strip().lower()
     return val in {"1", "true", "yes", "on"}
 

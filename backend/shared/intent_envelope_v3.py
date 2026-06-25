@@ -350,24 +350,47 @@ def synthesize_v3_envelope(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def v3_brain_enabled(brain_id: str, env_var: str = "PARADOX_V3_BRAINS") -> bool:
-    """Step 4 feature flag.
+    """Step 4 feature flag — DB-backed with env-var fallback.
 
-    Reads a comma-separated list of brain_ids from `env_var`. Returns
-    True iff `brain_id` is in the list. Defaults to False on missing
-    env or empty value — safe-OFF by design so v3 emits never roll
+    Source of truth, in order:
+      1. `system_flags.paradox_v3_brains` (DB-backed, flippable
+         from the admin UI without restart — 2026-02-23 operator fix)
+      2. `PARADOX_V3_BRAINS` env var (legacy / bootstrap fallback)
+
+    Returns True iff `brain_id` is in the effective list. Default
+    False on both empty — safe-OFF by design so v3 emits never roll
     out by accident.
 
-    Examples:
+    Examples (env behaviour preserved for tests):
         PARADOX_V3_BRAINS=                  → all brains stay on v2
         PARADOX_V3_BRAINS=camino            → only camino emits v3
         PARADOX_V3_BRAINS=camino,barracuda  → camino + barracuda
+
+    DB override examples (Mongo `system_flags.current` doc):
+        paradox_v3_brains: null              → fall back to env above
+        paradox_v3_brains: []                → explicitly no brains
+                                               (DB wins even if env set)
+        paradox_v3_brains: ["camino"]        → only camino
     """
+    target = (brain_id or "").strip().lower()
+    if not target:
+        return False
+    # DB-first.
+    try:
+        from shared.system_flags import get_system_flags
+        snap = get_system_flags()
+        if snap.paradox_v3_brains is not None:
+            return target in {b.lower() for b in snap.paradox_v3_brains}
+    except Exception:  # noqa: BLE001
+        # system_flags import / cache failure — fall through to env.
+        pass
+    # Env fallback (legacy path; preserved for tests + bootstrap).
     import os
     val = os.environ.get(env_var, "").strip().lower()
     if not val:
         return False
     brains = {b.strip() for b in val.split(",") if b.strip()}
-    return (brain_id or "").strip().lower() in brains
+    return target in brains
 
 
 __all__ = (
