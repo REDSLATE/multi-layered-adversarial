@@ -1,3 +1,58 @@
+## 2026-02-23 — Phase C complete: read paths migrated to stack_canonical + regression lint
+
+### What Phase C added on top of the dual-field migration
+
+**Read-path migrations (10 files, 30+ sites):**
+- `shared/brain_metrics.py:69, 143, 308` — in-memory grouping uses canonical
+- `routes/intent_origin.py:85` — `$group` aggregation `$ifNull: ['$stack_canonical', '$stack']`
+- `routes/admin_intents_funnel.py:193` — in-memory by-brain bucket grouping
+- `routes/scorecard_by_brain.py:83` — receipt grouping key
+- `routes/brain_emission_diagnose.py` — 8 `$match` filters + canonicalized input via `brain_legend.canonicalize_stack`
+- `routes/brain_runtime.py:225-238` — 4 `shared_intents` filter queries
+- `routes/sidecar_diagnostics.py:129-136` — 2 `shared_intents` filter queries
+- `routes/intent_summary.py:60` — single emission summary query
+- `shared/hypothesis.py:152, 197` — track-record + similar-setup queries
+- `shared/diagnostics.py:135` — latest-emit timestamp query
+- `shared/strategies/canary_runner.py:168` — NEW shared_intents write also stamps canonical
+
+**Phase C lint test (`test_phase_c_no_stack_groupings_regression.py`):**
+- Scans `routes/` + `shared/` for forbidden `$stack` groupings and `{"stack": <var>}` input-filter queries
+- Allow-list documents legitimate exceptions (display projections + other-collection sites that have their own migration story)
+- Second test pins the allow-list to real existing files (prevents stale entries)
+
+### End-to-end verification (iteration_15 testing agent)
+- `GET /api/admin/brain-legend` returns 4 rows with correct display casing (`Barracuda`/`Camino`/`Hellcat`/`GTO`)
+- Direct Mongo: 62,189 docs total, **0 missing `stack_canonical`**, exactly **4 canonical aggregation buckets** (barracuda 22,792 / hellcat 14,163 / camino 12,816 / gto 12,418)
+- Migration script idempotent: re-run reports "Nothing to migrate"
+- Live `POST /api/intents` (stack=camino) persists `stack_canonical=camino` alongside `stack=camino`
+- `POST /api/execution/submit` returns clean 422 (missing brain_name) instead of leaking 403 as `submit_raised`
+- **All 134 dual-field + auto-submit + seat-authority + council + override tests pass in 7.75s**
+
+### What's now true across the system
+- One canonical brain identity (`stack_canonical`) drives execution, consensus, council lookups, seat authority, and all aggregations.
+- The original `stack` field is preserved verbatim — operators can still trace any 6-month-old "camaro" audit row back to its wire form.
+- The `brain_legend` collection is the operator-visible documentation of the mapping.
+- Lint guards prevent silent drift back to identity-split bugs.
+
+### Out of scope (deliberately deferred)
+- Per-collection migrations for `live_positions`, `execution_receipts`, `doctrine_sidecars`, `brackets`, etc. These collections have their own write/read paths that still use `stack`. They are NOT visible on the active operational dashboards (which all read shared_intents). Each can get its own dual-field migration if/when it becomes a source of dashboard split-bucket confusion.
+
+### Next Action Items (operator decision)
+- **P1: Production deploy + validation** — run `python3 scripts/migrate_stack_canonical.py` on prod DB; verify on the post-mortem panel that the `auto_submit_fail/submit_raised` bar shrinks and a new `auto_submit_skip/seat_authority_mismatch` bar appears
+- **P3: Execution Lifecycle Funnel tile** — split `executed` intents into `filled / partially_filled / canceled / working / unknown` based on broker receipt status (next operational blind spot after Phase C)
+- **Operator Override Audit Feed tile** — read-only stream of intents executed where `intent_author != seat_holder`
+- **Brain Identity Legend card on Diagnostics** — documentation, not a primary tile (operator's call)
+
+### Backlog (P2)
+- Kraken spread poller
+- Hot-Brain Router into pipeline
+- Mongo aggregation caching for heavy dashboard panels (CPU/520 mitigation)
+- Refactor: split Webull/Kraken pollers into separate worker (root cause of preview/prod 520s)
+- Other-collection dual-field migrations if/when needed
+
+---
+
+
 ## 2026-02-23 — Dual-field brain identity migration (stack_canonical) + auto-submit cleanup
 
 ### Problem
