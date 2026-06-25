@@ -109,14 +109,19 @@ export default function ParadoxV3RolloutTile() {
         // Retirement candidates endpoint may not be mounted in all
         // deploys — soft-fail to null rather than break the tile.
         api.get("/admin/doctrine/retirement-candidates")
-           .catch(() => ({ candidates: [] })),
+           .catch(() => ({ data: { candidates: [] } })),
         api.get("/admin/system-flags/changes?limit=5")
-           .catch(() => ({ changes: [] })),
+           .catch(() => ({ data: { changes: [] } })),
       ]);
-      setStatus(s);
-      setStyles(st);
-      setRetirement(ret);
-      setChanges(ch?.changes || []);
+      // api.get returns { data, status } — destructure `.data` to
+      // reach the actual JSON body. Without this, every read-side
+      // field on the tile (brains_on_v3, watcher/refire flags, audit
+      // feed) reads as undefined and falls through to defaults.
+      // Caught by testing agent iter11 / 2026-02-23.
+      setStatus(s.data);
+      setStyles(st.data);
+      setRetirement(ret.data);
+      setChanges(ch?.data?.changes || []);
       setErr(null);
       setLastRefresh(new Date());
     } catch (e) {

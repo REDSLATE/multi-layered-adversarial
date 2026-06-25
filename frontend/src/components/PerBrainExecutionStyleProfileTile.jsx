@@ -135,7 +135,11 @@ export default function PerBrainExecutionStyleProfileTile() {
       const out = await api.get(
         "/admin/paradox-v3/per-brain-execution-style-profile",
       );
-      setData(out);
+      // api.get returns { data, status } — unwrap to read the JSON
+      // body. Without this, the matrix tile silently shows empty
+      // state even when v3 outcomes exist. Caught by testing
+      // agent iter11 / 2026-02-23.
+      setData(out.data);
       setErr(null);
       setLastRefresh(new Date());
     } catch (e) {
