@@ -101,6 +101,7 @@ async def build_redeye_crypto_intent(
     intent = {
         "intent_id": f"redeye-crypto-{action.lower()}-{uuid.uuid4().hex}",
         "stack": "gto",                  # MC's emitting-brain field
+        "stack_canonical": "gto",        # 2026-02-23 dual-field (already canonical)
         "source": "gto",                 # snippet alias
         "lane": "crypto",
         "asset_class": "crypto",

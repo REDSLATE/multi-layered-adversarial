@@ -89,6 +89,7 @@ async def build_hellcat_crypto_intent(
     intent = {
         "intent_id": f"chevelle-crypto-{action.lower()}-{uuid.uuid4().hex}",
         "stack": "hellcat",                   # MC's emitting-brain field
+        "stack_canonical": "hellcat",         # 2026-02-23 dual-field (already canonical)
         "source": "hellcat",                  # snippet alias
         "lane": "crypto",
         "asset_class": "crypto",

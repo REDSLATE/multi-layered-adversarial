@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 from auth import get_current_user
 from db import db
 from namespaces import SHARED_INTENTS
+from shared.brain_legend import canonicalize_stack  # 2026-02-23 dual-field migration
 from shared.executor_seat import get_seat_holder, seats_with_execute
 
 
@@ -163,6 +164,7 @@ def make_intent_bridge(cfg: BridgeConfig):
                 f"{action.lower()}-{uuid.uuid4().hex}"
             ),
             "stack": cfg.brain_id,
+            "stack_canonical": canonicalize_stack(cfg.brain_id),  # 2026-02-23 dual-field
             "source": cfg.brain_id,
             "lane": cfg.lane,
             "asset_class": cfg.lane,

@@ -483,11 +483,19 @@ async def matches_tier_1(intent: dict, policy: dict | None = None) -> tuple[bool
     # 2026-02-20: brain name normalization. Intents may arrive with
     # the legacy stack code (alpha/camaro/chevelle/redeye), the
     # canonical brain_id (camino/barracuda/hellcat/gto), or the UI
-    # display name (Camino/Barracuda/Hellcat/GTO). Normalize to the
-    # stack code so a brain rename or display-name drift doesn't
-    # silently filter every intent from that brain.
+    # display name (Camino/Barracuda/Hellcat/GTO).
+    #
+    # 2026-02-23 (dual-field migration): prefer `stack_canonical`
+    # when stamped — every emission site sets it, the backfill
+    # script stamped every historical doc. The normalizer is the
+    # defense-in-depth fallback for the rare row missing both
+    # fields (external callers, tests, very old docs).
     raw_brain = (intent.get("stack") or "").lower().strip()
-    brain = _normalize_brain_to_stack(raw_brain)
+    canonical_brain = (intent.get("stack_canonical") or "").lower().strip()
+    if canonical_brain:
+        brain = canonical_brain
+    else:
+        brain = _normalize_brain_to_stack(raw_brain)
     if brain not in p["allowed_brains"]:
         return False, (
             f"brain {raw_brain!r} (normalized {brain!r}) not in allowed "

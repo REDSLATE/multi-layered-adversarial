@@ -1,3 +1,67 @@
+## 2026-02-23 — Dual-field brain identity migration (stack_canonical) + auto-submit cleanup
+
+### Problem
+Equity throughput collapsed to ~0 trades in prod despite Shelly being ENABLED, equity lane ON, master switch ARMED. Investigation found two compounding issues:
+
+1. **3-mode doctrine noise** (just-implemented): non-seat-holder intents were calling `execution_submit` which raised HTTP 403 with `blocked_by=seat_authority_classification`. `maybe_auto_submit` caught the exception and filed them under `auto_submit_failed/submit_raised`. On 24h post-mortem this produced **422 doctrine-correct refusals appearing as pipeline failures**.
+
+2. **Brain identity drift**: legacy stack codes (alpha/camaro/chevelle/redeye) and canonical brain_ids (camino/barracuda/hellcat/gto) were silently coexisting on `shared_intents.stack`. The `_normalize_brain_to_stack` shim had a bug (`BRAIN_ID_TO_STACK` used as forward map instead of reverse) so `alpha` → `alpha` instead of `alpha` → `camino`. Tests written against the broken shim were stale.
+
+### Fix — dual-field migration
+
+**Architecture (preserve history, route reads through canonical):**
+- `stack` field is preserved verbatim — operator forensic trail.
+- `stack_canonical` is the new authoritative field, stamped at emission time on every intent, backfilled on all 61,836 historical docs.
+- `brain_legend` Mongo collection provides operator-visible legacy→canonical mapping at `/api/admin/brain-legend`.
+
+**Phase A (data + emission):**
+- `shared/brain_legend.py` — pure `canonicalize_stack(raw)` resolver, `seed_brain_legend(db)`, `get_brain_legend(db)`. Tested at 25 input forms (canonical/legacy/display/acronym/whitespace/empty/unknown).
+- `scripts/migrate_stack_canonical.py` — idempotent backfill, prints per-code counts, creates `ix_shared_intents_stack_canonical` index, verifies still_missing=0.
+- 5 emission sites stamp `stack_canonical` alongside `stack`:
+  - `shared/intents.py` × 4 (slim rejection, audit row, runtime doc, admin doc)
+  - `shared/intent_bridge_factory.py` × 1
+  - `shared/chevelle_crypto_intent_bridge.py` + `shared/redeye_crypto_intent_bridge.py` (canonical pass-through)
+- Lifespan seeds the legend on boot; route exposed at `/api/admin/brain-legend`.
+
+**Phase B (read migration — gates + auto-submit):**
+- `shared/auto_submit_policy.py::matches_tier_1` prefers `stack_canonical`, falls back to normalizer for external callers / tests.
+- `shared/execution.py::_evaluate_gates` (line 334) seat-authority comparison now uses `stack_canonical` first.
+- `shared/execution.py::execution_submit` brain_name validation canonicalizes both sides via `canonicalize_stack` — operator can type display name or legacy code and either resolves to the canonical match.
+
+**3-mode noise cleanup (companion fix):**
+- New skip categories: `SKIP_CATEGORY_SEAT_AUTHORITY_MISMATCH`, `SKIP_CATEGORY_SEAT_VACANT`.
+- `matches_tier_1` now pre-checks seat authority and returns clean `(False, "seat_authority …")` rows BEFORE `execution_submit` raises. Post-mortem panel surfaces "Skipped by Shelly · brain ≠ seat holder (doctrine OK)" with distinct color (#A78BFA) instead of the red `submit_raised` failure bucket.
+
+**Test drift fixes:**
+- `_normalize_brain_to_stack` bug fixed (used `BRAIN_ID_TO_STACK` reverse map, now uses `STACK_TO_BRAIN_ID` forward map).
+- 2 stale tests converted to `async` + canonical-name parameters (`test_doctrine_alignment_2026_02_20.py`, `test_market_hours.py`).
+- Skip-audit tests updated to canonical `["camino"]` allowed_brains.
+
+### Migration results (preview DB, 61,868 total intents)
+| canonical | total | from canonical | from legacy |
+|---|---|---|---|
+| barracuda | 22,720 | 5,373 | 17,331 (camaro) |
+| hellcat | 14,091 | 5,366 | 8,709 (chevelle) |
+| camino | 12,744 | 5,373 | 7,355 (alpha) |
+| gto | 12,346 | 5,188 | 7,141 (redeye) |
+
+### Test coverage
+- `tests/test_brain_legend_dual_field.py` — 25 input-form tests + legend shape pinning
+- `tests/test_matches_tier_1_seat_authority_precheck.py` — 5 tests pinning the clean-skip seat-authority pre-check, vacant case, cheap-filter precedence, transient-DB-defer behavior
+- All 120 doctrine/auto-submit/seat tests still pass
+
+### Files
+- Created: `shared/brain_legend.py`, `routes/admin_brain_legend.py`, `scripts/migrate_stack_canonical.py`, `tests/test_brain_legend_dual_field.py`, `tests/test_matches_tier_1_seat_authority_precheck.py`
+- Updated: `shared/intents.py`, `shared/intent_bridge_factory.py`, `shared/chevelle_crypto_intent_bridge.py`, `shared/redeye_crypto_intent_bridge.py`, `shared/auto_submit_policy.py`, `shared/execution.py`, `server_modules/lifespan.py`, `server_modules/router_registry.py`, `frontend/src/components/IntentPostMortemPanel.jsx`
+- Stale test drift fixes: `tests/test_doctrine_alignment_2026_02_20.py`, `tests/test_market_hours.py`, `tests/test_auto_submit_skip_audit.py`, `tests/test_auto_submit_dry_run_categories_2026_02_20.py`
+
+### Next steps (Phase C, not yet done — operator decision)
+- Migrate remaining read sites: dashboard aggregations (post-mortem grouping, brain-emission diagnose, per-brain execution-style profile, advisor performance) from `stack` → `stack_canonical`. Cosmetic only — the gate decisions already use canonical. Dashboards may currently aggregate legacy + canonical as separate buckets in some panels.
+- Add deprecation runtime warning when `stack_canonical` is missing on a fresh emit (defense against new emission sites being added without the stamp).
+
+---
+
+
 ## 2026-02-23 — Seat-authority three-mode doctrine + REQUIRED brain_name on submit (CRITICAL PROD FIX)
 
 ### Operator-reported (and code-confirmed) bypass

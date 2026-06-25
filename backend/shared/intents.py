@@ -45,6 +45,7 @@ from namespaces import (
     SHARED_INTENTS,
 )
 from runtime_auth import verify_runtime_token
+from shared.brain_legend import canonicalize_stack  # 2026-02-23 dual-field migration
 from shared.intent_envelope_v3 import (  # 2026-02 Paradox v3 schema (Step 1)
     ExecutionBlock,
     PlanBlock,
@@ -493,6 +494,7 @@ async def _audit_lane_policy_rejection(
     slim_doc = {
         "intent_id": rejection_id,
         "stack": stack,
+        "stack_canonical": canonicalize_stack(stack),  # 2026-02-23 dual-field
         "action": action,
         "symbol": symbol,
         "lane": lane,
@@ -702,7 +704,8 @@ async def _build_and_persist_doctrine_packet(
     #   per-brain context, NOT as a primary scoring axis.
     audit_row = {
         "intent_id": intent_id,
-        "stack": stack,                           # METADATA: ingest brain
+        "stack": stack,                           # METADATA: ingest brain (raw)
+        "stack_canonical": canonicalize_stack(stack),  # 2026-02-23 dual-field
         "lane": lane_norm or None,
         "symbol": symbol,
         "action": action,
@@ -1094,6 +1097,7 @@ async def _post_intent_impl(
     doc = {
         "intent_id": intent_id,
         "stack": body.stack,
+        "stack_canonical": canonicalize_stack(body.stack),  # 2026-02-23 dual-field
         "action": body.action,
         "symbol": body.symbol,
         "lane": effective_lane,
@@ -1514,6 +1518,7 @@ async def admin_post_intent(
     doc = {
         "intent_id": intent_id,
         "stack": body.stack,
+        "stack_canonical": canonicalize_stack(body.stack),  # 2026-02-23 dual-field
         "action": body.action,
         "symbol": body.symbol,
         "lane": effective_lane,

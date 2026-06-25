@@ -331,7 +331,14 @@ async def _evaluate_gates(
         seats_with_execute,
     )
     intent_lane_for_seat = intent.get("lane")
-    intent_stack = intent.get("stack")
+    # 2026-02-23 dual-field migration: prefer `stack_canonical`
+    # (set by every emission site + backfilled on historical docs);
+    # fall back to raw `stack` so external callers / tests still
+    # work. The seat-authority classification ALWAYS compares
+    # canonical identities — anything else creates the exact drift
+    # we just fixed (e.g. "camaro" emit vs "barracuda" seat holder
+    # would never match without normalization).
+    intent_stack = intent.get("stack_canonical") or intent.get("stack")
 
     # Find ANY execute-capable seat for this lane that is currently held.
     eligible_seats = seats_with_execute(intent_lane_for_seat)
@@ -1267,8 +1274,24 @@ async def execution_submit(
     #   (b) frontend stale state (intent re-keyed),
     #   (c) caller bug propagating a stale brain id.
     # All three are bad enough to refuse the broker call.
-    intent_stack = (intent.get("stack") or "").strip().lower()
-    claimed_brain = (body.brain_name or "").strip().lower()
+    # 2026-02-23 dual-field migration: prefer `stack_canonical`
+    # so the operator can type either the canonical brain id
+    # (camino/barracuda/hellcat/gto) or — for backwards
+    # compatibility — the legacy stack code embedded in the
+    # historical `stack` field. The `body.brain_name` will be
+    # routed through `canonicalize_stack` below so both forms
+    # compare equal.
+    intent_stack = (
+        intent.get("stack_canonical")
+        or intent.get("stack")
+        or ""
+    ).strip().lower()
+    # Canonicalize the operator's typed brain name as well — they
+    # might type "Camino" (display) or "alpha" (legacy) on the
+    # submit-override flow; either should match a "camino" intent.
+    from shared.brain_legend import canonicalize_stack as _canon  # noqa: WPS433
+    claimed_brain = _canon(body.brain_name or "")
+    intent_stack_canonical = _canon(intent_stack)
     if not intent_stack:
         raise HTTPException(
             status_code=400,
@@ -1277,16 +1300,18 @@ async def execution_submit(
                 "confirm brain authorship; refusing submit."
             ),
         )
-    if claimed_brain != intent_stack:
+    if claimed_brain != intent_stack_canonical:
         raise HTTPException(
             status_code=400,
             detail={
                 "blocked_by": "brain_name_mismatch",
                 "reason": (
-                    f"submit body claimed brain_name={claimed_brain!r} but "
-                    f"intent {body.intent_id} was emitted by "
-                    f"{intent_stack!r}. Type the EMITTING brain's name to "
-                    "confirm this is the intent you want to submit."
+                    f"submit body claimed brain_name={body.brain_name!r} "
+                    f"(canonical={claimed_brain!r}) but intent "
+                    f"{body.intent_id} was emitted by "
+                    f"{intent_stack!r} (canonical={intent_stack_canonical!r}). "
+                    "Type the EMITTING brain's name to confirm this is the "
+                    "intent you want to submit."
                 ),
                 "claimed_brain":   claimed_brain,
                 "intent_author":   intent_stack,

@@ -322,6 +322,15 @@ async def lifespan(app: FastAPI):
         logger.info("Brain × lane emission policy seeded")
     except Exception as e:  # noqa: BLE001
         logger.warning("brain_lane_policy seed failed: %s", e)
+    # Seed brain_legend collection (2026-02-23 dual-field migration).
+    # Idempotent. Provides operator-visible legacy→canonical mapping
+    # surfaced at `/api/admin/brain-legend`.
+    try:
+        from shared.brain_legend import seed_brain_legend  # noqa: WPS433
+        summary = await seed_brain_legend(db)
+        logger.info("brain_legend seeded: %s", summary)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("brain_legend seed failed: %s", e)
     # Position Monitor loop — periodic risk-guard evaluation
     # (StopLoss → TakeProfit → TrailingStop → MaxHoldTime).
     try:
