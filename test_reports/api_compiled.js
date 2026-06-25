@@ -1,5 +1,4 @@
-import axios from "axios";
-
+const axios = require("axios").default;
 // Doctrine pin (2026-05-31): when the frontend is hosted on its own
 // production domain (e.g., `mission.risedual.ai`), prefer SAME-ORIGIN
 // `/api` calls instead of the env-baked cross-origin URL. The prod
@@ -32,14 +31,13 @@ function resolveBackendUrl() {
 }
 
 const BACKEND_URL = resolveBackendUrl();
-export const API = `${BACKEND_URL}/api`;
+const API = `${BACKEND_URL}/api`;
 // Export the resolved backend root so other modules can build their
 // own URLs against the same same-origin-vs-env-var policy.
-export { BACKEND_URL };
 
 const TOKEN_KEY = "risedual_access_token";
 
-export function getToken() {
+function getToken() {
   try {
     return localStorage.getItem(TOKEN_KEY);
   } catch (e) {
@@ -50,7 +48,7 @@ export function getToken() {
     return null;
   }
 }
-export function setToken(t) {
+function setToken(t) {
   try {
     if (t) localStorage.setItem(TOKEN_KEY, t);
     else localStorage.removeItem(TOKEN_KEY);
@@ -331,7 +329,7 @@ async function request(method, path, body, cfg = {}) {
   return { data, status: resp.status };
 }
 
-export const api = {
+const api = {
   get:    (path, cfg) => request("GET", path, undefined, cfg),
   post:   (path, body, cfg) => request("POST", path, body ?? {}, cfg),
   put:    (path, body, cfg) => request("PUT", path, body ?? {}, cfg),
@@ -342,9 +340,9 @@ export const api = {
 // Keep axios import alive so existing usages of `axios` directly (if any
 // future code reaches for it) still resolve. The exported `api` above is
 // the only client used by the app today.
-export const _axios = axios;
+const _axios = axios;
 
-export function formatApiErrorDetail(detail) {
+function formatApiErrorDetail(detail) {
   if (detail == null) return "Something went wrong. Please try again.";
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail))
@@ -369,7 +367,7 @@ export function formatApiErrorDetail(detail) {
 //   alpha / camaro / chevelle / redeye  (slot codes — never user-facing)
 // Display labels are the operator brand:
 //   Camino / Barracuda / Hellcat / GTO  (rendered everywhere in the UI)
-export const RUNTIME_META = {
+const RUNTIME_META = {
   camino: {
     label: "CAMINO",
     project: "RISEDUAL-AI-2",
@@ -437,7 +435,7 @@ export const RUNTIME_META = {
 // Per the doctrine pin, the DB aliases are NEVER deleted — we
 // translate them on read instead. Keep this map in sync with the
 // backend if either side adds a new alias.
-export const RUNTIME_LEGACY_ALIAS = {
+const RUNTIME_LEGACY_ALIAS = {
   alpha:    "camino",
   camaro:   "barracuda",
   chevelle: "hellcat",
@@ -449,7 +447,7 @@ export const RUNTIME_LEGACY_ALIAS = {
 // can't crash a page with `Cannot read properties of undefined`.
 // Returns a fallback shape with the same keys RUNTIME_META has so
 // callers can read `.color` and `.label` unconditionally.
-export function getRuntimeMeta(rt) {
+function getRuntimeMeta(rt) {
   if (!rt) {
     return { color: "#A1A1AA", label: "UNKNOWN", note: "" };
   }
@@ -462,14 +460,14 @@ export function getRuntimeMeta(rt) {
   };
 }
 
-export function fmtTime(iso) {
+function fmtTime(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
   return d.toISOString().replace("T", " ").replace("Z", "Z").slice(0, 19) + "Z";
 }
 
-export function relTime(iso) {
+function relTime(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
   const diff = (Date.now() - d.getTime()) / 1000;
@@ -478,3 +476,5 @@ export function relTime(iso) {
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
 }
+
+module.exports = { api, API, BACKEND_URL, getToken, setToken };
