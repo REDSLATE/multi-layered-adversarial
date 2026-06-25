@@ -87,30 +87,62 @@ function buildUrl(path, params) {
 // same refresh cookie (which would be wasteful and could trigger
 // downstream rate limits). The first 401 wins; the rest await its
 // resolution.
+//
+// Doctrine pin (2026-02-23, prod 520 fix): tryRefresh returns a
+// TRI-STATE result so callers can distinguish "refresh endpoint
+// genuinely rejected us" (401/403 → clear token, bounce to /login)
+// from "Cloudflare/origin gave us a transient 5xx" (keep token,
+// surface the original error, next request retries). Before this
+// fix a single 520 on /auth/refresh would silently log the operator
+// out and produce the user-reported "3-min auto-logout" symptom
+// on mission.risedual.ai.
+//
+// Result shape:
+//   { token: "new..." }          → success, retry original request
+//   { rejected: true, status }   → real 401/403 from refresh endpoint
+//   { transient: true, status }  → 5xx / network / unknown — KEEP token
 let _refreshInFlight = null;
 
 async function tryRefresh() {
   if (_refreshInFlight) return _refreshInFlight;
   _refreshInFlight = (async () => {
+    let resp;
     try {
-      const resp = await fetch(`${API}/auth/refresh`, {
+      resp = await fetch(`${API}/auth/refresh`, {
         method: "POST",
         credentials: "include",   // refresh_token cookie rides here
         headers: { "Content-Type": "application/json" },
       });
-      if (!resp.ok) return null;
-      const data = await resp.json().catch(() => null);
-      const newTok = data && data.access_token;
-      if (!newTok) return null;
-      setToken(newTok);
-      return newTok;
-    } catch {
-      return null;
+    } catch (e) {
+      // fetch threw → network/DNS/CORS/offline. Treat as TRANSIENT
+      // — keep token, let the next request try again.
+      console.warn("[api] /auth/refresh network failure:", e?.message);
+      return { transient: true, status: 0 };
     } finally {
       // Single-shot: clear the gate on the next tick so a new 401
       // wave can trigger a fresh refresh.
       setTimeout(() => { _refreshInFlight = null; }, 0);
     }
+    if (resp.status === 401 || resp.status === 403) {
+      // Server explicitly rejected the refresh cookie. Real auth
+      // expiry — clear local token + bounce to /login.
+      return { rejected: true, status: resp.status };
+    }
+    if (!resp.ok) {
+      // 5xx (520/502/504 from Cloudflare), or anything else non-OK
+      // that isn't an explicit auth rejection. Keep the token.
+      console.warn("[api] /auth/refresh transient failure:", resp.status);
+      return { transient: true, status: resp.status };
+    }
+    const data = await resp.json().catch(() => null);
+    const newTok = data && data.access_token;
+    if (!newTok) {
+      // 2xx with no token in the body — defensive. Treat as
+      // transient rather than purging the session.
+      return { transient: true, status: resp.status };
+    }
+    setToken(newTok);
+    return { token: newTok };
   })();
   return _refreshInFlight;
 }
@@ -143,43 +175,53 @@ async function request(method, path, body, cfg = {}) {
   }
 
   // ── 401 auto-refresh + retry ────────────────────────────────────
-  // Doctrine pin (2026-06-24): the access token has a 60-min TTL
-  // (see auth.py `_create_access`). When it expires, every panel on
-  // the dashboard renders inline `HTTP 401` while the sidebar still
-  // shows the operator signed in — visually the operator is "locked
-  // out" without any redirect to /login. Auto-refresh closes that
-  // gap: on a 401, we try /api/auth/refresh once (using the 7-day
-  // httpOnly refresh cookie set at login), persist the new access
-  // token, and retry the original request transparently. If refresh
-  // fails OR we've already retried this request, the 401 surfaces
-  // normally and we ALSO clear the stale token + emit a
-  // `risedual:auth-expired` window event so AuthContext can drop
-  // `user` to null and React Router can redirect the operator back
-  // to /login. (Without that final step the operator gets stuck on
-  // a page rendering "HTTP 401" inline with no way out.)
+  // Doctrine pin (2026-06-24, hardened 2026-02-23): the access
+  // token has a 60-min TTL (see auth.py `_create_access`). When
+  // it expires, every panel on the dashboard renders inline
+  // `HTTP 401` while the sidebar still shows the operator signed
+  // in — visually the operator is "locked out" without any
+  // redirect to /login. Auto-refresh closes that gap.
+  //
+  // tryRefresh now returns a TRI-STATE result:
+  //   { token }     → retry original request transparently
+  //   { rejected }  → real 401/403 from /auth/refresh; clear
+  //                   token + emit `risedual:auth-expired` so the
+  //                   React tree drops to /login.
+  //   { transient } → 5xx/network on /auth/refresh (typical prod
+  //                   symptom: Cloudflare 520/502/504). KEEP the
+  //                   token — the original 401 surfaces to the
+  //                   panel as-is and the next request will try
+  //                   refresh again. This prevents a single
+  //                   Cloudflare 520 from logging the operator
+  //                   out (user-reported "3-min auto-logout" on
+  //                   mission.risedual.ai prod, 2026-02-23).
   if (resp.status === 401 && !cfg._isRefreshRetry && !path.startsWith("/auth/")) {
-    const newToken = await tryRefresh();
-    if (newToken) {
-      const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` };
+    const result = await tryRefresh();
+    if (result && result.token) {
+      const retryHeaders = { ...headers, Authorization: `Bearer ${result.token}` };
       return request(method, path, body, {
         ...cfg,
         headers: retryHeaders,
         _isRefreshRetry: true,
       });
     }
-    // Refresh failed — refresh cookie is missing, expired, or the
-    // backend rejected it. Drop the stale local token and notify
-    // the React tree so it can redirect to /login.
-    setToken(null);
-    if (typeof window !== "undefined") {
-      try {
-        window.dispatchEvent(new CustomEvent("risedual:auth-expired", {
-          detail: { path, status: 401 },
-        }));
-      } catch {
-        // Older browsers without CustomEvent; intentionally swallow.
+    if (result && result.rejected) {
+      // Real rejection — refresh cookie missing/expired/rejected.
+      // Drop the stale local token and notify the React tree so
+      // it can redirect to /login.
+      setToken(null);
+      if (typeof window !== "undefined") {
+        try {
+          window.dispatchEvent(new CustomEvent("risedual:auth-expired", {
+            detail: { path, status: 401, reason: "refresh_rejected" },
+          }));
+        } catch {
+          // Older browsers without CustomEvent; intentionally swallow.
+        }
       }
     }
+    // result.transient: fall through and surface the original 401
+    // to the caller. Token stays. Next call will retry refresh.
   }
 
   const ct = resp.headers.get("content-type") || "";

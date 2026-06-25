@@ -110,8 +110,28 @@ export function AuthProvider({ children }) {
   // login screen instead of leaving them stuck on a page rendering
   // "HTTP 401" inline. WITHOUT this listener, the api.js side of
   // the fix is half-done and the operator's prod symptom returns.
+  //
+  // 2026-02-23: also stash the rejection REASON in sessionStorage
+  // so the /login screen can surface a one-line banner ("Session
+  // ended: refresh rejected at /admin/foo") on the next render.
+  // This lets us tell apart 401 (real auth) vs 520 (Cloudflare)
+  // vs cookie-drop next time the operator reports a logout.
   useEffect(() => {
-    const handler = () => {
+    const handler = (e) => {
+      try {
+        const d = e?.detail || {};
+        sessionStorage.setItem(
+          "risedual_session_lost",
+          JSON.stringify({
+            reason: d.reason || "unknown",
+            status: d.status ?? null,
+            path:   d.path   ?? null,
+            at:     new Date().toISOString(),
+          }),
+        );
+      } catch {
+        // Quota / disabled storage — fine, banner just won't render.
+      }
       setUser(null);
       setStatus("ready");
     };
@@ -120,29 +140,58 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = useCallback(async (email, password) => {
-    try {
-      const { data } = await api.post("/auth/login", { email, password });
-      setToken(data.access_token);
-      setUser(data.user);
-      return { ok: true };
-    } catch (e) {
-      // Distinguish three failure modes so the operator sees the
-      // ACTUAL cause, not a generic "Something went wrong":
-      //   1. Server responded with a body (e.g. 401 + detail) → show detail
-      //   2. Request reached fetch but failed (network / CORS) → show e.message
-      //   3. Truly unknown → final fallback
-      const detail = e?.response?.data?.detail;
-      let msg;
-      if (detail != null) {
-        msg = formatApiErrorDetail(detail);
-      } else if (typeof e?.message === "string" && e.message.trim()) {
-        // Network-class error. fetch threw, no response body.
-        msg = `Cannot reach Mission Control: ${e.message}`;
-      } else {
-        msg = "Login failed. Please try again.";
+    // Doctrine pin (2026-02-23): login retries on 5xx / network
+    // errors with backoff. Mirrors the /auth/me retry doctrine.
+    // Production symptom: Cloudflare 520/502/504 between edge and
+    // origin produces a user-visible "Cannot reach Mission
+    // Control: HTTP 520" on the first POST. With this retry the
+    // user only sees the failure if all attempts inside a ~5s
+    // window fail. 401/403 (real credentials wrong) short-circuit
+    // immediately so a bad password still fails fast.
+    const attempts = 1 + RETRY_DELAYS_MS.length;
+    let lastErr = null;
+    for (let i = 0; i < attempts; i += 1) {
+      try {
+        const { data } = await api.post("/auth/login", { email, password });
+        // Clear any prior session-lost banner once we re-authenticate.
+        try { sessionStorage.removeItem("risedual_session_lost"); } catch { /* ignore */ }
+        setToken(data.access_token);
+        setUser(data.user);
+        return { ok: true };
+      } catch (e) {
+        lastErr = e;
+        if (isAuthRejection(e)) {
+          // Real credentials rejection — fail fast.
+          const detail = e?.response?.data?.detail;
+          const msg = detail != null
+            ? formatApiErrorDetail(detail)
+            : "Invalid credentials.";
+          return { ok: false, error: msg };
+        }
+        // Transient (5xx / network / Cloudflare). Backoff + retry.
+        if (i < attempts - 1) {
+          const waitMs = RETRY_DELAYS_MS[i];
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[auth] /auth/login transient failure (attempt ${i + 1}/${attempts}); retrying in ${waitMs}ms —`,
+            e?.response?.status ?? e?.message,
+          );
+          await delay(waitMs);
+        }
       }
-      return { ok: false, error: msg };
     }
+    // All retries exhausted on transient errors.
+    const e = lastErr;
+    const detail = e?.response?.data?.detail;
+    let msg;
+    if (detail != null) {
+      msg = formatApiErrorDetail(detail);
+    } else if (typeof e?.message === "string" && e.message.trim()) {
+      msg = `Cannot reach Mission Control: ${e.message}`;
+    } else {
+      msg = "Login failed. Please try again.";
+    }
+    return { ok: false, error: msg };
   }, []);
 
   const logout = useCallback(async () => {

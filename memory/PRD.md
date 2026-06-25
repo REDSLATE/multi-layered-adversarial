@@ -1,3 +1,65 @@
+## 2026-02-23 — Auth resilience: stop logging operators out on Cloudflare 520s (PROD HOTFIX)
+
+### User-reported symptoms (mission.risedual.ai PROD, mobile + desktop)
+- "It won't stay logged in. 3 mins tops, then 5 mins trying to log back in."
+- Screenshot: **"Cannot reach Mission Control: HTTP 520"** on /login POST.
+- Panels intermittently rendering inline HTTP 401, followed by bounce to /login.
+
+### Root cause
+`api.js` `tryRefresh` treated **any** non-2xx response from `/auth/refresh` as auth-rejection — calling `setToken(null)` + dispatching `risedual:auth-expired` → bouncing operator to /login. Cloudflare 520 (origin unreachable) → `resp.ok=false` → token purge. Single 520 = forced logout.
+
+The 60-min access TTL plus a panel polling every 10s means ANY 401 in any panel triggered `/auth/refresh`; if that refresh hit a 520 (intermittent on prod between Cloudflare and the origin pod), the operator was logged out in ~minutes. Symptom matched perfectly.
+
+### Fixes shipped (frontend-only — backend auth contract unchanged)
+
+**1. `lib/api.js` — `tryRefresh` tri-state result**
+- Returns `{ token }` on 2xx with valid body → retry original
+- Returns `{ rejected, status }` on **401/403** from `/auth/refresh` → clear token + dispatch event (real auth expiry)
+- Returns `{ transient, status }` on **5xx / network / 520 / 502 / 504** → KEEP token, surface original error to panel, next request retries refresh
+- 401-interceptor only calls `setToken(null)` inside the `rejected` branch. Transient path leaves the session intact.
+
+**2. `context/AuthContext.js` — login retry-with-backoff**
+- Mirror of the existing `/auth/me` retry doctrine (`RETRY_DELAYS_MS = [500, 1500, 3000]`).
+- 401/403 short-circuit immediately so wrong credentials fail fast.
+- 5xx / network errors retry up to 3× over ~5s. Operator sees "Cannot reach Mission Control" only if ALL attempts fail.
+
+**3. `pages/Login.jsx` + AuthContext — session-lost banner**
+- `risedual:auth-expired` event now carries `{ reason, status, path }` in detail.
+- AuthContext stashes it to `sessionStorage` under `risedual_session_lost`.
+- /login mounts a dismissible banner: "SESSION ENDED · refresh_rejected (HTTP 401) at /admin/diagnostics" — tells the operator (and us) WHY they were bounced. Cleared on successful login.
+
+### Tripwires (source-level pytest, doctrine pinned)
+`backend/tests/test_auth_refresh_transient_resilience.py` — 7 tests pinning:
+- `tryRefresh` must return the tri-state shape
+- `tryRefresh` must branch on `resp.status === 401 || 403` BEFORE fall-through
+- `setToken(null)` in `api.js` only inside a `result.rejected`-guarded branch
+- `risedual:auth-expired` event must carry a `reason` string
+- AuthContext `login` must reference `RETRY_DELAYS_MS` AND `isAuthRejection`
+- Login page must mount the session-lost banner + dismiss control
+- Successful login must clear the session-lost sessionStorage key
+
+Pairs with the existing `test_frontend_auth_context_resilience.py` (5 tests on `/auth/me` retry doctrine). Combined: 12 source-level invariants protecting against logout-on-transient-error regressions.
+
+### Verification
+- Happy-path login → `/api/auth/me` → `/api/auth/refresh` all 200 on preview backend.
+- `/api/auth/refresh` without cookie correctly returns 401 (the rejected branch).
+- Frontend e2e: login from clean state redirects to `/admin/hypothesis`; setting `risedual_session_lost` in sessionStorage renders the banner with `reason='refresh_rejected'`; dismiss removes it.
+
+### What still needs Emergent Support
+The underlying **HTTP 520 / 502 / 504 between Cloudflare and the prod origin** is infrastructure — not fixable from app code. The auth fix above means a single 520 no longer logs anyone out, but if the 520s are frequent the operator will still see "Cannot reach Mission Control" on the login retry-exhaustion path. Recommended: file a ticket with Emergent Support including timestamps of failing requests + the user's mobile screenshot so they can check the prod origin/Cloudflare edge config.
+
+### Files
+- `frontend/src/lib/api.js` — tryRefresh + 401-interceptor doctrine fix
+- `frontend/src/context/AuthContext.js` — login retry, session-lost event detail
+- `frontend/src/pages/Login.jsx` — session-lost banner + dismiss
+- `backend/tests/test_auth_refresh_transient_resilience.py` — new tripwire suite
+
+### Pre-existing test failures noted (out of scope)
+`test_authority_collapse_and_token_audit.py` has 3 failing tests on `/api/admin/runtime-tokens/health` (KeyError on `["rows"]`). These touch a different endpoint and existed before this session.
+
+---
+
+
 ## 2026-02-23 — Per-Brain Execution-Style Profile tile (P1 backlog item)
 
 ### Operator request

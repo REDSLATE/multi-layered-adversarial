@@ -1,7 +1,27 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { LockKey, ArrowRight } from "@phosphor-icons/react";
+import { LockKey, ArrowRight, Warning } from "@phosphor-icons/react";
+
+// Pulled from sessionStorage on /login mount. Set by AuthContext's
+// `risedual:auth-expired` handler so the operator sees WHY they
+// were bounced — distinguishes 401 (real auth) vs 5xx (Cloudflare)
+// vs cookie-drop next time a logout happens unexpectedly.
+function readSessionLost() {
+  try {
+    const raw = sessionStorage.getItem("risedual_session_lost");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function clearSessionLost() {
+  try { sessionStorage.removeItem("risedual_session_lost"); } catch { /* ignore */ }
+}
 
 export default function Login() {
   const { user, login, status } = useAuth();
@@ -10,6 +30,14 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [sessionLost, setSessionLost] = useState(null);
+
+  // Read the session-lost diagnostic ONCE on mount. We don't clear
+  // it until the operator successfully signs in (handled by
+  // AuthContext.login) or dismisses it manually.
+  useEffect(() => {
+    setSessionLost(readSessionLost());
+  }, []);
 
   if (status === "loading") return null;
   if (user) return <Navigate to="/admin/hypothesis" replace />;
@@ -108,6 +136,38 @@ export default function Login() {
             autoComplete="current-password"
             data-testid="login-password-input"
           />
+
+          {sessionLost && (
+            <div
+              className="border border-rd-warn/60 bg-rd-warn/5 text-rd-warn px-3 py-2 mb-5 text-[11px] font-mono leading-relaxed flex items-start gap-2"
+              data-testid="login-session-lost-banner"
+            >
+              <Warning size={12} weight="bold" className="mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <div>
+                  <span className="uppercase tracking-widest text-[9px] opacity-80">Session ended</span>
+                  {" · "}
+                  <span data-testid="login-session-lost-reason">
+                    {sessionLost.reason || "unknown"}
+                  </span>
+                  {sessionLost.status != null && (
+                    <span> (HTTP {String(sessionLost.status)})</span>
+                  )}
+                </div>
+                {sessionLost.path && (
+                  <div className="opacity-70 break-all">at {sessionLost.path}</div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => { clearSessionLost(); setSessionLost(null); }}
+                className="opacity-70 hover:opacity-100 text-[10px] uppercase tracking-widest"
+                data-testid="login-session-lost-dismiss"
+              >
+                dismiss
+              </button>
+            </div>
+          )}
 
           {error && (
             <div
