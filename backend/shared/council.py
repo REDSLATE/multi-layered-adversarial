@@ -245,10 +245,49 @@ _CONTRIBUTION_VALUES = ("contribution", "Contribution", "CONTRIBUTION")
 
 
 def _brain_id_variants(name: str) -> list[str]:
-    """All case variants we accept for a brain identity."""
+    """All identity variants we accept for a brain — case forms PLUS
+    the legacy/canonical pair via the brain legend.
+
+    Doctrine (2026-02-23 dual-field migration): receipts and seat
+    assignments may carry the brain identity as either the legacy
+    stack code (alpha/camaro/chevelle/redeye) OR the canonical
+    brain_id (camino/barracuda/hellcat/gto). The council's brain-
+    match clause MUST search both so a hellcat-held seat finds
+    chevelle-authored receipts (and vice versa). Without this, the
+    `_latest_governor_call` lookup silently misses every mirror that
+    used the other identity form.
+    """
     if not name:
         return []
-    return list({name, name.lower(), name.upper(), name.capitalize()})
+    variants: set[str] = {name, name.lower(), name.upper(), name.capitalize()}
+    # Lazy-imported so the council module stays cheap to import in
+    # contexts that don't need the legend (some sidecars).
+    try:
+        from shared.brain_legend import (  # noqa: WPS433
+            canonicalize_stack, LEGACY_TO_CANONICAL, DISPLAY_NAMES,
+        )
+        canonical = canonicalize_stack(name)
+        if canonical:
+            # Add the canonical brain_id + its display name.
+            variants.add(canonical)
+            variants.add(canonical.upper())
+            variants.add(canonical.capitalize())
+            display = DISPLAY_NAMES.get(canonical)
+            if display:
+                variants.add(display)
+            # Add every legacy alias for this canonical brain (one
+            # canonical may have many legacy aliases over time).
+            for legacy, can in LEGACY_TO_CANONICAL.items():
+                if can == canonical:
+                    variants.add(legacy)
+                    variants.add(legacy.upper())
+                    variants.add(legacy.capitalize())
+    except Exception:  # noqa: BLE001
+        # Defensive: legend lookup must never break the council
+        # path. Worst case we lose cross-form matching but keep
+        # case-variant matching, which is what we had before.
+        pass
+    return list(variants)
 
 
 def _brain_match_clause(brain: str) -> dict:

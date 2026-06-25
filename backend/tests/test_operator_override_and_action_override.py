@@ -160,6 +160,11 @@ def test_override_requires_reason(auth_token):
                 "confirm": "execute",
                 "operator_override": True,
                 "override_reason": "test",  # too short
+                # 2026-02-23: brain_name is required by SubmitBody.
+                # Any non-empty value is fine here — we want to
+                # reach the override_reason length check at line
+                # ~1240 of execution.py.
+                "brain_name": "camino",
             },
         )
     assert r.status_code == 400
@@ -177,6 +182,8 @@ def test_action_override_rejects_bad_value(auth_token):
                 "order_notional_usd": 5.0,
                 "confirm": "execute",
                 "action_override": "FLIP",
+                # 2026-02-23: brain_name required by SubmitBody.
+                "brain_name": "camino",
             },
         )
     assert r.status_code == 400
@@ -189,7 +196,10 @@ def test_hold_intent_without_action_override_refuses(auth_token):
     iid = f"hold-test-{uuid.uuid4().hex[:8]}"
     _sync_db["shared_intents"].insert_one({
         "intent_id": iid,
+        # 2026-02-23 dual-field migration: stamp both fields so the
+        # canonical-aware brain-name check matches.
         "stack": "redeye",
+        "stack_canonical": "gto",
         "symbol": "AAPL",
         "lane": "equity",
         "action": "HOLD",
@@ -208,6 +218,9 @@ def test_hold_intent_without_action_override_refuses(auth_token):
                     "confirm": "execute",
                     "operator_override": True,
                     "override_reason": "trying to force-route a HOLD intent",
+                    # `brain_name` is canonicalized inside the route
+                    # so either legacy or canonical matches.
+                    "brain_name": "gto",
                 },
             )
         assert r.status_code == 400

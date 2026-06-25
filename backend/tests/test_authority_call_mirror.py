@@ -81,12 +81,23 @@ async def test_mirror_lands_in_receipts_with_council_signal_shape():
 
 
 async def test_hard_veto_round_trip_produces_hard_block_verdict():
+    """Pre-2026-02-20 doctrine treated GOVERNOR_HARD_VETO as a hard
+    block. Per the 2026-02-20 operator directive, ALL governor-derived
+    reasons (including HARD_VETO) downgrade to RISK_DOWN_ONLY — the
+    governor sizes the trade down rather than killing it. Only
+    structural RoadGuards (KILL_SWITCH, BROKER_UNAVAILABLE, etc.)
+    still hard-block. This test now pins the new doctrine.
+    """
     await _cleanup("PRMIR_B")
     await _mirror_authority_call_to_receipts(
         _opinion("PRMIR_B", "BLOCK", "GOVERNOR_HARD_VETO")
     )
     holder, gov_doc = await _latest_governor_call("PRMIR_B", "equity")
-    assert holder == "chevelle"
+    # 2026-02-23 dual-field migration: seat holders are now stored
+    # as canonical brain_ids (hellcat) — receipts may still carry
+    # the legacy stack code (chevelle). The legend-aware
+    # `_brain_id_variants` makes the lookup cross-form.
+    assert holder == "hellcat"
     assert gov_doc is not None
     norm = _normalize_governor_call(gov_doc)
     assert norm is not None
@@ -99,10 +110,13 @@ async def test_hard_veto_round_trip_produces_hard_block_verdict():
         governor_holder=holder,
         policy=COUNCIL_POLICY["equity"],
     )
-    assert v["allowed"] is False
+    # 2026-02-20 doctrine: HARD_VETO is a SILENCE reason, not fatal.
+    # Trade is allowed but sized down hard (0.20 multiplier).
+    assert v["allowed"] is True
     assert v["reason"] == "GOVERNOR_HARD_VETO"
-    assert v["execution_effect"] == "HARD_BLOCK"
-    assert v["display_status"] == "BLOCK"
+    assert v["execution_effect"] == "RISK_DOWN_ONLY"
+    assert v["display_status"] == "RISK_DOWN"
+    assert v["risk_multiplier"] < 1.0  # explicit size-down vs full size
 
 
 async def test_warn_status_round_trip_produces_soft_dissent_downweight():
