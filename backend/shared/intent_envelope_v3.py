@@ -279,6 +279,97 @@ def normalize_intents(docs):
     return [normalize_intent(d) for d in (docs or [])]
 
 
+# ── Write-side: v3 envelope synthesizer (Step 4) ───────────────────
+def synthesize_v3_envelope(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Upgrade a v2 emit-payload to a v3 envelope.
+
+    Inverse of `normalize_intent` for the write path: takes the v2
+    payload a brain runner already built (action / confidence /
+    rationale / target_price / stop_price / lane / symbol / ...) and
+    returns a SHALLOW COPY enriched with `intent_version="v3"`,
+    `plan{}`, and `execution{}` blocks synthesised from the action.
+
+    Doctrine:
+      * The synthesised v3 envelope round-trips losslessly through
+        `normalize_intent` — the lifter would map it back to the same
+        action/intent/stance/execution_style combination. This is the
+        property that makes Step 4 safe: turning a brain v3-on doesn't
+        change what gets persisted in any way the downstream
+        post-mortem can detect, until the brain actually starts
+        emitting NEW v3-only intents (WAIT_FOR_TRIGGER, HEDGE, etc.).
+      * The top-level `action` field is preserved on the payload so
+        legacy v2 consumers (legacy gate chain, broker router) keep
+        seeing the canonical action they always have.
+      * `execution.derived_from_plan=True` (NOT False) because this
+        IS a planning-aware emit, not a v2-legacy fast-path row. The
+        lifter sets `False` for legacy v2 rows; the synthesiser sets
+        `True` for v3-aware emits even when synthesised from a v2
+        payload (per PRD §3.2 — `derived_from_plan` distinguishes
+        v3-aware emits from legacy fast-path).
+    """
+    if not payload:
+        return payload
+    action = (payload.get("action") or "").upper()
+    is_hold_or_blank = action in {"", "HOLD"}
+
+    plan: Dict[str, Any] = {
+        "stance": _V2_STANCE_FOR_ACTION.get(action, "NEUTRAL"),
+        "setup": "other",
+        "setup_custom_tag": None,
+        "intent": _V2_INTENT_FOR_ACTION.get(action, "WATCH"),
+        "execution_style": "MARKET_NOW",
+        "size_posture": "STANDARD",
+        "portfolio_posture": "NEUTRAL",
+        "hedge_against_symbol": None,
+        "trigger_price": None,
+        "invalidation_price": payload.get("stop_price"),
+        "target_prices": (
+            [float(payload["target_price"])] if payload.get("target_price") else None
+        ),
+        "confidence": float(payload.get("confidence") or 0.0),
+        "thesis": (payload.get("rationale") or "")[:4_000],
+        "horizon": "UNKNOWN",
+        "ttl_seconds": None,
+    }
+    execution: Dict[str, Any] = {
+        "action": None if is_hold_or_blank else action,
+        "notional_usd": None,
+        "limit_price": None,
+        "broker_hint": None,
+        # IMPORTANT: True (not False) — this IS a planning-aware emit,
+        # not a v2-legacy fast-path. See docstring above.
+        "derived_from_plan": True,
+        "derived_at": None,
+    }
+
+    new_payload = dict(payload)
+    new_payload["intent_version"] = "v3"
+    new_payload["plan"] = plan
+    new_payload["execution"] = execution
+    return new_payload
+
+
+def v3_brain_enabled(brain_id: str, env_var: str = "PARADOX_V3_BRAINS") -> bool:
+    """Step 4 feature flag.
+
+    Reads a comma-separated list of brain_ids from `env_var`. Returns
+    True iff `brain_id` is in the list. Defaults to False on missing
+    env or empty value — safe-OFF by design so v3 emits never roll
+    out by accident.
+
+    Examples:
+        PARADOX_V3_BRAINS=                  → all brains stay on v2
+        PARADOX_V3_BRAINS=camino            → only camino emits v3
+        PARADOX_V3_BRAINS=camino,barracuda  → camino + barracuda
+    """
+    import os
+    val = os.environ.get(env_var, "").strip().lower()
+    if not val:
+        return False
+    brains = {b.strip() for b in val.split(",") if b.strip()}
+    return (brain_id or "").strip().lower() in brains
+
+
 __all__ = (
     "STANCE_VALUES",
     "SETUP_VALUES",
@@ -293,4 +384,6 @@ __all__ = (
     "ExecutionBlock",
     "normalize_intent",
     "normalize_intents",
+    "synthesize_v3_envelope",
+    "v3_brain_enabled",
 )

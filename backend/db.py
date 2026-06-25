@@ -156,6 +156,26 @@ async def ensure_indexes() -> None:
     # IBKR connection — singleton credential + append-only audit log
     await db.ibkr_audit_log.create_index([("ts", -1)])
 
+    # ── Paradox v3 intent_watch_queue (2026-02, Step 3 — DORMANT) ──
+    # New collection for v3 WAIT_FOR_TRIGGER plans. Scanned by
+    # shared.pipeline.trigger_watcher when the operator opts in via
+    # PARADOX_V3_TRIGGER_WATCHER=1. Indexes here are boot-time so
+    # the watcher's first tick is index-backed regardless of when
+    # the env flag flips.
+    await db.intent_watch_queue.create_index([("state", 1), ("queued_at", 1)])
+    await db.intent_watch_queue.create_index([("symbol", 1), ("lane", 1), ("state", 1)])
+    await db.intent_watch_queue.create_index([("intent_id", 1)], unique=True)
+    # TTL safety net — orphan rows older than 30 days auto-prune.
+    # The per-plan ttl_seconds expires rows actively via the watcher;
+    # this index is the back-stop so abandoned queues don't bloat.
+    # Mongo TTL requires a BSON Date field — `queued_at` is stamped
+    # via `datetime.now(timezone.utc)` (BSON Date), not ISO string.
+    await db.intent_watch_queue.create_index(
+        "queued_at",
+        expireAfterSeconds=30 * 86_400,
+        name="intent_watch_queue_ttl_30d",
+    )
+
     # ── Hypothesis engine / Brain Recall — heavy read path on /admin/hypothesis ──
     # These indexes turn the per-role queries from collection scans into
     # bounded lookups. Profile-driven (see /api/hypothesis/_perf for p50/p95/p99).

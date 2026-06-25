@@ -91,3 +91,28 @@ class Lesson:
     setup_id: Optional[str] = None        # e.g. "crypto_breakdown_v1:SELL"
     outcome: LessonOutcome = "unknown"
     label_source: Optional[str] = None    # "bracket_resolver" | "brain_outcomes" | "synthetic" | None
+
+    # ─── Paradox v3 plan layer (2026-02, Step 2) ────────────────────
+    # Populated by the lifter on every read. v2 lessons receive the
+    # synthesised plan derived from `action` (BUY → ENTER/BULLISH,
+    # HOLD → WATCH/NEUTRAL, etc.). v3 lessons carry the brain's
+    # actual plan as emitted. The downstream Setup Memory and the
+    # Hot-Brain Router perf store can read these uniformly without
+    # branching on `intent_version`.
+    intent_version: Optional[str] = None
+    plan_stance: Optional[str] = None
+    plan_intent: Optional[str] = None
+    plan_setup: Optional[str] = None
+    plan_execution_style: Optional[str] = None
+    plan_size_posture: Optional[str] = None
+    plan_portfolio_posture: Optional[str] = None
+    plan_confidence: Optional[float] = None
+    plan_horizon: Optional[str] = None
+    plan_trigger_price: Optional[float] = None
+    plan_invalidation_price: Optional[float] = None
+    plan_target_prices: Optional[list[float]] = None
+    plan_ttl_seconds: Optional[int] = None
+    plan_setup_custom_tag: Optional[str] = None
+    plan_hedge_against_symbol: Optional[str] = None
+    execution_action: Optional[str] = None
+    execution_derived_from_plan: Optional[bool] = None

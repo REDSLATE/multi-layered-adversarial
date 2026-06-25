@@ -504,10 +504,10 @@ When operator approves, the work breakdown becomes:
 |---|---|---|---|
 | 0 | ✅ Approved | 2026-02-22 | All 7 §8 questions answered by operator. |
 | 1 | ✅ Shipped | 2026-02-22 | `shared/intent_envelope_v3.py` + `IntentIn` extended + lifter adopted in funnel + post-mortem. 93 new tests; 115 total tests green; live smoke confirms v3 WAIT_FOR_TRIGGER doc round-trips through MongoDB and the lifter. |
-| 2 | ☐ Pending | — | Verifier rule sheet + report cards: adopt the lifter (currently only adopted in the two admin read paths). |
-| 3 | ☐ Pending | — | `intent_watch_queue` Mongo collection + `trigger_watcher.py` periodic worker (DORMANT until step 5). |
-| 4 | ☐ Pending | — | First brain (camino) emits v3 envelopes behind env flag — 24h shadow run. |
-| 5 | ☐ Pending | — | Flip trigger_watcher to live. Trigger fires actually re-inject into pipeline. |
-| 6 | ☐ Pending | — | Roll v3 to barracuda, hellcat, gto in sequence. |
+| 2 | ✅ Shipped | 2026-02-22 | Lifter adopted in `shared/lessons/builder.py` (`build_lesson`). `Lesson` dataclass extended with 17 v3 plan/execution fields. `shared/report_cards.py` adds `plan_discipline` axis (v3-only — v2 rows excluded from scoring per operator §11). 9 new tests pin v2/v3 lesson lift + dataclass contract + plan_discipline aggregation. |
+| 3 | ✅ Shipped DORMANT | 2026-02-22 | NEW `shared/pipeline/trigger_watcher.py` — `is_watcher_enabled()` default OFF, `scan_watch_queue()` returns zero counters when dormant, `enqueue_watch_plan()` writes when dormant (backlog-safe). LIVE-mode TTL expiry + bullish/bearish trigger + invalidation legs all coded; price-trigger paths only engage when caller supplies a `price_fetcher` (Step 5 wires the default). NEW collection `intent_watch_queue` with 4 indexes including 30d TTL safety net. 12 new tests pin all behaviour. Seat-policy wiring is Step 5. |
+| 4 | ✅ Shipped DORMANT | 2026-02-22 | NEW `synthesize_v3_envelope(payload)` + `v3_brain_enabled(brain_id)` helpers (write-side mirrors of the read-side lifter). `external/brains/runner.py` calls them — when `PARADOX_V3_BRAINS=<csv>` includes the brain's id, the payload is upgraded to v3 before IntentIn parses it. Default OFF. 15 new tests pin synthesizer correctness + env-flag semantics + synthesize→normalize round-trip property. **Operator action**: flip `PARADOX_V3_BRAINS=camino` in `.env` + `sudo supervisorctl restart backend` to begin the 24h shadow run. |
+| 5 | ☐ Pending | — | Activate trigger_watcher: wire seat_policy to call `enqueue_watch_plan` for v3 WAIT_FOR_TRIGGER intents. Wire the default `price_fetcher` so trigger/invalidation legs actually fire. Add periodic worker tick to auto-router or a dedicated background task. |
+| 6 | ☐ Pending | — | Roll v3 to barracuda, hellcat, gto in sequence — each is now a one-line `.env` flag update. |
 | 7 | ☐ Pending | — | Un-quarantine `execution_judge.ready` for v3 PATIENT plans. |
 | 8 | ☐ Pending (~90d out) | — | After audit-retention window: delete v2 fast-path emit. Bridges only emit v3. |

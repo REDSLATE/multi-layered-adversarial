@@ -1,0 +1,307 @@
+"""Paradox v3 — Trigger Watcher (DORMANT by default).
+
+Step 3 of the v3 rollout (PRD §7). Ships the rails for the v3
+WAIT_FOR_TRIGGER lifecycle but does NOT activate until the operator
+sets `PARADOX_V3_TRIGGER_WATCHER=1`. Until then, every public entry
+point in this module is a no-op.
+
+Lifecycle (when live, Step 5):
+    seat_policy sees plan.intent == WAIT_FOR_TRIGGER
+      → enqueue_watch_plan() stamps the queue row, sets gate_state
+        on the intent doc to `waiting_for_trigger`.
+    scan_watch_queue() ticks every ~5s:
+      → for each watching row:
+          * trigger_price hit:        gate_state → trigger_fired,
+                                      re-inject into seat layer
+          * invalidation_price hit:   gate_state → plan_invalidated
+          * ttl elapsed:              gate_state → plan_expired
+      → respective queue row state transitions, resolved_at stamped.
+
+Doctrine pins:
+  * READ-ONLY when the env flag is off. `scan_watch_queue()` returns
+    a zero counter dict without touching Mongo.
+  * The seat-layer integration (Step 5) is NOT wired in this module —
+    seat_policy.py still has no awareness of v3 today. This module
+    ships the helpers so seat_policy can call them when Step 5 lands.
+  * Datetimes use `datetime.now(timezone.utc)` and are stored as BSON
+    Date (not ISO string) — TTL indexes require BSON Date or they
+    silently no-op.
+"""
+from __future__ import annotations
+
+import logging
+import os
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
+
+from db import db
+from namespaces import SHARED_INTENTS
+
+_log = logging.getLogger("risedual.paradox_v3.trigger_watcher")
+
+# Collection name. The Mongo TTL index lives on the `queued_at` field
+# with a 30-day retention so orphan rows can never accumulate even if
+# the watcher loop misses a tick. See db.py boot-time index creation.
+INTENT_WATCH_QUEUE_COLL = "intent_watch_queue"
+
+# When live, the watcher MUST never let a WAIT plan sit forever. The
+# TTL-on-queue safety net is 30 days; the per-plan ttl_seconds caps
+# it further. This constant is the safety-net default — every v3 plan
+# is expected to ship its own ttl_seconds (or have it derived from
+# horizon at the seat layer).
+SAFETY_TTL_SECONDS = 30 * 86_400  # 30 days
+
+
+# ── Feature flag ────────────────────────────────────────────────────
+def is_watcher_enabled(env_var: str = "PARADOX_V3_TRIGGER_WATCHER") -> bool:
+    """True iff the operator has opted INTO trigger-watching.
+
+    Default OFF. Pinned in two tests (`test_trigger_watcher_dormant_*`)
+    so a future env-cleanup pass can't quietly flip the default."""
+    val = os.environ.get(env_var, "0").strip().lower()
+    return val in {"1", "true", "yes", "on"}
+
+
+# ── Enqueue helper (called from seat_policy in Step 5) ─────────────
+async def enqueue_watch_plan(
+    *,
+    intent_id: str,
+    symbol: str,
+    lane: str,
+    stance: str,
+    trigger_price: Optional[float],
+    invalidation_price: Optional[float],
+    expires_at: Optional[datetime],
+) -> Dict[str, Any]:
+    """Park a v3 WAIT_FOR_TRIGGER plan on the watch queue.
+
+    Seat policy calls this in Step 5 when a v3 intent arrives with
+    `plan.intent == 'WAIT_FOR_TRIGGER'`. The plan is removed from the
+    main pipeline (gate_state → `waiting_for_trigger` on the intent
+    doc) and parked here until `scan_watch_queue()` fires it.
+
+    DORMANT semantics: when the env flag is off, the row is still
+    written so the operator can later flip the flag and process a
+    backlog. The watcher just doesn't transition any rows.
+    """
+    now = datetime.now(timezone.utc)
+    row = {
+        "intent_id": intent_id,
+        "symbol": symbol,
+        "lane": lane,
+        "stance": stance,
+        "trigger_price": (
+            float(trigger_price) if trigger_price is not None else None
+        ),
+        "invalidation_price": (
+            float(invalidation_price) if invalidation_price is not None else None
+        ),
+        "queued_at": now,
+        "expires_at": expires_at,
+        "state": "watching",
+        "resolved_at": None,
+        "resolved_reason": None,
+    }
+    try:
+        await db[INTENT_WATCH_QUEUE_COLL].insert_one(row.copy())
+        # Stamp the intent doc so the funnel + post-mortem see a
+        # canonical terminal-ish state (WAIT rows naturally land at
+        # Stage 1 — see funnel route).
+        await db[SHARED_INTENTS].update_one(
+            {"intent_id": intent_id},
+            {"$set": {"gate_state": "waiting_for_trigger"}},
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "enqueue_watch_plan failed intent=%s sym=%s err=%s",
+            intent_id, symbol, exc,
+        )
+    return row
+
+
+# ── Periodic worker ────────────────────────────────────────────────
+async def scan_watch_queue(
+    *,
+    now: Optional[datetime] = None,
+    price_fetcher=None,
+) -> Dict[str, Any]:
+    """Single tick of the trigger watcher.
+
+    DORMANT-mode behaviour (default):
+      Returns `{"enabled": False, ...}` zero-counters. NO Mongo
+      reads, NO writes, NO broker calls.
+
+    LIVE-mode behaviour (when `PARADOX_V3_TRIGGER_WATCHER=1`):
+      Step 3 ships the TTL-expiry leg only. Price-trigger and
+      invalidation-trigger paths are Step 5 work — they would
+      require a snapshot fetcher (the optional `price_fetcher`
+      callable). When `price_fetcher` is None even in live mode,
+      this function only expires TTL'd rows; price triggers stay
+      untouched. This is the same defensive pattern as the
+      auto-router — a flag flip lets the operator inspect the queue
+      drain before wiring price triggers.
+
+    Args:
+        now: optional override for time-now (test injection).
+        price_fetcher: optional async callable
+            `(symbol, lane) -> dict[bid/ask/price]`. If None, only
+            TTL-expiry processing runs.
+
+    Returns:
+        Counter dict with `enabled`, `scanned`, `fired`,
+        `invalidated`, `expired` keys.
+    """
+    enabled = is_watcher_enabled()
+    counters = {
+        "enabled":     enabled,
+        "scanned":     0,
+        "fired":       0,
+        "invalidated": 0,
+        "expired":     0,
+    }
+    if not enabled:
+        return counters
+
+    now = now or datetime.now(timezone.utc)
+    cursor = db[INTENT_WATCH_QUEUE_COLL].find({"state": "watching"})
+    async for row in cursor:
+        counters["scanned"] += 1
+        expires_at = row.get("expires_at")
+        if isinstance(expires_at, datetime):
+            # Ensure tz-aware comparison — Mongo can sometimes return
+            # naive datetimes depending on motor version.
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if now >= expires_at:
+                await _mark_resolved(
+                    row, state="expired", reason="ttl_elapsed", now=now,
+                    intent_gate_state="plan_expired",
+                )
+                counters["expired"] += 1
+                continue
+
+        # Price-trigger + invalidation legs — only run when caller
+        # supplies a fetcher. Step 5 wires the default fetcher; until
+        # then this code path is silent.
+        if price_fetcher is not None:
+            try:
+                snap = await price_fetcher(row["symbol"], row.get("lane"))
+            except Exception as exc:  # noqa: BLE001
+                _log.warning(
+                    "price_fetcher failed sym=%s err=%s",
+                    row.get("symbol"), exc,
+                )
+                snap = None
+            if not snap:
+                continue
+            outcome = _classify_trigger(row, snap)
+            if outcome == "fired":
+                await _mark_resolved(
+                    row, state="fired", reason="trigger_price_hit", now=now,
+                    intent_gate_state="trigger_fired",
+                )
+                counters["fired"] += 1
+            elif outcome == "invalidated":
+                await _mark_resolved(
+                    row, state="invalidated", reason="invalidation_price_hit",
+                    now=now, intent_gate_state="plan_invalidated",
+                )
+                counters["invalidated"] += 1
+
+    return counters
+
+
+def _classify_trigger(row: Dict[str, Any], snap: Dict[str, Any]) -> Optional[str]:
+    """Return `"fired" | "invalidated" | None` based on snapshot price.
+
+    Side-aware: BULLISH plans fire UP through trigger_price and
+    invalidate DOWN through invalidation_price. BEARISH plans are
+    the mirror.
+    """
+    price = snap.get("price") or snap.get("last")
+    if price is None:
+        return None
+    try:
+        price = float(price)
+    except (TypeError, ValueError):
+        return None
+
+    stance = (row.get("stance") or "").upper()
+    is_bullish = stance in {"BULLISH", "LONG_BIAS"}
+    is_bearish = stance in {"BEARISH", "SHORT_BIAS"}
+    trig = row.get("trigger_price")
+    inv = row.get("invalidation_price")
+
+    if is_bullish:
+        if inv is not None and price <= float(inv):
+            return "invalidated"
+        if trig is not None and price >= float(trig):
+            return "fired"
+    elif is_bearish:
+        if inv is not None and price >= float(inv):
+            return "invalidated"
+        if trig is not None and price <= float(trig):
+            return "fired"
+    return None
+
+
+async def _mark_resolved(
+    row: Dict[str, Any], *, state: str, reason: str,
+    now: datetime, intent_gate_state: str,
+) -> None:
+    """Transition a watching row to a terminal state + stamp the
+    intent doc's gate_state."""
+    try:
+        await db[INTENT_WATCH_QUEUE_COLL].update_one(
+            {"_id": row["_id"]},
+            {"$set": {
+                "state":           state,
+                "resolved_at":     now,
+                "resolved_reason": reason,
+            }},
+        )
+        await db[SHARED_INTENTS].update_one(
+            {"intent_id": row["intent_id"]},
+            {"$set": {"gate_state": intent_gate_state}},
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "trigger_watcher mark_resolved failed intent=%s state=%s err=%s",
+            row.get("intent_id"), state, exc,
+        )
+
+
+# ── Observability helper (read-only) ────────────────────────────────
+async def watch_queue_snapshot(limit: int = 100) -> Dict[str, Any]:
+    """Quick read of the current queue for the operator. Read-only.
+
+    Returns counts by state + the most-recent N rows. Safe to call
+    when the watcher is dormant — purely reads.
+    """
+    states = ("watching", "fired", "invalidated", "expired")
+    counts: Dict[str, int] = {s: 0 for s in states}
+    try:
+        for s in states:
+            counts[s] = await db[INTENT_WATCH_QUEUE_COLL].count_documents({"state": s})
+        recent = await db[INTENT_WATCH_QUEUE_COLL].find(
+            {}, {"_id": 0},
+        ).sort("queued_at", -1).to_list(length=int(limit))
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("watch_queue_snapshot failed: %s", exc)
+        recent = []
+    return {
+        "enabled":   is_watcher_enabled(),
+        "counts":    counts,
+        "recent":    recent,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+__all__ = (
+    "INTENT_WATCH_QUEUE_COLL",
+    "SAFETY_TTL_SECONDS",
+    "is_watcher_enabled",
+    "enqueue_watch_plan",
+    "scan_watch_queue",
+    "watch_queue_snapshot",
+)

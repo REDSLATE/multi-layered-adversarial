@@ -1,3 +1,160 @@
+## 2026-02-22 — Paradox v3 Steps 2 + 3 + 4 (lesson lift / dormant trigger watcher / camino emit flag)
+
+### Operator pin (verbatim)
+> "2, 3, & 4"
+
+### What shipped — all three steps as ONE additive batch
+All three steps are operationally DORMANT until the operator flips
+the relevant env flag. Backward-compat is total: every existing
+v2 emit and every existing read path produces identical output.
+
+**Step 2 — Lifter adoption in verifier + report cards**
+- `shared/lessons/builder.py::build_lesson` calls
+  `normalize_intent(doc)` immediately after the Mongo read so every
+  lesson (v2 or v3) carries the synthesised plan/execution shape.
+- `shared/lessons/schemas.py::Lesson` extended with 17 v3 fields
+  (`intent_version`, `plan_stance`, `plan_intent`, `plan_setup`,
+  `plan_execution_style`, `plan_size_posture`, `plan_portfolio_posture`,
+  `plan_confidence`, `plan_horizon`, `plan_trigger_price`,
+  `plan_invalidation_price`, `plan_target_prices`, `plan_ttl_seconds`,
+  `plan_setup_custom_tag`, `plan_hedge_against_symbol`,
+  `execution_action`, `execution_derived_from_plan`). All Optional —
+  v2 rows have them but they're synthesised from `action` per §6.2.
+- `shared/report_cards.py` gains the `plan_discipline` axis on
+  every report card: counts v3 vs v2 lesson totals, per-`plan_intent`
+  histogram, per-`plan_stance` histogram, per-`plan_setup` histogram,
+  `wait_plans_observed`. Reserves `wait_correct_rate`,
+  `trigger_hit_rate`, `invalidation_hit_rate` as null placeholders
+  until trigger_watcher (Step 5) starts stamping outcomes.
+- Operator §11 doctrine: v2 lessons are EXCLUDED from plan-discipline
+  scoring — they show up as `v2_legacy_count` only. v3-only emits
+  contribute to the histograms. No silent migration of v2 lessons
+  into the new axis.
+
+**Step 3 — Trigger Watcher (DORMANT)**
+- NEW `shared/pipeline/trigger_watcher.py`:
+  * `is_watcher_enabled()` reads `PARADOX_V3_TRIGGER_WATCHER` env
+    (default "0" → False).
+  * `scan_watch_queue()` returns zero-counters dict with no Mongo
+    touch when dormant.
+  * `enqueue_watch_plan(...)` writes the watch-queue row AND stamps
+    `gate_state="waiting_for_trigger"` on the intent doc even when
+    dormant — so a future flag-flip drains the existing backlog.
+  * LIVE-mode behaviour (when env=1):
+    - TTL expiry path runs always; transitions
+      `state="watching" → "expired"`, intent `gate_state →
+      "plan_expired"`.
+    - Trigger + invalidation paths only engage when caller supplies
+      a `price_fetcher` async callable. Step 5 wires the default
+      fetcher; until then the live mode is "TTL-expiry only" —
+      same defensive pattern as auto-router.
+    - Bullish plans fire UP through trigger_price, invalidate DOWN
+      through invalidation_price. Bearish plans are the mirror.
+- NEW collection `intent_watch_queue` with 4 indexes:
+  * `(state, queued_at)` — scan query
+  * `(symbol, lane, state)` — price-fetcher batching
+  * `intent_id` unique — idempotent enqueue
+  * `queued_at` TTL @ 30 days — safety net for orphan rows
+- All indexes verified live at boot.
+- `watch_queue_snapshot()` helper for operator observability —
+  state counts + recent rows.
+
+**Step 4 — camino v3 emit (DORMANT)**
+- NEW `shared/intent_envelope_v3.py::synthesize_v3_envelope(payload)`
+  — write-side mirror of the read-side lifter. Produces a v3 envelope
+  from a v2 payload that round-trips losslessly through
+  `normalize_intent`. The key distinction: `execution.derived_from_plan=
+  True` (v3-aware emit), whereas v2-legacy rows lifted on read get
+  `False` (legacy fast-path). This is the ONLY downstream-visible
+  difference between a v3-on emit and a v2 emit-then-lift for purely
+  fast-path intents — exactly the contract that makes Step 4 safe.
+- NEW `shared/intent_envelope_v3.py::v3_brain_enabled(brain_id)`
+  — reads `PARADOX_V3_BRAINS=<csv>` env. Whitespace-tolerant,
+  case-insensitive. Default False on missing/empty.
+- `external/brains/runner.py` — after `payload = _intent_to_mc_payload(intent)`
+  and before `IntentIn(**payload)`, calls
+  `payload = synthesize_v3_envelope(payload)` iff
+  `v3_brain_enabled(self.brain_id)`. Zero impact when flag is unset.
+
+### Tests (46 new pytest cases, 200+ total v3-suite cases green)
+- `tests/test_paradox_v3_step2_lesson_lift.py` (9 tests): v2 + v3
+  lesson lift on real Mongo seeds, dataclass field contract, the
+  three plan_discipline edge cases, full report card includes axis.
+- `tests/test_paradox_v3_step3_trigger_watcher.py` (22 tests):
+  dormant default, flag parameterised true/false sets, enqueue
+  works when dormant, LIVE TTL expiry transitions, bullish trigger
+  fires, bullish invalidation transitions, bearish trigger mirrored,
+  no-action when price between bands, observability snapshot.
+- `tests/test_paradox_v3_step4_emit_synthesizer.py` (15 tests):
+  env-flag CSV/whitespace/case semantics, synthesizer correctness
+  for every v2 action, target/stop lifts, input non-mutation,
+  empty-payload edge cases, synthesize→normalize round-trip property
+  for every v2 action.
+
+### Live verification
+- Backend restarted clean. All 4 brains continue posting intents
+  (camino/barracuda/hellcat/gto on NVDA every ~3s). Zero errors.
+- `intent_watch_queue` indexes verified at boot:
+  `state_1_queued_at_1`, `symbol_1_lane_1_state_1`,
+  `intent_id_1` (unique), `intent_watch_queue_ttl_30d`
+  (expireAfterSeconds=2,592,000).
+- Funnel + post-mortem return identical output for the 1,943 v2-
+  legacy intents in the 24h window (lifter is a no-op for them).
+- 154-test regression sweep (funnel + research-hook + all 5 v3
+  suites): all green, zero regressions.
+
+### Operator actions to begin shadow runs
+**Step 4 shadow run (camino on v3)**:
+```
+# In production .env (or preview .env for a dry-run first):
+PARADOX_V3_BRAINS=camino
+# Then:
+sudo supervisorctl restart backend
+```
+Effects:
+- Camino's intents land in `shared_intents` with
+  `intent_version="v3"` and a full synthesised `plan` + `execution`
+  block.
+- Other brains (barracuda/hellcat/gto) continue emitting v2 untouched.
+- Funnel, post-mortem, verifier, report-card output for camino is
+  shape-identical to v2 — the lifter normalises both. The ONLY
+  downstream-visible change is `execution.derived_from_plan=True`
+  on camino rows, surfaced on the report card's `plan_discipline`
+  axis. v2-from-other-brains stays in `v2_legacy_count`.
+
+**Step 3 dormant→live (trigger_watcher activation)**:
+```
+PARADOX_V3_TRIGGER_WATCHER=1
+sudo supervisorctl restart backend
+```
+Effect: TTL-expiry path activates immediately. Price-trigger and
+invalidation paths remain INACTIVE until Step 5 wires the default
+price fetcher into the auto-router tick.
+
+### Touched
+- EDIT: `backend/shared/lessons/schemas.py` (17 new optional v3 fields)
+- EDIT: `backend/shared/lessons/builder.py` (lifter + field stamping)
+- EDIT: `backend/shared/report_cards.py` (plan_discipline axis)
+- NEW:  `backend/shared/pipeline/trigger_watcher.py`
+- EDIT: `backend/db.py` (4 indexes for `intent_watch_queue`)
+- EDIT: `backend/shared/intent_envelope_v3.py` (synthesize_v3_envelope
+        + v3_brain_enabled exports)
+- EDIT: `external/brains/runner.py` (v3 emit gate)
+- NEW:  `backend/tests/test_paradox_v3_step2_lesson_lift.py`
+- NEW:  `backend/tests/test_paradox_v3_step3_trigger_watcher.py`
+- NEW:  `backend/tests/test_paradox_v3_step4_emit_synthesizer.py`
+- EDIT: `memory/PARADOX_V3_INTENT_ENVELOPE_PRD.md` (§13 rollout —
+        Steps 2/3/4 marked shipped)
+
+### Deploy ordering
+Backward-compatible. Production deploys whenever — no env changes
+needed until the operator decides to begin the shadow runs (per
+"Operator actions" above).
+
+---
+
+
+
 ## 2026-02-22 — Paradox v3 Intent Envelope — Step 1 (schema rails + read-side lifter)
 
 ### Operator pin (verbatim)

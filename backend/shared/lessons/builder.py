@@ -29,6 +29,7 @@ from namespaces import (
 from .mae_mfe import compute_mae_mfe_bps
 from .schemas import Lesson, LessonOutcome
 from .setup_classifier import classify_setup
+from shared.intent_envelope_v3 import normalize_intent  # 2026-02 Paradox v3
 
 
 _log = logging.getLogger("risedual.lessons.builder")
@@ -107,6 +108,16 @@ async def build_lesson(intent_id: str) -> Optional[Lesson]:
     )
     if not intent:
         return None
+
+    # ─── Paradox v3 lift (Step 2) ─────────────────────────────────
+    # Apply the read-side lifter so v2 lessons carry the synthesised
+    # plan/execution shape alongside v3 lessons. Downstream
+    # consumers (Setup Memory, Hot-Brain Router perf store, the
+    # frontend lesson card) read the v3 fields uniformly without
+    # branching on `intent_version`.
+    intent = normalize_intent(intent)
+    plan = intent.get("plan") or {}
+    execution = intent.get("execution") or {}
 
     evidence = intent.get("evidence") or {}
     snapshot = intent.get("snapshot") or {}
@@ -236,6 +247,24 @@ async def build_lesson(intent_id: str) -> Optional[Lesson]:
         setup_id=classify_setup(intent.get("action") or "", signals),
         outcome=final_outcome,
         label_source=outcome_block.get("label_source"),
+        # ─── Paradox v3 plan layer (Step 2) — lifted on read ────
+        intent_version=intent.get("intent_version"),
+        plan_stance=plan.get("stance"),
+        plan_intent=plan.get("intent"),
+        plan_setup=plan.get("setup"),
+        plan_execution_style=plan.get("execution_style"),
+        plan_size_posture=plan.get("size_posture"),
+        plan_portfolio_posture=plan.get("portfolio_posture"),
+        plan_confidence=(float(plan["confidence"]) if plan.get("confidence") is not None else None),
+        plan_horizon=plan.get("horizon"),
+        plan_trigger_price=(float(plan["trigger_price"]) if plan.get("trigger_price") is not None else None),
+        plan_invalidation_price=(float(plan["invalidation_price"]) if plan.get("invalidation_price") is not None else None),
+        plan_target_prices=list(plan.get("target_prices") or []) or None,
+        plan_ttl_seconds=plan.get("ttl_seconds"),
+        plan_setup_custom_tag=plan.get("setup_custom_tag"),
+        plan_hedge_against_symbol=plan.get("hedge_against_symbol"),
+        execution_action=execution.get("action"),
+        execution_derived_from_plan=execution.get("derived_from_plan"),
     )
 
 

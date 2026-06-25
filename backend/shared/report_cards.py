@@ -75,6 +75,55 @@ def _summarize(lessons: Iterable[Lesson]) -> dict:
     }
 
 
+def _summarize_plan_discipline(lessons: Iterable[Lesson]) -> dict:
+    """Paradox v3 plan-discipline axis (PRD §4 Step 2).
+
+    Aggregates the brain's PLAN-side cognition independent of order
+    fill. Today this is informational only (no brain emits v3 yet,
+    so every count under v3 buckets will read 0). Once Step 4 flips
+    camino to v3 emits, this surface populates immediately and
+    becomes the seed for the doctrine `plan_discipline` score.
+
+    Doctrine pin (operator §11): action-only v2 emits are NOT
+    counted as plan-discipline signal — only `intent_version == 'v3'`
+    contributes. v2 rows are surfaced as `v2_legacy` for transparency.
+    """
+    lessons = list(lessons)
+    v3 = [le for le in lessons if (le.intent_version or "v2") == "v3"]
+    v2 = [le for le in lessons if (le.intent_version or "v2") != "v3"]
+
+    # Per-plan-intent histogram across v3 lessons.
+    intent_hist: dict[str, int] = {}
+    stance_hist: dict[str, int] = {}
+    setup_hist: dict[str, int] = {}
+    for le in v3:
+        if le.plan_intent:
+            intent_hist[le.plan_intent] = intent_hist.get(le.plan_intent, 0) + 1
+        if le.plan_stance:
+            stance_hist[le.plan_stance] = stance_hist.get(le.plan_stance, 0) + 1
+        if le.plan_setup:
+            setup_hist[le.plan_setup] = setup_hist.get(le.plan_setup, 0) + 1
+
+    # Wait-discipline: of the WAIT_* plans, how many had a resolved
+    # outcome that matched the brain's directional call? Today this
+    # is None until trigger_watcher (Step 5) starts stamping
+    # `gate_state IN [trigger_fired, plan_invalidated, plan_expired]`.
+    wait_plans = [le for le in v3 if (le.plan_intent or "").startswith("WAIT_")]
+
+    return {
+        "v3_lesson_count": len(v3),
+        "v2_legacy_count": len(v2),
+        "by_plan_intent": intent_hist,
+        "by_plan_stance": stance_hist,
+        "by_plan_setup": setup_hist,
+        "wait_plans_observed": len(wait_plans),
+        # Future fields (populated in Step 5 once trigger_watcher live):
+        "wait_correct_rate":     None,
+        "trigger_hit_rate":      None,
+        "invalidation_hit_rate": None,
+    }
+
+
 async def build_report_card(
     *,
     stack: str,
@@ -116,6 +165,7 @@ async def build_report_card(
         "regime_filter": regime,
         "window_intents": len(lessons),
         "overall": _summarize(lessons),
+        "plan_discipline": _summarize_plan_discipline(lessons),
         "by_setup": {k: _summarize(v) for k, v in by_setup.items()},
         "by_regime": {k: _summarize(v) for k, v in by_regime.items()},
         "by_symbol_top": {

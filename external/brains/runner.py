@@ -1465,6 +1465,18 @@ class BrainRunner:
         # (sibling fire-and-forget posters need it too). Local import
         # removed; the name is in scope from the top-level import.
         from shared.intents import submit_intent_in_process, IntentIn
+        # ── Paradox v3 emit (2026-02, Step 4 — env-gated, default OFF) ──
+        # When `PARADOX_V3_BRAINS=<csv>` includes this brain's id, the
+        # payload is upgraded in-place to a v3 envelope before the
+        # IntentIn schema parses it. The v3 envelope round-trips
+        # losslessly through the read-side lifter, so DOWNSTREAM
+        # observability (funnel, post-mortem, verifier) behaves
+        # identically. The change becomes visible only when the brain
+        # starts emitting v3-only intents (WAIT_FOR_TRIGGER, HEDGE,
+        # etc.) — which is the Step 5/6 work, not Step 4.
+        from shared.intent_envelope_v3 import synthesize_v3_envelope, v3_brain_enabled
+        if v3_brain_enabled(self.brain_id):
+            payload = synthesize_v3_envelope(payload)
         try:
             intent_obj = IntentIn(**payload)
             result = await submit_intent_in_process(intent_obj)
