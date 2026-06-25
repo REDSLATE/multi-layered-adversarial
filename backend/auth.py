@@ -19,13 +19,44 @@ def _secret() -> str:
     return os.environ["JWT_SECRET"]
 
 
+def _bcrypt_cost() -> int:
+    """bcrypt cost factor for new password hashes.
+
+    Default 12 (~250ms on modern CPU, ~1s on CPU-throttled prod
+    pods). Operator can lower to 10 via env (`BCRYPT_COST=10`) when
+    the prod pod is CPU-bound and login is degrading sequentially —
+    user-reported symptom 2026-02-23 (login 1.9s → 3.4s → 4.1s on
+    prod, triggering Cloudflare 502/520 at the edge). Cost 10 is
+    ~4× faster and still OWASP-recommended for password storage,
+    especially given the 5-fails-in-15min brute-force tarpit.
+
+    EXISTING password hashes keep their stored cost — bcrypt encodes
+    the cost into the hash itself. Lowering this env var only
+    affects NEW hashes (new admin seed, password reset).
+    """
+    raw = os.environ.get("BCRYPT_COST")
+    if not raw:
+        return 12
+    try:
+        cost = int(raw)
+    except ValueError:
+        return 12
+    # OWASP floor: 10. Ceiling 14 — anything higher risks > 5s on
+    # weak CPU and re-triggers the Cloudflare-502 symptom this knob
+    # exists to mitigate.
+    return max(10, min(14, cost))
+
+
 def hash_password(password: str) -> str:
-    """Synchronous bcrypt hash. CPU-bound (~1s at cost 12). Use the
-    async wrappers below from inside FastAPI handlers — calling this
-    directly on the event loop will FREEZE every concurrent request
-    for the duration of the hash. This sync entry point exists for
-    the seed/migration scripts only."""
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    """Synchronous bcrypt hash. CPU-bound (~250ms-1s depending on
+    cost factor + CPU). Use the async wrappers below from inside
+    FastAPI handlers — calling this directly on the event loop will
+    FREEZE every concurrent request for the duration of the hash.
+    This sync entry point exists for the seed/migration scripts only."""
+    return bcrypt.hashpw(
+        password.encode("utf-8"),
+        bcrypt.gensalt(_bcrypt_cost()),
+    ).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:

@@ -109,6 +109,24 @@ async def ensure_indexes() -> None:
     except Exception:  # noqa: BLE001
         pass
 
+    # Users — unique index on email. Without this, every login does
+    # a full collection scan on users. Cheap fix, real win once the
+    # users collection has more than a handful of rows. Unique
+    # constraint also guards against accidental duplicate-admin seeds.
+    # Created with `unique=True` — if a duplicate already exists from
+    # legacy data, the index creation will raise; swallowed safely
+    # so startup doesn't crash and we surface the issue via logs.
+    try:
+        await db.users.create_index("email", unique=True, name="users_email_unique")
+    except Exception as e:  # noqa: BLE001
+        # Log but don't crash — a duplicate-email row would block
+        # the unique index. We'd rather start up degraded than fail
+        # the boot.
+        import logging
+        logging.getLogger("risedual.db").warning(
+            "users.email unique index creation failed: %s", e,
+        )
+
     # Shared infrastructure
     await db.shared_adl_receipts.create_index([("runtime", 1), ("timestamp", -1)])
     await db.shared_adl_receipts.create_index([("role_violation", 1), ("timestamp", -1)])
