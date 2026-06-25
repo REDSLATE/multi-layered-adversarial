@@ -312,29 +312,53 @@ _BEARISH_STANCES = {"BEARISH", "SHORT_BIAS"}
 def _derive_action_from_stance(stance: str, lane: str) -> Optional[str]:
     """Map `plan.stance` + lane → legacy execution action for re-injection.
 
-    Doctrine:
-      * BULLISH / LONG_BIAS → "BUY" on both lanes (Kraken spot buys
-        and Public.com long entries share the same verb).
-      * BEARISH / SHORT_BIAS on equity → "SHORT". The seat layer's
-        spot-short executor seat will gate the actual fill.
-      * BEARISH / SHORT_BIAS on crypto → None. Kraken Pro spot can't
-        short BTC — a bearish entry trigger fire on a crypto plan
-        would need a futures route we don't have. We refuse rather
-        than silently issuing a SELL (which means "close long" and
-        only makes sense if a position exists — context the watcher
-        doesn't have).
+    Doctrine (operator pin 2026-02-22 — corrected from initial draft):
+      * BULLISH / LONG_BIAS → "BUY" on both lanes.
+      * BEARISH / SHORT_BIAS → "SHORT" on both lanes. Kraken supports
+        margin shorts via leverage; Public.com / Webull support
+        equity shorts. The broker's own caps (leverage limits, locate
+        availability, margin available) gate the actual fill
+        downstream — not the watcher.
       * NEUTRAL / UNCERTAIN → None. A NEUTRAL plan that fires its
         trigger is logically inconsistent.
     """
     stance = (stance or "").upper()
-    lane = (lane or "").lower()
     if stance in _BULLISH_STANCES:
         return "BUY"
     if stance in _BEARISH_STANCES:
-        if lane == "crypto":
-            return None
         return "SHORT"
     return None
+
+
+# Execution styles that imply "use a limit price" on the broker call.
+# MARKET_NOW goes to market; everything else uses the trigger price
+# as the limit (TRIGGERED_LIMIT is the canonical case — fire at-or-
+# better than the trigger price the brain identified).
+_LIMIT_STYLES = {"LIMIT", "TRIGGERED_LIMIT", "STOP", "PATIENT", "SCALED"}
+
+
+def _derive_execution_pricing(
+    plan: Dict[str, Any], row: Dict[str, Any],
+) -> Dict[str, Optional[float]]:
+    """Return `{"limit_price": float | None}` for the refire mutation.
+
+    Source of truth for the limit price is `plan.trigger_price` (the
+    level the brain identified as the entry). When
+    `plan.execution_style == "MARKET_NOW"` we explicitly want
+    `limit_price=None` so the broker routes through its market path.
+    """
+    style = (plan.get("execution_style") or "MARKET_NOW").upper()
+    if style not in _LIMIT_STYLES:
+        return {"limit_price": None}
+    trig = plan.get("trigger_price")
+    if trig is None:
+        trig = row.get("trigger_price")
+    if trig is None:
+        return {"limit_price": None}
+    try:
+        return {"limit_price": float(trig)}
+    except (TypeError, ValueError):
+        return {"limit_price": None}
 
 
 async def _refire_trigger_fired_plan(
@@ -389,10 +413,17 @@ async def _refire_trigger_fired_plan(
     # Mutate the intent: flip plan.intent to ENTER + stamp execution.
     plan = dict(intent.get("plan") or {})
     plan["intent"] = "ENTER"
+    pricing = _derive_execution_pricing(plan, row)
     execution = dict(intent.get("execution") or {})
     execution["action"] = derived_action
     execution["derived_at"] = now.isoformat()
     execution["derived_from_plan"] = True
+    # 2026-02-22 (operator pin) — honour `plan.execution_style`. When
+    # the brain called for a limit-class fill, stamp `limit_price` so
+    # the broker routes through the limit path (Kraken supports both
+    # market + limit; ditto Public.com / Webull). MARKET_NOW leaves
+    # limit_price=None.
+    execution["limit_price"] = pricing["limit_price"]
 
     intent["plan"] = plan
     intent["execution"] = execution

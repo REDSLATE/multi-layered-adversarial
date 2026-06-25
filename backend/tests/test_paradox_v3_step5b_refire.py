@@ -61,15 +61,18 @@ def test_refire_on_for_truthy(monkeypatch, val):
 
 
 # ── _derive_action_from_stance doctrine ───────────────────────────
+# Operator pin 2026-02-22 (post-correction): Kraken supports margin
+# shorts; the watcher no longer refuses BEARISH crypto. Broker caps
+# gate the actual fill downstream.
 @pytest.mark.parametrize("stance,lane,expected", [
     ("BULLISH",    "equity", "BUY"),
     ("BULLISH",    "crypto", "BUY"),
     ("LONG_BIAS",  "equity", "BUY"),
     ("LONG_BIAS",  "crypto", "BUY"),
     ("BEARISH",    "equity", "SHORT"),
-    ("BEARISH",    "crypto", None),   # spot can't short — refuse
+    ("BEARISH",    "crypto", "SHORT"),   # corrected: Kraken supports short
     ("SHORT_BIAS", "equity", "SHORT"),
-    ("SHORT_BIAS", "crypto", None),
+    ("SHORT_BIAS", "crypto", "SHORT"),   # corrected
     ("NEUTRAL",    "equity", None),
     ("NEUTRAL",    "crypto", None),
     ("UNCERTAIN",  "equity", None),
@@ -184,18 +187,49 @@ async def test_refire_mutates_intent_and_fires_pipeline(
 
 
 async def test_refire_skips_bearish_crypto(monkeypatch, _camino_equity_seat):
-    """A BEARISH crypto plan that fires its trigger can't be safely
-    routed (Kraken spot can't short). Watcher transitions the queue
-    row to `fired` but skips the refire — intent's `action` stays as
-    HOLD so no broker call happens."""
+    """Stub-kept as a regression pin: even though `_derive_action_from_stance`
+    now returns "SHORT" for BEARISH crypto (Kraken supports margin shorts),
+    the broker's leverage / locate caps remain the safety net downstream.
+
+    This test now confirms the watcher REFIRES (not refuses) the BEARISH
+    crypto plan — and that broker validation happens at the broker layer.
+    """
     monkeypatch.setenv("PARADOX_V3_TRIGGER_WATCHER", "1")
     monkeypatch.setenv("PARADOX_V3_TRIGGER_REFIRE", "1")
+    # Make sure the crypto seat is held by camino so SeatPolicy auth passes.
+    await db[PARADOX_V2_SEAT_POLICY].update_one(
+        {"seat_id": "crypto_executor"},
+        {"$set": {
+            "seat_id": "crypto_executor", "enabled": True,
+            "autonomy_mode": "auto_execute",
+            "confidence_min": 0.5, "max_notional_usd": 25.0,
+        }},
+        upsert=True,
+    )
+    roster_before = await db[BRAIN_ROSTER].find_one(
+        {"_id": "current"}, {"assignments": 1, "_id": 0},
+    )
+    prev = (roster_before or {}).get("assignments") or {}
+    new_assignments = dict(prev); new_assignments["crypto"] = "camino"
+    await db[BRAIN_ROSTER].update_one(
+        {"_id": "current"}, {"$set": {"assignments": new_assignments}}, upsert=True,
+    )
+    await db[PARADOX_V2_SEAT_TRUSTED].update_one(
+        {"seat_id": "crypto_executor", "brain_id": "camino"},
+        {"$set": {"seat_id": "crypto_executor", "brain_id": "camino"}}, upsert=True,
+    )
     iid = f"t-bearcrypto-{uuid.uuid4().hex[:10]}"
     await db[SHARED_INTENTS].insert_one({
-        "intent_id": iid, "gate_state": "pending",
+        "intent_id": iid, "gate_state": "pending", "executed": False,
         "intent_version": "v3", "lane": "crypto", "symbol": "BTC/USD",
         "stack": "camino", "action": "HOLD", "confidence": 0.7,
-        "plan": {"stance": "BEARISH", "intent": "WAIT_FOR_TRIGGER"},
+        "plan": {
+            "stance": "BEARISH", "setup": "breakdown",
+            "intent": "WAIT_FOR_TRIGGER",
+            "execution_style": "TRIGGERED_LIMIT",
+            "trigger_price": 60_000.0, "confidence": 0.7,
+        },
+        "notional_usd": 10.0,
     })
     await enqueue_watch_plan(
         intent_id=iid, symbol="BTC/USD", lane="crypto", stance="BEARISH",
@@ -210,10 +244,128 @@ async def test_refire_skips_bearish_crypto(monkeypatch, _camino_equity_seat):
         out = await scan_watch_queue(price_fetcher=fetcher)
         assert out["fired"] == 1
         intent = await db[SHARED_INTENTS].find_one({"intent_id": iid})
-        assert intent["gate_state"] == "trigger_fired"
-        # CRITICAL — no action mutation, no broker call attempt.
-        assert intent["action"] == "HOLD"
-        assert intent["plan"]["intent"] == "WAIT_FOR_TRIGGER"
+        # CORRECTED: BEARISH crypto now refires as SHORT.
+        assert intent["action"] == "SHORT"
+        assert intent["plan"]["intent"] == "ENTER"
+        assert intent["execution"]["action"] == "SHORT"
+        # Limit pricing honoured (TRIGGERED_LIMIT style).
+        assert intent["execution"]["limit_price"] == 60_000.0
+    finally:
+        await db[INTENT_WATCH_QUEUE_COLL].delete_many({"intent_id": iid})
+        await db[SHARED_INTENTS].delete_many({"intent_id": iid})
+        # Restore the prior roster posture (preview has crypto vacant).
+        await db[BRAIN_ROSTER].update_one(
+            {"_id": "current"}, {"$set": {"assignments": prev}}, upsert=True,
+        )
+
+
+# ── Limit-price pinning per execution_style (operator 2026-02-22) ─
+from shared.pipeline.trigger_watcher import _derive_execution_pricing
+
+
+@pytest.mark.parametrize("style,trig,expected", [
+    ("MARKET_NOW",      100.0, None),         # market — no limit
+    ("LIMIT",           100.0, 100.0),
+    ("TRIGGERED_LIMIT", 100.0, 100.0),        # canonical case
+    ("STOP",            100.0, 100.0),
+    ("PATIENT",         100.0, 100.0),
+    ("SCALED",          100.0, 100.0),
+    ("TRIGGERED_LIMIT", None,  None),         # no trigger → no limit
+    ("",                100.0, None),         # default MARKET_NOW
+])
+def test_derive_execution_pricing_table(style, trig, expected):
+    plan = {"execution_style": style, "trigger_price": trig}
+    row = {"trigger_price": None}
+    out = _derive_execution_pricing(plan, row)
+    assert out["limit_price"] == expected
+
+
+def test_derive_execution_pricing_falls_back_to_row_trigger():
+    """If `plan.trigger_price` is missing but the watch-queue row has
+    it (e.g. corrupt plan dict), fall back to the row stamp."""
+    plan = {"execution_style": "TRIGGERED_LIMIT"}  # no trigger_price
+    row = {"trigger_price": 99.5}
+    out = _derive_execution_pricing(plan, row)
+    assert out["limit_price"] == 99.5
+
+
+async def test_refire_stamps_limit_price_for_triggered_limit(
+    monkeypatch, _camino_equity_seat,
+):
+    """End-to-end: a BULLISH equity plan with execution_style=
+    TRIGGERED_LIMIT lands with `execution.limit_price=trigger_price`
+    after refire."""
+    monkeypatch.setenv("PARADOX_V3_TRIGGER_WATCHER", "1")
+    monkeypatch.setenv("PARADOX_V3_TRIGGER_REFIRE", "1")
+    iid = f"t-limit-{uuid.uuid4().hex[:10]}"
+    await db[SHARED_INTENTS].insert_one({
+        "intent_id": iid, "gate_state": "pending", "executed": False,
+        "intent_version": "v3", "lane": "equity", "symbol": "NVDA",
+        "stack": "camino", "action": "HOLD", "confidence": 0.72,
+        "plan": {
+            "stance": "BULLISH", "setup": "bull_flag",
+            "intent": "WAIT_FOR_TRIGGER",
+            "execution_style": "TRIGGERED_LIMIT",
+            "trigger_price": 187.40,
+            "confidence": 0.72,
+        },
+        "notional_usd": 10.0,
+    })
+    await enqueue_watch_plan(
+        intent_id=iid, symbol="NVDA", lane="equity", stance="BULLISH",
+        trigger_price=187.40, invalidation_price=184.20,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+
+    async def fetcher(symbol, lane):
+        return {"price": 187.50}
+
+    try:
+        await scan_watch_queue(price_fetcher=fetcher)
+        intent = await db[SHARED_INTENTS].find_one({"intent_id": iid})
+        assert intent["action"] == "BUY"
+        assert intent["execution"]["action"] == "BUY"
+        assert intent["execution"]["limit_price"] == 187.40
+    finally:
+        await db[INTENT_WATCH_QUEUE_COLL].delete_many({"intent_id": iid})
+        await db[SHARED_INTENTS].delete_many({"intent_id": iid})
+
+
+async def test_refire_no_limit_price_for_market_now(
+    monkeypatch, _camino_equity_seat,
+):
+    """A MARKET_NOW plan refires WITHOUT a limit_price — broker routes
+    through its market path."""
+    monkeypatch.setenv("PARADOX_V3_TRIGGER_WATCHER", "1")
+    monkeypatch.setenv("PARADOX_V3_TRIGGER_REFIRE", "1")
+    iid = f"t-market-{uuid.uuid4().hex[:10]}"
+    await db[SHARED_INTENTS].insert_one({
+        "intent_id": iid, "gate_state": "pending", "executed": False,
+        "intent_version": "v3", "lane": "equity", "symbol": "NVDA",
+        "stack": "camino", "action": "HOLD", "confidence": 0.72,
+        "plan": {
+            "stance": "BULLISH", "setup": "bull_flag",
+            "intent": "WAIT_FOR_TRIGGER",
+            "execution_style": "MARKET_NOW",   # ← key
+            "trigger_price": 100.0,
+            "confidence": 0.72,
+        },
+        "notional_usd": 10.0,
+    })
+    await enqueue_watch_plan(
+        intent_id=iid, symbol="NVDA", lane="equity", stance="BULLISH",
+        trigger_price=100.0, invalidation_price=95.0,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+
+    async def fetcher(symbol, lane):
+        return {"price": 101.0}
+
+    try:
+        await scan_watch_queue(price_fetcher=fetcher)
+        intent = await db[SHARED_INTENTS].find_one({"intent_id": iid})
+        assert intent["action"] == "BUY"
+        assert intent["execution"]["limit_price"] is None  # MARKET_NOW
     finally:
         await db[INTENT_WATCH_QUEUE_COLL].delete_many({"intent_id": iid})
         await db[SHARED_INTENTS].delete_many({"intent_id": iid})
