@@ -321,6 +321,7 @@ async def route_order(
     *,
     notional_usd: float,
     client_order_id: Optional[str] = None,
+    limit_price: Optional[float] = None,
 ) -> dict:
     """Route a single intent's order to the correct broker.
 
@@ -330,6 +331,15 @@ async def route_order(
     The caller (auto-router or /execution/submit) is responsible for
     running its full gate chain BEFORE calling this — the router only
     enforces broker-identity invariants, NOT trade-policy gates.
+
+    ─── Paradox v3 (Step 5.b, 2026-02-22) ───────────────────────────
+    When `limit_price` is provided, the router dispatches to the
+    adapter's `submit_limit_order` instead of market. The notional is
+    converted to base-asset quantity via `qty = notional / limit_price`.
+    When `intent.action == "SHORT"` on the crypto lane, the Kraken
+    adapter receives a `leverage` hint (env-configurable via
+    `PARADOX_V3_KRAKEN_SHORT_LEVERAGE`, default 2) so Kraken opens a
+    margin short rather than rejecting a spot sell with no position.
     """
     intent_id = intent.get("intent_id", "<unknown>")
 
@@ -464,18 +474,52 @@ async def route_order(
 
     # 6. Submit through the adapter.
     logger.info(
-        "route_order intent=%s canonical=%s lane=%s broker=%s broker_sym=%s side=%s $%.2f receipt=%s override=%s",
+        "route_order intent=%s canonical=%s lane=%s broker=%s broker_sym=%s side=%s $%.2f receipt=%s override=%s limit=%s",
         intent_id, asset.canonical, asset.lane, broker_name, broker_symbol,
         side, notional_usd, receipt_check["reason"], override or "none",
+        limit_price,
     )
+    # ─── Paradox v3 short / leverage (Step 5.b) ──────────────────
+    # Kraken margin shorts: when action=SHORT on the crypto lane,
+    # pass `leverage` to the adapter so Kraken opens a margin short
+    # instead of rejecting a spot sell with no position. Spot shorts
+    # are not a thing on Kraken — leverage is the doctrinal mechanism.
+    is_short = (intent.get("action") or "").upper() == "SHORT"
+    short_leverage: Optional[int] = None
+    if is_short and asset.lane == "crypto" and broker_name == "kraken":
+        try:
+            short_leverage = int(
+                os.environ.get("PARADOX_V3_KRAKEN_SHORT_LEVERAGE", "2")
+            )
+        except (TypeError, ValueError):
+            short_leverage = 2
     try:
-        order = await adapter.submit_market_order(
-            symbol=broker_symbol if isinstance(broker_symbol, str) else asset.base,
-            notional=notional_usd,
-            side=side,
-            client_order_id=client_order_id,
-            mc_receipt=receipt_check.get("receipt"),
-        )
+        if limit_price is not None and float(limit_price) > 0:
+            # Convert notional → qty using the limit price. Adapters
+            # below accept `qty` directly on submit_limit_order.
+            qty = float(notional_usd) / float(limit_price)
+            adapter_kwargs = {
+                "symbol": broker_symbol if isinstance(broker_symbol, str) else asset.base,
+                "qty": qty,
+                "limit_price": float(limit_price),
+                "side": side,
+                "client_order_id": client_order_id,
+                "mc_receipt": receipt_check.get("receipt"),
+            }
+            if short_leverage is not None:
+                adapter_kwargs["leverage"] = short_leverage
+            order = await adapter.submit_limit_order(**adapter_kwargs)
+        else:
+            adapter_kwargs = {
+                "symbol": broker_symbol if isinstance(broker_symbol, str) else asset.base,
+                "notional": notional_usd,
+                "side": side,
+                "client_order_id": client_order_id,
+                "mc_receipt": receipt_check.get("receipt"),
+            }
+            if short_leverage is not None:
+                adapter_kwargs["leverage"] = short_leverage
+            order = await adapter.submit_market_order(**adapter_kwargs)
     except WebullCapBlocked as e:
         # Belt-and-braces re-check inside the adapter fired. Re-raise
         # as a clean route block so the auto-router treats it like

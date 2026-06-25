@@ -46,6 +46,11 @@ class BrainOpinion:
     # trigger_watcher queue instead of the broker.
     intent_version: Optional[str] = None
     plan: Optional[Dict[str, Any]] = None
+    # `execution` carries the broker-targeted ticket details — for
+    # v3 refire (Step 5.b), `execution.limit_price` may be populated
+    # so the pipeline dispatches to the adapter's limit-order path
+    # instead of market.
+    execution: Optional[Dict[str, Any]] = None
 
 
 @dataclass

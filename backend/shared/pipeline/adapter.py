@@ -172,6 +172,7 @@ def _opinion_from_intent(intent: Dict[str, Any], requested_notional: float) -> B
         # operator-shipped plan through with defaults filled.
         intent_version=_v3_lifted.get("intent_version"),
         plan=_v3_lifted.get("plan"),
+        execution=_v3_lifted.get("execution"),
     )
 
 
@@ -202,6 +203,36 @@ class _BrokerAdapter:
             intent_for_route,
             notional_usd=notional_usd,
             client_order_id=client_order_id,
+        )
+        return {"status": "submitted", "broker_order": order}
+
+    async def submit_limit_order(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        notional_usd: float,
+        lane: str,
+        limit_price: float,
+    ) -> Dict[str, Any]:
+        """Paradox v3 (Step 5.b) — limit-order broker dispatch.
+
+        Called by `execution_pipeline` when `opinion.execution.limit_price`
+        is set. Threads `limit_price` into `route_order`, which then
+        dispatches to the adapter's `submit_limit_order` method
+        (Public/Kraken support; Webull falls back to market via its
+        existing pre-trade cap logic).
+        """
+        intent_for_route = dict(self._intent)
+        intent_for_route["action"] = side
+        intent_for_route["symbol"] = symbol
+        intent_for_route["lane"] = lane
+        client_order_id = f"up-lim-{symbol.lower()}-{uuid.uuid4().hex[:8]}"
+        order = await route_order(
+            intent_for_route,
+            notional_usd=notional_usd,
+            client_order_id=client_order_id,
+            limit_price=limit_price,
         )
         return {"status": "submitted", "broker_order": order}
 

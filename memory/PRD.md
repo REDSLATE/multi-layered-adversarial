@@ -1,3 +1,122 @@
+## 2026-02-22 — Paradox v3 Step 5.c (broker-layer limit + crypto short)
+
+### Operator pin (verbatim)
+> "Hold on, Kraken does short and limit."  (correction)
+> "A"  (close the broker-layer gap end-to-end)
+
+### What shipped
+The watcher had been stamping `execution.limit_price` and refusing
+BEARISH crypto incorrectly. This batch:
+
+1. **Removed the BEARISH crypto refusal** — `_derive_action_from_stance`
+   returns `"SHORT"` for both lanes now. The broker's own caps
+   (leverage limits, margin availability) gate the actual fill
+   downstream — NOT the watcher's guess about what Kraken supports.
+
+2. **Stamped `execution.limit_price`** from `plan.trigger_price`
+   when `plan.execution_style ∈ {LIMIT, TRIGGERED_LIMIT, STOP,
+   PATIENT, SCALED}`. MARKET_NOW leaves it null.
+
+3. **Wired the broker layer to actually honour both:**
+   - `BrainOpinion` gains `execution: Optional[Dict[str, Any]]`.
+   - `adapter._opinion_from_intent` threads the lifted `execution`
+     block onto the opinion.
+   - `_BrokerAdapter` (pipeline-internal wrapper) gains
+     `submit_limit_order(symbol, side, notional_usd, lane, limit_price)`.
+   - `execution_pipeline.run_execution_pipeline` step 8 now reads
+     `opinion.execution.limit_price`. If non-null + positive →
+     `broker.submit_limit_order(...)`. Else → unchanged market path.
+   - `route_order(intent, ..., limit_price=None)` — new kwarg.
+     When set, converts `qty = notional_usd / limit_price` and
+     dispatches to `adapter.submit_limit_order`. Else market path.
+   - **Kraken SHORT/margin support**: `route_order` detects
+     `intent.action=="SHORT" AND lane="crypto" AND broker="kraken"`
+     and threads `leverage` (env `PARADOX_V3_KRAKEN_SHORT_LEVERAGE`,
+     default `2`) into the adapter call.
+   - **Kraken adapter** now has `submit_limit_order` mirroring
+     `submit_market_order`'s contract (MC receipt required,
+     userref hash, BSON Date timestamps) plus `ordertype="limit"` +
+     `price=...`. Both methods accept optional `leverage` —
+     when `leverage > 1` Kraken's `AddOrder` receives the param so
+     the order opens a margin position instead of spot.
+
+### End-to-end shape after this batch
+```
+brain emits v3 plan (WAIT_FOR_TRIGGER, stance=BEARISH, lane=crypto,
+  execution_style=TRIGGERED_LIMIT, trigger_price=60000)
+   → SeatPolicy parks on intent_watch_queue (Step 5)
+   → snapshot price crosses 60000 → trigger_watcher fires (Step 5)
+   → refire mutates intent: action=SHORT, plan.intent=ENTER,
+     execution.action=SHORT, execution.limit_price=60000  (Step 5.b)
+   → run_unified_for_intent → BrainOpinion includes execution block
+   → execution_pipeline reads opinion.execution.limit_price=60000
+   → _BrokerAdapter.submit_limit_order(...)
+   → route_order(limit_price=60000) → detects SHORT+crypto+kraken
+     → leverage=2
+   → KrakenLiveAdapter.submit_limit_order(qty, 60000, "SELL", leverage=2)
+   → Kraken AddOrder: ordertype=limit, type=sell, price=60000, leverage=2
+```
+
+### Tests (13 new, 224 total v3-suite)
+- `_BrokerAdapter` dispatches market when limit_price=None.
+- `_BrokerAdapter` threads limit_price through `route_order`.
+- `route_order` calls `submit_limit_order` with correct qty/price.
+- `route_order` adds `leverage` ONLY for SHORT-on-crypto-on-Kraken.
+- `route_order` does NOT add `leverage` for BUY-on-crypto.
+- `BrainOpinion` accepts None execution (v2 regression-safety).
+- `BrainOpinion` carries execution block when provided.
+- `KrakenLiveAdapter.submit_limit_order` exists + signatures pin
+  the `leverage` kwarg on both methods (future-proofing).
+- MC-receipt bypass guard mirrored on Kraken's limit path.
+- Kraken limit-order params built correctly (ordertype, type,
+  price, leverage hash, userref).
+
+### Live verification
+- 224-test sweep across all v3 + adjacent suites: all green.
+- Backend restarted clean.
+- Lint clean on all four critical-path files
+  (`models.py`, `adapter.py`, `execution_pipeline.py`,
+  `broker_router.py`, `crypto/broker_adapter.py`).
+- Backward compat verified — v2 emit path is untouched
+  (`limit_price=None` is the default and routes through the
+  unchanged market path).
+
+### Operator activation (unchanged from Step 5.b)
+```
+PARADOX_V3_BRAINS=camino
+PARADOX_V3_TRIGGER_WATCHER=1
+PARADOX_V3_TRIGGER_REFIRE=1
+# Optional — defaults to 2x:
+PARADOX_V3_KRAKEN_SHORT_LEVERAGE=2
+sudo supervisorctl restart backend
+```
+
+### Touched
+- EDIT: `backend/shared/pipeline/models.py` (`execution` field)
+- EDIT: `backend/shared/pipeline/adapter.py` (lift threading +
+        `_BrokerAdapter.submit_limit_order`)
+- EDIT: `backend/shared/pipeline/execution_pipeline.py` (step 8 dispatch)
+- EDIT: `backend/shared/broker_router.py` (`limit_price` kwarg +
+        Kraken SHORT/leverage detection)
+- EDIT: `backend/shared/crypto/broker_adapter.py` (NEW
+        `submit_limit_order` + `leverage` kwarg on both)
+- EDIT: `backend/shared/pipeline/trigger_watcher.py` (stance table
+        correction — BEARISH crypto → SHORT)
+- EDIT: `backend/tests/test_paradox_v3_step5b_refire.py` (table fix
+        + new limit-pricing tests)
+- NEW:  `backend/tests/test_paradox_v3_step5c_broker_limit_short.py`
+- EDIT: `memory/PARADOX_V3_INTENT_ENVELOPE_PRD.md`
+
+### Deploy ordering
+Backward-compatible. Deploy whenever. The new code path only
+activates when `execution.limit_price` is set on an opinion (v3
+refire path), which itself only happens when the operator flips on
+all three env flags.
+
+---
+
+
+
 ## 2026-02-22 — Paradox v3 Step 5.b (re-injection of fired plans)
 
 ### Operator pin (verbatim)

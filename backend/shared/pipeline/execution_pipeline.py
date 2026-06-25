@@ -168,13 +168,30 @@ async def run_execution_pipeline(
 
     # 8. Broker submit.
     broker_called = True
+    # ─── Paradox v3 limit dispatch (Step 5.b, 2026-02-22) ───────────
+    # `opinion.execution.limit_price` is populated by the trigger
+    # watcher's refire path when `plan.execution_style` was
+    # TRIGGERED_LIMIT (or any limit-class style). Dispatch to the
+    # broker's limit-order method instead of market. Falls back to
+    # market when None (every v2 emit + v3 MARKET_NOW plan).
+    _exec_block = opinion.execution or {}
+    _limit_price = _exec_block.get("limit_price")
     try:
-        broker_receipt = await broker.submit_market_order(
-            symbol=opinion.symbol,
-            side=opinion.action,
-            notional_usd=final_notional,
-            lane=opinion.lane,
-        )
+        if _limit_price is not None and float(_limit_price) > 0:
+            broker_receipt = await broker.submit_limit_order(
+                symbol=opinion.symbol,
+                side=opinion.action,
+                notional_usd=final_notional,
+                lane=opinion.lane,
+                limit_price=float(_limit_price),
+            )
+        else:
+            broker_receipt = await broker.submit_market_order(
+                symbol=opinion.symbol,
+                side=opinion.action,
+                notional_usd=final_notional,
+                lane=opinion.lane,
+            )
         status = (broker_receipt or {}).get("status", "submitted")
         receipt = PipelineReceipt(
             **base,
