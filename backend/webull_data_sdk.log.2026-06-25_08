@@ -1,0 +1,82 @@
+276504550240672 2026-06-25 08:18:05,892 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "AAL",
+    "category": "US_STOCK",
+    "timespan": "M1",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-25T08:18:00Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "54c4b358-9e10-55cc-8a32-72e76dfd32aa",
+    "x-signature": "17doesMAKBXYiXi8OymAzoe7Ttk=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'GATEWAY_TIMEOUT'} ServerException:HTTP Status: 504, Code: GATEWAY_TIMEOUT, Msg: , RequestID: 6f3a9e59-8abc-43ad-be15-f84fb0c6a5be
+276504550240672 2026-06-25 08:18:05,893 webull.core.client ERROR get_response exception. {
+  "error_code": "GATEWAY_TIMEOUT",
+  "error_msg": "",
+  "http_status": 504,
+  "request_id": "6f3a9e59-8abc-43ad-be15-f84fb0c6a5be"
+}
+276502385848736 2026-06-25 08:20:28,311 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "NVDA",
+    "category": "US_STOCK",
+    "timespan": "M1",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-25T08:20:23Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "44073fdd-e255-546a-829b-98dba2fba518",
+    "x-signature": "dnmSscSzy8IOuqmAxfCkc9Dz2oE=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'GATEWAY_TIMEOUT'} ServerException:HTTP Status: 504, Code: GATEWAY_TIMEOUT, Msg: , RequestID: 6d19cd84-74a5-438c-b5ab-245759bdfe11
+276502385848736 2026-06-25 08:20:28,311 webull.core.client ERROR get_response exception. {
+  "error_code": "GATEWAY_TIMEOUT",
+  "error_msg": "",
+  "http_status": 504,
+  "request_id": "6d19cd84-74a5-438c-b5ab-245759bdfe11"
+}
