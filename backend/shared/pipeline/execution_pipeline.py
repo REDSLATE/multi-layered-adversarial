@@ -67,7 +67,19 @@ async def run_execution_pipeline(
     }
 
     # 1. Brain cannot block. HOLD/ABSTAIN → no-order receipt.
-    if opinion.action in ("HOLD", "ABSTAIN"):
+    # ─── Paradox v3 exception (Step 5) ────────────────────────────
+    # A v3 WAIT_FOR_TRIGGER / WAIT_CONFIRMATION plan carries
+    # `action="HOLD"` (per §6.2 mapping — execution.action is null on
+    # the wait state) but is NOT a brain-side abstain. The seat must
+    # see the plan so it can park it on the watch queue. Bypass the
+    # HOLD short-circuit for those two intent values only.
+    _plan = opinion.plan or {}
+    _is_v3_wait = (
+        (opinion.intent_version == "v3")
+        and (_plan.get("intent") or "").upper()
+        in {"WAIT_FOR_TRIGGER", "WAIT_CONFIRMATION"}
+    )
+    if opinion.action in ("HOLD", "ABSTAIN") and not _is_v3_wait:
         receipt = PipelineReceipt(
             **base,
             final_status="NO_ORDER",

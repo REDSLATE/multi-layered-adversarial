@@ -41,6 +41,8 @@ from .consensus_pool import (
     record_advisory_opinion,
     record_telemetry,
 )
+from .trigger_watcher import enqueue_watch_plan  # 2026-02 Paradox v3 (Step 5)
+from shared.intent_envelope_v3 import HORIZON_TTL_DEFAULTS  # ttl fallback table
 
 
 # Lane → executor seat id. Only executor seats place real orders.
@@ -165,6 +167,24 @@ class SeatPolicy:
                 notional_usd=0.0,
             )
 
+        # ─── Paradox v3 WAIT_FOR_TRIGGER short-circuit (Step 5) ─────
+        # A v3 plan that declares WAIT_FOR_TRIGGER (or its sibling
+        # WAIT_CONFIRMATION) intentionally PARKS the intent — the
+        # brain has identified a setup but the trigger hasn't fired.
+        # SeatPolicy must NOT route this to the broker. Instead:
+        #   * Enqueue the plan onto `intent_watch_queue` (the
+        #     trigger_watcher tick will fire/invalidate/expire it).
+        #   * Stamp `gate_state="waiting_for_trigger"` on the intent.
+        #   * Return BLOCK with reason `paradox_v3_waiting_for_trigger`
+        #     so the funnel naturally buckets it at Stage 1 (operator
+        #     decision 5C — WAIT plans bucket under seat-blocked).
+        # Confidence check is DEFERRED — when the trigger fires and
+        # the watcher re-injects, the seat re-evaluates against
+        # conf_min at that moment with the live consensus pool.
+        wait_verdict = await _maybe_park_v3_wait_plan(opinion, autonomy_mode)
+        if wait_verdict is not None:
+            return wait_verdict
+
         conf_min = float(seat.get("confidence_min", 0.0) or 0.0)
 
         # ── Consensus boost ─────────────────────────────────────────
@@ -217,3 +237,61 @@ class SeatPolicy:
             notional_usd=max_notional,
             consensus=consensus.to_dict(),
         )
+
+
+# ── Paradox v3 WAIT-plan parking helper (Step 5) ────────────────────
+_WAIT_PLAN_INTENTS = {"WAIT_FOR_TRIGGER", "WAIT_CONFIRMATION"}
+
+
+async def _maybe_park_v3_wait_plan(
+    opinion: BrainOpinion, autonomy_mode: str,
+) -> Optional[SeatVerdict]:
+    """If `opinion` is a v3 WAIT_FOR_TRIGGER or WAIT_CONFIRMATION plan,
+    park it on `intent_watch_queue` and return a BLOCK verdict so the
+    pipeline writes a terminal receipt. Otherwise return None so the
+    normal seat-confidence path proceeds.
+
+    The intent's `gate_state` is stamped to `waiting_for_trigger` by
+    `enqueue_watch_plan` so the funnel + post-mortem read consistently.
+
+    Confidence floor is NOT applied here — the brain has explicitly
+    requested patience; the seat re-evaluates conf_min when the
+    trigger fires and the watcher re-injects. (See PRD §5.2.)
+    """
+    plan = opinion.plan or {}
+    intent_name = (plan.get("intent") or "").upper()
+    if intent_name not in _WAIT_PLAN_INTENTS:
+        return None
+
+    # Compute expiry from `plan.ttl_seconds` (operator-shipped) or
+    # fall back to the horizon-derived default per operator 4A.
+    from datetime import datetime, timezone, timedelta
+    ttl = plan.get("ttl_seconds")
+    if ttl is None:
+        horizon = (plan.get("horizon") or "UNKNOWN").upper()
+        ttl = HORIZON_TTL_DEFAULTS.get(horizon)
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(seconds=int(ttl))
+        if ttl else None
+    )
+
+    await enqueue_watch_plan(
+        intent_id=opinion.intent_id,
+        symbol=opinion.symbol,
+        lane=opinion.lane,
+        stance=(plan.get("stance") or "NEUTRAL").upper(),
+        trigger_price=plan.get("trigger_price"),
+        invalidation_price=plan.get("invalidation_price"),
+        expires_at=expires_at,
+    )
+    return SeatVerdict(
+        decision="BLOCK",
+        reason=(
+            f"paradox_v3_{intent_name.lower()}"
+            f":trigger={plan.get('trigger_price')}"
+            f",inv={plan.get('invalidation_price')}"
+            f",ttl={ttl}s"
+        ),
+        autonomy_mode=autonomy_mode,
+        notional_usd=0.0,
+    )

@@ -1,3 +1,130 @@
+## 2026-02-22 — Paradox v3 Step 5 (seat policy wiring + watch queue tick + admin endpoints)
+
+### Operator pin (verbatim)
+> "Step 5 (HIGH): Wire seat_policy.py to call enqueue_watch_plan for
+> v3 WAIT_FOR_TRIGGER intents. Hook the default price_fetcher
+> (probably snapshot_enrich) into a periodic worker tick so
+> trigger/invalidation legs actually fire. Add a
+> /api/admin/paradox-v3/watch-queue observability endpoint surfacing
+> watch_queue_snapshot()."
+
+### What shipped
+
+**1. `BrainOpinion` extended with v3 fields**
+- New optional `intent_version` + `plan` on the dataclass. `adapter.
+  _opinion_from_intent` lifts every persisted intent via
+  `normalize_intent` so SeatPolicy sees the planning block uniformly
+  for v2 (synthesised from `action`) and v3 (passed through) docs.
+
+**2. SeatPolicy WAIT-plan short-circuit**
+- New helper `_maybe_park_v3_wait_plan(opinion, autonomy_mode)`
+  fires AFTER the seat-missing/disabled/current-holder/trust auth
+  gates, BEFORE the conf_min check. Matches PRD §5.2 doctrine:
+  * Detects `plan.intent ∈ {WAIT_FOR_TRIGGER, WAIT_CONFIRMATION}`
+  * Computes `expires_at` from `plan.ttl_seconds` (or
+    horizon-derived default per operator 4A).
+  * Calls `enqueue_watch_plan(...)` (writes queue row +
+    stamps `gate_state="waiting_for_trigger"` on the intent doc).
+  * Returns `SeatVerdict(BLOCK, reason="paradox_v3_wait_for_trigger:...")`.
+  * Confidence floor is DEFERRED — the seat re-evaluates conf_min
+    against live consensus when the watcher re-injects on trigger fire.
+
+**3. execution_pipeline HOLD-bypass for v3 WAIT plans**
+- A v3 WAIT plan carries `action="HOLD"` (per §6.2 mapping —
+  `execution.action` is null on the wait state). Without this fix,
+  the legacy step-1 HOLD/ABSTAIN short-circuit would emit a
+  `brain_hold` NO_ORDER receipt BEFORE SeatPolicy ever sees the plan.
+- The bypass is narrow — only `intent_version="v3"` AND
+  `plan.intent ∈ {WAIT_FOR_TRIGGER, WAIT_CONFIRMATION}` skip the
+  HOLD short-circuit. Pinned in a regression test so a future
+  cleanup pass can't widen it accidentally.
+
+**4. Auto-router tick wires the watcher**
+- `auto_router._loop` calls
+  `scan_watch_queue(price_fetcher=default_price_fetcher)` after each
+  auto-router tick (30s cadence). DORMANT until the operator flips
+  `PARADOX_V3_TRIGGER_WATCHER=1` — the watcher returns zero counters
+  with no Mongo touch when off. Errors are swallowed locally so a
+  watcher crash never takes down the auto-router itself.
+
+**5. `default_price_fetcher` (Step 5 reference impl)**
+- Wraps `shared.market_data.enrich_snapshot_spread`. Walks the
+  brain → bid/ask → indicator-cache → Kraken-public → sentinel
+  ladder. Returns `{"price": float}` on success or None on any
+  failure. FAIL-SOFT — a tick failure means a one-tick delay, never
+  a wrong trigger fire.
+
+**6. NEW admin endpoints**
+- `GET /api/admin/paradox-v3/status` — surfaces both env flags,
+  the inferred rollout step (`steps_1_to_3_rails_only` /
+  `step_4_shadow_emit_only` / `step_5_trigger_watcher_live`), and a
+  doctrine note explaining what each posture means.
+- `GET /api/admin/paradox-v3/watch-queue?limit=50` — read-only
+  snapshot from `watch_queue_snapshot()`. State counts + the most-
+  recent N queue rows. Safe to call when dormant.
+
+### Live verification
+- Backend restarted clean. All 4 brains continue posting cleanly
+  (no regressions on the v2 emit path).
+- `/api/admin/paradox-v3/status` → `{brains_on_v3:[],
+  trigger_watcher_enabled:false, rollout_step:
+  "steps_1_to_3_rails_only"}` (correct dormant posture).
+- Full end-to-end smoke: a synthesized v3 WAIT_FOR_TRIGGER intent
+  ran through `run_unified_for_intent(...)` returns:
+    `verdict=no_trade`
+    `reason=paradox_v3_wait_for_trigger:trigger=187.4,inv=184.2,ttl=3600s`
+  Queue row state=`watching` with `stance=BULLISH, trigger_price=187.4`.
+  Intent's `gate_state=waiting_for_trigger`. ✅
+- 167-test regression sweep (all five v3 suites + funnel + seat-
+  policy + research-hook): all green, zero regressions.
+
+### Operator activation
+**To engage Step 5 in shadow mode** (recommended sequence):
+```
+# 1. Start with the trigger watcher TTL-expiry leg only (no price
+#    triggers yet — verifies orphan-drain plumbing).
+PARADOX_V3_TRIGGER_WATCHER=1
+
+# 2. Wait a tick, hit GET /api/admin/paradox-v3/status — should
+#    show rollout_step=step_5_trigger_watcher_live (if a brain is
+#    also on v3) or still "steps_1_to_3_rails_only".
+
+# 3. Once watcher is confirmed running, opt camino in:
+PARADOX_V3_BRAINS=camino
+
+# 4. sudo supervisorctl restart backend
+```
+Camino's WAIT_FOR_TRIGGER plans now land on the queue. The watcher
+checks each plan against the live snapshot ladder every 30s. Trigger
+fires → `gate_state="trigger_fired"`. Invalidation → `plan_invalidated`.
+TTL → `plan_expired`. Re-injection of fired plans into the seat
+layer is the Step 5 logical follow-up (the watcher currently only
+stamps state transitions; the auto-router would then pick them up
+from `gate_state` if the auto-router query is widened to include
+`trigger_fired`). Worth flagging if the operator wants live re-fire
+or just the observability.
+
+### Touched
+- EDIT: `backend/shared/pipeline/models.py` (BrainOpinion + plan field)
+- EDIT: `backend/shared/pipeline/adapter.py` (lift + threading)
+- EDIT: `backend/shared/pipeline/seat_policy.py` (`_maybe_park_v3_wait_plan`)
+- EDIT: `backend/shared/pipeline/execution_pipeline.py` (HOLD bypass)
+- EDIT: `backend/shared/pipeline/trigger_watcher.py` (`default_price_fetcher`)
+- EDIT: `backend/shared/auto_router.py` (tick wiring)
+- NEW:  `backend/routes/admin_paradox_v3.py`
+- EDIT: `backend/server_modules/router_registry.py` (registration)
+- NEW:  `backend/tests/test_paradox_v3_step5_seat_policy_wiring.py` (14 tests)
+- EDIT: `memory/PARADOX_V3_INTENT_ENVELOPE_PRD.md` (§13 Step 5 marked shipped)
+
+### Deploy ordering
+Backward-compatible. Deploy whenever — no env changes needed until
+the operator decides to begin shadow runs per "Operator activation"
+above.
+
+---
+
+
+
 ## 2026-02-22 — Paradox v3 Steps 2 + 3 + 4 (lesson lift / dormant trigger watcher / camino emit flag)
 
 ### Operator pin (verbatim)

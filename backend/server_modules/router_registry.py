@@ -144,6 +144,7 @@ from routes.admin_brain_metrics import (
 from routes.admin_advisor_performance import (
     router as admin_advisor_performance_router,
 )
+from routes.admin_paradox_v3 import router as admin_paradox_v3_router
 from routes.intent_why import router as intent_why_router
 from routes.seat_state_diagnose import router as seat_state_diagnose_router
 from routes.webull_caps_admin import router as webull_caps_admin_router
@@ -223,6 +224,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(admin_spread_quality_router)
     api_router.include_router(admin_brain_metrics_router)
     api_router.include_router(admin_advisor_performance_router)
+    api_router.include_router(admin_paradox_v3_router)
     api_router.include_router(intent_why_router)
     api_router.include_router(seat_state_diagnose_router)
     api_router.include_router(webull_caps_admin_router)

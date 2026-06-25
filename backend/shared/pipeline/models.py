@@ -37,6 +37,15 @@ class BrainOpinion:
     confidence: float
     notional_usd: float
     evidence: Dict[str, Any] = field(default_factory=dict)
+    # ─── Paradox v3 plan layer (2026-02, Step 5 — threaded through) ──
+    # `plan` is the brain's planning artefact; `intent_version` is the
+    # envelope discriminator. Adapter (`_opinion_from_intent`) lifts
+    # the persisted intent doc via `normalize_intent`, so this field
+    # is populated for BOTH v2 and v3 rows. SeatPolicy reads
+    # `plan.intent` to detect `WAIT_FOR_TRIGGER` and route to the
+    # trigger_watcher queue instead of the broker.
+    intent_version: Optional[str] = None
+    plan: Optional[Dict[str, Any]] = None
 
 
 @dataclass

@@ -271,6 +271,48 @@ async def _mark_resolved(
         )
 
 
+# ── Default price fetcher (Step 5) ──────────────────────────────────
+async def default_price_fetcher(symbol: str, lane: Optional[str]) -> Optional[Dict[str, float]]:
+    """Reference price fetcher wired into the auto-router tick.
+
+    Walks the existing `enrich_snapshot_spread` fallback ladder
+    (brain → derive(bid/ask) → indicator cache → Kraken public →
+    sentinel). Returns `{"price": float}` on success or None when
+    no source produced a usable quote.
+
+    Doctrine pin: this fetcher is FAIL-SOFT. Any error inside the
+    ladder is swallowed and the watcher leaves the queue row in
+    `watching` state — better to delay a trigger by one tick than to
+    fire incorrectly on a stale quote.
+    """
+    try:
+        from shared.market_data import enrich_snapshot_spread
+        enriched, _diag = await enrich_snapshot_spread(
+            {}, symbol=symbol, lane=lane,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.debug("default_price_fetcher enrich failed sym=%s err=%s", symbol, exc)
+        return None
+    # Prefer an explicit price/mid/last; otherwise derive from
+    # bid+ask. Pull the value out defensively (some keys are strings
+    # from upstream callers).
+    for key in ("price", "mid", "last"):
+        val = enriched.get(key)
+        if val is None:
+            continue
+        try:
+            return {"price": float(val)}
+        except (TypeError, ValueError):
+            continue
+    bid, ask = enriched.get("bid"), enriched.get("ask")
+    if bid is not None and ask is not None:
+        try:
+            return {"price": (float(bid) + float(ask)) / 2.0}
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 # ── Observability helper (read-only) ────────────────────────────────
 async def watch_queue_snapshot(limit: int = 100) -> Dict[str, Any]:
     """Quick read of the current queue for the operator. Read-only.
@@ -303,5 +345,6 @@ __all__ = (
     "is_watcher_enabled",
     "enqueue_watch_plan",
     "scan_watch_queue",
+    "default_price_fetcher",
     "watch_queue_snapshot",
 )

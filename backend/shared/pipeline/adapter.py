@@ -128,6 +128,12 @@ def _opinion_from_intent(intent: Dict[str, Any], requested_notional: float) -> B
     into `evidence` so the Governor and the /why endpoint can read
     them without re-running the doctrine layer.
     """
+    # 2026-02 (Step 5) — lift the intent doc into v3 shape so the
+    # planning block is available to SeatPolicy. v2 docs come back
+    # with a synthesised plan; v3 docs pass through with defaults.
+    from shared.intent_envelope_v3 import normalize_intent  # noqa: WPS433
+    _v3_lifted = normalize_intent(intent) or {}
+
     evidence: Dict[str, Any] = {}
 
     # Doctrine packet → evidence (read-only; not a gate).
@@ -158,6 +164,14 @@ def _opinion_from_intent(intent: Dict[str, Any], requested_notional: float) -> B
         confidence=float(intent.get("confidence") or 0.0),
         notional_usd=float(requested_notional or 0.0),
         evidence=evidence,
+        # ─── Paradox v3 lift (Step 5) ─────────────────────────────
+        # Lift the persisted intent doc into v3 shape so SeatPolicy
+        # can read `plan.intent` uniformly across v2 + v3 rows.
+        # `normalize_intent` synthesises the plan from `action` for
+        # v2 docs (per PRD §6.2 mapping). For v3 docs it passes the
+        # operator-shipped plan through with defaults filled.
+        intent_version=_v3_lifted.get("intent_version"),
+        plan=_v3_lifted.get("plan"),
     )
 
 
