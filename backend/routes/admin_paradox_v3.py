@@ -249,3 +249,138 @@ async def execution_style_outcomes(
             "≥200. Don't replace a heuristic until at least STRONG."
         ),
     }
+
+
+# ── Per-brain execution-style profile (operator pin 2026-02-23) ────
+# OBSERVATIONAL PROFILE. The seat-doctrinal canonicalization pin
+# (intents.py:696) says `stack` is METADATA only — metrics keyed on
+# `stack` must NEVER imply "brain X underperformed", only "(seat,
+# lane, doctrine_version) outcomes while X occupied the seat".
+#
+# This endpoint surfaces a brain × execution_style cross-tab so the
+# operator can spot METADATA correlations (e.g., "camino's PATIENT
+# plans had 8 outcomes — still INSUFFICIENT") WITHOUT scoring brains
+# off it. Same conservative bands as `execution-style-outcomes`.
+#
+# Read-only. Polled every 10s by the dashboard tile.
+@router.get("/per-brain-execution-style-profile")
+async def per_brain_execution_style_profile(
+    _user: dict = Depends(get_current_user),  # noqa: B008
+) -> Dict[str, Any]:
+    """Per-brain × per-execution-style observational profile.
+
+    Returns a matrix-friendly shape:
+
+        {
+          "brains":  ["camino", "barracuda", ...],   # rows
+          "styles":  ["MARKET_NOW", "PATIENT", ...], # cols
+          "cells":   [{brain, execution_style, trades, wins,
+                       losses, win_rate, avg_pnl_usd, state}, ...],
+          "totals_by_brain": [{brain, trades, wins, losses,
+                               win_rate, avg_pnl_usd}, ...],
+          "bands":   {HIGH_CONVICTION:200, STRONG:100, ...},
+          "hard_floor": 30,
+          "doctrine_note": "OBSERVATIONAL — stack is metadata...",
+        }
+
+    Filtering: `intent_version="v3"` AND `outcome_join` joined.
+    Rows missing a `stack` value bucket under "UNKNOWN".
+    """
+    from db import db
+    from namespaces import DOCTRINE_SIDECARS
+
+    cursor = db[DOCTRINE_SIDECARS].find(
+        {
+            "intent_version": "v3",
+            "outcome_join": {"$exists": True},
+        },
+        {
+            "_id": 0,
+            "stack": 1,
+            "plan_execution_style": 1,
+            "outcome_join.outcome_label": 1,
+            "outcome_join.pnl_usd": 1,
+        },
+    )
+
+    # bucket[(brain, style)] = {trades, wins, losses, pnl_sum}
+    bucket: Dict[tuple, Dict[str, Any]] = {}
+    brains_seen: set = set()
+    styles_seen: set = set()
+    async for row in cursor:
+        brain = (row.get("stack") or "UNKNOWN").lower() or "UNKNOWN"
+        style = (row.get("plan_execution_style") or "UNKNOWN").upper()
+        oj = row.get("outcome_join") or {}
+        label = (oj.get("outcome_label") or "").lower()
+        pnl = float(oj.get("pnl_usd") or 0.0)
+        brains_seen.add(brain)
+        styles_seen.add(style)
+        key = (brain, style)
+        b = bucket.setdefault(key, {
+            "trades": 0, "wins": 0, "losses": 0, "pnl_sum": 0.0,
+        })
+        b["trades"] += 1
+        b["pnl_sum"] += pnl
+        if label == "win":
+            b["wins"] += 1
+        elif label in ("loss", "stopped_out"):
+            b["losses"] += 1
+
+    cells = []
+    for (brain, style), b in sorted(bucket.items()):
+        resolved = b["wins"] + b["losses"]
+        win_rate = (b["wins"] / resolved) if resolved else None
+        avg_pnl = (b["pnl_sum"] / b["trades"]) if b["trades"] else 0.0
+        cells.append({
+            "brain":           brain,
+            "execution_style": style,
+            "trades":          b["trades"],
+            "wins":            b["wins"],
+            "losses":          b["losses"],
+            "win_rate":        (round(win_rate, 4) if win_rate is not None else None),
+            "avg_pnl_usd":     round(avg_pnl, 4),
+            "state":           _band_for_samples(b["trades"]),
+        })
+
+    # Per-brain row totals across styles — gives operator a quick
+    # sense of which brain has accumulated enough v3 outcomes overall.
+    totals_buf: Dict[str, Dict[str, Any]] = {}
+    for c in cells:
+        t = totals_buf.setdefault(c["brain"], {
+            "brain":   c["brain"],
+            "trades":  0, "wins": 0, "losses": 0, "pnl_sum": 0.0,
+        })
+        t["trades"] += c["trades"]
+        t["wins"]   += c["wins"]
+        t["losses"] += c["losses"]
+        t["pnl_sum"] += c["avg_pnl_usd"] * c["trades"]
+    totals_by_brain = []
+    for brain, t in sorted(totals_buf.items()):
+        resolved = t["wins"] + t["losses"]
+        win_rate = (t["wins"] / resolved) if resolved else None
+        avg_pnl = (t["pnl_sum"] / t["trades"]) if t["trades"] else 0.0
+        totals_by_brain.append({
+            "brain":       brain,
+            "trades":      t["trades"],
+            "wins":        t["wins"],
+            "losses":      t["losses"],
+            "win_rate":    (round(win_rate, 4) if win_rate is not None else None),
+            "avg_pnl_usd": round(avg_pnl, 4),
+            "state":       _band_for_samples(t["trades"]),
+        })
+
+    return {
+        "brains":          sorted(brains_seen),
+        "styles":          sorted(styles_seen),
+        "cells":           cells,
+        "totals_by_brain": totals_by_brain,
+        "bands":           {name: floor for name, floor in _BANDS},
+        "hard_floor":      30,
+        "doctrine_note": (
+            "OBSERVATIONAL PROFILE — `stack` is METADATA per the "
+            "seat-doctrinal canonicalization pin (intents.py:696). "
+            "Cells show outcomes WHILE a brain occupied the seat, "
+            "not a brain scoring axis. Conservative bands apply "
+            "(LEARNING≥30, READY≥50, STRONG≥100, HIGH_CONVICTION≥200)."
+        ),
+    }

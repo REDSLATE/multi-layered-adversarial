@@ -15,6 +15,7 @@ import BrainDeepDiagnoseCard from "@/components/BrainDeepDiagnoseCard";
 import BrainMetricsTile from "@/components/BrainMetricsTile";
 import AdvisorPerformanceTile from "@/components/AdvisorPerformanceTile";
 import ParadoxV3RolloutTile from "@/components/ParadoxV3RolloutTile";
+import PerBrainExecutionStyleProfileTile from "@/components/PerBrainExecutionStyleProfileTile";
 // ImposterScanCard removed 2026-02-21: the sidecar HTTP brain plumbing
 // it monitored was deleted (brains run in-process now), and the
 // `/admin/runtime/sidecar-imposter-scan` endpoint went with it — the
@@ -444,6 +445,8 @@ export default function Diagnostics() {
       <AdvisorPerformanceTile />
 
       <ParadoxV3RolloutTile />
+
+      <PerBrainExecutionStyleProfileTile />
 
       {/* ImposterScanCard removed 2026-02-21 — see import-block note. */}
 

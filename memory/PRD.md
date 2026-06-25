@@ -1,3 +1,42 @@
+## 2026-02-23 — Per-Brain Execution-Style Profile tile (P1 backlog item)
+
+### Operator request
+> Build a dashboard surface for per-brain execution-style profile — read-only, observational, doesn't change consensus weights, safe during the v3 observation phase.
+
+### What shipped
+**NEW `GET /api/admin/paradox-v3/per-brain-execution-style-profile`**
+- Cross-tab of `doctrine_sidecars` filtered to `intent_version="v3"` AND `outcome_join` joined, grouped by `(stack, plan_execution_style)`.
+- Returns `{brains, styles, cells, totals_by_brain, bands, hard_floor, doctrine_note}`.
+- Same conservative bands as `execution-style-outcomes` (LEARNING≥30, READY≥50, STRONG≥100, HIGH_CONVICTION≥200).
+- v2 rows excluded at query time.
+- Rows with missing `stack` bucket under `"UNKNOWN"` so nothing is silently dropped.
+
+**NEW `PerBrainExecutionStyleProfileTile.jsx`** mounted on `/admin/diagnostics` below `ParadoxV3RolloutTile`.
+- Matrix layout: rows = brains, columns = execution styles, plus per-brain Σ Total column.
+- Each cell shows: `trades · win%`, avg PnL coloured red/green, conservative band badge.
+- Polls every 15s. Empty-state message until v3 outcomes accumulate.
+- Header explicitly carries the **OBSERVATIONAL** caveat — "stack is metadata, not a brain-scoring axis" (seat-doctrinal canonicalization pin at `intents.py:696`).
+
+### Doctrine respect
+The seat-doctrinal pin says `stack` is METADATA only. Metrics keyed on `stack` must NEVER imply "brain X underperformed", only "(seat, lane, doctrine_version) outcomes while X occupied the seat". The tile's caveat surfaces this directly to the operator so the matrix can't be mistaken for brain scoring.
+
+### Side-effect fix
+Pre-existing bug in `ParadoxV3RolloutTile.jsx` called `api.get("/api/admin/...")` which double-prefixes (`api.js` already prepends `/api`), producing `/api/api/...` → 404. Both the existing tile and the new tile now use the correct `api.get("/admin/...")` form. Verified in preview: both tiles render data instead of "Not Found".
+
+### Tests
+- `backend/tests/test_per_brain_execution_style_profile.py` — 6 tests covering grouping, v2 exclusion, totals aggregation, missing-stack → UNKNOWN bucket, band assignment, response shape with OBSERVATIONAL framing.
+- Full suite: 12 v3 endpoint tests passing (6 new + 6 existing `test_execution_style_outcomes_endpoint`).
+
+### Files
+- `backend/routes/admin_paradox_v3.py` — new endpoint appended after `execution-style-outcomes`.
+- `backend/tests/test_per_brain_execution_style_profile.py` — new.
+- `frontend/src/components/PerBrainExecutionStyleProfileTile.jsx` — new.
+- `frontend/src/components/ParadoxV3RolloutTile.jsx` — `/api/api/` → `/admin/` path fix.
+- `frontend/src/pages/Diagnostics.jsx` — mount new tile.
+
+---
+
+
 ## 2026-02-22 — Paradox v3 Step 7+ (execution_style_outcomes + Rollout Tile + Step 8 doctrine pin)
 
 ### Operator pin (verbatim)

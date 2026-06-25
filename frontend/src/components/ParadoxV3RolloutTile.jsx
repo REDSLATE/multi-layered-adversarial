@@ -7,6 +7,8 @@
  *   GET /api/admin/paradox-v3/execution-style-outcomes — per-style table
  *   GET /api/admin/doctrine/retirement-candidates    — v3 PATIENT count
  *
+ * (Calls drop the `/api` prefix locally — `api.js` prepends it.)
+ *
  * Surfaces:
  *   • Brains: ✓/○ per brain (camino, barracuda, hellcat, gto)
  *   • Trigger watcher posture + refire posture
@@ -86,11 +88,11 @@ export default function ParadoxV3RolloutTile() {
   const refresh = useCallback(async () => {
     try {
       const [s, st, ret] = await Promise.all([
-        api.get("/api/admin/paradox-v3/status"),
-        api.get("/api/admin/paradox-v3/execution-style-outcomes"),
+        api.get("/admin/paradox-v3/status"),
+        api.get("/admin/paradox-v3/execution-style-outcomes"),
         // Retirement candidates endpoint may not be mounted in all
         // deploys — soft-fail to null rather than break the tile.
-        api.get("/api/admin/doctrine/retirement-candidates")
+        api.get("/admin/doctrine/retirement-candidates")
            .catch(() => ({ candidates: [] })),
       ]);
       setStatus(s);

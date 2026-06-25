@@ -123,10 +123,16 @@ export default function BrainMetricsTile() {
   const consensus = data?.consensus_boost;
 
   // Operator-pinned color mapping for the consensus health bands.
-  //   noise (0-5%)     → dim/yellow  — advisors not aligning
-  //   healthy (5-25%)  → green       — sweet spot
-  //   heavy (25-50%)   → amber       — leaning on advisors a lot
-  //   over_dependent (50%+) → red    — executor too dependent
+  //   noise (0-5%)            → yellow — advisors not aligning
+  //   healthy (5-25%)         → green  — sweet spot
+  //   heavy (25-50%)          → amber  — leaning on advisors a lot
+  //   over_dependent (50%+)   → red    — executor too dependent
+  //   insufficient_data       → yellow — < 50 evals, observe only
+  //   insufficient_data_suspicious → yellow + flag — < 50 evals
+  //                              but rate >50%; "behaviour suspicious"
+  // The two `insufficient_*` bands fire at total_evaluated < 50.
+  // Operator doctrine (2026-02-22): don't act on the metric at that
+  // sample size; mark it yellow and wait until ≥50 evaluations.
   const consensusBandColor =
     {
       no_data: "text-rd-dim",
@@ -134,6 +140,8 @@ export default function BrainMetricsTile() {
       healthy: "text-rd-success",
       heavy: "text-rd-warn",
       over_dependent: "text-rd-danger",
+      insufficient_data: "text-rd-warn",
+      insufficient_data_suspicious: "text-rd-warn",
     }[consensus?.health_band] || "text-rd-dim";
   const consensusBandLabel =
     {
@@ -142,6 +150,8 @@ export default function BrainMetricsTile() {
       healthy: "healthy · selective influence",
       heavy: "heavy · executor leaning on advisors",
       over_dependent: "over-dependent · executor too reliant",
+      insufficient_data: `observing · ${consensus?.total_evaluated ?? 0}/${consensus?.insufficient_samples_threshold ?? 50} evals`,
+      insufficient_data_suspicious: `behaviour suspicious · sample too small (${consensus?.total_evaluated ?? 0}/${consensus?.insufficient_samples_threshold ?? 50})`,
     }[consensus?.health_band] || "—";
 
   return (

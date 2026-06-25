@@ -375,16 +375,42 @@ APPLIED_RATE_HEALTH_BANDS = (
 )
 
 
-def _classify_applied_rate(rate: Optional[float]) -> str:
+def _classify_applied_rate(rate: Optional[float], total: int = 0) -> str:
     """Operator-pinned health band for the applied rate.
+
     Returns 'no_data' when the denominator is zero so the UI can
-    distinguish 'nothing happened yet' from 'happens 0% of the time'."""
+    distinguish 'nothing happened yet' from 'happens 0% of the time'.
+
+    Operator pin (2026-02-22, observation phase):
+      When `total < INSUFFICIENT_SAMPLES_THRESHOLD` (50 evaluations),
+      the band returns `'insufficient_data'` regardless of the rate.
+      The metric is observability-only at that sample size — even a
+      100% applied rate could be a small-N artifact, not real
+      over-dependence. Don't tune until we have ≥50 evaluations.
+
+      When sample is undersized AND rate is suspicious (>50%), the
+      band returns `'insufficient_data_suspicious'` so the UI can
+      render yellow with the doctrine note "behaviour suspicious,
+      sample too small to act on".
+    """
     if rate is None:
         return "no_data"
+    if total < INSUFFICIENT_SAMPLES_THRESHOLD:
+        # Defer the over_dependent verdict until we have enough data.
+        if rate > 0.5:
+            return "insufficient_data_suspicious"
+        return "insufficient_data"
     for label, lo, hi in APPLIED_RATE_HEALTH_BANDS:
         if lo <= rate < hi:
             return label
     return "noise"
+
+
+# Operator pin (2026-02-22): below this many executor evaluations,
+# the consensus_boost_applied_rate is observability-only — don't act
+# on it (no tuning, no doctrine change). 50 mirrors the READY band
+# threshold elsewhere in the v3 rollout (see admin_paradox_v3._BANDS).
+INSUFFICIENT_SAMPLES_THRESHOLD = 50
 
 
 async def consensus_boost_applied_rate(
@@ -442,7 +468,8 @@ async def consensus_boost_applied_rate(
         "applied_rate": round(rate, 4) if rate is not None else None,
         "applied_count": applied,
         "total_evaluated": total,
-        "health_band": _classify_applied_rate(rate),
+        "health_band": _classify_applied_rate(rate, total),
+        "insufficient_samples_threshold": INSUFFICIENT_SAMPLES_THRESHOLD,
         "window_hours": int(window_hours),
         "positive_boost_count": pos,
         "negative_boost_count": neg,
