@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, Query
 
 from auth import get_current_user
 from shared.pipeline.trigger_watcher import (
+    is_refire_enabled,
     is_watcher_enabled,
     watch_queue_snapshot,
 )
@@ -84,30 +85,42 @@ async def paradox_v3_status(
     return {
         "brains_on_v3": brains_on_v3,
         "trigger_watcher_enabled": is_watcher_enabled(),
+        "trigger_refire_enabled": is_refire_enabled(),
         "flags": {
             "PARADOX_V3_BRAINS": brains_csv or None,
             "PARADOX_V3_TRIGGER_WATCHER": (
                 os.environ.get("PARADOX_V3_TRIGGER_WATCHER") or None
             ),
+            "PARADOX_V3_TRIGGER_REFIRE": (
+                os.environ.get("PARADOX_V3_TRIGGER_REFIRE") or None
+            ),
         },
-        "rollout_step": _infer_rollout_step(brains_on_v3, is_watcher_enabled()),
+        "rollout_step": _infer_rollout_step(
+            brains_on_v3, is_watcher_enabled(), is_refire_enabled(),
+        ),
         "lane_executor_seats": lane_seats,
         "doctrine_note": (
             "Step 5 LIVE = at least one brain in `brains_on_v3` AND "
-            "`trigger_watcher_enabled=true`. Step 4 SHADOW = brains on "
-            "v3 but watcher still off. Steps 1-3 = no brain on v3. "
-            "WAIT plans can only be parked on lanes whose "
-            "`wait_plans_eligible=true` (executor seat held)."
+            "`trigger_watcher_enabled=true`. Step 5.b REFIRE = the "
+            "above plus `trigger_refire_enabled=true` — fired plans "
+            "translate into actual broker calls. Step 4 SHADOW = "
+            "brains on v3 but watcher still off. Steps 1-3 = no "
+            "brain on v3. WAIT plans can only be parked on lanes "
+            "whose `wait_plans_eligible=true` (executor seat held)."
         ),
     }
 
 
-def _infer_rollout_step(brains: list[str], watcher_live: bool) -> str:
+def _infer_rollout_step(
+    brains: list[str], watcher_live: bool, refire_live: bool,
+) -> str:
     if not brains:
         return "steps_1_to_3_rails_only"
     if brains and not watcher_live:
         return "step_4_shadow_emit_only"
-    return "step_5_trigger_watcher_live"
+    if watcher_live and not refire_live:
+        return "step_5_trigger_watcher_live"
+    return "step_5b_refire_live"
 
 
 @router.get("/watch-queue")

@@ -62,6 +62,21 @@ def is_watcher_enabled(env_var: str = "PARADOX_V3_TRIGGER_WATCHER") -> bool:
     return val in {"1", "true", "yes", "on"}
 
 
+def is_refire_enabled(env_var: str = "PARADOX_V3_TRIGGER_REFIRE") -> bool:
+    """True iff the operator has opted INTO live re-firing of fired
+    plans through the unified pipeline.
+
+    Default OFF — the operator may want to run the watcher in
+    observability-only mode first (Step 5 ship) before letting trigger
+    fires translate into actual broker calls. This second flag exists
+    so the activation order is: (1) flip watcher on, watch the queue
+    drain TTL'd rows; (2) flip refire on, watch a fired plan actually
+    reach the broker.
+    """
+    val = os.environ.get(env_var, "0").strip().lower()
+    return val in {"1", "true", "yes", "on"}
+
+
 # ── Enqueue helper (called from seat_policy in Step 5) ─────────────
 async def enqueue_watch_plan(
     *,
@@ -201,6 +216,24 @@ async def scan_watch_queue(
                     intent_gate_state="trigger_fired",
                 )
                 counters["fired"] += 1
+                # ─── Re-injection (Step 5.b) — opt-in via env flag ──
+                # When `PARADOX_V3_TRIGGER_REFIRE=1` is set, a fired
+                # plan is re-run through the unified pipeline with
+                # `execution.action` synthesised from `plan.stance`.
+                # The seat re-evaluates conf_min + consensus AT
+                # trigger-fire time (not at park time) so a plan that
+                # waited 6h doesn't ride stale doctrine. When the
+                # flag is OFF (default), trigger fire is
+                # observability-only — `gate_state=trigger_fired`
+                # gets stamped but no broker call is attempted.
+                if is_refire_enabled():
+                    try:
+                        await _refire_trigger_fired_plan(row, now=now)
+                    except Exception as rexc:  # noqa: BLE001
+                        _log.warning(
+                            "trigger_watcher refire failed intent=%s err=%s",
+                            row.get("intent_id"), rexc,
+                        )
             elif outcome == "invalidated":
                 await _mark_resolved(
                     row, state="invalidated", reason="invalidation_price_hit",
@@ -269,6 +302,117 @@ async def _mark_resolved(
             "trigger_watcher mark_resolved failed intent=%s state=%s err=%s",
             row.get("intent_id"), state, exc,
         )
+
+
+# ── Re-injection of fired plans (Step 5.b) ──────────────────────────
+_BULLISH_STANCES = {"BULLISH", "LONG_BIAS"}
+_BEARISH_STANCES = {"BEARISH", "SHORT_BIAS"}
+
+
+def _derive_action_from_stance(stance: str, lane: str) -> Optional[str]:
+    """Map `plan.stance` + lane → legacy execution action for re-injection.
+
+    Doctrine:
+      * BULLISH / LONG_BIAS → "BUY" on both lanes (Kraken spot buys
+        and Public.com long entries share the same verb).
+      * BEARISH / SHORT_BIAS on equity → "SHORT". The seat layer's
+        spot-short executor seat will gate the actual fill.
+      * BEARISH / SHORT_BIAS on crypto → None. Kraken Pro spot can't
+        short BTC — a bearish entry trigger fire on a crypto plan
+        would need a futures route we don't have. We refuse rather
+        than silently issuing a SELL (which means "close long" and
+        only makes sense if a position exists — context the watcher
+        doesn't have).
+      * NEUTRAL / UNCERTAIN → None. A NEUTRAL plan that fires its
+        trigger is logically inconsistent.
+    """
+    stance = (stance or "").upper()
+    lane = (lane or "").lower()
+    if stance in _BULLISH_STANCES:
+        return "BUY"
+    if stance in _BEARISH_STANCES:
+        if lane == "crypto":
+            return None
+        return "SHORT"
+    return None
+
+
+async def _refire_trigger_fired_plan(
+    row: Dict[str, Any], *, now: datetime,
+) -> Optional[Dict[str, Any]]:
+    """Re-run a fired WAIT plan through the unified pipeline with
+    `execution.action` synthesised from `plan.stance`.
+
+    Returns the pipeline's verdict dict, or None if the plan was
+    skipped (unparseable stance, missing intent doc, etc.).
+
+    Doctrine pins:
+      * The intent doc is mutated IN PLACE in Mongo before re-running
+        so any downstream consumer reading the doc post-fire sees the
+        new shape (`plan.intent="ENTER"`, `execution.action`
+        populated).
+      * `plan.intent` flips from `WAIT_FOR_TRIGGER` to `ENTER` so the
+        seat's WAIT short-circuit doesn't re-park the plan in an
+        infinite loop.
+      * The seat re-evaluates `conf_min` and live consensus AT
+        trigger-fire time. A plan that waited 6h with stale
+        confidence rides the LIVE doctrine, not the parked one.
+      * Failure is fail-soft — the queue row stays `fired` even if
+        re-injection fails; the operator can investigate via the
+        watch-queue snapshot.
+    """
+    intent_id = row.get("intent_id")
+    if not intent_id:
+        return None
+
+    intent = await db[SHARED_INTENTS].find_one(
+        {"intent_id": intent_id}, {"_id": 0},
+    )
+    if not intent:
+        _log.warning(
+            "trigger_watcher refire skipped — intent %s not in shared_intents",
+            intent_id,
+        )
+        return None
+
+    derived_action = _derive_action_from_stance(
+        row.get("stance") or "", intent.get("lane") or "",
+    )
+    if derived_action is None:
+        _log.info(
+            "trigger_watcher refire skipped intent=%s stance=%s lane=%s "
+            "(no derivable action — see _derive_action_from_stance docs)",
+            intent_id, row.get("stance"), intent.get("lane"),
+        )
+        return None
+
+    # Mutate the intent: flip plan.intent to ENTER + stamp execution.
+    plan = dict(intent.get("plan") or {})
+    plan["intent"] = "ENTER"
+    execution = dict(intent.get("execution") or {})
+    execution["action"] = derived_action
+    execution["derived_at"] = now.isoformat()
+    execution["derived_from_plan"] = True
+
+    intent["plan"] = plan
+    intent["execution"] = execution
+    intent["action"] = derived_action  # legacy v2 surface
+
+    await db[SHARED_INTENTS].update_one(
+        {"intent_id": intent_id},
+        {"$set": {
+            "plan": plan,
+            "execution": execution,
+            "action": derived_action,
+            "gate_state": "trigger_fired_pending_execution",
+        }},
+    )
+
+    # Defer import to avoid module-init cycles (adapter imports
+    # pipeline which imports this module).
+    from shared.pipeline.adapter import run_unified_for_intent
+    notional = float(intent.get("notional_usd") or 0.0) or 10.0
+    return await run_unified_for_intent(intent, notional)
 
 
 # ── Default price fetcher (Step 5) ──────────────────────────────────
@@ -343,6 +487,7 @@ __all__ = (
     "INTENT_WATCH_QUEUE_COLL",
     "SAFETY_TTL_SECONDS",
     "is_watcher_enabled",
+    "is_refire_enabled",
     "enqueue_watch_plan",
     "scan_watch_queue",
     "default_price_fetcher",

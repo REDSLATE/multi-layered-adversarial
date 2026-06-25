@@ -1,3 +1,107 @@
+## 2026-02-22 — Paradox v3 Step 5.b (re-injection of fired plans)
+
+### Operator pin (verbatim)
+> "Okay, continue."
+
+### What shipped
+Trigger-fire was observability-only after Step 5 — `gate_state` got
+stamped `trigger_fired` but no broker call ever happened. Step 5.b
+adds the re-injection path behind a separate env flag so the
+operator can run the rollout in three discrete stages:
+
+```
+Stage A (Step 4 SHADOW):   PARADOX_V3_BRAINS=camino
+Stage B (Step 5 WATCH):    + PARADOX_V3_TRIGGER_WATCHER=1
+Stage C (Step 5.b REFIRE): + PARADOX_V3_TRIGGER_REFIRE=1
+```
+
+Each stage is observable on `/api/admin/paradox-v3/status` via the
+new `rollout_step` value:
+  * `step_4_shadow_emit_only`     — brains on v3, watcher off
+  * `step_5_trigger_watcher_live` — watcher on, refire off
+  * `step_5b_refire_live`         — both on
+
+### Mechanics
+**Stance → action mapping (locked table)**
+| stance               | equity | crypto |
+|----------------------|--------|--------|
+| BULLISH / LONG_BIAS  | BUY    | BUY    |
+| BEARISH / SHORT_BIAS | SHORT  | REFUSED|
+| NEUTRAL / UNCERTAIN  | REFUSED| REFUSED|
+
+Crypto BEARISH refusal: Kraken Pro spot has no short product, and
+emitting `SELL` would imply "close long" — context the watcher can't
+infer safely. Refuse rather than guess.
+
+**Mutation on refire**
+The watcher updates the intent doc in-place BEFORE re-running:
+  * `action = "BUY"` (or "SHORT") — legacy v2 surface
+  * `plan.intent = "ENTER"` — flips WAIT to ENTER so the seat's
+    WAIT short-circuit doesn't re-park the plan (infinite-loop pin)
+  * `execution.action = "BUY"` (or "SHORT")
+  * `execution.derived_from_plan = True`
+  * `execution.derived_at = <iso>`
+  * `gate_state = "trigger_fired_pending_execution"`
+
+Then calls `run_unified_for_intent(intent, notional)`. The seat
+re-evaluates `conf_min` AT trigger-fire time, not at park time —
+a plan parked at 09:30 that fires at 15:30 rides the 15:30 doctrine.
+
+### Tests (29 new)
+- `is_refire_enabled` default + truthy/falsy env parameterisation.
+- `_derive_action_from_stance` 12-row matrix (every stance × both lanes).
+- Refire OFF: fired plan stamps `gate_state="trigger_fired"`, intent
+  `action` untouched.
+- Refire ON: BULLISH equity plan → `action="BUY"`, `plan.intent="ENTER"`,
+  pipeline ran.
+- BEARISH crypto refused gracefully (no mutation, no broker call).
+- Missing intent doc → fail-soft (no exception).
+- `test_refired_plan_does_not_re_park_in_subsequent_tick` — pins
+  the no-loop property.
+
+### Live verification
+- 200-test regression sweep: all green, zero regressions.
+- Backend restarted clean. Brains continue posting cleanly.
+- `/api/admin/paradox-v3/status` returns the new shape with
+  `trigger_refire_enabled: false`, `rollout_step:
+  steps_1_to_3_rails_only` (preview is fully dormant by design).
+
+### Operator activation
+**Recommended sequence** (each stage observable + reversible):
+```
+# Day 0 (Step 4 SHADOW): camino emits v3 envelopes only.
+PARADOX_V3_BRAINS=camino
+sudo supervisorctl restart backend
+
+# Day 1+ (Step 5 WATCH): Watcher TTL-expires + transitions
+# watching → fired / invalidated. No broker calls yet.
+PARADOX_V3_TRIGGER_WATCHER=1
+sudo supervisorctl restart backend
+
+# Day 3+ (Step 5.b REFIRE): trigger fires → broker call.
+PARADOX_V3_TRIGGER_REFIRE=1
+sudo supervisorctl restart backend
+```
+Confirm each stage by hitting `/api/admin/paradox-v3/status` and
+verifying `rollout_step` advanced.
+
+### Touched
+- EDIT: `backend/shared/pipeline/trigger_watcher.py`
+        (`is_refire_enabled`, `_derive_action_from_stance`,
+        `_refire_trigger_fired_plan`, refire branch in
+        `scan_watch_queue`)
+- EDIT: `backend/routes/admin_paradox_v3.py`
+        (status endpoint surfaces refire flag + new rollout step)
+- NEW:  `backend/tests/test_paradox_v3_step5b_refire.py` (29 tests)
+- EDIT: `memory/PARADOX_V3_INTENT_ENVELOPE_PRD.md` (§13 Step 5.b)
+
+### Deploy ordering
+Backward-compatible. Deploy whenever. New env vars default OFF.
+
+---
+
+
+
 ## 2026-02-22 — Paradox v3 Step 5 (seat policy wiring + watch queue tick + admin endpoints)
 
 ### Operator pin (verbatim)
