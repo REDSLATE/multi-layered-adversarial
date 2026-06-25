@@ -606,6 +606,8 @@ async def _build_and_persist_doctrine_packet(
     snapshot: Optional[dict],
     ingest_method: str,
     admin_email: Optional[str] = None,
+    intent_version: Optional[str] = None,
+    plan_execution_style: Optional[str] = None,
 ) -> Optional[dict]:
     """Attach a `BRAIN_DOCTRINE_SIDECAR_PACKET` to the intent.
 
@@ -709,6 +711,12 @@ async def _build_and_persist_doctrine_packet(
         "ingest_admin_email": admin_email,
         "snapshot": merged,
         "packet": packet,
+        # ── Paradox v3 envelope hints (2026-02-22, Step 7) ───────────
+        # Stamped so `_v3_patient_candidates` in auto_retire can
+        # filter to v3 PATIENT plans only. v2 rows leave these null;
+        # the slicer naturally excludes them.
+        "intent_version": intent_version,
+        "plan_execution_style": plan_execution_style,
         # ── seat-doctrinal canonical keys ────────────────────────────
         "quality": hoisted["quality"],
         "score": hoisted["score"],
@@ -1066,6 +1074,8 @@ async def _post_intent_impl(
         confidence=float(body.confidence),
         snapshot=body.doctrine_snapshot,
         ingest_method="runtime_token",
+        intent_version=body.intent_version,
+        plan_execution_style=(body.plan.execution_style if body.plan else None),
     )
 
     # ─── Spread-bps enrichment (2026-05-26) ───
@@ -1490,6 +1500,8 @@ async def admin_post_intent(
         snapshot=body.doctrine_snapshot,
         ingest_method="admin_proxy",
         admin_email=user.get("email"),
+        intent_version=body.intent_version,
+        plan_execution_style=(body.plan.execution_style if body.plan else None),
     )
 
     # Spread-bps enrichment ladder — same doctrine as runtime path.

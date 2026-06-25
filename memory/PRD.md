@@ -1,3 +1,117 @@
+## 2026-02-22 — Paradox v3 Steps 6 + 7 (multi-brain rollout + execution_judge un-quarantine)
+
+### Operator pin (verbatim)
+> "Step 6: Roll v3 to barracuda → hellcat → gto sequentially. Each
+> is now a one-line .env flag update — PARADOX_V3_BRAINS=
+> camino,barracuda etc.
+> Step 7: Un-quarantine execution_judge.ready for v3 PATIENT plans."
+
+### Step 6 — Multi-brain rollout
+The runner-side emit path is fully brain-agnostic. No code changes
+needed per brain — operator just updates the env CSV and restarts:
+
+```
+# Day 0: only camino on v3 (Step 4 shadow)
+PARADOX_V3_BRAINS=camino
+
+# Day N+1 (after 24-48h healthy data on camino):
+PARADOX_V3_BRAINS=camino,barracuda
+
+# Day N+2:
+PARADOX_V3_BRAINS=camino,barracuda,hellcat
+
+# Day N+3:
+PARADOX_V3_BRAINS=camino,barracuda,hellcat,gto
+```
+
+3 new tests pin the contract:
+- `v3_brain_enabled` works for every brain_id
+- partial rollout enables ONLY the listed brains (sequential safety)
+- `synthesize_v3_envelope` produces identical output regardless of
+  which brain emitted the payload (no brain-specific assumptions)
+
+### Step 7 — `execution_judge.ready` un-quarantined for v3 PATIENT
+The original 2026-06-23 quarantine pinned that on the broad v2 dataset
+the `ready` branch was INVERTING (ready_loss_rate=1.00 vs not_ready
+=0.37). Hypothesis: MARKET_NOW fast-path emits dominated the dataset
+and "ready" was correlating with brain impatience rather than actual
+setup quality. v3 PATIENT plans are doctrinally different — the brain
+has EXPLICITLY requested a patient fill — so the same heuristic may
+behave correctly on that subset.
+
+**Changes**:
+1. `doctrine_sidecars` audit rows now carry `intent_version` +
+   `plan_execution_style` so the slicer can filter to v3 PATIENT
+   plans. Stamped by both `_post_intent_impl` (runtime) and
+   `admin_post_intent` (admin proxy). v2 rows leave them null —
+   naturally excluded from the v3 PATIENT pass.
+2. NEW `_v3_patient_execution_judge_candidates(rows, min_samples)`
+   helper in `auto_retire.py`. Re-runs the previously-quarantined
+   `execution_judge.ready` expectation against the v3 PATIENT subset
+   ONLY. Candidates tagged `scope="v3_patient_only"`.
+3. `retirement_candidates` route appends v3 PATIENT candidates to
+   the response after the broad-dataset pass and re-sorts by severity.
+4. Response shape gains a `scope` field on candidates + an updated
+   `doctrine_note` explaining the new pass.
+5. `endpoint_version` bumped to `auto_retire_v2_seat_doctrinal_v3_patient_scoped`.
+
+**Doctrine pin** (preserved from 2026-06-23): the failure belongs to
+the heuristic, not the seat holder. The v3 PATIENT pass surfaces the
+same message — `"Replace the heuristic, not the seat holder."` —
+even when emitting a candidate. Auto-retire is read-only suggestion;
+the operator decides what to retire.
+
+5 new tests:
+- v3 PATIENT pass excludes v2 rows
+- inversion-on-PATIENT emits a tagged candidate
+- healthy direction (ready outperforms) emits nothing
+- below-min-samples emits nothing
+- **regression pin**: broad expectations list still excludes
+  execution_judge — catches a future agent accidentally re-enabling
+  the broad pass without reading the 2026-06-23 doctrine pin
+
+### Live verification
+- 232 tests green across all v3 + adjacent suites.
+- Backend restarted clean, all 4 brains continue posting cleanly.
+- Lint clean on `auto_retire.py` + `intents.py`.
+- Zero regressions.
+
+### Operator activation
+**Step 6** (sequential brain rollout):
+```
+# After verifying camino has clean v3 data for 24h:
+PARADOX_V3_BRAINS=camino,barracuda
+sudo supervisorctl restart backend
+# Then repeat for hellcat, gto.
+```
+
+**Step 7** (auto): no env flag needed. The v3 PATIENT pass runs
+automatically on every `GET /api/admin/doctrine/retirement-candidates`
+call. Candidates appear once enough v3 PATIENT plans have flowed
+through with resolved outcomes — until then the pass emits an empty
+list (correct behaviour — `min_samples=50` default).
+
+### Touched
+- EDIT: `backend/shared/intents.py`
+        (`_build_and_persist_doctrine_packet` accepts + stamps
+        `intent_version` + `plan_execution_style`; both ingest call
+        sites updated)
+- EDIT: `backend/shared/doctrine/auto_retire.py`
+        (NEW `_v3_patient_execution_judge_candidates` helper +
+        wiring in `retirement_candidates` route)
+- NEW:  `backend/tests/test_paradox_v3_step6_step7_multibrain_judge.py`
+        (8 tests covering both steps)
+- EDIT: `memory/PARADOX_V3_INTENT_ENVELOPE_PRD.md` (§13 Steps 6 + 7)
+
+### Deploy ordering
+Backward-compatible. Deploy whenever. Step 7 surfaces zero candidates
+until v3 PATIENT plans accumulate enough resolved outcomes (min_samples
+default = 50).
+
+---
+
+
+
 ## 2026-02-22 — Paradox v3 Step 5.c (broker-layer limit + crypto short)
 
 ### Operator pin (verbatim)

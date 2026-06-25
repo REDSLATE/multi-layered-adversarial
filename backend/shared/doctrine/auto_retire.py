@@ -207,15 +207,132 @@ async def retirement_candidates(
         key=lambda c: (-sev_rank.get(c["severity"], 0), -c["samples"]),
     )
 
+    # ─── Paradox v3 (Step 7, 2026-02-22) ─────────────────────────────
+    # Un-quarantine `execution_judge.ready` for v3 PATIENT plans.
+    # The quarantine pin (line ~93 above) noted the ready-branch was
+    # inverting its signal on the broad v2 dataset. The hypothesis:
+    # MARKET_NOW fast-path emits dominated the dataset and "ready"
+    # was correlating with impatience rather than actual setup
+    # quality. v3 PATIENT plans are doctrinally different — the
+    # brain has EXPLICITLY asked for a patient fill — so the same
+    # heuristic may behave correctly on that subset. Re-enable the
+    # scoring SCOPED to v3 PATIENT rows only. Candidates emitted
+    # from this pass are tagged `scope="v3_patient_only"` so the
+    # operator can distinguish them from the broad-dataset signals.
+    v3_patient_rows = [
+        r for r in rows
+        if r.get("intent_version") == "v3"
+        and (r.get("plan_execution_style") or "").upper() == "PATIENT"
+    ]
+    if v3_patient_rows:
+        candidates.extend(
+            _v3_patient_execution_judge_candidates(
+                v3_patient_rows, min_samples=min_samples,
+            )
+        )
+        candidates.sort(
+            key=lambda c: (-sev_rank.get(c["severity"], 0), -c["samples"]),
+        )
+
     return {
         "candidates": candidates,
         "filter": {"lane": lane, "min_samples": min_samples},
         "doctrine_note": (
             "Retirement targets (lane, seat, doctrine_version) — not brains. "
-            "occupancy_during_window is metadata only."
+            "occupancy_during_window is metadata only. "
+            "Candidates with `scope='v3_patient_only'` come from the "
+            "v3 PATIENT re-scoring pass (Step 7, 2026-02-22) — only "
+            "applies to v3 plans with execution_style=PATIENT."
         ),
-        "endpoint_version": "auto_retire_v1_seat_doctrinal",
+        "endpoint_version": "auto_retire_v2_seat_doctrinal_v3_patient_scoped",
     }
+
+
+def _v3_patient_execution_judge_candidates(
+    v3_patient_rows: list, *, min_samples: int,
+) -> list:
+    """Step 7: re-score `execution_judge.ready` on the v3-PATIENT-only
+    slice of the doctrine_sidecars dataset.
+
+    The heuristic the broad-dataset version of this scoring inverts on
+    MAY behave correctly when the brain has explicitly emitted a
+    PATIENT plan. This pass produces candidates tagged with
+    `scope="v3_patient_only"` so the operator can distinguish them
+    from the broad-dataset signals.
+
+    Returns an empty list if there aren't enough samples in the
+    v3 PATIENT subset to support the comparator delta.
+    """
+    slices = _aggregate_by_lane_seat_doctrine(v3_patient_rows)
+    rows_by_lane_dv: dict[tuple[str, str], list] = {}
+    for r in v3_patient_rows:
+        rl = r.get("lane") or "unknown"
+        rdv = r.get("doctrine_version") or "unknown"
+        rows_by_lane_dv.setdefault((rl, rdv), []).append(r)
+
+    out: list = []
+    for key, slc in slices.items():
+        if slc["seat"] != "execution_judge":
+            continue
+        branches = slc.get("branches") or {}
+        b = branches.get("ready") or {}
+        c = branches.get("not_ready") or {}
+        b_lr = b.get("loss_rate")
+        c_lr = c.get("loss_rate")
+        samples = (
+            b.get("samples_with_outcome", 0)
+            + c.get("samples_with_outcome", 0)
+        )
+        if b_lr is None or c_lr is None or samples < min_samples:
+            continue
+        # `branch_lower_loss` direction — ready SHOULD have LOWER loss
+        # than not_ready. The previous quarantine showed this inverted
+        # on the broad dataset; we re-enable here for v3 PATIENT only.
+        delta = c_lr - b_lr
+        sev = _severity(delta, samples)
+        if sev in ("OK", "INSUFFICIENT"):
+            continue
+        seat_lane = slc["lane"]
+        dv = slc["doctrine_version"]
+        window_rows = rows_by_lane_dv.get((seat_lane, dv), [])
+        window_occ = _seat_occupancy_metadata(
+            window_rows, only_seat="execution_judge",
+        )
+        occ = (window_occ.get(f"{seat_lane}/execution_judge")
+               or {}).get("holders", {})
+        out.append({
+            "kind": "seat_branch_underperforms",
+            "scope": "v3_patient_only",
+            "lane": seat_lane,
+            "seat": "execution_judge",
+            "doctrine_version": dv,
+            "branch": "ready",
+            "comparator": "not_ready",
+            "branch_loss_rate": b_lr,
+            "comparator_loss_rate": c_lr,
+            "delta": round(delta, 4),
+            "samples": samples,
+            "severity": sev,
+            "headline": (
+                f"{seat_lane}/execution_judge {dv}: ready heuristic "
+                f"underperforming on v3 PATIENT plans"
+            ),
+            "rationale": (
+                f"execution_judge.ready loss_rate {b_lr:.2f} ≥ "
+                f"execution_judge.not_ready loss_rate {c_lr:.2f} on the "
+                f"v3 PATIENT subset — the ready signal isn't selecting "
+                f"winners even on plans the brain explicitly marked "
+                f"PATIENT."
+            ),
+            "suggested_action": (
+                "Re-examine the execution_judge.ready heuristic — even on "
+                "v3 PATIENT plans (where the brain has asked for a "
+                "patient fill) the readiness signal is selecting worse "
+                "outcomes. Replace the heuristic, not the seat holder."
+            ),
+            "occupancy_during_window": occ,
+        })
+    return out
 
 
 def _headline(lane: str, seat: str, dv: str, branch: str, sev: str) -> str:
