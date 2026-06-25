@@ -63,6 +63,13 @@ const GATE_ICON = {
   dry_run_blocked: XCircle,
 };
 
+const SORTS = [
+  { value: "conviction",          label: "🔥 Highest Conviction" },
+  { value: "execution_priority",  label: "🚦 Closest to Execution" },
+  { value: "newest",              label: "🕒 Newest" },
+  { value: "symbol",              label: "🔤 Symbol (A-Z)" },
+];
+
 const STACKS = ["all", "camino", "barracuda", "hellcat", "gto"];
 const ACTIONS = ["all", "BUY", "SELL", "SHORT", "COVER", "HOLD"];
 const LANES = ["all", "equity", "crypto"];
@@ -412,6 +419,20 @@ export default function Intents() {
   const [action, setAction] = useState("all");
   const [gateState, setGateState] = useState("all");
   const [lane, setLane] = useState("all");
+  // 2026-02-23 operator queue improvements
+  //   sort: conviction (default — highest confidence first; operator's
+  //         strongest ideas surface immediately when they open the page),
+  //         execution_priority (BUY/SELL passed → blocked → HOLD),
+  //         newest (legacy ingest_ts DESC), symbol (alphabetical, escape
+  //         hatch for ticker lookup — explicitly NOT the default since
+  //         it hides the most important opportunities).
+  //   showDisabledLanes: when crypto (or any lane) is paused, hide its
+  //         intents from the operator queue by default. Toggle ON to
+  //         inspect them for QA / forensics.
+  const [sort, setSort] = useState("conviction");
+  const [showDisabledLanes, setShowDisabledLanes] = useState(false);
+  const [enabledLanes, setEnabledLanes] = useState([]);
+  const [queueNote, setQueueNote] = useState("");
   const [expanded, setExpanded] = useState(null);
   const [dryRunByIntent, setDryRunByIntent] = useState({});
   const [submitByIntent, setSubmitByIntent] = useState({});
@@ -447,10 +468,15 @@ export default function Intents() {
 
   const load = useCallback(async () => {
     try {
-      const params = { limit: 100 };
+      const params = { limit: 100, sort };
       if (stack !== "all") params.stack = stack;
       if (gateState !== "all") params.gate_state = gateState;
       if (lane !== "all") params.lane = lane;
+      // 2026-02-23 — only send the flag when the operator wants the
+      // disabled-lane intents shown. Default is server-side false,
+      // keeping the actionable queue clean of crypto noise while
+      // the lane is paused.
+      if (showDisabledLanes) params.include_disabled_lanes = "true";
       // action filter happens client-side since the API doesn't expose it
       // 2026-02-21: Stale `X-Runtime-Token: alpha-ingest-...` header
       // removed — that token belonged to the deleted sidecar HTTP
@@ -458,6 +484,8 @@ export default function Intents() {
       // backend `/intents` GET now accepts admin JWT directly.
       const res = await api.get("/intents", { params });
       setIntents(res.data?.items || []);
+      setEnabledLanes(res.data?.enabled_lanes || []);
+      setQueueNote(res.data?.note || "");
       setErr("");
     } catch (e) {
       // 2026-06-18: tag the error with the endpoint that failed so a
@@ -472,7 +500,7 @@ export default function Intents() {
         (reqId ? ` · request_id=${reqId}` : ""),
       );
     }
-  }, [stack, gateState, lane]);
+  }, [stack, gateState, lane, sort, showDisabledLanes]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -894,6 +922,56 @@ export default function Intents() {
           <FilterPill label="Stack" value={stack} options={STACKS} onChange={setStack} testid="filter-stack" />
           <FilterPill label="Action" value={action} options={ACTIONS} onChange={setAction} testid="filter-action" />
           <FilterPill label="Gate" value={gateState} options={GATE_STATES} onChange={setGateState} testid="filter-gate" />
+        </div>
+        {/* 2026-02-23 — operator queue improvements. Sort selector +
+            disabled-lane visibility toggle. Highest-conviction is the
+            default so the operator sees their strongest ideas first,
+            not the first ticker beginning with 'A'. Crypto intents
+            are hidden from the actionable queue while crypto lane
+            execution is OFF (brains still emit advisor opinions on
+            crypto — they just don't pollute the operator's view). */}
+        <div className="flex flex-wrap items-center gap-4 mt-3 pt-3 border-t border-rd-border">
+          <div className="flex items-center gap-2" data-testid="intents-sort-selector">
+            <span className="label-eyebrow">Sort</span>
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value)}
+              className="bg-rd-bg-deep border border-rd-border text-rd-text text-xs font-mono px-2 py-1 focus:outline-none focus:border-rd-accent"
+              data-testid="intents-sort-select"
+            >
+              {SORTS.map((s) => (
+                <option key={s.value} value={s.value}>{s.label}</option>
+              ))}
+            </select>
+          </div>
+          <label className="flex items-center gap-2 text-xs font-mono text-rd-dim cursor-pointer"
+                 data-testid="intents-show-disabled-toggle">
+            <input
+              type="checkbox"
+              checked={showDisabledLanes}
+              onChange={(e) => setShowDisabledLanes(e.target.checked)}
+              className="accent-rd-accent"
+              data-testid="intents-show-disabled-checkbox"
+            />
+            <span>Show disabled-lane intents</span>
+          </label>
+          {enabledLanes.length > 0 && !showDisabledLanes && (
+            <span
+              className="text-[10px] font-mono uppercase tracking-wider text-rd-dim ml-auto"
+              data-testid="intents-enabled-lanes-pill"
+              title="Only intents on currently-executing lanes are shown. Toggle 'Show disabled-lane intents' to inspect others."
+            >
+              enabled lanes: {enabledLanes.join(" · ")}
+            </span>
+          )}
+          {queueNote && (
+            <span
+              className="text-[10px] font-mono text-rd-warn"
+              data-testid="intents-queue-note"
+            >
+              {queueNote}
+            </span>
+          )}
         </div>
       </Card>
 

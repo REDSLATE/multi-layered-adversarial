@@ -1314,6 +1314,11 @@ async def list_intents(
     lane: Optional[Literal["equity", "crypto"]] = Query(default=None),
     gate_state: Optional[str] = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
+    # 2026-02-23 — operator queue improvements
+    sort: Literal[
+        "conviction", "execution_priority", "newest", "symbol",
+    ] = Query(default="conviction"),
+    include_disabled_lanes: bool = Query(default=False),
     x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
 ):
     """Read recent intents. Accepts either:
@@ -1326,6 +1331,24 @@ async def list_intents(
     sidecar HTTP architecture (since deleted). We accept it for any
     brain still calling this endpoint, but operator JWT is the canonical
     path now.
+
+    2026-02-23: Two operator-queue improvements.
+
+      `sort` (default 'conviction')
+        * conviction          — highest confidence first (operator's
+                                strongest ideas surface first)
+        * execution_priority  — BUY/SELL passed → BUY/SELL blocked
+                                → HOLD/WATCH (closest-to-execution first)
+        * newest              — historical ingest_ts DESC behavior
+        * symbol              — alphabetical (escape hatch for ticker
+                                lookup, NOT recommended as default)
+
+      `include_disabled_lanes` (default False)
+        When a lane has execution toggled OFF, the brains may still
+        emit observation/advisor intents on that lane. Hiding them
+        from the default queue keeps the operator's actionable view
+        clean while the lane is paused. Set to True to inspect
+        them for QA/forensics.
     """
     # Try operator JWT first (cookie or bearer); fall back to runtime token.
     try:
@@ -1360,8 +1383,112 @@ async def list_intents(
     if gate_state:
         q["gate_state"] = gate_state
 
-    rows = await db[SHARED_INTENTS].find(q, {"_id": 0}).sort("ingest_ts", -1).to_list(limit)
-    return {"items": rows, "count": len(rows)}
+    # 2026-02-23 disabled-lane filter. When `include_disabled_lanes`
+    # is False (the operator-friendly default), restrict the result
+    # to intents whose lane has execution currently ON. Crypto stays
+    # observable to the brains but hidden from the actionable queue
+    # while the operator has crypto paused.
+    enabled_lanes: list[str] = []
+    if not include_disabled_lanes:
+        # Lazy import to avoid lifespan-time circular reference.
+        from shared.lane_execution import is_lane_execution_enabled  # noqa: WPS433
+        for L in ("equity", "crypto"):
+            if await is_lane_execution_enabled(L):
+                enabled_lanes.append(L)
+        if enabled_lanes:
+            # Restrict to enabled lanes (intersect with any caller-
+            # supplied `lane` filter — if the caller asked for a
+            # disabled lane explicitly, return nothing rather than
+            # silently widening their query).
+            if "lane" in q:
+                if q["lane"] not in enabled_lanes:
+                    return {
+                        "items": [], "count": 0,
+                        "sort": sort,
+                        "enabled_lanes": enabled_lanes,
+                        "include_disabled_lanes": False,
+                        "note": (
+                            f"requested lane={q['lane']!r} has execution "
+                            f"disabled — returning empty. Pass "
+                            f"include_disabled_lanes=true to inspect."
+                        ),
+                    }
+            else:
+                q["lane"] = {"$in": enabled_lanes}
+        else:
+            # All lanes disabled — return empty rather than show
+            # everything as if nothing changed.
+            return {
+                "items": [], "count": 0,
+                "sort": sort,
+                "enabled_lanes": [],
+                "include_disabled_lanes": False,
+                "note": "All lanes disabled — pass include_disabled_lanes=true to view observation intents.",
+            }
+
+    # ── Sort selection ─────────────────────────────────────────────
+    # Note on Mongo sort tuples: `("confidence", -1)` is descending.
+    # The `execution_priority` rank below is computed via a small
+    # `$addFields` so we can sort on a derived field cleanly.
+    sort_spec: list[tuple[str, int]]
+    if sort == "newest":
+        sort_spec = [("ingest_ts", -1)]
+    elif sort == "symbol":
+        sort_spec = [("symbol", 1), ("ingest_ts", -1)]
+    elif sort == "conviction":
+        # Highest confidence first; tie-break by recency so two equally-
+        # confident intents on the same symbol show the freshest one.
+        sort_spec = [("confidence", -1), ("ingest_ts", -1)]
+    else:  # execution_priority
+        # We need a derived rank. Run as a tiny aggregation pipeline
+        # so the priority field doesn't pollute the response shape.
+        pipeline = [
+            {"$match": q},
+            {"$addFields": {
+                "_exec_rank": {
+                    "$switch": {
+                        "branches": [
+                            # 0 = passed/executable directional → top
+                            {"case": {"$and": [
+                                {"$in": ["$action", ["BUY", "SELL"]]},
+                                {"$eq": ["$gate_state", "dry_run_passed"]},
+                            ]}, "then": 0},
+                            {"case": {"$and": [
+                                {"$in": ["$action", ["BUY", "SELL"]]},
+                                {"$eq": ["$gate_state", "passed"]},
+                            ]}, "then": 1},
+                            # 2 = directional but blocked → fix-it bucket
+                            {"case": {"$and": [
+                                {"$in": ["$action", ["BUY", "SELL"]]},
+                                {"$in": ["$gate_state", ["dry_run_blocked", "blocked"]]},
+                            ]}, "then": 2},
+                            # 3 = directional pending dry-run
+                            {"case": {"$in": ["$action", ["BUY", "SELL"]]}, "then": 3},
+                            # 4 = HOLD/WATCH (informational) at the bottom
+                        ],
+                        "default": 4,
+                    },
+                },
+            }},
+            {"$sort": {"_exec_rank": 1, "confidence": -1, "ingest_ts": -1}},
+            {"$limit": limit},
+            {"$project": {"_id": 0, "_exec_rank": 0}},
+        ]
+        rows = await db[SHARED_INTENTS].aggregate(pipeline).to_list(None)
+        return {
+            "items": rows, "count": len(rows),
+            "sort": sort,
+            "enabled_lanes": enabled_lanes,
+            "include_disabled_lanes": bool(include_disabled_lanes),
+        }
+
+    rows = await db[SHARED_INTENTS].find(q, {"_id": 0}).sort(sort_spec).to_list(limit)
+    return {
+        "items": rows, "count": len(rows),
+        "sort": sort,
+        "enabled_lanes": enabled_lanes,
+        "include_disabled_lanes": bool(include_disabled_lanes),
+    }
 
 
 # ──────────────────── operator: honesty audit ────────────────────
