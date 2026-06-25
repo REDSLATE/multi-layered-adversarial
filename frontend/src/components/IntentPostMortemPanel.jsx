@@ -39,6 +39,15 @@ const OUTCOME_LABELS = {
   auto_submit_skipped_lane_filtered:      { label: "Skipped by Shelly · lane not allowed",   color: "#64748B" },
   auto_submit_skipped_action_filtered:    { label: "Skipped by Shelly · action not allowed", color: "#64748B" },
   auto_submit_skipped_brain_filtered:     { label: "Skipped by Shelly · brain not allowed",  color: "#64748B" },
+  // 2026-02-23 — three-mode seat authority doctrine. These two
+  // buckets disambiguate doctrine-correct refusals (seat is held by
+  // a different brain → operator must rotate or use the
+  // /execution/submit-override endpoint) from a missing seat
+  // assignment (operator action required). Distinct color so the
+  // operator can see at a glance whether the throughput drop is
+  // structural (seat assignment) vs. an actual pipeline bug.
+  auto_submit_skipped_seat_authority_mismatch: { label: "Skipped by Shelly · brain ≠ seat holder (doctrine OK)", color: "#A78BFA" },
+  auto_submit_skipped_seat_vacant:        { label: "Skipped by Shelly · executor seat vacant",   color: "#F59E0B" },
   // 2026-06-19: legacy single `dry_run_not_ready` bucket split into
   // three actionable buckets so operators can tell a correct refusal
   // (doctrine working) apart from a benign race (auto-resolves) and

@@ -20,6 +20,11 @@ from shared.market_hours import (
 )
 
 
+# The async equity-after-hours test below uses pytest-asyncio.
+# Scope to that test only so the bulk of the synchronous market-
+# hours pinning tests don't pay the event-loop overhead.
+
+
 @pytest.fixture(autouse=True)
 def _no_bypass(monkeypatch):
     monkeypatch.delenv("RISEDUAL_BYPASS_MARKET_HOURS", raising=False)
@@ -178,7 +183,8 @@ def test_reason_outside_rth():
 # ── Integration: auto-submit gate ──────────────────────────────────
 
 
-def test_matches_tier_1_blocks_equity_after_hours(monkeypatch):
+@pytest.mark.asyncio
+async def test_matches_tier_1_blocks_equity_after_hours(monkeypatch):
     """The whole point of this module — `matches_tier_1` MUST refuse
     equity intents when `is_equity_rth()` returns False."""
     from shared import auto_submit_policy
@@ -190,7 +196,7 @@ def test_matches_tier_1_blocks_equity_after_hours(monkeypatch):
         confidence_min=0.0,
         allowed_actions=["BUY", "SELL"],
         allowed_lanes=["equity", "crypto"],
-        allowed_brains=["camaro"],
+        allowed_brains=["barracuda"],
         required_dry_run_state="passed",
     )
 
@@ -205,23 +211,37 @@ def test_matches_tier_1_blocks_equity_after_hours(monkeypatch):
     intent = {
         "action": "BUY",
         "lane": "equity",
-        "stack": "camaro",
+        "stack": "barracuda",
         "confidence": 0.99,
         "dry_run_state": "passed",
     }
-    ok, reason = matches_tier_1(intent)
+    ok, reason = await matches_tier_1(intent)
     assert ok is False
     assert reason.startswith("equity_after_hours")
 
-    # Crypto on the SAME closed clock must still pass.
+    # Crypto on the SAME closed clock must skip the market-hours gate
+    # — but we stub the seat lookup so it doesn't trip the seat
+    # pre-check (different doctrine, unrelated to market hours).
+    from shared import executor_seat as es
+    from shared import seat_policy as sp
+
+    async def fake_get_seat_holder(seat_name):  # noqa: ARG001
+        return "barracuda"
+
+    monkeypatch.setattr(es, "get_seat_holder", fake_get_seat_holder)
+    monkeypatch.setattr(es, "seats_with_execute",
+                        lambda lane: ["ISRAFEL"])
+    monkeypatch.setattr(sp, "seat_may_execute_lane",
+                        lambda seat, lane: True)
+
     intent_crypto = {
         "action": "BUY",
         "lane": "crypto",
-        "stack": "camaro",
+        "stack": "barracuda",
         "confidence": 0.99,
         "dry_run_state": "passed",
     }
-    ok2, reason2 = matches_tier_1(intent_crypto)
+    ok2, reason2 = await matches_tier_1(intent_crypto)
     assert ok2 is True, f"crypto must trade 24/7: {reason2}"
 
     auto_submit_policy.reset_policy_for_tests()

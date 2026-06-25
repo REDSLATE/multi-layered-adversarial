@@ -100,7 +100,7 @@ BASE_POLICY = {
     "enabled": True,
     "allowed_actions": ["BUY", "SELL"],
     "allowed_lanes": ["equity", "crypto"],
-    "allowed_brains": ["alpha"],
+    "allowed_brains": ["camino"],
     "confidence_min": 0.5,
     "required_dry_run_state": "passed",
     "tier_name": "tier_1_conservative",
@@ -111,7 +111,7 @@ def _intent(dry_run_state):
     return {
         "action": "BUY",
         "lane": "crypto",  # crypto = no market-hours gate dependency
-        "stack": "alpha",
+        "stack": "camino",
         "confidence": 0.9,
         "dry_run_state": dry_run_state,
     }

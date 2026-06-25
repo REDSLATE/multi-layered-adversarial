@@ -308,6 +308,20 @@ SKIP_CATEGORY_DRY_RUN_PENDING   = "dry_run_pending"       # dry-run task running
 SKIP_CATEGORY_DRY_RUN_MISSING   = "dry_run_missing"       # dry_run_state never set — silent leak, needs investigation
 SKIP_CATEGORY_ALREADY_EXECUTED  = "already_executed"      # raced ourselves
 SKIP_CATEGORY_AFTER_HOURS       = "equity_after_hours"    # equity intent outside US RTH
+# 2026-02-23 — three-mode seat authority doctrine. When the
+# intent's emitting brain is NOT the current seat holder for the
+# intent's lane, auto-submit MUST refuse. Previously this state
+# leaked through to `execution_submit` which raised HTTP 403,
+# `maybe_auto_submit` caught the exception, and the row landed
+# in the `auto_submit_failed/submit_raised` bucket — making a
+# doctrine-correct REFUSAL look like a pipeline FAILURE on the
+# operator's post-mortem panel. With this category, the same
+# state surfaces as a clean SKIP row labeled
+# "brain ≠ seat holder" so the operator can see at a glance
+# whether the volume is structural (seat assignment mismatch)
+# vs. an actual pipeline bug.
+SKIP_CATEGORY_SEAT_AUTHORITY_MISMATCH = "seat_authority_mismatch"  # intent.stack != current seat holder
+SKIP_CATEGORY_SEAT_VACANT       = "seat_vacant"           # no holder for the intent's lane
 SKIP_CATEGORY_OTHER             = "other"                 # anything not classified
 SKIP_CATEGORY_NOT_FOUND         = "intent_not_found"      # intent_id missing at auto-submit time (DB race or rogue caller)
 SKIP_CATEGORY_INTERNAL_ERROR    = "internal_error"        # exception in chain before audit could be written
@@ -370,36 +384,53 @@ def _categorize_skip(reason: str) -> str:
         return SKIP_CATEGORY_ALREADY_EXECUTED
     if r.startswith("equity_after_hours"):
         return SKIP_CATEGORY_AFTER_HOURS
+    # 2026-02-23 — three-mode seat authority doctrine. Two distinct
+    # buckets so the operator sees "X intents from non-seat-holders"
+    # (rotate or override) separately from "Y intents had no
+    # executor seat at all" (assign one).
+    if r.startswith("seat_authority "):
+        if "vacant" in r:
+            return SKIP_CATEGORY_SEAT_VACANT
+        return SKIP_CATEGORY_SEAT_AUTHORITY_MISMATCH
     return SKIP_CATEGORY_OTHER
 
 
 
 
 def _normalize_brain_to_stack(raw: str) -> str:
-    """Normalize a brain identifier to its canonical stack code.
+    """Normalize a brain identifier to its canonical brain_id.
 
     Intents may carry the brain identity in three forms across the
     codebase's rename in flight:
-      * stack code  : alpha | camaro | chevelle | redeye  (legacy wire)
-      * brain_id    : camino | barracuda | hellcat | gto  (canonical)
-      * display name: Camino | Barracuda | Hellcat | GTO  (UI)
+      * canonical brain_id : camino | barracuda | hellcat | gto  (preferred)
+      * legacy stack code  : alpha | camaro | chevelle | redeye  (legacy wire)
+      * UI display name    : Camino | Barracuda | Hellcat | GTO  (UI)
 
-    All three normalize to the stack code here so the `allowed_brains`
-    list (still keyed on stack codes for backwards compatibility) can
-    match any of them. Unknown identifiers are returned lowercased
-    unchanged so the audit reason carries the original token.
+    All three normalize to the canonical brain_id here so the
+    `allowed_brains` list (canonical-keyed since 2026-02-20) can match
+    any of them. Unknown identifiers are returned lowercased unchanged
+    so the audit reason carries the original token.
+
+    Note (2026-06-25): the function name is historical — it used to
+    return legacy stack codes back when `allowed_brains` was stack-
+    keyed. It now returns canonical brain_ids. Renaming the function
+    requires touching every call site so we kept the name and pinned
+    the new semantics here.
     """
     key = (raw or "").lower().strip()
     if not key:
         return key
-    # Already a stack code → done.
+    # Already canonical → done.
     if key in {"camino", "barracuda", "hellcat", "gto"}:
         return key
-    # brain_id or display_name → resolve via brain_doctrine.
+    # Legacy stack code or display name → resolve via STACK_TO_BRAIN_ID.
+    # The map already contains canonical→canonical entries so lower-
+    # case display names ("camino") hit the early return; only legacy
+    # codes ("alpha", "camaro", "chevelle", "redeye") need this branch.
     try:
-        from shared.brain_doctrine import BRAIN_ID_TO_STACK  # noqa: WPS433
-        if key in BRAIN_ID_TO_STACK:
-            return BRAIN_ID_TO_STACK[key]
+        from shared.brain_doctrine import STACK_TO_BRAIN_ID  # noqa: WPS433
+        if key in STACK_TO_BRAIN_ID:
+            return STACK_TO_BRAIN_ID[key]
     except Exception:  # noqa: BLE001
         pass
     return key
@@ -473,6 +504,71 @@ async def matches_tier_1(intent: dict, policy: dict | None = None) -> tuple[bool
         )
     if intent.get("executed"):
         return False, "intent already executed"
+
+    # ── Seat-authority three-mode pre-check (2026-02-23) ───────────
+    # Mirrors the doctrine that `_evaluate_gates` enforces via
+    # `seat_authority_classification`: the auto-submit path MUST
+    # only fire when the emitting brain is the current seat holder
+    # for this lane. If we let non-seat-holder intents flow to
+    # `execution_submit`, it raises HTTP 403 with
+    # `blocked_by=seat_authority_classification`, and
+    # `maybe_auto_submit`'s exception handler files them under
+    # `auto_submit_failed/submit_raised` — making the operator's
+    # post-mortem panel show 422 doctrine-correct refusals as
+    # pipeline-failure noise.
+    #
+    # Resolving the seat holder here lets us return a clean
+    # SKIP row with `skip_category=seat_authority_mismatch` (or
+    # `seat_vacant` when no executor seat is assigned). The
+    # ultimate execution gate stays authoritative — this is just
+    # the auto-path's clean refusal mirror so the audit trail
+    # tells the truth.
+    #
+    # Imported lazily inside the function so the module stays
+    # importable from contexts that don't have the seat policy
+    # ready at module load (tests, scripts).
+    try:
+        from shared.executor_seat import (  # noqa: WPS433
+            get_seat_holder, seats_with_execute,
+        )
+        from shared.seat_policy import seat_may_execute_lane  # noqa: WPS433
+        eligible_seats = seats_with_execute(lane)
+        current_holder = None
+        matched_seat = None
+        for seat_name in eligible_seats:
+            holder = await get_seat_holder(seat_name)
+            if holder:
+                matched_seat = seat_name
+                current_holder = holder
+                break
+        if current_holder is None or not seat_may_execute_lane(matched_seat, lane):
+            return False, (
+                f"seat_authority vacant for lane={lane!r} — no executor "
+                f"seat assigned (assign via Quick Seat Switches before "
+                f"auto-submit can fire)"
+            )
+        holder_norm = _normalize_brain_to_stack(current_holder.strip().lower())
+        # `brain` is already the normalized stack code from the
+        # earlier brain-filter step above.
+        if brain != holder_norm:
+            return False, (
+                f"seat_authority intent author {brain!r} != current seat "
+                f"holder {holder_norm!r} (seat={matched_seat!r}, "
+                f"lane={lane!r}); requires_override path — auto-submit "
+                f"refuses by doctrine"
+            )
+    except Exception as exc:  # noqa: BLE001
+        # Defensive: if the seat lookup itself raises (DB hiccup,
+        # missing collection), do NOT block the intent on the
+        # bookkeeping failure — `_evaluate_gates` will still
+        # enforce the doctrine at submit time. Log so we can spot
+        # the issue.
+        logger.warning(
+            "matches_tier_1: seat-authority pre-check raised "
+            "(%s: %s); deferring to _evaluate_gates",
+            type(exc).__name__, exc,
+        )
+
     return True, "ok"
 
 

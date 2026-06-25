@@ -44,9 +44,9 @@ async def test_categorize_hold():
     operator sees 'Shelly correctly skipped 3500 HOLD signals' at a
     glance instead of getting lost in the action_filtered bucket."""
     ok, reason = await matches_tier_1(
-        {"action": "HOLD", "lane": "equity", "stack": "alpha", "confidence": 0.9, "dry_run_state": "passed"},
+        {"action": "HOLD", "lane": "equity", "stack": "camino", "confidence": 0.9, "dry_run_state": "passed"},
         {"enabled": True, "allowed_actions": ["BUY", "SELL"], "allowed_lanes": ["equity", "crypto"],
-         "allowed_brains": ["alpha"], "confidence_min": 0.85, "required_dry_run_state": "passed",
+         "allowed_brains": ["camino"], "confidence_min": 0.85, "required_dry_run_state": "passed",
          "tier_name": "tier_1_conservative"},
     )
     assert ok is False
@@ -55,9 +55,9 @@ async def test_categorize_hold():
 
 async def test_categorize_low_confidence():
     ok, reason = await matches_tier_1(
-        {"action": "BUY", "lane": "equity", "stack": "alpha", "confidence": 0.5, "dry_run_state": "passed"},
+        {"action": "BUY", "lane": "equity", "stack": "camino", "confidence": 0.5, "dry_run_state": "passed"},
         {"enabled": True, "allowed_actions": ["BUY", "SELL"], "allowed_lanes": ["equity", "crypto"],
-         "allowed_brains": ["alpha"], "confidence_min": 0.85, "required_dry_run_state": "passed",
+         "allowed_brains": ["camino"], "confidence_min": 0.85, "required_dry_run_state": "passed",
          "tier_name": "tier_1_conservative"},
     )
     assert ok is False
@@ -66,9 +66,9 @@ async def test_categorize_low_confidence():
 
 async def test_categorize_lane_filtered():
     ok, reason = await matches_tier_1(
-        {"action": "BUY", "lane": "options", "stack": "alpha", "confidence": 0.9, "dry_run_state": "passed"},
+        {"action": "BUY", "lane": "options", "stack": "camino", "confidence": 0.9, "dry_run_state": "passed"},
         {"enabled": True, "allowed_actions": ["BUY", "SELL"], "allowed_lanes": ["equity", "crypto"],
-         "allowed_brains": ["alpha"], "confidence_min": 0.85, "required_dry_run_state": "passed",
+         "allowed_brains": ["camino"], "confidence_min": 0.85, "required_dry_run_state": "passed",
          "tier_name": "tier_1_conservative"},
     )
     assert ok is False
@@ -79,7 +79,7 @@ async def test_categorize_brain_filtered():
     ok, reason = await matches_tier_1(
         {"action": "BUY", "lane": "equity", "stack": "rogue_brain", "confidence": 0.9, "dry_run_state": "passed"},
         {"enabled": True, "allowed_actions": ["BUY", "SELL"], "allowed_lanes": ["equity", "crypto"],
-         "allowed_brains": ["alpha"], "confidence_min": 0.85, "required_dry_run_state": "passed",
+         "allowed_brains": ["camino"], "confidence_min": 0.85, "required_dry_run_state": "passed",
          "tier_name": "tier_1_conservative"},
     )
     assert ok is False
@@ -92,9 +92,9 @@ async def test_categorize_dry_run_not_ready():
     # now lands in the precise `dry_run_pending` bucket; the legacy
     # constant is reserved for state literals we haven't catalogued.
     ok, reason = await matches_tier_1(
-        {"action": "BUY", "lane": "equity", "stack": "alpha", "confidence": 0.9, "dry_run_state": "pending"},
+        {"action": "BUY", "lane": "equity", "stack": "camino", "confidence": 0.9, "dry_run_state": "pending"},
         {"enabled": True, "allowed_actions": ["BUY", "SELL"], "allowed_lanes": ["equity", "crypto"],
-         "allowed_brains": ["alpha"], "confidence_min": 0.85, "required_dry_run_state": "passed",
+         "allowed_brains": ["camino"], "confidence_min": 0.85, "required_dry_run_state": "passed",
          "tier_name": "tier_1_conservative"},
     )
     assert ok is False
@@ -104,9 +104,9 @@ async def test_categorize_dry_run_not_ready():
 
 async def test_categorize_disabled():
     ok, reason = await matches_tier_1(
-        {"action": "BUY", "lane": "equity", "stack": "alpha", "confidence": 0.9, "dry_run_state": "passed"},
+        {"action": "BUY", "lane": "equity", "stack": "camino", "confidence": 0.9, "dry_run_state": "passed"},
         {"enabled": False, "allowed_actions": ["BUY", "SELL"], "allowed_lanes": ["equity"],
-         "allowed_brains": ["alpha"], "confidence_min": 0.85, "required_dry_run_state": "passed",
+         "allowed_brains": ["camino"], "confidence_min": 0.85, "required_dry_run_state": "passed",
          "tier_name": "tier_1_conservative"},
     )
     assert ok is False
@@ -115,10 +115,10 @@ async def test_categorize_disabled():
 
 async def test_categorize_already_executed():
     ok, reason = await matches_tier_1(
-        {"action": "BUY", "lane": "equity", "stack": "alpha", "confidence": 0.9,
+        {"action": "BUY", "lane": "equity", "stack": "camino", "confidence": 0.9,
          "dry_run_state": "passed", "executed": True},
         {"enabled": True, "allowed_actions": ["BUY", "SELL"], "allowed_lanes": ["equity"],
-         "allowed_brains": ["alpha"], "confidence_min": 0.85, "required_dry_run_state": "passed",
+         "allowed_brains": ["camino"], "confidence_min": 0.85, "required_dry_run_state": "passed",
          "tier_name": "tier_1_conservative"},
     )
     assert ok is False
