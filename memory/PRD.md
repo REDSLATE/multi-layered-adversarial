@@ -1,3 +1,48 @@
+## 2026-02-23 — Operator queue improvements: conviction-first sort + disabled-lane filter
+
+### Problem (operator-reported)
+1. Intents page looked alphabetical (AAPL, AAL, AMD, AMC, AEP…) — even though backend was sorting by `ingest_ts: -1`, the visual effect put low-priority tickers at the top. "When the market opens, the first thing you see should be the trades most likely to matter — not the first ticker beginning with A."
+2. Crypto lane is intentionally OFF until Saturday for an equity-only baseline, but crypto intents (advisor opinions from brains still analyzing crypto) were polluting the operator queue.
+
+### Fix
+**Backend** (`shared/intents.py:1309` `GET /api/intents`):
+- New `sort` query param: `conviction` (default) / `execution_priority` / `newest` / `symbol`
+- New `include_disabled_lanes` (default False) restricts queue to lanes whose execution toggle is ON
+- Explicit `lane=crypto` (while crypto OFF) returns clean `{items:[], count:0, note:'…disabled…'}` instead of silently widening
+- Response payload echoes `sort`, `enabled_lanes`, `include_disabled_lanes`, `note`
+- `execution_priority` uses a Mongo `$addFields + $switch` pipeline computing rank 0-4: BUY/SELL `dry_run_passed`=0 → BUY/SELL `passed`=1 → BUY/SELL blocked=2 → BUY/SELL pending=3 → HOLD/WATCH=4
+
+**Frontend** (`pages/Intents.jsx`):
+- Sort `<select>` with emoji-labeled options: 🔥 Highest Conviction / 🚦 Closest to Execution / 🕒 Newest / 🔤 Symbol (A-Z). Default: conviction
+- "Show disabled-lane intents" checkbox (default off)
+- "enabled lanes: equity" pill shown when crypto is hidden, with hover-explanation
+- Server-side note rendered in warn color when present
+- All controls separated by top border inside existing Filters card
+
+### Verification (iter_17 testing agent)
+- 8/8 new tests pass (`test_intents_queue_sort_and_lane_filter.py`)
+- 112/112 regression tests pass
+- Frontend network interception confirms sort + checkbox + lane changes all trigger fresh fetches with correct params
+- Invalid sort → 422 with all 4 valid options listed in error message
+
+### Operator alignment
+- Equity-only baseline (through Saturday) — crypto stays hidden by default without operator action
+- Brains keep emitting crypto intents in the background (observation continues)
+- Operator can toggle visibility for forensic inspection any time
+- Highest-conviction default surfaces strongest ideas first at market open
+
+### Files
+- Updated: `shared/intents.py`, `pages/Intents.jsx`
+- Created: `tests/test_intents_queue_sort_and_lane_filter.py`
+
+### Next Action Items (operator decision)
+- Equity-only baseline observation through Saturday (no further doctrine changes)
+- Operator Override Audit Feed tile (queued for after observation window)
+- Brain Identity Legend card on Diagnostics (low-priority documentation)
+
+---
+
+
 ## 2026-02-23 — P3 COMPLETE: Execution Lifecycle Funnel tile
 
 ### What shipped
