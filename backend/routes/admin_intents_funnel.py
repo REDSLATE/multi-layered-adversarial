@@ -190,7 +190,12 @@ async def intents_funnel(
 
     for it in intents:
         lane = (it.get("lane") or "unknown").lower()
-        brain = (it.get("stack") or "unknown").lower()
+        # 2026-02-23 dual-field migration — funnel groups by canonical
+        # identity so a single brain doesn't fan out into two buckets
+        # (e.g. "barracuda" + "camaro" on the same dashboard row).
+        brain = (
+            it.get("stack_canonical") or it.get("stack") or "unknown"
+        ).lower()
         if lane not in by_lane:
             by_lane[lane] = [0] * 7
         if brain not in by_brain:

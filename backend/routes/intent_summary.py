@@ -55,9 +55,15 @@ async def intent_summary(
     """
     since = datetime.now(timezone.utc) - timedelta(minutes=minutes)
     since_iso = since.isoformat().replace("+00:00", "Z")
+    # 2026-02-23 dual-field migration — query by `stack_canonical`
+    # so legacy + canonical historical docs aggregate into one
+    # brain's bucket.
+    from shared.brain_legend import canonicalize_stack as _canon  # noqa: WPS433
+    brain_canonical = _canon(brain) or brain.lower()
     query = {
-        # `stack` is the canonical brain_id field on `shared_intents`.
-        "stack": brain.lower(),
+        # `stack_canonical` is the authoritative brain identity (
+        # `stack` field is preserved as historical metadata only).
+        "stack_canonical": brain_canonical,
         # `ingest_ts` is the canonical insert timestamp on shared_intents
         # (NOT `created_at`). ISO-8601 → lexicographic compare works.
         "ingest_ts": {"$gte": since_iso},

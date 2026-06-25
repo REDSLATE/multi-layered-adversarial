@@ -66,7 +66,16 @@ def count_holds(intents: List[Dict[str, Any]]) -> Dict[str, Any]:
     )
 
     for it in intents:
-        brain = (it.get("stack") or it.get("brain_id") or "unknown").lower()
+        # 2026-02-23 dual-field migration: prefer `stack_canonical`
+        # so legacy + canonical docs aggregate into ONE bucket
+        # instead of two (camaro + barracuda showing as separate
+        # brains on the dashboard).
+        brain = (
+            it.get("stack_canonical")
+            or it.get("stack")
+            or it.get("brain_id")
+            or "unknown"
+        ).lower()
         action = str(it.get("action") or "").upper()
         plan = it.get("plan") if isinstance(it.get("plan"), dict) else {}
         plan_intent = str(plan.get("intent") or "").upper()
@@ -131,7 +140,13 @@ def entropy_average(intents: List[Dict[str, Any]]) -> Dict[str, Any]:
     by_brain_actions: Dict[str, Counter] = defaultdict(Counter)
 
     for it in intents:
-        brain = (it.get("stack") or it.get("brain_id") or "unknown").lower()
+        # 2026-02-23 dual-field migration — canonical-aware aggregation.
+        brain = (
+            it.get("stack_canonical")
+            or it.get("stack")
+            or it.get("brain_id")
+            or "unknown"
+        ).lower()
         # Prefer v3 plan.intent if present; fall back to v2 action.
         plan = it.get("plan") if isinstance(it.get("plan"), dict) else {}
         decision = str(plan.get("intent") or it.get("action") or "").upper()
@@ -297,7 +312,13 @@ def probability_spread(
         sym = (it.get("symbol") or "").upper()
         if not sym:
             continue
-        brain = (it.get("stack") or it.get("brain_id") or "unknown").lower()
+        # 2026-02-23 dual-field migration — canonical-aware aggregation.
+        brain = (
+            it.get("stack_canonical")
+            or it.get("stack")
+            or it.get("brain_id")
+            or "unknown"
+        ).lower()
         bucket = _bucket_ts(it.get("ingest_ts"), bucket_seconds)
         if bucket is None:
             continue

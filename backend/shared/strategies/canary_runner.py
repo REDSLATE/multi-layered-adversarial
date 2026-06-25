@@ -163,9 +163,13 @@ async def fire_canary(
     # at line 478 of shared/intents.py writes — same fields the
     # auto-router reads, same fields the existing UI renders. Tagged
     # so any post-hoc analysis can filter by `source=ma_canary`.
+    from shared.brain_legend import canonicalize_stack as _canon  # noqa: WPS433
     intent_doc = {
         "intent_id": intent_id,
         "stack": holder,
+        # 2026-02-23 dual-field migration — every shared_intents write
+        # MUST stamp stack_canonical alongside stack.
+        "stack_canonical": _canon(holder) or holder,
         "symbol": symbol,
         "action": signal.action,
         "lane": lane,

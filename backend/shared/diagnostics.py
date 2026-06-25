@@ -132,8 +132,11 @@ async def _last_receipt_ts(runtime: str) -> str | None:
     except ImportError:
         SHARED_INTENTS = None  # very old layout; skip gracefully
     if SHARED_INTENTS:
+        # 2026-02-23 dual-field migration — canonical-aware query.
+        from shared.brain_legend import canonicalize_stack as _canon  # noqa: WPS433
+        runtime_c = _canon(runtime) or runtime
         doc = await db[SHARED_INTENTS].find_one(
-            {"stack": runtime}, {"_id": 0, "ingest_ts": 1},
+            {"stack_canonical": runtime_c}, {"_id": 0, "ingest_ts": 1},
             sort=[("ingest_ts", -1)],
         )
         if doc and doc.get("ingest_ts"):

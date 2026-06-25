@@ -78,9 +78,20 @@ async def scorecard_by_brain(
     )
     for r in rows:
         oj = r.get("outcome_join") or {}
+        # 2026-02-23 dual-field migration — scorecard groups by
+        # canonical identity. The receipt's `stack_canonical` is
+        # authoritative; fall back to the historical `stack` and
+        # the outcome-join's stack only if neither is set on the
+        # receipt itself.
         key = (
             r.get("lane") or "unknown",
-            (r.get("stack") or oj.get("extra", {}).get("stack") or "unknown"),
+            (
+                r.get("stack_canonical")
+                or r.get("stack")
+                or oj.get("extra", {}).get("stack_canonical")
+                or oj.get("extra", {}).get("stack")
+                or "unknown"
+            ),
             r.get("doctrine_version") or "unknown",
         )
         agg = grouped[key]

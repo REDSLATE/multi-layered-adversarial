@@ -110,15 +110,22 @@ async def _heartbeat_status(brain: str) -> dict:
     hb_age = _age_seconds(hb_iso)
     sv_age = _age_seconds(sv_iso)
 
+    # 2026-02-23 dual-field migration — query by `stack_canonical`
+    # so the count covers both canonical AND legacy historical docs
+    # for this brain. Operator may type a canonical name in the URL
+    # but historical intents may still carry the legacy stack code.
+    from shared.brain_legend import canonicalize_stack  # noqa: WPS433
+    brain_canonical = canonicalize_stack(brain) or brain
+
     # Activity counts over the last hour + 24h.
     now = _dt.now(_tz.utc)
     cutoff_1h = (now - _td(hours=1)).isoformat()
     cutoff_24h = (now - _td(hours=24)).isoformat()
     intents_1h = await db["shared_intents"].count_documents(
-        {"stack": brain, "ingest_ts": {"$gte": cutoff_1h}},
+        {"stack_canonical": brain_canonical, "ingest_ts": {"$gte": cutoff_1h}},
     )
     intents_24h = await db["shared_intents"].count_documents(
-        {"stack": brain, "ingest_ts": {"$gte": cutoff_24h}},
+        {"stack_canonical": brain_canonical, "ingest_ts": {"$gte": cutoff_24h}},
     )
     try:
         opinions_1h = await db["shared_brain_opinions"].count_documents(
@@ -232,11 +239,17 @@ async def _intent_emission_stats(brain: str, hours: int = 24) -> dict:
     since = (_now() - timedelta(hours=hours)).isoformat()
     coll = db[SHARED_INTENTS]
 
+    # 2026-02-23 dual-field migration — canonicalize the brain
+    # identity and key every query on `stack_canonical`. Covers
+    # both legacy and canonical historical docs in one pass.
+    from shared.brain_legend import canonicalize_stack  # noqa: WPS433
+    brain_canonical = canonicalize_stack(brain) or brain
+
     # All-time row count for this stack.
-    total_ever = await coll.count_documents({"stack": brain})
+    total_ever = await coll.count_documents({"stack_canonical": brain_canonical})
 
     # Window-scoped rows.
-    win_q = {"stack": brain, "ingest_ts": {"$gte": since}}
+    win_q = {"stack_canonical": brain_canonical, "ingest_ts": {"$gte": since}}
     window_total = await coll.count_documents(win_q)
 
     # Per-action counts (window).
@@ -262,12 +275,12 @@ async def _intent_emission_stats(brain: str, hours: int = 24) -> dict:
 
     # Latest emission overall + latest DIRECTIONAL emission.
     latest = await coll.find_one(
-        {"stack": brain}, {"_id": 0, "action": 1, "symbol": 1,
+        {"stack_canonical": brain_canonical}, {"_id": 0, "action": 1, "symbol": 1,
                            "lane": 1, "gate_state": 1, "ingest_ts": 1},
         sort=[("ingest_ts", -1)],
     )
     latest_directional = await coll.find_one(
-        {"stack": brain, "action": {"$in": ["BUY", "SELL", "SHORT", "COVER"]}},
+        {"stack_canonical": brain_canonical, "action": {"$in": ["BUY", "SELL", "SHORT", "COVER"]}},
         {"_id": 0, "action": 1, "symbol": 1, "lane": 1,
          "gate_state": 1, "ingest_ts": 1},
         sort=[("ingest_ts", -1)],
@@ -275,7 +288,7 @@ async def _intent_emission_stats(brain: str, hours: int = 24) -> dict:
 
     # Audit-only rejection rows (lane-policy or other ingest blocks).
     audit_only_count = await coll.count_documents(
-        {"stack": brain, "audit_only": True, "ingest_ts": {"$gte": since}}
+        {"stack_canonical": brain_canonical, "audit_only": True, "ingest_ts": {"$gte": since}}
     )
 
     return {

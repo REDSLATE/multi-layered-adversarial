@@ -217,25 +217,26 @@ async def _build_in_process_status(brain: str) -> Dict[str, Any]:
     sv_age = _age_seconds(sv_iso, now)
 
     # Intent windows + per-action breakdown over 24h. Filter by
-    # `stack` (the brain that emitted) — same field the
-    # sidecar_diagnostics aggregator uses so the surfaces stay
-    # consistent.
+    # `stack_canonical` (2026-02-23 dual-field migration — covers
+    # both legacy and canonical historical docs in one query).
+    from shared.brain_legend import canonicalize_stack as _canon  # noqa: WPS433
+    brain_c = _canon(brain) or brain
     cutoff_24h = (now - timedelta(hours=24)).isoformat()
     cutoff_1h = (now - timedelta(hours=1)).isoformat()
     count_24h = await db[SHARED_INTENTS].count_documents({
-        "stack": brain, "ingest_ts": {"$gte": cutoff_24h},
+        "stack_canonical": brain_c, "ingest_ts": {"$gte": cutoff_24h},
     })
     count_1h = await db[SHARED_INTENTS].count_documents({
-        "stack": brain, "ingest_ts": {"$gte": cutoff_1h},
+        "stack_canonical": brain_c, "ingest_ts": {"$gte": cutoff_1h},
     })
     by_action_cursor = db[SHARED_INTENTS].aggregate([
-        {"$match": {"stack": brain, "ingest_ts": {"$gte": cutoff_24h}}},
+        {"$match": {"stack_canonical": brain_c, "ingest_ts": {"$gte": cutoff_24h}}},
         {"$group": {"_id": "$action", "count": {"$sum": 1}}},
     ])
     by_action: Dict[str, int] = {}
     async for row in by_action_cursor:
         by_action[str(row.get("_id") or "UNK").upper()] = int(row.get("count", 0))
-    total_intents = await db[SHARED_INTENTS].count_documents({"stack": brain})
+    total_intents = await db[SHARED_INTENTS].count_documents({"stack_canonical": brain_c})
 
     # Seats lane-resolved from the live roster snapshot.
     snap = await get_roster()

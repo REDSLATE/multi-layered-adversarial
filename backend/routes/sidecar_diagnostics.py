@@ -126,11 +126,14 @@ async def sidecar_diagnostics(
         )
 
         # 4. Gate-chain intent emissions — actual trade signals
+        # 2026-02-23 dual-field migration — canonical-aware query.
+        from shared.brain_legend import canonicalize_stack as _canon  # noqa: WPS433
+        brain_c = _canon(brain) or brain
         intent_total = await db[SHARED_INTENTS].count_documents(
-            {"stack": brain},
+            {"stack_canonical": brain_c},
         )
         latest_intent = await db[SHARED_INTENTS].find_one(
-            {"stack": brain}, {"_id": 0, "ingest_ts": 1, "symbol": 1,
+            {"stack_canonical": brain_c}, {"_id": 0, "ingest_ts": 1, "symbol": 1,
                                 "action": 1, "lane": 1, "gate_state": 1},
             sort=[("ingest_ts", -1)],
         )

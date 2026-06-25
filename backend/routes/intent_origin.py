@@ -82,7 +82,11 @@ async def list_intent_origins(
             "latest_ts": {"$max": "$ingest_ts"},
             "sample_ids": {"$push": {
                 "intent_id": "$intent_id",
-                "brain": "$stack",
+                # 2026-02-23 dual-field migration — canonical identity
+                # everywhere on the dashboard. `$stack` (legacy form)
+                # stays available in the doc itself for forensic audit
+                # but the operator-facing sample row uses the canonical.
+                "brain": {"$ifNull": ["$stack_canonical", "$stack"]},
                 "symbol": "$symbol",
                 "action": "$action",
                 "ts": "$ingest_ts",

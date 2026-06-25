@@ -146,11 +146,17 @@ async def _build_role(brain: Optional[str], symbol: str, regime_fp: dict) -> dic
             "summary": "Seat is empty. Rotate a brain into this seat to surface its stance.",
         }
 
+    # 2026-02-23 dual-field migration — canonical-aware intent
+    # queries so legacy + canonical historical docs come back as
+    # one brain's track record.
+    from shared.brain_legend import canonicalize_stack as _canon  # noqa: WPS433
+    brain_c = _canon(brain) or brain
+
     # The first three queries are independent — run them concurrently.
     # outcomes + similar_setups depend on the opinions/regime results,
     # so they fan out in a second wave.
     intents_task = db[SHARED_INTENTS].find(
-        {"stack": brain, "symbol": symbol},
+        {"stack_canonical": brain_c, "symbol": symbol},
         {"_id": 0, "intent_id": 1, "action": 1, "confidence": 1, "rationale": 1,
          "evidence": 1, "regime": 1, "gate_state": 1, "executed": 1,
          "executed_at": 1, "ingest_ts": 1, "risk_multiplier": 1},
@@ -194,7 +200,7 @@ async def _build_role(brain: Optional[str], symbol: str, regime_fp: dict) -> dic
             {"$or": [{f"evidence.regime_fp.{k}": v}, {f"evidence.{k}": v}]}
             for k, v in regime_fp.items()
         ]
-        q: dict = {"stack": brain, "symbol": {"$ne": symbol}, "executed": True}
+        q: dict = {"stack_canonical": brain_c, "symbol": {"$ne": symbol}, "executed": True}
         if and_clauses:
             q["$and"] = and_clauses
         return await db[SHARED_INTENTS].find(
