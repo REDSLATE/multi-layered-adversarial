@@ -148,6 +148,7 @@ from routes.admin_paradox_v3 import router as admin_paradox_v3_router
 from routes.admin_system_flags import router as admin_system_flags_router
 from routes.admin_seat_stage_drops import router as admin_seat_stage_drops_router
 from routes.admin_brain_legend import router as admin_brain_legend_router  # 2026-02-23
+from routes.admin_execution_lifecycle_funnel import router as admin_execution_lifecycle_funnel_router  # 2026-02-23 P3
 from routes.intent_why import router as intent_why_router
 from routes.seat_state_diagnose import router as seat_state_diagnose_router
 from routes.webull_caps_admin import router as webull_caps_admin_router
@@ -231,6 +232,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(admin_system_flags_router)
     api_router.include_router(admin_seat_stage_drops_router)
     api_router.include_router(admin_brain_legend_router)  # 2026-02-23 dual-field migration
+    api_router.include_router(admin_execution_lifecycle_funnel_router)  # 2026-02-23 P3 lifecycle funnel
     api_router.include_router(intent_why_router)
     api_router.include_router(seat_state_diagnose_router)
     api_router.include_router(webull_caps_admin_router)
