@@ -1,3 +1,54 @@
+## 2026-02-23 — Seat-authority three-mode doctrine + REQUIRED brain_name on submit (CRITICAL PROD FIX)
+
+### Operator-reported (and code-confirmed) bypass
+Two seat-authority models had been silently coexisting:
+- `shared/pipeline/seat_policy.py` — brain-bound (blocked non-holders correctly)
+- `shared/execution.py::_evaluate_gates` — position-only since 2026-05-28 (any held seat passes; emitting brain treated as informational)
+
+`/execution/submit` and `maybe_auto_submit` called `_evaluate_gates` only → **non-seat-holder brains' intents reached the broker under another brain's seat authority**. Operator caught the visible symptom on prod ("Camino's intent executing while Barracuda holds equity").
+
+### Three-mode doctrine (operator-proposed, now enforced)
+- **`seat_bound`** — intent.stack == current_holder. Auto + operator submit OK.
+- **`requires_override`** — seat held + lane allowed, but intent.stack != current_holder. Auto-submit BLOCKS. Operator must go through `/execution/submit-override` with `operator_override=True` + ≥12 char reason.
+- **`vacant`** — no holder. Always block.
+
+### Brain-name confirmation (REQUIRED on every submit)
+`SubmitBody.brain_name` is now Pydantic-required. Re-validated case-insensitive against `shared_intents.stack`. Auto-submit passes the value programmatically; operator UI types it (planned: type-to-confirm input). Mismatch returns structured 400 with `detail.blocked_by="brain_name_mismatch"`.
+
+### Audit trail
+Every broker receipt now carries:
+- `intent_author` (brain that authored the trade idea)
+- `execution_authority_mode` (`seat_bound` | `operator_override`)
+- `seat_holder` (current seat occupant)
+- `matched_seat` (seat id)
+- `operator_confirmed` (bool)
+- `operator_reason` (for override path)
+
+Plus a separate `override_submit_request` audit row written BEFORE the broker call on the override path — so a downstream broker failure can't lose the authorization record.
+
+### Test coverage (testing_agent iter14 verified 24/24 = 100%)
+- `tests/test_seat_authority_modes.py` — 11 tests pinning all three modes, brain-name validation, override-endpoint guards, auto-submit block (CRITICAL — catches doctrine drift)
+- `tests/test_admin_seat_stage_drops.py` — 9 tests (adjacent, unaffected)
+- `tests/test_iter14_live_preview_seat_authority.py` — 4 live-preview integration tests against the public /api endpoints
+- Frontend smoke on /admin/diagnostics: 5/5 (login, nav, tile renders, zero 5xx)
+
+### Files
+- `backend/shared/execution.py` — seat_authority classification, brain_name validation, requires_operator_override block, execution_submit_override endpoint, execution_authority_mode audit stamping
+- `backend/shared/auto_submit_policy.py` — passes brain_name=intent.stack on auto-submit body
+- `backend/tests/test_seat_authority_modes.py` — new doctrine test suite
+- `backend/tests/test_iter14_live_preview_seat_authority.py` — new live preview suite
+- `frontend/src/pages/Intents.jsx` — sends brain_name, routes to /execution/submit-override when required
+- `frontend/src/components/OperatorInjectIntent.jsx` — sends brain_name=holder.holder
+
+### Pre-existing fix as a side-effect
+`shared/execution.py` was using an undefined `logger.warning(...)` at line 957 (latent F821). Added module-level `logger = logging.getLogger("risedual.execution")` to satisfy the latent call.
+
+### Frontend TODO (testing_agent's non-blocking observation)
+Add a missing-field console warning in `Intents.jsx` if `submitModal.intent?.requires_operator_override` is missing from dry-run output — so the UI's reliance on that field stays observable in dev. Not blocking deploy.
+
+---
+
+
 ## 2026-02-23 — api.js panel-level retry-with-backoff for transient 5xx (PROD HOTFIX)
 
 ### Operator pain (continued)
