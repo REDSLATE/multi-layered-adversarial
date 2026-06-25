@@ -45,6 +45,10 @@ from namespaces import (
     SHARED_INTENTS,
 )
 from runtime_auth import verify_runtime_token
+from shared.intent_envelope_v3 import (  # 2026-02 Paradox v3 schema (Step 1)
+    ExecutionBlock,
+    PlanBlock,
+)
 from shared.regime_keys import (  # canonical regime/crypto primitives
     REGIME_FP_KEYS,
     _looks_like_crypto,
@@ -365,6 +369,21 @@ class IntentIn(BaseModel):
     # defaults arbitrarily. See `broker_router.py` and
     # `shared/broker/webull_caps.py` for the gate chain.
     broker_override: Optional[Literal["webull"]] = Field(default=None)
+
+    # ─── Paradox v3 envelope (2026-02, Step 1 of rollout — ADDITIVE) ──
+    # Operator-approved PRD §3 schema. v3 brains emit `intent_version
+    # = "v3"` plus a `plan{}` block (planning artefact, decoupled from
+    # the order ticket) and an optional `execution{}` block (derived
+    # from the plan when trigger conditions fire). v2 emitters leave
+    # all three fields null — backward-compat is guaranteed and the
+    # read-side lifter (`shared.intent_envelope_v3.normalize_intent`)
+    # synthesizes the same shape from v2 docs on read.
+    #
+    # No brain emits v3 yet. This is rail-only until Step 3 lands
+    # `trigger_watcher.py` and Step 4 flips the first brain to v3.
+    intent_version: Optional[Literal["v2", "v3"]] = Field(default=None)
+    plan: Optional[PlanBlock] = Field(default=None)
+    execution: Optional[ExecutionBlock] = Field(default=None)
 
 
     # SAFETY INVARIANTS — schema-pinned. Cannot be overridden by the brain.
@@ -1140,6 +1159,15 @@ async def _post_intent_impl(
         # → opts INTO the Webull parallel route, capped at $3-$10
         # per ticker by `evaluate_webull_order` BEFORE submission).
         "broker_override": body.broker_override,
+        # ─── Paradox v3 envelope (Step 1 — stamps if brain sent v3) ───
+        # When the brain emits v3, the discriminator + the two blocks
+        # ride alongside the legacy fields. When the brain still emits
+        # v2, `intent_version` lands as "v2" (so the lifter doesn't
+        # have to infer from missing keys) and the two blocks remain
+        # null. The lifter synthesises them on read for legacy rows.
+        "intent_version": (body.intent_version or "v2"),
+        "plan": (body.plan.model_dump() if body.plan is not None else None),
+        "execution": (body.execution.model_dump() if body.execution is not None else None),
     }
     if memory_modulator_info is not None:
         doc["memory_modulator"] = memory_modulator_info
@@ -1514,6 +1542,14 @@ async def admin_post_intent(
         "execution_receipt_id": None,
         # Broker route override — same semantics as the runtime path.
         "broker_override": body.broker_override,
+        # ─── Paradox v3 envelope (Step 1 — admin proxy mirror) ───
+        # Mirrors the runtime path so admin-replayed intents carry the
+        # same v3 shape as runtime-emitted intents. The lifter doesn't
+        # know which ingest channel produced a doc; consistency here
+        # is what keeps the post-mortem comparing apples to apples.
+        "intent_version": (body.intent_version or "v2"),
+        "plan": (body.plan.model_dump() if body.plan is not None else None),
+        "execution": (body.execution.model_dump() if body.execution is not None else None),
     }
     # Brain-supplied modulator receipt (bounds already validated by
     # IntentIn). Persisted on the admin path the same as the runtime

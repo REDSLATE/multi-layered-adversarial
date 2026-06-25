@@ -1,3 +1,106 @@
+## 2026-02-22 — Paradox v3 Intent Envelope — Step 1 (schema rails + read-side lifter)
+
+### Operator pin (verbatim)
+> "B" — proceed with Paradox v3 Intent Envelope rewrite.
+> Locked §8 decisions: 1A target_prices optional (no penalty),
+> 2B enum + setup_custom_tag fallback, 3B no inner plan_version,
+> 4A horizon-derived TTL defaults, 5C WAIT plans bucket under
+> seat-blocked, 6B HBR scores everything.
+
+### Doctrine
+v3 is ADDITIVE for this batch. No brain emits v3 yet. No pipeline
+behaviour changed. v2 emitters keep working unchanged. The rollout
+is sequenced in 8 steps (PRD §13) — this batch ships Step 1 only.
+
+### What shipped
+
+**1. `shared/intent_envelope_v3.py` (NEW)**
+- `PlanBlock` + `ExecutionBlock` pydantic models pinning the locked
+  vocabulary: 6 stances, 11 setups (+ `setup_custom_tag` free-string
+  fallback per decision 2B), 11 plan.intent values incl. the two
+  WAIT* variants and HEDGE, 6 execution_styles, 3 size_postures,
+  3 portfolio_postures, 4 horizons, 6 execution.actions.
+- `HORIZON_TTL_DEFAULTS` table per decision 4A (INTRADAY=23400s,
+  SWING=432000s, POSITION=1728000s, UNKNOWN=null).
+- HEDGE validator requires `hedge_against_symbol` per PRD §3.2.
+- `normalize_intent(doc)` lifter: ONE module knows about the v2 ↔
+  v3 shape difference. Every read path calls it.
+- v2 → v3 mapping table (PRD §6.2) baked into `_build_v2_lift`:
+  HOLD → execution.action=null + plan.intent=WATCH (the critical
+  mapping that was breaking doctrine scoring on correctly-identified
+  WAIT setups). v2's `target_price`/`stop_price` lift into
+  `plan.target_prices` / `plan.invalidation_price` naturally.
+
+**2. `shared/intents.py` — IntentIn extended**
+- Three new OPTIONAL fields: `intent_version`, `plan`, `execution`.
+- v2 emitters who don't ship these fields land with
+  `intent_version="v2"` and null plan/execution — the lifter
+  synthesises them on read.
+- v3 emitters get full pydantic validation (every enum, every
+  bound, hedge-symbol requirement).
+- Stamped on BOTH the runtime-token ingest path (`_post_intent_impl`)
+  AND the admin-proxy path so the post-mortem doesn't have to know
+  which ingest channel produced a doc.
+
+**3. Read paths adopt the lifter**
+- `routes/admin_intents_funnel.py` — pulls `intent_version`, `plan`,
+  `execution` in projection; lifts every row before bucket logic.
+  v2 docs come back identical (the lifter is pure-additive for legacy
+  rows). v3 docs gain uniform shape for downstream consumers.
+- `routes/admin_intents_post_mortem.py` — same treatment.
+
+### Tests (93 new pytest cases)
+- `tests/test_intent_envelope_v3_schema.py` (53 tests):
+  Every enum value accepted, invalid values rejected, HEDGE-symbol
+  requirement enforced, size/portfolio/horizon/exec_style/stance
+  enum coverage, target_prices positive-only, setup_custom_tag
+  length cap, locked-decision pins (1A/3B/4A/6B) so future agents
+  can't silently regress them.
+- `tests/test_intent_envelope_v3_normalize.py` (40 tests):
+  Every §6.2 mapping row pinned. v2 doc + v3 doc produce the same
+  normalised shape. Lifter is idempotent on v3. Input never mutated.
+  Edge cases (empty/None/unknown-action) bucket safely to WATCH.
+
+### Live verification
+- All 93 new tests pass.
+- Regression sweep (115 tests across funnel/post-mortem/research-hook/
+  replay-ghost/post-mortem-auto-router): all green, zero regressions.
+- `GET /api/admin/intents/funnel?hours=24` on preview → 1850 v2-legacy
+  intents lift through cleanly (lifter is a no-op for them; output
+  shape unchanged).
+- `POST /api/admin/intents` with full v3 WAIT_FOR_TRIGGER envelope
+  → 200 OK, persisted with `intent_version="v3"`, `plan.intent
+  ="WAIT_FOR_TRIGGER"`, `plan.trigger_price=187.4`, `plan.target_prices
+  =[189.0, 191.5]`. Re-read via lifter shows the same shape on egress.
+
+### What's still pending (rollout §13)
+- Step 2: adopt lifter inside verifier + report-card builders.
+- Step 3: `intent_watch_queue` Mongo collection + `trigger_watcher.py`
+  periodic worker (DORMANT).
+- Step 4: flip camino to v3 emits behind env flag for 24h shadow run.
+- Step 5: live trigger_watcher — fires actually re-inject the plan
+  into the seat layer when trigger_price hits.
+- Step 6: roll v3 to barracuda, hellcat, gto sequentially.
+- Step 7: un-quarantine `execution_judge.ready` for PATIENT plans.
+- Step 8: ~90d out — delete v2 fast-path emit. Bridges only emit v3.
+
+### Touched
+- NEW: `backend/shared/intent_envelope_v3.py`
+- EDIT: `backend/shared/intents.py` (IntentIn + both doc-build sites)
+- EDIT: `backend/routes/admin_intents_funnel.py` (lifter adoption)
+- EDIT: `backend/routes/admin_intents_post_mortem.py` (lifter adoption)
+- NEW: `backend/tests/test_intent_envelope_v3_schema.py`
+- NEW: `backend/tests/test_intent_envelope_v3_normalize.py`
+- EDIT: `memory/PARADOX_V3_INTENT_ENVELOPE_PRD.md` (§11–§13 sign-off + rollout progress)
+
+### Deploy ordering
+Backward-compatible. Production can take this deploy whenever — no
+brain runtime needs to change. Bridges keep emitting v2.
+
+---
+
+
+
 ## 2026-06-22g — Auto-submit Tier 2 (Aggressive) preset + tier picker
 
 ### Operator pin (verbatim)

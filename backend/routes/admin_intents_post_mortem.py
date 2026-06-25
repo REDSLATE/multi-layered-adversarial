@@ -44,6 +44,7 @@ from pydantic import BaseModel, Field
 from auth import get_current_user
 from db import db
 from namespaces import SHARED_INTENTS, SHARED_GATE_RESULTS
+from shared.intent_envelope_v3 import normalize_intent  # 2026-02 Paradox v3
 
 
 router = APIRouter(prefix="/admin/intents", tags=["admin-intents"])
@@ -92,14 +93,19 @@ async def intents_post_mortem(
     ).isoformat()
 
     # 1) Pull intents in window — small projection, ingest_ts ordered.
-    intents = await db[SHARED_INTENTS].find(
+    intents_raw = await db[SHARED_INTENTS].find(
         {"ingest_ts": {"$gte": cutoff_iso}},
         {
             "_id": 0, "intent_id": 1, "stack": 1, "lane": 1, "action": 1,
             "symbol": 1, "ingest_ts": 1, "executed": 1, "gate_state": 1,
             "dry_run_state": 1, "executed_at": 1,
+            # Paradox v3 (Step 1, 2026-02): version discriminator +
+            # planning blocks. Read paths apply `normalize_intent` so
+            # v2 + v3 docs hit the classifier with the same shape.
+            "intent_version": 1, "plan": 1, "execution": 1,
         },
     ).to_list(length=10000)
+    intents = [normalize_intent(it) for it in intents_raw]
 
     # 2) Pull the latest submit-related gate-results row per intent.
     intent_ids = [i["intent_id"] for i in intents]

@@ -484,15 +484,30 @@ When operator approves, the work breakdown becomes:
 | WAIT taxonomy | **Two forms**: `WAIT_FOR_TRIGGER` (price-level) + `WAIT_CONFIRMATION` (signal-confirmation). Doctrine treats both as discipline-scored. | Operator 2026-02 |
 | NO_EDGE | **First-class** plan.intent value, distinct from ABSTAIN. Scored when realized move proves brain right. | Operator 2026-02 |
 | HEDGE | **First-class** plan.intent with required `hedge_against_symbol`. Scored against pair net P&L. | Operator 2026-02 |
+| §8 Q1 target_prices required for ENTER | **No.** OPTIONAL with NO doctrine penalty when omitted. | Operator 2026-02 (review pass 2, decision 1A) |
+| §8 Q4 setup vocab shape | **Enum + `setup_custom_tag` free-string fallback** for labels that don't fit. | Operator 2026-02 (decision 2B) |
+| §8 Q5 inner plan_version | **No.** YAGNI — top-level `intent_version` is the only discriminator. | Operator 2026-02 (decision 3B) |
+| §8 Q6 ttl_seconds default | **Horizon-derived map**: INTRADAY=23400s, SWING=432000s, POSITION=1728000s, UNKNOWN=null. Stored on the row as null; verifier consults the table at score-time. | Operator 2026-02 (decision 4A) |
+| §8 Q3 WAIT plans in funnel | **Bucketed under seat-blocked** at Stage 1. NO new funnel column. (v3 WAIT docs have no pipeline receipt + executed=false → naturally land at Stage 1 same as seat-blocked v2 rows.) | Operator 2026-02 (decision 5C) |
+| §8 Q2 HBR scoring filter | **No filter.** Hot-Brain Router scores EVERY intent regardless of plan.intent. | Operator 2026-02 (decision 6B) |
 
 ## 12. Sign-off
 
 | Role | Name | Approved | Date |
 |---|---|---|---|
-| Operator | risedual | ☐ | |
-| MC main agent | E1 (continuation) | ✅ (draft) | 2026-02 |
+| Operator | risedual | ✅ | 2026-02-22 |
+| MC main agent | E1 (continuation) | ✅ (Step 1 shipped) | 2026-02-22 |
 
-**Next action requested:** operator to review §3 schema, §4 doctrine
-changes, and §8 open questions. Once approved (and after the 24h
-observation window concludes — confirm separately), proceed with
-Step 1.
+## 13. Rollout progress
+
+| Step | Status | Date | Notes |
+|---|---|---|---|
+| 0 | ✅ Approved | 2026-02-22 | All 7 §8 questions answered by operator. |
+| 1 | ✅ Shipped | 2026-02-22 | `shared/intent_envelope_v3.py` + `IntentIn` extended + lifter adopted in funnel + post-mortem. 93 new tests; 115 total tests green; live smoke confirms v3 WAIT_FOR_TRIGGER doc round-trips through MongoDB and the lifter. |
+| 2 | ☐ Pending | — | Verifier rule sheet + report cards: adopt the lifter (currently only adopted in the two admin read paths). |
+| 3 | ☐ Pending | — | `intent_watch_queue` Mongo collection + `trigger_watcher.py` periodic worker (DORMANT until step 5). |
+| 4 | ☐ Pending | — | First brain (camino) emits v3 envelopes behind env flag — 24h shadow run. |
+| 5 | ☐ Pending | — | Flip trigger_watcher to live. Trigger fires actually re-inject into pipeline. |
+| 6 | ☐ Pending | — | Roll v3 to barracuda, hellcat, gto in sequence. |
+| 7 | ☐ Pending | — | Un-quarantine `execution_judge.ready` for v3 PATIENT plans. |
+| 8 | ☐ Pending (~90d out) | — | After audit-retention window: delete v2 fast-path emit. Bridges only emit v3. |

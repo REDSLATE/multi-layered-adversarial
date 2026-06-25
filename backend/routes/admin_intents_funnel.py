@@ -47,6 +47,7 @@ from fastapi import APIRouter, Depends
 from auth import get_current_user
 from db import db
 from namespaces import SHARED_INTENTS
+from shared.intent_envelope_v3 import normalize_intent  # 2026-02 Paradox v3
 from shared.pipeline.receipts import PIPELINE_RECEIPTS_COLL
 
 
@@ -144,13 +145,24 @@ async def intents_funnel(
     ).isoformat()
 
     # 1) Pull intents in window.
-    intents = await db[SHARED_INTENTS].find(
+    intents_raw = await db[SHARED_INTENTS].find(
         {"ingest_ts": {"$gte": cutoff_iso}},
         {
             "_id": 0, "intent_id": 1, "stack": 1, "lane": 1, "action": 1,
             "symbol": 1, "ingest_ts": 1, "executed": 1,
+            # Paradox v3 (Step 1, 2026-02): pull the version
+            # discriminator + the two new blocks so the lifter sees
+            # them. v2 docs come back with all three keys missing /
+            # null and the lifter synthesises the v3 shape.
+            "intent_version": 1, "plan": 1, "execution": 1,
         },
     ).to_list(length=50000)
+    # Lift to v3 shape. v2 docs preserve their `action`/`executed`/
+    # `lane`/`stack` fields untouched — the bucket logic below stays
+    # identical for legacy rows. v3 docs gain a uniform `plan`/
+    # `execution` shape (not currently consumed by the bucket logic
+    # but lays the groundwork for Step 5 trigger_watcher integration).
+    intents = [normalize_intent(it) for it in intents_raw]
 
     intent_ids = [i["intent_id"] for i in intents]
 
