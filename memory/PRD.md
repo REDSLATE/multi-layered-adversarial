@@ -1,3 +1,77 @@
+## 2026-02-23 — Steps 3–6 complete: GTO, Camino, Hellcat native + sidecar retirement + diagnostic tile
+
+### Context
+Operator reported "Barracuda stopped equity intents 4 days ago" in prod — exactly the silent-worker symptom the consolidation kills. Per the operator's plan, all 4 brains and the retire step needed to be code-ready for the Friday-night-after-market-close redeploy.
+
+### Step 3 — GTO native runtime
+- `shared/brains/gto/strategy.py` — momentum doctrine (MACD hist + RSI + EMA(12)/EMA(26) trend + SMA(20) confirmation). BUY on confirmed bullish momentum; SHORT env-gated.
+- `shared/brains/gto/runner.py` — shim binding strategy to the shared runner core.
+- `shared/runtime/gto_runtime.py` — `GTO_NATIVE_RUNTIME_ENABLED` (default false), `GTO_NATIVE_RUNTIME_TICK_SEC=60`.
+
+### Step 4 — Camino native runtime
+- `shared/brains/camino/strategy.py` — trend doctrine (SMA(20)>SMA(50) + RSI healthy band + near EMA(12)). 2.5-ATR target, 2-ATR stop.
+- `CAMINO_NATIVE_RUNTIME_ENABLED` flag (default false).
+
+### Step 5 — Hellcat native runtime
+- `shared/brains/hellcat/strategy.py` — breakout doctrine (BB position>0.85 + RSI>60 + above SMA(20) + close at/above upper band). Highest confidence floor (0.48). 4-ATR target, 1.5-ATR stop.
+- `HELLCAT_NATIVE_RUNTIME_ENABLED` flag (default false).
+
+### Shared cores (de-dupe plumbing, keep doctrine isolated)
+- `shared/brains/_runner_core.py::run_tick_for_brain` — universe pull, snapshot read, per-symbol exception capture, canonical emit via `submit_intent_in_process`, tick row persistence. Used by all 4 per-brain `runner.py` shims.
+- `shared/runtime/_brain_scheduler.py::BrainScheduler` — env-flag-gated asyncio task wrapper. Single class instantiated per brain by `<brain>_runtime.py`.
+
+### Step 6 — Retire external sidecars
+- `external/brains/runner.py` extended: when any `<BRAIN>_NATIVE_RUNTIME_ENABLED=true`, the legacy `neutral_brains` multiplexed runner skips that brain. When **all four** flags are on, the legacy runner spawns ZERO tasks — effectively retired without removing code (kept for read-only rollback path).
+
+### Operator visibility — `NativeBrainRuntimeTile`
+Endpoint `GET /api/admin/native-runtime/status` reports per brain:
+- `enabled` (env-flag state)
+- `tick_age_sec` (since last tick)
+- `silent` — **true when enabled but no tick in 5+ min** — the exact symptom the migration kills
+- `tick_count_60m`, `emitted_60m`, `errors_60m`
+- `last_tick` (full row from `<brain>_native_runtime_ticks`)
+
+`NativeBrainRuntimeTile.jsx` renders this on `/admin/diagnostics`, polls every 20s. SILENT badge in red. Lights up GREEN when a brain is enabled + ticking.
+
+### Operator switch when ready (Friday post-close)
+Set on prod and redeploy:
+```
+BARRACUDA_NATIVE_RUNTIME_ENABLED=true
+GTO_NATIVE_RUNTIME_ENABLED=true
+CAMINO_NATIVE_RUNTIME_ENABLED=true
+HELLCAT_NATIVE_RUNTIME_ENABLED=true
+# shorts stay OFF for v1 observation:
+# BARRACUDA_SHORTS_ENABLED=false  (default)
+# GTO_SHORTS_ENABLED=false        (default)
+# CAMINO_SHORTS_ENABLED=false     (default)
+# HELLCAT_SHORTS_ENABLED=false    (default)
+```
+Each flag flip atomically: (a) starts that brain's in-process loop and (b) drops that brain from the legacy neutral_brains runner. No double-emission window.
+
+### Verification
+- **44/44 backend tests pass** across:
+  - `test_barracuda_native_runtime.py` (13)
+  - `test_native_brain_runtimes_full_stack.py` (27) — strategy branches per brain, runner end-to-end emits to canonical intents, scheduler gating, retire contract
+  - `test_admin_native_runtime_status.py` (4) — silent detection, disabled-not-silent, 60m aggregation, threshold
+- **Frontend smoke screenshot** — Native Brain Runtimes tile renders on `/admin/diagnostics` showing all 4 brains, all `off`/`dormant` in preview (correct).
+
+### Files
+- Created: `shared/brains/{gto,camino,hellcat}/{__init__.py,strategy.py,runner.py}`, `shared/brains/_runner_core.py`
+- Created: `shared/runtime/{gto,camino,hellcat}_runtime.py`, `shared/runtime/_brain_scheduler.py`
+- Created: `routes/admin_native_runtime_status.py`, `frontend/src/components/NativeBrainRuntimeTile.jsx`
+- Refactored: `shared/brains/barracuda/runner.py`, `shared/runtime/barracuda_runtime.py` to use shared cores
+- Updated: `server_modules/lifespan.py` (4 starts + 4 stops), `server_modules/router_registry.py` (1 include), `external/brains/runner.py` (4-brain dedup), `pages/Diagnostics.jsx` (tile mount)
+- Tests: `tests/test_admin_native_runtime_status.py`, `tests/test_native_brain_runtimes_full_stack.py`
+
+### Next Action Items (operator decision)
+- 🟢 **Friday post-market-close redeploy**: flip all 4 `<BRAIN>_NATIVE_RUNTIME_ENABLED=true` env vars in prod
+- 🟢 **Monitor**: Diagnostics → "Native Brain Runtimes" tile. SILENT count should be 0 within 60s of restart. Per-brain `emitted/60m` should be non-zero for at least Barracuda (matches the doctrine that was missing for 4 days).
+- 🟡 If Barracuda's `errors/60m` is non-zero, the tick row in `barracuda_native_runtime_ticks` carries the typed exception info per symbol
+- 🟡 Backlog (unchanged): Progressive sizing (0/1/2/3 obj → 100/60/35/15%), "Why did intent stop?" deep-dive tile, Operator Override Audit feed
+
+---
+
+
 ## 2026-02-23 — Barracuda native runtime (in-process brain, Step 2 of consolidation)
 
 ### Problem (operator-reported)

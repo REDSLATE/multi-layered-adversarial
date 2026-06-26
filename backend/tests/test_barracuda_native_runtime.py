@@ -222,9 +222,10 @@ def test_scheduler_enabled_via_env(monkeypatch):
 def test_scheduler_start_worker_is_noop_when_disabled(monkeypatch):
     """Lifespan must NEVER spawn the loop when the flag is off."""
     monkeypatch.delenv("BARRACUDA_NATIVE_RUNTIME_ENABLED", raising=False)
-    barracuda_runtime._worker_task = None  # type: ignore[attr-defined]
     barracuda_runtime.start_worker()
-    assert barracuda_runtime._worker_task is None  # type: ignore[attr-defined]
+    # Public surface: when disabled, the task never gets created.
+    sched = barracuda_runtime._instance()  # type: ignore[attr-defined]
+    assert sched.task is None
 
 
 # ────────────────────────── dedup with neutral_brains ──────────────────────────
@@ -239,4 +240,8 @@ def test_neutral_brains_skips_barracuda_when_native_runtime_enabled(monkeypatch)
     """
     src = open("/app/external/brains/runner.py", "r").read()
     assert "BARRACUDA_NATIVE_RUNTIME_ENABLED" in src
-    assert "skipping barracuda" in src.lower()
+    # New shape (2026-02-23): generic native-takeover dedup loop —
+    # the per-brain wording was replaced when the migration extended
+    # to all four brains.
+    assert "_native_takeover_active" in src
+    assert "native takeover" in src.lower()

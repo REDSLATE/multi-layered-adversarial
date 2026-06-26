@@ -409,20 +409,24 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("heartbeat_reconciler start failed: %s", e)
 
-    # 2026-02-23 — Barracuda native runtime (in-process brain).
-    # Consolidates the previously-external Barracuda sidecar into MC.
-    # Flag-gated by BARRACUDA_NATIVE_RUNTIME_ENABLED (default false)
-    # so deploying this code does NOT flip behavior until the operator
-    # explicitly turns it on. Doctrine: brains think separately, MC
-    # schedules them together, only canonical pipeline emits, only
-    # seat holder can execute.
-    try:
-        from shared.runtime.barracuda_runtime import (
-            start_worker as _start_barracuda_runtime,
-        )
-        _start_barracuda_runtime()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("barracuda_native_runtime start failed: %s", e)
+    # 2026-02-23 — Native brain runtimes (in-process brains).
+    # Consolidates the previously-external sidecars into MC. Each
+    # brain is flag-gated by `<BRAIN>_NATIVE_RUNTIME_ENABLED` (default
+    # false) so deploying this code does NOT flip behavior until the
+    # operator explicitly turns each one on. Doctrine: brains think
+    # separately, MC schedules them together, only canonical pipeline
+    # emits, only seat holder can execute.
+    for _brain_name in ("barracuda", "gto", "camino", "hellcat"):
+        try:
+            import importlib
+            _mod = importlib.import_module(
+                f"shared.runtime.{_brain_name}_runtime"
+            )
+            _mod.start_worker()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "%s_native_runtime start failed: %s", _brain_name, e,
+            )
     # Shadow-close cron — auto-fires `run_shadow_close` at 4:05pm ET
     # every weekday so the LEARNING counter ticks without an operator
     # click. Idempotent (per-ET-day + the existing `outcome_join`
@@ -661,6 +665,15 @@ async def lifespan(app: FastAPI):
         await _stop_barracuda_runtime()
     except Exception:  # noqa: BLE001
         pass
+    for _brain_name in ("gto", "camino", "hellcat"):
+        try:
+            import importlib
+            _mod = importlib.import_module(
+                f"shared.runtime.{_brain_name}_runtime"
+            )
+            await _mod.stop_worker()
+        except Exception:  # noqa: BLE001
+            pass
     try:
         from shared.brain_tuning_cache import stop_refresher as _stop_brain_tuning_refresher
         await _stop_brain_tuning_refresher()

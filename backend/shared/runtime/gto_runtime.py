@@ -1,12 +1,11 @@
-"""Barracuda native runtime scheduler — single asyncio task in MC.
+"""GTO native runtime scheduler — single asyncio task in MC.
 
-Thin shim over `shared.runtime._brain_scheduler.BrainScheduler`. The
-doctrinal interpretation lives at `shared/brains/barracuda/strategy.py`;
+Doctrinal interpretation lives at `shared/brains/gto/strategy.py`;
 this module just owns the env flag + task lifecycle.
 
 Flag-gating:
-    BARRACUDA_NATIVE_RUNTIME_ENABLED   default false
-    BARRACUDA_NATIVE_RUNTIME_TICK_SEC  default 60
+    GTO_NATIVE_RUNTIME_ENABLED   default false
+    GTO_NATIVE_RUNTIME_TICK_SEC  default 60
 """
 from __future__ import annotations
 
@@ -21,13 +20,13 @@ def _instance() -> BrainScheduler:
     if _scheduler is None:
         async def _tick() -> dict:
             from db import db
-            from shared.brains.barracuda.runner import tick_once
+            from shared.brains.gto.runner import tick_once
             return await tick_once(db)
 
         _scheduler = BrainScheduler(
-            brain_id="barracuda",
-            enabled_env="BARRACUDA_NATIVE_RUNTIME_ENABLED",
-            tick_sec_env="BARRACUDA_NATIVE_RUNTIME_TICK_SEC",
+            brain_id="gto",
+            enabled_env="GTO_NATIVE_RUNTIME_ENABLED",
+            tick_sec_env="GTO_NATIVE_RUNTIME_TICK_SEC",
             tick_fn=_tick,
         )
     return _scheduler

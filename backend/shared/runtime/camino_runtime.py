@@ -1,12 +1,10 @@
-"""Barracuda native runtime scheduler — single asyncio task in MC.
+"""Camino native runtime scheduler — single asyncio task in MC.
 
-Thin shim over `shared.runtime._brain_scheduler.BrainScheduler`. The
-doctrinal interpretation lives at `shared/brains/barracuda/strategy.py`;
-this module just owns the env flag + task lifecycle.
+Doctrinal interpretation lives at `shared/brains/camino/strategy.py`.
 
 Flag-gating:
-    BARRACUDA_NATIVE_RUNTIME_ENABLED   default false
-    BARRACUDA_NATIVE_RUNTIME_TICK_SEC  default 60
+    CAMINO_NATIVE_RUNTIME_ENABLED   default false
+    CAMINO_NATIVE_RUNTIME_TICK_SEC  default 60
 """
 from __future__ import annotations
 
@@ -21,13 +19,13 @@ def _instance() -> BrainScheduler:
     if _scheduler is None:
         async def _tick() -> dict:
             from db import db
-            from shared.brains.barracuda.runner import tick_once
+            from shared.brains.camino.runner import tick_once
             return await tick_once(db)
 
         _scheduler = BrainScheduler(
-            brain_id="barracuda",
-            enabled_env="BARRACUDA_NATIVE_RUNTIME_ENABLED",
-            tick_sec_env="BARRACUDA_NATIVE_RUNTIME_TICK_SEC",
+            brain_id="camino",
+            enabled_env="CAMINO_NATIVE_RUNTIME_ENABLED",
+            tick_sec_env="CAMINO_NATIVE_RUNTIME_TICK_SEC",
             tick_fn=_tick,
         )
     return _scheduler
