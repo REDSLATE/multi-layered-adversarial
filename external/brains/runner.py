@@ -2007,7 +2007,26 @@ async def start_neutral_brains() -> None:
     # can confirm prod is configured as prod (or spot the misconfig
     # immediately if env_name="preview" on the prod deploy).
     _log_identity_once()
+    # 2026-02-23 — Barracuda native runtime takeover.
+    # When the operator flips `BARRACUDA_NATIVE_RUNTIME_ENABLED=true`,
+    # Barracuda is served by `shared/runtime/barracuda_runtime.py`
+    # (in-process, no HTTP loopback, no setup_score multiplexer). The
+    # legacy neutral_brains runner MUST NOT also start a Barracuda
+    # task or we'd double-emit. This is the dedup point: the flag
+    # owns brain identity exclusivity.
+    try:
+        from shared.runtime.barracuda_runtime import is_enabled as _barracuda_native_on
+        _barracuda_takeover = bool(_barracuda_native_on())
+    except Exception:  # noqa: BLE001
+        _barracuda_takeover = False
+    if _barracuda_takeover:
+        logger.info(
+            "neutral_brains: skipping barracuda — superseded by "
+            "BARRACUDA_NATIVE_RUNTIME_ENABLED (shared.runtime.barracuda_runtime)",
+        )
     for brain_id, display_name, token_env, legacy_env in BRAIN_ROSTER:
+        if _barracuda_takeover and brain_id.lower() == "barracuda":
+            continue
         # 2026-02-20 — token is no longer used for in-process calls
         # (Option C complete). Read it best-effort for the 0 remaining
         # external HTTP paths the runner doesn't use, but DO NOT skip

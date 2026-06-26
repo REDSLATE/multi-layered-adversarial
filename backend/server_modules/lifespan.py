@@ -408,6 +408,21 @@ async def lifespan(app: FastAPI):
         logger.info("Heartbeat reconciler started")
     except Exception as e:  # noqa: BLE001
         logger.warning("heartbeat_reconciler start failed: %s", e)
+
+    # 2026-02-23 — Barracuda native runtime (in-process brain).
+    # Consolidates the previously-external Barracuda sidecar into MC.
+    # Flag-gated by BARRACUDA_NATIVE_RUNTIME_ENABLED (default false)
+    # so deploying this code does NOT flip behavior until the operator
+    # explicitly turns it on. Doctrine: brains think separately, MC
+    # schedules them together, only canonical pipeline emits, only
+    # seat holder can execute.
+    try:
+        from shared.runtime.barracuda_runtime import (
+            start_worker as _start_barracuda_runtime,
+        )
+        _start_barracuda_runtime()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("barracuda_native_runtime start failed: %s", e)
     # Shadow-close cron — auto-fires `run_shadow_close` at 4:05pm ET
     # every weekday so the LEARNING counter ticks without an operator
     # click. Idempotent (per-ET-day + the existing `outcome_join`
@@ -637,6 +652,13 @@ async def lifespan(app: FastAPI):
             stop_worker as _stop_shadow_close_cron,
         )
         await _stop_shadow_close_cron()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from shared.runtime.barracuda_runtime import (
+            stop_worker as _stop_barracuda_runtime,
+        )
+        await _stop_barracuda_runtime()
     except Exception:  # noqa: BLE001
         pass
     try:

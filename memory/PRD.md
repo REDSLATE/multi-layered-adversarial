@@ -1,3 +1,70 @@
+## 2026-02-23 — Barracuda native runtime (in-process brain, Step 2 of consolidation)
+
+### Problem (operator-reported)
+External Barracuda sidecar was silently failing in production. The strategist-equity seat walk heartbeat was never firing (`strategist_equity_stale_nevers`), pointing to a dead worker that MC had no way to surface. The operator-approved plan: consolidate all 4 brains into the MC process (one asyncio scheduler, one canonical emit path), starting with Barracuda because it's the visibly broken one.
+
+### Target architecture (operator pin, 2026-02-23)
+```
+MC process
+├── scheduler                  ← shared/runtime/<brain>_runtime.py per brain
+│   ├── Barracuda task         ← THIS PR
+│   ├── Camino / Hellcat / GTO ← upcoming after 24h observation
+├── canonical emit path        ← shared/intents.submit_intent_in_process
+├── consensus pool / seat policy / governor / roadguard / broker adapters
+```
+Each brain's doctrine code lives separately under `shared/brains/<brain>/`. No HTTP self-posting, no sidecar identity drift, no silent worker.
+
+### Implementation
+**Doctrine code** — `shared/brains/barracuda/`
+- `strategy.py` — pure compute. Reads `DOCTRINES["barracuda"]` (mean_reversion, min_confidence=0.43). Mean-reversion BUY on oversold (RSI<35, BB position<0.25, in_buy_trend filter). Returns `Decision(action, confidence, size_bias, rationale, target_price, stop_price, evidence, skipped_reason)`. SHORT branch gated by `BARRACUDA_SHORTS_ENABLED=false` default — observe long-only baseline first.
+- `runner.py` — `tick_once(db)`: pulls equity universe from `patterns_universe`, loads freshest `shared_indicator_snapshots`, runs strategy, emits via `submit_intent_in_process(IntentIn(...))`. Per-symbol exceptions are caught and recorded on the tick row — never abort the tick. Writes a summary to new `barracuda_native_runtime_ticks` collection so a missing tick is *visible*, not silent.
+
+**Scheduler** — `shared/runtime/barracuda_runtime.py`
+- Single asyncio loop, `start_worker()` / `stop_worker()`
+- Flag-gated by `BARRACUDA_NATIVE_RUNTIME_ENABLED=false` default — deploying the code does NOT flip behavior until the operator turns it on
+- Tunable tick interval `BARRACUDA_NATIVE_RUNTIME_TICK_SEC=60` default
+- Whole-tick failures (e.g. Mongo unreachable) log + continue; never kill the loop
+
+**Wiring**
+- `server_modules/lifespan.py` starts the worker alongside heartbeat_reconciler and stops it during shutdown
+- `external/brains/runner.py` (legacy neutral_brains) reads the same flag and skips Barracuda when native runtime is on — single atomic switch, no duplicate emissions
+
+**Tests** — `backend/tests/test_barracuda_native_runtime.py` (13/13 pass)
+- Strategy: BUY on oversold, HOLD on not-ready / missing indicators / weak signal / below-trend / shorts-off, SHORT only when explicitly enabled
+- Runner: end-to-end emits to canonical `shared_intents` (proves doctrine_packet attaches → went through `_post_intent_impl`), no-snapshot symbols surfaced
+- Scheduler: disabled by default, start_worker no-ops when off, enabled via env
+- Dedup: legacy neutral_brains runner contains the BARRACUDA_NATIVE_RUNTIME_ENABLED skip branch
+
+### Operator switch (when ready in prod)
+```
+BARRACUDA_NATIVE_RUNTIME_ENABLED=true         # flip on
+BARRACUDA_NATIVE_RUNTIME_TICK_SEC=60          # optional tune
+BARRACUDA_SHORTS_ENABLED=false                # leave off for long-only baseline
+```
+Flipping the first flag has two effects atomically: (a) the new in-process loop starts ticking; (b) the legacy neutral_brains runner drops Barracuda. Then watch `barracuda_native_runtime_ticks` for one row per tick + the BrainHealth emission rate.
+
+### Why this is the correct shape
+- **No HTTP loopback**: bypass FastAPI; in-process call to `submit_intent_in_process`
+- **No silent worker**: every tick writes a row; absence of rows = absence of ticks = visible alarm
+- **No identity drift**: `stack="barracuda"` is the only identity emitted; `stack_canonical` set by canonical ingest
+- **No personality merge**: doctrine code lives at `shared/brains/barracuda/strategy.py`, isolated from other brains
+
+### Files
+- Created: `shared/brains/barracuda/__init__.py`, `shared/brains/barracuda/strategy.py`, `shared/brains/barracuda/runner.py`
+- Created: `shared/runtime/barracuda_runtime.py`
+- Created: `backend/tests/test_barracuda_native_runtime.py`
+- Updated: `server_modules/lifespan.py` (startup + shutdown wiring)
+- Updated: `external/brains/runner.py` (takeover dedup)
+
+### Next Action Items (operator decision)
+- **Hold** until Saturday observation window closes — do NOT flip `BARRACUDA_NATIVE_RUNTIME_ENABLED=true` in prod yet
+- After observation: flip the flag in prod, watch `barracuda_native_runtime_ticks` for 24h, compare emit cadence to the dead sidecar
+- Then: migrate GTO → Camino → Hellcat using the same template
+- Then: retire all 4 external sidecar deployments
+
+---
+
+
 ## 2026-02-23 — Operator queue improvements: conviction-first sort + disabled-lane filter
 
 ### Problem (operator-reported)
