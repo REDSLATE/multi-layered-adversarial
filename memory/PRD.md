@@ -1,3 +1,59 @@
+## 2026-02-23 — Brain Input Health tile: instrument quality visibility
+
+### Operator concern
+"I'm fine with intents but I can't know which one is good to go if the instruments are failing to report accurate information." Plus: "Why did Barracuda specifically stop 4 days ago while the others kept emitting?"
+
+### What was missing
+The existing `BrainHealthTile` and `brain_emission_diagnose` route surface heartbeat / emission stats. Neither shows whether the **indicator snapshots feeding each brain** are fresh, complete, and dense enough to trust. Without that, every BUY emit could be a ghost signal off stale data and the operator has no way to tell.
+
+### Endpoint — `GET /api/admin/brain-input-health`
+Returns two correlated views:
+
+**Per-brain summary** (4 rows):
+- doctrine name (mean_reversion / momentum / trend / breakout)
+- `last_emit_age_sec` (any action, including HOLD) + `last_directional_age_sec` (BUY/SELL/SHORT/COVER only)
+- `emits_24h`, `emits_7d`, `directional_pct_7d`
+- `evaluable_count` / `evaluable_pct` — how many universe symbols this brain can ACTUALLY evaluate today (fresh snap + ≥60 bars + required fields present)
+
+**Per-symbol universe** (one row per equity-lane symbol):
+- `snapshot_age_sec`, `bars_seen`, `bars_thin` (bars < 60)
+- `last_close`, `rsi14`
+- `missing_for: [brain_id, …]` — which brains can't read this symbol's snapshot
+- `stale` flag (snapshot > 10min old)
+- `source` and `tf`
+
+Plus a `summary` block: `universe_size`, `fresh_count`, `stale_count`, `missing_snapshot_count`, `thin_bars_count`, `evaluable_all_brains_count`, `evaluable_by_brain`.
+
+### Doctrine: single source of truth for required-fields
+Each brain's `strategy.evaluate()` has a `missing` check that returns HOLD with `skipped_reason="missing_indicators:..."`. The endpoint's `_check_<brain>` functions MIRROR those checks exactly. A regression test (`test_strategy_and_checker_agree_on_missing`) drops one field at a time and asserts both the strategy AND the checker flag it — if a future strategy adds a dependency without updating the endpoint, the Brain Input Health tile would silently lie. The test fails first.
+
+### Tile — `BrainInputHealthTile.jsx`
+Polls every 30s. Three sections:
+1. **Summary strip** — 6 colored stat cards (universe/fresh/stale/no-snap/thin/eval-all)
+2. **Brains table** — emit ages color-coded green/amber/red (green <1h, amber <6h, red >6h)
+3. **Universe table** — defaults to "problems only" toggle so 37 healthy rows don't bury 12 broken ones. Each row shows which brains the snapshot blocks.
+
+### Real diagnostic value (verified live in preview)
+Preview snapshot at 2026-06-26 04:36 surfaced exactly what the operator wanted to see:
+- All 4 brains last emitted ~5.9 days ago → all red, the silent-worker pattern visible at a glance
+- 12 problem symbols including HOTH (no snapshot at all → blocks all 4), CBLS (32 bars → blocks barracuda/gto/camino, hellcat still works since it only needs sma20), FB (stale 4.6h)
+- 37/49 symbols (75.5%) evaluable per brain — i.e., a brain that didn't emit on 12 symbols had legit input reasons, not a silent-worker problem
+
+### Why this answers "deep dive on Barracuda silence"
+The endpoint cross-references emission heartbeat AGAINST instrument input availability:
+- If Barracuda's `last_emit_age_sec` is much larger than its peers AND its `evaluable_count` matches the peers → the brain itself is dead (sidecar dead, the prod symptom). The native runtime migration fixes that exact case.
+- If Barracuda's `evaluable_count` is much LOWER than peers → an indicator field Barracuda uniquely depends on (bbands.mid, sma50) is failing in the snapshot pipeline. Different bug; tile points right at it.
+
+### Files
+- Created: `routes/admin_brain_input_health.py`, `frontend/src/components/BrainInputHealthTile.jsx`, `tests/test_admin_brain_input_health.py` (14 tests)
+- Updated: `server_modules/router_registry.py` (1 include), `pages/Diagnostics.jsx` (tile mount)
+
+### Test count
+59/59 backend tests pass — the new endpoint adds 14, all passing including the strategy↔checker drift regression test.
+
+---
+
+
 ## 2026-02-23 — Prod block diagnosis: 100% HOLD intents at gate `action_routable`
 
 ### Operator-reported symptom

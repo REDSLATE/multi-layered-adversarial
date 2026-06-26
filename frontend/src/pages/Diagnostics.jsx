@@ -19,6 +19,7 @@ import PerBrainExecutionStyleProfileTile from "@/components/PerBrainExecutionSty
 import SeatStageDropsTile from "@/components/SeatStageDropsTile";
 import ExecutionLifecycleFunnelTile from "@/components/ExecutionLifecycleFunnelTile";  // 2026-02-23 P3
 import NativeBrainRuntimeTile from "@/components/NativeBrainRuntimeTile";  // 2026-02-23 in-process brain migration
+import BrainInputHealthTile from "@/components/BrainInputHealthTile";  // 2026-02-23 instrument quality
 // ImposterScanCard removed 2026-02-21: the sidecar HTTP brain plumbing
 // it monitored was deleted (brains run in-process now), and the
 // `/admin/runtime/sidecar-imposter-scan` endpoint went with it — the
@@ -454,6 +455,8 @@ export default function Diagnostics() {
       <ExecutionLifecycleFunnelTile />
 
       <NativeBrainRuntimeTile />
+
+      <BrainInputHealthTile />
 
       <PerBrainExecutionStyleProfileTile />
 
