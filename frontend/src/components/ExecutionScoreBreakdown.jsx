@@ -7,25 +7,28 @@
  *   "Was this blocked because we're 5% too conservative, or because
  *    the doctrine is genuinely 50% against the trade?"
  *
+ * Doctrine seats — operator pin (2026-02-23):
+ *     Strategist · Auditor · Governor · Executor
+ *
  * Math (transparent, derived from existing doctrine packet fields —
  * NOT a separate gate; the actual block reason still lives in
  * `failing_gates` on the intent):
  *
- *   start                 = 1.00
- *   strategist_penalty    = max(0, -strategist_conviction_delta)
- *   adversary_penalty     = objection_count * 0.05 +
- *                           (challenge_strength * 0.20 if required else 0)
- *   governor_penalty      = max(0, 1.0 - governor_risk_multiplier)
- *                           (only counts if governor_action ≠ NORMAL)
- *   doctrine_reject_pen   = (1.0 - doctrine_score) if quality=REJECT
+ *   start              = 1.00
+ *   strategist_penalty = max(0, -strategist_conviction_delta)
+ *   auditor_penalty    = objection_count * 0.05 +
+ *                        (challenge_strength * 0.20 if required else 0)
+ *                        (`adversary_*` keys in packet = Auditor seat)
+ *   governor_penalty   = max(0, 1.0 - governor_risk_multiplier)
+ *                        (only counts if governor_action ≠ NORMAL)
+ *   executor_penalty   = 0 if execution_judge_ready
+ *                        else min(1.0, 0.20 + 0.20 * failed_check_count)
  *
  *   final_score = clamp01(1.0 - Σ penalties)
  *
- * Threshold is intentionally surfaced but not enforced — it's a
- * read of the operator's `required_for_execution_threshold`
- * tunable (defaults to 0.50). Adjusting it does NOT change which
- * intents execute (the gate chain does that). It just changes the
- * "missed by" framing here.
+ * Threshold is intentionally surfaced but not enforced — adjusting it
+ * does NOT change which intents execute (the gate chain does that).
+ * It just changes the "missed by" framing here.
  *
  * Doctrine pin (2026-02-23): this is a DIAGNOSTIC view. The actual
  * decision logic remains in the gate chain. This panel exists to
@@ -45,8 +48,6 @@ function pct(n) {
 
 function computeBreakdown(packet) {
   if (!packet) return null;
-  const quality   = packet.quality || null;
-  const score     = Number.isFinite(packet.score) ? packet.score : null;
   const stratΔ    = Number.isFinite(packet.strategist_conviction_delta)
     ? packet.strategist_conviction_delta : 0;
   const objs      = Number.isFinite(packet.adversary_objection_count)
@@ -57,32 +58,42 @@ function computeBreakdown(packet) {
   const govAction = packet.governor_action || "NORMAL";
   const govRisk   = Number.isFinite(packet.governor_risk_multiplier)
     ? packet.governor_risk_multiplier : 1.0;
+  const execReady = !!packet.execution_judge_ready;
+  const execFailed = Array.isArray(packet.execution_judge_failed_checks)
+    ? packet.execution_judge_failed_checks : [];
+  const execNotReadyReason = packet.execution_judge_not_ready_reason || "";
 
   const strategist_penalty = Math.max(0, -stratΔ);
-  const adversary_penalty  = objs * 0.05 + (required ? cs * 0.20 : 0);
+  const auditor_penalty    = objs * 0.05 + (required ? cs * 0.20 : 0);
   const governor_penalty   = govAction !== "NORMAL"
     ? Math.max(0, 1.0 - govRisk) : 0;
-  const doctrine_penalty   = (quality === "REJECT" && score != null)
-    ? Math.max(0, 1.0 - score) : 0;
+  // Executor seat penalty — when `execution_judge_ready=false`, scale
+  // by failed-check count so 1 missing requirement is a 20% penalty
+  // and 4 missing is a full hold. Mirrors what the screen shows as
+  // "SETUP: 3 CHECKS FAILED" in the operator's prod screenshots.
+  const executor_penalty   = execReady
+    ? 0
+    : Math.min(1.0, 0.20 + 0.20 * execFailed.length);
 
-  const total_penalty = strategist_penalty + adversary_penalty +
-    governor_penalty + doctrine_penalty;
+  const total_penalty = strategist_penalty + auditor_penalty +
+    governor_penalty + executor_penalty;
   const final = clamp01(1.0 - total_penalty);
 
   return {
     final,
     components: [
-      { label: "strategist conviction", penalty: strategist_penalty,
-        detail: stratΔ != null ? `Δ=${stratΔ.toFixed(2)}` : "" },
-      { label: "adversary objections",  penalty: adversary_penalty,
+      { label: "strategist", penalty: strategist_penalty,
+        detail: `Δ=${stratΔ.toFixed(2)}` },
+      { label: "auditor",    penalty: auditor_penalty,
         detail: `${objs} obj${objs === 1 ? "" : "s"}${
           required ? `, cs=${cs.toFixed(2)} required` : ""}` },
-      { label: "governor risk",         penalty: governor_penalty,
+      { label: "governor",   penalty: governor_penalty,
         detail: `${govAction}, mult=${govRisk.toFixed(2)}` },
-      { label: "doctrine quality",      penalty: doctrine_penalty,
-        detail: quality
-          ? `${quality}${score != null ? ` score=${score.toFixed(2)}` : ""}`
-          : "n/a" },
+      { label: "executor",   penalty: executor_penalty,
+        detail: execReady
+          ? "ready"
+          : `${execFailed.length} check${execFailed.length === 1 ? "" : "s"} failed${
+              execNotReadyReason ? ` — ${execNotReadyReason}` : ""}` },
     ],
     total_penalty,
   };

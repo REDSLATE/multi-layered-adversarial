@@ -1,3 +1,27 @@
+## 2026-02-23 — Seat labels pinned: Strategist · Auditor · Governor · Executor
+
+Operator correction: the four doctrine seats are **Strategist · Auditor · Governor · Executor** — not "Adversary Objections / Doctrine Quality" as I'd loosely named them.
+
+Fixed `ExecutionScoreBreakdown.jsx` to use the four canonical seat labels and reworked the fourth seat penalty:
+
+```
+strategist_penalty = max(0, -strategist_conviction_delta)
+auditor_penalty    = objection_count * 0.05 +
+                     (challenge_strength * 0.20 if required else 0)
+                     (doctrine packet field `adversary_*` = Auditor seat)
+governor_penalty   = max(0, 1.0 - governor_risk_multiplier)
+                     when governor_action != NORMAL
+executor_penalty   = 0 if execution_judge_ready
+                     else min(1.0, 0.20 + 0.20 * failed_check_count)
+                     (mirrors the "SETUP: 3 CHECKS FAILED" pattern
+                      from prod screenshots — `execution_judge_failed_checks`)
+```
+
+For prod's "SETUP: 3 CHECKS FAILED" pattern, the Executor seat alone now scores `−0.20 − 0.60 = −80%` penalty, correctly attributing the failure to the seat that actually rejected it (not lumping it under a generic "doctrine quality" bucket).
+
+---
+
+
 ## 2026-02-23 — Per-intent input provenance + execution score breakdown
 
 ### Operator concerns addressed
