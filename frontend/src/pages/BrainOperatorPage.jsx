@@ -79,21 +79,25 @@ export default function BrainOperatorPage() {
   const [honesty, setHonesty] = useState(null);
   const [sovereign, setSovereign] = useState(null);
   const [roster, setRoster] = useState(null);
+  const [laneReadiness, setLaneReadiness] = useState({ equity: null, crypto: null });
   const [testResult, setTestResult] = useState(null);
   const [testSubmitting, setTestSubmitting] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!profile) return;
-    const [d, h, s, r] = await Promise.all([
+    const [d, h, s, r, eqLane, crLane] = await Promise.all([
       api.get("/admin/diagnostics"),
       api.get(`/admin/intents/honesty?stack=${brain}&hours=24`),
       api.get(`/admin/sovereign/state/${brain}`).catch(() => ({ data: null })),
       api.get("/admin/roster").catch(() => ({ data: null })),
+      api.get("/admin/lane-readiness/equity?hours=24").catch(() => ({ data: null })),
+      api.get("/admin/lane-readiness/crypto?hours=24").catch(() => ({ data: null })),
     ]);
     setDiag(d.data);
     setHonesty(h.data);
     setSovereign(s.data);
     setRoster(r.data);
+    setLaneReadiness({ equity: eqLane.data, crypto: crLane.data });
     try {
       const rt = await api.get(`/runtime/${brain}/status`);
       setIntents(rt.data);
@@ -172,28 +176,46 @@ export default function BrainOperatorPage() {
           {/* Seat & Authority — MC's current view of where this brain sits */}
           <Card title="Seat & Authority" data-testid={`brain-card-seat-${brain}`}>
             {(() => {
-              const seatHere = roster?.assignments
-                ? Object.entries(roster.assignments).find(([, holder]) => holder === brain)?.[0]
-                : null;
+              const seatsHere = roster?.assignments
+                ? Object.entries(roster.assignments)
+                    .filter(([, holder]) => holder === brain)
+                    .map(([seat]) => seat)
+                : [];
               const expected = profile.expected_seats;
-              const seatOk = seatHere && expected.includes(seatHere);
+              const unexpectedSeats = seatsHere.filter((s) => !expected.includes(s));
+              const seatOk = seatsHere.length > 0 && unexpectedSeats.length === 0;
               return (
                 <dl className="space-y-2 text-sm">
-                  <Row k="Current seat" v={seatHere || "—"} warn={!seatOk} />
-                  <Row k="Expected seats" v={expected.join(" or ")} />
+                  <Row
+                    k={`Current seat${seatsHere.length === 1 ? "" : "s"}`}
+                    v={
+                      seatsHere.length > 0 ? (
+                        <span
+                          className="font-mono"
+                          data-testid={`brain-current-seats-${brain}`}
+                        >
+                          {seatsHere.join(", ")}
+                        </span>
+                      ) : (
+                        "—"
+                      )
+                    }
+                    warn={!seatOk}
+                  />
+                  <Row k="Eligible seats" v={expected.join(" or ")} />
                   <Row k="Authority" v={sovereign?.authority_state || sovereign?.posted_as || "—"} />
                   <Row k="may_decide" v={String(sovereign?.may_decide ?? "—")} />
                   <Row k="may_execute" v={String(sovereign?.may_execute ?? "—")} />
                   <Row k="may_veto" v={String(sovereign?.may_veto ?? "—")} />
                   <Row k="Seat epoch" v={roster?.seat_epoch ?? "—"} />
-                  {seatHere && !seatOk && (
+                  {unexpectedSeats.length > 0 && (
                     <p className="mt-3 rounded border border-amber-700/50 bg-amber-950/30 p-2 text-xs text-amber-300"
                        data-testid={`brain-seat-mismatch-${brain}`}>
-                      ⚠️ Seat mismatch — currently <code>{seatHere}</code>, expected one of{" "}
-                      <code>{expected.join(", ")}</code>. Rotate via Roster page.
+                      ⚠️ Unexpected seat assignment — <code>{unexpectedSeats.join(", ")}</code>.
+                      Eligible: <code>{expected.join(", ")}</code>.
                     </p>
                   )}
-                  {!seatHere && (
+                  {seatsHere.length === 0 && (
                     <p className="mt-3 rounded border border-rose-700/50 bg-rose-950/30 p-2 text-xs text-rose-300"
                        data-testid={`brain-no-seat-${brain}`}>
                       ⚠️ No seat assigned. This brain holds no chair on the council.
@@ -261,6 +283,60 @@ export default function BrainOperatorPage() {
             )}
           </Card>
         </div>
+      )}
+
+      {/* Per-lane activity (24h) — both equity and crypto for this brain */}
+      {(laneReadiness.equity || laneReadiness.crypto) && (
+        <Card title="Per-lane activity (24h)" className="mt-6"
+              data-testid={`brain-card-lane-activity-${brain}`}>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {["equity", "crypto"].map((lane) => {
+              const lr = laneReadiness[lane];
+              const brainCadence = lr?.emission_cadence?.by_brain?.[brain];
+              const states = brainCadence?.states || {};
+              const ready = lr?.ready_to_trade;
+              const checks = lr?.checks || {};
+              const firstBlocker = Object.entries(checks).find(([, c]) => !c?.ok);
+              return (
+                <div
+                  key={lane}
+                  data-testid={`brain-lane-${lane}-${brain}`}
+                  className="rounded border border-zinc-800 bg-zinc-900/40 p-3"
+                >
+                  <div className="flex items-baseline justify-between">
+                    <span className="font-mono text-xs uppercase tracking-wider text-zinc-400">
+                      {lane}
+                    </span>
+                    <Badge color={ready ? "#10B981" : "#DC2626"}>
+                      {ready ? "READY" : "BLOCKED"}
+                    </Badge>
+                  </div>
+                  <dl className="mt-3 space-y-1 text-xs">
+                    <Row k="Emissions (24h)" v={brainCadence?.total ?? 0} />
+                    <Row k="dry_run_passed" v={states.dry_run_passed ?? 0} />
+                    <Row k="dry_run_blocked" v={states.dry_run_blocked ?? 0} />
+                    <Row k="pending" v={states.pending ?? 0} />
+                    <Row k="Executed" v={lr?.emission_cadence?.executed ?? 0} />
+                    <Row k="Last emit" v={brainCadence?.latest?.slice(11, 19) || "—"} />
+                  </dl>
+                  {!ready && firstBlocker && (
+                    <p className="mt-3 rounded border border-rose-700/50 bg-rose-950/30 p-2 text-xs text-rose-300">
+                      <span className="font-mono uppercase text-rose-400">
+                        {firstBlocker[0]}
+                      </span>{" "}
+                      — {firstBlocker[1].detail}
+                      {firstBlocker[1].fix && (
+                        <div className="mt-1 text-amber-300">
+                          Fix: <code>{firstBlocker[1].fix}</code>
+                        </div>
+                      )}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
       )}
 
       {/* Recent intents with honesty telemetry */}

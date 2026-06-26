@@ -1,3 +1,49 @@
+## 2026-06-26 — Lane Readiness Diagnostic + Brain Operator multi-seat fix (operator: "trading is dead on equity")
+
+### Context
+Operator reported: equity trading has been dead for >1 week. No Barracuda equity intents have reached the broker; only crypto is alive. Plus the `Brain Operation` page surfaced only one seat / one lane at a time, hiding the full picture.
+
+### Root-cause investigation (preview-side)
+Built a one-shot diagnostic endpoint that folds every prerequisite into a single JSON payload so the operator can hit it on prod and instantly see WHICH gate is killing trades. Preview snapshot (last 168h):
+- 6,166 total equity emissions, **zero executed**.
+- 151 intents got past dry-run.
+- ALL 151 were rejected at auto-submit with `skip_category=policy_disabled` → `auto_submit_policy.enabled=False`.
+
+Operator's prod state differs — toggles are ON, Barracuda holds the seat — so the canonical answer must come from running the diagnostic on prod.
+
+### What was built
+
+**Endpoint** — `routes/admin_lane_readiness.py` (`GET /api/admin/lane-readiness/{lane}?hours=24`)
+- `checks`: per-prerequisite `{ok, detail, fix}` for **lane_execution_enabled**, **auto_submit_policy** (enabled + lane allowed + brain allowed + confidence_min), **executor_seat** (holder + may_execute_lane), **broker_connected** (adapter resolves).
+- `ready_to_trade`: AND of the four checks.
+- `emission_cadence`: per-brain × per-gate-state tallies (`dry_run_blocked`, `dry_run_passed`, `pending`, …) + `executed` count.
+- `post_dry_run_outcomes`: for every intent that passed dry-run, classifies what happened next — `executed_count`, `submit_skip_categories` (`policy_disabled`, `low_confidence`, `equity_after_hours`, `seat_authority_mismatch`, `lane_filtered`, `brain_filtered`, …), `missing_auto_submit_row` (silent leak counter), plus 8 sample rows with brain/symbol/action/confidence/reason.
+- `top_block_reasons`: ranked failed-gate names from dry-run for the lane.
+- Auth: operator JWT. Registered via `server_modules/router_registry.py`.
+
+**Brain Operator page** — `frontend/src/pages/BrainOperatorPage.jsx`
+- Seat & Authority card now uses `Object.entries(...).filter(...)` instead of `.find(...)` so a brain that holds multiple seats (e.g. equity executor + crypto executor) lists every one. New row label pluralizes correctly; mismatch warning highlights only the unexpected seats.
+- New "Per-lane activity (24h)" card calls `/api/admin/lane-readiness/equity` and `/api/admin/lane-readiness/crypto` in parallel and shows BOTH side-by-side for the selected brain — total emissions, dry-run breakdown, executed count, READY/BLOCKED badge, and the first failing prerequisite with its fix command.
+
+### Operator next step
+On prod (`mission.risedual.ai`), after redeploy, hit:
+```
+GET /api/admin/lane-readiness/equity?hours=72
+```
+The `post_dry_run_outcomes.submit_skip_categories` map will name the exact reason equity intents aren't reaching the broker. Likely candidates given the operator's setup (toggles ON, Barracuda in seat):
+1. `low_confidence` — confidence below `confidence_min` (default 0.7); Barracuda's strategy caps confidence around 0.45–0.75.
+2. `equity_after_hours` — outside US RTH with Extended Hours toggle off.
+3. `seat_authority_mismatch` — emitting brain ≠ seat holder for the lane.
+4. `policy_disabled` — auto-submit policy off despite the lane toggle being on.
+
+### Files
+- `routes/admin_lane_readiness.py` (NEW)
+- `server_modules/router_registry.py` (registered new router)
+- `frontend/src/pages/BrainOperatorPage.jsx` (multi-seat + per-lane card)
+
+---
+
+
 ## 2026-02-23 — Advisor / consensus architecture (operator pin: brains advise, seat authorizes)
 
 ### Doctrine
