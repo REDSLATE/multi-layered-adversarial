@@ -48,32 +48,58 @@ function pct(n) {
 
 function computeBreakdown(packet) {
   if (!packet) return null;
-  const stratΔ    = Number.isFinite(packet.strategist_conviction_delta)
-    ? packet.strategist_conviction_delta : 0;
-  const objs      = Number.isFinite(packet.adversary_objection_count)
-    ? packet.adversary_objection_count : 0;
-  const cs        = Number.isFinite(packet.adversary_challenge_strength)
-    ? packet.adversary_challenge_strength : 0;
-  const required  = !!packet.adversary_challenge_required;
-  const govAction = packet.governor_action || "NORMAL";
-  const govRisk   = Number.isFinite(packet.governor_risk_multiplier)
-    ? packet.governor_risk_multiplier : 1.0;
-  const execReady = !!packet.execution_judge_ready;
-  const execFailed = Array.isArray(packet.execution_judge_failed_checks)
-    ? packet.execution_judge_failed_checks : [];
-  const execNotReadyReason = packet.execution_judge_not_ready_reason || "";
+  // Doctrine packet seats: { strategist, adversary, governor, execution_judge }.
+  // The DB key `adversary` is a legacy holdover — the canonical seat
+  // name is AUDITOR (operator pin 2026-02-23). All operator-visible
+  // strings here use "auditor"; the variable `auditor` reads the
+  // legacy DB key but never surfaces "adversary" in the UI.
+  const seats = packet.seats || {};
+  const strat = seats.strategist || {};
+  const auditor = seats.adversary || {};
+  const gov = seats.governor || {};
+  const exec = seats.execution_judge || {};
+
+  const stratΔ = Number.isFinite(strat.conviction_delta)
+    ? strat.conviction_delta
+    : (Number.isFinite(packet.strategist_conviction_delta)
+        ? packet.strategist_conviction_delta : 0);
+  const objList = Array.isArray(auditor.objections) ? auditor.objections : [];
+  const objs = Number.isFinite(packet.adversary_objection_count)
+    ? packet.adversary_objection_count : objList.length;
+  const cs = Number.isFinite(auditor.challenge_strength)
+    ? auditor.challenge_strength
+    : (Number.isFinite(packet.adversary_challenge_strength)
+        ? packet.adversary_challenge_strength : 0);
+  const required = auditor.challenge_required != null
+    ? !!auditor.challenge_required
+    : !!packet.adversary_challenge_required;
+  const govAction = gov.display_status || gov.governor_action
+    || packet.governor_action || "NORMAL";
+  const govRisk = Number.isFinite(gov.risk_multiplier)
+    ? gov.risk_multiplier
+    : (Number.isFinite(packet.governor_risk_multiplier)
+        ? packet.governor_risk_multiplier : 1.0);
+  const execReady = exec.execution_ready != null
+    ? !!exec.execution_ready
+    : !!packet.execution_judge_ready;
+  const execChecks = (exec.execution_checks && typeof exec.execution_checks === "object")
+    ? exec.execution_checks : {};
+  const execFailedCount = Array.isArray(packet.execution_judge_failed_checks)
+    ? packet.execution_judge_failed_checks.length
+    : Object.values(execChecks).filter((v) => v === false).length;
+  const execFailedList = Array.isArray(packet.execution_judge_failed_checks)
+    ? packet.execution_judge_failed_checks
+    : Object.entries(execChecks)
+        .filter(([, v]) => v === false)
+        .map(([k]) => k);
 
   const strategist_penalty = Math.max(0, -stratΔ);
   const auditor_penalty    = objs * 0.05 + (required ? cs * 0.20 : 0);
-  const governor_penalty   = govAction !== "NORMAL"
-    ? Math.max(0, 1.0 - govRisk) : 0;
-  // Executor seat penalty — when `execution_judge_ready=false`, scale
-  // by failed-check count so 1 missing requirement is a 20% penalty
-  // and 4 missing is a full hold. Mirrors what the screen shows as
-  // "SETUP: 3 CHECKS FAILED" in the operator's prod screenshots.
-  const executor_penalty   = execReady
+  const govNormal = String(govAction).toUpperCase() === "NORMAL";
+  const governor_penalty = govNormal ? 0 : Math.max(0, 1.0 - govRisk);
+  const executor_penalty = execReady
     ? 0
-    : Math.min(1.0, 0.20 + 0.20 * execFailed.length);
+    : Math.min(1.0, 0.20 + 0.20 * execFailedCount);
 
   const total_penalty = strategist_penalty + auditor_penalty +
     governor_penalty + executor_penalty;
@@ -84,16 +110,16 @@ function computeBreakdown(packet) {
     components: [
       { label: "strategist", penalty: strategist_penalty,
         detail: `Δ=${stratΔ.toFixed(2)}` },
-      { label: "auditor",    penalty: auditor_penalty,
+      { label: "auditor", penalty: auditor_penalty,
         detail: `${objs} obj${objs === 1 ? "" : "s"}${
           required ? `, cs=${cs.toFixed(2)} required` : ""}` },
-      { label: "governor",   penalty: governor_penalty,
+      { label: "governor", penalty: governor_penalty,
         detail: `${govAction}, mult=${govRisk.toFixed(2)}` },
-      { label: "executor",   penalty: executor_penalty,
+      { label: "executor", penalty: executor_penalty,
         detail: execReady
           ? "ready"
-          : `${execFailed.length} check${execFailed.length === 1 ? "" : "s"} failed${
-              execNotReadyReason ? ` — ${execNotReadyReason}` : ""}` },
+          : `${execFailedCount} check${execFailedCount === 1 ? "" : "s"} failed${
+              execFailedList.length ? ": " + execFailedList.slice(0, 3).join(", ") : ""}` },
     ],
     total_penalty,
   };
