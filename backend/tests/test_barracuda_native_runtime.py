@@ -174,6 +174,17 @@ async def test_runner_tick_emits_to_canonical_intents(monkeypatch):
         # through `_post_intent_impl`, not a custom shortcut path.
         assert "doctrine_packet" in intent_doc
 
+        # Input provenance stamped by the native runner (operator
+        # request 2026-02-23: every intent must carry "was this
+        # based on fresh data?" so the Intents page can render a
+        # trust badge per row without a second roundtrip).
+        prov = intent_doc["evidence"].get("input_provenance")
+        assert prov is not None, "input_provenance must be stamped at emit time"
+        assert prov["trust"] in {"fresh", "stale", "thin_bars", "unknown"}
+        assert prov["bars_seen_at_emit"] == 300
+        assert prov["snapshot_source_at_emit"] == "test"
+        assert prov["snapshot_tf_at_emit"] == "1h"
+
         # And a tick-row summary was persisted
         tick_row = await db["barracuda_native_runtime_ticks"].find_one(
             sort=[("started_at", -1)],

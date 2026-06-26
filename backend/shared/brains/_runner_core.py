@@ -83,7 +83,49 @@ def _build_intent_body(
     symbol: str,
     decision: Any,
     runtime_version: str,
+    snapshot: dict[str, Any] | None = None,
+    now: datetime | None = None,
 ) -> IntentIn:
+    # ── input provenance — stamps "was this intent based on fresh
+    #    data?" onto the intent's evidence so the Intents page can
+    #    render a trust badge per row without a second roundtrip.
+    provenance: dict[str, Any] = {}
+    if snapshot is not None:
+        indicators = snapshot.get("indicators") or {}
+        bars = indicators.get("bars_seen")
+        try:
+            bars = int(bars) if bars is not None else None
+        except (TypeError, ValueError):
+            bars = None
+        snap_iso = snapshot.get("computed_at")
+        age_sec: int | None = None
+        if isinstance(snap_iso, str):
+            try:
+                computed_at = datetime.fromisoformat(
+                    snap_iso.replace("Z", "+00:00"),
+                )
+                ref = now or datetime.now(timezone.utc)
+                age_sec = int((ref - computed_at).total_seconds())
+            except Exception:  # noqa: BLE001
+                age_sec = None
+        # Trust band — mirrors `admin_brain_input_health` thresholds
+        # so the badge on the Intents page matches the BIH tile.
+        trust = "fresh"
+        if age_sec is None:
+            trust = "unknown"
+        elif age_sec > 10 * 60:
+            trust = "stale"
+        if bars is not None and bars < 60:
+            trust = "thin_bars"
+        provenance = {
+            "snapshot_age_sec_at_emit": age_sec,
+            "bars_seen_at_emit": bars,
+            "snapshot_source_at_emit": snapshot.get("source"),
+            "snapshot_tf_at_emit": snapshot.get("tf"),
+            "snapshot_computed_at": snap_iso,
+            "trust": trust,
+        }
+
     return IntentIn(
         stack=brain_id,            # type: ignore[arg-type]
         action=decision.action,
@@ -98,6 +140,7 @@ def _build_intent_body(
             **(decision.evidence or {}),
             "emit_source": f"{brain_id}_native_runtime",
             "emit_source_version": runtime_version,
+            **({"input_provenance": provenance} if provenance else {}),
         },
         raw_action=decision.action,
         raw_confidence=float(decision.confidence),
@@ -169,6 +212,7 @@ async def run_tick_for_brain(
             body = _build_intent_body(
                 brain_id=brain_id, symbol=symbol,
                 decision=decision, runtime_version=runtime_version,
+                snapshot=snap,
             )
             result = await submit_intent_in_process(body)
             emitted.append({

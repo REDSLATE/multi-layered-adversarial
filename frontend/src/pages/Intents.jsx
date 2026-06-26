@@ -12,6 +12,8 @@ import WebullOtocoTestPanel from "@/components/WebullOtocoTestPanel";
 import WebullOtocoLivePanel from "@/components/WebullOtocoLivePanel";
 import LegacyWrapperTogglePanel from "@/components/LegacyWrapperTogglePanel";
 import IntentPostMortemPanel from "@/components/IntentPostMortemPanel";
+import InputProvenanceBadge from "@/components/InputProvenanceBadge";
+import ExecutionScoreBreakdown from "@/components/ExecutionScoreBreakdown";
 import AutoSubmitPolicyPanel from "@/components/AutoSubmitPolicyPanel";
 import TunablesStrip from "@/components/TunablesStrip";
 // ParadoxV2DashboardPanel + CouncilChamberTile moved to /admin/paradox (2026-02-19)
@@ -167,7 +169,12 @@ function IntentRow({ intent, expanded, onToggle, onDryRun, onSubmit, dryRunResul
         <td className="px-3 py-2">
           <Badge color={meta.color}>{meta.label}</Badge>
         </td>
-        <td className="px-3 py-2 font-display text-sm text-rd-text">{intent.symbol}</td>
+        <td className="px-3 py-2 font-display text-sm text-rd-text">
+          <div className="flex items-center gap-2">
+            <span>{intent.symbol}</span>
+            <InputProvenanceBadge intent={intent} />
+          </div>
+        </td>
         <td className="px-3 py-2">
           {intent.lane ? (
             <Badge color={intent.lane === "crypto" ? "#A855F7" : "#3B82F6"}>
@@ -250,10 +257,13 @@ function IntentRow({ intent, expanded, onToggle, onDryRun, onSubmit, dryRunResul
               testid={`panel-error-doctrine-${intent.intent_id}`}
               compact
             >
-              <DoctrineStrip
-                packet={intent.doctrine_packet}
-                intentId={intent.intent_id}
-              />
+              <div className="space-y-3 p-3 bg-rd-bg2 border-b border-rd-border">
+                <ExecutionScoreBreakdown intent={intent} />
+                <DoctrineStrip
+                  packet={intent.doctrine_packet}
+                  intentId={intent.intent_id}
+                />
+              </div>
             </PanelErrorBoundary>
           </td>
         </tr>

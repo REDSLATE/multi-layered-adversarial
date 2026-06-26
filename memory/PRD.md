@@ -1,3 +1,70 @@
+## 2026-02-23 — Per-intent input provenance + execution score breakdown
+
+### Operator concerns addressed
+1. "Is the panel reading from a different emission stream than the Intents page?" — **verified no parity bug**. Both endpoints read `shared_intents` filtered by `stack_canonical`. Preview's "5.9d / 0 emits 24h" is honest preview state (legacy sidecars off + native runtimes disabled). After Friday's flip, both views will agree.
+2. "I'd add the per-intent input provenance badge next" — DONE.
+3. "Add Final Buy Score / Missed By to every blocked intent" — DONE.
+
+### What was built
+
+**Backend — provenance stamp at emit time** (`shared/brains/_runner_core.py`):
+Each native runtime tick now passes the indicator snapshot into `_build_intent_body`, which stamps into `intent.evidence.input_provenance`:
+```
+snapshot_age_sec_at_emit, bars_seen_at_emit, snapshot_source_at_emit,
+snapshot_tf_at_emit, snapshot_computed_at, trust
+```
+`trust` is one of: `fresh` (< 10min, ≥ 60 bars, all fields), `stale` (> 10min), `thin_bars` (< 60 bars), `unknown` (legacy intent).
+Thresholds mirror `admin_brain_input_health` exactly so the badge on the Intents page and the BIH tile agree.
+
+**Frontend — `InputProvenanceBadge`** (`components/InputProvenanceBadge.jsx`):
+Small green/amber/red dot rendered next to the symbol on each Intents row. Hover tooltip shows: snapshot age, bars, source, tf, computed_at. Legacy intents (pre-migration) render as "NO PROVENANCE" — exactly what's currently visible in preview.
+
+**Frontend — `ExecutionScoreBreakdown`** (`components/ExecutionScoreBreakdown.jsx`):
+Synthesizes the doctrine packet into a transparent execution score. Math:
+```
+start                 = 1.00
+strategist_penalty    = max(0, -strategist_conviction_delta)
+adversary_penalty     = objection_count * 0.05 +
+                        (challenge_strength * 0.20 if required else 0)
+governor_penalty      = max(0, 1.0 - governor_risk_multiplier)
+                        (only counts when governor_action != NORMAL)
+doctrine_reject_pen   = (1.0 - doctrine_score) if quality=REJECT
+
+final_score = clamp01(1.0 - Σ penalties)
+threshold   = 0.50 (configurable later)
+missed_by   = max(0, threshold - final)
+```
+Renders above the existing `DoctrineStrip` in the expandable doctrine row. Shows:
+- Headline: `EXECUTION SCORE 27% threshold 50% missed by 23%` (color-coded green/amber/red)
+- 4 component cards (strategist / adversary / governor / doctrine) with individual penalties + raw values
+- "Actual block (gate chain)" subsection listing `failing_gates` with reasons
+
+### Why this answers the operator's diagnostic concern
+When a prod intent shows `Final 100%, cleared advisory, DRY_RUN_BLOCKED` → the doctrine likes the trade; the block is gate/lane/broker. Tune gates.
+
+When a prod intent shows `Final 20%, missed by 30%, governor risk −67%, doctrine quality −100%` → the doctrine genuinely thinks the trade is bad. Tune doctrine OR retire it.
+
+When the input provenance badge is red ("stale 4.6h") → don't trust the emit regardless of score; the underlying snapshot is unreliable.
+
+### Doctrine pin
+The execution score is DIAGNOSTIC ONLY. The gate chain remains the source of truth for execution. The screen explicitly says so in italics under the panel. This avoids the failure mode where an operator starts treating the score as a hard gate.
+
+### Files
+- Updated: `shared/brains/_runner_core.py` (stamp input_provenance at emit)
+- Updated: `tests/test_barracuda_native_runtime.py` (asserts provenance fields on emitted intents)
+- Created: `frontend/src/components/InputProvenanceBadge.jsx`, `frontend/src/components/ExecutionScoreBreakdown.jsx`
+- Updated: `frontend/src/pages/Intents.jsx` (wire badge to symbol cell + breakdown above DoctrineStrip)
+
+### Verification
+59/59 backend tests pass. Live smoke verified both components render on `/admin/intents`:
+- 100 visible legacy intents all show "NO PROVENANCE" badge (expected — they predate the migration)
+- Expanded row shows `EXECUTION SCORE 100% threshold 50% cleared advisory` with all 4 components at 0% penalty (legacy preview intents have no doctrine packet penalties)
+
+After Friday's redeploy + flag flip in prod, every new native-runtime intent will carry green/amber/red provenance and the breakdown will surface real penalties from the production doctrine packet.
+
+---
+
+
 ## 2026-02-23 — Brain Input Health tile: instrument quality visibility
 
 ### Operator concern
