@@ -427,6 +427,16 @@ async def lifespan(app: FastAPI):
             logger.warning(
                 "%s_native_runtime start failed: %s", _brain_name, e,
             )
+
+    # 2026-02-23 — Advisor/consensus collection — TTL + lookup indexes.
+    # Idempotent; safe at every boot. Storage is no-op until
+    # CONSENSUS_MODE_ENABLED=true flips on per-intent writes.
+    try:
+        from db import db as _db
+        from shared.advisor_opinions import ensure_indexes as _ensure_advisor_indexes
+        await _ensure_advisor_indexes(_db)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("advisor_opinions index ensure failed: %s", e)
     # Shadow-close cron — auto-fires `run_shadow_close` at 4:05pm ET
     # every weekday so the LEARNING counter ticks without an operator
     # click. Idempotent (per-ET-day + the existing `outcome_join`

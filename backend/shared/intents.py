@@ -143,6 +143,23 @@ async def _run_dry_run_then_auto_submit(intent_id: str, actor: str) -> None:
     submit_attempted = False
     try:
         await run_dry_run_for_intent(intent_id, 10.0, actor=actor)
+        # 2026-02-23 — consensus doctrine: store the brain's opinion
+        # in `advisor_opinions` for the seat holder to synthesize.
+        # Runs AFTER dry_run so we know the intent passed schema/
+        # action checks; the storage helper is itself NEVER allowed
+        # to raise (safety-first; see auto_submit_policy._store_advisor_opinion_safe).
+        try:
+            from shared.auto_submit_policy import (  # noqa: WPS433
+                _consensus_mode_enabled, _store_advisor_opinion_safe,
+            )
+            if _consensus_mode_enabled():
+                full_intent = await db["shared_intents"].find_one(
+                    {"intent_id": intent_id}, {"_id": 0},
+                )
+                if full_intent:
+                    await _store_advisor_opinion_safe(full_intent)
+        except Exception:  # noqa: BLE001
+            pass
         submit_attempted = True
         await maybe_auto_submit(intent_id)
     except Exception as e:  # noqa: BLE001

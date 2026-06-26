@@ -29,6 +29,174 @@ from typing import Any
 
 logger = logging.getLogger("risedual.auto_submit_policy")
 
+
+# ── Consensus / advisor doctrine (operator pin 2026-02-23) ──────────
+# Env-gated rollout of the "brains advise, seat authorizes" model.
+# When OFF (default), non-seat-holder intents take the legacy
+# requires_override path. When ON, they're stored as advisor
+# opinions and the seat holder synthesizes a consensus at
+# auto-submit time.
+
+_CONSENSUS_MODE_ENV = "CONSENSUS_MODE_ENABLED"
+_CONSENSUS_MIN_CONFIDENCE_ENV = "CONSENSUS_MIN_CONFIDENCE"
+_CONSENSUS_MIN_MARGIN_ENV = "CONSENSUS_MIN_MARGIN"
+_CONSENSUS_WINDOW_SEC_ENV = "CONSENSUS_WINDOW_SEC"
+
+
+def _consensus_mode_enabled() -> bool:
+    raw = os.environ.get(_CONSENSUS_MODE_ENV, "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def _store_advisor_opinion_safe(intent: dict[str, Any]) -> None:
+    """Best-effort write to `advisor_opinions`. NEVER raises — opinion
+    storage must not take down the ingest path."""
+    try:
+        from db import db  # noqa: WPS433
+        from shared.advisor_opinions import store_opinion  # noqa: WPS433
+        await store_opinion(db, intent)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "advisor opinion store failed for intent_id=%s: %r",
+            intent.get("intent_id"), exc,
+        )
+
+
+async def _consensus_check(
+    intent: dict[str, Any],
+) -> tuple[bool, str, dict[str, Any] | None]:
+    """Run consensus synthesis when the seat holder reaches auto-submit.
+
+    Collects all advisor opinions in the window for this (symbol, lane),
+    adds the seat holder's own opinion (this intent), and asks the
+    consensus engine to synthesize one decision.
+
+    Returns:
+        (ok, reason, evidence)
+
+        ok=True   — consensus agrees with the seat holder's action;
+                    auto-submit may proceed. `evidence` describes the
+                    consensus snapshot for the audit trail.
+        ok=False  — consensus is HOLD, or consensus action diverges
+                    from the seat holder's intent action; the seat
+                    refuses to fire and the skip is filed under
+                    `consensus_hold`. `evidence` describes the split.
+        evidence  — always populated when synthesis ran. None on lookup
+                    failure (skip is still authoritative; we fail
+                    open to the seat holder's original action).
+    """
+    try:
+        from db import db  # noqa: WPS433
+        from shared.advisor_opinions import collect_for, DEFAULT_WINDOW_SEC  # noqa: WPS433
+        from shared.consensus import BrainOpinion  # noqa: WPS433
+        from shared.consensus_engine import build_consensus  # noqa: WPS433
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("consensus module import failed: %r", exc)
+        return True, "ok", None
+
+    try:
+        window_sec = int(
+            os.environ.get(_CONSENSUS_WINDOW_SEC_ENV, str(DEFAULT_WINDOW_SEC))
+        )
+        symbol = intent.get("symbol")
+        lane = intent.get("lane")
+        if not symbol or not lane:
+            return True, "ok", None
+        opinions = await collect_for(db, symbol, lane, window_sec)
+        # Add this intent as the seat holder's own opinion. The
+        # opinion may already be in the collection if `_post_intent_impl`
+        # stamped it at ingest — but we still inject it so the seat
+        # ALWAYS has its own voice in the consensus regardless of
+        # whether the advisor store has the row yet (race-safe).
+        seat_brain = (
+            intent.get("stack_canonical")
+            or intent.get("stack")
+            or ""
+        ).lower()
+        seat_intent_id = intent.get("intent_id")
+        # De-dup: drop any advisor row that's the seat holder's own
+        # ingest write (we'll re-add fresh).
+        opinions = [
+            o for o in opinions
+            if not (o.brain == seat_brain and o.intent_id == seat_intent_id)
+        ]
+        opinions.insert(0, BrainOpinion(
+            brain=seat_brain,
+            symbol=symbol,
+            lane=lane,
+            action=intent.get("action") or "HOLD",  # type: ignore[arg-type]
+            confidence=float(intent.get("confidence") or 0.0),
+            edge=float((intent.get("evidence") or {}).get("edge") or 0.0),
+            reason=intent.get("rationale") or "",
+            intent_id=seat_intent_id,
+            market_regime=(
+                (intent.get("evidence") or {}).get("market_regime")
+            ),
+        ))
+
+        regime = (
+            (intent.get("evidence") or {}).get("market_regime")
+            or "neutral"
+        )
+        min_conf = float(
+            os.environ.get(_CONSENSUS_MIN_CONFIDENCE_ENV, "0.45")
+        )
+        min_margin = float(
+            os.environ.get(_CONSENSUS_MIN_MARGIN_ENV, "0.05")
+        )
+        consensus = build_consensus(
+            opinions, market_regime=regime,
+            min_confidence=min_conf, min_margin=min_margin,
+        )
+        if consensus is None:
+            return True, "ok", None
+
+        evidence: dict[str, Any] = {
+            "action": consensus.action,
+            "confidence": consensus.confidence,
+            "agreed_brains": consensus.agreed_brains,
+            "disagreed_brains": consensus.disagreed_brains,
+            **consensus.evidence,
+            "opinions_in_window": [
+                {
+                    "brain": o.brain, "action": o.action,
+                    "confidence": o.confidence,
+                    "intent_id": o.intent_id,
+                }
+                for o in opinions
+            ],
+        }
+
+        seat_action = intent.get("action") or "HOLD"
+        if consensus.action == "HOLD":
+            reason = (
+                f"consensus_hold: engine forced HOLD on {symbol}: "
+                f"confidence={consensus.confidence}, "
+                f"margin={consensus.evidence.get('margin')} "
+                f"(opinions={len(opinions)})"
+            )
+            return False, reason, evidence
+        if consensus.action != seat_action:
+            reason = (
+                f"consensus_hold: seat-holder action {seat_action!r} "
+                f"diverges from consensus {consensus.action!r} on "
+                f"{symbol} (advisors split: agreed="
+                f"{consensus.agreed_brains}, disagreed="
+                f"{consensus.disagreed_brains})"
+            )
+            return False, reason, evidence
+        return True, "ok", evidence
+    except Exception as exc:  # noqa: BLE001
+        # Fail-OPEN to the seat holder's original action — we never
+        # block on consensus-layer bookkeeping bugs. The doctrine
+        # says the seat is the authority; if synthesis breaks, the
+        # seat's intent still goes through normal gate validation.
+        logger.warning(
+            "consensus_check raised for intent_id=%s: %r",
+            intent.get("intent_id"), exc,
+        )
+        return True, "ok", None
+
 # ── Tier 1 defaults — operator-driven (2026-02-19 update) ────────────
 # Original "tier_1_conservative" was BUY+equity only. Operator directive
 # (2026-02-19): "I'm not reviewing, it should be handled by Shelly and
@@ -322,6 +490,14 @@ SKIP_CATEGORY_AFTER_HOURS       = "equity_after_hours"    # equity intent outsid
 # vs. an actual pipeline bug.
 SKIP_CATEGORY_SEAT_AUTHORITY_MISMATCH = "seat_authority_mismatch"  # intent.stack != current seat holder
 SKIP_CATEGORY_SEAT_VACANT       = "seat_vacant"           # no holder for the intent's lane
+# 2026-02-23 — advisor/consensus doctrine.
+# When CONSENSUS_MODE_ENABLED=true the seat-authority-mismatch case
+# is reframed as "this brain isn't the seat holder, so its opinion
+# is STORED for the consensus engine — not a failure, just routing".
+# The seat-holder case can also be skipped via `consensus_hold` when
+# the consensus engine determines the advisors are split or weak.
+SKIP_CATEGORY_ADVISOR_OPINION_STORED = "advisor_opinion_stored"
+SKIP_CATEGORY_CONSENSUS_HOLD         = "consensus_hold"
 SKIP_CATEGORY_OTHER             = "other"                 # anything not classified
 SKIP_CATEGORY_NOT_FOUND         = "intent_not_found"      # intent_id missing at auto-submit time (DB race or rogue caller)
 SKIP_CATEGORY_INTERNAL_ERROR    = "internal_error"        # exception in chain before audit could be written
@@ -392,6 +568,14 @@ def _categorize_skip(reason: str) -> str:
         if "vacant" in r:
             return SKIP_CATEGORY_SEAT_VACANT
         return SKIP_CATEGORY_SEAT_AUTHORITY_MISMATCH
+    # Advisor / consensus doctrine (2026-02-23) — distinct from
+    # legacy seat-authority-mismatch so the operator can see at a
+    # glance "X intents fed the consensus engine" vs "Y intents the
+    # seat blocked because the consensus split".
+    if r.startswith("advisor_opinion_stored"):
+        return SKIP_CATEGORY_ADVISOR_OPINION_STORED
+    if r.startswith("consensus_hold"):
+        return SKIP_CATEGORY_CONSENSUS_HOLD
     return SKIP_CATEGORY_OTHER
 
 
@@ -558,13 +742,48 @@ async def matches_tier_1(intent: dict, policy: dict | None = None) -> tuple[bool
         holder_norm = _normalize_brain_to_stack(current_holder.strip().lower())
         # `brain` is already the normalized stack code from the
         # earlier brain-filter step above.
+        consensus_on = _consensus_mode_enabled()
         if brain != holder_norm:
+            # ─── Advisor / consensus doctrine (operator pin 2026-02-23)
+            # When consensus mode is on, a non-seat-holder intent is
+            # NOT a refusal — it's a vote. Store the opinion so the
+            # seat holder can synthesize all 4 brains' views when
+            # ITS intent reaches auto-submit. The skip row tells the
+            # post-mortem panel "this brain advised; it did not
+            # attempt to execute" — which is the truth under the
+            # new doctrine.
+            if consensus_on:
+                await _store_advisor_opinion_safe(intent)
+                return False, (
+                    f"advisor_opinion_stored: brain {brain!r} is not the "
+                    f"current seat holder for lane={lane!r} (held by "
+                    f"{holder_norm!r}); opinion captured for the consensus "
+                    f"engine. Doctrine: brains advise, seat authorizes."
+                )
+            # Legacy behavior — non-seat-holder intents wait for
+            # operator override.
             return False, (
                 f"seat_authority intent author {brain!r} != current seat "
                 f"holder {holder_norm!r} (seat={matched_seat!r}, "
                 f"lane={lane!r}); requires_override path — auto-submit "
                 f"refuses by doctrine"
             )
+
+        # ─── Seat holder reached the auto-submit gate.
+        # Run consensus synthesis BEFORE handing off to the broker
+        # submit path. The seat holder is the one weighing the
+        # advisors' opinions; the consensus engine just computes the
+        # weighted vote so the seat doesn't have to invent the math.
+        if consensus_on:
+            ok, hold_reason, consensus_evidence = await _consensus_check(intent)
+            if consensus_evidence is not None:
+                # Stamp the consensus snapshot onto the intent for
+                # the operator's audit panel — preserved whether
+                # the trade fires or not.
+                intent.setdefault("evidence", {})
+                intent["evidence"]["consensus_at_submit"] = consensus_evidence
+            if not ok:
+                return False, hold_reason
     except Exception as exc:  # noqa: BLE001
         # Defensive: if the seat lookup itself raises (DB hiccup,
         # missing collection), do NOT block the intent on the

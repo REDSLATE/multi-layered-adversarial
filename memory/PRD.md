@@ -1,3 +1,95 @@
+## 2026-02-23 — Advisor / consensus architecture (operator pin: brains advise, seat authorizes)
+
+### Doctrine
+Replaces "brain owns seat → others rejected" with "brains advise → Paradox synthesizes → seat authorizes ONE decision → Governor sizes → RoadGuard blocks danger → Broker executes". The seat keeps execution authority but no longer operates in isolation — it weighs all 4 advisors' opinions before deciding.
+
+> Brains advise.
+> Paradox synthesizes.
+> Seat authorizes.
+> Governor sizes.
+> RoadGuard blocks danger.
+> Broker executes.
+
+### What was built
+
+**Models** — `shared/consensus.py`
+- `BrainOpinion(brain, symbol, lane, action, confidence, edge, reason, intent_id, market_regime, emitted_at)`
+- `ConsensusIntent(symbol, lane, action, confidence, agreed_brains, disagreed_brains, evidence)`
+
+**Engine** — `shared/consensus_engine.py` (pure compute, no I/O)
+- `build_consensus(opinions, market_regime, min_confidence=0.45, min_margin=0.05)`
+- `BASE_WEIGHTS` — equal across all 4 brains until calibration kicks in
+- `REGIME_WEIGHTS` — trend / range / breakout / neutral, conditioning per the operator's spec (Camino-trend, Barracuda-range, Hellcat-breakout, GTO-momentum). Forces HOLD when:
+  - top action's weighted share < `min_confidence` (default 0.45), OR
+  - margin between top and 2nd-place < `min_margin` (default 0.05)
+- `normalize_regime()` maps the codebase's wider regime vocabulary (bull/bear/chop/sideways/risk_on/risk_off/calm_bull/strong) onto the 4 engine regimes
+
+**Storage** — `shared/advisor_opinions.py`
+- Mongo collection `advisor_opinions`, indexed on `(symbol, lane, emitted_at)` plus a TTL on `expires_at` (5min) so it self-purges
+- `store_opinion(db, intent)` — best-effort write, NEVER raises (opinion storage is audit, not execution)
+- `collect_for(db, symbol, lane, window_sec=60)` — newest opinion per brain in the window
+- `ensure_indexes(db)` — idempotent, called from lifespan at boot
+
+**Pipeline integration** — `shared/auto_submit_policy.py`
+Env: `CONSENSUS_MODE_ENABLED` (default false; flip to opt in)
+- When OFF: legacy behavior preserved exactly. Non-seat-holder intents take the `requires_override` path.
+- When ON:
+  - Every intent → opinion stored at end of dry-run via `_run_dry_run_then_auto_submit` in `intents.py` (best-effort).
+  - At auto-submit, if `intent.brain != seat_holder` → returns SKIP with new category `advisor_opinion_stored`. Not a failure; it's the brain casting its vote.
+  - If `intent.brain == seat_holder` → `_consensus_check(intent)` runs:
+    - Collects opinions for `(symbol, lane)` in the window
+    - Injects this intent as the seat holder's own opinion (race-safe)
+    - Calls `build_consensus()` with regime + thresholds (env-tunable: `CONSENSUS_MIN_CONFIDENCE`, `CONSENSUS_MIN_MARGIN`, `CONSENSUS_WINDOW_SEC`)
+    - If consensus = HOLD or consensus.action != intent.action → SKIP `consensus_hold` with full breakdown in the reason
+    - Else → proceed (stamps `consensus_at_submit` into intent.evidence for the operator's audit trail)
+  - **Fail-OPEN** on synthesis errors — the seat's original intent goes through normal gates if consensus bookkeeping itself raises (doctrine: never block execution on diagnostic-layer bugs).
+
+**Skip categories** (`shared/auto_submit_policy.py`)
+- `SKIP_CATEGORY_ADVISOR_OPINION_STORED = "advisor_opinion_stored"` — non-seat-holder vote
+- `SKIP_CATEGORY_CONSENSUS_HOLD = "consensus_hold"` — seat refused because advisors split or weak
+
+These let the operator's post-mortem panel cleanly distinguish:
+- "X intents the advisors voted on" (signal volume) vs
+- "Y intents the seat held back because consensus said no" (doctrine catch)
+- vs the prior "seat_authority_mismatch" bucket (which now only fires in legacy mode)
+
+### Verification — operator's NVDA worked example reproduces
+
+```
+COLLECTED 4 opinions:
+  gto        BUY   conf=0.82
+  hellcat    BUY   conf=0.88
+  barracuda  HOLD  conf=0.48
+  camino     BUY   conf=0.91
+
+CONSENSUS: action=BUY conf=0.8447
+  agreed: ['gto', 'hellcat', 'camino']
+  disagreed: ['barracuda']
+  margin: 0.6893
+  raw_scores: {'BUY': 2.61, 'HOLD': 0.48}
+```
+
+Camino (seat holder) sees the consensus, sees 3-of-4 agree, and proceeds with BUY at consensus confidence. Barracuda's cautious HOLD is preserved in the audit trail as "disagreed" — informing future kernel grading.
+
+### Test count
+81/81 backend tests pass — 15 new for the consensus engine + storage layer + the pre-existing 66.
+
+### Operator switch
+Flip `CONSENSUS_MODE_ENABLED=true` on prod env. Tunable thresholds: `CONSENSUS_MIN_CONFIDENCE=0.45`, `CONSENSUS_MIN_MARGIN=0.05`, `CONSENSUS_WINDOW_SEC=60`. Default off — flipping is a single env var change, no redeploy of code required after this push.
+
+### What's deferred (Phase 2)
+- Per-symbol "consensus_decisions" audit collection (so the operator can replay every consensus decision in retrospect — currently only stamped on the intent's `evidence.consensus_at_submit`)
+- Frontend `ConsensusDecisionsTile` showing recent consensuses with agreed/disagreed brains
+- Kernel grading: post-trade, evaluate how well the seat used the advisors — the data is now there (every intent stamps which advisors agreed/disagreed), waiting on Kernel to learn from it
+
+### Files
+- Created: `shared/consensus.py`, `shared/consensus_engine.py`, `shared/advisor_opinions.py`
+- Updated: `shared/auto_submit_policy.py` (consensus integration + 2 new skip categories), `shared/intents.py` (opinion stamping at end of dry-run), `server_modules/lifespan.py` (TTL index ensure)
+- Created: `tests/test_consensus_engine.py` (11 tests), `tests/test_advisor_opinions_store.py` (4 tests)
+
+---
+
+
 ## 2026-02-23 — Cash-account safety gate (operator pin, no margin until profitable)
 
 ### Operator directive
