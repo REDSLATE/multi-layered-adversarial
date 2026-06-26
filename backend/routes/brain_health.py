@@ -272,6 +272,7 @@ def _compute_overall(
     checkin: Dict[str, Any],
     opinion: Dict[str, Any],
     seat_walk: Dict[str, Dict[str, Optional[Dict[str, Any]]]],
+    emissions: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Distill the three surfaces into a single green/degraded/dead
     verdict. The reasons list is also returned so the tile can show
@@ -335,10 +336,63 @@ def _compute_overall(
                 )
 
     verdict = "green" if not reasons else "degraded"
+
+    # 4) emissions — added 2026-02-23 to surface the Barracuda prod
+    # regression. A brain that's checked in + opinion-fresh but has
+    # written ZERO intents in 24h is silently broken (the worker
+    # process is alive but its emit loop isn't running). Only flag
+    # this for brains that hold an opinion-producing seat — pure
+    # executors don't emit, by doctrine.
+    if emissions and held_opinion_seat:
+        if emissions.get("silent_24h"):
+            reasons.append("emissions_silent_24h")
+            verdict = "degraded"
+        elif emissions.get("silent_1h"):
+            reasons.append("emissions_silent_1h")
+            # 1h silence is informational — don't auto-degrade
+            # (could be a quiet pre-market hour). Tile can highlight.
+
     return {"verdict": verdict, "reasons": reasons, "thresholds": THRESHOLDS}
 
 
 # ─────────────────── Routes ───────────────────
+
+
+async def _gather_emissions(brain: str, now) -> Dict[str, Any]:
+    """Count this brain's intent emissions over 1h + 24h windows.
+
+    Added 2026-02-23 — operator-reported regression: Barracuda in prod
+    was showing CHECKIN ✓ · OPINION fresh but 0 intents on the
+    dashboard. The smoking-gun signal (`strategist_equity_stale_nevers`
+    in the `WHY` text) was buried; with explicit emission counters on
+    the BrainHealth response, a brain whose worker has silently
+    stopped processing its seat shows up as `EMISSIONS 1h: 0` next to
+    the other green indicators — impossible to miss.
+
+    Reads `shared_intents` keyed on `stack_canonical` (post Phase C
+    migration; the canonical-aware field is authoritative).
+    """
+    from db import db as _db  # noqa: WPS433
+    from datetime import timedelta as _td  # noqa: WPS433
+    cutoff_1h = (now - _td(hours=1)).isoformat()
+    cutoff_24h = (now - _td(hours=24)).isoformat()
+    n_1h = await _db["shared_intents"].count_documents({
+        "stack_canonical": brain, "ingest_ts": {"$gte": cutoff_1h},
+    })
+    n_24h = await _db["shared_intents"].count_documents({
+        "stack_canonical": brain, "ingest_ts": {"$gte": cutoff_24h},
+    })
+    # `silent_1h_during_market` is intentionally informational, not a
+    # hard verdict driver — market hours can change between runs and
+    # the underlying RTH check lives in shared/market_hours.py. The
+    # dashboard tile can decide how to highlight zero counts; we just
+    # surface them with the same shape as `opinion.silent`.
+    return {
+        "intents_1h": int(n_1h),
+        "intents_24h": int(n_24h),
+        "silent_1h": n_1h == 0,
+        "silent_24h": n_24h == 0,
+    }
 
 
 @router.get("/brain-health/{brain}")
@@ -405,13 +459,15 @@ async def list_brain_health(
         opinion = await _gather_opinion(brain, now)
         data_keys = await _gather_data_keys(brain, now)
         seat_walk = await _gather_seat_walk(brain, now)
-        overall = _compute_overall(checkin, opinion, seat_walk)
+        emissions = await _gather_emissions(brain, now)  # 2026-02-23
+        overall = _compute_overall(checkin, opinion, seat_walk, emissions)
         rows[brain] = {
             "brain": brain,
             "checkin": checkin,
             "opinion": opinion,
             "data_keys": data_keys,
             "seat_walk": seat_walk,
+            "emissions": emissions,    # 2026-02-23 — explicit silence signal
             "overall": overall,
         }
     return {
