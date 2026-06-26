@@ -112,7 +112,10 @@ async def _check_auto_submit_policy(lane: str) -> dict:
 
 async def _check_executor_seat(lane: str) -> dict:
     """Walk every seat eligible to execute the lane and report the
-    first holder. Vacant = no authority to route."""
+    first holder. Vacant = no authority to route. Also surface the
+    Paradox v2 seat-policy floor (`confidence_min`, `max_notional_usd`)
+    so the operator sees on one screen if the floor is what's killing
+    intents at `below_seat_confidence_min`."""
     try:
         from shared.executor_seat import get_seat_holder, seats_with_execute
         from shared.seat_policy import seat_may_execute_lane
@@ -130,18 +133,37 @@ async def _check_executor_seat(lane: str) -> dict:
             matched_seat = seat
             matched_holder = h
 
+    # Paradox v2 executor seat policy (confidence_min, max_notional, …)
+    # — this is the floor surfaced on `below_seat_confidence_min` blocks.
+    v2_seat_id = "equity_executor" if lane == "equity" else "crypto_executor"
+    v2_policy = await db["paradox_v2_seat_policy_config"].find_one(
+        {"seat_id": v2_seat_id},
+        {"_id": 0, "confidence_min": 1, "max_notional_usd": 1,
+         "size_multiplier": 1, "enabled": 1, "autonomy_mode": 1,
+         "updated_at": 1, "updated_by": 1},
+    ) or {}
+
+    policy_str = (
+        f"v2_seat_policy[{v2_seat_id}]: "
+        f"confidence_min={v2_policy.get('confidence_min')}, "
+        f"max_notional_usd={v2_policy.get('max_notional_usd')}, "
+        f"size_multiplier={v2_policy.get('size_multiplier')}, "
+        f"autonomy_mode={v2_policy.get('autonomy_mode')}, "
+        f"enabled={v2_policy.get('enabled')}"
+    )
+
     if matched_seat and matched_holder and seat_may_execute_lane(matched_seat, lane):
         return _check(
             True,
             f"executor seat '{matched_seat}' held by '{matched_holder}' "
-            f"(eligible_seats={eligible})",
+            f"(eligible_seats={eligible}). {policy_str}",
         )
     return _check(
         False,
         f"executor seat for lane='{lane}' is VACANT "
-        f"(eligible_seats={eligible}, holders={holder_for_seat})",
+        f"(eligible_seats={eligible}, holders={holder_for_seat}). {policy_str}",
         fix=(
-            f"Assign a seat holder via the Quick Seat Switches UI or "
+            f"Assign a seat holder via Quick Seat Switches UI or "
             f"POST /api/executor/rotate. One of {eligible} must hold a brain."
         ),
     )
