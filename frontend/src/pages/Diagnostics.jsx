@@ -17,6 +17,7 @@ import AdvisorPerformanceTile from "@/components/AdvisorPerformanceTile";
 import ParadoxV3RolloutTile from "@/components/ParadoxV3RolloutTile";
 import PerBrainExecutionStyleProfileTile from "@/components/PerBrainExecutionStyleProfileTile";
 import SeatStageDropsTile from "@/components/SeatStageDropsTile";
+import LaneReadinessTile from "@/components/LaneReadinessTile";  // 2026-06-26 why isn't this lane trading?
 import ExecutionLifecycleFunnelTile from "@/components/ExecutionLifecycleFunnelTile";  // 2026-02-23 P3
 import NativeBrainRuntimeTile from "@/components/NativeBrainRuntimeTile";  // 2026-02-23 in-process brain migration
 import BrainInputHealthTile from "@/components/BrainInputHealthTile";  // 2026-02-23 instrument quality
@@ -449,6 +450,8 @@ export default function Diagnostics() {
       <AdvisorPerformanceTile />
 
       <ParadoxV3RolloutTile />
+
+      <LaneReadinessTile />
 
       <SeatStageDropsTile />
 
