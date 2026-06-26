@@ -1,3 +1,42 @@
+## 2026-02-23 — Cash-account safety gate (operator pin, no margin until profitable)
+
+### Operator directive
+"I haven't enabled margin. Don't think I will yet. I want it to trade successfully, in the black, first."
+
+### What was missing
+Per-brain `<BRAIN>_SHORTS_ENABLED=false` defaults existed but only as the FIRST layer (brain-level emission gate). No central pipeline check guaranteed cash-only routing if any future path emitted SHORT or COVER:
+- a legacy sidecar still alive in `external/brains/runner.py`
+- a manual `POST /api/admin/intents` request
+- a new brain added without env-gate discipline
+- an external runtime bug
+…would have routed straight to the broker.
+
+### Gate — `cash_account_authority` (`shared/execution.py`)
+Inserted directly after `action_routable`. Reads env `ACCOUNT_TYPE` (default `cash`):
+- `cash` (default): SHORT and COVER fail this gate with reason `"cash account — action 'SHORT' would require margin (set ACCOUNT_TYPE=margin to opt in)"`. BUY and SELL pass (SELL of existing long is just closing inventory).
+- `margin`: pass-through. Operator has explicitly opted in.
+
+Doctrine pin in code (not an advisory): the brains can THINK shorts all they want, but the pipeline refuses to ROUTE them while margin is off. Defense in depth — single env var flip required to enable, audit-loud reason on every block.
+
+Skipped for HOLD (action_routable already blocks those) — keeps gate diagnostics clean.
+
+### Tests — `test_cash_account_authority_gate.py` (7/7)
+Covers: SHORT blocked, COVER blocked, default-is-cash, BUY allowed, SELL allowed, margin opt-in allows SHORT, HOLD skips this gate.
+
+### Files
+- Updated: `shared/execution.py` (cash_account_authority gate insert)
+- Created: `tests/test_cash_account_authority_gate.py`
+
+### Operator switch
+- Default: nothing to do. `ACCOUNT_TYPE` env is unset → treated as cash → all shorts blocked.
+- To opt into margin later (after the system is in the black): set `ACCOUNT_TYPE=margin` in prod env and redeploy. No code change.
+
+### Test count
+66/66 backend tests pass.
+
+---
+
+
 ## 2026-02-23 — Seat labels pinned: Strategist · Auditor · Governor · Executor
 
 Operator correction: the four doctrine seats are **Strategist · Auditor · Governor · Executor** — not "Adversary Objections / Doctrine Quality" as I'd loosely named them.

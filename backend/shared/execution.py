@@ -134,6 +134,45 @@ async def _evaluate_gates(
         ),
     })
 
+    # 2a. Cash-account safety gate (2026-02-23, operator pin).
+    # Operator directive: "I haven't enabled margin. Don't think I will
+    # yet. I want it to trade successfully, in the black, first."
+    #
+    # Brains gate their own SHORT emissions behind per-brain
+    # `<BRAIN>_SHORTS_ENABLED=false` defaults — but that's the FIRST
+    # layer. This is the central pipeline check so any future path
+    # (legacy sidecar still alive in code, manual POST /admin/intents,
+    # a new brain added without the env-gate, an external runtime
+    # bug) that emits SHORT or COVER still gets blocked.
+    #
+    # Env: `ACCOUNT_TYPE=cash` (default) | `margin`
+    #   When `cash` (the safe default): SHORT and COVER fail this gate.
+    #   When `margin`: pass through — operator has explicitly opted in.
+    #
+    # Pin: this is NOT a doctrine advisory. It's a hard safety stop
+    # for cash-account compliance. Brains can THINK shorts all they
+    # want; the pipeline refuses to ROUTE them while margin is off.
+    if routable:
+        import os
+        account_type = (os.environ.get("ACCOUNT_TYPE") or "cash").strip().lower()
+        is_cash = account_type != "margin"
+        shorts_attempted = action in ("SHORT", "COVER")
+        cash_blocked = is_cash and shorts_attempted
+        gates.append({
+            "name": "cash_account_authority",
+            "passed": not cash_blocked,
+            "reason": (
+                f"cash account — action {action!r} would require margin "
+                f"(set ACCOUNT_TYPE=margin to opt in)"
+                if cash_blocked else
+                (
+                    f"cash account, long-only action {action!r} allowed"
+                    if is_cash else
+                    f"margin account opt-in via ACCOUNT_TYPE=margin"
+                )
+            ),
+        })
+
     # ─── 2b. Position-aware intent classification (2026-06-10, P2) ────
     # Doctrine pin: the operator deferred this in 2026-06-09 while live
     # trading was on prod. This is the integration point referenced in
