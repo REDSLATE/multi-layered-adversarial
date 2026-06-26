@@ -1,3 +1,64 @@
+## 2026-02-23 — Prod block diagnosis: 100% HOLD intents at gate `action_routable`
+
+### Operator-reported symptom
+"All 4 brains are 100% blocked from submitting intents to brokers."
+Prod screenshots (mission.risedual.ai/admin/intents): every intent shows `ACTION=HOLD CONF=1.000 R-MULT=0.000 GATE=DRY_RUN_BLOCKED` with doctrine packet showing `STRATEGIST -0.26 conviction / AUDITOR 4 obj cs 0.92 / GOVERNOR RISK_DOWN ×0.13 doctrine_reject / SETUP 3 CHECKS FAILED`.
+
+### Root cause (not what it looked like)
+The doctrine packet shown in the UI is **advisory only** per the operator's own 2026-05-18 pin in `shared/doctrine/brain_sidecars.py:179-183`:
+```
+REJECT quality is advisory-only — not a fatal safety stop.
+Downweight aggressively but DON'T zero, so the chip shows
+RISK_DOWN with reason "doctrine_reject" instead of BLOCK.
+```
+The advisory fires `risk_multiplier *= 0.25` with a `0.10` floor — never returns BLOCK.
+
+What's actually blocking: `shared/execution.py:128` gate `action_routable`:
+```python
+routable = action in ("BUY", "SELL", "SHORT", "COVER")
+```
+Every intent has `action=HOLD` → fails this gate → `dry_run_blocked`. Doctrine packet is innocent.
+
+**Why every intent is HOLD**: the legacy `external/brains/runner.py` neutral_brain biases its BUY hypothesis by the `setup_score` from the BASE-BREAKOUT pattern (`shared/strategies/canary_runner.py` etc.). When `setup_score=0` across the universe (current prod state), every brain falls back to HOLD. Barracuda emits nothing because its sidecar is dead (the separate silent-worker bug).
+
+### Why the native runtime migration fixes this
+The 4 native brains (`shared/brains/<brain>/strategy.py`) bypass `setup_score` entirely. They emit `ACTION=BUY/SHORT` directly when their own doctrine fires (mean-rev / momentum / trend / breakout). End-to-end verified in `tests/test_native_runtime_not_doctrine_blocked.py`:
+
+After Friday's flip, with `BARRACUDA_NATIVE_RUNTIME_ENABLED=true`, a clean BUY emit clears the gate chain:
+```
+✅ schema_invariants
+✅ action_routable               (action 'BUY' is routable)
+✅ position_aware_intent_classification
+✅ executor_seat_check
+✅ seat_authority_classification (mode=requires_override — Barracuda is strategist, not executor)
+✅ live_trading_disabled
+✅ broker_connected
+✅ symbol_in_universe
+✅ roadguard_spread_floor
+✅ rr_ratio_floor
+✅ governor_authority
+❌ lane_execution_enabled        (preview-only; prod has equity lane ON)
+```
+
+### New operator endpoint
+`POST /api/admin/native-runtime/{brain_id}/tick-once` — fires a single tick on demand, returns the same summary shape as a scheduled tick (universe size, emitted list with intent_id + gate_state, errors). Works **without** the env flag being on, so the operator can dry-test the runtime BEFORE flipping production.
+
+Friday post-deploy validation flow:
+1. Deploy with `BARRACUDA_NATIVE_RUNTIME_ENABLED=true` (and the other 3)
+2. Curl `POST /api/admin/native-runtime/barracuda/tick-once` — confirm `emitted_count > 0`
+3. Check Diagnostics → Native Brain Runtimes tile — confirm `silent: 0`
+4. Check Intents page — confirm BUY intents appearing with `seat_authority_classification: requires_override` (operator queue)
+
+### Verification
+45/45 backend tests pass. Test specifically guarding the advisory-only pin: `test_native_buy_is_not_doctrine_blocked` — fails if doctrine_reject ever becomes a hard gate.
+
+### Files
+- Updated: `routes/admin_native_runtime_status.py` (added `/tick-once` endpoint)
+- Created: `tests/test_native_runtime_not_doctrine_blocked.py` (advisory-only-pin regression guard)
+
+---
+
+
 ## 2026-02-23 — Steps 3–6 complete: GTO, Camino, Hellcat native + sidecar retirement + diagnostic tile
 
 ### Context

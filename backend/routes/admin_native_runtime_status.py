@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Path
 
 from auth import get_current_user
 from db import db
@@ -39,6 +39,7 @@ BRAINS = (
     ("camino",    camino_runtime,    "camino_native_runtime_ticks"),
     ("hellcat",   hellcat_runtime,   "hellcat_native_runtime_ticks"),
 )
+BRAIN_BY_ID = {bid: (mod, coll) for bid, mod, coll in BRAINS}
 
 SILENT_THRESHOLD_SEC = 5 * 60
 
@@ -113,3 +114,41 @@ async def admin_native_runtime_status(
         "silent_brains": silent_brains,
         "brains": rows,
     }
+
+
+@router.post("/admin/native-runtime/{brain_id}/tick-once")
+async def admin_native_runtime_tick_once(
+    brain_id: str = Path(..., description="canonical brain id"),
+    user: dict = Depends(get_current_user),  # noqa: B008, ARG001
+):
+    """Fire a single tick for one brain RIGHT NOW.
+
+    Doctrine (Friday post-redeploy validation):
+        After flipping `<BRAIN>_NATIVE_RUNTIME_ENABLED=true` and
+        deploying, the operator can call this endpoint instead of
+        waiting 60s for the scheduled tick. The returned summary
+        carries the SAME shape as a scheduled tick row — including
+        the list of `emitted` intents with their `intent_id` and
+        `gate_state`, so the operator can immediately confirm:
+          * the brain is running in-process
+          * it actually emitted BUY/SHORT (not HOLD)
+          * each intent cleared the gate chain (`gate_state` ≠
+            `dry_run_blocked`)
+
+    NO env-flag check: this endpoint runs the tick directly, so
+    the operator can also dry-test the runtime BEFORE flipping
+    the production flag. Useful for sanity-checking my native
+    runtime against current market data without enabling the
+    background loop.
+    """
+    bid = (brain_id or "").lower().strip()
+    if bid not in BRAIN_BY_ID:
+        raise HTTPException(
+            status_code=404,
+            detail=f"unknown brain_id {brain_id!r}; expected one of {sorted(BRAIN_BY_ID)}",
+        )
+    # Late import — each brain's runner.tick_once is the same shape.
+    import importlib
+    runner_mod = importlib.import_module(f"shared.brains.{bid}.runner")
+    summary = await runner_mod.tick_once(db)
+    return {"ok": True, "summary": summary}
