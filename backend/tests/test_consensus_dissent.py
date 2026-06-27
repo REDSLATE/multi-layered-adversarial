@@ -73,7 +73,12 @@ def test_same_side_moderate_gap_same_band_is_soft_dissent():
 
 
 def _adv(brain, action, conf):
-    return {"brain_id": brain, "action": action, "confidence": conf}
+    # Evidence-cited by default so legacy dissent tests don't get
+    # secondary-scaled by the evidence-quality multiplier added 2026-06-26.
+    return {
+        "brain_id": brain, "action": action, "confidence": conf,
+        "evidence_fields": ["rsi", "vwap", "spread_bps"],
+    }
 
 
 def test_hard_dissent_zeroes_boost_and_damps_governor():

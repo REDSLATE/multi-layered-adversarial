@@ -132,7 +132,7 @@ async def record_advisory_opinion(
     want it to break the seat path.
     """
     try:
-        await db[INTENT_CONSENSUS_POOL].insert_one({
+        doc = {
             "intent_id": opinion.intent_id,
             "brain_id": opinion.brain_id,
             "lane": opinion.lane,
@@ -141,7 +141,19 @@ async def record_advisory_opinion(
             "confidence": float(opinion.confidence),
             "ts": datetime.now(timezone.utc),
             "block_reason": block_reason,
-        })
+        }
+        # Persist evidence-citation fields if the BrainOpinion carries
+        # them (operator doctrine 2026-06-26 — see `consensus_evidence`).
+        # Brains that haven't been upgraded simply skip these fields;
+        # the dissent layer treats their opinions as rubber-stamps
+        # (0.25× weight).
+        ev = getattr(opinion, "evidence_fields", None)
+        if isinstance(ev, list) and ev:
+            doc["evidence_fields"] = list(ev)
+        obj = getattr(opinion, "objection", None)
+        if isinstance(obj, str) and obj.strip():
+            doc["objection"] = obj.strip()
+        await db[INTENT_CONSENSUS_POOL].insert_one(doc)
     except Exception:  # noqa: BLE001
         return
 
@@ -204,7 +216,8 @@ async def compute_consensus_boost(
             # (e.g. if the executor seat changed within the window).
             "brain_id": {"$ne": opinion.brain_id},
         },
-        {"_id": 0, "brain_id": 1, "action": 1, "ts": 1, "confidence": 1},
+        {"_id": 0, "brain_id": 1, "action": 1, "ts": 1, "confidence": 1,
+         "evidence_fields": 1, "objection": 1},
     ).sort("ts", -1).to_list(length=100)
 
     opposite = {"BUY": "SELL", "SELL": "BUY"}[opinion.action]
@@ -223,11 +236,13 @@ async def compute_consensus_boost(
         [b for b, a in seen_brain_actions.items() if a == opposite]
     )
 
-    # Persist the raw confidences so the adversarial classifier
-    # (`consensus_dissent`) can read same-side conf gaps when the
-    # ADVERSARIAL_ARGUMENT_MODE flag is on. Also re-walk newest-first
-    # rows to grab confidences alongside actions.
+    # Persist the raw confidences + evidence citations so the
+    # adversarial classifier (`consensus_dissent`) can apply the
+    # 0.25× weight penalty to rubber-stamp opinions (those with no
+    # `evidence_fields` and no `objection`).
     seen_brain_confidence: Dict[str, float] = {}
+    seen_brain_evidence: Dict[str, List[str]] = {}
+    seen_brain_objection: Dict[str, Optional[str]] = {}
     for r in rows:
         b = r.get("brain_id")
         c = r.get("confidence")
@@ -236,6 +251,12 @@ async def compute_consensus_boost(
                 seen_brain_confidence[b] = float(c)
             except (TypeError, ValueError):
                 continue
+        if b and b not in seen_brain_evidence:
+            ef = r.get("evidence_fields") or []
+            if isinstance(ef, list):
+                seen_brain_evidence[b] = ef
+        if b and b not in seen_brain_objection:
+            seen_brain_objection[b] = r.get("objection")
 
     raw_delta = per_brain * (len(agree_brains) - len(disagree_brains))
     delta = max(-cap, min(cap, raw_delta))
@@ -257,6 +278,8 @@ async def compute_consensus_boost(
                     "brain_id": b,
                     "action": a,
                     "confidence": seen_brain_confidence.get(b, 0.5),
+                    "evidence_fields": seen_brain_evidence.get(b, []),
+                    "objection": seen_brain_objection.get(b),
                 }
                 for b, a in seen_brain_actions.items()
             ]

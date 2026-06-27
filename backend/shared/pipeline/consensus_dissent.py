@@ -27,7 +27,7 @@ Operator can tune via `runtime_flags` Mongo doc (no redeploy):
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 
@@ -128,6 +128,13 @@ class DissentVerdict:
     damped_advisors: List[str]         # advisor_ids whose vote was halved
     require_barracuda: bool
     barracuda_present: bool
+    # ── Evidence-citation doctrine (2026-06-26) ─────────────────────
+    # Average evidence-weight across contributing advisors. 1.0 means
+    # every advisor cited market data (or had an objection); 0.25
+    # means every advisor was a rubber-stamper. Boost is scaled by
+    # this factor before the final cap.
+    evidence_quality: float = 1.0
+    evidence_weights: List[float] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -139,6 +146,8 @@ class DissentVerdict:
             "damped_advisors": list(self.damped_advisors),
             "require_barracuda": self.require_barracuda,
             "barracuda_present": self.barracuda_present,
+            "evidence_quality": round(self.evidence_quality, 4),
+            "evidence_weights": [round(w, 4) for w in self.evidence_weights],
         }
 
 
@@ -199,6 +208,17 @@ def apply_dissent(
     # 1. Classify every advisor's relation to the executor.
     relations: List[str] = []
     classified: List[tuple[Dict[str, Any], str]] = []
+    # Per-advisor evidence weight (operator doctrine 2026-06-26:
+    # "A brain may not agree or disagree unless it cites market
+    # fields"). Rubber-stampers (no evidence_fields, no objection)
+    # contribute 0.25× their normal vote.
+    evidence_weights: List[float] = []
+    try:
+        from shared.pipeline.consensus_evidence import (  # noqa: WPS433
+            advisor_weight as _adv_evidence_weight,
+        )
+    except Exception:  # noqa: BLE001
+        _adv_evidence_weight = lambda _: 1.0  # noqa: E731
     for adv in advisors:
         rel = classify_advisor_relation(
             executor_action=executor_action,
@@ -210,6 +230,7 @@ def apply_dissent(
         )
         relations.append(rel)
         classified.append((adv, rel))
+        evidence_weights.append(_adv_evidence_weight(adv))
 
     counts: Dict[str, int] = {}
     for r in relations:
@@ -264,6 +285,21 @@ def apply_dissent(
             scale = 1.0 - (groupthink_damp * (damped_count / contrib_count))
             boost = boost * max(0.0, scale)
 
+    # 3b. Evidence-quality scaling (operator doctrine 2026-06-26).
+    # Scale boost by the average evidence-weight of contributing
+    # (TRUE_AGREEMENT or any-dissent) advisors. A pool of rubber-
+    # stampers (weight 0.25 each) produces ¼ the boost a pool of
+    # evidence-backed advisors would. Skipped when no advisors
+    # contributed (boost already 0) to avoid 0/0.
+    evidence_quality: float = 1.0
+    contributing_weights = [
+        evidence_weights[i] for i, rel in enumerate(relations)
+        if rel != RELATION_HARD_DISSENT  # hard dissent already zeroed boost
+    ]
+    if boost != 0.0 and contributing_weights:
+        evidence_quality = sum(contributing_weights) / len(contributing_weights)
+        boost = boost * evidence_quality
+
     # 4. Cap the final boost at MAX_CONSENSUS_BOOST.
     if boost > max_boost:
         boost = max_boost
@@ -289,6 +325,8 @@ def apply_dissent(
         damped_advisors=damped,
         require_barracuda=require_barracuda_flag,
         barracuda_present=barracuda_present,
+        evidence_quality=evidence_quality,
+        evidence_weights=evidence_weights,
     )
 
 
