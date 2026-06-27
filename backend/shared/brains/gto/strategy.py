@@ -34,6 +34,16 @@ class Decision:
     stop_price: Optional[float]
     evidence: dict[str, Any] = field(default_factory=dict)
     skipped_reason: Optional[str] = None
+    # ── Operator doctrine 2026-06-26: evidence-citation contract ────
+    # Subset of `MarketSnapshot.__annotations__` keys consulted.
+    # GTO's momentum doctrine reads short/long trend, RSI, and ATR%.
+    # `volume_rel` is in the spec but not yet in GTO's indicator pull
+    # — added once the data layer surfaces it.
+    evidence_fields: tuple[str, ...] = ()
+    # Semicolon-joined adversarial-objection codes
+    # (e.g. "TREND_5M_DOWN;RSI_NOT_MOMENTUM"). None when momentum
+    # confirmation is clean.
+    objection: Optional[str] = None
 
 
 def _shorts_enabled() -> bool:
@@ -153,6 +163,22 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
         "sell_score": round(sell_signal, 4),
     }
 
+    # ── Operator-pinned evidence-citation contract (2026-06-26) ─────
+    # GTO's momentum doctrine consults short trend (close vs EMA12),
+    # long trend (close vs EMA26), RSI for momentum strength, and ATR%
+    # for volatility floor. These four are constant per emission.
+    evidence_fields_cited: tuple[str, ...] = (
+        "trend_5m", "trend_1h", "rsi", "atr_pct",
+    )
+
+    # Compute the citation-friendly metrics used by objection rules.
+    trend_5m_pct = ((last_close - ema12) / ema12) if ema12 > 0 else 0.0
+    trend_1h_pct = ((last_close - ema26) / ema26) if ema26 > 0 else 0.0
+    atr_pct_pct = ((atr14 / last_close) * 100.0) if last_close > 0 else 0.0
+    evidence_common["trend_5m_pct"] = round(trend_5m_pct * 100.0, 3)
+    evidence_common["trend_1h_pct"] = round(trend_1h_pct * 100.0, 3)
+    evidence_common["atr_pct_pct"] = round(atr_pct_pct, 3)
+
     if buy_signal > 0.25 and buy_signal >= sell_signal:
         confidence = min(0.85, 0.46 + 0.30 * buy_signal)
         if confidence < doctrine.min_confidence:
@@ -172,6 +198,21 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
             f"RSI={rsi14:.1f}, EMA(12)>EMA(26), above SMA(20). "
             f"target=+3*ATR({target_price}), stop=-1.5*ATR({stop_price})."
         )
+        # Operator-spec objection rules for BUY (momentum confirmation):
+        #   trend_5m ≤ 0, trend_1h ≤ 0, rsi < 50, atr_pct < 0.4
+        objection_codes_buy: list[str] = []
+        if trend_5m_pct <= 0:
+            objection_codes_buy.append(
+                f"TREND_5M_NOT_UP:{trend_5m_pct * 100:.2f}pct"
+            )
+        if trend_1h_pct <= 0:
+            objection_codes_buy.append(
+                f"TREND_1H_NOT_UP:{trend_1h_pct * 100:.2f}pct"
+            )
+        if rsi14 < 50:
+            objection_codes_buy.append(f"RSI_BELOW_MOMENTUM:{rsi14:.1f}")
+        if atr_pct_pct < 0.4:
+            objection_codes_buy.append(f"ATR_TOO_LOW:{atr_pct_pct:.2f}pct")
         return Decision(
             action="BUY",
             confidence=round(confidence, 4),
@@ -180,6 +221,8 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
             target_price=target_price,
             stop_price=stop_price,
             evidence=evidence_common,
+            evidence_fields=evidence_fields_cited,
+            objection=";".join(objection_codes_buy) or None,
         )
 
     if _shorts_enabled() and sell_signal > 0.25 and sell_signal > buy_signal:
@@ -198,6 +241,21 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
             f"RSI={rsi14:.1f}, EMA(26)>EMA(12), below SMA(20). "
             f"target=-3*ATR({target_price}), stop=+1.5*ATR({stop_price})."
         )
+        # Operator-spec objection rules for SELL/SHORT (symmetric):
+        #   trend_5m ≥ 0, trend_1h ≥ 0, rsi > 50, atr_pct < 0.4
+        objection_codes_sell: list[str] = []
+        if trend_5m_pct >= 0:
+            objection_codes_sell.append(
+                f"TREND_5M_NOT_DOWN:{trend_5m_pct * 100:.2f}pct"
+            )
+        if trend_1h_pct >= 0:
+            objection_codes_sell.append(
+                f"TREND_1H_NOT_DOWN:{trend_1h_pct * 100:.2f}pct"
+            )
+        if rsi14 > 50:
+            objection_codes_sell.append(f"RSI_ABOVE_MOMENTUM:{rsi14:.1f}")
+        if atr_pct_pct < 0.4:
+            objection_codes_sell.append(f"ATR_TOO_LOW:{atr_pct_pct:.2f}pct")
         return Decision(
             action="SHORT",
             confidence=round(confidence, 4),
@@ -206,6 +264,8 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
             target_price=target_price,
             stop_price=stop_price,
             evidence=evidence_common,
+            evidence_fields=evidence_fields_cited,
+            objection=";".join(objection_codes_sell) or None,
         )
 
     return _hold("no_momentum_signal", evidence=evidence_common)
