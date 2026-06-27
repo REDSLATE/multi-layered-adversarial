@@ -116,8 +116,14 @@ function LaneCard({ lane, data, err }) {
 
       {/* Counters */}
       <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-        <Counter label="Emitted 24h" value={cadence.total_intents ?? 0} />
-        <Counter label="Cleared dry-run" value={post.dry_run_passed_count ?? 0} />
+        <Counter
+          label="Directional 24h"
+          value={cadence.directional_total ?? cadence.total_intents ?? 0}
+        />
+        <Counter
+          label="Cleared dry-run"
+          value={cadence.directional_cleared_dry_run ?? post.dry_run_passed_count ?? 0}
+        />
         <Counter
           label="Executed"
           value={post.executed_count ?? 0}

@@ -297,22 +297,60 @@ async def _emission_cadence(lane: str, hours: int) -> dict:
     })
     executed = int(exec_count)
 
+    # Directional-only counts. HOLDs are advisory (action_routable
+    # filters them by design); reporting them in the "emitted" total
+    # produces misleading headlines like "1,655 emitted, 0 executed"
+    # when the directional pool was only a few hundred. Surface both.
+    directional_filter = {
+        "lane": lane, "ingest_ts": {"$gte": since},
+        "action": {"$in": ["BUY", "SELL", "SHORT"]},
+    }
+    directional_total = int(await db[SHARED_INTENTS].count_documents(
+        directional_filter,
+    ))
+    directional_cleared = int(await db[SHARED_INTENTS].count_documents({
+        **directional_filter, "gate_state": "dry_run_passed",
+    }))
+    directional_blocked = int(await db[SHARED_INTENTS].count_documents({
+        **directional_filter,
+        "gate_state": {"$in": ["dry_run_blocked", "blocked"]},
+    }))
+
     return {
         "window_hours": hours,
         "since": since,
         "total_intents": total,
         "executed": executed,
         "by_brain": by_brain,
+        # Directional-only counters for the headline / tile counters.
+        "directional_total": directional_total,
+        "directional_cleared_dry_run": directional_cleared,
+        "directional_blocked": directional_blocked,
     }
 
 
-async def _top_block_reasons(lane: str, hours: int, limit: int = 10) -> list[dict]:
+async def _top_block_reasons(
+    lane: str, hours: int, limit: int = 10,
+    directional_only: bool = True,
+) -> list[dict]:
     """Aggregate the top failed-gate names from dry_run results in
-    the window. Tells the operator WHICH gate is killing intents."""
+    the window. Tells the operator WHICH gate is killing intents.
+
+    `directional_only=True` (default for the headline) restricts the
+    pool to BUY/SELL/SHORT intents so HOLD-filter rejections (which
+    `action_routable` correctly fails by design — HOLDs are advisory,
+    not orders) don't swamp the count and produce a misleading
+    "Every directional intent fails action_routable" headline.
+    """
     since = (_now() - timedelta(hours=hours)).isoformat()
+    intent_filter: dict[str, Any] = {
+        "lane": lane, "ingest_ts": {"$gte": since},
+        "gate_state": {"$in": ["dry_run_blocked", "blocked"]},
+    }
+    if directional_only:
+        intent_filter["action"] = {"$in": ["BUY", "SELL", "SHORT"]}
     intent_ids = await db[SHARED_INTENTS].find(
-        {"lane": lane, "ingest_ts": {"$gte": since},
-         "gate_state": {"$in": ["dry_run_blocked", "blocked"]}},
+        intent_filter,
         {"_id": 0, "intent_id": 1},
     ).to_list(None)
     ids = [r["intent_id"] for r in intent_ids if r.get("intent_id")]
@@ -330,6 +368,13 @@ async def _top_block_reasons(lane: str, hours: int, limit: int = 10) -> list[dic
             if g.get("passed"):
                 continue
             name = g.get("name") or "unknown"
+            # Skip action_routable when in directional-only mode —
+            # by design this gate fails on HOLDs only, so for a pool
+            # filtered to directional intents it should never fire.
+            # Belt-and-suspenders for race conditions where a HOLD
+            # leaked into the pool.
+            if directional_only and name == "action_routable":
+                continue
             counter[name] = counter.get(name, 0) + 1
             if name not in examples:
                 examples[name] = (g.get("reason") or "")[:300]
@@ -519,12 +564,16 @@ async def lane_readiness(
         }
     elif top_dryrun and top_dryrun[0].get("gate"):
         g = top_dryrun[0]
+        dir_total = cadence.get("directional_total", 0)
+        dir_blocked = cadence.get("directional_blocked", 0)
         headline = {
             "status": "BLOCKED",
             "reason": g["gate"],
             "detail": (
-                f"Every directional intent fails `{g['gate']}` at dry-run "
-                f"({g['fail_count']} in last {hours}h). "
+                f"Of {dir_total} directional intents (BUY/SELL/SHORT) "
+                f"in last {hours}h, {dir_blocked} blocked at dry-run. "
+                f"Dominant failing gate: `{g['gate']}` "
+                f"({g['fail_count']} fails). "
                 f"Example: {g.get('example_reason', '')[:160]}"
             ),
             "fix": "",
