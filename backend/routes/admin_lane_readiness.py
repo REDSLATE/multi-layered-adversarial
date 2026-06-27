@@ -53,6 +53,81 @@ def _check(ok: bool, detail: str, fix: Optional[str] = None) -> dict:
     return {"ok": bool(ok), "detail": detail, "fix": fix}
 
 
+# Operator-facing fix command per `submit_skip_category`. Keys mirror
+# the SKIP_CATEGORY_* constants in `shared.auto_submit_policy`.
+_SKIP_FIX: dict[str, str] = {
+    "policy_disabled": (
+        'POST /api/admin/auto-submit/policy  {"enabled": true, ...}'
+    ),
+    "low_confidence": (
+        'POST /api/admin/auto-submit/policy  {"confidence_min": 0.45}  '
+        '(or switch to tier_2_aggressive)'
+    ),
+    "equity_after_hours": (
+        "Wait for US RTH, or POST /api/admin/equity-extended-hours "
+        '{"enabled": true}'
+    ),
+    "seat_authority_mismatch": (
+        "Advisor brain emitting on a seat it doesn't hold. Enable "
+        "CONSENSUS_MODE_ENABLED=true in env to convert these into "
+        "advisor opinions instead of blocking."
+    ),
+    "advisor_opinion_stored": (
+        "Not a block — advisor opinions are being stored for the consensus "
+        "engine. The seat holder's own intent is what fires; check whether "
+        "the seat holder is emitting directionally."
+    ),
+    "seat_vacant": (
+        "Assign a seat holder via Quick Seat Switches."
+    ),
+    "lane_filtered": (
+        'POST /api/admin/auto-submit/policy  '
+        '{"allowed_lanes": ["equity", "crypto"]}'
+    ),
+    "brain_filtered": (
+        'POST /api/admin/auto-submit/policy  {"allowed_brains": '
+        '["camino", "barracuda", "hellcat", "gto"]}'
+    ),
+    "action_filtered": (
+        "Brain is emitting HOLD/non-directional. Not auto-submittable by design."
+    ),
+    "already_executed": (
+        "Self-race — auto-submit fired twice on the same intent. "
+        "Usually transient."
+    ),
+    "auto_submit_failed": (
+        "Intent passed `matches_tier_1` but `execution_submit` raised. "
+        "Inspect `post_dry_run_outcomes.samples[].reason` and "
+        "/api/admin/intents/auto-submit-failures/breakdown for the gate."
+    ),
+    "internal_error": (
+        "Exception in the auto-submit chain. Check submit_skip_reasons "
+        "for the exception_type."
+    ),
+    "missing_auto_submit_row": (
+        "Auto-submit chain never wrote an audit row for these intents — "
+        "silent leak. Check supervisor logs around the intent_ids."
+    ),
+    "dry_run_blocked": (
+        "Intent's gate-state changed AFTER dry-run passed (race). "
+        "Usually transient."
+    ),
+    "dry_run_pending": (
+        "Dry-run task still running — benign race; auto-resolves."
+    ),
+    "dry_run_missing": (
+        "dry_run_state never set on intent — silent leak in emit path."
+    ),
+    "hold_action": (
+        "HOLD intent — not auto-submittable by design (informational only)."
+    ),
+}
+
+
+def _fix_for_skip_category(category: str, lane: str) -> str:  # noqa: ARG001
+    return _SKIP_FIX.get(category, "")
+
+
 async def _check_lane_toggle(lane: str) -> dict:
     doc = await db[LANE_EXECUTION_TOGGLES].find_one(
         {"_id": "current"}, {"_id": 0, lane: 1, f"{lane}_updated_at": 1, f"{lane}_updated_by": 1},
@@ -388,12 +463,100 @@ async def lane_readiness(
     }
     ready = all(c["ok"] for c in checks.values())
 
+    cadence = await _emission_cadence(lane, hours)
+    post = await _post_dry_run_outcomes(lane, hours)
+
+    # ── Single-sentence headline ────────────────────────────────────
+    # Operator wants ONE answer at the top of the page, not a tile
+    # collage. Priority order:
+    #   1. If any prerequisite gate is OFF, name it.
+    #   2. Else if intents are executing, declare READY.
+    #   3. Else if intents pass dry-run but die at auto-submit, name
+    #      the dominant submit_skip_category.
+    #   4. Else if intents are stuck in pending/blocked at dry-run,
+    #      name the dominant dry-run gate failure.
+    #   5. Else "no emissions" — upstream brain not running.
+    failing_check = next(((n, c) for n, c in checks.items() if not c["ok"]), None)
+    top_dryrun = (await _top_block_reasons(lane, hours, limit=1)) or [{}]
+    if failing_check is not None:
+        name, c = failing_check
+        headline = {
+            "status": "BLOCKED",
+            "reason": name,
+            "detail": c.get("detail", ""),
+            "fix": c.get("fix") or "",
+            "stage": "prerequisite",
+        }
+    elif post.get("executed_count", 0) > 0:
+        headline = {
+            "status": "TRADING",
+            "reason": "executed",
+            "detail": (
+                f"{post.get('executed_count', 0)} executed in last {hours}h "
+                f"({post.get('dry_run_passed_count', 0)} passed dry-run, "
+                f"{cadence.get('total_intents', 0)} total emissions)"
+            ),
+            "fix": "",
+            "stage": "execute",
+        }
+    elif post.get("submit_skip_categories"):
+        dom_cat, dom_count = next(iter(post["submit_skip_categories"].items()))
+        sample_reason = ""
+        for s in post.get("samples", []):
+            if s.get("skip_category") == dom_cat:
+                sample_reason = s.get("reason", "") or ""
+                break
+        headline = {
+            "status": "BLOCKED",
+            "reason": dom_cat,
+            "detail": (
+                f"{dom_count} intents passed dry-run then died at "
+                f"`{dom_cat}` in the last {hours}h. Example reason: "
+                f"{sample_reason or '(none captured)'}"
+            ),
+            "fix": _fix_for_skip_category(dom_cat, lane),
+            "stage": "auto_submit",
+        }
+    elif top_dryrun and top_dryrun[0].get("gate"):
+        g = top_dryrun[0]
+        headline = {
+            "status": "BLOCKED",
+            "reason": g["gate"],
+            "detail": (
+                f"Every directional intent fails `{g['gate']}` at dry-run "
+                f"({g['fail_count']} in last {hours}h). "
+                f"Example: {g.get('example_reason', '')[:160]}"
+            ),
+            "fix": "",
+            "stage": "dry_run",
+        }
+    elif cadence.get("total_intents", 0) == 0:
+        headline = {
+            "status": "BLOCKED",
+            "reason": "no_emissions",
+            "detail": (
+                f"No intents emitted on this lane in {hours}h. "
+                f"Brain runtimes may be off (check Native Brain Runtimes tile)."
+            ),
+            "fix": "Verify brains are running. See /admin/diagnostics → Native Brain Runtimes.",
+            "stage": "emission",
+        }
+    else:
+        headline = {
+            "status": "UNCLEAR",
+            "reason": "no_signal",
+            "detail": "Intents are flowing but no decisive blocker found. Investigate samples.",
+            "fix": "",
+            "stage": "unknown",
+        }
+
     return {
         "lane": lane,
         "ready_to_trade": ready,
+        "headline": headline,
         "checks": checks,
-        "emission_cadence": await _emission_cadence(lane, hours),
-        "post_dry_run_outcomes": await _post_dry_run_outcomes(lane, hours),
+        "emission_cadence": cadence,
+        "post_dry_run_outcomes": post,
         "top_block_reasons": await _top_block_reasons(lane, hours),
         "as_of": _now().isoformat(),
     }

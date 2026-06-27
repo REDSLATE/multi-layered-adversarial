@@ -21,6 +21,7 @@ import RecentIngests from "@/pages/RecentIngests";
 import RuntimeDetail from "@/pages/RuntimeDetail";
 import BrainConsole from "@/pages/BrainConsole";
 import Intents from "@/pages/Intents";
+import TradeFlow from "@/pages/TradeFlow";  // 2026-06-26 single-purpose "is this lane trading?"
 import ParadoxV2Page from "@/pages/ParadoxV2";
 import SetupPage from "@/pages/Setup";
 import Hypothesis from "@/pages/Hypothesis";
@@ -138,6 +139,7 @@ function App() {
             <Route path="runtime/:runtime" element={<RuntimeDetail />} />
             <Route path="brain/:brain" element={<BrainConsole />} />
             <Route path="intents" element={<Intents />} />
+            <Route path="trade-flow" element={<TradeFlow />} />
             <Route path="paradox" element={<ParadoxV2Page />} />
             <Route path="setup" element={<SetupPage />} />
             <Route path="hypothesis" element={<Hypothesis />} />
