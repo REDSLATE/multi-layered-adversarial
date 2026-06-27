@@ -33,6 +33,18 @@ class Decision:
     stop_price: Optional[float]
     evidence: dict[str, Any] = field(default_factory=dict)
     skipped_reason: Optional[str] = None
+    # ── Operator doctrine 2026-06-26: evidence-citation contract ────
+    # Hellcat is the EXECUTION-SAFETY voice. Cites the fields it
+    # consulted (subset of MarketSnapshot keys). Validator requires
+    # ≥ 3. Missing data → field is not cited (honesty over invention).
+    evidence_fields: tuple[str, ...] = ()
+    # Semicolon-joined adversarial-objection codes per operator spec:
+    #   WIDE_SPREAD_EXECUTION_RISK
+    #   LOW_VOLUME_LIQUIDITY_RISK
+    #   LOW_ATR_NO_RANGE
+    #   EXTREME_ATR_VOLATILITY_RISK
+    #   NEGATIVE_NEWS_RISK
+    objection: Optional[str] = None
 
 
 def _shorts_enabled() -> bool:
@@ -151,6 +163,55 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
         "sell_score": round(sell_signal, 4),
     }
 
+    # ── Operator-pinned evidence-citation contract (2026-06-26) ─────
+    # Hellcat's role: execution-safety voice. Cites the
+    # MarketSnapshot-schema fields it actually consulted. `price` and
+    # `atr_pct` are always available; `spread_bps`, `volume_rel`, and
+    # `news_score` are cited only when present in the snapshot so the
+    # citation stays honest.
+    atr_pct_pct = (atr14 / last_close * 100.0) if last_close > 0 else 0.0
+    spread_bps = _safe_float(indicators.get("spread_bps"))
+    # volume_rel may be carried as `volume_rel` or `rvol` (relative
+    # volume) — accept either alias.
+    volume_rel = (
+        _safe_float(indicators.get("volume_rel"))
+        if indicators.get("volume_rel") is not None
+        else _safe_float(indicators.get("rvol"))
+    )
+    news_score = _safe_float(indicators.get("news_score"))
+
+    cited_fields: list[str] = ["price", "atr_pct"]
+    if spread_bps is not None:
+        cited_fields.append("spread_bps")
+    if volume_rel is not None:
+        cited_fields.append("volume_rel")
+    if news_score is not None:
+        cited_fields.append("news_score")
+    evidence_fields_cited: tuple[str, ...] = tuple(cited_fields)
+
+    evidence_common["atr_pct_pct"] = round(atr_pct_pct, 3)
+    if spread_bps is not None:
+        evidence_common["spread_bps"] = round(spread_bps, 2)
+    if volume_rel is not None:
+        evidence_common["volume_rel"] = round(volume_rel, 3)
+    if news_score is not None:
+        evidence_common["news_score"] = round(news_score, 3)
+
+    def _execution_objections() -> list[str]:
+        """Per operator spec — fire only when data is available."""
+        codes: list[str] = []
+        if spread_bps is not None and spread_bps > 75.0:
+            codes.append(f"WIDE_SPREAD_EXECUTION_RISK:{spread_bps:.0f}bps")
+        if volume_rel is not None and volume_rel < 1.2:
+            codes.append(f"LOW_VOLUME_LIQUIDITY_RISK:{volume_rel:.2f}x")
+        if atr_pct_pct < 0.25:
+            codes.append(f"LOW_ATR_NO_RANGE:{atr_pct_pct:.2f}pct")
+        if atr_pct_pct > 6.0:
+            codes.append(f"EXTREME_ATR_VOLATILITY_RISK:{atr_pct_pct:.2f}pct")
+        if news_score is not None and news_score < -0.35:
+            codes.append(f"NEGATIVE_NEWS_RISK:{news_score:.2f}")
+        return codes
+
     if buy_signal > 0.25 and buy_signal >= sell_signal:
         # Hellcat's confidence floor (0.48) is the highest — start
         # higher to clear it on legitimate breakouts.
@@ -179,6 +240,8 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
             target_price=target_price,
             stop_price=stop_price,
             evidence=evidence_common,
+            evidence_fields=evidence_fields_cited,
+            objection=";".join(_execution_objections()) or None,
         )
 
     if _shorts_enabled() and sell_signal > 0.25 and sell_signal > buy_signal:
@@ -206,6 +269,8 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
             target_price=target_price,
             stop_price=stop_price,
             evidence=evidence_common,
+            evidence_fields=evidence_fields_cited,
+            objection=";".join(_execution_objections()) or None,
         )
 
     return _hold("no_breakout_signal", evidence=evidence_common)
