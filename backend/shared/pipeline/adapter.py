@@ -35,7 +35,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from shared.broker_router import route_order
 from shared.pipeline import (
@@ -155,6 +155,22 @@ def _opinion_from_intent(intent: Dict[str, Any], requested_notional: float) -> B
         if k in intent:
             evidence[k] = intent[k]
 
+    # ── Operator doctrine 2026-06-26: lift adversarial citations ────
+    # The native runtime parks evidence_fields + objection under
+    # `evidence.adversarial`. Lift them to BrainOpinion's top-level
+    # fields so the consensus pool stores them and the dissent layer
+    # can weight this brain accordingly.
+    intent_evidence = intent.get("evidence") or {}
+    adv = intent_evidence.get("adversarial") or {}
+    adv_evidence_fields: List[str] = []
+    raw_ef = adv.get("evidence_fields")
+    if isinstance(raw_ef, list):
+        adv_evidence_fields = [str(f) for f in raw_ef if isinstance(f, str)]
+    adv_objection: Optional[str] = None
+    raw_obj = adv.get("objection")
+    if isinstance(raw_obj, str) and raw_obj.strip():
+        adv_objection = raw_obj.strip()
+
     return BrainOpinion(
         intent_id=str(intent.get("intent_id") or uuid.uuid4()),
         brain_id=str(intent.get("stack") or intent.get("brain_id") or "").lower(),
@@ -164,15 +180,11 @@ def _opinion_from_intent(intent: Dict[str, Any], requested_notional: float) -> B
         confidence=float(intent.get("confidence") or 0.0),
         notional_usd=float(requested_notional or 0.0),
         evidence=evidence,
-        # ─── Paradox v3 lift (Step 5) ─────────────────────────────
-        # Lift the persisted intent doc into v3 shape so SeatPolicy
-        # can read `plan.intent` uniformly across v2 + v3 rows.
-        # `normalize_intent` synthesises the plan from `action` for
-        # v2 docs (per PRD §6.2 mapping). For v3 docs it passes the
-        # operator-shipped plan through with defaults filled.
         intent_version=_v3_lifted.get("intent_version"),
         plan=_v3_lifted.get("plan"),
         execution=_v3_lifted.get("execution"),
+        evidence_fields=adv_evidence_fields,
+        objection=adv_objection,
     )
 
 

@@ -10,7 +10,7 @@ analytics, the /why endpoint, and the UI can rely on stable contracts.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 
 Action = Literal["BUY", "SELL", "HOLD", "ABSTAIN"]
@@ -51,6 +51,15 @@ class BrainOpinion:
     # so the pipeline dispatches to the adapter's limit-order path
     # instead of market.
     execution: Optional[Dict[str, Any]] = None
+    # ── Operator doctrine 2026-06-26: evidence-citation contract ────
+    # Subset of `MarketSnapshot.__annotations__` keys this brain
+    # consulted (e.g. ["rsi", "atr_pct", "trend_1h"]). Empty list =
+    # rubber-stamp; downweighted to 0.25× by the dissent layer.
+    evidence_fields: List[str] = field(default_factory=list)
+    # Semicolon-joined adversarial-objection codes
+    # (e.g. "RSI_NOT_OVERSOLD;SPREAD_TOO_WIDE"). None when the brain
+    # had no objections. Cited dissent grants full weight.
+    objection: Optional[str] = None
 
 
 @dataclass

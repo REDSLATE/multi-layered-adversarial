@@ -46,6 +46,16 @@ class Decision:
     stop_price: Optional[float]
     evidence: dict[str, Any] = field(default_factory=dict)
     skipped_reason: Optional[str] = None  # populated for HOLDs
+    # ── Operator doctrine 2026-06-26: evidence-citation contract ────
+    # Subset of `MarketSnapshot.__annotations__` keys the brain
+    # consulted. Validator (`consensus_evidence.validate_opinion`)
+    # requires ≥ 3 valid names. Defaults to `()` so HOLDs/legacy
+    # callers keep working.
+    evidence_fields: tuple[str, ...] = ()
+    # Semicolon-joined adversarial-objection codes (e.g.
+    # "RSI_NOT_OVERSOLD;PRICE_NEAR_UPPER_BAND"). None when Barracuda
+    # is taking a clean BUY/SHORT setup with no flags.
+    objection: Optional[str] = None
 
 
 def _shorts_enabled() -> bool:
@@ -163,6 +173,38 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
         "sell_score": round(rsi_sell_strength, 4),
     }
 
+    # ── Operator-pinned evidence-citation contract (2026-06-26) ─────
+    # Barracuda always inspects the same MarketSnapshot fields:
+    #   rsi          ← rsi14
+    #   atr_pct      ← atr14
+    #   trend_1h     ← close-to-sma50 trend slope (proxy)
+    # These three are constant across every Barracuda emission. The
+    # operator's spec requires ≥ 3 cited MarketSnapshot keys, so this
+    # is the minimum honest disclosure of what Barracuda actually
+    # consulted. Other brains will cite their own field sets.
+    evidence_fields_cited: tuple[str, ...] = ("rsi", "atr_pct", "trend_1h")
+
+    # Build the adversarial-objection set from the same signals — i.e.
+    # Barracuda's reasons to be CAUTIOUS even if it's about to issue a
+    # BUY. These are surfaced to the consensus engine so a same-side
+    # opinion that includes objections still earns full weight.
+    objection_codes: list[str] = []
+    # RSI sanity — mean-reversion BUY wants RSI deeply oversold; the
+    # closer to neutral, the weaker the edge.
+    if rsi14 > 30.0:
+        objection_codes.append(f"RSI_NOT_DEEPLY_OVERSOLD:{rsi14:.1f}")
+    # BB position — should be near lower band for a long-reversion entry.
+    if bb_pos > 0.30:
+        objection_codes.append(f"PRICE_NOT_AT_LOWER_BAND:{bb_pos:.2f}")
+    # ATR sanity — a flat tape gives no reversion edge to capture.
+    atr_pct = (atr14 / last_close) if last_close > 0 else 0.0
+    if atr_pct < 0.005:
+        objection_codes.append(f"ATR_TOO_LOW:{atr_pct * 100:.2f}pct")
+    # Trend filter — fading a strong downtrend is dangerous.
+    trend_slope = ((last_close - sma50) / sma50) if sma50 > 0 else 0.0
+    if trend_slope < -0.05:
+        objection_codes.append(f"TREND_BELOW_SMA50:{trend_slope * 100:.1f}pct")
+
     # BUY wins if buy_signal > sell_signal AND clears the floor.
     if buy_signal > 0.20 and buy_signal >= sell_signal and in_buy_trend:
         # confidence: 0.45..0.75, scaled by doctrine.mean_reversion_weight.
@@ -194,6 +236,8 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
             target_price=target_price,
             stop_price=stop_price,
             evidence=evidence_common,
+            evidence_fields=evidence_fields_cited,
+            objection=";".join(objection_codes) or None,
         )
 
     if (
@@ -226,6 +270,8 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
             target_price=target_price,
             stop_price=stop_price,
             evidence=evidence_common,
+            evidence_fields=evidence_fields_cited,
+            objection=";".join(objection_codes) or None,
         )
 
     return _hold(

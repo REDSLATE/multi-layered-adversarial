@@ -141,6 +141,18 @@ def _build_intent_body(
             "emit_source": f"{brain_id}_native_runtime",
             "emit_source_version": runtime_version,
             **({"input_provenance": provenance} if provenance else {}),
+            # ── Operator doctrine 2026-06-26: evidence-citation ─────
+            # Surface citations under `evidence.adversarial` so the
+            # opinion-from-intent adapter lifts them into BrainOpinion
+            # without colliding with existing keys. Empty/None
+            # branches preserve legacy behavior for brains that
+            # haven't been upgraded yet.
+            **({
+                "adversarial": {
+                    "evidence_fields": list(decision.evidence_fields),
+                    "objection": decision.objection,
+                }
+            } if (decision.evidence_fields or decision.objection) else {}),
         },
         raw_action=decision.action,
         raw_confidence=float(decision.confidence),
