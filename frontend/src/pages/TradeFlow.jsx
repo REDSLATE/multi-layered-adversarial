@@ -163,6 +163,52 @@ function LaneCard({ lane, data, err }) {
             ))}
           </Section>
 
+          {/* Emission shape — directionals vs HOLDs */}
+          <Section title="Emission shape (24h)">
+            <div className="grid grid-cols-3 gap-2 text-[11px]">
+              <div className="rounded border border-zinc-800 bg-zinc-900/40 px-2 py-1.5">
+                <div className="text-zinc-100 font-mono text-sm">
+                  {cadence.total_intents ?? 0}
+                </div>
+                <div className="text-zinc-500 uppercase tracking-wider text-[9px]">
+                  total
+                </div>
+              </div>
+              <div className="rounded border border-zinc-800 bg-zinc-900/40 px-2 py-1.5">
+                <div className="text-zinc-100 font-mono text-sm">
+                  {cadence.directional_total ?? 0}
+                </div>
+                <div className="text-zinc-500 uppercase tracking-wider text-[9px]">
+                  BUY/SELL/SHORT
+                </div>
+              </div>
+              <div
+                data-testid={`trade-flow-hold-ratio-${lane}`}
+                className={`rounded border px-2 py-1.5 ${
+                  (cadence.hold_ratio_pct ?? 0) > 80
+                    ? "border-amber-700/40 bg-amber-950/30"
+                    : "border-zinc-800 bg-zinc-900/40"
+                }`}
+              >
+                <div className="text-zinc-100 font-mono text-sm">
+                  {cadence.hold_total ?? 0}
+                  <span className="text-zinc-500 text-[10px] ml-1">
+                    ({cadence.hold_ratio_pct ?? 0}%)
+                  </span>
+                </div>
+                <div className="text-zinc-500 uppercase tracking-wider text-[9px]">
+                  HOLD
+                </div>
+              </div>
+            </div>
+            {(cadence.hold_ratio_pct ?? 0) > 80 && (
+              <p className="mt-2 text-[11px] text-amber-300/80">
+                ⚠ HOLD ratio &gt; 80% — brains are seeing a signal-poor tape.
+                Verify indicator-input freshness on the Brain Input Health tile.
+              </p>
+            )}
+          </Section>
+
           {/* Skip-category histogram (what's killing intents after dry-run) */}
           {Object.keys(skipCats).length > 0 && (
             <Section title="Post-dry-run blockers">

@@ -316,6 +316,17 @@ async def _emission_cadence(lane: str, hours: int) -> dict:
         "gate_state": {"$in": ["dry_run_blocked", "blocked"]},
     }))
 
+    # HOLD-ratio surface — flags signal-poor environments where the
+    # brains are emitting mostly "watch, don't act" intents. A high
+    # HOLD ratio (>60%) is normal when the tape is choppy; sustained
+    # >80% across the council suggests indicator-input dehydration.
+    hold_total = int(await db[SHARED_INTENTS].count_documents({
+        "lane": lane, "ingest_ts": {"$gte": since}, "action": "HOLD",
+    }))
+    hold_ratio_pct = (
+        round(100.0 * hold_total / total, 1) if total > 0 else 0.0
+    )
+
     return {
         "window_hours": hours,
         "since": since,
@@ -326,6 +337,9 @@ async def _emission_cadence(lane: str, hours: int) -> dict:
         "directional_total": directional_total,
         "directional_cleared_dry_run": directional_cleared,
         "directional_blocked": directional_blocked,
+        # Signal-quality surface.
+        "hold_total": hold_total,
+        "hold_ratio_pct": hold_ratio_pct,
     }
 
 
