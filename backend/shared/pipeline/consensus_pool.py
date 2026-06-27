@@ -86,6 +86,12 @@ class ConsensusResult:
     agree_brains: List[str] = field(default_factory=list)
     disagree_brains: List[str] = field(default_factory=list)
     advisor_count: int = 0                # total advisors in window (incl. HOLD)
+    # ── Adversarial argument mode (2026-06-26) ──────────────────────
+    # Populated when `ADVERSARIAL_ARGUMENT_MODE=true`. Carries the
+    # dissent classification + governor multiplier the seat may
+    # consume. None when the legacy boost path ran (mode disabled).
+    dissent: Optional[Dict[str, Any]] = None
+    governor_multiplier: float = 1.0
 
     # Backward-compat alias for the older `delta` name still referenced
     # by tests written against the first cut. Kept as a property so we
@@ -106,6 +112,8 @@ class ConsensusResult:
             "agree_brains": self.agree_brains,
             "disagree_brains": self.disagree_brains,
             "advisor_count": self.advisor_count,
+            "dissent": self.dissent,
+            "governor_multiplier": round(self.governor_multiplier, 4),
         }
 
 
@@ -196,7 +204,7 @@ async def compute_consensus_boost(
             # (e.g. if the executor seat changed within the window).
             "brain_id": {"$ne": opinion.brain_id},
         },
-        {"_id": 0, "brain_id": 1, "action": 1, "ts": 1},
+        {"_id": 0, "brain_id": 1, "action": 1, "ts": 1, "confidence": 1},
     ).sort("ts", -1).to_list(length=100)
 
     opposite = {"BUY": "SELL", "SELL": "BUY"}[opinion.action]
@@ -215,8 +223,57 @@ async def compute_consensus_boost(
         [b for b, a in seen_brain_actions.items() if a == opposite]
     )
 
+    # Persist the raw confidences so the adversarial classifier
+    # (`consensus_dissent`) can read same-side conf gaps when the
+    # ADVERSARIAL_ARGUMENT_MODE flag is on. Also re-walk newest-first
+    # rows to grab confidences alongside actions.
+    seen_brain_confidence: Dict[str, float] = {}
+    for r in rows:
+        b = r.get("brain_id")
+        c = r.get("confidence")
+        if b and c is not None and b not in seen_brain_confidence:
+            try:
+                seen_brain_confidence[b] = float(c)
+            except (TypeError, ValueError):
+                continue
+
     raw_delta = per_brain * (len(agree_brains) - len(disagree_brains))
     delta = max(-cap, min(cap, raw_delta))
+
+    # ── Adversarial argument mode (operator pin 2026-06-26) ─────────
+    # When `ADVERSARIAL_ARGUMENT_MODE=true`, run the dissent classifier
+    # over the raw advisor opinions and override `delta` per the
+    # operator's doctrine (hard dissent kills boost, soft dissent
+    # damps it, groupthink advisors get halved, Barracuda required).
+    dissent_evidence: Optional[Dict[str, Any]] = None
+    governor_multiplier: float = 1.0
+    try:
+        from shared.pipeline.consensus_dissent import (  # noqa: WPS433
+            apply_dissent, is_enabled,
+        )
+        if is_enabled():
+            advisor_list = [
+                {
+                    "brain_id": b,
+                    "action": a,
+                    "confidence": seen_brain_confidence.get(b, 0.5),
+                }
+                for b, a in seen_brain_actions.items()
+            ]
+            verdict = apply_dissent(
+                executor_action=opinion.action,
+                executor_confidence=base,
+                advisors=advisor_list,
+                raw_boost=delta,
+            )
+            delta = verdict.boost
+            governor_multiplier = verdict.governor_multiplier
+            dissent_evidence = verdict.to_dict()
+    except Exception:  # noqa: BLE001
+        # Fail-open — if the adversarial layer raises, fall back to
+        # the legacy boost so we never lose decisions on the new code.
+        pass
+
     effective = max(0.0, min(1.0, base + delta))
 
     return ConsensusResult(
@@ -230,6 +287,8 @@ async def compute_consensus_boost(
         agree_brains=agree_brains,
         disagree_brains=disagree_brains,
         advisor_count=len(seen_brain_actions),
+        dissent=dissent_evidence,
+        governor_multiplier=governor_multiplier,
     )
 
 
