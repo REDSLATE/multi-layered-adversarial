@@ -39,6 +39,7 @@ const SECTIONS = [
     items: [
       { to: "/admin/hypothesis", label: "Hypothesis", icon: Sparkle, testid: "nav-hypothesis" },
       { to: "/admin/trade-flow", label: "Trade Flow", icon: Pulse, testid: "nav-trade-flow" },
+      { to: "/admin/witnesses", label: "Witnesses", icon: Eye, testid: "nav-witnesses" },
       { to: "/admin/intents", label: "Intents", icon: Lightning, testid: "nav-intents" },
       { to: "/admin/paradox", label: "Seraph", icon: Eye, testid: "nav-paradox" },
       { to: "/admin/learning-ladder", label: "Live Routes", icon: TrendUp, testid: "nav-learning-ladder" },
