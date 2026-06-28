@@ -1,3 +1,97 @@
+## 2026-02-25 (later) — `GET /api/admin/equity-trade-readiness` diagnostic endpoint
+
+### Operator brief
+Single-shot answer to "why isn't equity trading?" without scrolling
+through hundreds of intent rows. Per-intent authority chain
+(`raw_action → normalized_action → broker_action → submit_allowed`),
+ordered blocker list, `first_failing_gate` field, plus a 24h fleet
+histogram showing which gate is the dominant blocker.
+
+### Operator-pinned constraint
+> "Don't let this endpoint recompute doctrine. It should report
+>  what happened from persisted intent/audit fields as much as
+>  possible. Recomputing can create a second truth."
+
+Honored. The endpoint is a JOIN + reshape over:
+- `shared_intents` (raw_action, display_action, dry_run_state,
+  dry_run_reason, hold_reason, target/stop, would_have_traded_…)
+- `pipeline_receipts` (final_status, final_reason,
+  restriction_source, broker_called, consensus snapshot)
+- Current global state for the "would-this-fire-NOW" projection:
+  `get_seat_holder("executor")`, `is_equity_rth()`,
+  `is_equity_extended_hours()`, `get_policy().allowed_actions`.
+
+No verdict re-runs a gate's doctrine. The `broker_action`
+projection is explicitly labeled `source: "diagnostic_projection_cash_account"`
+so the operator knows it's not pulled from a persisted broker
+submission record.
+
+### Canonical gate order (operator-pinned)
+```
+brain_hold → seat_holder → market_hours → dry_run →
+consensus → action_allowed → rr_validity → roadguard
+```
+
+### What the endpoint returned on first live call (preview, 24h)
+```
+total_intents_window: 2233
+by_first_failing_gate:
+  brain_hold:    2222   ← 99.5% — confirms the placebo bug we fixed
+  seat_holder:      7   ← next bottleneck after brain_hold collapses
+  market_hours:     4
+```
+
+**Operator decoding**: once the now-wired `min_confidence` UI knob
+brings `brain_hold` down, the diagnostic will surface `seat_holder`
+or `market_hours` as the next-largest gate. Linear unblocking now
+possible without redeploys.
+
+### Files
+- `routes/equity_trade_readiness.py` — endpoint (~340 LOC)
+- `server_modules/router_registry.py` — registration (2-line patch)
+- `tests/test_equity_trade_readiness_2026_02_25.py` — 30-case
+  regression suite (broker-action projection table, gate-order
+  pinning, first-failing-gate walk, per-gate verdict shapes,
+  end-to-end shape contract, idempotency)
+
+### Verified
+- Endpoint returns HTTP 200 in 185ms against live preview data.
+- 30/30 regression tests pass.
+- Lint clean.
+- Backend boots clean.
+
+### Operator usage
+```bash
+# Whole fleet, 24h:
+curl -s -H "Authorization: Bearer $JWT" \
+  https://mission.risedual.ai/api/admin/equity-trade-readiness
+
+# Drill into one symbol's recent intents:
+curl -s -H "Authorization: Bearer $JWT" \
+  'https://mission.risedual.ai/api/admin/equity-trade-readiness?symbol=NVDA&limit=10'
+
+# Wide window for weekend triage:
+curl -s -H "Authorization: Bearer $JWT" \
+  'https://mission.risedual.ai/api/admin/equity-trade-readiness?hours=72'
+```
+
+### What this does NOT do (intentional non-features)
+- Does not show position state (use `/admin/runtime/positions`).
+- Does not show fills (use `/admin/broker-fills`).
+- Does not let the operator MUTATE anything — pure read.
+- Does not include crypto — the auditor's 6 blockers are
+  equity-specific. Crypto trades 24/7, has different SHORT semantics,
+  and lives behind a different bridge.
+
+### Frontend wiring (deferred — backend-only this session)
+A "Trade Readiness" tile on the Intents page that hits this
+endpoint and renders the `first_failing_gate` histogram + a
+drill-into-symbol view would be the natural next step. Backend
+contract is locked by tests; UI can be built any time.
+
+---
+
+
 ## 2026-02-25 (later) — `brain_tuning_cache.get_override()` placebo bug FIXED
 
 ### Diagnostic that found it

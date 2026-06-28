@@ -161,6 +161,7 @@ from routes.equity_extended_hours_admin import router as equity_extended_hours_a
 from routes.canary_admin import router as canary_admin_router
 from routes.brain_tuning_admin import router as brain_tuning_admin_router
 from routes.pipeline_blocker_histogram import router as pipeline_blocker_histogram_router
+from routes.equity_trade_readiness import router as equity_trade_readiness_router
 from routes.admin_auto_submit import router as admin_auto_submit_router
 from routes.admin_quiver import router as admin_quiver_router
 from routes.parabolic_phase_admin import router as parabolic_phase_admin_router
@@ -249,6 +250,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(canary_admin_router)
     api_router.include_router(brain_tuning_admin_router)
     api_router.include_router(pipeline_blocker_histogram_router)
+    api_router.include_router(equity_trade_readiness_router)
     api_router.include_router(admin_auto_submit_router)
     api_router.include_router(admin_quiver_router)
     api_router.include_router(paradox_v2_router)
