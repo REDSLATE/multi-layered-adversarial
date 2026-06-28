@@ -253,4 +253,24 @@ async def ensure_indexes() -> None:
     # The Date field `received_at_dt` continues to be stamped on
     # every new history row (see `shared/sovereign_mode_guard.py`)
     # because the rollup runner queries it as `ts_field`.
+
+    # ── External Signal Intake v1 (2026-02-23) ────────────────────
+    # `external_signals` is the witness layer (Pine / TradeLens / MTR).
+    # Idempotency: `dedup_key` is unique — TradingView retries cannot
+    # double-write. Diagnostics tile queries by `received_at` DESC
+    # (recent witnesses) and by `(symbol, received_at)` (per-symbol).
+    await db.external_signals.create_index(
+        "dedup_key", unique=True, name="external_signals_dedup_unique",
+    )
+    await db.external_signals.create_index(
+        [("received_at", -1)], name="external_signals_recent_idx",
+    )
+    await db.external_signals.create_index(
+        [("symbol", 1), ("received_at", -1)],
+        name="external_signals_symbol_recent_idx",
+    )
+    await db.external_signals.create_index(
+        [("source", 1), ("received_at", -1)],
+        name="external_signals_source_recent_idx",
+    )
     pass

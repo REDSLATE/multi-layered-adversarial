@@ -848,3 +848,39 @@ PARADOX_V2_VOTE_SESSIONS      = "paradox_v2_vote_sessions"
 # applies — backwards-compatible by design.
 SYSTEM_FLAGS         = "system_flags"
 SYSTEM_FLAG_CHANGES  = "system_flag_changes"
+
+# ─── External Signal Intake v1 (2026-02-23) ────────────────────────────
+# Pine / TradeLens / MTR are WITNESSES, not authorities. They land
+# raw alerts here; brains form opinions; Memory remembers; Shelly
+# judges; Seat executes; Governor sizes; RoadGuard stops. The
+# witness layer is descriptive evidence only.
+#
+# Doctrine pins:
+#   * No external signal may set `may_execute=true`. The collection
+#     intentionally has no such field.
+#   * Idempotency is enforced at the DB level via the unique
+#     `dedup_key` index. Retries from TradingView CANNOT double-write.
+#   * `bar_close_ts` MUST be supplied by the witness (rejected with
+#     400 otherwise). No server-side fallback to `received_at` —
+#     fallbacks weaken idempotency by making retries look new.
+#
+# Schema (one doc per witness alert):
+#   id              : str (uuid4)
+#   source          : "pine" | "tradelens" | "mtr"
+#   symbol          : str (uppercase, canonical)
+#   side            : "BUY" | "SELL" | "HOLD"
+#   confidence      : float in [0.0, 1.0]  (from scoring.py)
+#   timeframe       : str | None  ("15", "1h", "1d", …)
+#   event           : str | None  ("entry", "exit", "alert", …)
+#   price           : float | None
+#   stop_loss       : float | None
+#   take_profit     : float | None
+#   reason          : str | None
+#   raw             : dict        (verbatim payload, audit substrate)
+#   bar_close_ts    : ISO datetime str  (REQUIRED, from witness)
+#   dedup_key       : str         ("<source>:<symbol>:<tf>:<event>:<bar_close_ts>")
+#   processed_by_seat : bool      (v1 inline lifecycle)
+#   seat_decision   : str | None  (governor-applied or seat-applied verdict)
+#   applied_modifier: float | None  (governor modifier actually applied)
+#   received_at     : ISO datetime str
+EXTERNAL_SIGNALS = "external_signals"
