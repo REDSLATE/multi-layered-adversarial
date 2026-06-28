@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
 from shared.brain_doctrine import DOCTRINES
+from shared.brains._doctrine_overrides import effective_min_confidence
 
 
 Action = Literal["BUY", "SHORT", "HOLD"]
@@ -140,6 +141,9 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
     assert atr14 is not None
 
     doctrine = DOCTRINES["barracuda"]
+    # 2026-02-25 — read operator UI override (placebo bug fix). Falls
+    # back to doctrine default when no override is set.
+    min_conf = effective_min_confidence(doctrine, lane="equity")
 
     # ── BUY branch — oversold mean-reversion long ──────────────────
     # Triggers: RSI < 35, BB position < 0.25, price still within
@@ -210,9 +214,9 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
         # confidence: 0.45..0.75, scaled by doctrine.mean_reversion_weight.
         confidence = 0.45 + 0.30 * buy_signal
         confidence = min(0.85, confidence)
-        if confidence < doctrine.min_confidence:
+        if confidence < min_conf:
             return _hold(
-                f"confidence_below_floor:{confidence:.3f}<{doctrine.min_confidence}",
+                f"confidence_below_floor:{confidence:.3f}<{min_conf}",
                 evidence=evidence_common,
             )
         # R:R prices — target the BB mid; stop = entry - 2*ATR.
@@ -248,9 +252,9 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
     ):
         confidence = 0.45 + 0.30 * sell_signal
         confidence = min(0.85, confidence)
-        if confidence < doctrine.min_confidence:
+        if confidence < min_conf:
             return _hold(
-                f"confidence_below_floor:{confidence:.3f}<{doctrine.min_confidence}",
+                f"confidence_below_floor:{confidence:.3f}<{min_conf}",
                 evidence=evidence_common,
             )
         target_price = round(bb_mid, 4)

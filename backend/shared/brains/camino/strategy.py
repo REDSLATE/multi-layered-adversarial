@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
 from shared.brain_doctrine import DOCTRINES
+from shared.brains._doctrine_overrides import effective_min_confidence
 
 
 Action = Literal["BUY", "SHORT", "HOLD"]
@@ -99,6 +100,8 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
     )
 
     doctrine = DOCTRINES["camino"]
+    # 2026-02-25 — read operator UI override (placebo bug fix).
+    min_conf = effective_min_confidence(doctrine, lane="equity")
 
     # ── BUY branch — confirmed uptrend continuation ────────────────
     # last_close > SMA(20) > SMA(50), RSI in 45..70 (healthy), and
@@ -147,9 +150,9 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
 
     if buy_signal > 0.20 and buy_signal >= sell_signal:
         confidence = min(0.85, 0.47 + 0.30 * buy_signal)
-        if confidence < doctrine.min_confidence:
+        if confidence < min_conf:
             return _hold(
-                f"confidence_below_floor:{confidence:.3f}<{doctrine.min_confidence}",
+                f"confidence_below_floor:{confidence:.3f}<{min_conf}",
                 evidence=evidence_common,
             )
         # Trend doctrine targets 2.5 ATR rally; trailing 2 ATR stop.
@@ -174,9 +177,9 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
 
     if _shorts_enabled() and sell_signal > 0.20 and sell_signal > buy_signal:
         confidence = min(0.85, 0.47 + 0.30 * sell_signal)
-        if confidence < doctrine.min_confidence:
+        if confidence < min_conf:
             return _hold(
-                f"confidence_below_floor:{confidence:.3f}<{doctrine.min_confidence}",
+                f"confidence_below_floor:{confidence:.3f}<{min_conf}",
                 evidence=evidence_common,
             )
         target_price = round(last_close - 2.5 * atr14, 4)

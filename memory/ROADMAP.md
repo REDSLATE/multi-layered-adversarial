@@ -15,58 +15,32 @@ my own risk/scope annotations. **NOT to be worked today —
 operator explicitly deferred until after the immediate trading
 priorities ship.**
 
-### P0 (verify first — not a refactor, a possible trading blocker)
+### P0 — VERIFIED + FIXED on 2026-02-25 (no longer in backlog)
 
-**0a. `brain_tuning_cache.get_override()` — is it actually wired in?**
-- The audit claims `get_override("equity", "min_confidence")` and
-  `get_override("equity", "min_gap")` exist as operator-tunable
-  knobs in `shared/brain_tuning_cache.py` but the native brain
-  strategies (`shared/brains/{barracuda,camino,gto,hellcat}/strategy.py`)
-  still read `doctrine.min_confidence` / `doctrine.min_gap` directly
-  from `shared/brain_doctrine.py`.
-- **If true**: the operator UI tuning knobs are PLACEBO — adjusting
-  them in the UI never reaches the brain decision math. The
-  conservative-execution problem the operator has been chasing
-  could be partly explained by tuning overrides simply not applying.
-- **Verification step (first thing to do when work resumes)**:
-  ```bash
-  grep -rn "get_override" /app/backend/shared/brains/ /app/backend/shared/strategies/
-  grep -rn "doctrine.min_confidence\|doctrine.min_gap" /app/backend/shared/brains/
-  ```
-  If the first grep returns nothing in `brains/` and the second
-  returns hits in every strategy → claim confirmed → P0 fix.
-- **Fix shape (if confirmed)**: each strategy reads its config
-  through a thin resolver that checks the override cache first,
-  falls back to doctrine:
-  ```python
-  min_confidence = (
-      get_override(lane, "min_confidence")
-      or doctrine.min_confidence
-  )
-  ```
-- **Status**: NOT STARTED. Verification is a 30-second grep —
-  do it before refactor week.
+**~~0a. `brain_tuning_cache.get_override()` — wiring~~** — ✅ **DONE 2026-02-25**
 
-**0b. `_runner_core.py` HOLD-skip behavior**
-- Audit claims:
-  ```python
-  if decision.action == "HOLD":
-      skipped.append(...)
-      continue
-  ```
-  …means HOLDs never get persisted, breaking the honesty-audit
-  surface (which counts `would_have_traded_without_gates=True`
-  intents — but those are conditional on the intent existing).
-- **Likely partial truth**: HOLD intents are skipped from
-  EMISSION but the honesty-audit may capture them via a
-  different code path. Need to confirm.
-- **Verification step**:
-  ```bash
-  grep -rn "would_have_traded_without_gates" /app/backend/shared/
-  ```
-  Confirm whether HOLD decisions ever set this field, and where.
-- **Status**: NOT STARTED. Verify before deciding if any change
-  is needed — could be working as designed.
+Audit claim CONFIRMED by `grep`:
+- `get_override` defined in `shared/brain_tuning_cache.py:42` had
+  ZERO callsites anywhere in the backend.
+- All 4 strategies read `doctrine.min_confidence` directly,
+  bypassing operator UI overrides entirely.
+
+Fix shipped:
+- New helper `shared/brains/_doctrine_overrides.py` exposing
+  `effective_min_confidence(doctrine, lane="equity")` and
+  `effective_min_gap(doctrine, lane="equity")`.
+- All 4 strategies (`barracuda/camino/gto/hellcat`) now resolve
+  `min_conf = effective_min_confidence(doctrine, lane="equity")`
+  once per `evaluate()` call and use it in the floor check.
+- 27-case regression suite in
+  `tests/test_brain_tuning_override_wiring_2026_02_25.py` locks:
+  empty cache → doctrine default; populated cache → override
+  wins; lane isolation; partial overrides; import presence;
+  no-direct-`doctrine.min_confidence`-in-guards.
+
+**~~0b. `_runner_core.py` HOLD-skip behavior~~** — Not investigated
+in this pass. Audit claim about HOLD-skip needs separate scrutiny;
+parked.
 
 ### P1 — High-ROI, low-risk refactors
 

@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
 from shared.brain_doctrine import DOCTRINES
+from shared.brains._doctrine_overrides import effective_min_confidence
 
 
 Action = Literal["BUY", "SHORT", "HOLD"]
@@ -117,6 +118,8 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
     )
 
     doctrine = DOCTRINES["gto"]
+    # 2026-02-25 — read operator UI override (placebo bug fix).
+    min_conf = effective_min_confidence(doctrine, lane="equity")
     atr_pct = atr14 / last_close if last_close > 0 else 0.0  # noqa: F841
 
     # ── BUY branch — confirmed upside momentum ─────────────────────
@@ -181,9 +184,9 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
 
     if buy_signal > 0.25 and buy_signal >= sell_signal:
         confidence = min(0.85, 0.46 + 0.30 * buy_signal)
-        if confidence < doctrine.min_confidence:
+        if confidence < min_conf:
             return _hold(
-                f"confidence_below_floor:{confidence:.3f}<{doctrine.min_confidence}",
+                f"confidence_below_floor:{confidence:.3f}<{min_conf}",
                 evidence=evidence_common,
             )
         # Momentum doctrine targets a 3-ATR rally; stops 1.5 ATR below.
@@ -227,9 +230,9 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
 
     if _shorts_enabled() and sell_signal > 0.25 and sell_signal > buy_signal:
         confidence = min(0.85, 0.46 + 0.30 * sell_signal)
-        if confidence < doctrine.min_confidence:
+        if confidence < min_conf:
             return _hold(
-                f"confidence_below_floor:{confidence:.3f}<{doctrine.min_confidence}",
+                f"confidence_below_floor:{confidence:.3f}<{min_conf}",
                 evidence=evidence_common,
             )
         target_price = round(last_close - 3.0 * atr14, 4)

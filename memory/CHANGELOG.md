@@ -1,3 +1,102 @@
+## 2026-02-25 (later) — `brain_tuning_cache.get_override()` placebo bug FIXED
+
+### Diagnostic that found it
+The operator commissioned a structural code-redundancy audit
+which surfaced a side-channel claim: `get_override(lane, key)`
+in `shared/brain_tuning_cache.py` may be defined but never
+called. `grep -rn "get_override" /app/backend/shared/brains/`
+returned ZERO callsites. All 4 strategies were reading
+`doctrine.min_confidence` directly from compiled defaults.
+
+### The placebo trap
+The full chain existed:
+- `POST /api/admin/brain-tuning` (operator UI write endpoint) ✓
+- Mongo `runtime_flags.brain_tuning` document ✓
+- Lifespan-started 30s refresher loop → `_CACHE` ✓
+- `get_override(lane, key)` reader ✓
+- Strategy consumption ✗  ← **the missing link**
+
+So when the operator dragged the "less conservative" slider in
+the UI, the value travelled UI → POST → Mongo → cache, and died
+there. Every brain decision still used the hardcoded
+`brain_doctrine.py` defaults. The "brains too conservative"
+symptom the operator was chasing was partly self-induced — the
+fix knob was disconnected.
+
+### What shipped
+**New helper** (`shared/brains/_doctrine_overrides.py`):
+```python
+def effective_min_confidence(doctrine, lane="equity") -> float:
+    override = get_override(lane, "min_confidence")
+    return float(override) if override is not None else float(doctrine.min_confidence)
+
+def effective_min_gap(doctrine, lane="equity") -> float:
+    ...  # symmetric for the gap knob (not currently checked by
+         # strategies, but exposed now so the next strategy
+         # update has it ready).
+```
+
+**Each of 4 strategies** (`barracuda/camino/gto/hellcat/strategy.py`)
+- Imports the helper at module scope.
+- After `doctrine = DOCTRINES["<brain>"]`, computes
+  `min_conf = effective_min_confidence(doctrine, lane="equity")`.
+- Replaces `if confidence < doctrine.min_confidence` with
+  `if confidence < min_conf` (2 callsites per strategy: BUY
+  branch + SHORT branch).
+
+**Regression suite** (`tests/test_brain_tuning_override_wiring_2026_02_25.py`)
+- 27 tests, all passing.
+- Locks: empty-cache → doctrine default (no behavioral drift
+  from introducing the helper); populated-cache → override
+  wins; lane isolation; partial overrides don't spill;
+  unknown lane falls back; import presence guard per strategy;
+  forbids regressing to `if confidence < doctrine.min_confidence`.
+
+### Doctrine defaults (unchanged, still the fallback)
+| brain     | min_confidence | min_gap |
+|-----------|---------------:|--------:|
+| barracuda |           0.43 |    0.06 |
+| camino    |           0.46 |    0.08 |
+| gto       |           0.45 |    0.07 |
+| hellcat   |           0.48 |    0.10 |
+
+Operator can now lower any of these from the Brain Tuning UI
+and the brains will actually fire more readily — the value
+reaches `if confidence < min_conf` within one 30s cache cycle.
+
+### Bonus discovery (kept in code, not a fix)
+`gto/strategy.py` had a pre-existing duplicate code block at
+the bottom (lines 277-281) with 3-space invalid indentation
+that would have caused an `IndentationError` on the next
+`importlib.reload()`. Pre-dates this session (confirmed via
+`git diff HEAD~1`). Removed as part of this patch since the
+file had to be touched anyway.
+
+### Boot-clean verification
+- Backend restarts cleanly with all 4 brains running
+  (`brain=barracuda lane=equity sym=NVDA action=HOLD conf=0.70`
+   etc. in logs immediately after restart).
+- Lint clean on the new helper + test files.
+- 27/27 regression tests green.
+
+### What this likely unblocks
+The operator should now be able to:
+1. Pull up the Brain Tuning UI.
+2. Drag `min_confidence` for `equity` down from the default
+   ~0.45 to e.g. 0.30.
+3. Within 30 seconds, all 4 brains start firing BUY/SHORT
+   intents that previously fell into the
+   `confidence_below_floor:...<0.45` HOLD bucket.
+4. Watch the equity intent queue actually populate.
+
+This isn't a guarantee that equity will trade Monday — there
+are still ~16 downstream gates after the brain emits an intent
+— but the FIRST gate (brain confidence floor) is now
+operator-controllable in real time.
+
+---
+
+
 ## 2026-02-25 (later) — REAL fix: prod 500 was a missing-index regression, not a data-shape issue
 
 ### Operator-supplied prod response body (the decisive datum)
