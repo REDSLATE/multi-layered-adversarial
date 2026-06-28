@@ -37,12 +37,15 @@ What gets written:
     inserts never mutate existing fields — only Verifier may.
 
 Configuration:
-    POLYGON_API_KEY        existing env var (Massive uses the same key)
-    POLYGON_BASE_URL       defaults to https://api.massive.com
-                           (legacy https://api.polygon.io still works)
+    POLYGON_API_KEY                       existing env var (Massive uses same key)
+    POLYGON_BASE_URL                      defaults to https://api.massive.com
+    POLYGON_NEWS_WITNESS_ENABLED          "true" to enable (default true if key set)
+    POLYGON_NEWS_WITNESS_INTERVAL_SEC     default 3600 (1h)
+    POLYGON_NEWS_WITNESS_LIMIT            articles-per-tick (default 100)
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
@@ -56,7 +59,6 @@ from namespaces import EXTERNAL_SIGNALS, EXTERNAL_SOURCE_CREDIBILITY
 from shared.external_signals.models import (
     ExternalSignal,
     ExternalSourceCredibility,
-    build_dedup_key,
 )
 from shared.feeders.feeder_health import record_feeder_health
 
@@ -68,6 +70,8 @@ WITNESS_SOURCE = "polygon"
 PROVIDER = "polygon_news_witness"
 DEFAULT_BASE_URL = "https://api.massive.com"
 REASONING_MAX_CHARS = 500
+DEFAULT_INTERVAL_SEC = 3600  # 1h — news doesn't move bar-by-bar
+DEFAULT_LIMIT_PER_TICK = 100
 
 
 # Massive's `sentiment` is categorical. We map to a fixed float
@@ -216,13 +220,15 @@ def article_to_witness_rows(
             continue
         confidence = SENTIMENT_TO_DISPLAY_CONFIDENCE.get(sentiment, 0.50)
         reasoning = (insight.get("sentiment_reasoning") or "")[:REASONING_MAX_CHARS]
-        dedup_key = build_dedup_key(
-            source=WITNESS_SOURCE,
-            symbol=ticker,
-            timeframe=None,
-            event="news",
-            bar_close_ts=published_utc,
-        )
+        # bar_close_ts (per doctrine) stays as `published_utc` — that's
+        # the canonical time the witness fact was emitted, and what
+        # Verifier reads when correlating to later outcomes. For
+        # dedup, however, the `article_id` is the stronger uniqueness
+        # key: two articles published at the same minute that both
+        # mention the same ticker are STILL two distinct witness
+        # facts. Using published_utc here would silently swallow the
+        # second one — an idempotency leak.
+        dedup_key = f"{WITNESS_SOURCE}:{ticker}:news:{article_id}"
         rows.append(ExternalSignal(
             source=WITNESS_SOURCE,
             symbol=ticker,
@@ -351,5 +357,132 @@ __all__ = (
     "upsert_credibility_setoninsert",
     "write_witness_rows",
     "tick",
+    "start_worker_if_enabled",
+    "stop_worker",
     "close_client",
 )
+
+
+# ──────────────────────── worker loop ────────────────────────
+
+
+_task: Optional[asyncio.Task] = None
+_stop_flag: bool = False
+
+
+def _read_worker_config() -> dict[str, Any]:
+    api_key = (os.environ.get("POLYGON_API_KEY") or "").strip()
+    enabled_env = (os.environ.get("POLYGON_NEWS_WITNESS_ENABLED") or "").strip().lower()
+    # Default-on when key is present; explicit "false" disables.
+    if enabled_env == "false":
+        enabled = False
+    elif enabled_env == "true":
+        enabled = True
+    else:
+        enabled = bool(api_key)
+    return {
+        "api_key": api_key,
+        "enabled": enabled,
+        "interval": int(
+            os.environ.get("POLYGON_NEWS_WITNESS_INTERVAL_SEC", str(DEFAULT_INTERVAL_SEC))
+        ),
+        "limit": int(
+            os.environ.get("POLYGON_NEWS_WITNESS_LIMIT", str(DEFAULT_LIMIT_PER_TICK))
+        ),
+        "base_url": os.environ.get("POLYGON_BASE_URL", DEFAULT_BASE_URL),
+    }
+
+
+async def _high_water_mark() -> Optional[str]:
+    """Find the most recent `bar_close_ts` we've already persisted for
+    source=polygon. Used as `published_utc.gte` on the next fetch so
+    we don't re-stream the entire article history every tick.
+
+    Returns None when the holding cell has no polygon rows yet — the
+    first tick pulls a fresh window without a floor.
+    """
+    doc = await db[EXTERNAL_SIGNALS].find_one(
+        {"source": WITNESS_SOURCE},
+        sort=[("bar_close_ts", -1)],
+        projection={"bar_close_ts": 1, "_id": 0},
+    )
+    return doc.get("bar_close_ts") if doc else None
+
+
+async def _worker_loop() -> None:
+    """Periodic poll → fetch → transform → persist. Uses the
+    high-water mark from the holding cell to avoid re-streaming. The
+    unique `dedup_key` index makes the loop safe even if the mark
+    is wrong — duplicates no-op.
+    """
+    global _stop_flag
+    cfg = _read_worker_config()
+    logger.info(
+        "polygon_news_witness worker started: interval=%ss limit=%s base_url=%s",
+        cfg["interval"], cfg["limit"], cfg["base_url"],
+    )
+    while not _stop_flag:
+        try:
+            cfg = _read_worker_config()
+            if not cfg["enabled"] or not cfg["api_key"]:
+                await record_feeder_health(
+                    provider=PROVIDER, endpoint="(boot)",
+                    status_code=None, error_type="configuration",
+                    message=(
+                        "POLYGON_API_KEY missing or "
+                        "POLYGON_NEWS_WITNESS_ENABLED=false"
+                    ),
+                )
+                await asyncio.sleep(max(cfg["interval"], 300))
+                continue
+            hwm = await _high_water_mark()
+            summary = await tick(
+                api_key=cfg["api_key"],
+                base_url=cfg["base_url"],
+                limit=cfg["limit"],
+                published_utc_gte=hwm,
+            )
+            logger.info("polygon_news_witness tick: %s", summary)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("polygon_news_witness loop crashed: %s", exc)
+            await record_feeder_health(
+                provider=PROVIDER, endpoint="_worker_loop",
+                status_code=None, error_type="worker_crash",
+                message=str(exc)[:500],
+            )
+        try:
+            await asyncio.sleep(cfg["interval"])
+        except asyncio.CancelledError:
+            break
+
+
+def start_worker_if_enabled() -> None:
+    """Spawn the polling task. Idempotent — re-callable on hot reload."""
+    global _task, _stop_flag
+    if _task is not None and not _task.done():
+        return
+    cfg = _read_worker_config()
+    if not cfg["enabled"]:
+        logger.info(
+            "polygon_news_witness worker disabled "
+            "(POLYGON_NEWS_WITNESS_ENABLED=false or POLYGON_API_KEY missing)"
+        )
+        return
+    _stop_flag = False
+    _task = asyncio.create_task(_worker_loop(), name="polygon_news_witness")
+    logger.info(
+        "polygon_news_witness worker scheduled (interval=%ss)", cfg["interval"],
+    )
+
+
+async def stop_worker() -> None:
+    global _task, _stop_flag
+    _stop_flag = True
+    if _task is not None and not _task.done():
+        _task.cancel()
+        try:
+            await _task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+    _task = None
+    await close_client()
