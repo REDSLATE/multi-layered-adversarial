@@ -37,6 +37,8 @@ from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from auth import get_current_user
@@ -1347,7 +1349,14 @@ def _safe_jsonable_intents(rows: list[dict]) -> list[dict]:
     out: list[dict] = []
     for row in rows:
         try:
-            json.dumps(row, allow_nan=False, default=str)
+            # 2026-02-25 — use FastAPI's actual encoder (not json.dumps)
+            # so the shim's safety check matches what Starlette's
+            # response phase will actually run. Previously json.dumps
+            # accepted exotic Mongo types (Decimal128, ObjectId,
+            # bytes) via default=str that jsonable_encoder rejects,
+            # letting bad rows through the shim only to crash the
+            # response after the handler had already returned.
+            jsonable_encoder(row)
             out.append(row)
         except Exception as exc:  # widened 2026-02-25 — prod still 500s
             intent_id = row.get("intent_id") if isinstance(row, dict) else None
@@ -1440,8 +1449,14 @@ async def list_intents(
     # surface the full traceback in the response body (admin-authed only)
     # so the operator can paste it back and we can fix the upstream
     # write path or legacy doc shape that's tripping the handler.
+    #
+    # We also pre-encode the impl's return value through jsonable_encoder
+    # INSIDE the try/except so any response-phase encoder failure (Mongo
+    # Decimal128 / ObjectId / BSON Binary / etc.) is caught here rather
+    # than bubbling to Starlette's response phase where our handler-level
+    # try/except can no longer reach it.
     try:
-        return await _list_intents_impl(
+        payload = await _list_intents_impl(
             stack=stack,
             symbol=symbol,
             lane=lane,
@@ -1450,6 +1465,8 @@ async def list_intents(
             sort=sort,
             include_disabled_lanes=include_disabled_lanes,
         )
+        encoded = jsonable_encoder(payload)
+        return JSONResponse(status_code=200, content=encoded)
     except HTTPException:
         raise
     except Exception as exc:
@@ -1458,18 +1475,21 @@ async def list_intents(
             "intents.list: handler crashed err_type=%s err=%s\n%s",
             type(exc).__name__, str(exc)[:500], tb,
         )
-        return {
-            "items": [],
-            "count": 0,
-            "sort": sort,
-            "enabled_lanes": [],
-            "include_disabled_lanes": bool(include_disabled_lanes),
-            "_diagnostic_error": {
-                "type": type(exc).__name__,
-                "message": str(exc)[:500],
-                "traceback": tb,
+        return JSONResponse(
+            status_code=200,
+            content={
+                "items": [],
+                "count": 0,
+                "sort": sort,
+                "enabled_lanes": [],
+                "include_disabled_lanes": bool(include_disabled_lanes),
+                "_diagnostic_error": {
+                    "type": type(exc).__name__,
+                    "message": str(exc)[:500],
+                    "traceback": tb,
+                },
             },
-        }
+        )
 
 
 async def _list_intents_impl(
