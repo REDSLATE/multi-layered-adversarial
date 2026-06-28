@@ -118,11 +118,20 @@ def resolve_sizing_band(confidence: float) -> tuple[SizingBand, float]:
 
 
 REGIME_BULL_BEAR_BOOST = 0.10   # × regime_conf when bull or bear
-REGIME_HIGH_VOL_PENALTY = 0.08  # IMPROVED: was 0.05, now symmetric
-                                # enough to balance the +0.10
-                                # bull/bear boost. Original asymmetry
-                                # (+0.10 up / −0.05 down) created a
-                                # slight structural long bias.
+REGIME_HIGH_VOL_PENALTY = 0.10  # IMPROVED 2026-02-23: fully symmetric
+                                # with the +0.10 bull/bear boost. The
+                                # earlier 0.05 created a structural
+                                # long bias (caught 2026-02-21); the
+                                # interim 0.08 was a conservative
+                                # half-step. Operator decision (today)
+                                # is to commit to full symmetry until
+                                # live closed-trade data justifies
+                                # asymmetry in either direction. The
+                                # conviction_score plus per-trade
+                                # `regime_adjustment` field on
+                                # WeightedDecision give us the
+                                # attribution to re-tune this from
+                                # evidence rather than instinct.
 
 # IMPROVED: Leader penalty now scales with degree of disagreement.
 # Original: flat ×0.82 for any lack of clean agreement.
