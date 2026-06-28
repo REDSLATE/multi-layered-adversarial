@@ -320,6 +320,16 @@ async def lifespan(app: FastAPI):
     # VRL nightly scorecard recomputer — opt-out via VRL_SCHEDULER_ENABLED=false.
     start_scorecard_scheduler()
     logger.info("VRL scorecard scheduler started")
+    # RISE AI learning loop (2026-02-25) — auto-grader + JSONL harvester.
+    # Promotes the previously one-shot scaffolding into a live worker so
+    # the SHADOW corpus actually grows from Claude traffic. Kill switch:
+    # RISE_LEARNING_LOOP_ENABLED=false in backend/.env.
+    try:
+        from shared.rise_ai.learning_loop import start_rise_learning_loop  # noqa: WPS433
+        start_rise_learning_loop()
+        logger.info("RISE AI learning loop started")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("rise_ai learning loop start failed: %s", e)
     # Seed default brain × lane emission policy (idempotent).
     try:
         await seed_default_policy()
@@ -623,6 +633,12 @@ async def lifespan(app: FastAPI):
     await stop_news_refresher()
     await stop_darkpool_refresher()
     await stop_scorecard_scheduler()
+    # RISE AI learning loop — graceful cancel.
+    try:
+        from shared.rise_ai.learning_loop import stop_rise_learning_loop  # noqa: WPS433
+        await stop_rise_learning_loop()
+    except Exception:  # noqa: BLE001
+        pass
     await stop_position_monitor()
     await stop_paradox_coordinator()
     await stop_observation_resolver()
