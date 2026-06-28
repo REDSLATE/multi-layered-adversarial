@@ -285,4 +285,15 @@ async def ensure_indexes() -> None:
         [("status", 1), ("updated_at", -1)],
         name="external_source_credibility_status_idx",
     )
+
+    # ── Manipulation alerts (2026-02-23) ──────────────────────────
+    # RoadGuard's witness-cluster detector. Log-only in v1.
+    await db.external_signal_manipulation_alerts.create_index(
+        [("created_at", -1)],
+        name="external_signal_manipulation_alerts_recent_idx",
+    )
+    await db.external_signal_manipulation_alerts.create_index(
+        [("source", 1), ("trigger_type", 1), ("created_at", -1)],
+        name="external_signal_manipulation_alerts_lookup_idx",
+    )
     pass

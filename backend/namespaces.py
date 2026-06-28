@@ -923,3 +923,12 @@ EXTERNAL_SIGNALS = "external_signals"
 #   Phase 2 (WATCHLIST)  → 90d alpha < -0.02 OR manipulation flag
 #                        → demote to UNTRUSTED
 EXTERNAL_SOURCE_CREDIBILITY = "external_source_credibility"
+
+# ─── External signal manipulation alerts (2026-02-23) ──────────────────
+# RoadGuard's witness-cluster detector writes here. LOG-ONLY in v1 —
+# the existence of an alert does NOT modify any witness's
+# `influence_allowed` field. Verifier alone owns that transition.
+# When Verifier comes online and a source reaches TRUSTED, these
+# alerts SHOULD start gating that source's modifier; until then,
+# pure operator observability.
+EXTERNAL_SIGNAL_MANIPULATION_ALERTS = "external_signal_manipulation_alerts"

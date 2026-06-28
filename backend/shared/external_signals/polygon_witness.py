@@ -335,11 +335,57 @@ async def tick(
         rows.extend(article_to_witness_rows(article, symbol_universe=symbol_universe))
 
     write_summary = await write_witness_rows(rows)
+
+    # ── RoadGuard manipulation/noise pass (LOG-ONLY in v1) ──────
+    # Run the cluster detectors against this tick's rows, persist
+    # any alerts, and tag affected witness rows with
+    # `roadguard_labels` so Step 7's Seat view can filter cleaned
+    # context. Doctrine pin: zero execution effect — the alerts
+    # are descriptive evidence, not a block.
+    alerts_summary = {"alerts": 0, "rows_tagged": 0}
+    try:
+        from shared.external_signals.manipulation_detector import (
+            run_all_detectors,
+        )
+        from namespaces import EXTERNAL_SIGNAL_MANIPULATION_ALERTS
+        # Build dicts including `raw` so detectors can read article
+        # metadata (article_id, title, keywords). model_dump matches
+        # what was written to Mongo.
+        signal_dicts = [r.model_dump() for r in rows]
+        detected = run_all_detectors(signal_dicts)
+        if detected:
+            await db[EXTERNAL_SIGNAL_MANIPULATION_ALERTS].insert_many(
+                [a.model_dump() for a in detected],
+            )
+            # Tag-back: alerts carry in-memory uuid `id`s, but Mongo
+            # rows persist under stable `dedup_key`s. Map uuid→dedup_key
+            # via the same `rows` list the detectors saw, then update
+            # by `dedup_key` — that's the deterministic anchor.
+            uuid_to_dk = {r.id: r.dedup_key for r in rows}
+            row_labels: dict[str, set[str]] = {}
+            for a in detected:
+                for sid in a.signal_ids:
+                    dk = uuid_to_dk.get(sid)
+                    if dk:
+                        row_labels.setdefault(dk, set()).add(a.label)
+            for dk, labels in row_labels.items():
+                await db[EXTERNAL_SIGNALS].update_one(
+                    {"dedup_key": dk},
+                    {"$addToSet": {"roadguard_labels": {"$each": sorted(labels)}}},
+                )
+            alerts_summary = {
+                "alerts": len(detected),
+                "rows_tagged": len(row_labels),
+            }
+    except Exception as exc:  # noqa: BLE001 — detector must NEVER block witness landing
+        logger.warning("polygon_news_witness: detector pass failed: %s", exc)
+
     summary = {
         "ok": True,
         "articles_fetched": len(articles),
         "rows_built": len(rows),
         **write_summary,
+        **alerts_summary,
         "ts": datetime.now(timezone.utc).isoformat(),
     }
     logger.info("polygon_news_witness tick: %s", summary)
