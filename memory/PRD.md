@@ -1,3 +1,101 @@
+## 2026-02-23 — Witness Council layer (Polygon news intake + RoadGuard labels + cleaned Seat context) + camaro_weights regime symmetry fix
+
+### Doctrine — TRIAL COURT, NOT A VOTING SYSTEM
+External signals (Polygon news today; Pine / Public / MTR later) are **default-hostile witnesses**, not authorities. Every witness lands UNTRUSTED with `influence_allowed=False`. The Governor returns a 0.0 modifier for any witness where `influence_allowed=False`, regardless of self-reported confidence. Verifier (future) is the only thing that can ever promote a source through the four-phase progression (UNTRUSTED → WATCHLIST → TRUSTED, and reverse). Witnesses are evidence the Seat is informed by, not directed by.
+
+### What was built
+
+**1. `/api/intents` defensive shim** — `shared/intents.py::_safe_jsonable_intents()`
+- Hedge against the prod HTTP 500 reported in the prior handoff (does not reproduce in preview — 68,500 docs scanned clean for NaN/Inf serialization issues).
+- Per-doc `json.dumps(allow_nan=False)` probe; unserializable rows degrade to observable stubs with `_serialization_error` field + logged `intent_id`, instead of 500'ing the whole feed.
+- Wraps both return paths in `list_intents` (aggregation path + standard path). Live-tested against an injected NaN doc — endpoint stayed 200, stub appeared with correct intent_id, error logged.
+
+**2. Witness holding cell + credibility ledger** — `shared/external_signals/`
+- New collection `external_signals` (4 indexes; `dedup_key` UNIQUE so TradingView/Polygon retries cannot double-write).
+- New collection `external_source_credibility` (2 indexes; `source` UNIQUE — Verifier's per-source case file).
+- Pydantic models in `shared/external_signals/models.py`: `ExternalSignal` (with default-hostile `verifier_status=UNTRUSTED` + `influence_allowed=False`), `ExternalSourceCredibility` (with all four phase thresholds documented in the docstring), `PineWebhookPayload` (future contract).
+- `scoring.py` demoted to display-only: `pine_self_reported_confidence()` renamed and re-doc'd as advisory diagnostic. RISEDUAL does not act on Pine's self-grade; only Verifier eventually does.
+
+**3. Polygon/Massive news+sentiment witness ingestor** — `shared/external_signals/polygon_witness.py`
+- Verified Massive plan tier (Options Starter + Stocks Starter) includes `/v2/reference/news` with full `insights[]` (sentiment + sentiment_reasoning per ticker per article).
+- One HTTP call per tick — fetches recent news, extracts insights, emits one `ExternalSignal` per `(article × ticker)` pair. Multi-ticker articles produce N rows.
+- `dedup_key` keyed on **article_id** (not published_utc) after first-deploy bug surfaced 9 lost rows from articles sharing a published_utc minute.
+- High-water mark from holding cell's most recent `bar_close_ts` prevents re-streaming history.
+- Worker scheduled into `server_modules/lifespan.py` alongside the existing `polygon_equity` worker — hourly cadence (well under Starter's 5/min limit).
+
+**4. RoadGuard manipulation/noise cluster detector** — `shared/external_signals/manipulation_detector.py`
+- **LOG-ONLY in v1** (`enforced=False` is the doctrine pin; the existence of an alert does NOT modify any witness's `influence_allowed`).
+- Five trigger labels (per operator-locked vocabulary):
+  - `EXTERNAL_SIGNAL_SPAM` — source emits >400 signals/hour OR >8 signals/symbol in 60min
+  - `EXTERNAL_SIGNAL_DUPLICATE_BURST` — single article spawns ≥5 witness rows
+  - `EXTERNAL_SIGNAL_FLIP_FLOP` — same (source, symbol) BUY↔SELL within 60min
+  - `EXTERNAL_SIGNAL_SOFT_NEWS_CLUSTER` — single article generates BUY/SELL on ≥3 unrelated tickers AND no material-news keyword detected (earnings/SEC/analyst/M&A/FDA/etc.) — catches the "Company Access Network mentions WMT, INTU, NVDA" pattern
+  - `EXTERNAL_SIGNAL_SOURCE_DRIFT` — v1 STUB (needs historical baseline; wired so contract is in place)
+- New collection `external_signal_manipulation_alerts` (2 indexes).
+- Tag-back step adds `roadguard_labels: [...]` to affected witness rows (matched by `dedup_key`, the stable anchor — initial implementation used in-memory uuids and silently failed to tag; bug caught and fixed).
+- 18 unit tests passing, including the showcase: the "Company Access Network mentions WMT/INTU/NVDA" pattern correctly fires SOFT_NEWS_CLUSTER, while an M&A article touching multiple tickers correctly stays clean.
+
+**5. Operator UI** — two new routes
+- `GET /admin/witnesses` (`pages/Witnesses.jsx`) — raw read-only panel. Shows everything. Doctrine banner. Credibility-ledger table. Per-source totals breakdown. Recent witness cards with reasoning text + UNTRUSTED badge. No execution controls.
+- `GET /admin/seat-context` (`pages/SeatContext.jsx`) — cleaned read-only panel for the Seat-bound view. Filters witnesses with `roadguard_labels` so only un-tagged rows surface. RoadGuard filter-audit tile shows what got filtered out and at what rate (live numbers: 62% filter rate overall, 91% on NVDA).
+- Both pages: explicit "read-only · advisory" badges on every row, no click-to-execute paths, no promotion controls, comprehensive `data-testid` coverage.
+- Backend endpoints: `GET /api/admin/external-signals`, `GET /api/admin/external-signals/credibility`, `GET /api/admin/external-signals/seat-context`.
+- Nav wired in `Layout.jsx` (Witnesses + Seat Context entries under Governance group).
+
+**6. camaro_weights regime symmetry fix** — `shared/brains/camaro_weights.py`
+- Operator review surfaced the asymmetric regime bonus (`+0.10` bull/bear boost vs `-0.05` high_vol penalty — original) → had been partially corrected to `-0.08` on 2026-02-21.
+- Today: bumped `REGIME_HIGH_VOL_PENALTY` to `0.10` for full symmetry with the bull/bear boost. Eliminates the residual structural long bias.
+- Comment updated to capture rationale: "operator decision to commit to full symmetry until live closed-trade data justifies asymmetry in either direction."
+- 27/27 existing `test_camaro_weights_2026_02_21.py` tests still pass (tests measure behavior at WeightedDecision level, not at penalty constant).
+- The `conviction_score` field on `WeightedDecision` + the per-trade `regime_adjustment` field are now the attribution surface for re-tuning empirically once Monday's Trade Flow read unblocks equity execution.
+
+### Live state after deploy
+- Polygon news worker scheduled every 3600s. First tick: 100 articles → 296 witness rows. Idempotency working (re-run: 0 inserted, 296 duplicates).
+- 37 RoadGuard alerts persisted from one tick (DUPLICATE_BURST 17, FLIP_FLOP 11, SOFT_NEWS_CLUSTER 6, SPAM 3), all `enforced=False`.
+- 178 witness rows tagged with `roadguard_labels` (60% of dataset carries at least one label).
+- Cleaned Seat context: 154 of 400 24h witnesses survive the filter. The signals that do come through are the *material* ones (NKE recovery momentum, LULU guidance lowered + CEO transition, PFE clinical trial + CFO departure, CME FedWatch data source). Clickbait noise (hedge-funds-buying-AMZN soft-news, Company-Access-Network multi-ticker) gets correctly binned.
+
+### Doctrine guarantees (compiled into the system, not convention)
+- `ExternalSignal.verifier_status` defaults to `UNTRUSTED`; `influence_allowed` defaults to `False`. Test `test_external_signal_defaults_hostile` pins this — flipping either default breaks the test.
+- Manipulation alerts always land `enforced=False`. Test `test_run_all_returns_log_only_alerts` pins this.
+- The `external_source_credibility` row is `$setOnInsert`-only from the webhook path. Mutation is Verifier-owned. A hostile witness cannot re-set itself to UNTRUSTED after Verifier promotes it.
+- The `dedup_key` UNIQUE index makes TradingView/Polygon retries idempotent at the DB level.
+- The cleaned-context endpoint physically excludes any row with non-empty `roadguard_labels` — not a JS-side filter, a DB-side `$or: [{$exists: false}, {$size: 0}]` query.
+
+### What's still pending
+- **Verifier promotion logic** — needs per-signal P&L attribution (Polygon BUY on NKE at 9:31 → what did NKE do over next N hours?). Gated on live equity execution.
+- **OpenFlow Seat Dispatcher** — conditional build, only if Monday's Trade Flow read shows a code-path blocker instead of a tunable knob.
+- **Grid Recovery Governor wiring** — module built, not yet injected into the live pipeline.
+- **Public.com preflight endpoint** — P1 backlog, execution-side gate.
+- **Camino evidence citation upgrade** — pinned to wait for the other three brains to prove their voices in prod.
+
+### Files
+- `backend/shared/intents.py` (defensive shim)
+- `backend/shared/external_signals/__init__.py` (NEW)
+- `backend/shared/external_signals/models.py` (NEW)
+- `backend/shared/external_signals/scoring.py` (NEW)
+- `backend/shared/external_signals/polygon_witness.py` (NEW)
+- `backend/shared/external_signals/manipulation_detector.py` (NEW)
+- `backend/routes/admin_external_signals.py` (NEW)
+- `backend/shared/brains/camaro_weights.py` (regime symmetry fix)
+- `backend/namespaces.py` (+EXTERNAL_SIGNALS, EXTERNAL_SOURCE_CREDIBILITY, EXTERNAL_SIGNAL_MANIPULATION_ALERTS)
+- `backend/db.py` (7 new indexes across 3 new collections)
+- `backend/server_modules/lifespan.py` (worker wiring)
+- `backend/server_modules/router_registry.py` (router wiring)
+- `backend/tests/test_external_signals_scoring.py` (NEW, 23 tests)
+- `backend/tests/test_manipulation_detector.py` (NEW, 18 tests)
+- `frontend/src/pages/Witnesses.jsx` (NEW)
+- `frontend/src/pages/SeatContext.jsx` (NEW)
+- `frontend/src/App.js` (route wiring)
+- `frontend/src/components/Layout.jsx` (nav wiring)
+
+### Operator next step
+Monday market open: hit `/admin/trade-flow` on prod to confirm whether equity execution is unblocked by a tunable confidence floor or whether a code-path blocker remains. The witness layer is structurally complete and harmless either way — no execution influence until Verifier promotes a source, which can't happen without live trades to grade.
+
+---
+
+
+
 ## 2026-06-26 — Lane Readiness Diagnostic + Brain Operator multi-seat fix (operator: "trading is dead on equity")
 
 ### Context
