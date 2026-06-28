@@ -29,10 +29,11 @@ Doctrine:
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from pydantic import BaseModel, Field, field_validator
@@ -1322,6 +1323,49 @@ async def post_intent_equity(
     _lane_pin(body, "equity")
     return await post_intent(body, x_runtime_token=x_runtime_token)
 
+def _safe_jsonable_intents(rows: list[dict]) -> list[dict]:
+    """Defensive wrapper for the GET /api/intents response.
+
+    Doctrine: a single malformed intent (NaN/Inf float, unexpected
+    BSON type, legacy doctrine_packet shape that the FastAPI default
+    encoder chokes on, etc.) must NOT 500 the entire intents feed.
+    The operator's monitoring view is too critical to lose.
+
+    For each row we probe with `json.dumps(..., allow_nan=False)`.
+    Healthy rows pass through untouched. Bad rows are replaced with
+    a stub carrying the `intent_id` and the serialization error,
+    so the operator sees the row exists but knows it failed to
+    render — observability over silence.
+
+    This is a hedge against the prod 500 reported in the prior
+    handoff that does not reproduce in preview (68.5k docs scanned
+    clean). If/when prod actually surfaces a bad doc, the offending
+    intent_id will land in the logs and we can fix the upstream
+    write path instead of guessing.
+    """
+    out: list[dict] = []
+    for row in rows:
+        try:
+            json.dumps(row, allow_nan=False, default=str)
+            out.append(row)
+        except (ValueError, TypeError) as exc:
+            intent_id = row.get("intent_id") if isinstance(row, dict) else None
+            logger.error(
+                "intents.list: dropping unserializable doc intent_id=%s err=%s",
+                intent_id, str(exc)[:200],
+            )
+            out.append({
+                "intent_id": intent_id,
+                "stack": row.get("stack") if isinstance(row, dict) else None,
+                "symbol": row.get("symbol") if isinstance(row, dict) else None,
+                "lane": row.get("lane") if isinstance(row, dict) else None,
+                "ingest_ts": row.get("ingest_ts") if isinstance(row, dict) else None,
+                "_serialization_error": str(exc)[:200],
+            })
+    return out
+
+
+
 
 @router.get("/intents")
 async def list_intents(
@@ -1493,7 +1537,7 @@ async def list_intents(
         ]
         rows = await db[SHARED_INTENTS].aggregate(pipeline).to_list(None)
         return {
-            "items": rows, "count": len(rows),
+            "items": _safe_jsonable_intents(rows), "count": len(rows),
             "sort": sort,
             "enabled_lanes": enabled_lanes,
             "include_disabled_lanes": bool(include_disabled_lanes),
@@ -1501,7 +1545,7 @@ async def list_intents(
 
     rows = await db[SHARED_INTENTS].find(q, {"_id": 0}).sort(sort_spec).to_list(limit)
     return {
-        "items": rows, "count": len(rows),
+        "items": _safe_jsonable_intents(rows), "count": len(rows),
         "sort": sort,
         "enabled_lanes": enabled_lanes,
         "include_disabled_lanes": bool(include_disabled_lanes),
