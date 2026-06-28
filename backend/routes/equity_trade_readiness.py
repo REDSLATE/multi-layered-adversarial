@@ -47,6 +47,7 @@ from auth import get_current_user
 from db import db
 from shared.auto_submit_policy import get_policy
 from shared.executor_seat import get_seat_holder
+from shared.lane_execution import is_lane_execution_enabled
 from shared.market_hours import (
     is_equity_extended_hours,
     is_equity_rth,
@@ -330,16 +331,43 @@ async def equity_trade_readiness(
     allowed_actions = list(policy.get("allowed_actions") or [])
     rth_now = is_equity_rth(now)
     ext_now = is_equity_extended_hours(now)
-    # is the operator's extended-hours toggle ON right now? Pulled
-    # from the same runtime_flags doc the auto-submit policy reads —
-    # but the policy itself is the single source of truth here.
-    extended_enabled_now = bool(policy.get("equity_extended_hours_enabled", False))
+    # 2026-02-25 (op-correction): the previous read pulled this off
+    # `policy.equity_extended_hours_enabled` which is NOT the source
+    # of truth — the operator toggles it via the admin route, which
+    # writes to `runtime_flags._id="equity_extended_hours"`. Pull it
+    # directly so prod's actual flag state is reflected, not a stale
+    # policy field that was never wired.
+    from routes.equity_extended_hours_admin import (
+        get_equity_extended_hours_enabled,
+    )  # noqa: WPS433 — late import avoids router_registry cycle
+    extended_enabled_now = await get_equity_extended_hours_enabled()
+    # Lane-execution toggle (the operator's master switch per lane).
+    # When OFF, even an in-RTH equity intent will be held by the
+    # `lane_execution_enabled` gate downstream.
+    lane_enabled = await is_lane_execution_enabled("equity")
+
+    # Compose a single operator-facing `lane_status`:
+    #   OPEN     — lane toggle ON AND (in RTH, OR (in ext-hrs window
+    #              AND ext-hrs toggle ON))
+    #   GATED    — lane toggle ON but market currently closed and no
+    #              ext-hrs coverage. Intents are emitted but held by
+    #              the market-hours gate until next RTH open.
+    #   DISABLED — lane toggle is OFF. The lane is the closed thing,
+    #              not the market.
+    if not lane_enabled:
+        lane_status = "DISABLED"
+    elif rth_now or (ext_now and extended_enabled_now):
+        lane_status = "OPEN"
+    else:
+        lane_status = "GATED"
 
     session = {
         "now_utc": now.isoformat(),
         "rth": rth_now,
         "extended_hours_window": ext_now,
         "extended_hours_enabled": extended_enabled_now,
+        "lane_enabled": lane_enabled,
+        "lane_status": lane_status,
         "next_rth_open_iso": next_rth_open_iso(now),
     }
 

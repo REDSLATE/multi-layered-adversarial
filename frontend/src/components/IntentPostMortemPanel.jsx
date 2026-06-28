@@ -3,6 +3,7 @@ import { api, getRuntimeMeta } from "@/lib/api";
 import { Crosshair, ArrowsClockwise, Warning, CheckCircle, XCircle, MagnifyingGlass, Lightning, Power } from "@phosphor-icons/react";
 import FunnelDeltasTile from "./FunnelDeltasTile";
 import IntentFunnelTile from "./IntentFunnelTile";
+import TradeReadinessTile from "./TradeReadinessTile";
 import { ResearchSignalsBlock } from "./ResearchSignalsBlock";
 
 /**
@@ -1254,6 +1255,14 @@ export default function IntentPostMortemPanel() {
               actually change anything?" — answer it inline before
               they scroll to the outcome distribution. */}
           <FunnelDeltasTile />
+
+          {/* ─── Trade Readiness diagnostic (2026-02-25) ─────────
+              Single-glance "why isn't equity trading?". Polls
+              /admin/equity-trade-readiness for the persisted-truth
+              view: top failing gate + colored histogram + newest
+              intents with click-to-filter. Backs the same backend
+              endpoint the operator can curl from the command line. */}
+          <TradeReadinessTile />
 
           {/* ─── 7-stage Intent Funnel (2026-02-21) ─────────────────
               Brain → Seat → Governor → RoadGuard → AutoSubmit →

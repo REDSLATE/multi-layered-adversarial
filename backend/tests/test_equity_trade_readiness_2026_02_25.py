@@ -245,8 +245,11 @@ async def test_endpoint_returns_complete_top_level_shape():
         assert key in result, f"missing top-level key: {key}"
 
     # Session shape
-    for key in ["now_utc", "rth", "extended_hours_window", "extended_hours_enabled", "next_rth_open_iso"]:
+    for key in ["now_utc", "rth", "extended_hours_window", "extended_hours_enabled",
+                "lane_enabled", "lane_status", "next_rth_open_iso"]:
         assert key in result["session"], f"missing session.{key}"
+    # lane_status must be one of the operator-facing labels
+    assert result["session"]["lane_status"] in ("OPEN", "GATED", "DISABLED")
 
     # Seat shape
     assert "equity_executor" in result["seat"]
