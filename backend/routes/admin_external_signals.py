@@ -148,3 +148,89 @@ async def list_source_credibility(_user=Depends(get_current_user)):
             "UNTRUSTED → WATCHLIST → TRUSTED (and reverse)."
         ),
     }
+
+
+# ──────────────────────── Seat-bound cleaned context ────────────────────────
+
+
+@router.get("/admin/external-signals/seat-context")
+async def seat_context(
+    _user=Depends(get_current_user),
+    symbol: Optional[str] = Query(default=None, description="filter by ticker"),
+    hours: int = Query(default=24, ge=1, le=72),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    """Return CLEANED witness context for the Seat-bound view.
+
+    Doctrine pin (TRIAL COURT):
+        The witness page displays everything (raw). RoadGuard labels
+        suspicious clusters (SPAM, DUPLICATE_BURST, FLIP_FLOP,
+        SOFT_NEWS_CLUSTER, SOURCE_DRIFT). This endpoint returns
+        ONLY rows that carry NO RoadGuard labels — i.e. witnesses
+        that survived the noise filter.
+
+        Even so, the rows returned are STILL `verifier_status=UNTRUSTED`
+        and `influence_allowed=False`. The Seat sees them as
+        ADVISORY context, not authority. This endpoint does not
+        change that. The cleaned set is just "less noise" — not
+        "promoted to trusted."
+
+        The response also reports what was filtered out (counts per
+        label) so the operator can audit the filter's behavior. If
+        SOFT_NEWS_CLUSTER is silently dropping 60% of NVDA witnesses,
+        the operator deserves to see that number explicitly, not
+        discover it later.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    base_q: dict[str, Any] = {"received_at": {"$gte": cutoff}}
+    if symbol:
+        base_q["symbol"] = symbol.strip().upper()
+
+    # Cleaned: no roadguard_labels OR explicitly empty
+    cleaned_q = {
+        **base_q,
+        "$or": [
+            {"roadguard_labels": {"$exists": False}},
+            {"roadguard_labels": {"$size": 0}},
+        ],
+    }
+    cleaned = await db[EXTERNAL_SIGNALS].find(
+        cleaned_q, _PROJECTION_RECENT,
+    ).sort("received_at", -1).to_list(limit)
+
+    # Filter audit: what got filtered out, by label
+    filtered_q = {
+        **base_q,
+        "roadguard_labels": {"$exists": True, "$not": {"$size": 0}},
+    }
+    total_filtered = await db[EXTERNAL_SIGNALS].count_documents(filtered_q)
+    pipeline = [
+        {"$match": filtered_q},
+        {"$unwind": "$roadguard_labels"},
+        {"$group": {"_id": "$roadguard_labels", "n": {"$sum": 1}}},
+        {"$sort": {"n": -1}},
+    ]
+    filtered_by_label: dict[str, int] = {}
+    async for d in db[EXTERNAL_SIGNALS].aggregate(pipeline):
+        filtered_by_label[d["_id"]] = d["n"]
+
+    total_in_window = await db[EXTERNAL_SIGNALS].count_documents(base_q)
+
+    return {
+        "items": cleaned,
+        "count": len(cleaned),
+        "window_hours": hours,
+        "totals": {
+            "total_in_window": total_in_window,
+            "cleaned_shown": len(cleaned),
+            "filtered_out": total_filtered,
+        },
+        "filtered_by_label": filtered_by_label,
+        "doctrine": (
+            "SEAT-BOUND CLEANED CONTEXT. Rows here survived RoadGuard "
+            "label filtering. They are still UNTRUSTED and "
+            "influence_allowed=False. Read-only advisory context — "
+            "the Seat does not act on these, the Seat is INFORMED by these. "
+            "Verifier (future) decides if any source ever earns weight."
+        ),
+    }
