@@ -264,12 +264,45 @@ def test_recovery_breakeven():
 # ---------------------------------------------------
 
 def test_alpha_more_rope():
-    assert evaluate_recovery_escalation(
+    # mae_atr=5.5 sits between BETA's recovery threshold (5.0) and
+    # ALPHA's tier-adjusted recovery threshold (5.0 × 1.2 = 6.0).
+    # Under BETA the same value fires WARNING; under ALPHA it
+    # returns None — that's the doctrine of "ALPHA gets more rope".
+    modifier = evaluate_recovery_escalation(
+        base_basket(
+            verifier_tier="ALPHA",
+            mae_atr=5.5,
+        )
+    )
+
+    assert modifier is None
+
+
+def test_alpha_more_rope_proven_by_beta_warning():
+    # The companion: same input under BETA does fire — proving the
+    # gap is the verifier tier, not the absolute value.
+    modifier = evaluate_recovery_escalation(
+        base_basket(
+            verifier_tier="BETA",
+            mae_atr=5.5,
+        )
+    )
+
+    assert modifier is not None
+    assert modifier.severity == EscalationSeverity.WARNING
+
+
+def test_alpha_mae_11_is_critical_not_fatal():
+    modifier = evaluate_recovery_escalation(
         base_basket(
             verifier_tier="ALPHA",
             mae_atr=11,
         )
-    ) is None
+    )
+
+    assert modifier is not None
+    assert modifier.severity == EscalationSeverity.CRITICAL
+    assert modifier.reason == "CRITICAL_CRISIS_THRESHOLD"
 
 
 def test_beta_fatal():
