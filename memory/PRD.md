@@ -1,3 +1,46 @@
+## 2026-02-23 (late session) — Pre-Monday safety: consensus-boost kill switch + dry_run_reason instrumentation
+
+### Why
+Operator surfaced two concerns after the witness-council layer landed:
+1. **Could non-seat brains' intents be blocking the seat holder's intents through math?** Investigation confirmed the architecture allows it: with `consensus_boost` active and default `±0.05 per advisor / ±0.15 cap`, three peer brains disagreeing with the executor can shift the executor's `effective_confidence` by -0.15 — enough to push a `raw_confidence=0.78` Barracuda intent below the 0.70 auto-submit floor, silently rejecting it as `low_confidence`. The non-seat brains effectively VETO the seat holder via math even though they have zero fire authority.
+2. **The `dry_run_reason` field on `shared_intents` is always `None`** — 4,992 preview equity intents in `dry_run_blocked` state, all carrying `dry_run_reason=None`. The Trade Flow page and lane-readiness diagnostic surface this field as the "why" — operator was looking at half-blind diagnostics.
+
+### What was built
+
+**1. Consensus-boost kill switch** — `shared/pipeline/consensus_pool.py`
+- New env var: `CONSENSUS_BOOST_ENABLED`. Default `true` (current behavior unchanged).
+- `_consensus_boost_enabled()` reads the env; accepts `false / 0 / off / no` (case-insensitive) as the kill values.
+- `compute_consensus_boost()` short-circuits when the kill switch is engaged — returns `advisor_boost=0.0, effective=base`. The pool still captures every advisory opinion (Verifier-style evidence is preserved); only the math output is silenced.
+- Doctrine: matches the external-witness layer built earlier today. When disabled, non-seat brains become PURE WITNESSES — opinions recorded, zero modifier applied, no veto by math.
+- Sized for **instant rollback without redeploy**: operator flips the env var + `supervisorctl restart backend`. No code change, no migration, no schema change.
+
+**2. `dry_run_reason` instrumentation fix** — `shared/execution.py::run_dry_run_for_intent`
+- The `dry_run_reason` field on `shared_intents` was never populated — only `gate_state=dry_run_blocked` and `dry_run_state=blocked` were set. The block reason was captured in `shared_gate_results` but joining-by-intent_id was expensive and wasn't being done by the diagnostic surface.
+- Fix: derives `dry_run_reason` from the FIRST failing gate's name + reason text, persists inline on the intent doc as `{name}:{reason}` (truncated to 200 chars).
+- Verified on a real preview intent: AVGO HOLD now persists `dry_run_reason=action_routable:action 'HOLD' is not a routable order (HOLD/etc are watchlist signals)`.
+- Drive-by lint fix: removed an unrelated pre-existing `f"margin account..."` f-string without placeholders (was tripping ruff on the same file).
+
+### Live state after deploy
+- Existing 51 consensus-boost pathway tests still passing; default behavior unchanged.
+- 27 camaro_weights tests still passing.
+- 41 witness-layer tests still passing.
+- 8 unrelated test failures in `test_consensus_applied_rate_metric_2026_06_24.py` and 1 in `test_consensus_indexes_and_api_regression.py` (TTL index name) are pre-existing drift, not introduced by tonight's work.
+
+### Monday playbook
+1. Open `/admin/trade-flow` on prod at 9:30 ET. Read the headline.
+2. Hit `GET /api/admin/lane-readiness/equity?hours=72` — `top_block_reasons` and `skipped_examples` now carry actual reasons instead of nulls.
+3. In `post_dry_run_outcomes.skipped_examples`, look for any Barracuda row with `auto_submit_skip_category="low_confidence"` AND `confidence >= 0.70`. That signature proves the consensus-pool veto is happening live.
+4. If proven: flip `CONSENSUS_BOOST_ENABLED=false` + restart backend. Non-seat brains go to pure-witness mode immediately. Verifier-style evidence collection continues uninterrupted.
+5. If not proven: the active blocker is something else; follow the actual top block reasons (now legible) to the killer.
+
+### Files
+- `backend/shared/pipeline/consensus_pool.py` (kill switch + env reader)
+- `backend/shared/execution.py` (dry_run_reason inline persist + drive-by lint fix)
+
+---
+
+
+
 ## 2026-02-23 — Witness Council layer (Polygon news intake + RoadGuard labels + cleaned Seat context) + camaro_weights regime symmetry fix
 
 ### Doctrine — TRIAL COURT, NOT A VOTING SYSTEM
