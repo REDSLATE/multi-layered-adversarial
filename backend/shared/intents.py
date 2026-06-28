@@ -1607,7 +1607,9 @@ async def _list_intents_impl(
             {"$limit": limit},
             {"$project": {"_id": 0, "_exec_rank": 0}},
         ]
-        rows = await db[SHARED_INTENTS].aggregate(pipeline).to_list(None)
+        rows = await db[SHARED_INTENTS].aggregate(
+            pipeline, maxTimeMS=15000,
+        ).to_list(None)
         return {
             "items": _safe_jsonable_intents(rows), "count": len(rows),
             "sort": sort,
@@ -1615,7 +1617,14 @@ async def _list_intents_impl(
             "include_disabled_lanes": bool(include_disabled_lanes),
         }
 
-    rows = await db[SHARED_INTENTS].find(q, {"_id": 0}).sort(sort_spec).to_list(limit)
+    # 2026-02-25 — bound server-side execution at 15s so a missing
+    # index regression (the kind that fired NetworkTimeout in prod
+    # today) fails with a clean OperationFailure inside the
+    # handler's try/except instead of a 30s+ socket timeout that
+    # hangs the operator's UI.
+    rows = await db[SHARED_INTENTS].find(
+        q, {"_id": 0},
+    ).sort(sort_spec).max_time_ms(15000).to_list(limit)
     return {
         "items": _safe_jsonable_intents(rows), "count": len(rows),
         "sort": sort,

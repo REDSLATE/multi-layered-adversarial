@@ -211,6 +211,28 @@ async def ensure_indexes() -> None:
     # Solo index on `ingest_ts` is the surgical fix — bounded
     # memory, indexed sort.
     await db.shared_intents.create_index([("ingest_ts", -1)], name="shared_intents_ingest_ts_idx")
+    # 2026-02-25 (P0 prod hotfix — regression of 2026-06-22 hotfix):
+    # On 2026-02-23 the default sort changed from `ingest_ts` →
+    # `conviction` (= `[(confidence, -1), (ingest_ts, -1)]`). The
+    # 2026-06-22 `ingest_ts`-only index above no longer covers the
+    # new hot path: with ~100k+ prod intents the planner blocking-
+    # sorts in memory → 32MB cap → Mongo socket timeout → operator
+    # sees `NetworkTimeout` 500 on the Intents page.
+    # Two compound indexes cover the realistic query shapes:
+    #   1. unfiltered conviction sort (when include_disabled_lanes=true
+    #      or both lanes enabled with no lane pin) — index on
+    #      (confidence -1, ingest_ts -1).
+    #   2. default page (include_disabled_lanes=false, lane $in
+    #      [enabled]) — leading-on-lane lets the planner intersect
+    #      filter + sort in a single index scan.
+    await db.shared_intents.create_index(
+        [("confidence", -1), ("ingest_ts", -1)],
+        name="shared_intents_conviction_idx",
+    )
+    await db.shared_intents.create_index(
+        [("lane", 1), ("confidence", -1), ("ingest_ts", -1)],
+        name="shared_intents_lane_conviction_idx",
+    )
     await db.shared_brain_opinions.create_index([("runtime", 1), ("topic", 1), ("posted_at", -1)])
     await db.shared_brain_outcomes.create_index([("opinion_id", 1), ("resolved_at", -1)])
     # Shelly memory regex search was the worst offender (~25-40ms scan);

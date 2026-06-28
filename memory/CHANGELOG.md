@@ -1,3 +1,90 @@
+## 2026-02-25 (later) — REAL fix: prod 500 was a missing-index regression, not a data-shape issue
+
+### Operator-supplied prod response body (the decisive datum)
+```json
+{"detail":"NetworkTimeout: customer-apps-shard-00-02.kndgvm.mongodb.net:27017: The read operation timed out",
+ "request_id":"17bbb7ce3d89","path":"/api/intents","method":"GET"}
+```
+
+The earlier diagnostic instrumentation captured this from the global
+`@app.exception_handler(Exception)` in `server_modules/middleware_setup.py`
+(lines 67-90). Once the operator pasted the response body — not just
+the status code — the real fault site became obvious: pymongo's
+async driver raised `NetworkTimeout` waiting for an Atlas shard
+read to return. Zero data-shape issue. Pure performance regression.
+
+### Root cause — silent regression of the 2026-06-22 P0 hotfix
+- 2026-06-22 the operator added `shared_intents_ingest_ts_idx`
+  (single-key on `ingest_ts -1`) because the default Intents page
+  query was `find({}).sort("ingest_ts", -1)` and at ~100k+ prod
+  intents the planner blocking-sorted in-memory → 32MB cap →
+  HTTP 500. Hotfix shipped clean.
+- 2026-02-23 (this fork) the default sort flipped to `conviction`
+  = `[(confidence -1), (ingest_ts -1)]`. The 06-22 single-key
+  index no longer covers the new hot path. Planner falls back
+  to in-memory sort across all ~100k intents → exceeds 32MB or
+  just takes too long → Mongo socket timeout → operator sees
+  `NetworkTimeout` 500 on the Intents page.
+- Preview never reproduced because preview has ≤3 docs in the
+  default lane filter; in-memory sort is instant.
+
+### Surgical fix — two compound indexes
+`db.py::ensure_indexes`:
+```python
+db.shared_intents.create_index(
+    [("confidence", -1), ("ingest_ts", -1)],
+    name="shared_intents_conviction_idx",
+)
+db.shared_intents.create_index(
+    [("lane", 1), ("confidence", -1), ("ingest_ts", -1)],
+    name="shared_intents_lane_conviction_idx",
+)
+```
+- Index 1 covers the unfiltered-conviction case
+  (`include_disabled_lanes=true` or both lanes enabled).
+- Index 2 covers the default page where the route adds
+  `lane: {$in: [enabled_lanes]}` before sort — leading-on-`lane`
+  lets the planner intersect filter+sort in a single index scan.
+
+### Belt-and-suspenders — bounded server-side execution
+`shared/intents.py::_list_intents_impl`:
+- `.max_time_ms(15000)` on the find().sort() call.
+- `maxTimeMS=15000` on the execution_priority aggregation.
+
+Next time someone adds a sort dimension without an index, the query
+fails with `OperationFailure` (Code 50) inside the handler's
+try/except in ~15s and surfaces a clean `_diagnostic_error` payload
+to the UI — instead of a 30s+ socket hang followed by NetworkTimeout.
+
+### Verified preview
+- Both indexes registered live (verified via `index_information()`).
+- `GET /api/intents?limit=10` returns HTTP 200 in 124ms.
+- Lint clean on db.py; intents.py warnings are pre-existing
+  (lines 316/439/450 `import json` inside functions, untouched).
+
+### What changes for the operator
+1. Deploy.
+2. `ensure_indexes()` runs on startup; both new indexes get created
+   on the prod Atlas cluster automatically (idempotent by name).
+3. The next request to `/api/intents` against the conviction sort
+   uses indexed sort — should return in <500ms even at 100k+ intents.
+
+### Why the previous instrumentation patches were still worth shipping
+- The widened `_safe_jsonable_intents` + `jsonable_encoder` switch
+  prevents the OTHER class of bug (exotic Mongo types in nested
+  payloads) from ever 500ing the feed silently.
+- The handler-level try/except + `_diagnostic_error` payload turns
+  every future failure of this route into a self-debugging response
+  body — the operator gets the exception class and traceback in the
+  UI without needing log access.
+- The 2026-06-22 hotfix comment is now joined by the 2026-02-25
+  comment explaining the regression — the next person who flips
+  the default sort will see "you need a new index" written into the
+  code path they're about to break.
+
+---
+
+
 ## 2026-02-25 — GET /api/intents prod 500 — diagnostic instrumentation
 
 ### Operator report (verbatim)

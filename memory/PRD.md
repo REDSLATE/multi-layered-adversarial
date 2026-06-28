@@ -1,3 +1,32 @@
+## 2026-02-25 (later) — Prod 500 ROOT-CAUSED & fixed
+
+### Decisive datum (operator-supplied)
+Response body: `{"detail":"NetworkTimeout: ...customer-apps-shard...timed out","request_id":...}`
+
+### Diagnosis
+Not a data-shape bug. Mongo Atlas socket read timeout. The 2026-02-23 doctrine flip making `sort=conviction` (`[(confidence -1), (ingest_ts -1)]`) the default silently regressed the 2026-06-22 P0 index hotfix — the old single-key `ingest_ts` index no longer covers the new hot path. At ~100k+ prod intents the planner does in-memory sort → 32MB cap / slow → driver timeout → 500.
+
+### Fix shipped
+- `db.py::ensure_indexes` — two new compound indexes:
+  - `shared_intents_conviction_idx`: `[(confidence -1), (ingest_ts -1)]`
+  - `shared_intents_lane_conviction_idx`: `[(lane 1), (confidence -1), (ingest_ts -1)]`
+- `shared/intents.py::_list_intents_impl` — `.max_time_ms(15000)` on find; `maxTimeMS=15000` on aggregate. Future regressions of this class will surface a clean `OperationFailure` inside the handler's `try/except` rather than a 30s socket hang.
+- Diagnostic instrumentation from earlier today retained as defense-in-depth (catches the orthogonal class of bug: exotic Mongo types in row payloads).
+
+### Verified preview
+- Both indexes registered live (verified via `index_information()`).
+- `GET /api/intents?limit=10` returns HTTP 200 in 124ms.
+- Backend boot logs clean.
+
+### Operator action
+Deploy → `ensure_indexes()` creates the new indexes on prod Atlas automatically (idempotent by name) → next request should return in <500ms.
+
+### Status
+P0 closed pending operator confirmation post-deploy.
+
+---
+
+
 ## 2026-02-25 — Prod 500 on GET /api/intents — diagnostic instrumentation shipped
 
 ### Status
