@@ -20,9 +20,26 @@ Doctrine (operator pick, 2026-06-24):
 
 Tunable via runtime_flags (Mongo overrides; operator UI can set them
 later without redeploy). Defaults below.
+
+KILL SWITCH (2026-02-23, pre-Monday safety):
+  * Env var `CONSENSUS_BOOST_ENABLED` — default `true` (current
+    behavior unchanged).
+  * Set to `false` to make non-seat brains PURELY ADVISORY:
+    opinions still get captured into the pool (Verifier-style
+    evidence is preserved), but `compute_consensus_boost` returns
+    `advisor_boost=0.0` so the executor's effective_confidence
+    equals its raw confidence.
+  * Rationale: the symmetric ±0.15 boost design lets 3 dissenting
+    non-seat brains push the executor BELOW the auto-submit
+    confidence floor (0.70), effectively granting them veto power
+    via math even though they have zero fire authority. The kill
+    switch lets the operator flip to pure-witness doctrine
+    (matches the external-witness layer built 2026-02-23) without
+    a redeploy.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
@@ -36,6 +53,24 @@ from shared.pipeline.models import BrainOpinion
 DEFAULT_BOOST_PER_BRAIN = 0.05
 DEFAULT_BOOST_CAP = 0.15
 DEFAULT_WINDOW_SECONDS = 900   # 15 min — pool TTL AND lookup window
+
+
+def _consensus_boost_enabled() -> bool:
+    """Env-gated kill switch (pre-Monday safety, 2026-02-23).
+
+    When set to `false`, `compute_consensus_boost` returns a no-op
+    result (boost=0, effective=base). The pool still captures every
+    advisory opinion for evidence preservation, but non-seat brains
+    can no longer veto the executor through confidence math.
+
+    Default: enabled (boost active, current behavior). Operator
+    flips to `false` if prod diagnostic surfaces low-confidence
+    skips on the seat-holder caused by peer-brain disagreement.
+    """
+    raw = (os.environ.get("CONSENSUS_BOOST_ENABLED") or "").strip().lower()
+    if raw in ("false", "0", "off", "no"):
+        return False
+    return True
 
 
 # Process-global runtime-flag cache. Survives across requests until
@@ -192,6 +227,15 @@ async def compute_consensus_boost(
     )
     if opinion.action not in ("BUY", "SELL"):
         # HOLD/ABSTAIN executor → no consensus reference. Pass through.
+        return no_boost
+
+    # Kill switch (2026-02-23): when disabled, non-seat brains are
+    # PURELY ADVISORY — opinions still get pooled below for evidence
+    # preservation, but no boost/penalty is applied. The executor's
+    # raw confidence is the final word. Matches the witness-council
+    # doctrine (default-hostile witnesses, zero modifier until
+    # Verifier promotes).
+    if not _consensus_boost_enabled():
         return no_boost
 
     per_brain = await _load_runtime_flag(

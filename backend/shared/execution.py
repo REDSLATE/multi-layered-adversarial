@@ -168,7 +168,7 @@ async def _evaluate_gates(
                 (
                     f"cash account, long-only action {action!r} allowed"
                     if is_cash else
-                    f"margin account opt-in via ACCOUNT_TYPE=margin"
+                    "margin account opt-in via ACCOUNT_TYPE=margin"
                 )
             ),
         })
@@ -949,15 +949,38 @@ async def run_dry_run_for_intent(
     # dry_run_passed, but dry_run_state=None → maybe_auto_submit
     # rejected).
     dry_run_summary = "passed" if result["verdict"] == "would_pass" else "blocked"
+    # 2026-02-23: derive `dry_run_reason` from the FIRST failing gate.
+    # Before this fix, `shared_intents.dry_run_reason` was never
+    # populated — only `gate_state=dry_run_blocked` was set. Operator
+    # diagnostics (Trade Flow page, lane_readiness top_block_reasons)
+    # were querying the intent doc directly and getting `None` for
+    # every block reason. The reason is captured in shared_gate_results
+    # but joining-by-intent_id is expensive and wasn't being done by
+    # the diagnostic surface. Persisting the first-failing-gate name
+    # inline on the intent doc makes the diagnostic instantly readable
+    # without a join.
+    dry_run_reason = None
+    if result["verdict"] != "would_pass":
+        for g in (result.get("gates") or []):
+            if not g.get("passed"):
+                name = g.get("name") or "unknown_gate"
+                reason = g.get("reason") or ""
+                # Keep it compact: `gate_name:reason_text` (truncated)
+                # so it indexes well and shows cleanly in the UI.
+                dry_run_reason = f"{name}:{reason}"[:200] if reason else name[:200]
+                break
+    set_doc = {
+        "gate_state": new_state,
+        "dry_run_state": dry_run_summary,
+        "last_dry_run_ts": _now_iso(),
+        "last_dry_run_by": actor,
+        "last_dry_run_notional_usd": order_notional_usd,
+    }
+    if dry_run_reason is not None:
+        set_doc["dry_run_reason"] = dry_run_reason
     await db[SHARED_INTENTS].update_one(
         {"intent_id": intent_id},
-        {"$set": {
-            "gate_state": new_state,
-            "dry_run_state": dry_run_summary,
-            "last_dry_run_ts": _now_iso(),
-            "last_dry_run_by": actor,
-            "last_dry_run_notional_usd": order_notional_usd,
-        }},
+        {"$set": set_doc},
     )
     await db[SHARED_GATE_RESULTS].insert_one({
         "intent_id": intent_id,
