@@ -1,3 +1,37 @@
+## 2026-02-25 — Prod 500 on GET /api/intents — diagnostic instrumentation shipped
+
+### Status
+- **P0 carry-over**: prod 500 still happening after the previous `_safe_jsonable_intents` shim. Preview data is clean → unreproducible locally.
+- **Approach**: instrument first, fix second. Cannot guess the failing key — must extract the prod stack trace.
+
+### What landed (`shared/intents.py`)
+- Widened `_safe_jsonable_intents` from `(ValueError, TypeError)` → `Exception`.
+- Extracted route body into `_list_intents_impl(...)` (auth check stays in handler so 401 control flow is unchanged).
+- Outer `try/except Exception` in `list_intents` returns HTTP 200 with an empty list **+ `_diagnostic_error: {type, message, traceback}`** payload (admin-authed). `HTTPException` re-raised cleanly.
+- Why 200 (not 500): keeps the frontend feed alive, lets the operator paste the traceback back without log access.
+
+### Verified preview
+- Backend boots clean.
+- All 4 sort modes (`conviction`/`execution_priority`/`newest`/`symbol`) return 200 with `_diagnostic_error=None` (data is clean → instrumentation dormant).
+- Lint clean.
+
+### Next operator action
+Redeploy to prod → hit `/api/intents` → paste `_diagnostic_error.traceback` → targeted upstream fix to whichever legacy doc / aggregation step is tripping.
+
+### Open after this lands
+- P0 root-cause fix once traceback arrives.
+- P1 Witness Verifier promotion (P&L attribution wiring).
+- P1 Public.com preflight endpoint.
+- P2 Progressive Sizing by objections.
+- P2 "Why did this intent stop?" deep-dive tile + Operator Override Audit Feed.
+- P2 Wire Grid Recovery Governor into live pipeline.
+- P2 Upgrade Camino to cite evidence (unlocks full 1.0 seat weight).
+- P3 Code-quality cleanup (circular imports, hook deps, hardcoded test secrets).
+- Future: Kraken spread poller, Hot-Brain Router into active pipeline, OpenFlow Seat Dispatcher (only if Monday diagnostic shows a code-path blocker).
+
+---
+
+
 ## 2026-02-23 (closing pass) — Test-drift cleanup: 8 stale tests fixed
 
 ### Why

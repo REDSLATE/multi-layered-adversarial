@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+import traceback
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
@@ -1348,11 +1349,11 @@ def _safe_jsonable_intents(rows: list[dict]) -> list[dict]:
         try:
             json.dumps(row, allow_nan=False, default=str)
             out.append(row)
-        except (ValueError, TypeError) as exc:
+        except Exception as exc:  # widened 2026-02-25 — prod still 500s
             intent_id = row.get("intent_id") if isinstance(row, dict) else None
             logger.error(
-                "intents.list: dropping unserializable doc intent_id=%s err=%s",
-                intent_id, str(exc)[:200],
+                "intents.list: dropping unserializable doc intent_id=%s err_type=%s err=%s",
+                intent_id, type(exc).__name__, str(exc)[:200],
             )
             out.append({
                 "intent_id": intent_id,
@@ -1360,7 +1361,7 @@ def _safe_jsonable_intents(rows: list[dict]) -> list[dict]:
                 "symbol": row.get("symbol") if isinstance(row, dict) else None,
                 "lane": row.get("lane") if isinstance(row, dict) else None,
                 "ingest_ts": row.get("ingest_ts") if isinstance(row, dict) else None,
-                "_serialization_error": str(exc)[:200],
+                "_serialization_error": f"{type(exc).__name__}: {str(exc)[:200]}",
             })
     return out
 
@@ -1434,6 +1435,57 @@ async def list_intents(
         if not authed:
             raise HTTPException(status_code=401, detail="invalid runtime ingest token")
 
+    # 2026-02-25 — diagnostic instrumentation for the recurring prod 500.
+    # Preview data is clean so the bug is unreproducible locally; we
+    # surface the full traceback in the response body (admin-authed only)
+    # so the operator can paste it back and we can fix the upstream
+    # write path or legacy doc shape that's tripping the handler.
+    try:
+        return await _list_intents_impl(
+            stack=stack,
+            symbol=symbol,
+            lane=lane,
+            gate_state=gate_state,
+            limit=limit,
+            sort=sort,
+            include_disabled_lanes=include_disabled_lanes,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        tb = traceback.format_exc()
+        logger.error(
+            "intents.list: handler crashed err_type=%s err=%s\n%s",
+            type(exc).__name__, str(exc)[:500], tb,
+        )
+        return {
+            "items": [],
+            "count": 0,
+            "sort": sort,
+            "enabled_lanes": [],
+            "include_disabled_lanes": bool(include_disabled_lanes),
+            "_diagnostic_error": {
+                "type": type(exc).__name__,
+                "message": str(exc)[:500],
+                "traceback": tb,
+            },
+        }
+
+
+async def _list_intents_impl(
+    *,
+    stack: Optional[str],
+    symbol: Optional[str],
+    lane: Optional[str],
+    gate_state: Optional[str],
+    limit: int,
+    sort: str,
+    include_disabled_lanes: bool,
+) -> dict:
+    """Extracted body of list_intents so the route handler can wrap
+    it in a single diagnostic try/except without polluting the
+    auth-check control flow.
+    """
     q: dict = {}
     if stack:
         q["stack"] = stack

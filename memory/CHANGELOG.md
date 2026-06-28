@@ -1,3 +1,67 @@
+## 2026-02-25 — GET /api/intents prod 500 — diagnostic instrumentation
+
+### Operator report (verbatim)
+> "After last deploy /api/intents is STILL throwing a 500 in production.
+>  Preview is clean."
+
+### Root cause hypothesis
+Legacy intent docs in prod carry a shape (likely missing/renamed dict
+key, unexpected None, or BSON type) that trips the handler **before**
+reaching `_safe_jsonable_intents`. The previous shim only caught
+`ValueError/TypeError` on `json.dumps` — a `KeyError` raised during
+doc iteration / aggregation / lane filtering / sort prep would slip
+through and 500 the whole route.
+
+### What shipped (`shared/intents.py`)
+1. **Widened `_safe_jsonable_intents`** — now catches `Exception`
+   (not just `ValueError/TypeError`) so any per-row failure degrades
+   to a stub instead of bubbling.
+2. **Extracted route body → `_list_intents_impl(...)`** — kept the
+   auth-check control flow in the handler (so 401s still raise
+   `HTTPException` cleanly) but moved every data-touching line into
+   an inner coroutine.
+3. **Outer `try/except Exception` in `list_intents`** — wraps the
+   call to `_list_intents_impl`. On failure returns HTTP 200 with:
+   ```json
+   {
+     "items": [], "count": 0,
+     "_diagnostic_error": {
+       "type": "<ExcClassName>",
+       "message": "<str(exc)[:500]>",
+       "traceback": "<traceback.format_exc()>"
+     }
+   }
+   ```
+   200 (not 500) on purpose: the frontend stays alive, the operator
+   sees an empty queue **plus** the exact failing line/key, and we
+   can fix the upstream write path or legacy doc shape immediately.
+   `HTTPException` (auth/401s) re-raised as-is — only unexpected
+   exceptions are captured.
+
+### Why HTTP 200 with diagnostic body (not 500 + body)
+FastAPI/Starlette returns the global error handler's JSON shape on
+unhandled exceptions, which the operator's frontend treats as a
+hard failure (shows "feed offline" banner). HTTP 200 lets the
+existing UI render the empty list and an "error chip" tile we can
+add later if needed. The diagnostic stays admin-authed (the auth
+check runs before the wrapped block).
+
+### Verified
+- `python -c "import shared.intents"` clean.
+- Backend boots without errors.
+- Live curl against `/api/intents` for all 4 sort modes
+  (`conviction`/`execution_priority`/`newest`/`symbol`) — all
+  return `count > 0` and `_diagnostic_error` is `None` on preview
+  (clean data path).
+- Lint clean.
+
+### Next step (operator)
+Redeploy → hit `/api/intents` in prod → paste back the
+`_diagnostic_error.traceback` → targeted upstream fix.
+
+---
+
+
 ## 2026-06-24 (later) — Brain Metrics: consensus_boost_applied_rate KPI
 
 ### Operator pin (verbatim)
