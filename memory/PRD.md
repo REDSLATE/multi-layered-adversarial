@@ -1,3 +1,34 @@
+## 2026-02-23 (closing pass) — Test-drift cleanup: 8 stale tests fixed
+
+### Why
+After landing the consensus-boost kill switch + dry_run_reason instrumentation, ran the consensus regression suite and saw 8 failures. Operator asked whether they were fixable. Investigation showed all 8 were test-drift — production code had been operator-pinned to new doctrine, tests had stale expectations. Zero production-code changes needed.
+
+### What was fixed
+
+**Cluster 1 — `test_consensus_applied_rate_metric_2026_06_24.py` (7 tests)**
+- Production change (2026-02-22): operator pinned `INSUFFICIENT_SAMPLES_THRESHOLD = 50` in `brain_metrics.py::_classify_applied_rate`. When `total < 50`, classifier returns `"insufficient_data"` (or `"insufficient_data_suspicious"` when rate > 0.5) regardless of rate. Doctrine: observation-phase metric is observability-only at small sample size — don't tune until ≥50 evaluations.
+- Tests called classifier with default `total=0`, never reaching the band math they intended to verify.
+- Fix: TestClassifier cases pass `total=100`; TestAppliedRate cases seed 50 telemetry rows (at the threshold).
+- Added a new `test_insufficient_data_doctrine` that pins the small-sample short-circuit behavior — locks the doctrine in code so a future refactor can't silently revert it.
+
+**Cluster 2 — `test_consensus_indexes_and_api_regression.py::test_telemetry_ttl_15m` (1 test)**
+- Production change (2026-02-21): TTL on `intent_consensus_telemetry` bumped 15min → 7d to support the full applied-rate metric window. Index renamed `consensus_telemetry_ttl_15m` → `consensus_telemetry_ttl_7d` with `expireAfterSeconds=604800`. Drop logic in `db.py::ensure_indexes` removes the legacy 15min index when the new 7d one is healthy.
+- Test still asserted the old name + 900-second value.
+- Fix: renamed test to `test_telemetry_ttl_7d`, asserts the new name + 604800. Self-documenting failure message points future readers to db.py / brain_metrics.py if the rename ever gets reverted.
+
+### Live state after fix
+- Consensus path: **25/25 applied-rate + indexes** (was 17/25), **51/51 boost pathway**, **27/27 camaro_weights**, **41/41 witness-council layer**. Whole consensus regression suite is now green.
+- Lint clean on both touched test files.
+- Zero production code changes — pure test-side correctness.
+
+### Files
+- `backend/tests/test_consensus_applied_rate_metric_2026_06_24.py` (5 tests updated, 1 added)
+- `backend/tests/test_consensus_indexes_and_api_regression.py` (1 test renamed + updated)
+
+---
+
+
+
 ## 2026-02-23 (late session) — Pre-Monday safety: consensus-boost kill switch + dry_run_reason instrumentation
 
 ### Why

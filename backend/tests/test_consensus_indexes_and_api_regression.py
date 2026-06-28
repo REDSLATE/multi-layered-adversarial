@@ -44,12 +44,20 @@ class TestConsensusIndexesLive:
         assert "consensus_telemetry_intent_idx" in idx
         assert idx["consensus_telemetry_intent_idx"]["key"] == [("intent_id", 1)]
 
-    async def test_telemetry_ttl_15m(self):
+    async def test_telemetry_ttl_7d(self):
+        """TTL was bumped 15min → 7d on 2026-02-21 to support the full
+        applied-rate metric window. Index renamed accordingly. This
+        test pins the new spec; the previous 15min index gets dropped
+        by `ensure_indexes()` when the 7d one is healthy (see db.py)."""
         await ensure_indexes()
         idx = await db[INTENT_CONSENSUS_TELEMETRY].index_information()
-        assert "consensus_telemetry_ttl_15m" in idx
-        spec = idx["consensus_telemetry_ttl_15m"]
-        assert spec.get("expireAfterSeconds") == 900
+        assert "consensus_telemetry_ttl_7d" in idx, (
+            "expected new 7d TTL index — was the rename "
+            "(consensus_telemetry_ttl_15m → consensus_telemetry_ttl_7d) "
+            "reverted? See db.py and brain_metrics.py comments."
+        )
+        spec = idx["consensus_telemetry_ttl_7d"]
+        assert spec.get("expireAfterSeconds") == 604800  # 7 days
 
 
 # ── API regression (prior-iteration fixes still healthy) ──────────

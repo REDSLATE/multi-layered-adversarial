@@ -82,34 +82,51 @@ async def test_telemetry_ttl_is_seven_days(clean_telemetry):
 
 
 # ── Math / classification ──────────────────────────────────────────
+# Tests pass `total=100` (above INSUFFICIENT_SAMPLES_THRESHOLD=50) so
+# the band math is exercised. Below the threshold the classifier
+# short-circuits to `insufficient_data` regardless of rate (operator
+# pin 2026-02-22, observation-phase doctrine).
 class TestClassifier:
     def test_no_data(self):
         assert _classify_applied_rate(None) == "no_data"
 
     def test_noise_band(self):
-        assert _classify_applied_rate(0.0) == "noise"
-        assert _classify_applied_rate(0.03) == "noise"
-        assert _classify_applied_rate(0.049) == "noise"
+        assert _classify_applied_rate(0.0, total=100) == "noise"
+        assert _classify_applied_rate(0.03, total=100) == "noise"
+        assert _classify_applied_rate(0.049, total=100) == "noise"
 
     def test_healthy_band(self):
-        assert _classify_applied_rate(0.05) == "healthy"
-        assert _classify_applied_rate(0.15) == "healthy"
-        assert _classify_applied_rate(0.249) == "healthy"
+        assert _classify_applied_rate(0.05, total=100) == "healthy"
+        assert _classify_applied_rate(0.15, total=100) == "healthy"
+        assert _classify_applied_rate(0.249, total=100) == "healthy"
 
     def test_heavy_band(self):
-        assert _classify_applied_rate(0.25) == "heavy"
-        assert _classify_applied_rate(0.40) == "heavy"
-        assert _classify_applied_rate(0.499) == "heavy"
+        assert _classify_applied_rate(0.25, total=100) == "heavy"
+        assert _classify_applied_rate(0.40, total=100) == "heavy"
+        assert _classify_applied_rate(0.499, total=100) == "heavy"
 
     def test_over_dependent_band(self):
-        assert _classify_applied_rate(0.50) == "over_dependent"
-        assert _classify_applied_rate(0.85) == "over_dependent"
-        assert _classify_applied_rate(1.00) == "over_dependent"
+        assert _classify_applied_rate(0.50, total=100) == "over_dependent"
+        assert _classify_applied_rate(0.85, total=100) == "over_dependent"
+        assert _classify_applied_rate(1.00, total=100) == "over_dependent"
 
     def test_bands_cover_full_range(self):
-        # Defensive: every rate in [0,1] MUST land in some band.
+        # Defensive: every rate in [0,1] MUST land in some band (when
+        # sample size is sufficient — small-N is observability-only).
         for r in (0.0, 0.05, 0.06, 0.25, 0.499, 0.50, 0.99, 1.0):
-            assert _classify_applied_rate(r) != "no_data"
+            assert _classify_applied_rate(r, total=100) != "no_data"
+
+    def test_insufficient_data_doctrine(self):
+        """Operator pin 2026-02-22: below 50 evaluations the metric is
+        observability-only. Verifies the classifier respects the
+        threshold and surfaces `insufficient_data` (or the suspicious
+        variant when rate > 0.5)."""
+        # rate present but sample too small → insufficient_data
+        assert _classify_applied_rate(0.15, total=10) == "insufficient_data"
+        # rate suspicious AND sample too small → insufficient_data_suspicious
+        assert _classify_applied_rate(0.80, total=10) == "insufficient_data_suspicious"
+        # At threshold (50), band math kicks in
+        assert _classify_applied_rate(0.15, total=50) == "healthy"
 
 
 # ── End-to-end via the public function ─────────────────────────────
@@ -122,13 +139,14 @@ class TestAppliedRate:
         assert out["applied_count"] == 0
 
     async def test_zero_applied(self, clean_telemetry):
-        # 10 evaluations, zero boost on any of them.
-        for i in range(10):
+        # 50 evaluations (at INSUFFICIENT_SAMPLES_THRESHOLD), zero
+        # boost on any of them. Band math activates at total >= 50.
+        for i in range(50):
             await _seed_telemetry_row(f"i{i}", 0.0, minutes_ago=i)
         out = await consensus_boost_applied_rate(db, window_hours=24)
         assert out["applied_rate"] == 0.0
         assert out["health_band"] == "noise"
-        assert out["total_evaluated"] == 10
+        assert out["total_evaluated"] == 50
         assert out["applied_count"] == 0
 
     async def test_healthy_band_15_percent(self, clean_telemetry):
@@ -146,10 +164,11 @@ class TestAppliedRate:
         assert out["negative_boost_count"] == 0
 
     async def test_over_dependent_band(self, clean_telemetry):
-        # 6 applied, 4 not → 60% → over_dependent.
-        for i in range(6):
+        # 30 applied, 20 not → 60% → over_dependent (sample = 50 at
+        # the INSUFFICIENT_SAMPLES_THRESHOLD so band math activates).
+        for i in range(30):
             await _seed_telemetry_row(f"a{i}", 0.10, minutes_ago=i)
-        for i in range(4):
+        for i in range(20):
             await _seed_telemetry_row(f"z{i}", 0.0, minutes_ago=i)
         out = await consensus_boost_applied_rate(db, window_hours=24)
         assert out["applied_rate"] == 0.6
@@ -171,18 +190,20 @@ class TestAppliedRate:
         assert out["applied_count"] == 10
 
     async def test_mixed_positive_and_negative_boost(self, clean_telemetry):
-        # 3 positive, 2 negative, 5 zero. applied = 5/10 = 50%.
-        for i in range(3):
+        # 15 positive, 10 negative, 25 zero. applied = 25/50 = 50%.
+        # Sample = 50 at the INSUFFICIENT_SAMPLES_THRESHOLD so band
+        # math activates.
+        for i in range(15):
             await _seed_telemetry_row(f"p{i}", 0.10, minutes_ago=i)
-        for i in range(2):
+        for i in range(10):
             await _seed_telemetry_row(f"n{i}", -0.05, minutes_ago=i)
-        for i in range(5):
+        for i in range(25):
             await _seed_telemetry_row(f"z{i}", 0.0, minutes_ago=i)
         out = await consensus_boost_applied_rate(db, window_hours=24)
         assert out["applied_rate"] == 0.5
         assert out["health_band"] == "over_dependent"
-        assert out["positive_boost_count"] == 3
-        assert out["negative_boost_count"] == 2
+        assert out["positive_boost_count"] == 15
+        assert out["negative_boost_count"] == 10
 
     async def test_applied_inferred_from_boost_value_when_flag_missing(
         self, clean_telemetry
