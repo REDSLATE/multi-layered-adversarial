@@ -850,10 +850,19 @@ SYSTEM_FLAGS         = "system_flags"
 SYSTEM_FLAG_CHANGES  = "system_flag_changes"
 
 # ─── External Signal Intake v1 (2026-02-23) ────────────────────────────
-# Pine / TradeLens / MTR are WITNESSES, not authorities. They land
-# raw alerts here; brains form opinions; Memory remembers; Shelly
-# judges; Seat executes; Governor sizes; RoadGuard stops. The
-# witness layer is descriptive evidence only.
+# Polygon / Public / Pine / MTR are WITNESSES, not authorities. They
+# land raw alerts here; brains form opinions; Memory remembers; Shelly
+# judges; Seat executes; Governor sizes; RoadGuard stops. The witness
+# layer is descriptive evidence only.
+#
+# Witness council (each source default-hostile, Verifier-graded
+# independently):
+#   * polygon  — market + news/sentiment witness (poller)
+#   * public   — broker-quote / account / preflight witness
+#   * pine     — technical-pattern witness (TradingView webhook, on hold)
+#   * mtr      — research-only witness (no live trading path)
+#
+# Webull is NOT a witness. It's the execution broker — different layer.
 #
 # Doctrine pins (TRIAL COURT, NOT A VOTING SYSTEM):
 #   * No external signal may set `may_execute=true`. The collection
@@ -874,7 +883,7 @@ SYSTEM_FLAG_CHANGES  = "system_flag_changes"
 #
 # Schema (one doc per witness alert):
 #   id              : str (uuid4)
-#   source          : "pine" | "tradelens" | "mtr"
+#   source          : "pine" | "polygon" | "public" | "mtr"
 #   symbol          : str (uppercase, canonical)
 #   side            : "BUY" | "SELL" | "HOLD"
 #   self_reported_confidence : float in [0.0, 1.0]  (ADVISORY ONLY)

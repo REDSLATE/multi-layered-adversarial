@@ -52,7 +52,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
-ExternalSignalSource = Literal["pine", "tradelens", "mtr"]
+ExternalSignalSource = Literal["pine", "polygon", "public", "mtr"]
 ExternalSignalSide = Literal["BUY", "SELL", "HOLD"]
 VerifierStatus = Literal["UNTRUSTED", "WATCHLIST", "TRUSTED"]
 
