@@ -1,60 +1,52 @@
-"""Tests for the Pine grade → confidence mapping and dir → side map.
+"""Tests for Pine self-reported confidence + dir→side + dedup key.
 
-Doctrine pins these tests guard:
-  * The Seat's 0.70 confidence floor: A+ / A / B+ MUST land above it,
-    B / C+ / C / D / F MUST land at-or-below it.
-  * Score bonus is bounded by ±SCORE_BONUS_CAP — the grade dominates,
-    the raw Pine score can only nudge.
-  * Unknown grades return the LOG_ONLY floor (below 0.70).
-  * Pine direction mapping is strict — unknown values raise.
+Doctrine pin: this module's `pine_self_reported_confidence` is
+ADVISORY ONLY. The Seat does not act on it. The Governor does not
+act on it. These tests therefore guard the MATH (monotonic,
+bounded, deterministic) — NOT any "Seat floor" or "binding
+threshold" doctrine, because no such doctrine applies in v1
+(witnesses are default-hostile; all influence is zero until
+Verifier promotes the source).
 """
 from __future__ import annotations
 
 import pytest
 
 from shared.external_signals import (
+    ExternalSignal,
+    ExternalSourceCredibility,
     GRADE_TO_CONFIDENCE,
     SCORE_BONUS_CAP,
     UNKNOWN_GRADE_FLOOR,
     build_dedup_key,
-    grade_score_to_confidence,
     pine_dir_to_side,
+    pine_self_reported_confidence,
 )
 from shared.external_signals.scoring import PINE_SCORE_MAX
 
 
-SEAT_FLOOR = 0.70
+# ─── Grade table is monotonic and bounded ─────────────────────────────
 
 
-# ─── Grade table doctrine ─────────────────────────────────────────────
+def test_grade_table_is_monotonic() -> None:
+    """A+ > A > B+ > B > C+ > C > D > F. If the table ever drifts
+    out of order, downstream comparisons (which the Verifier WILL
+    use to correlate self-grade vs outcome) break."""
+    order = ["A+", "A", "B+", "B", "C+", "C", "D", "F"]
+    values = [GRADE_TO_CONFIDENCE[g] for g in order]
+    for a, b in zip(values, values[1:]):
+        assert a > b, f"grade table out of order: {order}"
 
 
-@pytest.mark.parametrize("grade", ["A+", "A", "B+"])
-def test_high_grades_clear_seat_floor(grade: str) -> None:
-    """A+, A, B+ MUST sit above the 0.70 Seat floor — they're
-    binding witnesses, not advisory."""
-    assert GRADE_TO_CONFIDENCE[grade] > SEAT_FLOOR
-
-
-@pytest.mark.parametrize("grade", ["B", "C+", "C", "D", "F"])
-def test_low_grades_below_seat_floor(grade: str) -> None:
-    """B and below MUST sit at-or-below the 0.70 Seat floor — they're
-    advisory witnesses (LOG_ONLY by Seat policy)."""
-    assert GRADE_TO_CONFIDENCE[grade] <= SEAT_FLOOR
-
-
-def test_unknown_grade_returns_log_only_floor() -> None:
-    """Missing or unrecognized grades land at the LOG_ONLY floor —
-    we never over-weight a witness we don't understand."""
-    assert grade_score_to_confidence(None) == UNKNOWN_GRADE_FLOOR
-    assert grade_score_to_confidence("") == UNKNOWN_GRADE_FLOOR
-    assert grade_score_to_confidence("???") == UNKNOWN_GRADE_FLOOR
-    assert UNKNOWN_GRADE_FLOOR < SEAT_FLOOR
+def test_unknown_grade_returns_floor() -> None:
+    assert pine_self_reported_confidence(None) == UNKNOWN_GRADE_FLOOR
+    assert pine_self_reported_confidence("") == UNKNOWN_GRADE_FLOOR
+    assert pine_self_reported_confidence("???") == UNKNOWN_GRADE_FLOOR
 
 
 def test_grade_is_case_insensitive_and_trimmed() -> None:
-    assert grade_score_to_confidence("a+") == GRADE_TO_CONFIDENCE["A+"]
-    assert grade_score_to_confidence(" A ") == GRADE_TO_CONFIDENCE["A"]
+    assert pine_self_reported_confidence("a+") == GRADE_TO_CONFIDENCE["A+"]
+    assert pine_self_reported_confidence(" A ") == GRADE_TO_CONFIDENCE["A"]
 
 
 # ─── Score bonus is bounded ───────────────────────────────────────────
@@ -62,46 +54,30 @@ def test_grade_is_case_insensitive_and_trimmed() -> None:
 
 def test_score_bonus_caps_at_plus_minus_cap() -> None:
     """Even at the extremes, the raw score can't shift confidence by
-    more than SCORE_BONUS_CAP from the base grade — grade dominates."""
+    more than SCORE_BONUS_CAP from the base grade — the grade
+    dominates the rendered diagnostic value."""
     base = GRADE_TO_CONFIDENCE["A"]
-    high = grade_score_to_confidence("A", score=PINE_SCORE_MAX * 2)  # clamped
-    low = grade_score_to_confidence("A", score=-100)  # clamped
-    # Both should differ from base by exactly the cap (in opposite signs)
+    high = pine_self_reported_confidence("A", score=PINE_SCORE_MAX * 2)  # clamped
+    low = pine_self_reported_confidence("A", score=-100)  # clamped
     assert high == pytest.approx(base + SCORE_BONUS_CAP, abs=1e-9)
     assert low == pytest.approx(base - SCORE_BONUS_CAP, abs=1e-9)
 
 
 def test_score_at_midpoint_yields_no_bonus() -> None:
-    """Midpoint score = neutral, no nudge applied."""
     midpoint = PINE_SCORE_MAX / 2.0
-    assert grade_score_to_confidence("A", score=midpoint) == pytest.approx(
+    assert pine_self_reported_confidence("A", score=midpoint) == pytest.approx(
         GRADE_TO_CONFIDENCE["A"], abs=1e-9,
     )
 
 
 def test_score_none_yields_no_bonus() -> None:
-    """When Pine omits `score`, the base grade is returned unchanged."""
-    assert grade_score_to_confidence("A+", score=None) == GRADE_TO_CONFIDENCE["A+"]
+    assert pine_self_reported_confidence("A+", score=None) == GRADE_TO_CONFIDENCE["A+"]
 
 
 def test_confidence_never_escapes_zero_one() -> None:
-    """No matter the input, confidence is a probability ∈ [0, 1]."""
-    assert grade_score_to_confidence("F", score=-1000) >= 0.0
-    assert grade_score_to_confidence("A+", score=1000) <= 1.0
-
-
-def test_b_plus_remains_above_floor_even_at_min_score() -> None:
-    """Edge case: B+ is right at 0.72 — confirm that even the worst
-    raw score can't drop it BELOW the Seat floor. (If a future tweak
-    moves B+ closer to 0.70, this guard catches the regression.)"""
-    worst = grade_score_to_confidence("B+", score=0.0)
-    # 0.72 - 0.05 = 0.67, which IS below 0.70 — operator should be
-    # aware of this, so the test pins the EXACT computed value rather
-    # than asserting above-floor. The score-bonus IS a way for a B+
-    # to drop into LOG_ONLY territory. That's by design (a weak
-    # Pine score on a B+ grade is a soft signal). The test pins the
-    # math so it doesn't drift unintentionally.
-    assert worst == pytest.approx(GRADE_TO_CONFIDENCE["B+"] - SCORE_BONUS_CAP, abs=1e-9)
+    """No matter the input, the rendered float is a probability ∈ [0, 1]."""
+    assert pine_self_reported_confidence("F", score=-1000) >= 0.0
+    assert pine_self_reported_confidence("A+", score=1000) <= 1.0
 
 
 # ─── Direction mapping ────────────────────────────────────────────────
@@ -120,8 +96,6 @@ def test_pine_dir_to_side_known_values(pine_dir: str, expected: str) -> None:
 
 @pytest.mark.parametrize("bad", ["", "up", "down", "neutral", None])
 def test_pine_dir_to_side_rejects_unknown(bad) -> None:
-    """Unknown directions raise — the route layer catches and 400s
-    so the operator sees the bad witness payload."""
     with pytest.raises(ValueError):
         pine_dir_to_side(bad)  # type: ignore[arg-type]
 
@@ -131,34 +105,62 @@ def test_pine_dir_to_side_rejects_unknown(bad) -> None:
 
 def test_dedup_key_is_deterministic_from_witness_fields() -> None:
     """Doctrine: the dedup key depends ONLY on witness-supplied
-    fields — no server timestamps, no per-request randomness. A
-    TradingView retry produces the same key and hits the unique
-    index."""
+    fields. A TradingView retry produces the same key and hits the
+    unique index."""
     k1 = build_dedup_key("pine", "XAUUSD", "15", "entry", "2026-02-23T14:30:00Z")
     k2 = build_dedup_key("pine", "XAUUSD", "15", "entry", "2026-02-23T14:30:00Z")
     assert k1 == k2
 
 
 def test_dedup_key_normalizes_symbol_case() -> None:
-    """Mixed-case symbols (xauusd vs XAUUSD) must NOT generate
-    distinct dedup keys — that would be an idempotency leak."""
     k1 = build_dedup_key("pine", "xauusd", "15", "entry", "2026-02-23T14:30:00Z")
     k2 = build_dedup_key("pine", "XAUUSD", "15", "entry", "2026-02-23T14:30:00Z")
     assert k1 == k2
 
 
 def test_dedup_key_distinguishes_different_bars() -> None:
-    """Two alerts on the same symbol/tf/event but different bar
-    closes MUST produce distinct keys."""
     k1 = build_dedup_key("pine", "XAUUSD", "15", "entry", "2026-02-23T14:30:00Z")
     k2 = build_dedup_key("pine", "XAUUSD", "15", "entry", "2026-02-23T14:45:00Z")
     assert k1 != k2
 
 
 def test_dedup_key_handles_missing_optional_fields() -> None:
-    """Even if Pine omits `tf` or `event`, the key remains stable
-    (using '-' as the placeholder for each)."""
     k = build_dedup_key("pine", "XAUUSD", None, None, "2026-02-23T14:30:00Z")
     assert "-" in k
     assert "XAUUSD" in k
-    assert "2026-02-23T14:30:00Z" in k
+
+
+# ─── Default-hostile doctrine on the ExternalSignal model ─────────────
+
+
+def test_external_signal_defaults_hostile() -> None:
+    """Every witness lands UNTRUSTED with influence_allowed=False.
+    This guard is the doctrine pin — if anyone ever changes the
+    default to TRUSTED or True, this test catches it before code
+    review."""
+    s = ExternalSignal(
+        source="pine",
+        symbol="XAUUSD",
+        side="BUY",
+        self_reported_confidence=0.99,  # even max confidence — still hostile
+        raw={"v": 2},
+        bar_close_ts="2026-02-23T14:30:00Z",
+        dedup_key="pine:XAUUSD:15:entry:2026-02-23T14:30:00Z",
+    )
+    assert s.verifier_status == "UNTRUSTED"
+    assert s.influence_allowed is False
+    assert s.processed_by_seat is False
+    assert s.applied_modifier is None
+
+
+def test_external_source_credibility_defaults_hostile() -> None:
+    """Verifier case-file rows also land default-hostile. A first-
+    sight witness MUST start at UNTRUSTED with zero samples."""
+    c = ExternalSourceCredibility(source="pine")
+    assert c.status == "UNTRUSTED"
+    assert c.samples == 0
+    assert c.wins == 0
+    assert c.losses == 0
+    assert c.verified_alpha == 0.0
+    assert c.last_promoted_at is None
+    assert c.last_demoted_at is None

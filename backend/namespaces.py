@@ -855,9 +855,17 @@ SYSTEM_FLAG_CHANGES  = "system_flag_changes"
 # judges; Seat executes; Governor sizes; RoadGuard stops. The
 # witness layer is descriptive evidence only.
 #
-# Doctrine pins:
+# Doctrine pins (TRIAL COURT, NOT A VOTING SYSTEM):
 #   * No external signal may set `may_execute=true`. The collection
 #     intentionally has no such field.
+#   * Every witness lands DEFAULT-HOSTILE: `verifier_status=UNTRUSTED`,
+#     `influence_allowed=false`. The Governor short-circuits to a
+#     0.0 modifier for any signal where `influence_allowed=false`,
+#     regardless of self-reported confidence.
+#   * Verifier owns transitions (UNTRUSTED → WATCHLIST → TRUSTED and
+#     reverse). The webhook only $setOnInsert's a fresh case-file
+#     row in `external_source_credibility` — never mutates existing
+#     fields, so a hostile source can't silently re-set itself.
 #   * Idempotency is enforced at the DB level via the unique
 #     `dedup_key` index. Retries from TradingView CANNOT double-write.
 #   * `bar_close_ts` MUST be supplied by the witness (rejected with
@@ -869,7 +877,7 @@ SYSTEM_FLAG_CHANGES  = "system_flag_changes"
 #   source          : "pine" | "tradelens" | "mtr"
 #   symbol          : str (uppercase, canonical)
 #   side            : "BUY" | "SELL" | "HOLD"
-#   confidence      : float in [0.0, 1.0]  (from scoring.py)
+#   self_reported_confidence : float in [0.0, 1.0]  (ADVISORY ONLY)
 #   timeframe       : str | None  ("15", "1h", "1d", …)
 #   event           : str | None  ("entry", "exit", "alert", …)
 #   price           : float | None
@@ -878,9 +886,31 @@ SYSTEM_FLAG_CHANGES  = "system_flag_changes"
 #   reason          : str | None
 #   raw             : dict        (verbatim payload, audit substrate)
 #   bar_close_ts    : ISO datetime str  (REQUIRED, from witness)
-#   dedup_key       : str         ("<source>:<symbol>:<tf>:<event>:<bar_close_ts>")
+#   dedup_key       : str         (unique idempotency key)
+#   verifier_status : "UNTRUSTED" | "WATCHLIST" | "TRUSTED"
+#                                  (default UNTRUSTED; Verifier-owned)
+#   influence_allowed : bool      (default False; Verifier-owned)
 #   processed_by_seat : bool      (v1 inline lifecycle)
-#   seat_decision   : str | None  (governor-applied or seat-applied verdict)
-#   applied_modifier: float | None  (governor modifier actually applied)
+#   seat_decision   : str | None
+#   applied_modifier: float | None
 #   received_at     : ISO datetime str
 EXTERNAL_SIGNALS = "external_signals"
+
+# ─── Verifier-owned credibility ledger (2026-02-23) ────────────────────
+# One document per witness `source` (unique). This is the trial
+# court's case file — Verifier updates it after observed outcomes
+# (P&L attribution per signal). The webhook is allowed to insert a
+# fresh UNTRUSTED row on first sight of a new source, but MUST NOT
+# mutate existing fields. Mutation is Verifier's job only.
+#
+# Phase progression (operator-tunable thresholds documented in the
+# Pydantic model; not enforced here — Verifier owns the logic):
+#   Phase 1 (UNTRUSTED)  → samples ≥ 50 AND orthogonal_win_rate > 0.50
+#                        → Phase 2 (WATCHLIST)
+#   Phase 2 (WATCHLIST)  → samples ≥ 200 AND verified_alpha > +0.02
+#                        → Phase 3 (TRUSTED)
+#   Phase 3 (TRUSTED)    → rolling 30d alpha < 0 OR 10 consecutive
+#                          losers → demote to WATCHLIST
+#   Phase 2 (WATCHLIST)  → 90d alpha < -0.02 OR manipulation flag
+#                        → demote to UNTRUSTED
+EXTERNAL_SOURCE_CREDIBILITY = "external_source_credibility"

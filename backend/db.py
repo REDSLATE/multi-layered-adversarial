@@ -273,4 +273,16 @@ async def ensure_indexes() -> None:
         [("source", 1), ("received_at", -1)],
         name="external_signals_source_recent_idx",
     )
+
+    # ── Verifier-owned credibility ledger (2026-02-23) ────────────
+    # One doc per witness source. Verifier updates after observed
+    # outcomes. The webhook only $setOnInsert's a fresh UNTRUSTED
+    # row on first sight; never mutates existing rows.
+    await db.external_source_credibility.create_index(
+        "source", unique=True, name="external_source_credibility_unique",
+    )
+    await db.external_source_credibility.create_index(
+        [("status", 1), ("updated_at", -1)],
+        name="external_source_credibility_status_idx",
+    )
     pass
