@@ -136,6 +136,24 @@ async def _run_dry_run_then_auto_submit(intent_id: str, actor: str) -> None:
     sits at dry_run_passed and the operator can click SUBMIT
     manually. The post-mortem panel will surface the failure pattern.
     """
+    # ─── Direct-execute fast path (2026-02-26, operator directive) ───
+    # When `DIRECT_EXECUTE_MODE=true`, skip the entire dry-run + gate +
+    # auto-submit policy chain. Ship the intent straight to the broker.
+    # See `shared/direct_execute.py` for the doctrine pin.
+    try:
+        from shared.direct_execute import (  # noqa: WPS433
+            direct_execute, is_direct_execute_enabled,
+        )
+        if await is_direct_execute_enabled():
+            await direct_execute(intent_id, actor=actor)
+            return
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "direct_execute fast-path raised intent=%s err=%r — falling "
+            "through to dry-run chain",
+            intent_id, exc,
+        )
+
     from shared.execution import run_dry_run_for_intent  # noqa: WPS433
     from shared.auto_submit_policy import maybe_auto_submit  # noqa: WPS433
     # 2026-02-20: track whether maybe_auto_submit was actually

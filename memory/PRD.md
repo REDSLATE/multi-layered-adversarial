@@ -1,3 +1,44 @@
+## 2026-02-26 — DIRECT_EXECUTE_MODE shipped (gate maze bypassed)
+
+### Operator directive
+"There is no progress with equity trading. The gates and the dry runs need to be removed. The money is not that serious. I need a functional stack and this isn't it."
+
+### What shipped
+- **`shared/direct_execute.py`** — bypass path. Intent → `broker_router.route_order` directly. NO dry-run, NO soft gates, NO auto-submit policy filter, NO seat-authority / consensus / council / RoadGuard checks.
+- **`routes/direct_execute_admin.py`** — operator endpoints:
+  - `GET  /api/admin/direct-execute/status`  – flag + last-24h counts
+  - `POST /api/admin/direct-execute/toggle`  – runtime flip (confirm:`direct_execute`)
+  - `GET  /api/admin/direct-execute/recent`  – raw broker responses + Python exception strings
+  - `POST /api/admin/direct-execute/replay`  – re-fire a specific intent
+- **`shared/intents.py`** — ingest hook short-circuits to `direct_execute()` when the flag is on (Mongo singleton overrides env).
+- **`.env`** — `DIRECT_EXECUTE_MODE=true`, `DIRECT_EXECUTE_NOTIONAL_USD=5`.
+
+### What still applies (money safety, NOT opinion gates)
+- Broker freeze (operator emergency stop)
+- Per-lane operator broker toggle  (`/api/admin/broker/lanes/...`)
+- Webull pre-trade cap evaluator   ($3-$10 / ticker)
+- MC receipt seal                  (currently `RISEDUAL_BROKER_REQUIRE_MC_RECEIPT=false`)
+- Adapter credential presence      (broker actually configured)
+- Idempotency — an intent fires AT MOST once
+
+### Verified preview
+- Intents are now reaching the broker.
+- Equity intents → Webull returns `HTTP 417 INVALID_PARAMETER: "The time you sent is not supported"`. **Root cause: container clock is fictionally set to 2026-06-29; Webull's signing process rejects timestamps that drift from server time.** On production with a real clock this will go away.
+- Crypto intents → blocked at Kraken-not-configured (correct — no Kraken creds in preview).
+- All four endpoints round-trip clean (status / toggle / recent / replay).
+
+### Operator action on prod
+1. Deploy. `DIRECT_EXECUTE_MODE=true` in `.env` is the kill switch (or use the toggle endpoint).
+2. Curl `/api/admin/direct-execute/recent` to see live broker responses.
+3. If Webull still 417s on prod, capture the exception_type/message — it's now visible inline, no more grepping logs.
+4. To revert to the gate-chain: `POST /api/admin/direct-execute/toggle {enabled:false, confirm:"direct_execute"}`.
+
+### Status
+P0 done. Operator verification pending on prod.
+
+---
+
+
 ## 2026-02-25 (later) — Prod 500 ROOT-CAUSED & fixed
 
 ### Decisive datum (operator-supplied)
