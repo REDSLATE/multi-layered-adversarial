@@ -403,4 +403,20 @@ async def ensure_indexes() -> None:
         name="brain_metrics_snapshots_captured_idx",
     )
 
+    # `shared_gate_results` powers the Trade Readiness / Equity Dry-Run
+    # Autopsy / Direct-Execute Recent tiles. The new direct-execute
+    # admin endpoints (2026-02-26) query
+    # `.find({kind in [...], ts >= since}).sort(ts, -1)`. Without this
+    # compound index the prod collection (years of audit rows) does a
+    # COLLSCAN and the endpoint times out with NetworkTimeout against
+    # the Mongo Atlas shard.
+    await db.shared_gate_results.create_index(
+        [("kind", 1), ("ts", -1)],
+        name="shared_gate_results_kind_ts_idx",
+    )
+    await db.shared_gate_results.create_index(
+        [("intent_id", 1), ("ts", -1)],
+        name="shared_gate_results_intent_ts_idx",
+    )
+
     pass
