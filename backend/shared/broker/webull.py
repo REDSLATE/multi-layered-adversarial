@@ -442,29 +442,35 @@ class WebullAdapter(BrokerAdapter):
         side: str,
     ) -> tuple[str, Optional[str], str, bool]:
         """Return `(order_type, limit_price_str, session, ext_hours_flag)`
-        for the Webull v2 stock_order body, picking between the MARKET
-        (RTH) and LIMIT (extended hours) paths.
+        for the Webull v2 stock_order body.
 
-        Doctrine (2026-06-22 — operator-pinned):
-          * RTH or any non-equity lane → MARKET, CORE session.
-          * Equity lane outside RTH but inside the extended window
-            (RoadGuard already approved us; we're in pre/post-market)
-            → LIMIT with a buy/sell-adjusted slippage band on the
-            current last_price. Webull rejects MARKET orders during
-            pre/post; LIMIT is the only path the broker accepts.
+        Doctrine (2026-02-26 — operator-pinned, supersedes 2026-06-22):
+          * Crypto lanes (non-equity) → MARKET, CORE session.
+          * Equity lanes → **LIMIT regardless of session**. Webull's
+            `entrust_type=AMOUNT` (the only path that ships a cash
+            amount to convert to fractional shares) is INCOMPATIBLE
+            with `order_type=MARKET`: the broker returns
+            HTTP 417 / INVALID_PARAMETER "The time you sent is not
+            supported" — a misleading message that actually refers to
+            the order_type/entrust_type/time_in_force combination,
+            not the signing timestamp. (Operator hit this 8+ times in
+            preview on 2026-06-29 with a real-wall-clock-correct
+            container; verified via direct-execute autopsy.)
+
+            We always compute a LIMIT price from `last_price` with a
+            buy/sell-adjusted slippage band so the order still fills
+            against the inside book during BOTH RTH and pre/post.
+            During RTH the `support_trading_session` stays `CORE`;
+            during extended hours we flip to the env-configurable
+            session ("ALL" by default) and set `extended_hours_trading=True`.
 
         Tunable via env (no redeploy):
-          * `WEBULL_EXTENDED_HOURS_SLIPPAGE_BPS` (default 50 = 0.5%) —
-            the price band the LIMIT walks away from last_price on the
-            aggressive side (BUY → above, SELL → below) so the order
-            still fills against the inside book during the thinner
-            pre/post session.
-          * `WEBULL_EXTENDED_HOURS_SESSION` (default "ALL") — the
-            value Webull uses to flag extended-hours-eligible orders.
-            Webull's documented session values include `CORE` (RTH
-            only) and `ALL` (RTH + extended). Configurable so we can
-            flip to broker-specific values without a redeploy if
-            Webull changes them.
+          * `WEBULL_LIMIT_SLIPPAGE_BPS` (default 50 = 0.5%) — the RTH
+            slippage band on last_price for the LIMIT.
+          * `WEBULL_EXTENDED_HOURS_SLIPPAGE_BPS` (default 100 = 1.0%) —
+            wider slippage band during the thinner pre/post session.
+          * `WEBULL_EXTENDED_HOURS_SESSION` (default "ALL") — Webull
+            session enum for extended-hours-eligible orders.
 
         Returns the tuple in the exact shape `submit_market_order`
         needs to assemble the v2 stock_order body.
@@ -474,48 +480,51 @@ class WebullAdapter(BrokerAdapter):
         if lane != "equity":
             return "MARKET", None, "CORE", False
 
-        # If we're inside RTH RIGHT NOW, the MARKET path is still
-        # the right choice. Only switch to LIMIT when we're
-        # genuinely in the pre/post-market window. RoadGuard's
-        # extended-hours guard already approved us reaching here;
-        # this helper just picks the right order kind.
+        # Decide RTH vs extended (controls session enum + slippage band
+        # width). Both branches return LIMIT — see doctrine above.
         try:
             from shared.market_hours import is_equity_rth  # noqa: WPS433
             in_rth = is_equity_rth()
         except Exception:  # noqa: BLE001
-            # Defensive: if the helper raises (it shouldn't), prefer
-            # the safer MARKET/CORE path so we don't accidentally
-            # promote to LIMIT during a state we can't classify.
+            # Defensive: if the helper raises (it shouldn't), assume
+            # RTH so we use the tighter slippage band.
             in_rth = True
-        if in_rth:
-            return "MARKET", None, "CORE", False
-
-        # Extended-hours LIMIT branch.
-        try:
-            slippage_bps = float(
-                os.environ.get("WEBULL_EXTENDED_HOURS_SLIPPAGE_BPS", "50")
-            )
-        except (TypeError, ValueError):
-            slippage_bps = 50.0
-        slippage_bps = max(0.0, slippage_bps)
-        session = (
-            os.environ.get("WEBULL_EXTENDED_HOURS_SESSION") or "ALL"
-        ).upper().strip()
 
         if last_price <= 0:
-            # No reference price → fail safe back to MARKET so the
-            # caller's downstream broker reject (417) becomes the
-            # observable error, rather than us sending a degenerate
-            # limit_price of 0.
+            # No reference price → we cannot compose a LIMIT. Fall
+            # back to MARKET; the broker's reject (417) becomes the
+            # observable error so the operator can see "no last_price".
             return "MARKET", None, "CORE", False
 
+        if in_rth:
+            try:
+                slippage_bps = float(
+                    os.environ.get("WEBULL_LIMIT_SLIPPAGE_BPS", "50")
+                )
+            except (TypeError, ValueError):
+                slippage_bps = 50.0
+            session = "CORE"
+            ext_flag = False
+        else:
+            try:
+                slippage_bps = float(
+                    os.environ.get("WEBULL_EXTENDED_HOURS_SLIPPAGE_BPS", "100")
+                )
+            except (TypeError, ValueError):
+                slippage_bps = 100.0
+            session = (
+                os.environ.get("WEBULL_EXTENDED_HOURS_SESSION") or "ALL"
+            ).upper().strip()
+            ext_flag = True
+
+        slippage_bps = max(0.0, slippage_bps)
         adj = slippage_bps / 10_000.0  # bps → fraction
         if side == "BUY":
             limit_price = last_price * (1.0 + adj)
         else:  # SELL
             limit_price = last_price * (1.0 - adj)
         # Webull documents US-equity prices at 2 decimals.
-        return "LIMIT", f"{limit_price:.2f}", session, True
+        return "LIMIT", f"{limit_price:.2f}", session, ext_flag
 
     async def submit_market_order(
         self,
@@ -652,27 +661,32 @@ class WebullAdapter(BrokerAdapter):
         sym_u = (symbol or "").upper().strip()
 
         if notional is not None:
-            # ── FRACTIONAL PATH (v2 + AMOUNT) ────────────────────────
-            # Build the stock_order dict per Webull's v2 spec and
-            # send via place_order_v2. No qty rounding — the broker
-            # converts the cash amount to fractional shares.
+            # ── FRACTIONAL PATH (v2 + QTY) ────────────────────────────
+            # Doctrine pin (2026-02-26): Webull's v2 API DEPRECATED the
+            # AMOUNT entrust_type. The only accepted value per the
+            # current docs is `QTY` with `quantity` as a string
+            # (decimal supported for fractional US equities).
+            # Sending `entrust_type=AMOUNT` + `total_cash_amount` causes
+            # Webull to reject with HTTP 417 / INVALID_PARAMETER and
+            # the misleading message "The time you sent is not
+            # supported." That was the actual root cause of the
+            # operator-reported "broker submit errors" — verified
+            # against `/api/admin/direct-execute/recent` payload dump
+            # against developer.webull.com/apis/docs.
+            #
+            # We convert notional → fractional qty using `last_price`,
+            # serialize with 6-decimal precision (well below Webull's
+            # documented decimal allowance for fractional US stocks),
+            # and use LIMIT + slippage band so the cash spend stays
+            # within the operator's per-order cap even if the price
+            # ticks up between quote and fill.
             effective_notional = float(notional)
-            # `total_cash_amount` is documented as a STRING in
-            # Webull's API; pass with 2-decimal precision so the
-            # request body matches the doc example exactly.
-            cash_amt_str = f"{effective_notional:.2f}"
+            if last_price <= 0:
+                raise RuntimeError(
+                    f"Webull last-price unavailable for {sym_u}; "
+                    f"cannot size fractional QTY order; NO_TRADE"
+                )
 
-            # 2026-06-22 — Extended-hours LIMIT-with-slippage branch.
-            # Webull rejects MARKET orders submitted outside RTH
-            # (the broker requires LIMIT during pre/post-market). When
-            # RoadGuard allows the order through during extended hours
-            # (operator flipped EQUITY_EXTENDED_HOURS=ON and we're
-            # inside the 04:00-20:00 ET window but NOT inside RTH),
-            # we promote the leg to LIMIT and compute a buy/sell-
-            # adjusted limit price from last_price using a configurable
-            # slippage band. This removes the operator's need to
-            # toggle EQUITY_EXTENDED_HOURS OFF manually during the
-            # pre/post-market window.
             order_kind, limit_price_str, session_str, ext_flag = (
                 self._extended_hours_branch(
                     lane=lane,
@@ -680,21 +694,39 @@ class WebullAdapter(BrokerAdapter):
                     side=side_str,
                 )
             )
+            # Compute qty against the LIMIT price (if LIMIT) so the
+            # cash spend never exceeds `effective_notional` even at
+            # worst-case fill. For MARKET (whole-share fallback) we
+            # use last_price.
+            price_for_qty = (
+                float(limit_price_str) if limit_price_str else last_price
+            )
+            raw_qty = effective_notional / price_for_qty if price_for_qty > 0 else 0.0
+            # 6-dp truncate (not round-half-up) so the resulting cash
+            # spend is always ≤ effective_notional.
+            qty_truncated = int(raw_qty * 1_000_000) / 1_000_000.0
+            if qty_truncated <= 0:
+                raise RuntimeError(
+                    f"Webull QTY sizing produced zero for {sym_u} "
+                    f"(notional={effective_notional} price={price_for_qty}); "
+                    f"NO_TRADE"
+                )
+            qty_str = f"{qty_truncated:.6f}".rstrip("0").rstrip(".")
+            if "." not in qty_str:
+                qty_str = f"{qty_str}.0"
 
             stock_order = {
                 "client_order_id": order_id,
                 "symbol": sym_u,
-                "instrument_id": instrument_id,
                 "instrument_type": "EQUITY",
                 "market": "US",
                 "order_type": order_kind,
                 "side": side_str,
                 "time_in_force": "DAY",
-                "entrust_type": "AMOUNT",
-                "total_cash_amount": cash_amt_str,
+                "entrust_type": "QTY",
+                "quantity": qty_str,
                 "support_trading_session": session_str,
                 "account_tax_type": "GENERAL",
-                "extended_hours_trading": ext_flag,
             }
             if order_kind == "LIMIT" and limit_price_str is not None:
                 stock_order["limit_price"] = limit_price_str
@@ -703,22 +735,26 @@ class WebullAdapter(BrokerAdapter):
             if mc_receipt:
                 sig = (mc_receipt.get("signature") or "")[:12]
                 logger.info(
-                    "Webull submit_market_order (v2/AMOUNT) receipt_sig=%s "
+                    "Webull submit_market_order (v2/QTY-frac) receipt_sig=%s "
                     "symbol=%s instrument_id=%s lane=%s side=%s "
-                    "total_cash_amount=%s last_price=%s",
+                    "quantity=%s notional=%.2f last_price=%s",
                     sig, sym_u, instrument_id, lane, side_str,
-                    cash_amt_str, last_price,
+                    qty_str, effective_notional, last_price,
                 )
             else:
                 logger.info(
-                    "Webull submit_market_order (v2/AMOUNT) symbol=%s "
-                    "instrument_id=%s lane=%s side=%s total_cash_amount=%s "
-                    "last_price=%s",
-                    sym_u, instrument_id, lane, side_str, cash_amt_str,
-                    last_price,
+                    "Webull submit_market_order (v2/QTY-frac) symbol=%s "
+                    "instrument_id=%s lane=%s side=%s quantity=%s "
+                    "notional=%.2f last_price=%s",
+                    sym_u, instrument_id, lane, side_str, qty_str,
+                    effective_notional, last_price,
                 )
 
             try:
+                logger.info(
+                    "Webull v2 REQUEST account_id=%s stock_order=%r",
+                    account_id, stock_order,
+                )
                 res = await self._sdk_call(
                     self._trade().order.place_order_v2,
                     account_id, stock_order,
@@ -1363,6 +1399,22 @@ async def get_webull_adapter() -> Optional[WebullAdapter]:
         # while we were waiting on the lock.
         if _ADAPTER is not None:
             return _ADAPTER
+        # ─── Clock-skew compensator (2026-02-26) ─────────────────
+        # If the system clock disagrees with real wall time (preview
+        # pods set fictional dates), Webull's signing verifier rejects
+        # every request with HTTP 417 "The time you sent is not
+        # supported." We patch the SDK's two timestamp helpers ONCE,
+        # before the first ApiClient is built, so every signed request
+        # leaves with a real-wall-clock timestamp. Idempotent. Falls
+        # open if the network probe fails.
+        try:
+            from shared.broker.webull_clock_skew import (  # noqa: WPS433
+                install_webull_clock_skew_compensator,
+            )
+            report = install_webull_clock_skew_compensator()
+            logger.info("Webull clock-skew compensator: %s", report)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Webull clock-skew compensator install raised: %s", exc)
         try:
             api_client = ApiClient(app_key, app_secret, region_id)
             if environment == "uat":
