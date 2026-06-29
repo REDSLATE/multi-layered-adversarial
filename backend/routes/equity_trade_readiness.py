@@ -511,3 +511,85 @@ async def equity_trade_readiness(
             "by_first_failing_gate": dict(counter.most_common()),
         },
     }
+
+
+# 2026-02-25 (later) — equity dry-run autopsy endpoint.
+# The fleet histogram in `/equity-trade-readiness` tells you the
+# top failing GATE family. This endpoint drills inside the
+# `dry_run` family and names which of the ~12 dry-run sub-gates
+# is actually firing. `shared_intents.dry_run_reason` has the
+# answer per-intent in the format `"<gate_name>:<reason_text>"`.
+# Aggregating that field gives the operator a one-shot answer
+# to "what's blocking trades inside the dry-run."
+
+@router.get("/equity-dry-run-autopsy")
+async def equity_dry_run_autopsy(
+    hours: int = Query(default=24, ge=1, le=168),
+    _user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Read-only autopsy of `dry_run_reason` for blocked equity
+    intents in the window. Returns:
+      - total_dry_run_blocked
+      - by_gate_name (the gate that fired, e.g. "broker_connected")
+      - by_full_reason (top 20 full reason strings, includes the
+        specific "...not connected for lane='equity'" detail)
+      - sample_intents (3 newest per top gate so the operator can
+        verify the reason matches the situation)
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(hours=hours)).isoformat()
+
+    q = {
+        "lane": "equity",
+        "ingest_ts": {"$gte": cutoff},
+        "dry_run_state": "dry_run_blocked",
+    }
+
+    total = await db[SHARED_INTENTS].count_documents(q)
+
+    by_gate: dict[str, int] = {}
+    by_reason: dict[str, int] = {}
+    sample_by_gate: dict[str, list[dict[str, Any]]] = {}
+
+    cursor = db[SHARED_INTENTS].find(
+        q,
+        {
+            "_id": 0, "intent_id": 1, "stack": 1, "symbol": 1,
+            "action": 1, "ingest_ts": 1,
+            "dry_run_reason": 1, "target_price": 1, "stop_price": 1,
+        },
+    ).sort("ingest_ts", -1).max_time_ms(15000)
+
+    async for row in cursor:
+        reason = row.get("dry_run_reason") or "<no reason persisted>"
+        # Split "gate_name:specific_text" → ("gate_name", "specific_text")
+        if ":" in reason:
+            gate_name = reason.split(":", 1)[0].strip()
+        else:
+            gate_name = reason.strip()
+        by_gate[gate_name] = by_gate.get(gate_name, 0) + 1
+        by_reason[reason] = by_reason.get(reason, 0) + 1
+        bucket = sample_by_gate.setdefault(gate_name, [])
+        if len(bucket) < 3:
+            bucket.append({
+                "intent_id": row.get("intent_id"),
+                "brain": row.get("stack"),
+                "symbol": row.get("symbol"),
+                "action": row.get("action"),
+                "ingest_ts": row.get("ingest_ts"),
+                "target_price": row.get("target_price"),
+                "stop_price": row.get("stop_price"),
+                "dry_run_reason": reason,
+            })
+
+    by_gate_sorted = sorted(by_gate.items(), key=lambda x: -x[1])
+    by_reason_sorted = sorted(by_reason.items(), key=lambda x: -x[1])[:20]
+
+    return {
+        "now": now.isoformat(),
+        "window_hours": hours,
+        "total_dry_run_blocked": total,
+        "by_gate_name": [{"gate": g, "n": n} for g, n in by_gate_sorted],
+        "by_full_reason_top20": [{"reason": r, "n": n} for r, n in by_reason_sorted],
+        "sample_intents_by_gate": sample_by_gate,
+    }
