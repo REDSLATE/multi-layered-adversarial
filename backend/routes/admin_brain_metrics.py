@@ -60,7 +60,7 @@ async def _compute_metrics_for_window(hours: int) -> Dict[str, Any]:
             "action": 1, "symbol": 1, "ingest_ts": 1, "confidence": 1,
             "gate_state": 1, "plan": 1,
         },
-    ).to_list(length=50000)
+    ).max_time_ms(15000).to_list(length=50000)
 
     intent_ids = [i.get("intent_id") for i in intents if i.get("intent_id")]
     receipts_by_id: Dict[str, Dict[str, Any]] = {}
@@ -68,7 +68,7 @@ async def _compute_metrics_for_window(hours: int) -> Dict[str, Any]:
         receipts = await db[PIPELINE_RECEIPTS_COLL].find(
             {"intent_id": {"$in": intent_ids}},
             {"_id": 0, "intent_id": 1, "final_reason": 1, "final_status": 1},
-        ).to_list(length=50000)
+        ).max_time_ms(15000).to_list(length=50000)
         receipts_by_id = {r["intent_id"]: r for r in receipts}
 
     return {
@@ -173,7 +173,7 @@ async def brain_metrics_history(
     rows = await db[BRAIN_METRICS_SNAPSHOTS_COLL].find(
         {"window_hours": window_hours, "captured_at": {"$gte": cutoff}},
         {"_id": 0},
-    ).sort("captured_at", 1).to_list(length=5000)
+    ).sort("captured_at", 1).max_time_ms(15000).to_list(length=5000)
 
     # Serialize datetime → iso string for JSON.
     for r in rows:

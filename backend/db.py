@@ -233,6 +233,22 @@ async def ensure_indexes() -> None:
         [("lane", 1), ("confidence", -1), ("ingest_ts", -1)],
         name="shared_intents_lane_conviction_idx",
     )
+    # 2026-02-25 (later — admin diagnostic 500 sweep):
+    # The Intents page hotfix earlier today is one tile in a tile farm.
+    # An operator screenshot showed ~8 OTHER admin tiles 500ing on the
+    # same MongoDB-timeout pattern. Survey traced them to six query
+    # shapes across five collections that had ZERO covering indexes.
+    # This block adds the missing compound indexes — surgical, named,
+    # idempotent. Boot-time `ensure_indexes()` creates them on every
+    # restart (Mongo no-ops if they already exist).
+    #
+    # `admin_brain_input_health` joins per-brain emit stats via
+    # `stack_canonical + created_at` — find_one(sort) and aggregate
+    # group both run blocking sorts at prod volumes today.
+    await db.shared_intents.create_index(
+        [("stack_canonical", 1), ("created_at", -1)],
+        name="shared_intents_stack_canonical_created_idx",
+    )
     await db.shared_brain_opinions.create_index([("runtime", 1), ("topic", 1), ("posted_at", -1)])
     await db.shared_brain_outcomes.create_index([("opinion_id", 1), ("resolved_at", -1)])
     # Shelly memory regex search was the worst offender (~25-40ms scan);
@@ -318,4 +334,73 @@ async def ensure_indexes() -> None:
         [("source", 1), ("trigger_type", 1), ("created_at", -1)],
         name="external_signal_manipulation_alerts_lookup_idx",
     )
+
+    # ── 2026-02-25 admin-tile diagnostic 500 sweep ────────────────────
+    # Five collections powering admin diagnostic tiles had zero or
+    # incomplete index coverage. At prod volumes (~100k+ docs each)
+    # their default queries blocked-sort in memory → Mongo socket
+    # timeout → operator's diagnostic UI flickered HTTP 500 across
+    # ~8 different tiles. Surgical compound indexes that match each
+    # tile's actual query shape:
+
+    # `doctrine_sidecars` (2 tiles: Paradox v3 Rollout +
+    # Per-Brain Execution Style Profile). Both filter by
+    # `intent_version="v3"` AND `outcome_join: {$exists: true}` and
+    # then iterate the entire cursor. With no indexes, that's a
+    # full-collection scan on every poll (10s interval). Compound
+    # index makes both filters indexed.
+    await db.doctrine_sidecars.create_index(
+        [("intent_version", 1), ("outcome_join", 1)],
+        name="doctrine_sidecars_v3_outcome_idx",
+    )
+
+    # `pipeline_receipts` Seat Stage Drops tile sorts by ts DESC.
+    # The existing `ts_1` index is ascending — Mongo won't use it
+    # for a DESC sort without reverse-scan, which it does support
+    # but adds cost. An explicit DESC index makes it free. Also
+    # add a compound (lane, ts) for the lane-filtered variant.
+    await db.pipeline_receipts.create_index(
+        [("ts", -1)], name="pipeline_receipts_ts_desc_idx",
+    )
+    await db.pipeline_receipts.create_index(
+        [("lane", 1), ("ts", -1)],
+        name="pipeline_receipts_lane_ts_idx",
+    )
+
+    # `shared_indicator_snapshots` per-symbol latest lookup
+    # (Brain Input Health tile): `find_one({symbol: X},
+    # sort=[(computed_at, -1)])`. The existing
+    # `source_1_symbol_1_tf_1` index isn't leading-on-symbol+sort.
+    await db.shared_indicator_snapshots.create_index(
+        [("symbol", 1), ("computed_at", -1)],
+        name="shared_indicator_snapshots_symbol_recent_idx",
+    )
+
+    # `market_data_key_fetches` Brain Health tile reads
+    # `.find().sort(ts, -1).limit(500)`. No prior index.
+    await db.market_data_key_fetches.create_index(
+        [("ts", -1)],
+        name="market_data_key_fetches_recent_idx",
+    )
+
+    # `sidecar_checkin_audit` powers the Native Brain Runtimes /
+    # Brain Outages tiles. Reads `.find({brain_id, ts$gte}).sort(ts, 1)`.
+    # No prior index. Compound (brain_id, ts) covers both filter and
+    # sort in one scan.
+    await db.sidecar_checkin_audit.create_index(
+        [("brain_id", 1), ("ts", 1)],
+        name="sidecar_checkin_audit_brain_ts_idx",
+    )
+    await db.sidecar_checkin_audit.create_index(
+        [("ts", -1)],
+        name="sidecar_checkin_audit_ts_desc_idx",
+    )
+
+    # `brain_metrics_snapshots` polled by the Brain Metrics tile
+    # for the 72h timeseries: `.find({captured_at >= cutoff}).sort(captured_at, 1)`.
+    await db.brain_metrics_snapshots.create_index(
+        [("captured_at", 1)],
+        name="brain_metrics_snapshots_captured_idx",
+    )
+
     pass

@@ -194,7 +194,7 @@ async def seat_stage_drops(
             "reason":   1,
             "ts":       1,
         },
-    ).sort("ts", -1).to_list(50000)
+    ).sort("ts", -1).max_time_ms(15000).to_list(50000)
 
     # Total emitted = ALL receipts in the window (including those
     # that got past the seat). Needed so the operator can compute

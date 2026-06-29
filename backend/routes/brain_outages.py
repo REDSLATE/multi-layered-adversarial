@@ -57,7 +57,7 @@ async def _outages_for_brain(
     cursor = db["sidecar_checkin_audit"].find(
         {"runtime": brain, "ts": {"$gte": since.isoformat()}},
         {"_id": 0, "ts": 1},
-    ).sort("ts", 1)
+    ).sort("ts", 1).max_time_ms(15000)
 
     outages: List[Dict[str, Any]] = []
     prev_ts_str: str | None = None

@@ -215,7 +215,7 @@ async def execution_style_outcomes(
             "outcome_join.outcome_label": 1,
             "outcome_join.pnl_usd": 1,
         },
-    )
+    ).max_time_ms(15000)
 
     bucket: Dict[str, Dict[str, Any]] = {}
     async for row in cursor:
@@ -310,7 +310,7 @@ async def per_brain_execution_style_profile(
             "outcome_join.outcome_label": 1,
             "outcome_join.pnl_usd": 1,
         },
-    )
+    ).max_time_ms(15000)
 
     # bucket[(brain, style)] = {trades, wins, losses, pnl_sum}
     bucket: Dict[tuple, Dict[str, Any]] = {}

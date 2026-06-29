@@ -164,6 +164,7 @@ async def _latest_snapshot(symbol: str) -> Optional[dict]:
         {"symbol": symbol},
         {"_id": 0},
         sort=[("computed_at", -1)],
+        max_time_ms=15000,
     )
 
 
@@ -175,6 +176,7 @@ async def _emit_stats_for_brain(brain_id: str, now: datetime) -> dict:
         {"stack_canonical": brain_id},
         {"_id": 0, "created_at": 1, "action": 1, "symbol": 1, "rationale": 1},
         sort=[("created_at", -1)],
+        max_time_ms=15000,
     )
     last_dir = await db["shared_intents"].find_one(
         {
@@ -183,6 +185,7 @@ async def _emit_stats_for_brain(brain_id: str, now: datetime) -> dict:
         },
         {"_id": 0, "created_at": 1, "action": 1, "symbol": 1},
         sort=[("created_at", -1)],
+        max_time_ms=15000,
     )
 
     emits_24h = await db["shared_intents"].count_documents({
@@ -203,7 +206,7 @@ async def _emit_stats_for_brain(brain_id: str, now: datetime) -> dict:
         {"$group": {"_id": "$action", "n": {"$sum": 1}}},
     ]
     actions_7d = {}
-    async for row in db["shared_intents"].aggregate(pipeline):
+    async for row in db["shared_intents"].aggregate(pipeline, maxTimeMS=15000):
         actions_7d[row["_id"] or "UNKNOWN"] = row["n"]
 
     def _age(iso: Optional[str]) -> Optional[float]:

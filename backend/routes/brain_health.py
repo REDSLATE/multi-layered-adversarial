@@ -167,7 +167,7 @@ async def _gather_data_keys(brain: str, now: datetime) -> Dict[str, Any]:
     # count over the last 100 rows — bounded work, reasonable signal.
     recent_rows = await db["market_data_key_fetches"].find(
         {"brain": brain}, {"_id": 0, "ts": 1},
-    ).sort("ts", -1).limit(500).to_list(length=500)
+    ).sort("ts", -1).limit(500).max_time_ms(15000).to_list(length=500)
     fetch_count_24h = 0
     for r in recent_rows:
         ts_iso = r.get("ts")
