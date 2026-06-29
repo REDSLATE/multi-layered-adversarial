@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Literal, Optional
 
 from shared.intents import IntentIn, submit_intent_in_process
+from shared.opinions import OpinionIn, submit_opinion_in_process
 
 
 logger = logging.getLogger("risedual.brains.runner_core")
@@ -227,6 +228,48 @@ async def run_tick_for_brain(
                 snapshot=snap,
             )
             result = await submit_intent_in_process(body)
+            # 2026-02-25 — sovereign opinion wire-up (fix for the
+            # "opinion · never" silence that caused MC's doctrine
+            # fallback to emit identical scores for every symbol).
+            # The brain has just made a directional decision; record
+            # that decision as a sovereign opinion so the Seat Roster
+            # / Mission Control doctrine evaluator can use real
+            # brain-stamped opinions instead of the deterministic
+            # sidecar fallback. Best-effort — never blocks intent
+            # emission. Stance maps cleanly: BUY/COVER = long bias,
+            # SHORT/SELL = short bias.
+            try:
+                stance_map = {
+                    "BUY": "long", "COVER": "long",
+                    "SHORT": "short", "SELL": "short",
+                }
+                stance = stance_map.get(decision.action)
+                if stance is not None:
+                    opinion_body = OpinionIn(
+                        runtime=brain_id,
+                        topic=f"symbol:{symbol}",
+                        stance=stance,
+                        confidence=float(decision.confidence),
+                        body=(
+                            getattr(decision, "objection", None)
+                            or (decision.evidence or {}).get("rationale")
+                            or f"{brain_id} {decision.action} {symbol} "
+                               f"c={decision.confidence:.3f}"
+                        )[:512],
+                        evidence={
+                            "source": f"{brain_id}_native_runtime",
+                            "intent_id": result.get("intent_id"),
+                            "action": decision.action,
+                        },
+                    )
+                    await submit_opinion_in_process(opinion_body)
+            except Exception as exc:  # noqa: BLE001
+                # Opinion post failed (validation, network, race). Log
+                # and move on — the intent is already in the pipeline.
+                logger.warning(
+                    "%s opinion post failed symbol=%s action=%s err=%s",
+                    brain_id, symbol, decision.action, str(exc)[:200],
+                )
             emitted.append({
                 "symbol": symbol,
                 "action": decision.action,

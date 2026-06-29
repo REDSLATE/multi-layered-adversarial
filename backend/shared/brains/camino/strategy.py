@@ -32,6 +32,16 @@ class Decision:
     stop_price: Optional[float]
     evidence: dict[str, Any] = field(default_factory=dict)
     skipped_reason: Optional[str] = None
+    # 2026-02-25 — `_runner_core._build_intent_body` reads these on
+    # every emission. Other brains (barracuda/gto/hellcat) defined
+    # them; Camino was missing them, so every Camino tick crashed
+    # with `AttributeError: 'Decision' object has no attribute
+    # 'evidence_fields'` (visible in prod backend logs Jun 29 15:11).
+    # Default-empty preserves Camino's current "no cited evidence"
+    # behavior — when Camino learns to cite (P2 backlog item from
+    # 2026-02-23) it can populate them.
+    evidence_fields: tuple = ()
+    objection: Optional[str] = None
 
 
 def _shorts_enabled() -> bool:
