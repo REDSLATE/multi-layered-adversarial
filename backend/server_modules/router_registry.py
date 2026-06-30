@@ -144,6 +144,7 @@ from routes.admin_brain_metrics import (
 from routes.admin_advisor_performance import (
     router as admin_advisor_performance_router,
 )
+from routes.admin_trader import router as admin_trader_router  # 2026-06-30 sidecar trader
 from routes.admin_paradox_v3 import router as admin_paradox_v3_router
 from routes.admin_system_flags import router as admin_system_flags_router
 from routes.admin_seat_stage_drops import router as admin_seat_stage_drops_router
@@ -239,6 +240,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(admin_spread_quality_router)
     api_router.include_router(admin_brain_metrics_router)
     api_router.include_router(admin_advisor_performance_router)
+    api_router.include_router(admin_trader_router)  # 2026-06-30 sidecar trader
     api_router.include_router(admin_paradox_v3_router)
     api_router.include_router(admin_system_flags_router)
     api_router.include_router(admin_seat_stage_drops_router)

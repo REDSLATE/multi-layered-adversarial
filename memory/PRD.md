@@ -72,6 +72,37 @@ Broker keys (already in prod env per operator):
 `KRAKEN_API_KEY`, `KRAKEN_API_SECRET`, `WEBULL_APP_KEY`,
 `WEBULL_APP_SECRET`, `WEBULL_ACCOUNT_ID`.
 
+### Operator endpoints (2026-06-30)
+- `GET  /api/admin/trader/status` — task liveness, last cycle ts,
+  fires today, spent today, env config
+- `GET  /api/admin/trader/receipts?limit=50&lane=equity&fired_only=true`
+  — per-cycle tape (signals + chosen + risk + broker_result)
+- `GET  /api/admin/trader/executions?limit=50&lane=equity&ok=true`
+  — only `source=trader` execution rows (broker truth tape)
+- `POST /api/admin/trader/seed-seats` — idempotent. Writes the
+  operator-canonical angel→brain pairings to `seat_registry`.
+  Safe to call repeatedly. Run once after deploy:
+  ```
+  curl -X POST -H "Authorization: Bearer <JWT>" \
+    https://mission.risedual.ai/api/admin/trader/seed-seats
+  ```
+
+### Canonical seat assignments (2026-06-30)
+| Lane | Angel | Role | Brain |
+|---|---|---|---|
+| equity | Raziel  | strategist | camino    (trend) |
+| equity | Nuriel  | governor   | hellcat   (breakout) |
+| equity | Paschar | executor   | gto       (momentum) |
+| equity | Sariel  | auditor    | barracuda (mean rev) |
+| crypto | Remiel  | strategist | hellcat   (breakout) |
+| crypto | Cassiel | governor   | camino    (trend) |
+| crypto | Israfel | executor   | gto       (momentum) |
+| crypto | Zadkiel | auditor    | barracuda (mean rev) |
+
+Strategist+Executor are directionally compatible (both lean BUY on
+real trends/breakouts → strict agreement produces trades). Mean
+reversion is Auditor-only (observability, no veto).
+
 ### Pass 2 deletion — DEFERRED
 Per operator pin (2026-02-27, reaffirmed 2026-06-30): the ~11,000 lines of
 disconnected MC pipeline (`legacy_brain_wrappers`, `council`, `consensus*`,
