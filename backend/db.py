@@ -609,4 +609,21 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         name="shared_gate_results_intent_ts_idx",
     )
 
+    # ── 2026-02-27 architectural reduction collections ────────────
+    # `executions` — one row per (intent → broker attempt). Hot reads:
+    #   • `recent()` sorts by ts DESC
+    #   • daily-spend aggregation matches `ts ~ "^YYYY-MM-DD"`
+    await db.executions.create_index(
+        [("ts", -1)], name="executions_ts_desc_idx",
+    )
+    await db.executions.create_index(
+        [("intent_id", 1)], name="executions_intent_idx",
+    )
+    await db.executions.create_index(
+        [("lane", 1), ("ts", -1)], name="executions_lane_ts_idx",
+    )
+    await db.executions.create_index(
+        [("ok", 1), ("ts", -1)], name="executions_ok_ts_idx",
+    )
+
     pass

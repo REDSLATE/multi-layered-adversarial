@@ -92,144 +92,40 @@ def _auto_dry_run_enabled() -> bool:
 
 
 async def _fire_and_forget_dry_run(intent_id: str, actor: str) -> None:
-    """Best-effort dry-run launcher. Always swallows exceptions so the
-    brain's POST never blocks on bookkeeping. We schedule the actual
-    gate evaluation as a background task; the response to the brain
-    returns immediately with `gate_state=pending` (the dry-run flip
-    happens asynchronously, typically within ~50ms)."""
-    if not _auto_dry_run_enabled():
-        return
+    """Post-ingest async kicker.
+
+    2026-02-27 architectural reduction: the legacy dry-run + auto-submit
+    + council + consensus chain is gone. The brain emits → the intent
+    lands in `shared_intents` → the auto_router's next tick (≤30s)
+    routes it through Seat → Risk → Broker → executions.
+
+    To shorten the wait from up-to-30s to ~50ms, we kick off a single
+    out-of-band tick after the insert is committed. Errors are
+    swallowed — the loop will catch it on the next regular tick
+    regardless.
+    """
     try:
-        # Chain dry-run → auto-submit (Phase 1 throughput unlock).
-        # `_run_dry_run_then_auto_submit` runs the existing dry-run
-        # and then calls the auto-submit policy. Policy is OFF by
-        # default — operator opts in via the admin endpoint.
-        _asyncio.create_task(_run_safely(
-            _run_dry_run_then_auto_submit(intent_id, actor=actor)
-        ))
+        from shared.auto_router import force_one_tick  # noqa: WPS433
+        _asyncio.create_task(_run_safely(force_one_tick()))
     except Exception as e:  # noqa: BLE001
-        logger.warning("auto_dry_run schedule failed for %s: %s", intent_id, e)
+        logger.warning("post-ingest auto_router kick failed for %s: %s", intent_id, e)
 
 
 async def _run_safely(coro) -> None:
-    """Swallow exceptions in the background dry-run task. The intent
-    just stays at `pending` if anything goes wrong — operator can
-    manually re-run via the existing endpoint."""
+    """Swallow exceptions in the background tick. Intents stay in
+    `shared_intents` regardless — the 30s loop will retry."""
     try:
         await coro
     except Exception as e:  # noqa: BLE001
-        logger.warning("auto_dry_run background task failed: %s", e)
+        logger.warning("post-ingest tick failed: %s", e)
 
 
 async def _run_dry_run_then_auto_submit(intent_id: str, actor: str) -> None:
-    """Chain auto-submit (Phase 1) onto the dry-run finalizer.
-
-    Doctrine: the brain emits → dry-run completes ~50ms later → if
-    tier-1 policy matches we call the SAME `execution_submit` path
-    the operator's SUBMIT button uses. Every gate still runs. The
-    receipt's `executed_by` field marks the intent as machine-
-    advanced (`auto_submit_tier_1@risedual.io`) so the audit feed
-    shows operator-click vs. policy-advanced trades distinctly.
-
-    Failure here is silently swallowed — auto-submit is a throughput
-    optimization, not a correctness gate. If it fails, the intent
-    sits at dry_run_passed and the operator can click SUBMIT
-    manually. The post-mortem panel will surface the failure pattern.
-    """
-    # ─── Direct-execute fast path (2026-02-26, operator directive) ───
-    # When `DIRECT_EXECUTE_MODE=true`, skip the entire dry-run + gate +
-    # auto-submit policy chain. Ship the intent straight to the broker.
-    # See `shared/direct_execute.py` for the doctrine pin.
-    try:
-        from shared.direct_execute import (  # noqa: WPS433
-            direct_execute, is_direct_execute_enabled,
-        )
-        if await is_direct_execute_enabled():
-            await direct_execute(intent_id, actor=actor)
-            return
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "direct_execute fast-path raised intent=%s err=%r — falling "
-            "through to dry-run chain",
-            intent_id, exc,
-        )
-
-    from shared.execution import run_dry_run_for_intent  # noqa: WPS433
-    from shared.auto_submit_policy import maybe_auto_submit  # noqa: WPS433
-    # 2026-02-20: track whether maybe_auto_submit was actually
-    # entered. If the chain raises *before* maybe_auto_submit writes
-    # its own audit row, we'd previously lose the intent into the
-    # "Never submitted (no audit row)" black hole. Now we write a
-    # catch-all `auto_submit_failed` row with the exception so the
-    # post-mortem panel surfaces the leak with diagnostic detail.
-    submit_attempted = False
-    try:
-        await run_dry_run_for_intent(intent_id, 10.0, actor=actor)
-        # 2026-02-23 — consensus doctrine: store the brain's opinion
-        # in `advisor_opinions` for the seat holder to synthesize.
-        # Runs AFTER dry_run so we know the intent passed schema/
-        # action checks; the storage helper is itself NEVER allowed
-        # to raise (safety-first; see auto_submit_policy._store_advisor_opinion_safe).
-        try:
-            from shared.auto_submit_policy import (  # noqa: WPS433
-                _consensus_mode_enabled, _store_advisor_opinion_safe,
-            )
-            if _consensus_mode_enabled():
-                full_intent = await db["shared_intents"].find_one(
-                    {"intent_id": intent_id}, {"_id": 0},
-                )
-                if full_intent:
-                    await _store_advisor_opinion_safe(full_intent)
-        except Exception:  # noqa: BLE001
-            pass
-        submit_attempted = True
-        await maybe_auto_submit(intent_id)
-    except Exception as e:  # noqa: BLE001
-        # 2026-02-20: capture STRUCTURED receipt instead of just the
-        # `repr(e)` blob. Operator can now group the 61 `internal_error`
-        # rows by `exception_type` and see which Python error is
-        # actually killing trades.
-        from shared.auto_submit_receipt import build_receipt
-        receipt = build_receipt(
-            intent_id,
-            stage=("post_dry_run" if submit_attempted else "in_dry_run"),
-            exc=e,
-        )
-        # 2026-06-22 (P0): bump the chain-failure log line to
-        # `exception()` so the FULL traceback lands in the supervisor
-        # log alongside the structured Mongo receipt. Prod has been
-        # bleeding `TypeError: cannot unpack non-iterable coroutine
-        # object` for days without a single stack frame to anchor the
-        # fix — the audit row carried it but operators only see the
-        # rolled-up label in the post-mortem panel. With this, the
-        # very next occurrence drops a full traceback into
-        # `/var/log/supervisor/backend.err.log` for instant triage.
-        logger.exception(
-            "auto_submit chain failed intent=%s stage=%s type=%s msg=%s",
-            intent_id, receipt.stage, receipt.exception_type, receipt.exception_message,
-        )
-        # Only write the catch-all when the failure happened *outside*
-        # maybe_auto_submit's own audit envelope. If submit_attempted
-        # is True the failure was inside maybe_auto_submit, which has
-        # its own internal try/except writing `auto_submit_failed`.
-        # But if it raised after maybe_auto_submit had a chance to
-        # bubble its own pre-audit exception, we still want a row —
-        # `kind=auto_submit_failed` is idempotent in spirit (one
-        # latest row per intent wins in the post-mortem aggregator).
-        try:
-            from db import db as _db  # noqa: WPS433
-            from namespaces import SHARED_GATE_RESULTS  # noqa: WPS433
-            await _db[SHARED_GATE_RESULTS].insert_one(
-                receipt.to_row(
-                    kind="auto_submit_failed",
-                    skip_category="internal_error",
-                    actor="auto_submit_tier_1",
-                ) | {"phase": receipt.stage}
-            )
-        except Exception:  # noqa: BLE001
-            # last-ditch — if even the audit write fails, we accept
-            # the loss; logs still carry the exception.
-            pass
+    """LEGACY — preserved as a no-op for any direct importer that
+    hasn't been migrated yet. The dry-run + auto-submit chain was
+    removed in the 2026-02-27 architectural reduction. New emissions
+    flow through `_fire_and_forget_dry_run` → auto_router."""
+    return None
 
 
 

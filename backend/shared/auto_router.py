@@ -85,169 +85,214 @@ def _now_iso() -> str:
 
 
 async def _route_one(intent: dict) -> dict:
-    """Run an intent through the Unified Pipeline.
+    """The new path (2026-02-27 architectural reduction).
 
-    Three blockers, one receipt: Seat → Governor (modifier) →
-    RoadGuard → Broker. See `shared/pipeline/execution_pipeline.py`
-    for the full state machine. This function is a thin wrapper —
-    no extra gating, sizing, or classification happens here.
+        Brain (already emitted) → Seat → Risk → Broker → Executions audit
 
-    Returns the legacy verdict dict shape so existing callers
+    No dry-run. No auto-submit policy. No council. No consensus pool.
+    No legacy brain wrappers. No unified pipeline. One row in the
+    `executions` collection per attempt, period.
+
+    Returns a verdict dict in the legacy shape so existing callers
     (status endpoint, post-mortem aggregator) keep working unchanged.
     """
-    from shared.pipeline.adapter import run_unified_for_intent  # noqa: WPS433
+    from shared import executions, risk, seat  # noqa: WPS433
+
+    intent_id = intent.get("intent_id") or ""
     notional_raw = float(
         intent.get("requested_notional_usd") or AUTO_ROUTER_NOTIONAL_USD
     )
-    return await run_unified_for_intent(intent, notional_raw)
 
+    # ── 1. Seat decides ──────────────────────────────────────────
+    sd = await seat.decide(intent)
+    if sd.verdict != "fire":
+        await executions.record(
+            intent=intent,
+            seat_verdict=sd.verdict,
+            seat_holder=sd.holder,
+            seat_reason=sd.reason,
+            risk_ok=False,
+            risk_reason="seat_did_not_fire",
+            notional_usd=notional_raw,
+            ok=False,
+        )
+        # Stamp the intent so the next tick skips it.
+        terminal_state = (
+            "advisory_only" if sd.verdict == "pass" else "blocked"
+        )
+        try:
+            await db[SHARED_INTENTS].update_one(
+                {"intent_id": intent_id},
+                {"$set": {
+                    "gate_state": terminal_state,
+                    "last_submit_ts": _now_iso(),
+                    "last_submit_by": AUTO_ROUTER_EMAIL,
+                    "seat_reason": sd.reason,
+                }},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return {
+            "verdict": "blocked",
+            "reason": sd.reason,
+            "seat_holder": sd.holder,
+            "intent_brain": sd.intent_brain,
+            "lane": sd.lane,
+        }
 
-async def _persist_blocked_intent(intent_id: str, notional: float, result: dict) -> None:
-    """Write the auto_router_blocked gate row + mark the intent blocked.
+    # ── 2. Risk hard limits ──────────────────────────────────────
+    rc = await risk.check(intent, notional_usd=notional_raw)
+    if not rc.ok:
+        await executions.record(
+            intent=intent,
+            seat_verdict=sd.verdict,
+            seat_holder=sd.holder,
+            seat_reason=sd.reason,
+            risk_ok=False,
+            risk_reason=rc.reason,
+            notional_usd=rc.notional_usd,
+            ok=False,
+        )
+        try:
+            await db[SHARED_INTENTS].update_one(
+                {"intent_id": intent_id},
+                {"$set": {
+                    "gate_state": "blocked",
+                    "last_submit_ts": _now_iso(),
+                    "last_submit_by": AUTO_ROUTER_EMAIL,
+                    "risk_reason": rc.reason,
+                }},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return {"verdict": "blocked", "reason": rc.reason}
 
-    Only used by `_sweep_seat_mismatched_intents` to drain legacy
-    limbo (intents whose lane has no current seat-holder). The
-    unified pipeline writes its own receipts to `pipeline_receipts`;
-    this function only touches `shared_gate_results` + `shared_intents`.
-    """
-    await db[SHARED_GATE_RESULTS].insert_one({
-        "intent_id": intent_id,
-        "kind": "auto_router_blocked",
-        "ts": _now_iso(),
-        "by": AUTO_ROUTER_EMAIL,
-        "order_notional_usd": notional,
-        "verdict": result["verdict"],
-        "gates": result["gates"],
-        "risk_multiplier": result.get("risk_multiplier"),
-    })
+    # ── 3. Broker ────────────────────────────────────────────────
+    from shared.broker_router import (  # noqa: WPS433
+        BrokerRouteBlocked, route_order,
+    )
+    try:
+        order = await route_order(
+            intent,
+            notional_usd=rc.notional_usd,
+            client_order_id=f"ar-{intent_id[:24]}",
+        )
+    except BrokerRouteBlocked as exc:
+        await executions.record(
+            intent=intent,
+            seat_verdict=sd.verdict,
+            seat_holder=sd.holder,
+            seat_reason=sd.reason,
+            risk_ok=rc.ok,
+            risk_reason=rc.reason,
+            notional_usd=rc.notional_usd,
+            broker_status="blocked_by_broker_router",
+            exception_type="BrokerRouteBlocked",
+            exception_msg=str(exc)[:500],
+            ok=False,
+        )
+        try:
+            await db[SHARED_INTENTS].update_one(
+                {"intent_id": intent_id},
+                {"$set": {
+                    "gate_state": "blocked",
+                    "last_submit_ts": _now_iso(),
+                    "last_submit_by": AUTO_ROUTER_EMAIL,
+                    "broker_reason": str(exc)[:500],
+                }},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return {"verdict": "blocked", "reason": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        exc_type = type(exc).__name__
+        exc_msg = str(exc)[:1000]
+        logger.exception(
+            "auto_router broker call raised intent=%s symbol=%s action=%s "
+            "exc=%s msg=%s",
+            intent_id, intent.get("symbol"), intent.get("action"),
+            exc_type, exc_msg,
+        )
+        await executions.record(
+            intent=intent,
+            seat_verdict=sd.verdict,
+            seat_holder=sd.holder,
+            seat_reason=sd.reason,
+            risk_ok=rc.ok,
+            risk_reason=rc.reason,
+            notional_usd=rc.notional_usd,
+            exception_type=exc_type,
+            exception_msg=exc_msg,
+            ok=False,
+        )
+        # Do NOT stamp the intent terminally — broker errors are
+        # transient; let the next tick retry.
+        return {
+            "verdict": "error",
+            "reason": exc_msg,
+            "exception_type": exc_type,
+        }
+
+    # ── 4. Success ───────────────────────────────────────────────
     await db[SHARED_INTENTS].update_one(
         {"intent_id": intent_id},
         {"$set": {
-            "gate_state": "blocked",
-            "last_submit_ts": _now_iso(),
-            "last_submit_by": AUTO_ROUTER_EMAIL,
+            "executed": True,
+            "executed_at": _now_iso(),
+            "executed_by": AUTO_ROUTER_EMAIL,
+            "gate_state": "submitted",
+            "broker_order": {
+                k: order.get(k) for k in (
+                    "id", "order_id", "broker", "broker_symbol", "canonical",
+                    "lane", "side", "qty", "notional", "status",
+                    "filled_qty", "filled_avg_price", "submitted_at",
+                ) if order.get(k) is not None
+            },
         }},
     )
-
-
-async def _sweep_seat_mismatched_intents() -> int:
-    """Doctrine (2026-05-31, position-model alignment): an intent's
-    `holds_executor_seat=False` flag means "the brain that POSTED this
-    intent did not hold the executor seat at post-time". Under the
-    position-model doctrine, that's NOT a terminal state — authority
-    lives in the seat, not the brain — so whichever brain CURRENTLY
-    holds the lane's executor seat can route this intent.
-
-    This sweep is consistent with the pipeline's seat check:
-      - If the lane has a current executor-seat holder → leave the
-        intent pending; the auto-router will pick it up.
-      - If the lane has NO current executor-seat holder → block it
-        with a typed reason so the operator queue stays honest.
-    """
-    from shared.executor_seat import get_seat_holder, seats_with_execute  # noqa: WPS433
-
-    q = {
-        "gate_state": "pending",
-        "executed": {"$ne": True},
-        "action": {"$in": ["BUY", "SELL", "SHORT", "COVER"]},
-        "holds_executor_seat": False,
+    await executions.record(
+        intent=intent,
+        seat_verdict=sd.verdict,
+        seat_holder=sd.holder,
+        seat_reason=sd.reason,
+        risk_ok=rc.ok,
+        risk_reason=rc.reason,
+        notional_usd=rc.notional_usd,
+        broker=order.get("broker"),
+        broker_order_id=order.get("id") or order.get("order_id"),
+        broker_status=order.get("status") or "submitted",
+        broker_response=order,
+        ok=True,
+    )
+    logger.info(
+        "auto_router OK intent=%s symbol=%s action=%s notional=%.2f "
+        "broker=%s order_id=%s",
+        intent_id, intent.get("symbol"), intent.get("action"),
+        rc.notional_usd, order.get("broker"),
+        order.get("id") or order.get("order_id"),
+    )
+    return {
+        "verdict": "executed",
+        "intent_id": intent_id,
+        "final_notional": rc.notional_usd,
+        "notional_usd": rc.notional_usd,
+        "broker": order.get("broker"),
+        "order_id": order.get("id") or order.get("order_id"),
     }
-    now = _now_iso()
-    candidates = await db[SHARED_INTENTS].find(
-        q, {"_id": 0, "intent_id": 1, "stack": 1, "symbol": 1,
-            "action": 1, "lane": 1, "executor_holder_at_post": 1},
-    ).limit(500).to_list(500)
-    if not candidates:
-        return 0
-
-    # Cache per-lane seat-occupancy across the candidate sweep so we
-    # don't hammer the seat collection for every intent in a batch.
-    lane_has_holder: dict[str, bool] = {}
-
-    async def _lane_has_seat(lane: str) -> bool:
-        if lane in lane_has_holder:
-            return lane_has_holder[lane]
-        eligible = seats_with_execute(lane)
-        for seat_name in eligible:
-            if await get_seat_holder(seat_name):
-                lane_has_holder[lane] = True
-                return True
-        lane_has_holder[lane] = False
-        return False
-
-    blocked_count = 0
-    for it in candidates:
-        lane = (it.get("lane") or "").lower()
-        if await _lane_has_seat(lane):
-            # Position-model: someone holds the seat → intent is
-            # eligible to fire under the pipeline's seat check.
-            # Leave it pending; _tick() will pick it up next pass.
-            continue
-        # No holder anywhere → terminal block with a clear, lane-aware
-        # reason. Operator can re-seat and the next post will succeed;
-        # existing blocked intents stay blocked for audit clarity.
-        await _persist_blocked_intent(
-            it["intent_id"], 0.0, {
-                "verdict": "blocked",
-                "gates": [{
-                    "name": "executor_seat_check",
-                    "passed": False,
-                    "reason": (
-                        f"no current executor-seat holder for lane="
-                        f"{lane or 'unknown'!r}; intent posted by "
-                        f"{it.get('stack')!r} when seat was held by "
-                        f"{it.get('executor_holder_at_post')!r} — "
-                        f"swept by auto_router at {now}"
-                    ),
-                }],
-                "risk_multiplier": 0.0,
-            },
-        )
-        blocked_count += 1
-    if blocked_count:
-        logger.info(
-            "auto_router: swept %d seat-mismatched limbo intents (no current holder)",
-            blocked_count,
-        )
-    return blocked_count
 
 
 async def _tick() -> list[dict]:
-    """One scan pass. Picks up at most AUTO_ROUTER_MAX_PER_TICK eligible intents.
+    """One scan pass. Picks up at most AUTO_ROUTER_MAX_PER_TICK unexecuted
+    intents and routes them through Seat → Risk → Broker.
 
-    Also runs the seat-mismatch sweep at most once per tick so the
-    legacy limbo queue drains over time without flooding mongo on
-    every cycle.
+    2026-02-27 architectural reduction: the legacy "seat-mismatch
+    sweep" and `seats_with_execute(lane)` indirection are gone.
+    `Seat.decide(intent)` is the single eligibility check; each
+    intent's lane/brain combo is evaluated inline by `_route_one`.
 
-    Per-intent seat eligibility is checked against the CURRENT
-    seat-holder for the intent's lane — same question the pipeline's
-    Seat layer asks. So an intent posted by REDEYE while Alpha held
-    the equity executor seat IS eligible to fire as long as some
-    brain currently holds an equity executor seat, regardless of who.
+    Stale intents (older than AUTO_ROUTER_LOOKBACK_MIN, default 60m)
+    are NOT picked up — that's the operator-curated history boundary.
     """
-    from shared.executor_seat import get_seat_holder, seats_with_execute  # noqa: WPS433
-
-    # Drain seat-mismatch limbo first (cheap when empty).
-    await _sweep_seat_mismatched_intents()
-    # 2026-02-26 (P0 prod post-mortem): the auto-router was sorting on
-    # `created_at`, a field that DOES NOT EXIST on `shared_intents`
-    # documents — they only carry `ingest_ts`. So the sort was a no-op
-    # and the query scanned the entire historical routable set
-    # (millions of rows on prod), exceeding maxTimeMS. The healthcheck
-    # endpoint surfaced this as `sample_intent_query` timing out at 4s
-    # even AFTER the `(action, created_at)` index was confirmed
-    # `[exists]` on Mongo.
-    #
-    # The fix: sort by `ingest_ts` (the actual populated field) and
-    # restrict the query to a recent lookback window so we never scan
-    # historical noise. The pre-existing
-    # `shared_intents_ingest_ts_idx` covers this perfectly — no new
-    # index needed.
-    #
-    # `AUTO_ROUTER_LOOKBACK_MIN` is env-tunable. Default 60 minutes:
-    # stale intents older than that are operator-curated history, not
-    # active queue. The lookback bound is the SINGLE biggest perf
-    # lever in this query — without it, every tick has unbounded work.
     try:
         lookback_min = int(os.environ.get("AUTO_ROUTER_LOOKBACK_MIN", "60"))
     except (TypeError, ValueError):
@@ -261,116 +306,36 @@ async def _tick() -> list[dict]:
         "action": {"$in": ["BUY", "SELL", "SHORT", "COVER"]},
         "symbol": {"$ne": None},
         # Honest queue: don't re-process intents already terminally
-        # blocked by an earlier tick. Without this, the auto_router
-        # would keep retrying gate-failed intents forever.
-        "gate_state": {"$nin": ["blocked", "no_trade", "advisory_only"]},
+        # stamped by an earlier tick (blocked or advisory_only).
+        "gate_state": {"$nin": ["blocked", "no_trade", "advisory_only", "submitted"]},
     }
-    # Pull a larger sample than AUTO_ROUTER_MAX_PER_TICK so the
-    # per-intent seat-eligibility filter can drop ineligible ones
-    # and still leave us with up-to-MAX_PER_TICK eligible candidates.
-    # Sort by `ingest_ts -1` so the freshest emissions are tried first
-    # (uses `shared_intents_ingest_ts_idx`). `maxTimeMS` is a defense-
-    # in-depth ceiling: if anything makes this query slow despite the
-    # index + lookback, Mongo aborts after 8s instead of hanging the
-    # whole tick.
     sample = await (
         db[SHARED_INTENTS]
         .find(q, {"_id": 0})
         .sort("ingest_ts", -1)
         .max_time_ms(8000)
-        .to_list(AUTO_ROUTER_MAX_PER_TICK * 4)
+        .to_list(AUTO_ROUTER_MAX_PER_TICK)
     )
     if not sample:
         return []
 
-    # Per-lane seat-occupancy cache for the duration of this tick.
-    lane_has_holder: dict[str, bool] = {}
-
-    async def _lane_eligible(lane: str) -> bool:
-        if lane in lane_has_holder:
-            return lane_has_holder[lane]
-        eligible = seats_with_execute(lane)
-        for seat_name in eligible:
-            if await get_seat_holder(seat_name):
-                lane_has_holder[lane] = True
-                return True
-        lane_has_holder[lane] = False
-        return False
-
-    intents: list[dict] = []
-    for it in sample:
-        if len(intents) >= AUTO_ROUTER_MAX_PER_TICK:
-            break
-        lane = (it.get("lane") or "").lower()
-        if not await _lane_eligible(lane):
-            # No current seat-holder for this lane — the pipeline's
-            # Seat layer would block anyway. Skip silently; the sweep
-            # has already terminally-blocked these.
-            continue
-        intents.append(it)
-
-    if not intents:
-        return []
-    results = []
-    for intent in intents:
+    results: list[dict] = []
+    for intent in sample:
         try:
             r = await _route_one(intent)
             results.append(r)
             if r.get("verdict") == "executed":
                 logger.info(
-                    "auto-routed %s %s %s -> %s",
-                    intent.get("stack"), intent.get("action"), intent.get("symbol"),
+                    "auto-routed %s %s %s -> $%s",
+                    intent.get("stack"), intent.get("action"),
+                    intent.get("symbol"),
                     r.get("final_notional") or r.get("notional_usd") or 0,
                 )
-            else:
-                # 2026-06-22 (P0 — Seat Drift / Funnel-leak fix):
-                # The Unified Pipeline writes its own receipt to
-                # `pipeline_receipts`, but it does NOT update the
-                # canonical `shared_intents.gate_state`. Without this
-                # writeback, every BLOCKED/NO_ORDER intent stayed at
-                # `gate_state=pending` and got re-evaluated on every
-                # 30s tick — forever. Production funnel showed 6,459
-                # of 6,464 intents (100% leak) dropped between
-                # EMITTED→SEAT_APPROVED because the same 5 stuck
-                # TRIPWIRE intents looped through camaro at 5/tick.
-                #
-                # Fix: stamp the pipeline's terminal verdict back onto
-                # `shared_intents.gate_state` so the next tick skips
-                # it via the existing `gate_state $nin [blocked,
-                # no_trade, advisory_only]` filter on line 239.
-                verdict = (r.get("verdict") or "").lower()
-                terminal_state = None
-                if verdict in ("no_trade", "blocked"):
-                    terminal_state = "blocked"
-                elif verdict == "advisory_only":
-                    terminal_state = "advisory_only"
-                elif verdict == "error":
-                    # Broker / pipeline error — DON'T terminally
-                    # block. Pod restarts / broker reconnections
-                    # should let the intent retry on the next tick.
-                    terminal_state = None
-                if terminal_state:
-                    try:
-                        await db[SHARED_INTENTS].update_one(
-                            {"intent_id": intent.get("intent_id")},
-                            {"$set": {
-                                "gate_state": terminal_state,
-                                "last_submit_ts": _now_iso(),
-                                "last_submit_by": AUTO_ROUTER_EMAIL,
-                                "last_pipeline_verdict": verdict,
-                                "last_pipeline_reason": r.get("reason"),
-                            }},
-                        )
-                    except Exception as upd_err:  # noqa: BLE001
-                        # Never let the audit-write failure crash
-                        # the tick — better to re-process the intent
-                        # next time than to nuke the whole loop.
-                        logger.warning(
-                            "auto-router terminal state writeback failed intent=%s err=%s",
-                            intent.get("intent_id"), upd_err,
-                        )
         except Exception as e:  # noqa: BLE001
-            logger.exception("auto-router error on intent %s: %s", intent.get("intent_id"), e)
+            logger.exception(
+                "auto-router error on intent %s: %s",
+                intent.get("intent_id"), e,
+            )
     return results
 
 
