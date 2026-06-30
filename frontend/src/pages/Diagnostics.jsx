@@ -20,6 +20,7 @@ import SeatStageDropsTile from "@/components/SeatStageDropsTile";
 import ExecutionLifecycleFunnelTile from "@/components/ExecutionLifecycleFunnelTile";  // 2026-02-23 P3
 import NativeBrainRuntimeTile from "@/components/NativeBrainRuntimeTile";  // 2026-02-23 in-process brain migration
 import BrainInputHealthTile from "@/components/BrainInputHealthTile";  // 2026-02-23 instrument quality
+import HealthcheckTile from "@/components/HealthcheckTile";  // 2026-02-26 post-deploy validation
 // ImposterScanCard removed 2026-02-21: the sidecar HTTP brain plumbing
 // it monitored was deleted (brains run in-process now), and the
 // `/admin/runtime/sidecar-imposter-scan` endpoint went with it — the
@@ -443,6 +444,15 @@ export default function Diagnostics() {
       />
 
       <BrainDeepDiagnoseCard />
+
+      {/* Post-deploy runtime validation suite (2026-02-26). Lives at
+          the top so the FIRST thing the operator sees after a deploy
+          is one-row truth: indexes present? auto-router ticking?
+          sample query fast? brain emissions flowing? Replaces six
+          hours of log-grepping with a single green/amber/red dot. */}
+      <div className="mt-6">
+        <HealthcheckTile />
+      </div>
 
       <BrainMetricsTile />
 
