@@ -1,0 +1,3208 @@
+273386092495264 2026-06-29 23:35:15,863 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:35:15Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "de25a0df-7467-53cf-894f-d524444eee59",
+    "x-signature": "DZT/wDCxchoG64QkddQGzJXdOdw=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: a1410797-50d4-4052-b034-e3f185b396e6
+273386092495264 2026-06-29 23:35:15,864 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "a1410797-50d4-4052-b034-e3f185b396e6"
+}
+273386100949408 2026-06-29 23:35:15,951 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:35:15Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "f5ae5601-5b56-5517-b92b-0d54a59b3983",
+    "x-signature": "OGfClFhFPje3trDFLRIrK/uaP2g=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'TOO_MANY_REQUESTS', 'message': 'Too many requests'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 8700d4bd-d005-4985-8952-2aa35d46c6a9
+273386100949408 2026-06-29 23:35:15,952 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "8700d4bd-d005-4985-8952-2aa35d46c6a9"
+}
+273386118906272 2026-06-29 23:35:16,125 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:35:15Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "cbe9d260-93d4-5b67-8c28-f6284496f2d0",
+    "x-signature": "/1g6TebXzF+yxaSN8BaARdTXHIA=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: e7bb49f9-1676-42f2-b146-6c1e4972187d
+273386118906272 2026-06-29 23:35:16,125 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "e7bb49f9-1676-42f2-b146-6c1e4972187d"
+}
+273385523114400 2026-06-29 23:35:16,127 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:35:15Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "cf1a89d8-3173-5627-9c64-0e2b7abac6fc",
+    "x-signature": "Y+lQLRcF/kCluneEJBAxEYkfuLE=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'TOO_MANY_REQUESTS', 'message': 'Too many requests'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 3036509f-7baf-4238-9f48-de1091817886
+273385523114400 2026-06-29 23:35:16,127 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "3036509f-7baf-4238-9f48-de1091817886"
+}
+273385540022688 2026-06-29 23:35:16,128 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:35:15Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "a8b80776-a5f9-532c-97a1-984f5d6f7427",
+    "x-signature": "K8TKIb+v5Z994tfMIIit4CyqfNw=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: f8bd8392-c67b-4ce6-a456-8bde509210c5
+273385540022688 2026-06-29 23:35:16,128 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "f8bd8392-c67b-4ce6-a456-8bde509210c5"
+}
+273386092495264 2026-06-29 23:35:16,140 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:35:15Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "1442edbb-6865-51f6-8dad-843b7f441882",
+    "x-signature": "lkx5okUTHWOASNILwcGEu5lEt0M=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-1d9d8586-f015-423a-9866-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-1d9d8586-f015-423a-9866-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-1d9d8586-f015-423a-9866-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: d5d8879a-faa4-44ce-a1a5-4c94c36ce939
+273386092495264 2026-06-29 23:35:16,140 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "d5d8879a-faa4-44ce-a1a5-4c94c36ce939"
+}
+273385506206112 2026-06-29 23:35:16,293 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:35:16Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "9205bab4-7a33-537b-b18c-877f4a5fe06f",
+    "x-signature": "L6FHbIVIe96wIhT3FyNO6KG8PcM=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-d494ee26-b311-41d6-852f-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-d494ee26-b311-41d6-852f-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-d494ee26-b311-41d6-852f-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 3c72ede5-e31d-4d4e-bf2f-9b3806d9724d
+273384424010144 2026-06-29 23:35:16,295 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:35:16Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "c3605280-f043-5437-a452-fff03437cb65",
+    "x-signature": "HOo72PXclPMFmTNneDrq4WdTpdA=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-f51d7277-cb05-43ee-a4a9-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-f51d7277-cb05-43ee-a4a9-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-f51d7277-cb05-43ee-a4a9-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 663e37be-f135-44aa-ad15-c1e7f388e6a7
+273385506206112 2026-06-29 23:35:16,296 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "3c72ede5-e31d-4d4e-bf2f-9b3806d9724d"
+}
+273384424010144 2026-06-29 23:35:16,296 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "663e37be-f135-44aa-ad15-c1e7f388e6a7"
+}
+273385514660256 2026-06-29 23:35:16,297 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:35:16Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "a8135c80-9dd6-5efc-997d-9c69765a08dc",
+    "x-signature": "6tfzW+Dmz4UaBonSSzl+YqNaEgM=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-d3f3b150-9ec1-46ab-83c8-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-d3f3b150-9ec1-46ab-83c8-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-d3f3b150-9ec1-46ab-83c8-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 41afa2b6-4b0a-4aff-b66a-22accf5dfd1c
+273385514660256 2026-06-29 23:35:16,298 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "41afa2b6-4b0a-4aff-b66a-22accf5dfd1c"
+}
+273385506206112 2026-06-29 23:38:05,002 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:38:04Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "976bcdd9-3747-5f8e-9777-611abc9c9b15",
+    "x-signature": "X24tKfXvqZ+YoncIy1NWj8TH3dE=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "348",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-702b0e37-6697-4fe5-82f1-",
+      "symbol": "AAPL",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "SELL",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.017926",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "278.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-702b0e37-6697-4fe5-82f1-\",\"symbol\":\"AAPL\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"SELL\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.017926\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"278.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-702b0e37-6697-4fe5-82f1-",
+    "symbol": "AAPL",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "SELL",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.017926",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "278.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: aa2e2467-e99e-4205-8a77-b15f74680a66
+273385506206112 2026-06-29 23:38:05,002 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "aa2e2467-e99e-4205-8a77-b15f74680a66"
+}
+273385523114400 2026-06-29 23:38:06,321 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:38:06Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "adc500f9-c6cc-51e4-9e9a-9c12af4a87b9",
+    "x-signature": "4R6lYTv90o80YQ7taRwC/DRwDFU=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: e12a2d75-95c0-4315-bb45-37ceb9ee5d01
+273385523114400 2026-06-29 23:38:06,321 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "e12a2d75-95c0-4315-bb45-37ceb9ee5d01"
+}
+273386118906272 2026-06-29 23:38:06,412 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:38:06Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "9cc95616-d86f-5201-826f-9783b7a6109b",
+    "x-signature": "yKBbiaIvxkUaPkqJlp1ZwtT4828=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "348",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-f94e67c3-8d14-4bbf-8b61-",
+      "symbol": "AAPL",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "SELL",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.017926",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "278.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-f94e67c3-8d14-4bbf-8b61-\",\"symbol\":\"AAPL\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"SELL\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.017926\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"278.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-f94e67c3-8d14-4bbf-8b61-",
+    "symbol": "AAPL",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "SELL",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.017926",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "278.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: d0056d4f-c656-4105-ac86-18bf4d5059e1
+273386118906272 2026-06-29 23:38:06,412 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "d0056d4f-c656-4105-ac86-18bf4d5059e1"
+}
+273385514660256 2026-06-29 23:38:09,394 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:38:09Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "4bc51d25-733f-5499-8a00-3a9cf98f8c1a",
+    "x-signature": "fRSc4BpTomPhvP20PfIWUhPhms8=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "348",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-774edbbd-61e2-4651-b593-",
+      "symbol": "AAPL",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "SELL",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.017926",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "278.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-774edbbd-61e2-4651-b593-\",\"symbol\":\"AAPL\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"SELL\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.017926\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"278.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-774edbbd-61e2-4651-b593-",
+    "symbol": "AAPL",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "SELL",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.017926",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "278.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 9ce68e46-41e5-4553-ad42-6fae3f4bdee7
+273385514660256 2026-06-29 23:38:09,394 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "9ce68e46-41e5-4553-ad42-6fae3f4bdee7"
+}
+273384424010144 2026-06-29 23:38:09,890 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:38:09Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "9b89e6cd-abfa-51dc-abb1-c58fc4e8286c",
+    "x-signature": "5GWMPv9RFrnWgyiTHaoHpBvZALI=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "348",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-04a39377-07f4-4b84-9d89-",
+      "symbol": "AAPL",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "SELL",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.017926",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "278.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-04a39377-07f4-4b84-9d89-\",\"symbol\":\"AAPL\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"SELL\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.017926\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"278.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-04a39377-07f4-4b84-9d89-",
+    "symbol": "AAPL",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "SELL",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.017926",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "278.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: df357955-e9d2-4695-be2c-56fd6a4de455
+273384424010144 2026-06-29 23:38:09,890 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "df357955-e9d2-4695-be2c-56fd6a4de455"
+}
+273385540022688 2026-06-29 23:39:33,081 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:39:32Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "c6871b9d-dda1-5585-acb4-cc9666da5ab1",
+    "x-signature": "dUW94t6kxSe13CkScXxkw0B7MnI=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-731f674a-6c30-4ae0-a2d2-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-731f674a-6c30-4ae0-a2d2-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-731f674a-6c30-4ae0-a2d2-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 48ecd80d-e589-4bc8-93d0-0b795b581e1a
+273385540022688 2026-06-29 23:39:33,082 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "48ecd80d-e589-4bc8-93d0-0b795b581e1a"
+}
+273385523114400 2026-06-29 23:39:34,440 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:39:34Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "d51a4239-3de7-555c-9c46-c33faa194876",
+    "x-signature": "kWGKnIQksWTvFVW8zLHdZ+gAXXo=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 42930224-e6f7-48cc-b704-13c4a119f57b
+273385523114400 2026-06-29 23:39:34,440 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "42930224-e6f7-48cc-b704-13c4a119f57b"
+}
+273385514660256 2026-06-29 23:39:34,532 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:39:34Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "ed273c0d-e1bc-5650-b5cf-05d35b116105",
+    "x-signature": "I3J5JaBX6TygaeeIF1sIyi0DiZ0=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-8043ea8b-6d9d-430d-9f0d-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-8043ea8b-6d9d-430d-9f0d-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-8043ea8b-6d9d-430d-9f0d-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 6281eb32-99b0-4129-b43e-e610c7c5f88b
+273385514660256 2026-06-29 23:39:34,533 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "6281eb32-99b0-4129-b43e-e610c7c5f88b"
+}
+273384424010144 2026-06-29 23:39:35,432 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:39:35Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "e814a81a-280b-567e-833f-a85adb8a115e",
+    "x-signature": "sZlduAf6xfSKPnh5/qEtsTvXklY=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-6e577760-1363-4e2f-826e-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-6e577760-1363-4e2f-826e-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-6e577760-1363-4e2f-826e-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: c6a9d03d-2548-4e28-9e68-63296ba728e8
+273384424010144 2026-06-29 23:39:35,432 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "c6a9d03d-2548-4e28-9e68-63296ba728e8"
+}
+273385531568544 2026-06-29 23:39:42,040 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:39:41Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "e338b1fc-10f8-53ab-94fa-ca283c482133",
+    "x-signature": "H7cnaf6JOpvN0TE2krEj+HPa+JA=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-e6217fc9-c70d-4cca-9fa5-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-e6217fc9-c70d-4cca-9fa5-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-e6217fc9-c70d-4cca-9fa5-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 5f5bbd73-6471-43fc-9719-35a9ec55ba5d
+273385531568544 2026-06-29 23:39:42,040 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "5f5bbd73-6471-43fc-9719-35a9ec55ba5d"
+}
+279997214159264 2026-06-29 23:41:09,990 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:41:09Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "87adfdf4-3441-55fe-bc2e-76c0f9aeb2c4",
+    "x-signature": "UwGnfzjnKaGdz5LU3kHYYfSOzbw=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: ba852ba1-2415-4cbd-8a45-03479cd39e14
+279997214159264 2026-06-29 23:41:09,991 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "ba852ba1-2415-4cbd-8a45-03479cd39e14"
+}
+279997591650720 2026-06-29 23:41:10,085 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:41:09Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "960a06b1-e4f8-5de0-93de-6130cf6238ab",
+    "x-signature": "dAi5WIz6LBu8K+z2AsIrFxqpMIc=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 6718e902-a026-45dc-99de-5baaec69ee40
+279997591650720 2026-06-29 23:41:10,086 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "6718e902-a026-45dc-99de-5baaec69ee40"
+}
+279997188796832 2026-06-29 23:41:10,135 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:41:10Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "9a498cff-9262-5bf1-93d2-97329786350d",
+    "x-signature": "iSKqys0wRl+1Sbv9BT0bu5tjo48=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'TOO_MANY_REQUESTS', 'message': 'Too many requests'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 920e2465-8721-4265-911a-a5d741241427
+279997205705120 2026-06-29 23:41:10,138 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:41:10Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "18c17263-e278-5eb4-9dcc-dc88fe5940d9",
+    "x-signature": "l43lDlQkGZaXiAht0hYPNw5cAIk=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 06989415-fb73-4871-82f3-8059833ce8c6
+279997188796832 2026-06-29 23:41:10,140 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "920e2465-8721-4265-911a-a5d741241427"
+}
+279997205705120 2026-06-29 23:41:10,141 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "06989415-fb73-4871-82f3-8059833ce8c6"
+}
+279996702650784 2026-06-29 23:41:10,195 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:41:10Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "44858092-e9f7-5c07-9d78-6e569b4b66c1",
+    "x-signature": "bBa1tFoyY7HW6cKGImgKiSP4764=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-02f05bda-836b-418d-90e8-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-02f05bda-836b-418d-90e8-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-02f05bda-836b-418d-90e8-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 86564d28-2d39-4f97-ac3b-64e24bea5803
+279996702650784 2026-06-29 23:41:10,197 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "86564d28-2d39-4f97-ac3b-64e24bea5803"
+}
+279997197250976 2026-06-29 23:41:10,257 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:41:10Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "1f13f3de-908f-5894-90ff-756dd16072fd",
+    "x-signature": "qSKxpnYSF4RMGIxx8ahm2m8fQMI=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-f8f07010-5c66-496e-94a6-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-f8f07010-5c66-496e-94a6-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-f8f07010-5c66-496e-94a6-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: f20e4960-2557-4eef-a63e-58431ff86505
+279997197250976 2026-06-29 23:41:10,257 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "f20e4960-2557-4eef-a63e-58431ff86505"
+}
+279997214159264 2026-06-29 23:41:10,258 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:41:10Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "1cb559f1-a534-597c-ab8f-7ef7c7fe8ac7",
+    "x-signature": "E/CDQ7Mla8IXEMn3CGN3uWsKgTA=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-5f303343-fe59-443e-be6d-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-5f303343-fe59-443e-be6d-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-5f303343-fe59-443e-be6d-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: a74941f6-2bb7-423d-ad28-beacf37082e3
+279997214159264 2026-06-29 23:41:10,258 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "a74941f6-2bb7-423d-ad28-beacf37082e3"
+}
+279997231067552 2026-06-29 23:41:10,386 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:41:10Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "2f26fea4-7a82-513d-a5b6-5c703e311a6a",
+    "x-signature": "MaurLOy1Ks40ik8jzzuN7qqmbUo=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: d22de442-5f97-422a-a4f6-760b53428e50
+279997231067552 2026-06-29 23:41:10,387 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "d22de442-5f97-422a-a4f6-760b53428e50"
+}
+279997188796832 2026-06-29 23:41:10,487 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:41:10Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "7c3cc2c6-5c0b-51a1-98e1-0fffc10ed89b",
+    "x-signature": "Pr9vKNzy2iP/EdwVgwiwdujq7ls=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-b1801fff-1e75-4427-b00e-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-b1801fff-1e75-4427-b00e-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-b1801fff-1e75-4427-b00e-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 16da9c80-140e-425e-b127-e92c03a3c672
+279997188796832 2026-06-29 23:41:10,487 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "16da9c80-140e-425e-b127-e92c03a3c672"
+}
+279997231067552 2026-06-29 23:44:15,266 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:44:15Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "385f9c84-6ae1-5058-952c-22413d8a5219",
+    "x-signature": "18cqdUb4CTGg9nJ9ke1cPiMseX0=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "348",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-aa77d87a-3373-46c0-a6ba-",
+      "symbol": "AAPL",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "SELL",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.017926",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "278.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-aa77d87a-3373-46c0-a6ba-\",\"symbol\":\"AAPL\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"SELL\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.017926\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"278.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-aa77d87a-3373-46c0-a6ba-",
+    "symbol": "AAPL",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "SELL",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.017926",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "278.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: f9eae903-7dc8-47ae-8072-dae16edd0679
+279997231067552 2026-06-29 23:44:15,266 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "f9eae903-7dc8-47ae-8072-dae16edd0679"
+}
+279997188796832 2026-06-29 23:44:59,200 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:44:59Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "9d6b9dbd-86bf-50e1-82c0-db1a3842c648",
+    "x-signature": "ypQ8ASaxovbDUbzuMiNZmW4ZXpc=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-2087ae71-0bdb-4c00-87af-",
+      "symbol": "ABNB",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.033638",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "148.64"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-2087ae71-0bdb-4c00-87af-\",\"symbol\":\"ABNB\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.033638\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"148.64\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-2087ae71-0bdb-4c00-87af-",
+    "symbol": "ABNB",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.033638",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "148.64"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: d31be379-6008-47eb-bd56-ef2a839284d3
+279997188796832 2026-06-29 23:44:59,201 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "d31be379-6008-47eb-bd56-ef2a839284d3"
+}
+279997214159264 2026-06-29 23:45:35,309 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:45:35Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "a7005ea1-8d4b-5d44-a03e-8d292b657909",
+    "x-signature": "+ksPlFlNLzhX3vGCsPb8mzALHDE=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-9e746300-c9fa-49f4-ad2d-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-9e746300-c9fa-49f4-ad2d-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-9e746300-c9fa-49f4-ad2d-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 3c6c97dd-2855-442b-b452-384d153f5161
+279997214159264 2026-06-29 23:45:35,309 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "3c6c97dd-2855-442b-b452-384d153f5161"
+}
+279997231067552 2026-06-29 23:45:39,328 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:45:39Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "ebd76e12-a294-5634-a66e-928cdf1302f2",
+    "x-signature": "l3tp/s8eXjweL08z+KwaVYYBrdo=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-d64a749b-381b-4f53-aea9-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-d64a749b-381b-4f53-aea9-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-d64a749b-381b-4f53-aea9-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: f6957c34-e576-449f-b9a9-504a23b835f1
+279997231067552 2026-06-29 23:45:39,328 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "f6957c34-e576-449f-b9a9-504a23b835f1"
+}
+279997222613408 2026-06-29 23:45:45,688 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:45:45Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "25ea7e69-97a7-5325-8e9f-057b8b47636f",
+    "x-signature": "y/n+TtEJJoyuzdsI+8Sr1LcNyjI=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-513ec9bc-4aa4-4caa-9027-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-513ec9bc-4aa4-4caa-9027-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-513ec9bc-4aa4-4caa-9027-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 1c182768-a51a-435d-ac66-c0ee85b55abd
+279997222613408 2026-06-29 23:45:45,688 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "1c182768-a51a-435d-ac66-c0ee85b55abd"
+}
+279997222613408 2026-06-29 23:45:46,119 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:45:46Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "7476de29-bd05-5853-a111-2bed627bd29f",
+    "x-signature": "PQGXlbjp+TUhyXaxKrWeoQNyKpE=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'TOO_MANY_REQUESTS', 'message': 'Too many requests'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: b7897f73-dc49-4376-8376-23c9d976a258
+279997222613408 2026-06-29 23:45:46,119 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "b7897f73-dc49-4376-8376-23c9d976a258"
+}
+279997231067552 2026-06-29 23:45:46,208 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:45:46Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "84d2f21b-4760-5e41-92ae-a57f7f0ec960",
+    "x-signature": "zriGYpPzt49sVavYkX1Uwz75ERE=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-5c16088a-efab-4177-b56c-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-5c16088a-efab-4177-b56c-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-5c16088a-efab-4177-b56c-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 3b4bec4b-3cef-4693-8ec9-98b6efed8d47
+279997231067552 2026-06-29 23:45:46,208 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "3b4bec4b-3cef-4693-8ec9-98b6efed8d47"
+}
+279997214159264 2026-06-29 23:48:41,129 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:48:41Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "54b0256e-7c78-5a18-a062-a6069d14a20b",
+    "x-signature": "3cgkG/aXVo/bnf5BOCSCJtFiVLE=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "345",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-f0108c7b-098f-46b4-b57d-",
+      "symbol": "AEO",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.290023",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "17.24"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-f0108c7b-098f-46b4-b57d-\",\"symbol\":\"AEO\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.290023\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"17.24\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-f0108c7b-098f-46b4-b57d-",
+    "symbol": "AEO",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.290023",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "17.24"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 4cbc5c14-2fe3-4b42-a401-1a76777f1d2e
+279997214159264 2026-06-29 23:48:41,129 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "4cbc5c14-2fe3-4b42-a401-1a76777f1d2e"
+}
+279997214159264 2026-06-29 23:48:48,099 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:48:48Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "36727201-ec0d-550b-a39e-5d065fcb1ed6",
+    "x-signature": "8lk+1mwgZ3K0XX1U4tFp6cQxmIc=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "345",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-ab79de42-8475-4fef-b7cb-",
+      "symbol": "AEO",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.290023",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "17.24"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-ab79de42-8475-4fef-b7cb-\",\"symbol\":\"AEO\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.290023\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"17.24\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-ab79de42-8475-4fef-b7cb-",
+    "symbol": "AEO",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.290023",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "17.24"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 67537ae2-6975-4120-a4ed-11d15ece738d
+279997214159264 2026-06-29 23:48:48,099 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "67537ae2-6975-4120-a4ed-11d15ece738d"
+}
+279997197250976 2026-06-29 23:50:11,831 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:50:11Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "e307a1f8-fef6-518e-b3ce-af7fd83ab486",
+    "x-signature": "kIXlUhZZR/5MZ0Pv96Ae06Q3IYY=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 91f75dbf-b755-470f-95aa-20b9ec2ecf07
+279997197250976 2026-06-29 23:50:11,831 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "91f75dbf-b755-470f-95aa-20b9ec2ecf07"
+}
+279997188796832 2026-06-29 23:50:11,840 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:50:11Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "9556b74f-1484-5d27-bd1f-0593bfe4a245",
+    "x-signature": "Ss6nF1T1r1hpZ/2gTP8cPj7iG4g=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'TOO_MANY_REQUESTS', 'message': 'Too many requests'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: cbb89c1b-b39e-4021-afca-dab3bfd38b90
+279997188796832 2026-06-29 23:50:11,841 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "cbb89c1b-b39e-4021-afca-dab3bfd38b90"
+}
+279997214159264 2026-06-29 23:50:11,928 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:50:11Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "606e051c-2518-5a38-893f-8115325e46bd",
+    "x-signature": "NpbqBN9q8f7JUVXuA4b8OmXq104=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-8be9a2d3-3768-41ac-ad0e-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-8be9a2d3-3768-41ac-ad0e-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-8be9a2d3-3768-41ac-ad0e-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 49bd24eb-7abc-4755-8a71-8adfb29c2605
+279997214159264 2026-06-29 23:50:11,928 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "49bd24eb-7abc-4755-8a71-8adfb29c2605"
+}
+279997205705120 2026-06-29 23:50:11,936 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:50:11Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "6b772266-a195-56f8-94a5-4ae68ba2bbc5",
+    "x-signature": "VSKdu+Z4hKFRL2vNpBIMxUKsSM4=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-059d9dc8-93b6-48da-a610-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-059d9dc8-93b6-48da-a610-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-059d9dc8-93b6-48da-a610-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 8ed58105-807b-4db5-820a-2777eedb3c01
+279997205705120 2026-06-29 23:50:11,936 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "8ed58105-807b-4db5-820a-2777eedb3c01"
+}
+279997222613408 2026-06-29 23:50:20,703 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:50:20Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "103ad18b-84e2-53e3-8214-61143d16527d",
+    "x-signature": "+CdXSI4XwefpZlCu+MVOUT0Z5iE=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-2ec6c8ff-cf5c-48cc-8857-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-2ec6c8ff-cf5c-48cc-8857-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-2ec6c8ff-cf5c-48cc-8857-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 396e9121-2859-47e9-98d8-7a104f80e456
+279997222613408 2026-06-29 23:50:20,704 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "396e9121-2859-47e9-98d8-7a104f80e456"
+}
+279997214159264 2026-06-29 23:50:21,122 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:50:21Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "902c1c64-a150-5c2f-af81-130c9325db16",
+    "x-signature": "8cuO+KpJKQ+rqUpFjNVYgkqhl2E=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-d63659b0-5219-4aa1-8eb1-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-d63659b0-5219-4aa1-8eb1-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-d63659b0-5219-4aa1-8eb1-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 9f9d931a-028e-418d-9896-3c4e786aecaa
+279997214159264 2026-06-29 23:50:21,122 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "9f9d931a-028e-418d-9896-3c4e786aecaa"
+}
+279997197250976 2026-06-29 23:54:42,742 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:54:42Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "98caccd6-e813-5185-b99e-11e6d98e19b4",
+    "x-signature": "AAJYuuRsxivOgtd2nTKDZ5jknKo=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-93ce5501-e2e5-47ab-8310-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-93ce5501-e2e5-47ab-8310-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-93ce5501-e2e5-47ab-8310-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 7ff6ee59-d5ef-4678-be87-7f6a617bcbe9
+279997197250976 2026-06-29 23:54:42,742 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "7ff6ee59-d5ef-4678-be87-7f6a617bcbe9"
+}
+279997214159264 2026-06-29 23:54:45,749 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:54:45Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "855fbe76-46c2-5a55-a0ce-a318326febca",
+    "x-signature": "ZMreoPR/zeEWF7CyFj12bkKq4L8=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-1127704f-b347-4fcb-91ab-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-1127704f-b347-4fcb-91ab-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-1127704f-b347-4fcb-91ab-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 7eb579e8-9356-44dc-ab39-ce4ca37fb10a
+279997214159264 2026-06-29 23:54:45,749 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "7eb579e8-9356-44dc-ab39-ce4ca37fb10a"
+}
+279996702650784 2026-06-29 23:54:48,132 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:54:48Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "f808c5d9-4f4d-5865-bf52-f58867de4d20",
+    "x-signature": "eEKtJBw2xT81HEx0x2NZRNZmUNI=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-4214b0d8-b067-49df-acd9-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-4214b0d8-b067-49df-acd9-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-4214b0d8-b067-49df-acd9-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 28c4d01c-85ce-4e18-9123-8930d322ed3b
+279996702650784 2026-06-29 23:54:48,132 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "28c4d01c-85ce-4e18-9123-8930d322ed3b"
+}
+279997222613408 2026-06-29 23:54:55,836 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:54:55Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "761e34b8-31c8-54af-ad0a-2826df4fbd9d",
+    "x-signature": "k2iP/1iUsmOjtvWgKYDvteyy7To=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-3b13a798-f3ef-4f40-aac7-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-3b13a798-f3ef-4f40-aac7-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-3b13a798-f3ef-4f40-aac7-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 9470d267-6dea-42a0-aac6-8fc216e8c78e
+279997222613408 2026-06-29 23:54:55,836 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "9470d267-6dea-42a0-aac6-8fc216e8c78e"
+}
+280290161258912 2026-06-29 23:58:58,453 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:58:58Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "cc3f5865-656c-5390-b5a0-25303b04d1ef",
+    "x-signature": "6T4lV35OQqZ678DAxynlN3KDH4k=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'TOO_MANY_REQUESTS', 'message': 'Too many requests'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 6faa0a35-34a4-4eb2-b7fe-65f33cc97724
+280290161258912 2026-06-29 23:58:58,454 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "6faa0a35-34a4-4eb2-b7fe-65f33cc97724"
+}
+280289624388000 2026-06-29 23:58:58,455 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:58:58Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "d2e88b57-6ad1-5af6-b608-7f830497ff96",
+    "x-signature": "OuRAS0xNYR204sCywkoGLmt8tTE=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'TOO_MANY_REQUESTS', 'message': 'Too many requests'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 026b4d76-1748-4398-86ad-b68d200c8057
+280289624388000 2026-06-29 23:58:58,455 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "026b4d76-1748-4398-86ad-b68d200c8057"
+}
+280289632842144 2026-06-29 23:58:58,501 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:58:58Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "98d02b30-53a4-51fc-a805-6da99ffec187",
+    "x-signature": "c7WdcyPyXsApwsEO5OWIg2aWr0M=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'TOO_MANY_REQUESTS', 'message': 'Too many requests'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 07da1472-be41-4b3a-8833-4ed158c7e659
+280289632842144 2026-06-29 23:58:58,501 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "07da1472-be41-4b3a-8833-4ed158c7e659"
+}
+280290127442336 2026-06-29 23:58:58,557 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:58:58Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "2b76cd43-1050-51f6-8817-eaf3160afcb4",
+    "x-signature": "i/U9W+NSgCAd7cB/6JjyX9mlsFs=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 37ef8ca9-9d1c-4818-9a9b-85bd944edfef
+280290127442336 2026-06-29 23:58:58,557 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "37ef8ca9-9d1c-4818-9a9b-85bd944edfef"
+}
+280290135896480 2026-06-29 23:58:58,564 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:58:58Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "321e9b54-87f4-5532-aa79-63a5868d40cd",
+    "x-signature": "lwmXW58JVpAf2Qkd2cE+Lp26DO0=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-0caefe0e-af93-4932-998f-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-0caefe0e-af93-4932-998f-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-0caefe0e-af93-4932-998f-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: e410de56-6a03-403e-9895-998a0f839b38
+280290135896480 2026-06-29 23:58:58,564 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "e410de56-6a03-403e-9895-998a0f839b38"
+}
+280289615933856 2026-06-29 23:58:58,593 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:58:58Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "ac0fad89-32fd-52a5-8ab8-ce4930e69479",
+    "x-signature": "GXvBIj1ukAHrpkMIAkLjMd/I88U=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-a4cead28-69b8-4c63-b2a1-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-a4cead28-69b8-4c63-b2a1-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-a4cead28-69b8-4c63-b2a1-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: e62bb7a2-e16e-4352-b0e2-14c6f225c251
+280289615933856 2026-06-29 23:58:58,594 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "e62bb7a2-e16e-4352-b0e2-14c6f225c251"
+}
+280290144350624 2026-06-29 23:58:58,650 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:58:58Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "de808fb4-5dca-5ce4-bc79-2e903df6194b",
+    "x-signature": "0wcesARKTfcwVN6X/0yW2KbgiQQ=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-51daf6ef-a293-4a0e-a5d0-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-51daf6ef-a293-4a0e-a5d0-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-51daf6ef-a293-4a0e-a5d0-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 3f0e6c8d-99cf-4ebe-97c3-3733f7602edd
+280290144350624 2026-06-29 23:58:58,650 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "3f0e6c8d-99cf-4ebe-97c3-3733f7602edd"
+}
+280289615933856 2026-06-29 23:58:59,269 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/assets/balance",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:58:59Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "dc41d239-59e1-5275-ae25-b0fc3e51b0d3",
+    "x-signature": "+awYegpZsh+XI02OJoviHE6ARlQ=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 73a8d3fc-febd-43c2-98ae-703c84873111
+280289615933856 2026-06-29 23:58:59,269 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "73a8d3fc-febd-43c2-98ae-703c84873111"
+}
+280289632842144 2026-06-29 23:58:59,359 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/place",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "POST",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-06-29T23:58:59Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "b9e0a041-c680-5a90-b3af-b991d2e30086",
+    "x-signature": "qXg+JysMaVECFujMqGf8LzyC1gM=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk",
+    "Content-Length": "347",
+    "Content-Type": "application/json"
+  },
+  "_body_params": {
+    "stock_order": {
+      "client_order_id": "de-f2d389a4-cd60-4d60-9ca4-",
+      "symbol": "NVDA",
+      "instrument_type": "EQUITY",
+      "market": "US",
+      "order_type": "LIMIT",
+      "side": "BUY",
+      "time_in_force": "DAY",
+      "entrust_type": "QTY",
+      "quantity": "0.025391",
+      "support_trading_session": "ALL",
+      "account_tax_type": "GENERAL",
+      "limit_price": "196.92"
+    },
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29"
+  },
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": "{\"stock_order\":{\"client_order_id\":\"de-f2d389a4-cd60-4d60-9ca4-\",\"symbol\":\"NVDA\",\"instrument_type\":\"EQUITY\",\"market\":\"US\",\"order_type\":\"LIMIT\",\"side\":\"BUY\",\"time_in_force\":\"DAY\",\"entrust_type\":\"QTY\",\"quantity\":\"0.025391\",\"support_trading_session\":\"ALL\",\"account_tax_type\":\"GENERAL\",\"limit_price\":\"196.92\"},\"account_id\":\"F8ISIGG74NU0C495ILNGG99D29\"}",
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>",
+  "_stock_order": {
+    "client_order_id": "de-f2d389a4-cd60-4d60-9ca4-",
+    "symbol": "NVDA",
+    "instrument_type": "EQUITY",
+    "market": "US",
+    "order_type": "LIMIT",
+    "side": "BUY",
+    "time_in_force": "DAY",
+    "entrust_type": "QTY",
+    "quantity": "0.025391",
+    "support_trading_session": "ALL",
+    "account_tax_type": "GENERAL",
+    "limit_price": "196.92"
+  }
+} Response:{'message': 'The time you sent is not supported. Please check. ', 'error_code': 'INVALID_PARAMETER'} ServerException:HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you sent is not supported. Please check. , RequestID: 289c7e70-7b93-4716-9293-5d5c88cffcec
+280289632842144 2026-06-29 23:58:59,359 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_PARAMETER",
+  "error_msg": "The time you sent is not supported. Please check. ",
+  "http_status": 417,
+  "request_id": "289c7e70-7b93-4716-9293-5d5c88cffcec"
+}

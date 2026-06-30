@@ -32,7 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from db import db
@@ -229,7 +229,34 @@ async def _tick() -> list[dict]:
 
     # Drain seat-mismatch limbo first (cheap when empty).
     await _sweep_seat_mismatched_intents()
+    # 2026-02-26 (P0 prod post-mortem): the auto-router was sorting on
+    # `created_at`, a field that DOES NOT EXIST on `shared_intents`
+    # documents — they only carry `ingest_ts`. So the sort was a no-op
+    # and the query scanned the entire historical routable set
+    # (millions of rows on prod), exceeding maxTimeMS. The healthcheck
+    # endpoint surfaced this as `sample_intent_query` timing out at 4s
+    # even AFTER the `(action, created_at)` index was confirmed
+    # `[exists]` on Mongo.
+    #
+    # The fix: sort by `ingest_ts` (the actual populated field) and
+    # restrict the query to a recent lookback window so we never scan
+    # historical noise. The pre-existing
+    # `shared_intents_ingest_ts_idx` covers this perfectly — no new
+    # index needed.
+    #
+    # `AUTO_ROUTER_LOOKBACK_MIN` is env-tunable. Default 60 minutes:
+    # stale intents older than that are operator-curated history, not
+    # active queue. The lookback bound is the SINGLE biggest perf
+    # lever in this query — without it, every tick has unbounded work.
+    try:
+        lookback_min = int(os.environ.get("AUTO_ROUTER_LOOKBACK_MIN", "60"))
+    except (TypeError, ValueError):
+        lookback_min = 60
+    lookback_cutoff = (
+        datetime.now(timezone.utc) - timedelta(minutes=lookback_min)
+    ).isoformat()
     q = {
+        "ingest_ts": {"$gte": lookback_cutoff},
         "executed": {"$ne": True},
         "action": {"$in": ["BUY", "SELL", "SHORT", "COVER"]},
         "symbol": {"$ne": None},
@@ -241,10 +268,16 @@ async def _tick() -> list[dict]:
     # Pull a larger sample than AUTO_ROUTER_MAX_PER_TICK so the
     # per-intent seat-eligibility filter can drop ineligible ones
     # and still leave us with up-to-MAX_PER_TICK eligible candidates.
+    # Sort by `ingest_ts -1` so the freshest emissions are tried first
+    # (uses `shared_intents_ingest_ts_idx`). `maxTimeMS` is a defense-
+    # in-depth ceiling: if anything makes this query slow despite the
+    # index + lookback, Mongo aborts after 8s instead of hanging the
+    # whole tick.
     sample = await (
         db[SHARED_INTENTS]
         .find(q, {"_id": 0})
-        .sort("created_at", 1)
+        .sort("ingest_ts", -1)
+        .max_time_ms(8000)
         .to_list(AUTO_ROUTER_MAX_PER_TICK * 4)
     )
     if not sample:

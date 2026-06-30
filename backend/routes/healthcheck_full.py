@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -199,9 +199,21 @@ async def _check_auto_router_ticking() -> dict:
 
 async def _check_sample_intent_query() -> dict:
     """The query the auto-router runs every tick. If THIS times out,
-    the auto-router will too."""
+    the auto-router will too. Mirrors `shared/auto_router.py::_tick`
+    EXACTLY — same filter shape, same sort, same lookback — so the
+    health signal accurately tracks the real bottleneck."""
     started = time.monotonic()
+    try:
+        lookback_min = int(__import__("os").environ.get(
+            "AUTO_ROUTER_LOOKBACK_MIN", "60",
+        ))
+    except (TypeError, ValueError):
+        lookback_min = 60
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(minutes=lookback_min)
+    ).isoformat()
     q = {
+        "ingest_ts": {"$gte": cutoff},
         "executed": {"$ne": True},
         "action": {"$in": ["BUY", "SELL", "SHORT", "COVER"]},
         "symbol": {"$ne": None},
@@ -210,7 +222,7 @@ async def _check_sample_intent_query() -> dict:
     try:
         rows = await _bounded(
             db.shared_intents.find(q, {"_id": 0, "intent_id": 1})
-            .sort("created_at", 1).to_list(5),
+            .sort("ingest_ts", -1).max_time_ms(3500).to_list(5),
             default=None,
         )
         elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -220,7 +232,8 @@ async def _check_sample_intent_query() -> dict:
                 "elapsed_ms": elapsed_ms,
                 "detail": (
                     f"auto-router-shaped query timed out at {_PER_CHECK_BUDGET_S}s "
-                    f"— missing index `shared_intents_action_created_idx`?"
+                    f"— check `shared_intents_ingest_ts_idx` exists and "
+                    f"AUTO_ROUTER_LOOKBACK_MIN is bounded"
                 ),
             }
         status = "pass" if elapsed_ms < 1000 else "warn"
@@ -228,9 +241,10 @@ async def _check_sample_intent_query() -> dict:
             "status": status,
             "elapsed_ms": elapsed_ms,
             "rows_returned": len(rows),
+            "lookback_min": lookback_min,
             "detail": (
                 f"auto-router-shaped query OK in {elapsed_ms}ms "
-                f"({len(rows)} candidates)"
+                f"({len(rows)} candidates in last {lookback_min}min)"
             ),
         }
     except Exception as exc:  # noqa: BLE001
