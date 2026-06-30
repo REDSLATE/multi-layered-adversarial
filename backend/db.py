@@ -1,8 +1,27 @@
 """MongoDB connection + index management.
-Single shared client. Namespaced collection names enforced via collections.py."""
+Single shared client. Namespaced collection names enforced via collections.py.
+
+Doctrine pin (2026-02-26 post-mortem of failed prod deploy at 00:28 UTC):
+NEVER `await ensure_indexes()` inside the FastAPI lifespan handler.
+On prod, `shared_intents` and `shared_gate_results` are multi-million-row
+collections; new compound-index builds take minutes server-side.
+pymongo's socket timeout (~15s) is much shorter — `await create_index`
+raises NetworkTimeout, the lifespan crashes, the pod never reaches Ready,
+all API responses become Cloudflare 520. The fix:
+
+  * Lifespan fires `ensure_indexes()` as a background task and returns
+    immediately (see server_modules/lifespan.py).
+  * `_safe_create_index()` enforces a 6s client-side deadline per index
+    and swallows NetworkTimeout/ExecutionTimeout. Mongo continues
+    building in the background regardless.
+  * `POST /api/admin/db/ensure-indexes` runs the FULL ensure() with
+    per-index status (created / exists / timeout / error) so the
+    operator can see what's done and what's still building.
+"""
 import asyncio
 import logging
 import os
+import time
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import (
     ExecutionTimeout,
@@ -18,66 +37,97 @@ db = client[os.environ["DB_NAME"]]
 logger = logging.getLogger("risedual.db")
 
 
-async def _safe_create_index(coll, keys, **opts) -> dict:
+# Per-index status, updated by `_safe_create_index`. Read by the
+# admin endpoint so the operator sees a JSON report instead of just
+# "ok: true". Keys are index names, values are dicts:
+#   {"status": "created" | "exists" | "timeout" | "error",
+#    "collection": str,
+#    "elapsed_ms": int,
+#    "reason": str | None}
+_INDEX_REPORT: dict[str, dict] = {}
+
+
+def get_index_report() -> dict:
+    """Snapshot of the most recent ensure_indexes run, as a dict so
+    the admin endpoint can serialize it. Returns an empty dict if
+    no run has happened yet."""
+    return dict(_INDEX_REPORT)
+
+
+async def _safe_create_index(coll, keys, *, deadline_s: float = 6.0, **opts) -> dict:
     """Create-index wrapper that NEVER blocks startup.
 
-    Doctrine pin (2026-02-26, post-mortem of failed prod deploy at
-    00:28 UTC): `ensure_indexes()` is called from the FastAPI lifespan
-    hook. On prod, `shared_intents` has millions of rows; building a
-    new compound index takes minutes. pymongo's default
-    socketTimeoutMS (~15s) is much shorter than the build, so the
-    client raises `NetworkTimeout`, the lifespan handler crashes, the
-    pod never reaches Ready, and the entire deploy fails.
+    `deadline_s` is the client-side wait ceiling. Default 6s for
+    startup-callable paths; the admin endpoint may pass a larger
+    value (e.g. 60s) for operator-driven manual rebuilds.
 
-    Mongo builds indexes in the BACKGROUND server-side regardless of
-    whether the client connection survives — so swallowing the timeout
-    is safe: the index will continue building and become available a
-    few minutes later. Subsequent calls (e.g. via
-    `POST /api/admin/db/ensure-indexes`) will see it already-built
-    and no-op.
-
-    We also enforce a 6s client-side deadline so even if pymongo's
-    own timeout is configured generously somewhere, this call cannot
-    hold up startup beyond 6 seconds per index.
+    Updates `_INDEX_REPORT[name]` with per-index outcome so the
+    admin endpoint can return a structured JSON report.
     """
-    name = opts.get("name") or str(keys)
+    name = opts.get("name") or "_".join(f"{k[0]}_{k[1]}" for k in keys)
+    started = time.monotonic()
     try:
-        await asyncio.wait_for(coll.create_index(keys, **opts), timeout=6.0)
-        return {"index": name, "ok": True}
+        await asyncio.wait_for(coll.create_index(keys, **opts), timeout=deadline_s)
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        # Sub-50ms means Mongo no-op'd (index already existed).
+        # Anything longer means it actually built (or partially built).
+        status = "exists" if elapsed_ms < 50 else "created"
+        _INDEX_REPORT[name] = {
+            "status": status, "collection": coll.name,
+            "elapsed_ms": elapsed_ms, "reason": None,
+        }
+        return _INDEX_REPORT[name]
     except asyncio.TimeoutError:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
         logger.warning(
-            "create_index %s on %s exceeded 6s client deadline; "
-            "Mongo will continue building in the background. Safe to ignore.",
-            name, coll.name,
+            "create_index %s on %s exceeded %.1fs client deadline; "
+            "Mongo continues building in the background. Safe.",
+            name, coll.name, deadline_s,
         )
-        return {"index": name, "ok": "deferred", "reason": "client_timeout_6s"}
+        _INDEX_REPORT[name] = {
+            "status": "timeout", "collection": coll.name,
+            "elapsed_ms": elapsed_ms,
+            "reason": f"client_deadline_{deadline_s}s_mongo_building_async",
+        }
+        return _INDEX_REPORT[name]
     except (NetworkTimeout, ExecutionTimeout, ServerSelectionTimeoutError) as exc:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
         logger.warning(
-            "create_index %s on %s timed out (%s); Mongo continues "
-            "in background. Safe to ignore.",
+            "create_index %s on %s server-timeout (%s); Mongo continues "
+            "in background. Safe.",
             name, coll.name, type(exc).__name__,
         )
-        return {"index": name, "ok": "deferred", "reason": type(exc).__name__}
+        _INDEX_REPORT[name] = {
+            "status": "timeout", "collection": coll.name,
+            "elapsed_ms": elapsed_ms, "reason": type(exc).__name__,
+        }
+        return _INDEX_REPORT[name]
     except OperationFailure as exc:
-        # IndexOptionsConflict / IndexAlreadyExists with different
-        # options — log and continue; an existing index that already
-        # serves the query is fine.
+        elapsed_ms = int((time.monotonic() - started) * 1000)
         logger.warning(
-            "create_index %s on %s OperationFailure code=%s msg=%s; "
-            "continuing.",
+            "create_index %s on %s OperationFailure code=%s msg=%s",
             name, coll.name, exc.code, str(exc)[:200],
         )
-        return {"index": name, "ok": False, "reason": f"op_failure_{exc.code}"}
+        _INDEX_REPORT[name] = {
+            "status": "error", "collection": coll.name,
+            "elapsed_ms": elapsed_ms,
+            "reason": f"op_failure_code_{exc.code}",
+        }
+        return _INDEX_REPORT[name]
     except Exception as exc:  # noqa: BLE001
+        elapsed_ms = int((time.monotonic() - started) * 1000)
         logger.warning(
-            "create_index %s on %s raised unexpected %s: %s; "
-            "continuing.",
+            "create_index %s on %s unexpected %s: %s",
             name, coll.name, type(exc).__name__, str(exc)[:200],
         )
-        return {"index": name, "ok": False, "reason": type(exc).__name__}
+        _INDEX_REPORT[name] = {
+            "status": "error", "collection": coll.name,
+            "elapsed_ms": elapsed_ms, "reason": type(exc).__name__,
+        }
+        return _INDEX_REPORT[name]
 
 
-async def ensure_indexes() -> None:
+async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # ── Consensus pool indexes (2026-06-24) ───────────────────────
     # Non-executor brains' opinions land in `intent_consensus_pool`.
     # The seat policy reads it by (lane, symbol, ts) and writes by
@@ -333,13 +383,13 @@ async def ensure_indexes() -> None:
     # inline against the much smaller post-action set (typically <1%
     # of total intents because most are HOLD).
     #
-    # USES `_safe_create_index`: building this on the multi-million-row
-    # prod `shared_intents` collection takes minutes server-side. The
-    # safe wrapper enforces a 6s client deadline so startup never
-    # blocks; Mongo continues the build in the background.
+    # USES `_safe_create_index` with the function-scoped
+    # `heavy_deadline_s` (default 6s for startup; admin endpoint
+    # passes 60s for operator-driven manual rebuilds).
     await _safe_create_index(
         db.shared_intents,
         [("action", 1), ("created_at", 1)],
+        deadline_s=heavy_deadline_s,
         name="shared_intents_action_created_idx",
     )
     await db.shared_brain_opinions.create_index([("runtime", 1), ("topic", 1), ("posted_at", -1)])
@@ -504,17 +554,17 @@ async def ensure_indexes() -> None:
     # COLLSCAN and the endpoint times out with NetworkTimeout against
     # the Mongo Atlas shard.
     #
-    # USES `_safe_create_index`: same reason as the shared_intents
-    # action_created index above — these compound indexes need
-    # minutes to build server-side on the live prod collection.
+    # USES `_safe_create_index` with `heavy_deadline_s`.
     await _safe_create_index(
         db.shared_gate_results,
         [("kind", 1), ("ts", -1)],
+        deadline_s=heavy_deadline_s,
         name="shared_gate_results_kind_ts_idx",
     )
     await _safe_create_index(
         db.shared_gate_results,
         [("intent_id", 1), ("ts", -1)],
+        deadline_s=heavy_deadline_s,
         name="shared_gate_results_intent_ts_idx",
     )
 

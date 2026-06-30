@@ -122,7 +122,30 @@ async def lifespan(app: FastAPI):
     )
     logger.info("asyncio default executor set to 64-thread pool")
 
-    await ensure_indexes()
+    # Doctrine pin (2026-02-26 post-mortem): `ensure_indexes()` is
+    # fire-and-forget at startup. Heavy compound-index builds on a
+    # multi-million-row collection take minutes server-side; pymongo's
+    # socket timeout (~15s) is much shorter. If we `await` here, the
+    # client connection dies, the lifespan handler crashes, and the
+    # pod never becomes Ready (broke prod deploy at 2026-06-30 00:28).
+    # By scheduling on the event loop and returning immediately,
+    # startup never blocks. The full index list — with per-index
+    # status, longer timeouts, and a JSON response — is exposed at
+    # `POST /api/admin/db/ensure-indexes` for operator-triggered
+    # rebuilds that need observable outcomes.
+    async def _ensure_indexes_soft() -> None:
+        try:
+            await ensure_indexes()
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "ensure_indexes background task failed; app startup "
+                "continues. Run POST /api/admin/db/ensure-indexes to "
+                "retry with per-index status.",
+            )
+    try:
+        asyncio.create_task(_ensure_indexes_soft())
+    except Exception:  # noqa: BLE001
+        logger.exception("ensure_indexes scheduling failed")
     await seed_admin(db)
     await seed_all(db)
     # Paradox v2 — idempotent seed of brains, seat policies, governor
