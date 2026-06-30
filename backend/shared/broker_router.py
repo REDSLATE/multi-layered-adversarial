@@ -343,6 +343,19 @@ async def route_order(
     """
     intent_id = intent.get("intent_id", "<unknown>")
 
+    # ─── BROKER_DISABLED env flag (2026-06-30, Path 2 / sidecar trader) ─
+    # When set, MC is in "eyes-only" mode. Every broker write becomes
+    # a BrokerRouteBlocked. The sidecar trader process (NOT this
+    # router) is the only thing fires real orders during this period.
+    # MC keeps showing intents, executions, etc. — but cannot
+    # authorize a trade. This is the "MC = display, Trader =
+    # authority" pin.
+    if os.environ.get("BROKER_DISABLED", "false").lower() == "true":
+        raise BrokerRouteBlocked(
+            f"broker_disabled_env_flag — intent {intent_id} not routed; "
+            "MC is in eyes-only mode (sidecar trader has authority)"
+        )
+
     # 0. Emergency freeze — supersedes everything. If the operator
     #    flipped the freeze on, NO broker write happens, period. This
     #    runs BEFORE adapter resolution so we never even fetch creds.
