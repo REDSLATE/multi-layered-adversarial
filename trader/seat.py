@@ -26,21 +26,39 @@ from trader import config
 logger = logging.getLogger("trader.seat")
 
 
-# Hard-coded fallback assignments. These match the angel-named seats
-# that the operator pinned. Operator can override at any time by
-# writing to `seat_registry` from MC.
+# Hard-coded fallback assignments. The angel-named seats are
+# constants of the architecture — Raziel, Nuriel, Paschar, Sariel
+# on equity; Remiel, Cassiel, Israfel, Zadkiel on crypto. The
+# brain-in-seat is the rotation. These defaults pair compatible
+# doctrines at the top two seats (strategist + executor) so the
+# strict-agreement rule (operator pin 2026-06-30) produces trades
+# instead of a permanent HOLD machine.
+#
+#   Equity:
+#     Raziel  (strategist) = Camino   (trend continuation)
+#     Nuriel  (governor)   = Hellcat  (breakout) — risk modifier
+#     Paschar (executor)   = GTO      (momentum) — authorizes
+#     Sariel  (auditor)    = Barracuda (mean rev) — observability
+#
+#   Crypto:
+#     Remiel  (strategist) = Hellcat  (breakout)
+#     Cassiel (governor)   = Camino   (trend) — risk modifier
+#     Israfel (executor)   = GTO      (momentum) — authorizes
+#     Zadkiel (auditor)    = Barracuda (mean rev) — observability
+#
+# Operator can override at any time via `seat_registry` in Mongo.
 DEFAULT_SEATS = {
     "equity": {
-        "strategist": "barracuda",  # Raziel
+        "strategist": "camino",     # Raziel
         "governor":   "hellcat",    # Nuriel
-        "executor":   "camino",     # Paschar
-        "auditor":    "gto",        # Sariel
+        "executor":   "gto",        # Paschar
+        "auditor":    "barracuda",  # Sariel
     },
     "crypto": {
         "strategist": "hellcat",    # Remiel
-        "governor":   "gto",        # Cassiel
-        "executor":   "barracuda",  # Israfel
-        "auditor":    "camino",     # Zadkiel
+        "governor":   "camino",     # Cassiel
+        "executor":   "gto",        # Israfel
+        "auditor":    "barracuda",  # Zadkiel
     },
 }
 
