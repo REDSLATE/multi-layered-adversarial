@@ -167,6 +167,7 @@ from routes.server_time_admin import router as server_time_admin_router
 from routes.db_admin import router as db_admin_router
 from routes.healthcheck_full import router as healthcheck_full_router
 from routes.era_comparison import router as era_comparison_router
+from routes.unblock_report import router as unblock_report_router
 from routes.admin_auto_submit import router as admin_auto_submit_router
 from routes.admin_quiver import router as admin_quiver_router
 from routes.parabolic_phase_admin import router as parabolic_phase_admin_router
@@ -261,6 +262,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(db_admin_router)
     api_router.include_router(healthcheck_full_router)
     api_router.include_router(era_comparison_router)
+    api_router.include_router(unblock_report_router)
     api_router.include_router(admin_auto_submit_router)
     api_router.include_router(admin_quiver_router)
     api_router.include_router(paradox_v2_router)
