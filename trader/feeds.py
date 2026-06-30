@@ -169,7 +169,7 @@ async def fetch_equity(ticker: str = "TSLA") -> Optional[dict]:
     quote = (res[0].get("indicators") or {}).get("quote") or [{}]
     closes = [c for c in (quote[0].get("close") or []) if c is not None]
     highs = [h for h in (quote[0].get("high") or []) if h is not None]
-    lows = [l for l in (quote[0].get("low") or []) if l is not None]
+    lows = [low for low in (quote[0].get("low") or []) if low is not None]
     if not closes:
         return None
     last_price = closes[-1]

@@ -1,0 +1,315 @@
+"""RISEDUAL Trader — main loop.
+
+One synchronous-style asyncio loop. Each cycle, on each lane:
+
+    1. fetch live market data
+    2. ask all 4 brains for an opinion
+    3. apply the seat doctrine to pick which brain's signal fires
+    4. apply the governor's risk multiplier
+    5. run the risk check (per-order cap, daily cap, freeze, lane)
+    6. call the broker
+    7. write executions + trader_receipts
+
+If anything fails at any step, the cycle logs the failure to
+`trader_receipts` and continues to the next lane / next cycle.
+Nothing about this loop can hang silently — every external call
+has a hard timeout.
+
+Run via supervisor program `trader` (see supervisor config). The
+TRADER_ENABLED env flag must be `true` for the loop to actually
+trade; default is `false` so a fresh deploy is safe.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import sys
+import uuid
+from datetime import datetime, timezone
+
+# Make /app importable so `from trader import ...` works.
+sys.path.insert(0, "/app")
+
+from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
+
+from trader import audit, brains, config, feeds, risk, seat  # noqa: E402
+from trader.broker import (  # noqa: E402
+    BrokerError, kraken_market_order, webull_market_order,
+)
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stdout,
+)
+logger = logging.getLogger("trader.main")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _new_db():
+    """Same connection settings as MC's db.py — retry + idle recycle."""
+    mongo_url = os.environ["MONGO_URL"]
+    client = AsyncIOMotorClient(
+        mongo_url,
+        retryWrites=True,
+        retryReads=True,
+        maxIdleTimeMS=45_000,
+        appname="risedual-trader",
+    )
+    return client[os.environ["DB_NAME"]]
+
+
+# Map verdict to Kraken/Webull side strings.
+SIDE_MAP = {"BUY": "buy", "SELL": "sell"}
+EQUITY_SIDE_MAP = {"BUY": "BUY", "SELL": "SELL"}
+
+
+async def run_lane(db, lane: str) -> dict:
+    """One full lane cycle. Returns a result dict for diagnostics."""
+    cycle_id = uuid.uuid4().hex
+    symbol = config.crypto_pair() if lane == "crypto" else config.equity_ticker()
+
+    # 1. live data
+    try:
+        if lane == "crypto":
+            data = await asyncio.wait_for(feeds.fetch_kraken(symbol), timeout=20)
+        else:
+            data = await asyncio.wait_for(feeds.fetch_equity(symbol), timeout=20)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[%s] data fetch failed: %s", lane, e)
+        await audit.write_receipt(
+            db, cycle_id=cycle_id, lane=lane, symbol=symbol,
+            last_price=None, signals=[], chosen=None,
+            seats={}, angels={},
+            risk_verdict={}, error=f"fetch_failed:{e}",
+        )
+        return {"lane": lane, "ok": False, "reason": "fetch_failed"}
+    if not data:
+        return {"lane": lane, "ok": False, "reason": "no_data"}
+
+    last_price = data.get("last_price")
+
+    # 2. all 4 brains opine
+    signals = []
+    for b in config.BRAINS:
+        s = brains.run_brain(b, data)
+        if s:
+            signals.append({
+                "brain": s.brain, "verdict": s.verdict,
+                "confidence": s.confidence, "reason": s.reason,
+            })
+
+    # 3. seat doctrine — strategist proposes, executor fires
+    seats = await seat.get_lane_seats(db, lane)
+    angels = {
+        "strategist": "Raziel" if lane == "equity" else "Remiel",
+        "governor":   "Nuriel" if lane == "equity" else "Cassiel",
+        "executor":   "Paschar" if lane == "equity" else "Israfel",
+        "auditor":    "Sariel" if lane == "equity" else "Zadkiel",
+    }
+    strategist_brain = seats.get("strategist")
+    executor_brain = seats.get("executor")
+
+    # Find the signal from the strategist (or executor as fallback).
+    chosen = None
+    for s in signals:
+        if s["brain"] == strategist_brain:
+            chosen = s
+            break
+    if not chosen:
+        for s in signals:
+            if s["brain"] == executor_brain:
+                chosen = s
+                break
+    if not chosen:
+        # No seat-holder brain produced a signal — log + skip.
+        await audit.write_receipt(
+            db, cycle_id=cycle_id, lane=lane, symbol=symbol,
+            last_price=last_price, signals=signals, chosen=None,
+            seats=seats, angels=angels,
+            risk_verdict={"reason": "no_seat_signal"},
+        )
+        return {"lane": lane, "ok": False, "reason": "no_seat_signal"}
+
+    # Threshold + verdict gate (cheap, in-process).
+    threshold = config.confidence_threshold()
+    if chosen["verdict"] == "HOLD" or chosen["confidence"] < threshold:
+        await audit.write_receipt(
+            db, cycle_id=cycle_id, lane=lane, symbol=symbol,
+            last_price=last_price, signals=signals, chosen=chosen,
+            seats=seats, angels=angels,
+            risk_verdict={
+                "reason": (
+                    "hold" if chosen["verdict"] == "HOLD"
+                    else f"below_threshold:{chosen['confidence']:.2f}<{threshold:.2f}"
+                ),
+            },
+        )
+        return {"lane": lane, "ok": True, "verdict": "HOLD"}
+
+    # 4. governor's risk multiplier
+    risk_mult = await seat.governor_multiplier(db, lane)
+    base_notional = config.per_order_cap_usd()
+    notional = max(0.0, base_notional * risk_mult)
+
+    # 5. risk check
+    intent_id = f"trader-{cycle_id[:16]}-{lane}"
+    intent = {"intent_id": intent_id, "lane": lane}
+    rv = await risk.check(db, intent, notional_usd=notional)
+    risk_verdict_dict = {
+        "ok": rv.ok, "reason": rv.reason,
+        "notional_usd": rv.notional_usd,
+        "spent_today_usd": rv.spent_today_usd,
+    }
+    if not rv.ok:
+        await audit.write_receipt(
+            db, cycle_id=cycle_id, lane=lane, symbol=symbol,
+            last_price=last_price, signals=signals, chosen=chosen,
+            seats=seats, angels=angels,
+            risk_verdict=risk_verdict_dict,
+        )
+        await audit.write_execution(
+            db, intent_id=intent_id, brain=chosen["brain"], lane=lane,
+            action=chosen["verdict"], symbol=symbol,
+            notional_usd=rv.notional_usd, seats=seats, angels=angels,
+            risk_multiplier=risk_mult,
+            risk_ok=False, risk_reason=rv.reason, ok=False,
+        )
+        return {"lane": lane, "ok": False, "reason": rv.reason}
+
+    # 6. broker
+    broker_result = None
+    broker_name = None
+    broker_order_id = None
+    exc_type = None
+    exc_msg = None
+    fired_ok = False
+
+    try:
+        if lane == "crypto":
+            broker_name = "kraken"
+            side = SIDE_MAP.get(chosen["verdict"])
+            # Translate notional → BTC qty using last price.
+            qty = rv.notional_usd / last_price if last_price else 0
+            if qty <= 0:
+                raise BrokerError(f"qty_zero notional={rv.notional_usd} price={last_price}")
+            broker_result = await asyncio.wait_for(
+                kraken_market_order(
+                    pair=symbol, side=side, volume=f"{qty:.8f}",
+                ),
+                timeout=20,
+            )
+            broker_order_id = (broker_result.get("txid") or [None])[0]
+        else:
+            broker_name = "webull"
+            broker_result = await asyncio.wait_for(
+                webull_market_order(
+                    ticker=symbol,
+                    side=EQUITY_SIDE_MAP.get(chosen["verdict"]),
+                    notional_usd=rv.notional_usd,
+                    last_price=last_price,
+                ),
+                timeout=20,
+            )
+            broker_order_id = (
+                broker_result.get("order_id")
+                or broker_result.get("orderId")
+                or broker_result.get("id")
+            )
+        fired_ok = True
+    except BrokerError as be:
+        exc_type, exc_msg = "BrokerError", str(be)
+        broker_result = {**be.detail, "error": str(be)}
+    except asyncio.TimeoutError:
+        exc_type, exc_msg = "TimeoutError", "broker_call_timeout"
+    except Exception as e:  # noqa: BLE001
+        exc_type, exc_msg = type(e).__name__, str(e)[:1000]
+
+    # 7. audit
+    await audit.write_execution(
+        db, intent_id=intent_id, brain=chosen["brain"], lane=lane,
+        action=chosen["verdict"], symbol=symbol,
+        notional_usd=rv.notional_usd, seats=seats, angels=angels,
+        risk_multiplier=risk_mult,
+        risk_ok=True, risk_reason=rv.reason,
+        broker=broker_name, broker_order_id=broker_order_id,
+        broker_status="submitted" if fired_ok else "rejected",
+        broker_response=broker_result,
+        exception_type=exc_type, exception_msg=exc_msg,
+        ok=fired_ok,
+    )
+    await audit.write_receipt(
+        db, cycle_id=cycle_id, lane=lane, symbol=symbol,
+        last_price=last_price, signals=signals, chosen=chosen,
+        seats=seats, angels=angels,
+        risk_verdict=risk_verdict_dict,
+        broker_result=broker_result if fired_ok else {"error": exc_msg},
+        error=exc_msg,
+    )
+
+    if fired_ok:
+        logger.info(
+            "[%s] FIRED %s %s qty/notional=$%.2f broker=%s order_id=%s brain=%s",
+            lane, chosen["verdict"], symbol, rv.notional_usd,
+            broker_name, broker_order_id, chosen["brain"],
+        )
+    else:
+        logger.warning(
+            "[%s] broker REJECTED %s %s notional=$%.2f exc=%s msg=%s",
+            lane, chosen["verdict"], symbol, rv.notional_usd,
+            exc_type, exc_msg,
+        )
+    return {"lane": lane, "ok": fired_ok, "verdict": chosen["verdict"]}
+
+
+async def run_cycle(db) -> dict:
+    """One pass: both lanes, sequentially."""
+    cycle_start = _now_iso()
+    out = {"cycle_start": cycle_start, "lanes": []}
+    for lane in config.LANES:
+        try:
+            r = await asyncio.wait_for(run_lane(db, lane), timeout=90)
+            out["lanes"].append(r)
+        except asyncio.TimeoutError:
+            logger.error("[%s] cycle timeout", lane)
+            out["lanes"].append({"lane": lane, "ok": False, "reason": "cycle_timeout"})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[%s] cycle exception: %s", lane, e)
+            out["lanes"].append({"lane": lane, "ok": False, "reason": f"exception:{e}"})
+    out["cycle_end"] = _now_iso()
+    return out
+
+
+async def main() -> None:
+    if not config.trader_enabled():
+        logger.warning(
+            "trader DISABLED (TRADER_ENABLED=false). "
+            "Sleeping in idle loop; set TRADER_ENABLED=true to activate."
+        )
+        while True:
+            await asyncio.sleep(60)
+    db = _new_db()
+    interval = config.interval_sec()
+    logger.info(
+        "trader STARTED interval=%ss per_order_cap=$%.2f daily_cap=$%.2f "
+        "crypto=%s equity=%s",
+        interval, config.per_order_cap_usd(), config.daily_cap_usd(),
+        config.crypto_pair(), config.equity_ticker(),
+    )
+    while True:
+        try:
+            r = await run_cycle(db)
+            n_fired = sum(1 for x in r["lanes"] if x.get("ok") and x.get("verdict") in ("BUY", "SELL"))
+            logger.info("cycle done lanes=%d fired=%d", len(r["lanes"]), n_fired)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("cycle crashed: %s", e)
+        await asyncio.sleep(interval)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

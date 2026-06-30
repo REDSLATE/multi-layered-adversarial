@@ -330,6 +330,34 @@ async def lifespan(app: FastAPI):
             "Auto-router NOT started — runtime_flags.auto_router_enabled is not true. "
             "POST /api/admin/auto-router/start to enable."
         )
+
+    # ── 2026-06-30 sidecar trader (Path 2) ────────────────────────
+    # When TRADER_ENABLED=true the trader becomes the authority for
+    # broker calls. MC's auto_router should be OFF when the trader
+    # is ON (otherwise both would race). We start the trader as a
+    # background asyncio task in this same process — same env, same
+    # Mongo, same lifecycle. The task auto-stops on shutdown.
+    import os as _os
+    if _os.environ.get("TRADER_ENABLED", "false").lower() == "true":
+        try:
+            import sys as _sys
+            # `/app` is the trader package's parent; add it once.
+            if "/app" not in _sys.path:
+                _sys.path.insert(0, "/app")
+            import asyncio as _asyncio
+            from trader.main import main as _trader_main  # noqa: WPS433
+            app.state.trader_task = _asyncio.create_task(_trader_main())
+            logger.info(
+                "Sidecar trader STARTED (TRADER_ENABLED=true). "
+                "MC is eyes-only; trader has broker authority."
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error("Sidecar trader start failed: %s", e)
+    else:
+        logger.info(
+            "Sidecar trader NOT started (TRADER_ENABLED is not true). "
+            "Set env var and restart to activate."
+        )
     # Keep Alpaca's pinger conditional — only matters if Alpaca creds
     # exist (zero-cost no-op otherwise).
     # 2026-02-19: Alpaca pinger removed (Alpaca broker fully deprecated).
@@ -653,6 +681,21 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001
         pass
     await stop_auto_router()
+
+    # ── 2026-06-30 sidecar trader shutdown ────────────────────────
+    try:
+        t = getattr(app.state, "trader_task", None)
+        if t and not t.done():
+            t.cancel()
+            try:
+                import asyncio as _asyncio
+                await _asyncio.wait_for(t, timeout=10)
+            except Exception:  # noqa: BLE001 - timeout or CancelledError
+                pass
+            logger.info("Sidecar trader stopped.")
+    except Exception:  # noqa: BLE001
+        pass
+
     await stop_news_refresher()
     await stop_darkpool_refresher()
     await stop_scorecard_scheduler()

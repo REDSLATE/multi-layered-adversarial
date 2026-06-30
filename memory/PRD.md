@@ -7,6 +7,79 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+## 2026-06-30 Operator Doctrine Pin — Path 2: MC = eyes, Trader = authority
+
+After the prod 500s + persistent auto_router_loop hang, the operator
+elected **Path 2** from the architectural triage:
+
+```
+MC (eyes only)                    Trader (authority)
+─────────────                     ────────────────────────
+AUTO_ROUTER_ENABLED=false         /app/trader/ — sidecar
+BROKER_DISABLED=true              Market Data → Brain → Risk cap
+auto_router cannot tick           → Broker → executions + receipts
+broker_router refuses calls       runs in same FastAPI process
+                                  same Mongo, same env vars
+↓                                 ↓
+reads `executions`,               writes `executions` (source=trader)
+`trader_receipts` for display     writes `trader_receipts` per cycle
+no trade authority                fires real orders
+```
+
+### What's live (2026-06-30, verified in preview)
+- **`/app/trader/`** — 8 files, ~700 lines total:
+  - `__init__.py`        — module marker + doctrine pin
+  - `config.py`          — env-only configuration, no hardcoded values
+  - `brains.py`          — 4 personality strategies (trend/mean-rev/breakout/momentum)
+  - `feeds.py`           — Kraken OHLC + Yahoo equity, async httpx, computes RSI/SMA/MACD
+  - `risk.py`            — per-order cap + daily cap + freeze + lane toggle + idempotency
+  - `seat.py`            — reads `seat_registry` + legacy roster + DEFAULT_SEATS fallback
+  - `broker.py`          — Kraken & Webull executors, ONE call per attempt
+  - `audit.py`           — writes `executions` (source=trader) + `trader_receipts`
+  - `main.py`            — async loop, bounded timeouts on every external call
+
+- **MC neutralization** when `BROKER_DISABLED=true`:
+  `shared/broker_router.py::route_order` raises `BrokerRouteBlocked` immediately
+  with reason `broker_disabled_env_flag`. MC can never authorize a trade.
+
+- **Sidecar startup** from MC's lifespan:
+  When `TRADER_ENABLED=true` is set, `server_modules/lifespan.py` spawns the
+  trader as a background asyncio task. Same process, same env, same Mongo. No
+  supervisor changes needed (Emergent's `supervisord.conf` is read-only).
+
+### Verified in preview
+```
+trader_receipts count: 2
+  - 2026-06-30T18:29:11Z crypto XBTUSD  price=$58429.60 signals=4 chosen=HOLD
+  - 2026-06-30T18:29:10Z equity TSLA    price=$418.80   signals=4 chosen=HOLD
+```
+Live Yahoo + Kraken data pulled in <500ms. All 4 brains ran. Seat doctrine
+applied. No trades fired (correct — both verdicts HOLD).
+
+### Required env vars on prod to activate
+```
+TRADER_ENABLED=true
+AUTO_ROUTER_ENABLED=false
+BROKER_DISABLED=true
+TRADER_INTERVAL_SEC=60            # default
+TRADER_PER_ORDER_USD_CAP=10       # default
+TRADER_DAILY_USD_CAP=1000         # default
+TRADER_CRYPTO_PAIR=XBTUSD         # default
+TRADER_EQUITY_TICKER=TSLA         # default
+TRADER_CONFIDENCE_THRESHOLD=0.55  # default
+```
+Broker keys (already in prod env per operator):
+`KRAKEN_API_KEY`, `KRAKEN_API_SECRET`, `WEBULL_APP_KEY`,
+`WEBULL_APP_SECRET`, `WEBULL_ACCOUNT_ID`.
+
+### Pass 2 deletion — DEFERRED
+Per operator pin (2026-02-27, reaffirmed 2026-06-30): the ~11,000 lines of
+disconnected MC pipeline (`legacy_brain_wrappers`, `council`, `consensus*`,
+`auto_submit_policy`, `pipeline/`, `direct_execute`, `sovereign_mode_guard`,
+`paradox_v2/`, dry_run, 7 seat-sprawl files) remain present.
+**Deletion is gated on**: trader fires at least one successful trade in BOTH
+lanes. Until then, no deletions. Rollback safety net intact.
+
 ## 2026-02-27 Operator Doctrine Pin — Architectural Reduction
 
 **Problem**: Every new capability was added without retiring an old
