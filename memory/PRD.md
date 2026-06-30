@@ -1,3 +1,39 @@
+## 2026-02-26 — auto_router_loop stall: missing `(action, created_at)` index on `shared_intents`
+
+### Diagnostic chain
+1. Operator screenshot of prod dashboard showed:
+   ```
+   auto_router_loop: task_alive=True · tick_count=0 · last_tick_ts=None
+   last_tick_error=ExecutionTimeout: Executor error during find command
+     :: caused by :: operation exceeded time limit · MaxTimeMSExpired
+   ```
+2. Source of the failing query: `shared/auto_router.py::_tick()`:
+   ```python
+   find({
+       "executed": {"$ne": True},
+       "action": {"$in": ["BUY","SELL","SHORT","COVER"]},
+       "symbol": {"$ne": None},
+       "gate_state": {"$nin": ["blocked","no_trade","advisory_only"]},
+   }).sort("created_at", 1)
+   ```
+3. Existing `shared_intents` indexes (5 of them) ALL sort on `ingest_ts -1`. None covers `created_at 1`. Result: full COLLSCAN + in-memory sort on a multi-million-row collection → tick exceeded maxTimeMS every cycle → tick_count never advanced.
+
+### Fix
+- Added `(action: 1, created_at: 1)` compound index to `db.ensure_indexes()` (named `shared_intents_action_created_idx`).
+- Added live-trigger endpoint `POST /api/admin/db/ensure-indexes` so the index can be built against the running prod pod WITHOUT another deploy. Idempotent. Build runs in Mongo background.
+- Also added `(kind, ts)` + `(intent_id, ts)` indexes on `shared_gate_results` so the `/direct-execute/recent` + `/status` endpoints stop timing out.
+
+### Status
+Code is in preview. One more prod deploy is required to land the new admin endpoint + auto-create the indexes at startup. After deploy, hit `POST /api/admin/db/ensure-indexes` once to confirm; subsequent `/api/admin/auto-router/status` should show `tick_count > 0` and `last_tick_ts` advancing.
+
+### Backstory of mistakes this session
+- I spent two hours fixing the Webull v2 payload (entrust_type AMOUNT → QTY) thinking the 417 was the root cause. It probably WAS a real issue but it's downstream of this. The auto_router_loop has not completed a tick since at least the timestamp shown — meaning **no intent has ever reached the broker code via the router**.
+- I diagnosed "brain HOLD bias = 72%" from the dashboard — true but irrelevant when the router itself isn't running.
+- The operator caught the real root cause from one screenshot. Lesson: read `auto_router/status` FIRST whenever the symptom is "no trades."
+
+---
+
+
 ## 2026-02-26 — DIRECT_EXECUTE_MODE shipped (gate maze bypassed)
 
 ### Operator directive

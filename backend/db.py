@@ -249,6 +249,24 @@ async def ensure_indexes() -> None:
         [("stack_canonical", 1), ("created_at", -1)],
         name="shared_intents_stack_canonical_created_idx",
     )
+    # 2026-02-26 (P0 prod hotfix — auto_router_loop stalled):
+    # `shared/auto_router.py::_tick()` queries
+    #   find({executed:$ne True, action:$in [BUY/SELL/SHORT/COVER],
+    #         symbol:$ne None, gate_state:$nin [...]}).sort(created_at, 1)
+    # The 5 pre-existing `shared_intents` indexes all sort on
+    # `ingest_ts -1`, none on `created_at 1`. So the auto-router was
+    # doing a full COLLSCAN + in-memory sort on every tick. On prod
+    # (millions of rows) this exceeded Mongo's maxTimeMS and the task
+    # crashed every tick → tick_count=0 → no orders fired.
+    # `(action, created_at)` is the surgical fix: `action $in [...]`
+    # uses the index for a bounded multi-key lookup, `created_at` is
+    # the sort key. `$ne`/`$nin` on executed/gate_state are evaluated
+    # inline against the much smaller post-action set (typically <1%
+    # of total intents because most are HOLD).
+    await db.shared_intents.create_index(
+        [("action", 1), ("created_at", 1)],
+        name="shared_intents_action_created_idx",
+    )
     await db.shared_brain_opinions.create_index([("runtime", 1), ("topic", 1), ("posted_at", -1)])
     await db.shared_brain_outcomes.create_index([("opinion_id", 1), ("resolved_at", -1)])
     # Shelly memory regex search was the worst offender (~25-40ms scan);
