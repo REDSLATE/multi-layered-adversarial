@@ -21,9 +21,31 @@ that still expresses my philosophy. One responsibility per layer."
 Market Data → Brain → Seat → Risk → Broker
 ```
 
-Every other component must justify its existence with the question:
-*"What happens if I'm removed?"* If the answer is "diagnostics still
-work, just less verbose," it's out of the critical path.
+**Seat carries the FUNCTION. Brain keeps its PERSONALITY.**
+
+Each lane has FOUR seats, each a distinct function. Brains rotate
+into seats — Camino isn't "the trend brain forever"; Camino currently
+holds (e.g.) the equity executor seat. Tomorrow a different brain
+may hold it.
+
+  | Seat function | Role in the decision |
+  |---|---|
+  | `strategist` | proposes the trade (its brain emits BUY/SELL) |
+  | `governor` | sets the lane's risk regime (size multiplier 0.0–2.0) |
+  | `executor` | authorizes routing to the broker |
+  | `auditor` | recorded on the executions row for post-pass review |
+
+**ONE PASS per complete decision.** `Seat.decide(intent)` returns a
+single `SeatDecision` with all 4 holders + the governor's risk
+multiplier already read. The caller multiplies notional once, calls
+Risk, calls Broker, writes one `executions` row. No callbacks. No
+"auditor objects" recheck loops. No council vote. No consensus pool.
+
+Brain personalities (immutable, baked into `shared/brains/<name>/strategy.py`):
+  * camino    — trend continuation (SMA/RSI/EMA filters)
+  * barracuda — mean reversion (RSI/BB-position/trend)
+  * hellcat   — breakout (BB-position/RSI/SMA20)
+  * gto       — momentum (MACD/RSI/EMA cross)
 
 ### Delete / Keep (operator-directed, 2026-02-27)
 

@@ -109,8 +109,13 @@ async def _route_one(intent: dict) -> dict:
         await executions.record(
             intent=intent,
             seat_verdict=sd.verdict,
-            seat_holder=sd.holder,
+            seat_holder=sd.executor,
             seat_reason=sd.reason,
+            strategist=sd.strategist,
+            governor=sd.governor,
+            executor=sd.executor,
+            auditor=sd.auditor,
+            risk_multiplier=sd.risk_multiplier,
             risk_ok=False,
             risk_reason="seat_did_not_fire",
             notional_usd=notional_raw,
@@ -135,19 +140,27 @@ async def _route_one(intent: dict) -> dict:
         return {
             "verdict": "blocked",
             "reason": sd.reason,
-            "seat_holder": sd.holder,
+            "seat_holder": sd.executor,
             "intent_brain": sd.intent_brain,
             "lane": sd.lane,
         }
 
     # ── 2. Risk hard limits ──────────────────────────────────────
-    rc = await risk.check(intent, notional_usd=notional_raw)
+    # Governor's risk multiplier is applied here — ONE PASS, no
+    # callback. SeatDecision already carries it; we just multiply.
+    adjusted_notional = max(0.0, notional_raw * sd.risk_multiplier)
+    rc = await risk.check(intent, notional_usd=adjusted_notional)
     if not rc.ok:
         await executions.record(
             intent=intent,
             seat_verdict=sd.verdict,
-            seat_holder=sd.holder,
+            seat_holder=sd.executor,
             seat_reason=sd.reason,
+            strategist=sd.strategist,
+            governor=sd.governor,
+            executor=sd.executor,
+            auditor=sd.auditor,
+            risk_multiplier=sd.risk_multiplier,
             risk_ok=False,
             risk_reason=rc.reason,
             notional_usd=rc.notional_usd,
@@ -181,8 +194,13 @@ async def _route_one(intent: dict) -> dict:
         await executions.record(
             intent=intent,
             seat_verdict=sd.verdict,
-            seat_holder=sd.holder,
+            seat_holder=sd.executor,
             seat_reason=sd.reason,
+            strategist=sd.strategist,
+            governor=sd.governor,
+            executor=sd.executor,
+            auditor=sd.auditor,
+            risk_multiplier=sd.risk_multiplier,
             risk_ok=rc.ok,
             risk_reason=rc.reason,
             notional_usd=rc.notional_usd,
@@ -216,8 +234,13 @@ async def _route_one(intent: dict) -> dict:
         await executions.record(
             intent=intent,
             seat_verdict=sd.verdict,
-            seat_holder=sd.holder,
+            seat_holder=sd.executor,
             seat_reason=sd.reason,
+            strategist=sd.strategist,
+            governor=sd.governor,
+            executor=sd.executor,
+            auditor=sd.auditor,
+            risk_multiplier=sd.risk_multiplier,
             risk_ok=rc.ok,
             risk_reason=rc.reason,
             notional_usd=rc.notional_usd,
@@ -253,8 +276,13 @@ async def _route_one(intent: dict) -> dict:
     await executions.record(
         intent=intent,
         seat_verdict=sd.verdict,
-        seat_holder=sd.holder,
+        seat_holder=sd.executor,
         seat_reason=sd.reason,
+        strategist=sd.strategist,
+        governor=sd.governor,
+        executor=sd.executor,
+        auditor=sd.auditor,
+        risk_multiplier=sd.risk_multiplier,
         risk_ok=rc.ok,
         risk_reason=rc.reason,
         notional_usd=rc.notional_usd,

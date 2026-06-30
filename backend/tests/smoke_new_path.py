@@ -55,7 +55,12 @@ async def main() -> int:
 
     # 3. Seat decide.
     sd = await seat.decide(fake)
-    print(f"[seat.decide] verdict={sd.verdict} reason={sd.reason!r}")
+    print(
+        f"[seat.decide] verdict={sd.verdict} reason={sd.reason!r}\n"
+        f"  strategist={sd.strategist} governor={sd.governor} "
+        f"executor={sd.executor} auditor={sd.auditor} "
+        f"risk_mult={sd.risk_multiplier}"
+    )
 
     # 4. Risk check.
     rc = await risk.check(fake, notional_usd=5.0)
@@ -65,8 +70,13 @@ async def main() -> int:
     row_id = await executions.record(
         intent=fake,
         seat_verdict=sd.verdict,
-        seat_holder=sd.holder,
+        seat_holder=sd.executor,
         seat_reason=sd.reason,
+        strategist=sd.strategist,
+        governor=sd.governor,
+        executor=sd.executor,
+        auditor=sd.auditor,
+        risk_multiplier=sd.risk_multiplier,
         risk_ok=rc.ok,
         risk_reason=rc.reason,
         notional_usd=rc.notional_usd,

@@ -87,8 +87,13 @@ async def record(
     *,
     intent: dict[str, Any],
     seat_verdict: str,
-    seat_holder: Optional[str],
-    seat_reason: str,
+    seat_holder: Optional[str] = None,
+    seat_reason: str = "",
+    strategist: Optional[str] = None,
+    governor: Optional[str] = None,
+    executor: Optional[str] = None,
+    auditor: Optional[str] = None,
+    risk_multiplier: float = 1.0,
     risk_ok: bool,
     risk_reason: str,
     notional_usd: float,
@@ -102,7 +107,16 @@ async def record(
 ) -> str:
     """Write one execution row. Returns the inserted _id as a string.
     Bookkeeping failure is logged but NEVER raised — broker truth
-    is authoritative; audit writes cannot block trades."""
+    is authoritative; audit writes cannot block trades.
+
+    The four seat roles are stamped on the row so post-pass review
+    (the Auditor's role) can answer:
+        * which strategist proposed this?
+        * which governor sized it (and by how much)?
+        * which executor authorized routing?
+        * which auditor signed off?
+    All four in one row, one pass, no joins.
+    """
     row = {
         "intent_id": intent.get("intent_id"),
         "ts": _now_iso(),
@@ -111,9 +125,16 @@ async def record(
         "action": (intent.get("action") or "").upper() or None,
         "symbol": intent.get("symbol"),
         "notional_usd": float(notional_usd or 0.0),
+        "risk_multiplier": float(risk_multiplier or 1.0),
         "decision": seat_verdict,
-        "seat_holder": seat_holder,
+        "seat_holder": seat_holder or executor,  # back-compat
         "seat_reason": seat_reason,
+        "seats": {
+            "strategist": strategist,
+            "governor": governor,
+            "executor": executor,
+            "auditor": auditor,
+        },
         "risk_ok": bool(risk_ok),
         "risk_reason": risk_reason,
         "broker": broker,
