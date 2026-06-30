@@ -33,44 +33,33 @@ from pymongo.errors import (
 mongo_url = os.environ["MONGO_URL"]
 
 # Connection-pool config (2026-02-27 prod hotfix — Kraken loop & 520s).
-# The prior bare `AsyncIOMotorClient(mongo_url)` relied entirely on
-# pymongo defaults. On Atlas shared tier those defaults let the pool
-# go "paused" mid-day: idle conns get dropped server-side, pymongo's
-# topology can't refresh, the next operation blocks until
-# server_selection_timeout (default 30s) and the operator-visible
-# symptom is "Last tick: customer-apps-shard-XX.mongodb.net:27017:
-# connection pool paused" on the Kraken broker panel, plus HTTP 520s
-# across every admin tile.
+# Updated 2026-06-30 — softened timeouts after prod 500s.
 #
-# These options are the official pymongo fix for the symptom:
+# The previous tight timeouts (`serverSelectionTimeoutMS=15s`,
+# `waitQueueTimeoutMS=10s`) were too aggressive for the Atlas shared
+# tier under real load: on transient slow-selection (Atlas autoscale
+# events, replica election, region failover), EVERY request would
+# throw a `ServerSelectionTimeoutError` and the user saw HTTP 500s
+# across the entire backend.
+#
+# Going back closer to pymongo defaults, keeping only the changes
+# that fix the documented "connection pool paused" Atlas symptom:
 #   * `retryWrites=True` + `retryReads=True` — auto-retry on the
-#     "connection pool paused" / transient SocketException.
-#   * `maxPoolSize=50` — bounded above so we never exhaust Atlas's
-#     per-cluster connection limit (M0/M10 cap ~500 cluster-wide).
-#   * `minPoolSize=5` — keep warm conns so the Kraken loop's per-tick
-#     write doesn't pay handshake cost.
-#   * `maxIdleTimeMS=45_000` — recycle idle conns BEFORE Atlas drops
-#     them (Atlas idle-kill is ~60s on shared tier).
-#   * `serverSelectionTimeoutMS=15_000` — fail loud at 15s instead
-#     of hanging forever; the loop's outer except handles it cleanly.
-#   * `connectTimeoutMS=20_000` + `socketTimeoutMS=30_000` — bounded
-#     socket-level timeouts; covers the slow-DNS / TLS-renegotiation
-#     edge cases that previously surfaced as NetworkTimeout.
-#   * `waitQueueTimeoutMS=10_000` — when the pool is saturated, fail
-#     the caller in 10s instead of queueing forever (this is what
-#     turned "pool paused" into a 520 cascade — every request piled
-#     onto the wait queue waiting for a conn that would never come).
+#     transient SocketException / "connection pool paused".
+#   * `maxIdleTimeMS=45_000` — recycle idle conns BEFORE Atlas
+#     drops them (Atlas idle-kill is ~60s on shared tier). This is
+#     the ONE change that actually fixed the symptom.
+#   * `maxPoolSize` left at pymongo default (100) so we never
+#     starve under burst load.
+#   * `serverSelectionTimeoutMS` left at pymongo default (30s) so
+#     transient Atlas slowness doesn't 500-cascade.
+#   * `appname="risedual-mc"` — diagnostic only; helps identify the
+#     workload in Atlas dashboards. No timeout impact.
 client = AsyncIOMotorClient(
     mongo_url,
     retryWrites=True,
     retryReads=True,
-    maxPoolSize=50,
-    minPoolSize=5,
     maxIdleTimeMS=45_000,
-    serverSelectionTimeoutMS=15_000,
-    connectTimeoutMS=20_000,
-    socketTimeoutMS=30_000,
-    waitQueueTimeoutMS=10_000,
     appname="risedual-mc",
 )
 db = client[os.environ["DB_NAME"]]
