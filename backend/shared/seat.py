@@ -72,6 +72,26 @@ Verdict = Literal["fire", "pass"]
 ROLES = ("strategist", "governor", "executor", "auditor")
 LANES = ("equity", "crypto")
 
+# Angel-named seat labels (operator doctrine — pinned 2026-02-27).
+# The seat's NAME is the angel. The seat's FUNCTION is the role.
+# The brain currently sitting in the seat is the holder. Angels are
+# constants of the architecture; brains rotate; functions never change.
+SEAT_ANGELS: dict[tuple[str, str], str] = {
+    ("equity", "strategist"): "Raziel",
+    ("equity", "governor"):   "Nuriel",
+    ("equity", "executor"):   "Paschar",
+    ("equity", "auditor"):    "Sariel",
+    ("crypto", "strategist"): "Remiel",
+    ("crypto", "governor"):   "Cassiel",
+    ("crypto", "executor"):   "Israfel",
+    ("crypto", "auditor"):    "Zadkiel",
+}
+
+
+def angel_for(lane: str, role: str) -> Optional[str]:
+    """Return the angel name for a (lane, role), or None if unknown."""
+    return SEAT_ANGELS.get(((lane or "").lower(), (role or "").lower()))
+
 
 @dataclass(frozen=True)
 class SeatDecision:
@@ -84,6 +104,13 @@ class SeatDecision:
     governor: Optional[str]
     executor: Optional[str]
     auditor: Optional[str]
+
+    # Angel-named seat labels, in one snapshot. The angel is the
+    # seat's NAME; the brain (above) is who holds it; the role
+    # (key in the dict) is the function. All three live together
+    # on the decision so the executions row records the full
+    # context with no joins.
+    angels: dict   # {"strategist": "Raziel", ...}
 
     # Governor's one-pass effect on sizing. Default 1.0 (no change).
     # Applied by the caller to the intent's notional. NOT re-read
@@ -177,6 +204,8 @@ async def set_holder(
 ) -> dict:
     """Assign or clear a seat. Upserts the registry row.
 
+    The angel name for (lane, role) is also stamped on the row so
+    every read is self-describing (no join against SEAT_ANGELS).
     `risk_multiplier` is governor-only; ignored for other roles.
     Bounded [0.0, 2.0] when present.
     """
@@ -184,6 +213,7 @@ async def set_holder(
     sid = _seat_id(lane, role)
     set_fields: dict[str, Any] = {
         "holder": holder,
+        "angel": angel_for(lane, role),
         "since": now if holder else None,
         "assigned_by": assigned_by if holder else None,
         "reason": reason,
@@ -207,12 +237,32 @@ async def set_holder(
 
 
 async def list_seats() -> dict[str, dict]:
-    """Every seat row, keyed by `<lane>:<role>`. Used by the Seat tile."""
+    """Every seat row, keyed by `<lane>:<role>`. Returns the registry
+    row PLUS the angel name (filled in from SEAT_ANGELS even when the
+    seat was created before the angel field existed). Used by the
+    Seat tile."""
     out: dict[str, dict] = {}
+    seen: set[str] = set()
     async for row in db[_SEAT_COLL].find({}):
         sid = row.pop("_id", None)
-        if sid:
-            out[sid] = row
+        if not sid:
+            continue
+        if not row.get("angel"):
+            row["angel"] = angel_for(row.get("lane"), row.get("role"))
+        out[sid] = row
+        seen.add(sid)
+    # Surface every angel-named seat even if the row hasn't been
+    # written yet — operator sees the full board, including vacancies.
+    for (lane, role), angel in SEAT_ANGELS.items():
+        sid = _seat_id(lane, role)
+        if sid not in seen:
+            out[sid] = {
+                "lane": lane,
+                "role": role,
+                "angel": angel,
+                "holder": None,
+                "vacant": True,
+            }
     return out
 
 
@@ -240,6 +290,8 @@ async def decide(intent: dict[str, Any]) -> SeatDecision:
     seats = await get_lane_seats(lane) if lane else {r: None for r in ROLES}
     mult = await get_governor_multiplier(lane) if lane else 1.0
 
+    angels = {r: angel_for(lane, r) for r in ROLES} if lane else {r: None for r in ROLES}
+
     base = dict(
         lane=lane or None,
         intent_brain=brain or None,
@@ -247,6 +299,7 @@ async def decide(intent: dict[str, Any]) -> SeatDecision:
         governor=seats.get("governor"),
         executor=seats.get("executor"),
         auditor=seats.get("auditor"),
+        angels=angels,
         risk_multiplier=mult,
     )
 
@@ -290,7 +343,9 @@ async def decide(intent: dict[str, Any]) -> SeatDecision:
 __all__ = [
     "ROLES",
     "LANES",
+    "SEAT_ANGELS",
     "SeatDecision",
+    "angel_for",
     "decide",
     "get_holder",
     "get_lane_seats",
