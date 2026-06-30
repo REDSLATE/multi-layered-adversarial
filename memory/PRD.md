@@ -122,6 +122,17 @@ Brain personalities (immutable, baked into `shared/brains/<name>/strategy.py`):
   executions row written.
 
 ### ⏳ Pending — Architectural Reduction Pass 2 (bulk delete)
+
+**Operator timeline (2026-02-27 pin)**:
+  * **This week**: legacy pipeline runs disconnected. New path is
+    authoritative. Operator evaluates the old layers — anything
+    actually doing work surfaces in this window.
+  * **After both lanes (Webull equity + Kraken crypto) complete one
+    successful end-to-end trade through the new path**: Pass 2 bulk
+    delete proceeds.
+  * **Until then**: do NOT delete any of the modules below. They
+    remain present, importable, and unreferenced from the hot path.
+
 The following files are NO LONGER in the hot path but still present
 because 40+ admin routes/tests import them. They get deleted in a
 follow-up commit once trades are verified flowing in prod:
