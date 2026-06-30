@@ -602,17 +602,26 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # `executions` — one row per (intent → broker attempt). Hot reads:
     #   • `recent()` sorts by ts DESC
     #   • daily-spend aggregation matches `ts ~ "^YYYY-MM-DD"`
-    await db.executions.create_index(
-        [("ts", -1)], name="executions_ts_desc_idx",
+    # Wrapped in `_safe_create_index` so a slow Atlas index build
+    # CANNOT hang the pod startup. Without this, the auto-router
+    # task starts but its first tick blocks forever — symptom: the
+    # diagnostics tile shows `tick_count=0 · last_tick_ts=None ·
+    # last_tick_error=None` and no trades fire.
+    await _safe_create_index(
+        db.executions, [("ts", -1)],
+        deadline_s=heavy_deadline_s, name="executions_ts_desc_idx",
     )
-    await db.executions.create_index(
-        [("intent_id", 1)], name="executions_intent_idx",
+    await _safe_create_index(
+        db.executions, [("intent_id", 1)],
+        deadline_s=heavy_deadline_s, name="executions_intent_idx",
     )
-    await db.executions.create_index(
-        [("lane", 1), ("ts", -1)], name="executions_lane_ts_idx",
+    await _safe_create_index(
+        db.executions, [("lane", 1), ("ts", -1)],
+        deadline_s=heavy_deadline_s, name="executions_lane_ts_idx",
     )
-    await db.executions.create_index(
-        [("ok", 1), ("ts", -1)], name="executions_ok_ts_idx",
+    await _safe_create_index(
+        db.executions, [("ok", 1), ("ts", -1)],
+        deadline_s=heavy_deadline_s, name="executions_ok_ts_idx",
     )
 
     pass

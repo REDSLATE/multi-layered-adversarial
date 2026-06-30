@@ -340,12 +340,15 @@ async def _tick() -> list[dict]:
         # stamped by an earlier tick (blocked or advisory_only).
         "gate_state": {"$nin": ["blocked", "no_trade", "advisory_only", "submitted"]},
     }
-    sample = await (
-        db[SHARED_INTENTS]
-        .find(q, {"_id": 0})
-        .sort("ingest_ts", -1)
-        .max_time_ms(8000)
-        .to_list(AUTO_ROUTER_MAX_PER_TICK)
+    sample = await asyncio.wait_for(
+        (
+            db[SHARED_INTENTS]
+            .find(q, {"_id": 0})
+            .sort("ingest_ts", -1)
+            .max_time_ms(8000)
+            .to_list(AUTO_ROUTER_MAX_PER_TICK)
+        ),
+        timeout=12.0,
     )
     if not sample:
         return []
@@ -353,7 +356,10 @@ async def _tick() -> list[dict]:
     results: list[dict] = []
     for intent in sample:
         try:
-            r = await _route_one(intent)
+            # 2026-06-30: route_one wrapped in its own bounded timeout
+            # so a slow broker call cannot block the entire tick. The
+            # tick exits in ≤30s no matter what.
+            r = await asyncio.wait_for(_route_one(intent), timeout=20.0)
             results.append(r)
             if r.get("verdict") == "executed":
                 logger.info(
@@ -362,6 +368,11 @@ async def _tick() -> list[dict]:
                     intent.get("symbol"),
                     r.get("final_notional") or r.get("notional_usd") or 0,
                 )
+        except asyncio.TimeoutError:
+            logger.error(
+                "auto-router _route_one timeout intent=%s symbol=%s action=%s",
+                intent.get("intent_id"), intent.get("symbol"), intent.get("action"),
+            )
         except Exception as e:  # noqa: BLE001
             logger.exception(
                 "auto-router error on intent %s: %s",
@@ -379,7 +390,12 @@ async def _loop() -> None:
     )
     while True:
         try:
-            results = await _tick()
+            # 2026-06-30 prod-hang fix: bound the entire tick so a
+            # hung Mongo call cannot block the loop forever. Without
+            # this the tile reads `tick_count=0 · last_tick_ts=None
+            # · last_tick_error=None` indefinitely because the await
+            # never returns and the try/except never fires.
+            results = await asyncio.wait_for(_tick(), timeout=45.0)
             _TICK_COUNT += 1
             _LAST_TICK_TS = _now_iso()
             _LAST_TICK_RESULTS = len(results) if results else 0
