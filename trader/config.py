@@ -235,3 +235,39 @@ def equity_spread_max_bps() -> float:
 
 def equity_spread_gate_enabled() -> bool:
     return env_bool("TRADER_EQUITY_SPREAD_GATE_ENABLED", default=False)
+
+
+# Webull MQTT streaming (fluid-machine upgrade over HTTP polling).
+# Opens a persistent connection to `data-api.webull.com`, receives
+# QUOTE messages tick-by-tick, decodes protobuf, updates the SAME
+# in-memory cache the HTTP poller writes into. The HTTP poller stays
+# on as a warm safety net — whichever source is fresher wins.
+# 2026-07-02: shipped OFF by default. The SDK's gRPC token-exchange
+# call couples `Host` metadata to the MQTT host, which produces
+# `UNAVAILABLE: tcp handshaker shutdown` on `api.webull.com`-tier
+# plans. Awaiting operator confirmation that the OpenAPI plan
+# includes the streaming entitlement (it's separate from L1 snapshot).
+def equity_stream_enabled() -> bool:
+    return env_bool("TRADER_EQUITY_STREAM_ENABLED", default=False)
+
+
+def equity_stream_symbols() -> tuple[str, ...]:
+    """Symbols to subscribe on the MQTT stream. Defaults to the same
+    list the HTTP poller uses so they can coexist without divergence."""
+    raw = env_str("TRADER_EQUITY_STREAM_SYMBOLS", "").strip()
+    if not raw:
+        return equity_spread_tickers()
+    return tuple(t.strip().upper() for t in raw.split(",") if t.strip())
+
+
+def equity_stream_region() -> str:
+    """Webull region code passed to the streaming client. Options:
+    us / hk / cn. Default `us` matches the trade adapter's default."""
+    return env_str("TRADER_EQUITY_STREAM_REGION", "us")
+
+
+def equity_stream_endpoint() -> str:
+    """Override the streaming endpoint host. Empty (default) lets the
+    SDK resolve via gRPC — SDK maps `us` region to its own gateway.
+    Set explicitly (e.g. `data-api.webull.com`) if the resolver fails."""
+    return env_str("TRADER_EQUITY_STREAM_ENDPOINT", "")

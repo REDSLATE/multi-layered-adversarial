@@ -345,6 +345,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("trader.spread poll start failed (non-fatal): %s", e)
 
+    # Webull MQTT stream — tick-by-tick L1 quotes. Opt-in via
+    # TRADER_EQUITY_STREAM_ENABLED=true. Coexists with the HTTP
+    # poller; whichever source is fresher wins the cache read.
+    try:
+        from trader import spread_stream as _trader_stream  # noqa: WPS433
+        _trader_stream.start()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("trader.spread_stream start failed (non-fatal): %s", e)
+
     if _os.environ.get("TRADER_ENABLED", "false").lower() == "true":
         try:
             import asyncio as _asyncio
@@ -710,6 +719,14 @@ async def lifespan(app: FastAPI):
             except Exception:  # noqa: BLE001
                 pass
             logger.info("trader.spread poller stopped.")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # ── 2026-07-02 spread MQTT stream shutdown ────────────────────
+    try:
+        from trader import spread_stream as _trader_stream_sd  # noqa: WPS433
+        _trader_stream_sd.stop(timeout=5.0)
+        logger.info("trader.spread_stream stopped.")
     except Exception:  # noqa: BLE001
         pass
 

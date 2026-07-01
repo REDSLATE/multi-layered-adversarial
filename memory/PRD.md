@@ -7,6 +7,18 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ⚠️ Webull MQTT Streaming — infrastructure shipped, awaiting entitlement confirmation (2026-07-02)
+
+Full plumbing for Webull's MQTT tick-by-tick L1 stream is in place, defaulting OFF (`TRADER_EQUITY_STREAM_ENABLED=false`). Enable when operator confirms streaming entitlement on the OpenAPI plan.
+
+- **`/app/trader/spread_stream.py`** — thread-based bridge wrapping the official `webull-python-sdk-mdata` `DefaultQuotesClient`. On QUOTE protobuf messages, extracts best `bids[0]` / `asks[0]`, updates the same `_latest` cache the HTTP poller writes to (`source="webull_mqtt"`), persists to SQLite. Auto-reconnect with exponential backoff.
+- **`/api/admin/trader/spread`** now includes a `stream: {state, message_count, last_error, subscribed_symbols}` block.
+- **SpreadWatcher.jsx** shows a `MQTT STREAM` chip (green when connected, amber starting, red on error) alongside message count.
+- **Deps added** (via `pip install --no-deps` to bypass ancient grpcio pin): `webull-python-sdk-mdata`, `webull-python-sdk-quotes-core`, `webull-python-sdk-core`. Runtime uses env's newer `grpcio 1.81.1` + `protobuf 6.33.6` — verified binary-compatible with the SDK's protobuf schemas.
+- **Tests**: 6 cases in `/app/backend/tests/test_trader_spread_stream.py`. All 33 total tests green.
+- **Live-probe finding**: `data-api.webull.com` accepts TCP but the SDK's gRPC token-exchange returns `UNAVAILABLE: tcp handshaker shutdown` — coupling between MQTT host and gRPC Host metadata in the SDK. Root cause is likely: (a) streaming entitlement not active on the OpenAPI plan (Webull says market-data streaming is separately purchased and enabled), or (b) the operator's plan uses a different regional endpoint pairing. HTTP snapshot poller keeps flowing at 20s cadence in the meantime.
+
+
 ### ✅ Kraken + Webull Spread Poller (2026-07-02)
 
 Live bid/ask spread telemetry for the sidecar trader with an optional

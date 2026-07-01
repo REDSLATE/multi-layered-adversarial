@@ -285,10 +285,18 @@ async def trader_spread(
     if isinstance(latest_all, list):
         for row in latest_all:
             row["stale"] = spread_mod.is_stale(row.get("pair", ""))
+    # Include the MQTT stream health so the UI can distinguish
+    # `tick-by-tick stream` vs `20s HTTP snapshot` at a glance.
+    try:
+        from trader import spread_stream as _spread_stream_mod  # noqa: WPS433
+        stream_status = _spread_stream_mod.get_status()
+    except Exception:  # noqa: BLE001
+        stream_status = {"state": "unavailable"}
     return {
         "ok": True,
         "latest": latest_all,
         "history": store_mod.recent_spread_ticks(limit=limit),
+        "stream": stream_status,
         "config": {
             "crypto": {
                 "enabled": os.environ.get(

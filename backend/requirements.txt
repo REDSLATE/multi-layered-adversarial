@@ -23,6 +23,8 @@ ecdsa==0.19.2
 email-validator==2.3.0
 emergentintegrations==0.1.0
 fastapi==0.110.1
+fastembed==0.8.0
+fastuuid==0.14.0
 filelock==3.29.0
 flake8==7.3.0
 flatbuffers==25.12.19
@@ -37,11 +39,15 @@ google-genai==1.75.0
 google-generativeai==0.8.6
 googleapis-common-protos==1.75.0
 greenlet==3.5.0
-grpcio==1.59.5
+grpcio==1.81.1
+grpcio-status==1.59.5
+grpcio-tools==1.81.1
 h11==0.16.0
+hf-xet==1.5.0
 httpcore==1.0.9
 httplib2==0.31.2
 httpx==0.28.1
+huggingface_hub==1.14.0
 idna==3.13
 importlib_metadata==9.0.0
 iniconfig==2.3.0
@@ -66,6 +72,8 @@ multidict==6.7.1
 mypy==2.0.0
 mypy_extensions==1.1.0
 numpy==2.4.4
+oauthlib==3.3.1
+onnxruntime==1.26.0
 openai==1.99.9
 packaging==26.2
 paho-mqtt==1.6.1
@@ -78,7 +86,7 @@ playwright==1.59.0
 pluggy==1.6.0
 propcache==0.4.1
 proto-plus==1.28.0
-protobuf==4.25.9
+protobuf==6.33.6
 py_rust_stemmers==0.1.8
 pyasn1==0.6.3
 pyasn1_modules==0.4.2
@@ -132,5 +140,8 @@ uvicorn==0.25.0
 watchfiles==1.1.1
 websockets==16.0
 webull-openapi-python-sdk==2.0.10
+webull-python-sdk-core==0.1.18
+webull-python-sdk-mdata==0.1.18
+webull-python-sdk-quotes-core==0.1.18
 yarl==1.23.0
 zipp==3.23.1

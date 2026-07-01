@@ -152,7 +152,7 @@ export default function SpreadWatcher() {
 
       {/* Webull 2FA token strip */}
       <div
-        className="flex flex-wrap items-center gap-2 mb-4 pb-3 border-b border-rd-border"
+        className="flex flex-wrap items-center gap-2 mb-2 pb-3 border-b border-rd-border"
         data-testid="spread-watcher-webull-auth"
       >
         <span className="text-[10px] uppercase tracking-widest text-rd-dim">
@@ -180,6 +180,11 @@ export default function SpreadWatcher() {
             {tokenMsg}
           </span>
         )}
+        <div className="w-full h-px" />
+        <span className="text-[10px] uppercase tracking-widest text-rd-dim">
+          mqtt stream
+        </span>
+        <StreamChip s={data?.stream} />
       </div>
 
       {/* Latest snapshot per symbol */}
@@ -263,6 +268,35 @@ function GateChip({ label, on, bps, testid }) {
     </div>
   );
 }
+
+function StreamChip({ s }) {
+  const state = s?.state || "unknown";
+  const color =
+    state === "connected" ? "#10B981" :
+    state === "starting" ? "#F59E0B" :
+    state === "error" ? "#EF4444" :
+    "#71717A";
+  const count = s?.message_count || 0;
+  return (
+    <div className="flex items-center gap-1.5" data-testid="spread-stream-chip">
+      <Badge color={color}>{state.toUpperCase()}</Badge>
+      {state === "connected" && (
+        <span className="text-[10px] font-mono text-rd-dim">
+          {count.toLocaleString()} msgs
+        </span>
+      )}
+      {s?.last_error && state !== "connected" && (
+        <span
+          className="text-[10px] font-mono text-rd-warn truncate max-w-[240px]"
+          title={s.last_error}
+        >
+          {s.last_error.length > 40 ? `${s.last_error.slice(0, 40)}…` : s.last_error}
+        </span>
+      )}
+    </div>
+  );
+}
+
 
 function TokenChip({ s }) {
   if (!s || !s.present) {
