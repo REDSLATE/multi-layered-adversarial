@@ -104,12 +104,16 @@ async def run_lane(db, lane: str) -> dict:
                 "confidence": s.confidence, "reason": s.reason,
             })
 
-    # 3. seat doctrine — strategist proposes, executor authorizes.
-    # STRICT AGREEMENT (operator pin 2026-06-30): both must agree on
-    # direction (or both HOLD). Any disagreement = no trade. This is
-    # the "one pass per complete decision" doctrine — the seat is
-    # canonical, and the two top seats (strategist + executor) must
-    # ratify each other or the trade is dropped.
+    # 3. seat doctrine (2026-06-30 rewrite per operator pin):
+    #     "The holder of the seat controls execution.
+    #      The Brain is advisory.
+    #      The Seat CONSIDERS advisors, does not obey them."
+    #
+    # Only the EXECUTOR's signal decides. The other 3 brains (in the
+    # strategist / governor / auditor seats) produce advisory opinions
+    # that are captured on the receipt for context and post-hoc
+    # review — they do NOT gate the trade. This is not "executor wins
+    # a vote"; there is no vote. Advisors advise. Seat decides.
     seats = await seat.get_lane_seats(db, lane)
     angels = {
         "strategist": "Raziel" if lane == "equity" else "Remiel",
@@ -117,50 +121,30 @@ async def run_lane(db, lane: str) -> dict:
         "executor":   "Paschar" if lane == "equity" else "Israfel",
         "auditor":    "Sariel" if lane == "equity" else "Zadkiel",
     }
-    strategist_brain = seats.get("strategist")
     executor_brain = seats.get("executor")
 
-    # Find each seat-holder's signal.
-    strategist_sig = next(
-        (s for s in signals if s["brain"] == strategist_brain), None,
-    )
-    executor_sig = next(
+    # The single decision-maker: the brain currently in the executor
+    # seat. If that seat is vacant, the trader HOLDs — an unassigned
+    # seat is the only condition that can force HOLD; every other
+    # opinion is advisory.
+    chosen = next(
         (s for s in signals if s["brain"] == executor_brain), None,
     )
 
-    # Both seats must have produced a signal AND agree on direction.
-    chosen = None
-    disagreement_reason = None
-    if strategist_sig is None or executor_sig is None:
-        disagreement_reason = (
-            "no_strategist_signal" if strategist_sig is None
-            else "no_executor_signal"
-        )
-    elif strategist_sig["verdict"] != executor_sig["verdict"]:
-        disagreement_reason = (
-            f"seat_disagreement:strategist({strategist_brain})="
-            f"{strategist_sig['verdict']}@{strategist_sig['confidence']:.2f} vs "
-            f"executor({executor_brain})="
-            f"{executor_sig['verdict']}@{executor_sig['confidence']:.2f}"
-        )
-    else:
-        # Strategist and executor agree — pick the executor's signal
-        # (executor authorizes; strategist's matching proposal is
-        # context, not the final call). Confidence is the executor's
-        # (more conservative interpretation than averaging).
-        chosen = executor_sig
-
     if chosen is None:
+        # Executor seat is vacant or its brain produced no signal.
         await audit.write_receipt(
             db, cycle_id=cycle_id, lane=lane, symbol=symbol,
             last_price=last_price, signals=signals, chosen=None,
             seats=seats, angels=angels,
-            risk_verdict={"reason": disagreement_reason or "no_chosen"},
+            risk_verdict={
+                "reason": (
+                    "executor_seat_vacant" if not executor_brain
+                    else f"executor({executor_brain})_no_signal"
+                ),
+            },
         )
-        return {
-            "lane": lane, "ok": False,
-            "reason": disagreement_reason or "no_chosen",
-        }
+        return {"lane": lane, "ok": False, "reason": "no_executor_signal"}
 
     # Threshold + verdict gate (cheap, in-process).
     threshold = config.confidence_threshold()
