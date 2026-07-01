@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+import asyncio
 
 from auth import get_current_user
 from db import db
@@ -191,6 +192,35 @@ async def trader_reload_caches(actor: dict = Depends(get_current_user)) -> dict:
         ),
         "reloaded_at": _now_iso(),
         "requested_by": actor.get("email"),
+    }
+
+
+@router.post("/prune")
+async def trader_prune(
+    actor: dict = Depends(get_current_user),
+    days: int = Query(default=7, ge=1, le=365,
+                      description="Retention window in days"),
+    keep_pending: bool = Query(default=True,
+                               description="Refuse to prune rows not yet mirrored to Mongo"),
+) -> dict:
+    """Retention trim. Keeps the last `days` days of local truth in
+    SQLite; anything older is dropped and space is reclaimed via
+    VACUUM. Mongo mirror (best-effort archive) is the long-tail
+    store.
+
+    By default (`keep_pending=true`) rows that have not yet been
+    mirrored to Mongo are preserved — so an Atlas outage does NOT
+    cause silent data loss when the operator hits prune.
+
+    Safe to schedule nightly via cron / a scheduled fetch."""
+    _, store = _import_trader()
+    result = await asyncio.to_thread(store.prune, days, keep_pending=keep_pending)
+    return {
+        "ok": True,
+        "days": days,
+        "pruned_at": _now_iso(),
+        "pruned_by": actor.get("email"),
+        **result,
     }
 
 

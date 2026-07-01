@@ -197,5 +197,65 @@ def test_hot_path_does_not_depend_on_mongo(fresh_store):
     assert store.already_executed("does-not-exist") is False
 
 
+def test_prune_removes_old_synced_rows(fresh_store):
+    """Rows older than the cutoff AND already mirrored to Mongo are
+    deleted. Recent rows and unmirrored rows survive."""
+    old = "2020-01-01T00:00:00+00:00"
+    fresh = _iso()
+    # 3 old-and-mirrored executions
+    for i in range(3):
+        store.record_execution({
+            "intent_id": f"old-mirrored-{i}", "ts": old,
+            "notional_usd": 1.0, "ok": True,
+        })
+    # 2 old-but-not-yet-mirrored
+    for i in range(2):
+        store.record_execution({
+            "intent_id": f"old-pending-{i}", "ts": old,
+            "notional_usd": 1.0, "ok": True,
+        })
+    # 4 fresh rows (whether or not mirrored)
+    for i in range(4):
+        store.record_execution({
+            "intent_id": f"fresh-{i}", "ts": fresh,
+            "notional_usd": 1.0, "ok": True,
+        })
+    # Simulate mirror success on the first 3 old rows + 2 of the fresh
+    from trader.store import _mark_synced_exec
+    for i in range(3):
+        _mark_synced_exec(f"old-mirrored-{i}")
+    _mark_synced_exec("fresh-0")
+    _mark_synced_exec("fresh-1")
+
+    r = store.prune(days=7, keep_pending=True)
+    assert r["executions_deleted"] == 3        # only old + mirrored dropped
+    assert r["executions_after"] == 6          # 2 old-pending + 4 fresh survive
+    # The unmirrored old rows must still be there (safety default).
+    assert store.already_executed("old-pending-0") is True
+    assert store.already_executed("fresh-0") is True
+    assert store.already_executed("old-mirrored-0") is False
+
+
+def test_prune_force_deletes_unmirrored(fresh_store):
+    """With keep_pending=False, unmirrored old rows are dropped too.
+    Operator opt-in only."""
+    old = "2020-01-01T00:00:00+00:00"
+    for i in range(5):
+        store.record_execution({
+            "intent_id": f"old-{i}", "ts": old,
+            "notional_usd": 1.0, "ok": True,
+        })
+    r = store.prune(days=7, keep_pending=False)
+    assert r["executions_deleted"] == 5
+    assert r["executions_after"] == 0
+
+
+def test_prune_rejects_bad_days(fresh_store):
+    with pytest.raises(ValueError):
+        store.prune(days=0)
+    with pytest.raises(ValueError):
+        store.prune(days=-1)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

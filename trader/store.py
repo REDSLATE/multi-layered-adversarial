@@ -44,7 +44,7 @@ import logging
 import os
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -481,6 +481,64 @@ def counts() -> dict:
         "receipts_pending_mongo": int(pending_rcpt),
         "mirror_queue_size": q.qsize() if q else 0,
         "mirror_queue_max": _MIRROR_Q_MAX,
+    }
+
+
+def prune(days: int, *, keep_pending: bool = True) -> dict:
+    """Retention trim. Deletes SQLite rows whose `ts` is older than
+    `days` days ago. Mongo mirror (best-effort archive) is the long-
+    term store; SQLite only needs to be hot enough for `daily_spent`
+    + idempotency + operator dashboards.
+
+    Doctrine pin: never delete a row that hasn't been mirrored to
+    Mongo yet unless `keep_pending=False`. Default behavior is
+    conservative — if Atlas has been down all week the mirror queue
+    is behind, and pruning would silently drop rows that never made
+    it to the archive.
+
+    Returns row counts before/after and the cutoff.
+    """
+    if days < 1:
+        raise ValueError(f"days must be >= 1, got {days}")
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=days)
+    ).isoformat()
+    with _lock:
+        c = _require_conn()
+        before_exec = c.execute("SELECT COUNT(*) FROM executions").fetchone()[0]
+        before_rcpt = c.execute("SELECT COUNT(*) FROM trader_receipts").fetchone()[0]
+        if keep_pending:
+            # Only prune rows already mirrored to Mongo.
+            c.execute(
+                "DELETE FROM executions "
+                "WHERE ts < ? AND mongo_synced = 1",
+                (cutoff,),
+            )
+            c.execute(
+                "DELETE FROM trader_receipts "
+                "WHERE ts < ? AND mongo_synced = 1",
+                (cutoff,),
+            )
+        else:
+            c.execute("DELETE FROM executions WHERE ts < ?", (cutoff,))
+            c.execute("DELETE FROM trader_receipts WHERE ts < ?", (cutoff,))
+        after_exec = c.execute("SELECT COUNT(*) FROM executions").fetchone()[0]
+        after_rcpt = c.execute("SELECT COUNT(*) FROM trader_receipts").fetchone()[0]
+        # Reclaim disk. VACUUM must run outside a transaction; we're
+        # in autocommit mode (isolation_level=None) so this is safe.
+        try:
+            c.execute("VACUUM")
+        except sqlite3.OperationalError as e:  # noqa: F841 - can't VACUUM under load
+            logger.warning("VACUUM skipped: %s", e)
+    return {
+        "cutoff_ts": cutoff,
+        "keep_pending": keep_pending,
+        "executions_before": int(before_exec),
+        "executions_after": int(after_exec),
+        "executions_deleted": int(before_exec - after_exec),
+        "receipts_before": int(before_rcpt),
+        "receipts_after": int(after_rcpt),
+        "receipts_deleted": int(before_rcpt - after_rcpt),
     }
 
 

@@ -11,7 +11,7 @@ import WebullEntitlementsCard from "@/components/WebullEntitlementsCard";
 import WebullOtocoTestPanel from "@/components/WebullOtocoTestPanel";
 import WebullOtocoLivePanel from "@/components/WebullOtocoLivePanel";
 import LegacyWrapperTogglePanel from "@/components/LegacyWrapperTogglePanel";
-import IntentPostMortemPanel from "@/components/IntentPostMortemPanel";
+import TraderPostMortem from "@/components/TraderPostMortem";
 import InputProvenanceBadge from "@/components/InputProvenanceBadge";
 import ExecutionScoreBreakdown from "@/components/ExecutionScoreBreakdown";
 import AutoSubmitPolicyPanel from "@/components/AutoSubmitPolicyPanel";
@@ -745,7 +745,7 @@ export default function Intents() {
           the single most important panel for diagnosing prod. */}
       <div className="mb-4" data-testid="intents-receipts-mount">
         <PanelErrorBoundary label="Receipts">
-          <IntentPostMortemPanel />
+          <TraderPostMortem />
         </PanelErrorBoundary>
       </div>
 
