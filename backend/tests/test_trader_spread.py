@@ -102,25 +102,62 @@ async def test_fetch_kraken_api_error_returns_none(fresh_store):
 
 # ─── Webull OpenAPI parsing + fetch ───────────────────────────────
 
-def test_webull_sign_matches_docs_formula():
-    """Reproduce the exact formula from Webull's docs:
-        HMAC-SHA1(secret, key+ts+nonce+METHOD+path+body) → base64"""
+def test_webull_sign_matches_official_sdk_formula():
+    """Reproduce the exact algo from webull-inc/openapi-python-sdk:
+      sign_params sorted (lowercased keys) → URI + '&' + kv-joined →
+      URL-encode(safe='') → HMAC-SHA1(secret+'&', encoded) → base64.
+    """
     import hmac
     import hashlib
     import base64
+    import urllib.parse
     key = "dk_app_key_123"
     secret = "your_app_secret_here"
     ts = "2026-07-01T16:00:00Z"
     nonce = "abc-999-noise"
-    method = "GET"
+    host = "api.webull.com"
     path = "/openapi/assets/balance"
-    body = ""
-    expected_stt = f"{key}{ts}{nonce}{method}{path}{body}"
+    # Manually build the expected signature exactly as the SDK does
+    sp = {
+        "host": host,
+        "x-app-key": key,
+        "x-signature-algorithm": "HMAC-SHA1",
+        "x-signature-nonce": nonce,
+        "x-signature-version": "1.0",
+        "x-timestamp": ts,
+    }
+    pairs = [f"{k}={sp[k]}" for k in sorted(sp.keys())]
+    stt = path + "&" + "&".join(pairs)
+    encoded = urllib.parse.quote(stt, safe="")
     expected = base64.b64encode(
-        hmac.new(secret.encode(), expected_stt.encode(), hashlib.sha1).digest()
-    ).decode()
-    got = spread._webull_sign(key, secret, ts, nonce, method, path, body)
+        hmac.new((secret + "&").encode(), encoded.encode(), hashlib.sha1).digest()
+    ).decode().strip()
+    got = spread._webull_sign(
+        app_key=key, app_secret=secret, timestamp=ts, nonce=nonce,
+        method="GET", path=path, host=host,
+    )
     assert got == expected
+
+
+def test_webull_sign_incorporates_query_and_body():
+    """Query params + body md5 must be woven into the signature."""
+    a = spread._webull_sign(
+        app_key="k", app_secret="s", timestamp="T", nonce="N",
+        method="GET", path="/x", host="h",
+    )
+    b = spread._webull_sign(
+        app_key="k", app_secret="s", timestamp="T", nonce="N",
+        method="GET", path="/x", host="h",
+        query={"symbols": "AAPL"},
+    )
+    c = spread._webull_sign(
+        app_key="k", app_secret="s", timestamp="T", nonce="N",
+        method="POST", path="/x", host="h",
+        body='{"a":1}',
+    )
+    assert a != b, "query params must affect the signature"
+    assert a != c, "body must affect the signature"
+    assert b != c
 
 
 def test_parse_webull_extracts_bid_ask_from_snapshot_array(fresh_store):
@@ -157,9 +194,9 @@ def test_parse_webull_tolerates_legacy_wrapped_shape(fresh_store):
 
 
 @pytest.mark.asyncio
-async def test_fetch_webull_sends_all_9_headers(fresh_store, monkeypatch):
-    """Regression guard: missing headers => Webull returns 404. All
-    9 must be present and signature must match the docs formula."""
+async def test_fetch_webull_sends_correct_headers(fresh_store, monkeypatch):
+    """Regression guard: header set must NOT include x-app-secret
+    (that caused a 401 in prod). All 8 required headers present."""
     monkeypatch.setenv("WEBULL_APP_KEY", "test-key")
     monkeypatch.setenv("WEBULL_APP_SECRET", "test-secret")
     monkeypatch.setenv("WEBULL_ACCESS_TOKEN", "test-token")
@@ -179,13 +216,12 @@ async def test_fetch_webull_sends_all_9_headers(fresh_store, monkeypatch):
     assert row is not None
     assert row["bid"] == pytest.approx(240.50)
     assert row["ask"] == pytest.approx(240.60)
-    # URL correctness
     assert "openapi/market-data/stock/snapshot" in seen["url"]
     assert "symbols=TSLA" in seen["url"]
     assert "category=US_STOCK" in seen["url"]
     # Every required header present
     for h in [
-        "x-app-key", "x-app-secret", "x-timestamp",
+        "x-app-key", "x-timestamp",
         "x-signature-version", "x-signature-algorithm",
         "x-signature-nonce", "x-access-token", "x-version", "x-signature",
     ]:
@@ -194,6 +230,10 @@ async def test_fetch_webull_sends_all_9_headers(fresh_store, monkeypatch):
     assert seen["headers"]["x-access-token"] == "test-token"
     assert seen["headers"]["x-signature-algorithm"] == "HMAC-SHA1"
     assert seen["headers"]["x-version"] == "v2"
+    # CRITICAL: x-app-secret must NOT be sent (real prod cause of 401)
+    assert "x-app-secret" not in {k.lower() for k in seen["headers"].keys()}, (
+        "x-app-secret must NOT be sent — Webull rejects it with 401"
+    )
 
 
 @pytest.mark.asyncio

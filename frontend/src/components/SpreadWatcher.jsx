@@ -44,17 +44,42 @@ export default function SpreadWatcher() {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [tokenStatus, setTokenStatus] = useState(null);
+  const [tokenBusy, setTokenBusy] = useState(false);
+  const [tokenMsg, setTokenMsg] = useState("");
 
   const load = useCallback(async () => {
     setBusy(true);
     try {
-      const r = await api.get("/admin/trader/spread", { params: { limit: 120 } });
-      setData(r.data);
+      const [spreadR, tokenR] = await Promise.all([
+        api.get("/admin/trader/spread", { params: { limit: 120 } }),
+        api.get("/admin/trader/webull-token-status").catch(() => ({ data: null })),
+      ]);
+      setData(spreadR.data);
+      setTokenStatus(tokenR.data);
       setErr("");
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
     } finally {
       setBusy(false);
+    }
+  }, []);
+
+  const initToken = useCallback(async () => {
+    setTokenBusy(true);
+    setTokenMsg("");
+    try {
+      const r = await api.post("/admin/trader/webull-token-create");
+      setTokenMsg(r.data?.message || "Token creation triggered.");
+      // Refresh status immediately so the chip flips to PENDING
+      const s = await api.get("/admin/trader/webull-token-status");
+      setTokenStatus(s.data);
+    } catch (e) {
+      setTokenMsg(
+        `Failed: ${e?.response?.data?.detail || e.message}`,
+      );
+    } finally {
+      setTokenBusy(false);
     }
   }, []);
 
@@ -107,7 +132,7 @@ export default function SpreadWatcher() {
       )}
 
       {/* Config chips */}
-      <div className="flex flex-wrap items-center gap-2 mb-4" data-testid="spread-watcher-config">
+      <div className="flex flex-wrap items-center gap-2 mb-3" data-testid="spread-watcher-config">
         <GateChip
           label="crypto gate"
           on={cfg?.crypto?.gate_enabled}
@@ -123,6 +148,38 @@ export default function SpreadWatcher() {
         <span className="text-[10px] font-mono text-rd-dim uppercase tracking-widest">
           stale after {cfg?.stale_sec ?? "—"}s
         </span>
+      </div>
+
+      {/* Webull 2FA token strip */}
+      <div
+        className="flex flex-wrap items-center gap-2 mb-4 pb-3 border-b border-rd-border"
+        data-testid="spread-watcher-webull-auth"
+      >
+        <span className="text-[10px] uppercase tracking-widest text-rd-dim">
+          webull token
+        </span>
+        <TokenChip s={tokenStatus} />
+        <button
+          onClick={initToken}
+          disabled={tokenBusy}
+          className="text-[10px] uppercase tracking-widest px-2 py-1 border border-rd-border text-rd-text hover:border-rd-accent hover:text-rd-accent font-mono"
+          data-testid="spread-watcher-webull-init"
+        >
+          {tokenBusy ? "…triggering" : (tokenStatus?.present ? "reissue token" : "init token")}
+        </button>
+        {tokenStatus?.expires_in_hours != null && !tokenStatus?.expired && (
+          <span className="text-[10px] font-mono text-rd-dim">
+            expires in {tokenStatus.expires_in_hours}h
+          </span>
+        )}
+        {tokenMsg && (
+          <span
+            className="text-[10px] font-mono text-rd-text w-full mt-1"
+            data-testid="spread-watcher-webull-msg"
+          >
+            {tokenMsg}
+          </span>
+        )}
       </div>
 
       {/* Latest snapshot per symbol */}
@@ -204,5 +261,42 @@ function GateChip({ label, on, bps, testid }) {
         {on ? `ON @ ${Number(bps || 0).toFixed(0)}bps` : "OFF"}
       </Badge>
     </div>
+  );
+}
+
+function TokenChip({ s }) {
+  if (!s || !s.present) {
+    return (
+      <Badge color="#71717A" testid="spread-webull-token-chip">
+        NONE
+      </Badge>
+    );
+  }
+  if (s.expired) {
+    return (
+      <Badge color="#EF4444" testid="spread-webull-token-chip">
+        EXPIRED
+      </Badge>
+    );
+  }
+  const color =
+    s.status === "NORMAL" ? "#10B981" :
+    s.status === "PENDING" ? "#F59E0B" :
+    "#EF4444";
+  return (
+    <>
+      <Badge color={color} testid="spread-webull-token-chip">
+        {s.status || "UNKNOWN"}
+      </Badge>
+      {s.token_preview && (
+        <span
+          className="text-[10px] font-mono text-rd-dim"
+          data-testid="spread-webull-token-preview"
+          title={`length: ${s.token_length}`}
+        >
+          {s.token_preview}
+        </span>
+      )}
+    </>
   );
 }

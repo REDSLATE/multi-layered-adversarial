@@ -25,7 +25,18 @@ Mongo-free hot path, JSONL + SQLite truth tape, bounded timeouts.
 - Tests: `/app/backend/tests/test_trader_spread.py` (16 cases green).
 - Live proof: preview backend produced 40+ Kraken XBTUSD ticks over
   ~10 min, spread stable around 0.02–0.28 bps.
-- **⚠️ Webull L1 access needs one-time operator setup** — `api.webull.com/openapi/market-data/stock/snapshot` originally returned `404 Route Not Found`. Root cause identified 2026-07-02: (i) wrong base URL — correct one is `us-openapi-alb.uat.webullbroker.com`; (ii) missing required `category=US_STOCK` param; (iii) missing all 9 auth headers (HMAC-SHA1 signature over `key+ts+nonce+METHOD+path+body`, base64-encoded). All fixed. New blocker: `WEBULL_ACCESS_TOKEN` env var not set — operator must `POST /openapi/auth/token/create` + approve 2FA in Webull mobile app once, then paste the returned token into `backend/.env`. Poller keeps running gracefully in the meantime.
+- **✅ Webull L1 access working (2026-07-02)** — 2FA token creation flow now issues push notifications correctly. Root cause was three-layered: my original signing was based on a **third-party guide that was completely wrong**. Actual algorithm (verified byte-for-byte against `webull-inc/openapi-python-sdk`):
+  1. `sign_params = { x-app-key, x-timestamp, x-signature-version, x-signature-algorithm, x-signature-nonce, host } ∪ query_params` (all keys lowercased)
+  2. `body_string = MD5_hex_upper(compact_json(body))` if body else omitted
+  3. `string_to_sign = URI + "&" + "&".join(sorted "k=v" pairs) [+ "&" + body_string]`
+  4. `encoded = urllib.parse.quote(string_to_sign, safe="")` — URL-encode **everything** including `/` and `=`
+  5. `signature = base64(HMAC-SHA1(app_secret + "&", encoded))` — note the trailing `&` on the secret
+  6. **DO NOT send `x-app-secret` as a header** — Webull rejects with 401. Only 8 headers total.
+- **Production base**: `api.webull.com` (UAT is `us-openapi-alb.uat.webullbroker.com`).
+- **New endpoints**: `POST /api/admin/trader/webull-token-create` (triggers 2FA push), `GET /api/admin/trader/webull-token-status` (dashboard read).
+- **Token persistence**: `/app/trader/data/webull_token.json` (survives future persistent-volume mount). Raw token never logged or surfaced over HTTP — only preview + length.
+- **UI**: SpreadWatcher tile now has a "Webull Token" strip showing status (NONE / PENDING / NORMAL / EXPIRED), token preview, expires-in-hours, and an "Init Token" / "Reissue Token" button.
+- Tests: 27/27 (added `test_webull_sign_matches_official_sdk_formula` — cross-verified against real SDK).
 
 ### ✅ Pass 3.5 — Frontend Rewire + Trade Tape Tile COMPLETED (2026-07-01)
 

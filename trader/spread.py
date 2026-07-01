@@ -47,10 +47,10 @@ logger = logging.getLogger("trader.spread")
 
 KRAKEN_TICKER = "https://api.kraken.com/0/public/Ticker"
 # Webull OpenAPI market-data snapshot — authenticated L1 quotes.
-# Base URL from docs: `us-openapi-alb.uat.webullbroker.com`. This
-# name reads "UAT" but is the documented base for individual/dev
-# accounts; prod-tier operators can override via WEBULL_OPENAPI_BASE.
-WEBULL_OPENAPI_BASE_DEFAULT = "https://us-openapi-alb.uat.webullbroker.com"
+# Production HTTP API base: `api.webull.com` (verified 2026-07-02).
+# UAT / sandbox: `us-openapi-alb.uat.webullbroker.com`.
+# Operators toggle environments via WEBULL_OPENAPI_BASE.
+WEBULL_OPENAPI_BASE_DEFAULT = "https://api.webull.com"
 WEBULL_SNAPSHOT_PATH = "/openapi/market-data/stock/snapshot"
 # Signature scheme (docs 2026-07-02):
 #   string_to_sign = app_key + timestamp + nonce + METHOD + path + body
@@ -150,69 +150,111 @@ def _webull_openapi_base() -> str:
 
 def _webull_creds() -> Optional[tuple[str, str, str]]:
     """Return (app_key, app_secret, access_token) or None if any is
-    missing. Same env vars as the trade adapter — plus the one-time
-    2FA-derived access token. If the access token env is unset we
-    still return the tuple with an empty string; Webull's 404 on a
-    missing token is explicit enough for the operator to notice."""
+    missing. Same env vars as the trade adapter. Access token comes
+    from the persisted 2FA-derived credential (see webull_auth.py);
+    falls back to `WEBULL_ACCESS_TOKEN` env for operator overrides."""
     import os
     key = os.environ.get("WEBULL_APP_KEY") or ""
     secret = os.environ.get("WEBULL_APP_SECRET") or ""
-    token = os.environ.get("WEBULL_ACCESS_TOKEN") or ""
     # Strip any accidental quotes from the .env file (common footgun).
     key = key.strip().strip('"').strip("'")
     secret = secret.strip().strip('"').strip("'")
-    token = token.strip().strip('"').strip("'")
     if not (key and secret):
         return None
+    # Prefer the persisted 2FA token, else fall back to env override.
+    # We import lazily to avoid a circular import at module load time.
+    token = ""
+    try:
+        from trader import webull_auth  # noqa: WPS433
+        token = webull_auth.get_token() or ""
+    except Exception:  # noqa: BLE001
+        pass
+    if not token:
+        token = (os.environ.get("WEBULL_ACCESS_TOKEN") or "").strip().strip('"').strip("'")
     return key, secret, token
 
 
 def _webull_sign(app_key: str, app_secret: str, timestamp: str,
                  nonce: str, method: str, path: str,
+                 host: str, query: Optional[dict] = None,
                  body: str = "") -> str:
     """Compute the base64(HMAC-SHA1) signature Webull expects.
 
-    string_to_sign = app_key + timestamp + nonce + METHOD + path + body
+    Algorithm mirrors the official `openapi-python-sdk` (BSD 2022) —
+    NOT the widely-cited third-party guides (which are wrong):
 
-    NB: `path` must be the request path WITHOUT the query string
-    (verified against dev.to guide + Webull SDK source, 2026-07-02).
-    `body` must be a minified JSON string for POSTs, or "" for GETs.
+    1. sign_params = { x-app-key, x-timestamp, x-signature-version,
+       x-signature-algorithm, x-signature-nonce, host } ∪ query
+    2. body_string = MD5_hex_upper(compact_json(body)) if body else ""
+    3. Lowercase every key; sort ascending.
+    4. Join into `k=v` pairs with `&`.
+    5. string_to_sign = URI + "&" + joined_pairs [+ "&" + body_string]
+    6. URL-encode the ENTIRE string with `safe=''` (so `/` and `=`
+       both become `%2F` / `%3D`).
+    7. signature = base64( HMAC-SHA1( app_secret + "&", encoded ) )
     """
     import hmac
     import hashlib
     import base64
-    stt = f"{app_key}{timestamp}{nonce}{method.upper()}{path}{body}"
-    digest = hmac.new(
-        app_secret.encode("utf-8"),
-        stt.encode("utf-8"),
-        hashlib.sha1,
-    ).digest()
-    return base64.b64encode(digest).decode("utf-8")
+    import urllib.parse as _urlparse
+
+    sign_params: dict[str, str] = {
+        "x-app-key": app_key,
+        "x-timestamp": timestamp,
+        "x-signature-version": WEBULL_SIGNATURE_VERSION,
+        "x-signature-algorithm": WEBULL_SIGNATURE_ALGO,
+        "x-signature-nonce": nonce,
+        "host": host,
+    }
+    if query:
+        for k, v in query.items():
+            sign_params[str(k).lower()] = str(v)
+
+    sorted_pairs = [f"{k}={sign_params[k]}"
+                    for k in sorted(sign_params.keys())]
+    stt = path + "&" + "&".join(sorted_pairs)
+    if body:
+        body_md5 = hashlib.md5(body.encode("utf-8")).hexdigest().upper()
+        stt = stt + "&" + body_md5
+
+    encoded = _urlparse.quote(stt, safe="")
+    key = (app_secret + "&").encode("utf-8")
+    digest = hmac.new(key, encoded.encode("utf-8"), hashlib.sha1).digest()
+    return base64.b64encode(digest).decode("utf-8").strip()
 
 
 def _webull_headers(app_key: str, app_secret: str, access_token: str,
-                    method: str, path: str, body: str = "") -> dict:
-    """Build the full 9-header set for a Webull OpenAPI request."""
+                    method: str, path: str, host: str,
+                    query: Optional[dict] = None,
+                    body: str = "") -> dict:
+    """Build the exact header set Webull's OpenAPI expects. NB: the
+    app_secret and Host are used ONLY for signing — they are NOT
+    sent as HTTP headers. Sending `x-app-secret` causes 401."""
     import uuid
     from datetime import datetime, timezone as _tz
     ts = datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     nonce = uuid.uuid4().hex
-    sig = _webull_sign(app_key, app_secret, ts, nonce, method, path, body)
-    return {
+    sig = _webull_sign(
+        app_key=app_key, app_secret=app_secret,
+        timestamp=ts, nonce=nonce, method=method,
+        path=path, host=host, query=query, body=body,
+    )
+    headers = {
         "Accept": "application/json",
         "x-app-key": app_key,
-        # Some Webull regional deployments require `x-app-secret` in
-        # headers too (documented in the params panel on the snapshot
-        # endpoint). Harmless when the server ignores it.
-        "x-app-secret": app_secret,
         "x-timestamp": ts,
         "x-signature-version": WEBULL_SIGNATURE_VERSION,
         "x-signature-algorithm": WEBULL_SIGNATURE_ALGO,
         "x-signature-nonce": nonce,
-        "x-access-token": access_token,
         "x-version": WEBULL_API_VERSION,
         "x-signature": sig,
     }
+    # Access token only when we actually have one (token/create sends
+    # nothing here; snapshot etc. do). Passing an empty x-access-token
+    # is treated as invalid by some Webull deployments.
+    if access_token:
+        headers["x-access-token"] = access_token
+    return headers
 
 
 def _parse_webull_snapshot(ticker_req: str,
@@ -303,12 +345,19 @@ async def fetch_webull(client: httpx.AsyncClient,
         )
         return None
     path = WEBULL_SNAPSHOT_PATH
-    url = _webull_openapi_base() + path
-    headers = _webull_headers(app_key, app_secret, access_token, "GET", path)
+    base = _webull_openapi_base()
+    url = base + path
+    # Derive host from the base URL for the signing sign_params.
+    host = base.split("://", 1)[-1].split("/", 1)[0]
     params = {
         "symbols": ticker.upper(),
         "category": _webull_category(ticker),
     }
+    headers = _webull_headers(
+        app_key=app_key, app_secret=app_secret,
+        access_token=access_token, method="GET",
+        path=path, host=host, query=params,
+    )
     try:
         r = await client.get(url, params=params, headers=headers)
         r.raise_for_status()

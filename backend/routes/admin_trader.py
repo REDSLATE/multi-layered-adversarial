@@ -26,7 +26,7 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 import asyncio
 
 from auth import get_current_user
@@ -318,6 +318,54 @@ async def trader_spread(
         },
         "checked_at": _now_iso(),
     }
+
+
+@router.post("/webull-token-create")
+async def webull_token_create(
+    _: dict = Depends(get_current_user),
+) -> dict:
+    """Trigger Webull's 2FA-based access-token creation flow.
+
+    Calls `POST /openapi/auth/token/create` on the Webull OpenAPI.
+    The server sends a push notification to the operator's Webull
+    mobile app; approval flips the token status from PENDING to
+    NORMAL. We persist the returned token to `webull_token.json`;
+    `spread.py` starts using it on the next poll cycle.
+
+    Response never contains the raw token — only a preview
+    (`bf12ab…7c9d`) + length so ops can verify it was written.
+    """
+    import sys
+    if "/app" not in sys.path:
+        sys.path.insert(0, "/app")
+    from trader import webull_auth as _wa   # noqa: WPS433
+    try:
+        payload = await _wa.create_token()
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {
+        "ok": True,
+        "message": (
+            "Token created. Approve the push notification in your "
+            "Webull mobile app to activate it. Once status flips to "
+            "NORMAL server-side, equity spreads will start flowing."
+        ),
+        **payload,
+        "checked_at": _now_iso(),
+    }
+
+
+@router.get("/webull-token-status")
+async def webull_token_status(
+    _: dict = Depends(get_current_user),
+) -> dict:
+    """Cheap dashboard read — never hits Webull. Reports whether a
+    persisted token exists, its status/expiry, and a preview."""
+    import sys
+    if "/app" not in sys.path:
+        sys.path.insert(0, "/app")
+    from trader import webull_auth as _wa   # noqa: WPS433
+    return {"ok": True, **_wa.status(), "checked_at": _now_iso()}
 
 
 # Operator-canonical angel→brain pairings for the trader.
