@@ -103,3 +103,56 @@ def jsonl_dir() -> str:
 
 def cache_refresh_sec() -> int:
     return env_int("TRADER_CACHE_REFRESH_SEC", 60)
+
+
+# ── Per-brain tunables (2026-07-01) ──────────────────────────────
+# Every constant that was previously baked into brains.py is now
+# an env-var knob. Operators can tune sensitivity without a
+# redeploy — set the env var, restart the pod, brains re-import.
+
+# Camino — trend continuation
+def camino_dist_min() -> float:
+    return env_float("TRADER_CAMINO_DIST_MIN", 0.0005)
+
+
+def camino_rsi_buy_min() -> float:
+    return env_float("TRADER_CAMINO_RSI_BUY_MIN", 45.0)
+
+
+def camino_rsi_buy_max() -> float:
+    return env_float("TRADER_CAMINO_RSI_BUY_MAX", 75.0)
+
+
+def camino_rsi_sell_min() -> float:
+    return env_float("TRADER_CAMINO_RSI_SELL_MIN", 25.0)
+
+
+def camino_rsi_sell_max() -> float:
+    return env_float("TRADER_CAMINO_RSI_SELL_MAX", 55.0)
+
+
+# Barracuda — mean reversion
+def barracuda_rsi_buy_below() -> float:
+    return env_float("TRADER_BARRACUDA_RSI_BUY_BELOW", 45.0)
+
+
+def barracuda_rsi_sell_above() -> float:
+    return env_float("TRADER_BARRACUDA_RSI_SELL_ABOVE", 55.0)
+
+
+# Hellcat — breakout
+def hellcat_hl_proximity() -> float:
+    return env_float("TRADER_HELLCAT_HL_PROXIMITY", 0.01)
+
+
+def hellcat_bb_upper() -> float:
+    return env_float("TRADER_HELLCAT_BB_UPPER", 0.65)
+
+
+def hellcat_bb_lower() -> float:
+    return env_float("TRADER_HELLCAT_BB_LOWER", 0.35)
+
+
+# GTO — momentum
+def gto_macd_min_gap() -> float:
+    return env_float("TRADER_GTO_MACD_MIN_GAP", 0.0)
