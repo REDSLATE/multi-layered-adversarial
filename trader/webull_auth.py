@@ -74,21 +74,23 @@ def _write_to_disk(payload: dict) -> None:
 def get_token() -> Optional[str]:
     """Return the current access token from cache/disk, or None.
     `spread._webull_creds()` calls this first, then falls back to
-    the WEBULL_ACCESS_TOKEN env var. Expired tokens return None."""
+    the WEBULL_ACCESS_TOKEN env var.
+
+    We deliberately DO NOT enforce the local `expires` value here —
+    it's the pre-approval TTL from Webull's create response (usually
+    ~6 min). Once the operator approves via 2FA, Webull server-side
+    extends validity to 15 days but never tells us the new expiry.
+    So we let Webull authoritatively reject the token if it's stale
+    (401 UNAUTHORIZED, surfaced in the log for operator awareness)
+    rather than lock ourselves out with an outdated local guess.
+    """
     global _cache
     with _lock:
         if _cache is None:
             _cache = _read_from_disk()
         if not _cache:
             return None
-        exp = _cache.get("expires")
-        if exp and exp / 1000 < datetime.now(timezone.utc).timestamp():
-            logger.warning("webull_token expired (expires=%s)", exp)
-            return None
-        tok = _cache.get("token")
-        if not tok:
-            return None
-        return tok
+        return _cache.get("token") or None
 
 
 def _sanitized(payload: dict) -> dict:
@@ -175,10 +177,36 @@ def status() -> dict:
         return {"present": False, "source": "none"}
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     exp = _cache.get("expires") or 0
+    # Webull's `POST /openapi/auth/token/create` response always says
+    # PENDING with a ~6-minute TTL; once the operator approves via
+    # 2FA the server flips it to NORMAL server-side and extends the
+    # expiry to 15 days. We infer "NORMAL" locally by watching the
+    # spread poller's success — if the equity poller has cached a
+    # tick after our token was created, the token must be active.
+    reported = _cache.get("status")
+    effective = reported
+    if reported == "PENDING":
+        try:
+            from trader import spread as _spread  # noqa: WPS433
+            created_ts = _cache.get("created_at")
+            if created_ts:
+                created = datetime.fromisoformat(created_ts).timestamp()
+            else:
+                created = 0
+            for row in _spread.latest() or []:
+                if row.get("source") != "webull":
+                    continue
+                row_ts = row.get("ts_unix") or 0
+                if row_ts > created:
+                    effective = "NORMAL"
+                    break
+        except Exception:  # noqa: BLE001
+            pass
     return {
         "present": True,
         "source": "disk",
-        "status": _cache.get("status"),
+        "status": effective,
+        "reported_status": reported,
         "expires": exp,
         "expired": bool(exp) and exp < now_ms,
         "expires_in_hours": (

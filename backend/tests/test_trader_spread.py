@@ -20,16 +20,22 @@ from trader import store, spread, config  # noqa: E402
 # ─── shared fixtures ──────────────────────────────────────────────
 
 @pytest.fixture()
-def fresh_store(tmp_path):
+def fresh_store(tmp_path, monkeypatch):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     store.init(
         str(tmp_path / "executions.sqlite"),
         str(tmp_path / "jsonl"),
     )
+    # Isolate the persisted Webull token per-test so live-run tokens
+    # from `/app/trader/data/` don't leak into unit assertions.
+    monkeypatch.setenv("WEBULL_TOKEN_PATH", str(tmp_path / "webull_token.json"))
+    from trader import webull_auth as _wa
+    _wa._cache = None
     # Clear the in-memory cache between tests
     spread._latest.clear()
     yield
+    _wa._cache = None
     store.close()
     loop.close()
     asyncio.set_event_loop(None)

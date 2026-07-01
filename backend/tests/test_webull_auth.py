@@ -112,14 +112,18 @@ async def test_create_token_raises_on_401(fresh_env, monkeypatch):
         await webull_auth.create_token()
 
 
-def test_get_token_returns_none_when_expired(fresh_env):
-    # Seed a token that expired yesterday
+def test_get_token_ignores_local_expiry(fresh_env):
+    """Local `expires` from create response is the pre-approval TTL;
+    post-approval Webull extends silently. We must NOT lock ourselves
+    out based on that stale hint — let Webull's 401 be authoritative."""
     (fresh_env / "webull_token.json").write_text(json.dumps({
         "token": "abc123def456",
-        "expires": int(time.time() * 1000) - 60_000,
+        "expires": int(time.time() * 1000) - 60_000,  # "expired" locally
         "status": "NORMAL",
     }))
-    assert webull_auth.get_token() is None
+    # We should still return the token; Webull will reject if truly stale.
+    assert webull_auth.get_token() == "abc123def456"
+    # But status() must still report expired=True so the UI can hint.
     s = webull_auth.status()
     assert s["expired"] is True
 
