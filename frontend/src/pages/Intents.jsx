@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, RUNTIME_META, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
-import SeatRosterStrip from "@/components/SeatRosterStrip";
 import QuickSeatSwitches from "@/components/QuickSeatSwitches";
 import PublicConnect from "@/components/PublicConnect";
 import KrakenBrokerTile from "@/components/KrakenBrokerTile";
@@ -13,12 +12,17 @@ import WebullOtocoLivePanel from "@/components/WebullOtocoLivePanel";
 import TraderPostMortem from "@/components/TraderPostMortem";
 import InputProvenanceBadge from "@/components/InputProvenanceBadge";
 import ExecutionScoreBreakdown from "@/components/ExecutionScoreBreakdown";
-import TunablesStrip from "@/components/TunablesStrip";
-// 2026-07-01 (Pass 2/3 cleanup): removed imports for panels whose
-// backend endpoints were deleted — LegacyWrapperTogglePanel
-// (/admin/wrappers), AutoSubmitPolicyPanel (/admin/auto-submit/policy),
-// OperatorInjectIntent + SubmitOrderModal (/execution/submit).
-// The Sidecar Trader owns execution now; MC is eyes-only on this page.
+// 2026-07-01 (Pass 2/3 cleanup, batch 1): removed imports for panels
+// whose backend endpoints were deleted — LegacyWrapperTogglePanel,
+// AutoSubmitPolicyPanel, OperatorInjectIntent, SubmitOrderModal.
+// Sidecar Trader owns execution; MC is eyes-only on this page.
+//
+// 2026-07-01 (batch 2): additionally removed TunablesStrip
+// (/admin/auto-submit/tunables-simulator → 404) and
+// SeatRosterStrip (its backend query hits Atlas directly and
+// times out on the shared-tier connection; the Overview Trader
+// Seats tile already surfaces the same info via the
+// Mongo-independent in-memory state cache).
 import ParabolicPhaseStrip from "@/components/ParabolicPhaseStrip";
 import BrokerSelectionMenu from "@/components/BrokerSelectionMenu";
 import DoctrineStrip from "@/components/DoctrineStrip";
@@ -499,39 +503,20 @@ export default function Intents() {
           Auto-execution is now the Sidecar Trader's responsibility;
           it fires when TRADER_ENABLED=true, no manual policy toggle. */}
 
-      {/* ─── Tunables what-if dial (2026-02-19) ───
-          Live read-only simulator that answers "if I lowered
-          confidence_min from 0.85 → 0.75, how many intents would I
-          actually unlock?" before the operator commits to a policy
-          change in the panel above. Pure read; refreshes every 30s. */}
-      <div className="mb-4" data-testid="intents-tunables-mount">
-        <PanelErrorBoundary label="Tunables what-if">
-          <TunablesStrip />
-        </PanelErrorBoundary>
-      </div>
+      {/* ─── Tunables what-if strip removed 2026-07-01 —
+          /admin/auto-submit/tunables-simulator was deleted with the
+          rest of the auto-submit policy machinery. Sidecar Trader
+          fires when TRADER_ENABLED=true; no tunables to simulate. */}
 
-      {/* ─── Paradox V2 surfaces (Council Chamber + Seat Dashboard)
-          MOVED to /admin/paradox (2026-02-19) to declutter this page.
-          Sidebar nav "Trading → Paradox V2" opens the dedicated view. */}
-
-      {/* ─── Seat Roster strip (2026-05-27, pass #15) ───
-          All four seats per lane in one view + freshness of each
-          brain's last opinion/sovereign-contribution. Surfaces the
-          gap between "heartbeating" and "actually contributing" so
-          the operator can tell at a glance when MC is showing
-          doctrine-fallback values instead of real brain voices. */}
-      <div className="mb-4" data-testid="intents-seat-roster-mount">
-        <PanelErrorBoundary label="Seat Roster">
-          <SeatRosterStrip />
-        </PanelErrorBoundary>
-      </div>
+      {/* ─── Seat Roster strip removed 2026-07-01 — its backend query
+          hits Atlas directly and times out on the shared-tier
+          connection. The Overview Trader Seats tile (4×2 grid, angel
+          names, executor highlight) already surfaces the same info,
+          served from the Mongo-independent in-memory state cache. */}
 
       {/* ─── Quick Seat Switches (2026-05-27, pass #17) ───
-          One-click seat assignment for all 4 seats per lane. Optional
-          reason field. Uses /api/admin/roster/assign — same backend
-          path as the full RosterPanel, but compact and inline so the
-          operator can react to the SeatRosterStrip's freshness chips
-          without navigating away. */}
+          One-click seat assignment for all 4 seats per lane. Uses
+          /api/admin/roster/assign — the actual assignment surface. */}
       <div className="mb-4" data-testid="intents-quick-switches-mount">
         <PanelErrorBoundary label="Quick Seat Switches">
           <QuickSeatSwitches />

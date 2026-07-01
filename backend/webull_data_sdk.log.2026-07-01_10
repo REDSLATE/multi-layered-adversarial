@@ -1,0 +1,117 @@
+278033591890336 2026-07-01 09:12:37,927 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/option/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "AAPL",
+    "category": "US_OPTION"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-01T09:12:37Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "f1380507-1e31-528e-81a4-4e4925e8b349",
+    "x-signature": "AezfogoCWKDGDqO3AyHGSKvL/ng=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'Unauthorized', 'message': 'Insufficient permission, please subscribe to US_OPTION quotes.', 'status': 401} ServerException:HTTP Status: 401, Code: Unauthorized, Msg: Insufficient permission, please subscribe to US_OPTION quotes., RequestID: ea6b207f-873d-4f0e-b056-572badff2144
+278033591890336 2026-07-01 09:12:37,928 webull.core.client ERROR get_response exception. {
+  "error_code": "Unauthorized",
+  "error_msg": "Insufficient permission, please subscribe to US_OPTION quotes.",
+  "http_status": 401,
+  "request_id": "ea6b207f-873d-4f0e-b056-572badff2144"
+}
+278033591890336 2026-07-01 09:58:29,936 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/option/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "AAPL",
+    "category": "US_OPTION"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-01T09:58:29Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "4e634051-6d06-549f-9eea-42915f28acef",
+    "x-signature": "bjEpEDgF6G1P7BLdq7jy9UQS0is=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'Unauthorized', 'message': 'Insufficient permission, please subscribe to US_OPTION quotes.', 'status': 401} ServerException:HTTP Status: 401, Code: Unauthorized, Msg: Insufficient permission, please subscribe to US_OPTION quotes., RequestID: c91e7519-7447-45be-8b24-baa0351799c3
+278033591890336 2026-07-01 09:58:30,047 webull.core.client ERROR get_response exception. {
+  "error_code": "Unauthorized",
+  "error_msg": "Insufficient permission, please subscribe to US_OPTION quotes.",
+  "http_status": 401,
+  "request_id": "c91e7519-7447-45be-8b24-baa0351799c3"
+}
+278033591890336 2026-07-01 10:00:02,343 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/option/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "AAPL",
+    "category": "US_OPTION"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-01T10:00:01Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "fb0a5e00-2c9f-5b3c-b057-a1e2b19de93e",
+    "x-signature": "3zGJsLJ6cDM9gnsy1k8cTexwsFc=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'Unauthorized', 'message': 'Insufficient permission, please subscribe to US_OPTION quotes.', 'status': 401} ServerException:HTTP Status: 401, Code: Unauthorized, Msg: Insufficient permission, please subscribe to US_OPTION quotes., RequestID: cbbdb4ec-f5b1-49fb-8677-cf56cbc86b63
+278033591890336 2026-07-01 10:00:02,343 webull.core.client ERROR get_response exception. {
+  "error_code": "Unauthorized",
+  "error_msg": "Insufficient permission, please subscribe to US_OPTION quotes.",
+  "http_status": 401,
+  "request_id": "cbbdb4ec-f5b1-49fb-8677-cf56cbc86b63"
+}
