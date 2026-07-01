@@ -538,22 +538,9 @@ async def assign(body: AssignIn, user: dict = Depends(get_current_user)):
         await _wipe_legacy_executor_doc(
             actor, reason=f"roster assign {target_role}={body.brain}",
         )
-    # 2026-02-20: mirror executor changes to the Paradox v2 trust list
-    # so the unified pipeline (UNIFIED_PIPELINE_ENABLED=true) sees the
-    # same holder the operator just assigned via QSS. Non-executor
-    # seats (strategist/governor/auditor) are skipped — they don't
-    # gate broker calls and don't need a trust row.
-    try:
-        from shared.seat_state import mirror_executor_to_v2_trust  # noqa: WPS433
-        for role_key in ("executor", "crypto"):
-            if prev.get(role_key) != new_assignments.get(role_key):
-                await mirror_executor_to_v2_trust(
-                    role_key, new_assignments.get(role_key),
-                )
-    except Exception:  # noqa: BLE001
-        # Best-effort. The legacy roster is still the source of truth;
-        # a mirror failure only delays unified pipeline visibility.
-        pass
+    # 2026-07-01 Pass 2 delete: paradox_v2 trust mirror is gone
+    # (`shared/seat_state.py` deleted). The trader reads seat_registry
+    # directly, no mirror needed.
     return await get_current(user)
 
 

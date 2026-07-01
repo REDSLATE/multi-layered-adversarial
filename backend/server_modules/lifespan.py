@@ -148,26 +148,11 @@ async def lifespan(app: FastAPI):
         logger.exception("ensure_indexes scheduling failed")
     await seed_admin(db)
     await seed_all(db)
-    # Paradox v2 — idempotent seed of brains, seat policies, governor
-    # rules, and the alpha→equity_executor trust default. Stand-alone
-    # deployment: not wired into the live intent flow yet (operator
-    # exercises it via /api/v2/evaluate).
-    try:
-        from shared.paradox_v2.seed import seed_paradox_v2
-        v2_seed = await seed_paradox_v2()
-        logger.info("Paradox v2 seed: %s", v2_seed.get("seeded"))
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Paradox v2 seed failed (non-fatal): %s", e)
-
-    # Unified pipeline (2026-02-20) — idempotent index ensurer for
-    # `pipeline_receipts`. Safe no-op when collection already has the
-    # indexes. Required for the /api/intents/{id}/why endpoint.
-    try:
-        from shared.pipeline.receipts import ensure_indexes as ensure_pipeline_indexes
-        await ensure_pipeline_indexes()
-        logger.info("pipeline_receipts indexes ensured")
-    except Exception as e:  # noqa: BLE001
-        logger.warning("pipeline_receipts index ensure failed (non-fatal): %s", e)
+    # 2026-07-01 Pass 2 delete: `shared/paradox_v2/`,
+    # `shared/pipeline/receipts`, `shared/seat_state`,
+    # `shared/brain_identity_migration` are all gone. The trader's
+    # `seat_registry` is the single source of truth for seat state
+    # now; no migration or trust-mirror is required.
 
     # System flags (2026-02-23) — DB-backed runtime feature toggles.
     # Boot the background refresher so the brain runner's sync reads
@@ -180,29 +165,6 @@ async def lifespan(app: FastAPI):
         logger.info("system_flags refresher started")
     except Exception as e:  # noqa: BLE001
         logger.warning("system_flags refresher failed to start (non-fatal): %s", e)
-
-    # Seat-state single-source-of-truth migration (2026-02-20). Copies
-    # the legacy `shared_auditor_seat.holder` into the canonical
-    # `brain_roster.assignments.auditor` if the roster slot is empty.
-    # Idempotent: re-running on a healed roster is a no-op.
-    try:
-        from shared.seat_state import (
-            migrate_legacy_auditor_to_roster,
-            sync_v2_trust_from_roster,
-        )
-        # Run the canonical-rename migration FIRST so the auditor
-        # migration + v2 trust sync operate on the new names.
-        from shared.brain_identity_migration import migrate_brain_identity
-        rename_report = await migrate_brain_identity()
-        # Only log if anything actually changed — keeps boot logs quiet
-        # once the migration has settled.
-        actual = {k: v for k, v in (rename_report.get("updates") or {}).items() if v}
-        if actual:
-            logger.info("brain_identity rename migration: %s", actual)
-        result = await migrate_legacy_auditor_to_roster()
-        logger.info("seat_state migration: %s", result)
-        sync_result = await sync_v2_trust_from_roster()
-        logger.info("seat_state v2 trust sync: %s", sync_result)
     except Exception as e:  # noqa: BLE001
         logger.warning("seat_state migration failed (non-fatal): %s", e)
 

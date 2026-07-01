@@ -403,22 +403,6 @@ async def _loop() -> None:
                 1 for r in (results or []) if r.get("verdict") == "executed"
             )
             _LAST_TICK_ERROR = None
-            # ─── Paradox v3 trigger watcher tick (2026-02, Step 5) ───
-            # Piggybacks on the auto-router's 30s cadence so we don't
-            # introduce a second loop. DORMANT by default — the
-            # watcher returns immediately when `PARADOX_V3_TRIGGER_
-            # WATCHER` is off. When live, processes TTL expiries + any
-            # trigger/invalidation fires using the default price
-            # fetcher. Errors are swallowed locally so a watcher
-            # crash never takes down the auto-router itself.
-            try:
-                from shared.pipeline.trigger_watcher import (
-                    default_price_fetcher,
-                    scan_watch_queue,
-                )
-                await scan_watch_queue(price_fetcher=default_price_fetcher)
-            except Exception as wexc:  # noqa: BLE001
-                logger.warning("paradox_v3 trigger_watcher tick failed: %s", wexc)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001

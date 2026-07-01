@@ -256,31 +256,18 @@ async def _check_sample_intent_query() -> dict:
 
 
 async def _check_direct_execute_state() -> dict:
-    started = time.monotonic()
-    try:
-        from shared.direct_execute import is_direct_execute_enabled  # noqa: WPS433
-        enabled = await _bounded(is_direct_execute_enabled(), default=None)
-        elapsed_ms = int((time.monotonic() - started) * 1000)
-        if enabled is None:
-            return {
-                "status": "warn", "elapsed_ms": elapsed_ms,
-                "detail": "direct-execute state lookup timed out",
-            }
-        return {
-            "status": "pass",
-            "elapsed_ms": elapsed_ms,
-            "enabled": bool(enabled),
-            "detail": (
-                f"direct_execute_mode={'ON' if enabled else 'OFF'} "
-                f"({'gates bypassed' if enabled else 'normal pipeline'})"
-            ),
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {
-            "status": "warn",
-            "elapsed_ms": int((time.monotonic() - started) * 1000),
-            "detail": f"{type(exc).__name__}: {str(exc)[:200]}",
-        }
+    """2026-07-01 Pass 2 delete: `shared/direct_execute.py` is gone.
+    The check is retained as a static "trader-mode" indicator so
+    the healthcheck payload stays shape-stable for any UI reading it."""
+    return {
+        "status": "pass",
+        "elapsed_ms": 0,
+        "enabled": False,
+        "detail": (
+            "direct_execute_mode=OFF (deprecated; sidecar trader "
+            "at /api/admin/trader/* is the execution authority)"
+        ),
+    }
 
 
 async def _check_recent_intents() -> dict:
