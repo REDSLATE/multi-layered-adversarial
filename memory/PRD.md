@@ -7,6 +7,19 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ✅ Webull MQTT Streaming — LIVE (2026-07-02)
+
+Fluid-machine equity data source. Tick-by-tick L1 quotes via Webull's MQTT gateway.
+
+- **`/app/trader/spread_stream.py`** — background thread wrapping the newer umbrella SDK's `webull.data.data_streaming_client.DataStreamingClient`. Explicit host separation (`http_host="api.webull.com"` for gRPC token exchange, `mqtt_host="data-api.webull.com"` for the actual quote stream) — this was the missing piece. The legacy `webullsdkmdata.DefaultQuotesClient` coupled the two, producing `UNAVAILABLE: tcp handshaker shutdown` because the MQTT gateway doesn't speak gRPC on 443.
+- **Session id**: `mc_paradox_equity_1` by default (env-override: `TRADER_EQUITY_STREAM_SESSION_ID`). Max 5 concurrent sessions per App Key.
+- **Callback signatures**: `on_connect_success(client, api_client, session_id)`, `on_quotes_message(client, topic, quotes)`. Subscribes on connect (SDK doesn't auto-subscribe).
+- Per-message handler duck-types both `QuoteResult` (has `get_asks`/`get_bids`/`get_basic`) and raw dict payloads for cross-SDK-version tolerance.
+- **Live verified 2026-07-02**: TSLA ticks flowing at ~0.75/sec, prices moving inside sub-second windows (`423.00 → 423.04` within 500ms). SQLite tape logs each tick as `source="webull_mqtt"`.
+- HTTP snapshot poller stays running as a warm safety net — whichever source produces the newer tick wins.
+- Config env vars: `TRADER_EQUITY_STREAM_ENABLED`, `TRADER_EQUITY_STREAM_HTTP_HOST`, `TRADER_EQUITY_STREAM_ENDPOINT` (=MQTT host), `TRADER_EQUITY_STREAM_SESSION_ID`, `TRADER_EQUITY_STREAM_SUB_TYPES` (default `QUOTE`; can add `SNAPSHOT,TICK`).
+- 34/34 tests green.
+
 ### ⚠️ Webull MQTT Streaming — infrastructure shipped, awaiting entitlement confirmation (2026-07-02)
 
 Full plumbing for Webull's MQTT tick-by-tick L1 stream is in place, defaulting OFF (`TRADER_EQUITY_STREAM_ENABLED=false`). Enable when operator confirms streaming entitlement on the OpenAPI plan.

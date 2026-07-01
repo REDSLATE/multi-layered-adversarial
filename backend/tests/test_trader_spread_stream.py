@@ -1,8 +1,9 @@
 """Tests for /app/trader/spread_stream.py — Webull MQTT L1 stream.
 
-Doctrine: no real network. We mock the SDK's QuoteResult and drive
-`_on_quote_message` directly, then assert that the cache + SQLite
-tape both received the tick.
+Doctrine: no real network. We build a fake `quotes` payload matching
+the `DataStreamingClient` message shape and drive `_on_quote_message`
+directly, then assert that the cache + SQLite tape both received the
+tick.
 """
 from __future__ import annotations
 
@@ -17,6 +18,8 @@ from trader import spread, spread_stream, store  # noqa: E402
 
 
 class _FakeAskBid:
+    """Duck-types the SDK's ask/bid entries — has `.get_price()`."""
+
     def __init__(self, price, size="0"):
         self._price = str(price)
         self._size = str(size)
@@ -35,13 +38,11 @@ class _FakeBasic:
     def get_symbol(self):
         return self._symbol
 
-    def get_timestamp(self):
-        return "1720000000000"
 
-
-class _FakeQuoteResult:
-    """Duck-types the real QuoteResult from
-    `webullsdkmdata.quotes.subscribe.quote_result.QuoteResult`."""
+class _FakeQuotes:
+    """Duck-types the object dispatched by DataStreamingClient into
+    `on_quotes_message(client, topic, quotes)`. Has get_asks(),
+    get_bids(), get_basic()."""
 
     def __init__(self, symbol, bids, asks):
         self._basic = _FakeBasic(symbol)
@@ -67,7 +68,6 @@ def fresh_store(tmp_path, monkeypatch):
         str(tmp_path / "jsonl"),
     )
     spread._latest.clear()
-    # Reset stream status between tests
     spread_stream._status.update({
         "state": "stopped", "message_count": 0,
         "last_message_at": None, "last_error": None,
@@ -79,72 +79,68 @@ def fresh_store(tmp_path, monkeypatch):
     asyncio.set_event_loop(None)
 
 
-def test_on_quote_message_ignores_non_quote_result(fresh_store, monkeypatch):
-    """The SDK dispatches multiple result types to the same callback;
-    we only care about QuoteResult. Anything else is a no-op."""
-    # Import so the isinstance check has the real class in scope
-    from webullsdkmdata.quotes.subscribe.quote_result import QuoteResult
+def test_on_quote_message_ignores_unrelated_topics(fresh_store):
+    """SNAPSHOT/TICK payloads without get_asks/get_bids must no-op."""
 
     class NotAQuote:
         pass
 
-    spread_stream._on_quote_message(None, None, NotAQuote())
+    spread_stream._on_quote_message(None, "snapshot", NotAQuote())
     assert spread.latest("TSLA") == {}
     assert spread_stream.get_status()["message_count"] == 0
 
 
-def test_on_quote_message_updates_cache_and_store(fresh_store, monkeypatch):
-    """Isinstance guard uses the real QuoteResult; we monkeypatch the
-    imported class inside spread_stream to accept our fake."""
-    from webullsdkmdata.quotes.subscribe import quote_result as _qr_mod
-    monkeypatch.setattr(_qr_mod, "QuoteResult", _FakeQuoteResult)
-
-    fake = _FakeQuoteResult(
+def test_on_quote_message_updates_cache_and_store(fresh_store):
+    """Duck-typed QuoteResult -> _latest cache + spread_tick row."""
+    fake = _FakeQuotes(
         symbol="TSLA",
         bids=[("426.50", "200"), ("426.45", "500")],
         asks=[("426.55", "100"), ("426.60", "300")],
     )
-    spread_stream._on_quote_message(None, None, fake)
+    spread_stream._on_quote_message(None, "quote", fake)
 
-    # In-memory cache updated
     cached = spread.latest("TSLA")
     assert cached
     assert cached["bid"] == 426.50
     assert cached["ask"] == 426.55
     assert cached["source"] == "webull_mqtt"
     assert cached["lane"] == "equity"
-    # spread bps ≈ 0.05 / 426.525 * 10_000 ≈ 1.17 bps
     assert cached["spread_bps"] == pytest.approx(1.17, abs=0.05)
-    # SQLite tape updated
     hist = store.recent_spread_ticks(pair="TSLA", limit=5)
     assert len(hist) == 1
     assert hist[0]["source"] == "webull_mqtt"
-    # Status counter incremented
     st = spread_stream.get_status()
     assert st["message_count"] == 1
     assert st["last_message_at"]
 
 
-def test_on_quote_message_rejects_crossed_book(fresh_store, monkeypatch):
-    """Bid > ask (crossed market) must not corrupt the cache."""
-    from webullsdkmdata.quotes.subscribe import quote_result as _qr_mod
-    monkeypatch.setattr(_qr_mod, "QuoteResult", _FakeQuoteResult)
+def test_on_quote_message_accepts_dict_shape(fresh_store):
+    """Some SDK versions dispatch raw dicts — parser handles both."""
+    payload = {
+        "symbol": "AAPL",
+        "bidList": [{"price": "185.40"}],
+        "askList": [{"price": "185.44"}],
+    }
+    spread_stream._on_quote_message(None, "quote", payload)
+    cached = spread.latest("AAPL")
+    assert cached
+    assert cached["bid"] == 185.40
+    assert cached["ask"] == 185.44
 
-    fake = _FakeQuoteResult(
+
+def test_on_quote_message_rejects_crossed_book(fresh_store):
+    fake = _FakeQuotes(
         symbol="TSLA",
         bids=[("500.00", "1")],
         asks=[("400.00", "1")],
     )
-    spread_stream._on_quote_message(None, None, fake)
+    spread_stream._on_quote_message(None, "quote", fake)
     assert spread.latest("TSLA") == {}
 
 
-def test_on_quote_message_ignores_empty_book(fresh_store, monkeypatch):
-    from webullsdkmdata.quotes.subscribe import quote_result as _qr_mod
-    monkeypatch.setattr(_qr_mod, "QuoteResult", _FakeQuoteResult)
-
-    fake = _FakeQuoteResult(symbol="TSLA", bids=[], asks=[])
-    spread_stream._on_quote_message(None, None, fake)
+def test_on_quote_message_ignores_empty_book(fresh_store):
+    fake = _FakeQuotes(symbol="TSLA", bids=[], asks=[])
+    spread_stream._on_quote_message(None, "quote", fake)
     assert spread.latest("TSLA") == {}
     assert spread_stream.get_status()["message_count"] == 0
 
@@ -152,19 +148,19 @@ def test_on_quote_message_ignores_empty_book(fresh_store, monkeypatch):
 def test_start_is_noop_when_disabled(fresh_store, monkeypatch):
     monkeypatch.setenv("TRADER_EQUITY_STREAM_ENABLED", "false")
     spread_stream.start()
-    # No thread started
-    assert spread_stream._thread is None or not spread_stream._thread.is_alive()
+    assert (
+        spread_stream._thread is None
+        or not spread_stream._thread.is_alive()
+    )
 
 
 def test_start_needs_credentials(fresh_store, monkeypatch):
-    """When creds are missing, start() must not raise; status flips to error."""
     monkeypatch.setenv("TRADER_EQUITY_STREAM_ENABLED", "true")
     monkeypatch.delenv("WEBULL_APP_KEY", raising=False)
     monkeypatch.delenv("WEBULL_APP_SECRET", raising=False)
     monkeypatch.setenv("TRADER_EQUITY_SPREAD_TICKERS", "TSLA")
 
     spread_stream.start()
-    # Give the thread a moment to hit the creds check and bail
     import time
     for _ in range(20):
         if spread_stream.get_status()["state"] == "error":

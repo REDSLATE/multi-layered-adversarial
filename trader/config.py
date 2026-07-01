@@ -267,7 +267,29 @@ def equity_stream_region() -> str:
 
 
 def equity_stream_endpoint() -> str:
-    """Override the streaming endpoint host. Empty (default) lets the
-    SDK resolve via gRPC — SDK maps `us` region to its own gateway.
-    Set explicitly (e.g. `data-api.webull.com`) if the resolver fails."""
-    return env_str("TRADER_EQUITY_STREAM_ENDPOINT", "")
+    """MQTT host override. Default `data-api.webull.com` — the docs
+    endpoint for the L1 quote stream. See also
+    `TRADER_EQUITY_STREAM_HTTP_HOST` for the paired gRPC host."""
+    return env_str("TRADER_EQUITY_STREAM_ENDPOINT", "data-api.webull.com")
+
+
+def equity_stream_http_host() -> str:
+    """gRPC (token exchange) host. MUST be separate from the MQTT
+    host — coupling them causes `UNAVAILABLE: tcp handshaker shutdown`
+    because the MQTT gateway doesn't speak gRPC on 443."""
+    return env_str("TRADER_EQUITY_STREAM_HTTP_HOST", "api.webull.com")
+
+
+def equity_stream_session_id() -> str:
+    """Stable client session id — Webull boots the earlier connection
+    if we reuse a live one, so a per-process/per-role tag is best.
+    Max 5 concurrent sessions per App Key."""
+    return env_str("TRADER_EQUITY_STREAM_SESSION_ID", "mc_paradox_equity_1")
+
+
+def equity_stream_sub_types() -> tuple[str, ...]:
+    """Which of QUOTE / SNAPSHOT / TICK to subscribe. Default QUOTE
+    only (best bid/ask) — SNAPSHOT + TICK add trade prints and OHLC
+    but at the cost of throughput. Comma-separated string in env."""
+    raw = env_str("TRADER_EQUITY_STREAM_SUB_TYPES", "QUOTE").strip()
+    return tuple(s.strip().upper() for s in raw.split(",") if s.strip())

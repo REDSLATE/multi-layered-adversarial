@@ -1,12 +1,17 @@
 """Webull MQTT L1 quote stream — fluid-machine upgrade path.
 
-Doctrine pin (2026-07-02):
+Doctrine pin (2026-07-02, revised after operator supplied the
+canonical SDK pattern):
     Same-broker doctrine: the equity lane already trades through Webull.
     This module opens a persistent MQTT subscription to Webull's
-    `data-api.webull.com` gateway, receives protobuf-encoded QUOTE
-    messages tick-by-tick (best bid/ask), decodes them via the
-    official `webull-python-sdk-mdata` SDK, and updates the SAME
-    in-memory cache the HTTP snapshot poller writes to
+    `data-api.webull.com` gateway using the newer umbrella SDK's
+    `DataStreamingClient` (which decouples the gRPC token-exchange
+    host from the MQTT gateway host — an earlier attempt with the
+    legacy `DefaultQuotesClient` coupled them, causing `UNAVAILABLE:
+    tcp handshaker shutdown` on the MQTT gateway).
+
+    Receives QUOTE messages (best bid/ask), extracts L1, and updates
+    the SAME in-memory cache the HTTP snapshot poller writes to
     (`trader.spread._latest`) plus the durable SQLite tape
     (`trader.store.record_spread_tick`, `source="webull_mqtt"`).
 
@@ -19,10 +24,12 @@ Doctrine pin (2026-07-02):
     writes are thread-safe (SQLite lock in store.py already, and
     dict assignment for _latest is atomic under GIL).
 
+Session id: `mc_paradox_equity_1` by default (override with
+`TRADER_EQUITY_STREAM_SESSION_ID`). Reusing an active session_id
+boots the earlier connection; max 5 concurrent per App Key.
+
 Requires the L1 market-data subscription active on the operator's
-OpenAPI plan AND a valid streaming credential (the SDK trades
-`app_key`+`app_secret` for a streaming token via gRPC). Failure
-falls back gracefully — poller keeps running.
+OpenAPI plan. Failure falls back gracefully — poller keeps running.
 """
 from __future__ import annotations
 
@@ -70,32 +77,40 @@ def get_status() -> dict:
         return dict(_status)
 
 
-def _on_quote_message(client, userdata, message) -> None:
-    """paho-mqtt on_message callback. The SDK's DefaultQuotesClient
-    dispatches decoded messages here as `(client, userdata,
-    QuoteResult|SnapshotResult|TickResult)`. We handle QuoteResult
-    (best bid/ask) and ignore the rest — the HTTP poller already
-    tracks OHLC via the snapshot endpoint."""
+def _on_quote_message(client, topic, quotes) -> None:
+    """DataStreamingClient dispatches decoded messages here as
+    `(client, topic, quotes)`. The `quotes` payload is the SDK's
+    decoded protobuf — QUOTE topics carry best bid/ask, SNAPSHOT
+    carries OHLC, TICK carries trade prints. We only extract L1
+    from QUOTE messages (matching what the risk gate needs)."""
     try:
-        # Late import so the module is importable without SDK deps
-        # if someone runs the trader without streaming enabled.
-        from webullsdkmdata.quotes.subscribe.quote_result import QuoteResult
-    except Exception:  # noqa: BLE001
-        return
-    if not isinstance(message, QuoteResult):
-        return
-    try:
-        basic = message.get_basic()
-        symbol = (basic.get_symbol() or "").upper()
-        if not symbol:
+        # QUOTE messages have `bidList` / `askList` on the top-level
+        # payload; SNAPSHOT and TICK use different shapes. Duck-type
+        # so unrelated topics silently no-op.
+        if not hasattr(quotes, "get_asks") and not isinstance(quotes, dict):
             return
-        asks = message.get_asks() or []
-        bids = message.get_bids() or []
-        if not (asks and bids):
+        if hasattr(quotes, "get_asks"):
+            asks = quotes.get_asks() or []
+            bids = quotes.get_bids() or []
+            basic = quotes.get_basic() if hasattr(quotes, "get_basic") else None
+            symbol = (basic.get_symbol() if basic else "").upper()
+        else:
+            # dict shape — best-effort field pluck
+            asks = quotes.get("askList") or quotes.get("asks") or []
+            bids = quotes.get("bidList") or quotes.get("bids") or []
+            symbol = (quotes.get("symbol") or "").upper()
+        if not symbol or not (asks and bids):
             return
+        # Each entry is either an object with get_price() or a dict
+        def _px(entry):
+            if hasattr(entry, "get_price"):
+                return entry.get_price()
+            if isinstance(entry, dict):
+                return entry.get("price") or entry.get("Price")
+            return None
         try:
-            ask = float(asks[0].get_price())
-            bid = float(bids[0].get_price())
+            ask = float(_px(asks[0]) or 0)
+            bid = float(_px(bids[0]) or 0)
         except (TypeError, ValueError):
             return
         if ask <= 0 or bid <= 0 or ask < bid:
@@ -112,9 +127,6 @@ def _on_quote_message(client, userdata, message) -> None:
             "spread_bps": round(spread_bps, 4),
             "source": "webull_mqtt",
         }
-        # Cache + persist. Thread-safety: store.record_spread_tick
-        # holds its own lock; dict assignment on _latest is atomic
-        # under CPython's GIL.
         spread._cache_row(row)
         try:
             store.record_spread_tick(row)
@@ -128,13 +140,36 @@ def _on_quote_message(client, userdata, message) -> None:
         logger.warning("stream message handling failed: %s", e)
 
 
-def _on_connect_success(client, userdata, session_id) -> None:
+def _on_connect_success(client, api_client, session_id) -> None:
+    """DataStreamingClient signature: (client, api_client, session_id).
+    Subscribes to the configured symbols on connect — the SDK doesn't
+    auto-subscribe. Boot-time subscription is idempotent-per-session."""
     logger.info("stream connected session=%s", session_id)
     _set_status(state="connected", started_at=_now_iso())
+    try:
+        from webull.data.common.category import Category  # noqa: WPS433
+        from webull.data.common.subscribe_type import SubscribeType  # noqa: WPS433
+        symbols = list(config.equity_stream_symbols())
+        sub_types = [
+            getattr(SubscribeType, s).name
+            for s in config.equity_stream_sub_types()
+            if hasattr(SubscribeType, s)
+        ]
+        if not sub_types:
+            sub_types = [SubscribeType.QUOTE.name]
+        client.subscribe(symbols, Category.US_STOCK.name, sub_types)
+        logger.info(
+            "stream subscribing symbols=%s sub_types=%s",
+            symbols, sub_types,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.error("stream subscribe on connect failed: %s", e)
+        _set_status(state="error", last_error=f"subscribe: {e}")
 
 
-def _on_subscribe_success(client, grpc_client, token) -> None:
-    logger.info("stream subscription confirmed")
+def _on_subscribe_success(client, api_client, session_id) -> None:
+    logger.info("stream subscription confirmed session=%s", session_id)
+    _set_status(state="connected")
 
 
 def _run_loop() -> None:
@@ -152,23 +187,22 @@ def _run_loop() -> None:
         _set_status(state="error", last_error="no_symbols")
         return
     region = config.equity_stream_region()
-    endpoint = config.equity_stream_endpoint() or None
+    mqtt_host = config.equity_stream_endpoint() or None
+    http_host = config.equity_stream_http_host() or None
+    session_id = config.equity_stream_session_id()
 
     try:
-        from webullsdkmdata.common.category import Category   # noqa: WPS433
-        from webullsdkmdata.common.subscribe_type import SubscribeType  # noqa: WPS433
-        from webullsdkmdata.quotes.subscribe.default_client import (  # noqa: WPS433
-            DefaultQuotesClient,
+        # Newer umbrella SDK (webull-openapi-python-sdk v2.x) — decouples
+        # the gRPC (http_host) and MQTT (mqtt_host) endpoints. The older
+        # `webullsdkmdata.DefaultQuotesClient` coupled them, causing
+        # `UNAVAILABLE: tcp handshaker shutdown` because the MQTT gateway
+        # doesn't accept gRPC on port 443.
+        from webull.data.data_streaming_client import (  # noqa: WPS433
+            DataStreamingClient,
         )
-        # Turn on the SDK's own logging so an operator can see the
-        # gRPC handshake + MQTT connect steps in the backend log
-        # instead of guessing at what the stream is doing.
         import logging as _logging  # noqa: WPS433
+        _logging.getLogger("webull").setLevel(_logging.INFO)
         _logging.getLogger("webullsdkquotescore").setLevel(_logging.INFO)
-        _logging.getLogger("webullsdkmdata").setLevel(_logging.INFO)
-        _logging.getLogger("webullsdkcore").setLevel(_logging.INFO)
-        # Enable paho-mqtt's own trace so a failed CONNECT / SUBACK
-        # surfaces in the log instead of a silent hang.
         _logging.getLogger("paho.mqtt.client").setLevel(_logging.INFO)
     except Exception as e:  # noqa: BLE001
         _set_status(state="error", last_error=f"sdk_import: {e}")
@@ -184,23 +218,21 @@ def _run_loop() -> None:
                 last_error=None,
             )
             global _client
-            _client = DefaultQuotesClient(
-                app_key, app_secret, region, endpoint,
-            )
-            _client.init_default_settings(
-                symbols,
-                Category.US_STOCK.name,
-                SubscribeType.QUOTE.name,
+            _client = DataStreamingClient(
+                app_key, app_secret, region, session_id,
+                http_host=http_host, mqtt_host=mqtt_host,
             )
             _client.on_quotes_message = _on_quote_message
             _client.on_connect_success = _on_connect_success
             _client.on_subscribe_success = _on_subscribe_success
             logger.info(
-                "stream starting symbols=%s region=%s endpoint=%s",
-                symbols, region, endpoint or "<sdk-default>",
+                "stream starting symbols=%s region=%s http=%s mqtt=%s session=%s",
+                symbols, region,
+                http_host or "<sdk-default>",
+                mqtt_host or "<sdk-default>",
+                session_id,
             )
             _client.connect_and_loop_forever()  # blocks
-            # Reached only on clean disconnect
             if _stop_flag.is_set():
                 logger.info("stream loop exited (stop requested)")
                 break
