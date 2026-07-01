@@ -16,10 +16,14 @@ import Flags from "@/pages/Flags";
 // 2026-02-19 — superseded by Paradox V2 seat-policy + 25-eval
 // autonomy ladder. The /pages/Promotion.jsx file is left on disk
 // for git history but no longer imported or routable.
-import LearningLadder from "@/pages/LearningLadder";
 import RecentIngests from "@/pages/RecentIngests";
 import RuntimeDetail from "@/pages/RuntimeDetail";
 import BrainConsole from "@/pages/BrainConsole";
+// 2026-07-01 (Pass 2/3 cleanup, batch 3): LearningLadder removed —
+// hypothesis→paper→live promotion ladder was an auto-router-era
+// concept. The sidecar trader has no promotion ladder; it fires
+// or holds. Backend queries also hit Atlas and SSL-timed-out on
+// the shared-tier connection.
 import Intents from "@/pages/Intents";
 import Witnesses from "@/pages/Witnesses";  // 2026-02-23 witness-council read-only panel
 import SeatContext from "@/pages/SeatContext";  // 2026-02-23 cleaned witness context for the Seat
@@ -134,7 +138,6 @@ function App() {
             <Route path="artifacts" element={<Artifacts />} />
             <Route path="diagnostics" element={<Diagnostics />} />
             <Route path="flags" element={<Flags />} />
-            <Route path="learning-ladder" element={<LearningLadder />} />
             <Route path="recent" element={<RecentIngests />} />
             <Route path="runtime/:runtime" element={<RuntimeDetail />} />
             <Route path="brain/:brain" element={<BrainConsole />} />

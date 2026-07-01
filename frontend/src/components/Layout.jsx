@@ -41,7 +41,6 @@ const SECTIONS = [
       { to: "/admin/witnesses", label: "Witnesses", icon: Eye, testid: "nav-witnesses" },
       { to: "/admin/seat-context", label: "Seat Context", icon: Crosshair, testid: "nav-seat-context" },
       { to: "/admin/intents", label: "Intents", icon: Lightning, testid: "nav-intents" },
-      { to: "/admin/learning-ladder", label: "Live Routes", icon: TrendUp, testid: "nav-learning-ladder" },
       { to: "/admin/positions", label: "Positions", icon: Crosshair, testid: "nav-positions" },
     ],
   },
