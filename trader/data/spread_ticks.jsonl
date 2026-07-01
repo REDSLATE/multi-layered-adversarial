@@ -288,3 +288,5 @@
 {"ts": "2026-07-01T16:53:39.472645+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 59879.7, "ask": 59879.8, "last": 59879.8, "spread_abs": 0.10000000000582077, "spread_bps": 0.0167, "source": "kraken"}
 {"ts": "2026-07-01T16:53:48.969911+00:00", "pair": "TSLA", "lane": "equity", "bid": 426.03, "ask": 426.13, "last": 426.03, "spread_abs": 0.10000000000002274, "spread_bps": 2.347, "source": "webull"}
 {"ts": "2026-07-01T16:53:54.575394+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 59879.7, "ask": 59879.8, "last": 59880.9, "spread_abs": 0.10000000000582077, "spread_bps": 0.0167, "source": "kraken"}
+{"ts": "2026-07-01T16:54:09.093805+00:00", "pair": "TSLA", "lane": "equity", "bid": 425.78, "ask": 425.97, "last": 425.88, "spread_abs": 0.19000000000005457, "spread_bps": 4.4614, "source": "webull"}
+{"ts": "2026-07-01T16:54:09.798062+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 59879.7, "ask": 59879.8, "last": 59879.8, "spread_abs": 0.10000000000582077, "spread_bps": 0.0167, "source": "kraken"}
