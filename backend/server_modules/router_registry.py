@@ -26,7 +26,6 @@ from shared.crypto.routes import router as kraken_router
 from shared.ibkr import router as ibkr_router
 from shared.public import router as public_router
 from shared.positions import router as positions_router
-from shared.sovereign_mode_guard import router as sovereign_router
 from shared.public_api import router as public_api_router
 from shared.public_api.traffic import router as public_traffic_router
 from shared.seat_performance import router as seat_performance_router
@@ -46,7 +45,6 @@ from shared.auditor_seat import router as auditor_router
 from shared.seat_nudges import router as seat_nudges_router
 from shared.decisions_feed import router as decisions_router
 from shared.doctrine_routes import router as doctrine_router
-from shared.execution import router as execution_router
 from shared.live_positions import router as live_positions_router
 from shared.brain_lane_policy import router as brain_lane_policy_router
 from shared.redeye_crypto_intent_bridge import router as redeye_bridge_router
@@ -113,7 +111,6 @@ from routes.seat_registry_diagnose import router as seat_registry_diagnose_route
 from routes.rise_ai_admin import router as rise_ai_admin_router
 from routes.shelly_admin_extension import router as shelly_admin_extension_router
 from routes.brain_doctrine_hint import router as brain_doctrine_hint_router
-from routes.intent_inspect import router as intent_inspect_router
 from routes.storage_rollup import router as storage_rollup_router
 from routes.trading_controls import router as trading_controls_router
 from routes.alpha_vantage_admin import router as alpha_vantage_admin_router
@@ -125,13 +122,6 @@ from routes.mc_connection_stream import router as mc_connection_stream_router
 from routes.position_misread_admin import router as position_misread_admin_router
 from routes.intent_origin import router as intent_origin_router
 from routes.webull_admin import router as webull_admin_router
-from routes.admin_wrappers import router as admin_wrappers_router
-from routes.admin_intents_post_mortem import (
-    router as admin_intents_post_mortem_router,
-)
-from routes.admin_intents_funnel import (
-    router as admin_intents_funnel_router,
-)
 from routes.admin_hot_brain_router import (
     router as admin_hot_brain_router,
 )
@@ -145,31 +135,22 @@ from routes.admin_advisor_performance import (
     router as admin_advisor_performance_router,
 )
 from routes.admin_trader import router as admin_trader_router  # 2026-06-30 sidecar trader
-from routes.admin_paradox_v3 import router as admin_paradox_v3_router
 from routes.admin_system_flags import router as admin_system_flags_router
-from routes.admin_seat_stage_drops import router as admin_seat_stage_drops_router
 from routes.admin_brain_legend import router as admin_brain_legend_router  # 2026-02-23
 from routes.admin_execution_lifecycle_funnel import router as admin_execution_lifecycle_funnel_router  # 2026-02-23 P3
 from routes.admin_native_runtime_status import router as admin_native_runtime_status_router  # 2026-02-23 in-process brain migration
 from routes.admin_brain_input_health import router as admin_brain_input_health_router  # 2026-02-23 instrument quality
-from routes.admin_lane_readiness import router as admin_lane_readiness_router  # 2026-06-26 one-shot lane diagnostic
 from routes.admin_external_signals import router as admin_external_signals_router  # 2026-02-23 witness-council read-only panel
-from routes.intent_why import router as intent_why_router
-from routes.seat_state_diagnose import router as seat_state_diagnose_router
 from routes.webull_caps_admin import router as webull_caps_admin_router
 from routes.exposure_caps_admin import router as exposure_caps_admin_router
 from routes.equity_extended_hours_admin import router as equity_extended_hours_admin_router
 from routes.canary_admin import router as canary_admin_router
 from routes.brain_tuning_admin import router as brain_tuning_admin_router
 from routes.pipeline_blocker_histogram import router as pipeline_blocker_histogram_router
-from routes.equity_trade_readiness import router as equity_trade_readiness_router
-from routes.direct_execute_admin import router as direct_execute_admin_router
 from routes.server_time_admin import router as server_time_admin_router
 from routes.db_admin import router as db_admin_router
 from routes.healthcheck_full import router as healthcheck_full_router
 from routes.era_comparison import router as era_comparison_router
-from routes.unblock_report import router as unblock_report_router
-from routes.admin_auto_submit import router as admin_auto_submit_router
 from routes.admin_quiver import router as admin_quiver_router
 from routes.parabolic_phase_admin import router as parabolic_phase_admin_router
 from routes.data_council_admin import router as data_council_admin_router
@@ -181,7 +162,6 @@ from routes.outcome_join_admin import router as outcome_join_admin_router
 from routes.shadow_outcome_admin import router as shadow_outcome_admin_router
 from routes.scorecard_by_brain import router as scorecard_by_brain_router
 from routes.safety_gates_audit import router as safety_gates_audit_router
-from routes.paradox_v2 import router as paradox_v2_router
 from routes.finnhub_backfill import router as finnhub_backfill_router
 from routes.learning_scoreboard import router as learning_scoreboard_router
 from routes.runtime_broker_status import router as runtime_broker_status_router
@@ -212,7 +192,6 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(outcomes_router)
     api_router.include_router(conflicts_router)
     api_router.include_router(positions_router)
-    api_router.include_router(sovereign_router)
     api_router.include_router(public_api_router)
     api_router.include_router(public_traffic_router)
     api_router.include_router(seat_performance_router)
@@ -232,42 +211,28 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(executor_router)
     api_router.include_router(auditor_router)
     api_router.include_router(seat_nudges_router)
-    api_router.include_router(execution_router)
-    api_router.include_router(admin_wrappers_router)
-    api_router.include_router(admin_intents_post_mortem_router)
-    api_router.include_router(admin_intents_funnel_router)
     api_router.include_router(admin_hot_brain_router)
     api_router.include_router(admin_spread_quality_router)
     api_router.include_router(admin_brain_metrics_router)
     api_router.include_router(admin_advisor_performance_router)
     api_router.include_router(admin_trader_router)  # 2026-06-30 sidecar trader
-    api_router.include_router(admin_paradox_v3_router)
     api_router.include_router(admin_system_flags_router)
-    api_router.include_router(admin_seat_stage_drops_router)
     api_router.include_router(admin_brain_legend_router)  # 2026-02-23 dual-field migration
     api_router.include_router(admin_execution_lifecycle_funnel_router)  # 2026-02-23 P3 lifecycle funnel
     api_router.include_router(admin_native_runtime_status_router)  # 2026-02-23 native brain runtimes
     api_router.include_router(admin_brain_input_health_router)  # 2026-02-23 instrument quality
-    api_router.include_router(admin_lane_readiness_router)  # 2026-06-26 lane readiness diagnostic
     api_router.include_router(admin_external_signals_router)  # 2026-02-23 witness-council read-only panel
-    api_router.include_router(intent_why_router)
-    api_router.include_router(seat_state_diagnose_router)
     api_router.include_router(webull_caps_admin_router)
     api_router.include_router(exposure_caps_admin_router)
     api_router.include_router(equity_extended_hours_admin_router)
     api_router.include_router(canary_admin_router)
     api_router.include_router(brain_tuning_admin_router)
     api_router.include_router(pipeline_blocker_histogram_router)
-    api_router.include_router(equity_trade_readiness_router)
-    api_router.include_router(direct_execute_admin_router)
     api_router.include_router(server_time_admin_router)
     api_router.include_router(db_admin_router)
     api_router.include_router(healthcheck_full_router)
     api_router.include_router(era_comparison_router)
-    api_router.include_router(unblock_report_router)
-    api_router.include_router(admin_auto_submit_router)
     api_router.include_router(admin_quiver_router)
-    api_router.include_router(paradox_v2_router)
     api_router.include_router(live_positions_router)
     api_router.include_router(brain_lane_policy_router)
     api_router.include_router(redeye_bridge_router)
@@ -332,7 +297,6 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(intent_summary_router)
     api_router.include_router(mc_connection_stream_router)
     api_router.include_router(position_misread_admin_router)
-    api_router.include_router(intent_inspect_router)
 
     api_router.include_router(coordinator_router)
     api_router.include_router(runtime_bundles_router)

@@ -7,6 +7,81 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ✅ Pass 2 — Bulk Delete COMPLETED (2026-07-01)
+
+Operator directive: "Pass 2 is a done deal. It's not trading either way, might as well delete the 11k."
+
+**105 files deleted.** Every module that no longer had a place in the
+Brain → Seat → Risk → Broker doctrine is gone.
+
+Deleted shared modules:
+```
+shared/legacy_brain_wrappers.py       (CAMARO/REDEYE/CHEVELLE/ALPHA wraps)
+shared/execution.py                   (dry_run simulator + auto_submit chain)
+shared/auto_submit_policy.py
+shared/auto_submit_receipt.py
+shared/council.py
+shared/consensus.py + consensus_engine.py
+shared/direct_execute.py
+shared/sovereign_mode_guard.py
+shared/governor_policy.py
+shared/market_regime.py
+shared/brain_identity_migration.py
+shared/seat_state.py
+shared/advisor_opinions.py
+shared/brains/camaro_weights_adapter.py
+shared/brains/camino_committee.py
+shared/brains/alpha_engine.py
+shared/pipeline/       (whole folder — adapter, execution_pipeline, consensus_*, seat_policy, trigger_watcher)
+shared/paradox_v2/     (whole folder — seed, verifier_loop, vote_doctrine_repo, vote_session_sweeper)
+```
+
+Deleted admin routes:
+```
+routes/admin_auto_submit.py
+routes/admin_wrappers.py
+routes/direct_execute_admin.py
+routes/paradox_v2.py
+routes/admin_paradox_v3.py
+routes/seat_state_diagnose.py
+routes/admin_seat_stage_drops.py
+routes/admin_intents_post_mortem.py
+routes/admin_intents_funnel.py
+routes/admin_lane_readiness.py
+routes/equity_trade_readiness.py
+routes/intent_inspect.py
+routes/intent_why.py
+routes/unblock_report.py
+```
+
+Deleted tests: ~60 test files that only tested the deleted modules
+(test_camaro_*, test_auto_submit_*, test_consensus_*, test_paradox_*,
+test_legacy_wrapper*, test_direct_execute_*, test_council_*,
+test_seat_state*, test_sovereign_*, test_dry_run*, test_unified_pipeline*,
+test_authority_*, test_camino_committee*, test_governor*, test_roadguard*,
+etc.)
+
+**Not deleted (surprising retention)**:
+- The 8-file trader (never touched — it doesn't use any legacy)
+- 4 brain strategies (camino/barracuda/hellcat/gto — actively used by trader)
+- MC's core UI backend (auth, healthcheck, snapshots, market data)
+- The `executor_seat.py` fallback path (kept as legacy roster reader
+  since the trader's `seat.get_holder` falls through to it)
+
+**Backend verified booting clean** after deletes. `/api/admin/trader/*`
+endpoints still respond (401 = auth required, correct). Trader end-to-end
+cycle passes: Brain → Seat → Risk → Broker → executions.
+
+**Residual (post-deploy)**:
+- Some legacy admin tiles in MC UI will show empty or 404 (routes deleted).
+  The trader's new tiles (`/api/admin/trader/{status,receipts,executions}`)
+  are the source of truth.
+- A handful of lazy imports in still-existing files (`shared/auto_router.py`,
+  `shared/roster.py`, `routes/healthcheck_full.py`,
+  `server_modules/lifespan.py`) reference deleted modules inside try/except
+  blocks. They log warnings but don't crash. These get cleaned in a
+  future pass.
+
 ## 2026-06-30 Operator Doctrine Pin — Path 2: MC = eyes, Trader = authority
 
 After the prod 500s + persistent auto_router_loop hang, the operator

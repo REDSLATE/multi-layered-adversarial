@@ -713,14 +713,8 @@ async def lifespan(app: FastAPI):
         await stop_neutral_brains()
     except Exception:  # noqa: BLE001
         pass
-    # Paradox v2 background workers
-    try:
-        from shared.paradox_v2.verifier_loop import stop_verifier_loop
-        from shared.paradox_v2.vote_session_sweeper import stop_vote_session_sweeper
-        await stop_verifier_loop()
-        await stop_vote_session_sweeper()
-    except Exception:  # noqa: BLE001
-        pass
+    # Paradox v2 background workers — REMOVED in 2026-07-01 Pass 2 delete.
+    # (previously stopped verifier_loop + vote_session_sweeper)
     try:
         await stop_daily_snapshot_worker()
     except Exception:  # noqa: BLE001

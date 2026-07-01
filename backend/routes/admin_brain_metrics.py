@@ -29,7 +29,6 @@ from fastapi import APIRouter, Depends, Query
 from auth import get_current_user
 from db import db
 from namespaces import SHARED_INTENTS
-from shared.pipeline.receipts import PIPELINE_RECEIPTS_COLL
 from shared.brain_metrics import (
     consensus_boost_applied_rate,
     count_holds,
