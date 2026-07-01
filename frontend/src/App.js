@@ -34,10 +34,13 @@ import Redeye from "@/pages/Redeye";
 import BrainOperatorPage from "@/pages/BrainOperatorPage";
 import Discussion from "@/pages/Discussion";
 import Scorecards from "@/pages/Scorecards";
-import Conflicts from "@/pages/Conflicts";
+// 2026-07-01 (Pass 2/3 cleanup, batch 5): Conflicts and
+// SafetyGatesAudit removed. Conflicts hit Atlas directly (read
+// timeouts on shared-tier). SafetyGatesAudit was tied to the
+// deleted 16-gate pipeline (HTTP 500 on prod). Both can be
+// rebuilt later from trader receipts if the operator needs them.
 import Doctrine from "@/pages/Doctrine";
 import DoctrineReference from "@/pages/DoctrineReference";
-import SafetyGatesAudit from "@/pages/SafetyGatesAudit";
 import Positions from "@/pages/Positions";
 import PublicTraffic from "@/pages/PublicTraffic";
 import LlmLedger from "@/pages/LlmLedger";
@@ -153,8 +156,6 @@ function App() {
             <Route path="scorecards" element={<Scorecards />} />
             <Route path="doctrine" element={<Doctrine />} />
             <Route path="doctrine-reference" element={<DoctrineReference />} />
-            <Route path="safety-gates" element={<SafetyGatesAudit />} />
-            <Route path="conflicts" element={<Conflicts />} />
             <Route path="positions" element={<Positions />} />
             <Route path="public-traffic" element={<PublicTraffic />} />
             <Route path="llm-ledger" element={<LlmLedger />} />

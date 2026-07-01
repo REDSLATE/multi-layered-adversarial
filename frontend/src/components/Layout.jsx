@@ -52,8 +52,9 @@ const SECTIONS = [
       { to: "/admin/scorecards", label: "Scorecards", icon: Trophy, testid: "nav-scorecards" },
       { to: "/admin/doctrine", label: "Doctrine", icon: Shield, testid: "nav-doctrine" },
       { to: "/admin/doctrine-reference", label: "Doctrine Ref", icon: Shield, testid: "nav-doctrine-reference" },
-      { to: "/admin/safety-gates", label: "Safety Gates", icon: Shield, testid: "nav-safety-gates" },
-      { to: "/admin/conflicts", label: "Conflicts", icon: LightningSlash, testid: "nav-conflicts" },
+      // 2026-07-01 (batch 5): Safety Gates + Conflicts links removed.
+      // Their pages were deleted — both hit Atlas or 500-crashed.
+      { to: "/admin/setup", label: "Setup", icon: Wrench, testid: "nav-setup" },
       // "Promotion" (Patent G + J governance) removed 2026-02-19 —
       // superseded by Paradox V2 seat-policy + 25-eval autonomy ladder.
       // Operator deferred the readiness-gate doctrine; every gate on
