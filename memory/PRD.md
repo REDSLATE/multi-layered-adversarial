@@ -7,6 +7,34 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ✅ Kraken + Webull Spread Poller (2026-07-02)
+
+Live bid/ask spread telemetry for the sidecar trader with an optional
+hard risk gate per lane. Same doctrine as the rest of the trader:
+Mongo-free hot path, JSONL + SQLite truth tape, bounded timeouts.
+- **`/app/trader/spread.py`** — two independent asyncio pollers (Kraken
+  `/public/Ticker` for crypto pair(s), Webull's public quote gateway
+  `quotes-gw.webullbroker.com` for equity). In-memory latest cache
+  keyed by SYMBOL; SQLite `spread_ticks` table for rolling history.
+- **`risk.check()`** — per-lane spread gate. Reads the in-memory cache
+  (never blocks on I/O). **Fails OPEN on stale readings** so a dead
+  poller cannot deadlock trading. Gate is env-flagged and defaults OFF
+  (`TRADER_SPREAD_GATE_ENABLED` for crypto, `TRADER_EQUITY_SPREAD_GATE_ENABLED`
+  for equity).
+- **`/api/admin/trader/spread`** — dashboard endpoint. Returns latest
+  snapshot per symbol + rolling history + config surface. Reads only
+  from local store, no Mongo.
+- **`SpreadWatcher.jsx`** — Overview tile below TradeTape. Symbol
+  rows with bid/ask/last/bps and staleness badge; config chips show
+  each lane's gate state and cap.
+- **⚠️ Equity poller defaults OFF (2026-07-02)** — Webull retired
+  their public bid/ask endpoints (`API_DISABLED`) and Yahoo `/quote`
+  is unreliable. Plumbing stays in place ready to plug into
+  Alpaca/Polygon/Tradier once operator picks a real-time L1 provider.
+- Tests: `/app/backend/tests/test_trader_spread.py` (14 cases, all
+  green). Live proof: preview backend produced 26 XBTUSD ticks in
+  ~6 minutes with spread ~0.28 bps.
+
 ### ✅ Pass 3.5 — Frontend Rewire + Trade Tape Tile COMPLETED (2026-07-01)
 
 Wired the new local-first backend into the operator dashboard:

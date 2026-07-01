@@ -247,6 +247,79 @@ async def trader_prune(
     }
 
 
+@router.get("/spread")
+async def trader_spread(
+    _: dict = Depends(get_current_user),
+    symbol: Optional[str] = Query(default=None,
+                                  description="Kraken pair or equity ticker"),
+    limit: int = Query(default=200, ge=1, le=2000),
+) -> dict:
+    """Bid/ask spread telemetry from the trader's spread poller.
+    Returns latest per-symbol snapshot + rolling history. Reads
+    entirely from local SQLite + in-memory cache — no Mongo, works
+    during Atlas outages.
+    """
+    _, store_mod = _import_trader()
+    import sys
+    if "/app" not in sys.path:
+        sys.path.insert(0, "/app")
+    from trader import spread as spread_mod   # noqa: WPS433
+
+    if symbol:
+        # Single-symbol view: cache row + its history
+        cache_row = spread_mod.latest(symbol)
+        history = store_mod.recent_spread_ticks(pair=symbol, limit=limit)
+        return {
+            "ok": True,
+            "symbol": symbol.upper(),
+            "latest": cache_row or None,
+            "stale": spread_mod.is_stale(symbol),
+            "history": history,
+            "checked_at": _now_iso(),
+        }
+
+    # Multi-symbol view: one snapshot per known symbol + a shared
+    # rolling history feed
+    latest_all = spread_mod.latest()
+    # attach staleness per row
+    if isinstance(latest_all, list):
+        for row in latest_all:
+            row["stale"] = spread_mod.is_stale(row.get("pair", ""))
+    return {
+        "ok": True,
+        "latest": latest_all,
+        "history": store_mod.recent_spread_ticks(limit=limit),
+        "config": {
+            "crypto": {
+                "enabled": os.environ.get(
+                    "TRADER_SPREAD_ENABLED", "true"
+                ).lower() == "true",
+                "pairs": os.environ.get("TRADER_SPREAD_PAIRS", ""),
+                "poll_sec": int(os.environ.get("TRADER_SPREAD_POLL_SEC", "15")),
+                "max_bps": float(os.environ.get("TRADER_SPREAD_MAX_BPS", "50")),
+                "gate_enabled": os.environ.get(
+                    "TRADER_SPREAD_GATE_ENABLED", "false"
+                ).lower() == "true",
+            },
+            "equity": {
+                # 2026-07-02 default OFF — Webull retired public bid/ask
+                # endpoints (API_DISABLED) and Yahoo /quote is unreliable.
+                "enabled": os.environ.get(
+                    "TRADER_EQUITY_SPREAD_ENABLED", "false"
+                ).lower() == "true",
+                "tickers": os.environ.get("TRADER_EQUITY_SPREAD_TICKERS", ""),
+                "poll_sec": int(os.environ.get("TRADER_EQUITY_SPREAD_POLL_SEC", "20")),
+                "max_bps": float(os.environ.get("TRADER_EQUITY_SPREAD_MAX_BPS", "25")),
+                "gate_enabled": os.environ.get(
+                    "TRADER_EQUITY_SPREAD_GATE_ENABLED", "false"
+                ).lower() == "true",
+            },
+            "stale_sec": int(os.environ.get("TRADER_SPREAD_STALE_SEC", "120")),
+        },
+        "checked_at": _now_iso(),
+    }
+
+
 # Operator-canonical angel→brain pairings for the trader.
 # Documented in /app/trader/state.py::DEFAULT_SEATS. Repeated here so
 # the seed endpoint can write them without importing the trader

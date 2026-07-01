@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from trader import config, state, store
+from trader import spread as _spread
 
 
 logger = logging.getLogger("trader.risk")
@@ -62,4 +63,13 @@ async def check(db, intent: dict, notional_usd: Optional[float] = None) -> RiskV
             f"daily_cap_exceeded:spent={spent:.2f}+req={n:.2f}>cap={daily:.2f}",
             n, spent,
         )
+    # Bid/ask spread gate — per-lane, gate is env-flagged, fails
+    # OPEN on stale readings so a dead poller cannot deadlock trading.
+    if lane in ("crypto", "equity"):
+        symbol = intent.get("symbol") or (
+            config.crypto_pair() if lane == "crypto" else config.equity_ticker()
+        )
+        ok, reason, _bps = _spread.check_spread_ok(symbol, lane=lane)
+        if not ok:
+            return RiskVerdict(False, reason, n, spent)
     return RiskVerdict(True, "ok", n, spent)

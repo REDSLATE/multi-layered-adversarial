@@ -34,6 +34,7 @@ sys.path.insert(0, "/app")
 from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
 
 from trader import audit, brains, config, feeds, risk, seat, state, store  # noqa: E402
+from trader import spread as trader_spread  # noqa: E402
 from trader.broker import (  # noqa: E402
     BrokerError, kraken_market_order, webull_market_order,
 )
@@ -337,6 +338,9 @@ async def main() -> None:
     )
     mirror_task = asyncio.create_task(
         store.mongo_mirror_worker(db), name="trader.store.mongo_mirror",
+    )
+    spread_task = asyncio.create_task(
+        trader_spread.poll_loop(), name="trader.spread.poll",
     )
 
     interval = config.interval_sec()

@@ -156,3 +156,83 @@ def hellcat_bb_lower() -> float:
 # GTO — momentum
 def gto_macd_min_gap() -> float:
     return env_float("TRADER_GTO_MACD_MIN_GAP", 0.0)
+
+
+# ── Kraken spread poller (2026-07-02) ─────────────────────────────
+# Polls Kraken's public Ticker for one or more pairs, computes bid/
+# ask spread in basis points, caches the latest tick in memory, and
+# persists a rolling window to SQLite. Non-authoritative observability
+# by default; can be promoted to a hard risk gate for the crypto lane
+# by setting TRADER_SPREAD_GATE_ENABLED=true.
+def spread_enabled() -> bool:
+    return env_bool("TRADER_SPREAD_ENABLED", default=True)
+
+
+def spread_pairs() -> tuple[str, ...]:
+    """Comma-separated Kraken pair codes; default = the trader's
+    active crypto pair. e.g. `TRADER_SPREAD_PAIRS=XBTUSD,ETHUSD`."""
+    raw = env_str("TRADER_SPREAD_PAIRS", "").strip()
+    if not raw:
+        return (crypto_pair(),)
+    return tuple(p.strip().upper() for p in raw.split(",") if p.strip())
+
+
+def spread_poll_sec() -> int:
+    return env_int("TRADER_SPREAD_POLL_SEC", 15)
+
+
+def spread_max_bps() -> float:
+    """Wide-spread ceiling in basis points. When gating is enabled,
+    a spread above this HOLDs the crypto lane for that cycle."""
+    return env_float("TRADER_SPREAD_MAX_BPS", 50.0)
+
+
+def spread_gate_enabled() -> bool:
+    """When true, `risk.check()` refuses crypto orders whose latest
+    observed spread exceeds `TRADER_SPREAD_MAX_BPS`. Default off —
+    the poller is observability-first."""
+    return env_bool("TRADER_SPREAD_GATE_ENABLED", default=False)
+
+
+def spread_stale_sec() -> int:
+    """Age (seconds) beyond which a cached spread reading is treated
+    as unreliable. The gate ignores stale readings (fails open) — a
+    dead poller must not deadlock trading."""
+    return env_int("TRADER_SPREAD_STALE_SEC", 120)
+
+
+# Equity spread (Yahoo /v7/finance/quote → bid/ask). Same doctrine
+# as the crypto poller: observability-first, optional gate. Webull's
+# private OpenAPI quote endpoint isn't reachable from preview pods,
+# so Yahoo is the free source-of-truth that matches what the equity
+# feeds module already uses. The `source` column distinguishes
+# `kraken` vs `yahoo` rows in `spread_ticks`.
+def equity_spread_enabled() -> bool:
+    # 2026-07-02 default flipped to OFF: Webull retired their public
+    # bid/ask endpoints (`API_DISABLED`), and Yahoo's /v7/finance/quote
+    # is unreliable per operator. Keep the plumbing in place — flip
+    # this to `true` once we have a data-source (Alpaca / Polygon /
+    # Tradier / Finnhub-paid) whose free tier returns real-time L1.
+    return env_bool("TRADER_EQUITY_SPREAD_ENABLED", default=False)
+
+
+def equity_spread_tickers() -> tuple[str, ...]:
+    raw = env_str("TRADER_EQUITY_SPREAD_TICKERS", "").strip()
+    if not raw:
+        return (equity_ticker(),)
+    return tuple(t.strip().upper() for t in raw.split(",") if t.strip())
+
+
+def equity_spread_poll_sec() -> int:
+    return env_int("TRADER_EQUITY_SPREAD_POLL_SEC", 20)
+
+
+def equity_spread_max_bps() -> float:
+    """Equity spreads are typically wider than crypto majors — the
+    default 25bps allows normal TSLA/AAPL retail-quote conditions
+    while blocking obvious mid-halt / after-hours widening."""
+    return env_float("TRADER_EQUITY_SPREAD_MAX_BPS", 25.0)
+
+
+def equity_spread_gate_enabled() -> bool:
+    return env_bool("TRADER_EQUITY_SPREAD_GATE_ENABLED", default=False)

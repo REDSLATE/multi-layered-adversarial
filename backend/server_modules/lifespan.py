@@ -325,6 +325,26 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.error("trader.store init failed (non-fatal): %s", e)
 
+    # Kraken + Webull spread poller — non-authoritative telemetry.
+    # Runs unconditionally so the operator's dashboard shows live
+    # spreads even when TRADER_ENABLED=false. The trader's own
+    # main.py also starts a poller, so we guard against double-start
+    # via app.state.
+    try:
+        import asyncio as _asyncio_sp
+        if _os.environ.get("TRADER_ENABLED", "false").lower() != "true":
+            from trader import spread as _trader_spread  # noqa: WPS433
+            app.state.spread_task = _asyncio_sp.create_task(
+                _trader_spread.poll_loop(),
+                name="mc.trader.spread.poll",
+            )
+            logger.info(
+                "trader.spread poller STARTED (dashboard-only; "
+                "trader loop is disabled)"
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("trader.spread poll start failed (non-fatal): %s", e)
+
     if _os.environ.get("TRADER_ENABLED", "false").lower() == "true":
         try:
             import asyncio as _asyncio
@@ -676,6 +696,20 @@ async def lifespan(app: FastAPI):
             except Exception:  # noqa: BLE001 - timeout or CancelledError
                 pass
             logger.info("Sidecar trader stopped.")
+    except Exception:  # noqa: BLE001
+        pass
+
+    # ── 2026-07-02 spread poller shutdown (MC-owned when trader is off) ─
+    try:
+        st = getattr(app.state, "spread_task", None)
+        if st and not st.done():
+            st.cancel()
+            try:
+                import asyncio as _asyncio_sp2
+                await _asyncio_sp2.wait_for(st, timeout=10)
+            except Exception:  # noqa: BLE001
+                pass
+            logger.info("trader.spread poller stopped.")
     except Exception:  # noqa: BLE001
         pass
 

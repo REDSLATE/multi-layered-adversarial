@@ -21,6 +21,7 @@ import PositionMisreadsCard from "@/components/PositionMisreadsCard";
 import DivergenceChopGauge from "@/components/DivergenceChopGauge";
 import TradeTape from "@/components/TradeTape";
 import TraderSeatViewer from "@/components/TraderSeatViewer";
+import SpreadWatcher from "@/components/SpreadWatcher";
 
 export default function Overview() {
   const [overview, setOverview] = useState(null);
@@ -218,6 +219,13 @@ export default function Overview() {
               <TraderSeatViewer />
             </PanelErrorBoundary>
           </div>
+
+          {/* 2026-07-02 — Spread Watcher. Live bid/ask spread for
+              Kraken (crypto) + Webull public gateway (equity).
+              Optional risk gate; observability-only by default. */}
+          <PanelErrorBoundary panelName="Spread Watcher" testid="panel-error-spread-watcher">
+            <SpreadWatcher />
+          </PanelErrorBoundary>
 
           {/* P2 (2026-06-10) — Live observability strip.
               Three cards consume the new `/api/mc-connection/stream`

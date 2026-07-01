@@ -124,6 +124,22 @@ CREATE TABLE IF NOT EXISTS flags_cache (
     value_json          TEXT NOT NULL,
     updated_at          TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS spread_ticks (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts                  TEXT NOT NULL,
+    pair                TEXT NOT NULL,
+    bid                 REAL NOT NULL,
+    ask                 REAL NOT NULL,
+    last                REAL,
+    spread_abs          REAL NOT NULL,
+    spread_bps          REAL NOT NULL,
+    source              TEXT NOT NULL DEFAULT 'kraken'
+);
+CREATE INDEX IF NOT EXISTS idx_spread_ticks_pair_ts
+    ON spread_ticks(pair, ts);
+CREATE INDEX IF NOT EXISTS idx_spread_ticks_ts
+    ON spread_ticks(ts);
 """
 
 
@@ -467,6 +483,7 @@ def counts() -> dict:
         c = _require_conn()
         n_exec = c.execute("SELECT COUNT(*) FROM executions").fetchone()[0]
         n_rcpt = c.execute("SELECT COUNT(*) FROM trader_receipts").fetchone()[0]
+        n_spread = c.execute("SELECT COUNT(*) FROM spread_ticks").fetchone()[0]
         pending_exec = c.execute(
             "SELECT COUNT(*) FROM executions WHERE mongo_synced = 0"
         ).fetchone()[0]
@@ -477,6 +494,7 @@ def counts() -> dict:
     return {
         "executions_total": int(n_exec),
         "receipts_total": int(n_rcpt),
+        "spread_ticks_total": int(n_spread),
         "executions_pending_mongo": int(pending_exec),
         "receipts_pending_mongo": int(pending_rcpt),
         "mirror_queue_size": q.qsize() if q else 0,
@@ -522,6 +540,15 @@ def prune(days: int, *, keep_pending: bool = True) -> dict:
         else:
             c.execute("DELETE FROM executions WHERE ts < ?", (cutoff,))
             c.execute("DELETE FROM trader_receipts WHERE ts < ?", (cutoff,))
+        # spread_ticks are pure telemetry (no Mongo mirror) — always
+        # trim to the same cutoff regardless of `keep_pending`.
+        before_spread = c.execute(
+            "SELECT COUNT(*) FROM spread_ticks"
+        ).fetchone()[0]
+        c.execute("DELETE FROM spread_ticks WHERE ts < ?", (cutoff,))
+        after_spread = c.execute(
+            "SELECT COUNT(*) FROM spread_ticks"
+        ).fetchone()[0]
         after_exec = c.execute("SELECT COUNT(*) FROM executions").fetchone()[0]
         after_rcpt = c.execute("SELECT COUNT(*) FROM trader_receipts").fetchone()[0]
         # Reclaim disk. VACUUM must run outside a transaction; we're
@@ -539,6 +566,9 @@ def prune(days: int, *, keep_pending: bool = True) -> dict:
         "receipts_before": int(before_rcpt),
         "receipts_after": int(after_rcpt),
         "receipts_deleted": int(before_rcpt - after_rcpt),
+        "spread_ticks_before": int(before_spread),
+        "spread_ticks_after": int(after_spread),
+        "spread_ticks_deleted": int(before_spread - after_spread),
     }
 
 
@@ -549,6 +579,100 @@ def _safe_json(s: Optional[str], default: Any) -> Any:
         return json.loads(s)
     except Exception:  # noqa: BLE001
         return default
+
+
+# ─── spread ticks (Kraken poller — 2026-07-02) ─────────────────────
+
+def record_spread_tick(row: dict) -> None:
+    """Append a Kraken spread reading. JSONL first for durability,
+    SQLite second for query. NOT mirrored to Mongo — spread history
+    is high-volume telemetry and lives locally only. Never raises."""
+    _append_jsonl("spread_ticks.jsonl", row)
+    try:
+        with _lock:
+            _require_conn().execute(
+                """
+                INSERT INTO spread_ticks (
+                    ts, pair, bid, ask, last, spread_abs, spread_bps, source
+                ) VALUES (?,?,?,?,?,?,?,?)
+                """,
+                (
+                    row["ts"], row["pair"],
+                    float(row["bid"]), float(row["ask"]),
+                    float(row["last"]) if row.get("last") is not None else None,
+                    float(row["spread_abs"]),
+                    float(row["spread_bps"]),
+                    row.get("source", "kraken"),
+                ),
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.error("sqlite spread_ticks insert failed pair=%s err=%s",
+                     row.get("pair"), e)
+
+
+def recent_spread_ticks(pair: Optional[str] = None,
+                        limit: int = 200) -> list[dict]:
+    """Rolling history for the dashboard. Newest first."""
+    where = []
+    args: list = []
+    if pair:
+        where.append("pair = ?")
+        args.append(pair.upper())
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+    sql = (f"SELECT ts, pair, bid, ask, last, spread_abs, spread_bps, source "
+           f"FROM spread_ticks {clause} ORDER BY id DESC LIMIT ?")
+    args.append(int(limit))
+    with _lock:
+        cur = _require_conn().execute(sql, tuple(args))
+        rows = cur.fetchall()
+    return [
+        {
+            "ts": r[0], "pair": r[1],
+            "bid": r[2], "ask": r[3], "last": r[4],
+            "spread_abs": r[5], "spread_bps": r[6],
+            "source": r[7],
+        }
+        for r in rows
+    ]
+
+
+def latest_spread_row(pair: str) -> Optional[dict]:
+    """Single most recent tick for a pair. Used by the risk gate."""
+    if not pair:
+        return None
+    with _lock:
+        cur = _require_conn().execute(
+            "SELECT ts, pair, bid, ask, last, spread_abs, spread_bps, source "
+            "FROM spread_ticks WHERE pair = ? ORDER BY id DESC LIMIT 1",
+            (pair.upper(),),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "ts": row[0], "pair": row[1],
+        "bid": row[2], "ask": row[3], "last": row[4],
+        "spread_abs": row[5], "spread_bps": row[6],
+        "source": row[7],
+    }
+
+
+def prune_spread_ticks(days: int) -> int:
+    """Trim spread history older than `days` days. Returns rows
+    deleted. Called from `prune()` — kept public so ops can hit it
+    directly if the main receipts store is healthy but spread ticks
+    are ballooning."""
+    if days < 1:
+        raise ValueError(f"days must be >= 1, got {days}")
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=days)
+    ).isoformat()
+    with _lock:
+        c = _require_conn()
+        before = c.execute("SELECT COUNT(*) FROM spread_ticks").fetchone()[0]
+        c.execute("DELETE FROM spread_ticks WHERE ts < ?", (cutoff,))
+        after = c.execute("SELECT COUNT(*) FROM spread_ticks").fetchone()[0]
+    return int(before - after)
 
 
 # ─── Mongo mirror ──────────────────────────────────────────────────
