@@ -32,3 +32,4 @@
 {"ts": "2026-07-01T15:49:42.148500+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 60097.0, "ask": 60097.1, "last": 60097.0, "spread_abs": 0.09999999999854481, "spread_bps": 0.0166, "source": "kraken"}
 {"ts": "2026-07-01T15:49:57.251180+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 60074.0, "ask": 60074.1, "last": 60071.9, "spread_abs": 0.09999999999854481, "spread_bps": 0.0166, "source": "kraken"}
 {"ts": "2026-07-01T15:50:12.335646+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 60074.1, "ask": 60076.5, "last": 60085.7, "spread_abs": 2.400000000001455, "spread_bps": 0.3995, "source": "kraken"}
+{"ts": "2026-07-01T15:50:27.436874+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 60064.9, "ask": 60065.0, "last": 60065.0, "spread_abs": 0.09999999999854481, "spread_bps": 0.0166, "source": "kraken"}
