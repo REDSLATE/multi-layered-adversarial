@@ -104,6 +104,7 @@ async def write_receipt(
     risk_verdict: dict,
     broker_result: Optional[dict] = None,
     error: Optional[str] = None,
+    quote: Optional[dict] = None,
 ) -> Optional[str]:
     row = {
         "cycle_id": cycle_id,
@@ -111,6 +112,16 @@ async def write_receipt(
         "lane": (lane or "").lower(),
         "symbol": symbol,
         "last_price": last_price,
+        # L1 quote provenance (2026-07-02) — recorded so post-mortem
+        # can tell whether a decision was made on live broker-side
+        # L1 (`webull_mqtt`), 20s HTTP snapshot (`webull`), or Kraken
+        # public ticker (`kraken`). `quote_age_ms` and `l1_stale`
+        # answer "was the reading fresh?" on a per-cycle basis.
+        "quote": quote or {
+            "quote_source": None, "quote_age_ms": None,
+            "bid": None, "ask": None, "spread_bps": None,
+            "last_price": last_price, "l1_stale": True,
+        },
         "signals": signals,
         "chosen": chosen,
         "seats": seats,

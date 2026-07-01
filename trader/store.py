@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS trader_receipts (
     seats_json          TEXT,
     angels_json         TEXT,
     risk_json           TEXT,
+    quote_json          TEXT,
     broker_result_json  TEXT,
     error               TEXT,
     mongo_synced        INTEGER NOT NULL DEFAULT 0
@@ -171,6 +172,17 @@ def init(sqlite_path: str, jsonl_dir: str) -> None:
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(_SCHEMA)
+    # Idempotent migrations for schema additions on already-live pods.
+    # SQLite's `ADD COLUMN` fails with "duplicate column" if it exists;
+    # a try/except keeps init a no-op on fresh databases too.
+    for migration in (
+        # 2026-07-02: L1 quote provenance block on receipts.
+        "ALTER TABLE trader_receipts ADD COLUMN quote_json TEXT",
+    ):
+        try:
+            conn.execute(migration)
+        except sqlite3.OperationalError:
+            pass  # column already present
     _conn = conn
 
     _mirror_q = asyncio.Queue(maxsize=_MIRROR_Q_MAX)
@@ -275,9 +287,9 @@ def record_receipt(row: dict) -> int:
                 INSERT INTO trader_receipts (
                     cycle_id, ts, lane, symbol, last_price,
                     signals_json, chosen_json, seats_json,
-                    angels_json, risk_json, broker_result_json,
-                    error, mongo_synced
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0)
+                    angels_json, risk_json, quote_json,
+                    broker_result_json, error, mongo_synced
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0)
                 """,
                 (
                     row.get("cycle_id"), row["ts"],
@@ -289,6 +301,7 @@ def record_receipt(row: dict) -> int:
                     json.dumps(row.get("seats") or {}, default=str),
                     json.dumps(row.get("angels") or {}, default=str),
                     json.dumps(row.get("risk") or {}, default=str),
+                    json.dumps(row.get("quote") or {}, default=str),
                     json.dumps(row.get("broker_result"), default=str)
                         if row.get("broker_result") is not None else None,
                     row.get("error"),
@@ -412,14 +425,22 @@ def recent_receipts(limit: int = 50, lane: Optional[str] = None,
     clause = ("WHERE " + " AND ".join(where)) if where else ""
     sql = (f"SELECT cycle_id, ts, lane, symbol, last_price, "
            f"signals_json, chosen_json, seats_json, angels_json, "
-           f"risk_json, broker_result_json, error "
+           f"risk_json, quote_json, broker_result_json, error "
            f"FROM trader_receipts {clause} ORDER BY ts DESC LIMIT ?")
     args.append(int(limit))
     with _lock:
         cur = _require_conn().execute(sql, tuple(args))
         rows = cur.fetchall()
     out = []
+    # Default provenance keys — a receipt written before the quote
+    # block was added still gets a stable schema on read.
+    _default_quote = {
+        "quote_source": None, "quote_age_ms": None,
+        "bid": None, "ask": None, "spread_bps": None,
+        "last_price": None, "l1_stale": True,
+    }
     for r in rows:
+        quote = _safe_json(r[10], None)
         out.append({
             "cycle_id": r[0], "ts": r[1], "lane": r[2], "symbol": r[3],
             "last_price": r[4],
@@ -428,8 +449,9 @@ def recent_receipts(limit: int = 50, lane: Optional[str] = None,
             "seats": _safe_json(r[7], {}),
             "angels": _safe_json(r[8], {}),
             "risk": _safe_json(r[9], {}),
-            "broker_result": _safe_json(r[10], None),
-            "error": r[11],
+            "quote": {**_default_quote, **(quote or {})},
+            "broker_result": _safe_json(r[11], None),
+            "error": r[12],
             "source": "trader",
         })
     return out

@@ -7,6 +7,23 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ✅ Receipts carry L1 quote provenance (2026-07-02)
+
+Every trader receipt now stamps the exact L1 quote the brains saw at decision-time:
+```
+receipt.quote = {
+  quote_source:  "webull_mqtt" | "webull" | "kraken" | null
+  quote_age_ms:  <int, ms between L1 tick and decision>
+  bid, ask, spread_bps, last_price
+  l1_stale:      <bool — was reading stale per TRADER_SPREAD_STALE_SEC>
+}
+```
+- **`main.py`**: L1 snapshot is captured BEFORE the OHLC fetch so even fetch-fail receipts record what the trader saw. Overlaid onto the brain-input `data` dict (`data.last_price = L1.last`, `data.l1_mid`, `data.l1_bid/ask/spread_bps/source/age_ms`). Brains stop deciding on 60s-stale OHLC closes.
+- **`audit.py`**: `write_receipt(..., quote=...)` param; default-fills the block on legacy paths so schema stays stable.
+- **`store.py`**: new `quote_json` column via idempotent `ALTER TABLE` migration (safe on already-live prod DBs). Reader default-fills missing quote blocks so old rows still deserialize.
+- **`risk.check` intent** now carries `symbol` so the crypto spread gate matches the actual pair.
+- 47/47 tests green, incl. 2 new: `test_receipt_carries_quote_provenance`, `test_receipt_defaults_quote_block_when_omitted`.
+
 ### ✅ Webull MQTT Streaming — LIVE (2026-07-02)
 
 Fluid-machine equity data source. Tick-by-tick L1 quotes via Webull's MQTT gateway.

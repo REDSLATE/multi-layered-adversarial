@@ -75,6 +75,31 @@ async def run_lane(db, lane: str) -> dict:
     cycle_id = uuid.uuid4().hex
     symbol = config.crypto_pair() if lane == "crypto" else config.equity_ticker()
 
+    # ── L1 quote overlay (2026-07-02) — assembled BEFORE the OHLC
+    # fetch so a fetch-fail receipt still captures the live L1 the
+    # trader saw at that instant. Fields: quote_source, quote_age_ms,
+    # bid, ask, spread_bps, last_price, l1_stale. Cheap dict-lookup
+    # from the in-memory cache — no network I/O.
+    quote_row = trader_spread.latest(symbol) or {}
+    if quote_row:
+        _row_ts_unix = float(quote_row.get("ts_unix") or 0)
+        _now_unix = datetime.now(timezone.utc).timestamp()
+        quote_age_ms = (
+            int(max(0, (_now_unix - _row_ts_unix) * 1000))
+            if _row_ts_unix else None
+        )
+    else:
+        quote_age_ms = None
+    quote_prov = {
+        "quote_source": quote_row.get("source") if quote_row else None,
+        "quote_age_ms": quote_age_ms,
+        "bid": quote_row.get("bid") if quote_row else None,
+        "ask": quote_row.get("ask") if quote_row else None,
+        "spread_bps": quote_row.get("spread_bps") if quote_row else None,
+        "last_price": quote_row.get("last") if quote_row else None,
+        "l1_stale": trader_spread.is_stale(symbol) if quote_row else True,
+    }
+
     # 1. live data
     try:
         if lane == "crypto":
@@ -88,12 +113,32 @@ async def run_lane(db, lane: str) -> dict:
             last_price=None, signals=[], chosen=None,
             seats={}, angels={},
             risk_verdict={}, error=f"fetch_failed:{e}",
+            quote=quote_prov,
         )
         return {"lane": lane, "ok": False, "reason": "fetch_failed"}
     if not data:
         return {"lane": lane, "ok": False, "reason": "no_data"}
 
+    # Merge L1 fields onto the OHLC-derived data so brains see the
+    # live tape, not a 60s-stale close. `quote_row` was captured
+    # above at cycle-start so post-mortem provenance is honest.
+    if quote_row:
+        if quote_row.get("last") is not None:
+            data["last_price"] = quote_row["last"]
+        if quote_row.get("bid") and quote_row.get("ask"):
+            mid = (quote_row["bid"] + quote_row["ask"]) / 2.0
+            data["l1_mid"] = mid
+            if data.get("last_price") is None:
+                data["last_price"] = mid
+        data["l1_bid"] = quote_row.get("bid")
+        data["l1_ask"] = quote_row.get("ask")
+        data["l1_spread_bps"] = quote_row.get("spread_bps")
+        data["l1_source"] = quote_row.get("source")
+        data["l1_age_ms"] = quote_age_ms
     last_price = data.get("last_price")
+    # Keep the receipt's `last_price` in sync with whatever the
+    # brains ultimately saw (L1 mid > L1 last > OHLC close).
+    quote_prov["last_price"] = last_price
 
     # 2. all 4 brains opine
     signals = []
@@ -144,6 +189,7 @@ async def run_lane(db, lane: str) -> dict:
                     else f"executor({executor_brain})_no_signal"
                 ),
             },
+            quote=quote_prov,
         )
         return {"lane": lane, "ok": False, "reason": "no_executor_signal"}
 
@@ -160,6 +206,7 @@ async def run_lane(db, lane: str) -> dict:
                     else f"below_threshold:{chosen['confidence']:.2f}<{threshold:.2f}"
                 ),
             },
+            quote=quote_prov,
         )
         return {"lane": lane, "ok": True, "verdict": "HOLD"}
 
@@ -170,7 +217,7 @@ async def run_lane(db, lane: str) -> dict:
 
     # 5. risk check
     intent_id = f"trader-{cycle_id[:16]}-{lane}"
-    intent = {"intent_id": intent_id, "lane": lane}
+    intent = {"intent_id": intent_id, "lane": lane, "symbol": symbol}
     rv = await risk.check(db, intent, notional_usd=notional)
     risk_verdict_dict = {
         "ok": rv.ok, "reason": rv.reason,
@@ -183,6 +230,7 @@ async def run_lane(db, lane: str) -> dict:
             last_price=last_price, signals=signals, chosen=chosen,
             seats=seats, angels=angels,
             risk_verdict=risk_verdict_dict,
+            quote=quote_prov,
         )
         await audit.write_execution(
             db, intent_id=intent_id, brain=chosen["brain"], lane=lane,
@@ -261,6 +309,7 @@ async def run_lane(db, lane: str) -> dict:
         risk_verdict=risk_verdict_dict,
         broker_result=broker_result if fired_ok else {"error": exc_msg},
         error=exc_msg,
+        quote=quote_prov,
     )
 
     if fired_ok:
