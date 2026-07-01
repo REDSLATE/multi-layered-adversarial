@@ -195,6 +195,29 @@ async def trader_reload_caches(actor: dict = Depends(get_current_user)) -> dict:
     }
 
 
+@router.get("/broker-check")
+async def trader_broker_check(_: dict = Depends(get_current_user)) -> dict:
+    """Live connectivity probe of both brokers. Read-only calls;
+    never creates orders. Resolves credentials from env first,
+    then Mongo (matches the trader's actual runtime lookup).
+
+    Response shape:
+        {"kraken": {connected, cred_source, error?, probe?},
+         "webull": {connected, cred_source, error?, probe?}}
+
+    Safe to run on demand from the operator dashboard.
+    """
+    from routes.trader_broker_check import probe_kraken, probe_webull
+    kraken = await probe_kraken(db)
+    webull = await probe_webull()
+    return {
+        "ok": True,
+        "checked_at": _now_iso(),
+        "kraken": kraken,
+        "webull": webull,
+    }
+
+
 @router.post("/prune")
 async def trader_prune(
     actor: dict = Depends(get_current_user),

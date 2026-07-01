@@ -50,6 +50,8 @@ export default function TraderSeatViewer() {
   const [state, setState] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [brokerCheck, setBrokerCheck] = useState(null);
+  const [brokerBusy, setBrokerBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -97,6 +99,24 @@ export default function TraderSeatViewer() {
       setErr(d);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const runBrokerCheck = async () => {
+    setBrokerBusy(true);
+    try {
+      const res = await api.get("/admin/trader/broker-check");
+      setBrokerCheck(res.data);
+      const k = res.data?.kraken?.connected;
+      const w = res.data?.webull?.connected;
+      if (k && w) toast.success("Both brokers connected");
+      else if (k || w) toast.warning(`Partial: kraken=${k ? "OK" : "FAIL"}, webull=${w ? "OK" : "FAIL"}`);
+      else toast.error("Both brokers failed — see details below");
+    } catch (e) {
+      const d = e?.response?.data?.detail || e.message;
+      toast.error(`Broker check failed: ${d}`);
+    } finally {
+      setBrokerBusy(false);
     }
   };
 
@@ -211,8 +231,16 @@ export default function TraderSeatViewer() {
         ))}
       </div>
 
-      {/* Seed button */}
-      <div className="flex items-center justify-end mt-4">
+      {/* Seed + broker check buttons */}
+      <div className="flex items-center justify-between gap-2 mt-4 flex-wrap">
+        <button
+          onClick={runBrokerCheck}
+          disabled={brokerBusy}
+          data-testid="trader-broker-check"
+          className="px-3 py-1.5 text-[11px] font-mono uppercase tracking-wider border border-rd-border text-rd-text hover:text-rd-accent hover:border-rd-accent disabled:opacity-40"
+        >
+          {brokerBusy ? "Probing…" : "Broker check"}
+        </button>
         <button
           onClick={seedSeats}
           disabled={busy}
@@ -222,6 +250,55 @@ export default function TraderSeatViewer() {
           {busy ? "Working…" : "Reseed canonical pairings"}
         </button>
       </div>
+
+      {/* Broker check result */}
+      {brokerCheck && (
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2" data-testid="broker-check-result">
+          {["kraken", "webull"].map((broker) => {
+            const r = brokerCheck[broker] || {};
+            return (
+              <div
+                key={`broker-${broker}`}
+                className={
+                  "border p-2 " +
+                  (r.connected
+                    ? "border-rd-success bg-rd-success/5"
+                    : "border-rd-danger bg-rd-danger/5")
+                }
+                data-testid={`broker-check-${broker}`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] uppercase tracking-widest font-mono text-rd-text">
+                    {broker}
+                  </span>
+                  <Badge color={r.connected ? "#10B981" : "#EF4444"}>
+                    {r.connected ? "CONNECTED" : "FAILED"}
+                  </Badge>
+                </div>
+                <div className="text-[10px] font-mono text-rd-muted">
+                  source: <span className="text-rd-text">{r.cred_source || "none"}</span>
+                </div>
+                {r.error && (
+                  <div className="text-[10px] font-mono text-rd-danger mt-1 break-all">
+                    {r.error}
+                  </div>
+                )}
+                {r.hint && (
+                  <div className="text-[10px] font-mono text-rd-warn mt-1">
+                    hint: {r.hint}
+                  </div>
+                )}
+                {r.probe && (
+                  <div className="text-[10px] font-mono text-rd-success mt-1">
+                    ✓ {r.probe.endpoint}
+                    {r.probe.asset_count !== undefined && ` · ${r.probe.asset_count} assets`}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </Card>
   );
 }
