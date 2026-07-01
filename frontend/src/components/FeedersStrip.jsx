@@ -4,7 +4,6 @@ import { Card, Badge } from "@/components/ui-bits";
 import { Plug, Pulse, WarningCircle, Power, Copy } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import KrakenConnect from "./KrakenConnect";
-import IBKRConnect from "./IBKRConnect";
 import PublicConnect from "./PublicConnect";
 
 const FEEDER_META = {
@@ -22,25 +21,11 @@ const FEEDER_META = {
     market: "Equities / Futures",
     docsUrl: "/runtime_patch_kit/technicals/README.md",
   },
-  ibkr: {
-    label: "IBKR",
-    short: "IBKR",
-    color: "#FF7B5C",
-    market: "Multi-asset broker",
-    docsUrl: null,
-  },
   public: {
     label: "PUBLIC.COM",
     short: "PUB",
     color: "#00C896",
     market: "Stocks / Options · NO PDT",
-    docsUrl: null,
-  },
-  alpaca_paper: {
-    label: "ALPACA PAPER",
-    short: "ALPCA",
-    color: "#FFD60A",
-    market: "Stocks · Paper Trading",
     docsUrl: null,
   },
   manual: {
@@ -61,22 +46,11 @@ const STATUS_META = {
   unknown:      { label: "UNKNOWN",      color: "#A1A1AA", icon: WarningCircle },
 };
 
-/**
- * Per-feeder connection slots. Kraken Pro gets headline placement
- * because it's the active crypto feeder; ThinkOrSwim and Manual sit
- * alongside. Click a slot to see setup details.
- */
-// IBKR slot is PARKED (2026-02-12). IBKR's retail path requires the
-// Client Portal Gateway running locally on the operator's machine — the
-// cloud-based OAuth path we built first is gated behind their Campus /
-// institutional registration which most retail accounts cannot get. We
-// already have working live connections via Kraken Pro (crypto) and
-// Public.com (stocks/options, no PDT), which cover the position-debate
-// loop. The IBKR backend code + tests are intact in case we come back
-// to this for Phase 2 execution; the slot is just hidden from the UI to
-// avoid the "Connect IBKR" footgun (it asks for a token retail users
-// don't have).
-const SHOW_IBKR_SLOT = false;
+// IBKR + Alpaca slots removed 2026-07-01: their backend routes
+// (/admin/ibkr/*, /admin/alpaca/*) were deleted in Pass 2/3. The
+// sidecar trader only knows Webull (equity) + Kraken (crypto).
+// Public.com remains — its slot is broker-connection metadata,
+// not execution.
 
 export default function FeedersStrip() {
   const [items, setItems] = useState([]);
@@ -86,10 +60,9 @@ export default function FeedersStrip() {
 
   const refresh = useCallback(async () => {
     try {
-      const [feeders, publicSt, alpacaSt] = await Promise.all([
+      const [feeders, publicSt] = await Promise.all([
         api.get("/shared/technical/feeders"),
         api.get("/admin/public/status").catch(() => ({ data: null })),
-        api.get("/admin/alpaca/status").catch(() => ({ data: null })),
       ]);
       const baseItems = feeders.data.items || [];
       // Public.com — broker slot (no PDT restrictions).
@@ -108,28 +81,7 @@ export default function FeedersStrip() {
         tfs: [],
         is_broker: true,
       };
-      // Alpaca Paper — broker slot. Singleton credentials live under
-      // /api/admin/alpaca/* (Fernet-encrypted). Status returns
-      // {connected, account_number, last_equity_snapshot, last_ping_*}.
-      const alpacaData = alpacaSt?.data;
-      const alpacaItem = {
-        key: "alpaca_paper",
-        env_key: "—",
-        configured: Boolean(alpacaData?.connected),
-        status: alpacaData?.connected
-          ? (alpacaData.last_ping_ok ? "live" : "stale")
-          : "unconfigured",
-        last_bar_ts: alpacaData?.last_ping_at || null,
-        symbols: alpacaData?.account_number ? [alpacaData.account_number] : [],
-        symbols_count: alpacaData?.account_number ? 1 : 0,
-        bars_count: 0,
-        tfs: [],
-        is_broker: true,
-      };
-      const broker_items = SHOW_IBKR_SLOT
-        ? [/* re-enable when Gateway sidecar ships */]
-        : [];
-      setItems([...baseItems, ...broker_items, publicItem, alpacaItem]);
+      setItems([...baseItems, publicItem]);
       setEndpoint(feeders.data.endpoint);
       setErr("");
     } catch (e) {
@@ -143,8 +95,8 @@ export default function FeedersStrip() {
     return () => clearInterval(id);
   }, [refresh]);
 
-  // Sort: kraken_pro, thinkorswim, ibkr, public, alpaca_paper, manual.
-  const order = { kraken_pro: 0, thinkorswim: 1, ibkr: 2, public: 3, alpaca_paper: 4, manual: 5 };
+  // Sort: kraken_pro, thinkorswim, public, manual.
+  const order = { kraken_pro: 0, thinkorswim: 1, public: 2, manual: 3 };
   const sorted = [...items].sort((a, b) =>
     (order[a.key] ?? 99) - (order[b.key] ?? 99),
   );
@@ -247,11 +199,6 @@ function FeederSlot({ feeder, isOpen, onToggle, endpoint }) {
           {feeder.key === "kraken_pro" && (
             <div className="pb-2 mb-2 border-b border-rd-border">
               <KrakenConnect />
-            </div>
-          )}
-          {feeder.key === "ibkr" && (
-            <div className="pb-2 mb-2 border-b border-rd-border">
-              <IBKRConnect />
             </div>
           )}
           {feeder.key === "public" && (

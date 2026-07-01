@@ -21,10 +21,8 @@ import RecentIngests from "@/pages/RecentIngests";
 import RuntimeDetail from "@/pages/RuntimeDetail";
 import BrainConsole from "@/pages/BrainConsole";
 import Intents from "@/pages/Intents";
-import TradeFlow from "@/pages/TradeFlow";  // 2026-06-26 single-purpose "is this lane trading?"
 import Witnesses from "@/pages/Witnesses";  // 2026-02-23 witness-council read-only panel
 import SeatContext from "@/pages/SeatContext";  // 2026-02-23 cleaned witness context for the Seat
-import ParadoxV2Page from "@/pages/ParadoxV2";
 import SetupPage from "@/pages/Setup";
 import Hypothesis from "@/pages/Hypothesis";
 import McShelly from "@/pages/McShelly";
@@ -141,10 +139,8 @@ function App() {
             <Route path="runtime/:runtime" element={<RuntimeDetail />} />
             <Route path="brain/:brain" element={<BrainConsole />} />
             <Route path="intents" element={<Intents />} />
-            <Route path="trade-flow" element={<TradeFlow />} />
             <Route path="witnesses" element={<Witnesses />} />
             <Route path="seat-context" element={<SeatContext />} />
-            <Route path="paradox" element={<ParadoxV2Page />} />
             <Route path="setup" element={<SetupPage />} />
             <Route path="hypothesis" element={<Hypothesis />} />
             <Route path="mc-shelly" element={<McShelly />} />

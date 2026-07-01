@@ -79,25 +79,25 @@ export default function BrainOperatorPage() {
   const [honesty, setHonesty] = useState(null);
   const [sovereign, setSovereign] = useState(null);
   const [roster, setRoster] = useState(null);
-  const [laneReadiness, setLaneReadiness] = useState({ equity: null, crypto: null });
   const [testResult, setTestResult] = useState(null);
   const [testSubmitting, setTestSubmitting] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!profile) return;
-    const [d, h, s, r, eqLane, crLane] = await Promise.all([
+    // 2026-07-01: /admin/lane-readiness/{lane} was deleted in Pass 2/3.
+    // The per-lane activity card was replaced by the Sidecar Trader's
+    // Trade Tape on Overview, which shows the same signals live from
+    // local SQLite.
+    const [d, h, s, r] = await Promise.all([
       api.get("/admin/diagnostics"),
       api.get(`/admin/intents/honesty?stack=${brain}&hours=24`),
       api.get(`/admin/sovereign/state/${brain}`).catch(() => ({ data: null })),
       api.get("/admin/roster").catch(() => ({ data: null })),
-      api.get("/admin/lane-readiness/equity?hours=24").catch(() => ({ data: null })),
-      api.get("/admin/lane-readiness/crypto?hours=24").catch(() => ({ data: null })),
     ]);
     setDiag(d.data);
     setHonesty(h.data);
     setSovereign(s.data);
     setRoster(r.data);
-    setLaneReadiness({ equity: eqLane.data, crypto: crLane.data });
     try {
       const rt = await api.get(`/runtime/${brain}/status`);
       setIntents(rt.data);
@@ -252,7 +252,7 @@ export default function BrainOperatorPage() {
             {profile.test_intent ? (
               <>
                 <p className="text-xs text-zinc-400 mb-3">
-                  Posts a synthetic intent via the admin proxy. If MC's gate chain
+                  Posts a synthetic intent via the admin proxy. If MC&apos;s gate chain
                   accepts it, the wiring is alive end-to-end.
                 </p>
                 <button
@@ -285,59 +285,10 @@ export default function BrainOperatorPage() {
         </div>
       )}
 
-      {/* Per-lane activity (24h) — both equity and crypto for this brain */}
-      {(laneReadiness.equity || laneReadiness.crypto) && (
-        <Card title="Per-lane activity (24h)" className="mt-6"
-              data-testid={`brain-card-lane-activity-${brain}`}>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {["equity", "crypto"].map((lane) => {
-              const lr = laneReadiness[lane];
-              const brainCadence = lr?.emission_cadence?.by_brain?.[brain];
-              const states = brainCadence?.states || {};
-              const ready = lr?.ready_to_trade;
-              const checks = lr?.checks || {};
-              const firstBlocker = Object.entries(checks).find(([, c]) => !c?.ok);
-              return (
-                <div
-                  key={lane}
-                  data-testid={`brain-lane-${lane}-${brain}`}
-                  className="rounded border border-zinc-800 bg-zinc-900/40 p-3"
-                >
-                  <div className="flex items-baseline justify-between">
-                    <span className="font-mono text-xs uppercase tracking-wider text-zinc-400">
-                      {lane}
-                    </span>
-                    <Badge color={ready ? "#10B981" : "#DC2626"}>
-                      {ready ? "READY" : "BLOCKED"}
-                    </Badge>
-                  </div>
-                  <dl className="mt-3 space-y-1 text-xs">
-                    <Row k="Emissions (24h)" v={brainCadence?.total ?? 0} />
-                    <Row k="dry_run_passed" v={states.dry_run_passed ?? 0} />
-                    <Row k="dry_run_blocked" v={states.dry_run_blocked ?? 0} />
-                    <Row k="pending" v={states.pending ?? 0} />
-                    <Row k="Executed" v={lr?.emission_cadence?.executed ?? 0} />
-                    <Row k="Last emit" v={brainCadence?.latest?.slice(11, 19) || "—"} />
-                  </dl>
-                  {!ready && firstBlocker && (
-                    <p className="mt-3 rounded border border-rose-700/50 bg-rose-950/30 p-2 text-xs text-rose-300">
-                      <span className="font-mono uppercase text-rose-400">
-                        {firstBlocker[0]}
-                      </span>{" "}
-                      — {firstBlocker[1].detail}
-                      {firstBlocker[1].fix && (
-                        <div className="mt-1 text-amber-300">
-                          Fix: <code>{firstBlocker[1].fix}</code>
-                        </div>
-                      )}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </Card>
-      )}
+      {/* Per-lane activity block removed 2026-07-01 — /admin/lane-readiness
+          was purged in the Pass 2/3 backend simplification. The Sidecar
+          Trader's Trade Tape (on Overview) surfaces live per-lane
+          activity from the local SQLite. */}
 
       {/* Recent intents with honesty telemetry */}
       {honesty?.items && honesty.items.length > 0 && (

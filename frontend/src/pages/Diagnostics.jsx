@@ -2,9 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getRuntimeMeta, fmtTime, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
 import VRLScorecardsPanel from "@/components/VRLScorecardsPanel";
-import LiveTradeDiagnose from "@/components/LiveTradeDiagnose";
-// RuntimeTokensPanel + RuntimeBundlesPanel moved to /admin/setup (2026-02-19)
-//   — operator-rare actions; no longer mounted on Diagnostics.
 import SidecarCheckinPanel from "@/components/SidecarCheckinPanel";
 import BrainHealthTile from "@/components/BrainHealthTile";
 import LaneExecutionTogglesPanel from "@/components/LaneExecutionTogglesPanel";
@@ -14,8 +11,6 @@ import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import BrainDeepDiagnoseCard from "@/components/BrainDeepDiagnoseCard";
 import BrainMetricsTile from "@/components/BrainMetricsTile";
 import AdvisorPerformanceTile from "@/components/AdvisorPerformanceTile";
-import ParadoxV3RolloutTile from "@/components/ParadoxV3RolloutTile";
-import PerBrainExecutionStyleProfileTile from "@/components/PerBrainExecutionStyleProfileTile";
 import SeatStageDropsTile from "@/components/SeatStageDropsTile";
 import ExecutionLifecycleFunnelTile from "@/components/ExecutionLifecycleFunnelTile";  // 2026-02-23 P3
 import NativeBrainRuntimeTile from "@/components/NativeBrainRuntimeTile";  // 2026-02-23 in-process brain migration
@@ -458,8 +453,6 @@ export default function Diagnostics() {
 
       <AdvisorPerformanceTile />
 
-      <ParadoxV3RolloutTile />
-
       <SeatStageDropsTile />
 
       <ExecutionLifecycleFunnelTile />
@@ -467,8 +460,6 @@ export default function Diagnostics() {
       <NativeBrainRuntimeTile />
 
       <BrainInputHealthTile />
-
-      <PerBrainExecutionStyleProfileTile />
 
       {/* ImposterScanCard removed 2026-02-21 — see import-block note. */}
 
@@ -614,11 +605,10 @@ export default function Diagnostics() {
             </PanelErrorBoundary>
           </LazyDetails>
 
-          <div className="mt-6">
-            <PanelErrorBoundary panelName="LiveTradeDiagnose">
-              <LiveTradeDiagnose />
-            </PanelErrorBoundary>
-          </div>
+          {/* LiveTradeDiagnose removed 2026-07-01 — its `/admin/execution/diagnose`
+              endpoint was deleted in the Pass 2/3 backend simplification.
+              The Sidecar Trader's TradeTape (on Overview) now surfaces
+              the actual lane-blocking reason per cycle. */}
 
           {/* Promotion artifact — shadow-proposal vs alpha-fill evidence.
               Operators read this to decide whether a challenger brain

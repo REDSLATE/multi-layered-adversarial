@@ -10,15 +10,15 @@ import MasterTradingSwitch from "@/components/MasterTradingSwitch";
 import WebullEntitlementsCard from "@/components/WebullEntitlementsCard";
 import WebullOtocoTestPanel from "@/components/WebullOtocoTestPanel";
 import WebullOtocoLivePanel from "@/components/WebullOtocoLivePanel";
-import LegacyWrapperTogglePanel from "@/components/LegacyWrapperTogglePanel";
 import TraderPostMortem from "@/components/TraderPostMortem";
 import InputProvenanceBadge from "@/components/InputProvenanceBadge";
 import ExecutionScoreBreakdown from "@/components/ExecutionScoreBreakdown";
-import AutoSubmitPolicyPanel from "@/components/AutoSubmitPolicyPanel";
 import TunablesStrip from "@/components/TunablesStrip";
-// ParadoxV2DashboardPanel + CouncilChamberTile moved to /admin/paradox (2026-02-19)
-//   — Intents page was getting cluttered; doctrine-specific surfaces now live
-//     on their own dedicated page accessible via the sidebar "Paradox V2" link.
+// 2026-07-01 (Pass 2/3 cleanup): removed imports for panels whose
+// backend endpoints were deleted — LegacyWrapperTogglePanel
+// (/admin/wrappers), AutoSubmitPolicyPanel (/admin/auto-submit/policy),
+// OperatorInjectIntent + SubmitOrderModal (/execution/submit).
+// The Sidecar Trader owns execution now; MC is eyes-only on this page.
 import ParabolicPhaseStrip from "@/components/ParabolicPhaseStrip";
 import BrokerSelectionMenu from "@/components/BrokerSelectionMenu";
 import DoctrineStrip from "@/components/DoctrineStrip";
@@ -27,12 +27,10 @@ import DoctrineHealthPanel from "@/components/DoctrineHealthPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import PipelineBlockerChip from "@/components/PipelineBlockerChip";
 import SeatRegistryDriftBanner from "@/components/SeatRegistryDriftBanner";
-import OperatorInjectIntent from "@/components/OperatorInjectIntent";
-import SubmitOrderModal from "@/components/SubmitOrderModal";
 import { toast } from "sonner";
 import {
   Lightning, ArrowsClockwise, Funnel, Pulse,
-  CheckCircle, XCircle, Hourglass, Eye, CaretDown, CaretUp, Rocket,
+  CheckCircle, XCircle, Hourglass, CaretDown, CaretUp,
   CurrencyBtc, Buildings,
 } from "@phosphor-icons/react";
 
@@ -148,13 +146,12 @@ function StatTile({ label, value, color, testid }) {  return (
   );
 }
 
-function IntentRow({ intent, expanded, onToggle, onDryRun, onSubmit, dryRunResult, submitResult }) {
+function IntentRow({ intent, expanded, onToggle, onDryRun, dryRunResult }) {
   const meta = BRAIN_META[intent.stack] || { label: intent.stack, color: "#A1A1AA" };
   const GateIcon = GATE_ICON[intent.gate_state] || Hourglass;
   const gateColor = GATE_COLOR[intent.gate_state] || "#A1A1AA";
   const actionColor = ACTION_COLOR[intent.action] || "#A1A1AA";
   const isExecuted = intent.executed === true;
-  const submitEligible = !isExecuted && (intent.gate_state === "dry_run_passed" || intent.gate_state === "passed");
 
   return (
     <>
@@ -218,26 +215,16 @@ function IntentRow({ intent, expanded, onToggle, onDryRun, onSubmit, dryRunResul
               <Lightning size={10} weight="bold" className="inline mr-1" />
               dry-run
             </button>
-            {isExecuted ? (
+            {isExecuted && (
               <span
                 className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border border-rd-success text-rd-success"
                 data-testid={`intent-executed-${intent.intent_id}`}
-                title="Already executed"
+                title="Already executed by the trader"
               >
                 <CheckCircle size={10} weight="bold" className="inline mr-1" />
                 executed
               </span>
-            ) : submitEligible ? (
-              <button
-                onClick={(e) => { e.stopPropagation(); onSubmit(); }}
-                data-testid={`intent-submit-${intent.intent_id}`}
-                className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border border-rd-accent text-rd-accent hover:bg-rd-accent hover:text-black"
-                title="Route this intent to the broker"
-              >
-                <Rocket size={10} weight="bold" className="inline mr-1" />
-                submit
-              </button>
-            ) : null}
+            )}
             {expanded ? (
               <CaretUp size={12} weight="bold" className="text-rd-dim" />
             ) : (
@@ -312,89 +299,10 @@ function IntentRow({ intent, expanded, onToggle, onDryRun, onSubmit, dryRunResul
                     </div>
                   </>
                 )}
-                {submitResult && (
-                  <>
-                    <div className="label-eyebrow mt-4 mb-2">
-                      Submit ·{" "}
-                      <span style={{ color: submitResult.error ? "#DC2626" : "#10B981" }}>
-                        {submitResult.error ? "BLOCKED / ERROR" : "EXECUTED"}
-                      </span>
-                    </div>
-                    {submitResult.error ? (
-                      (() => {
-                        const err = submitResult.error;
-                        const isObj = err && typeof err === "object";
-                        const blockedBy = isObj ? err.blocked_by : null;
-                        const reason = isObj ? err.reason : null;
-                        const gates = isObj ? err.gates : null;
-                        const failingGates = Array.isArray(gates)
-                          ? gates.filter((g) => g && g.passed === false)
-                          : [];
-                        return (
-                          <div
-                            className="border border-rd-danger bg-rd-danger/5 px-3 py-2 text-[11px] font-mono space-y-2"
-                            data-testid={`submit-error-${intent.intent_id}`}
-                          >
-                            <div className="text-rd-danger">
-                              {blockedBy ? (
-                                <>
-                                  <span className="font-bold">blocked_by</span>{" "}
-                                  <span className="text-rd-text">{blockedBy}</span>
-                                  {submitResult.status ? (
-                                    <span className="text-rd-dim ml-2">· HTTP {submitResult.status}</span>
-                                  ) : null}
-                                </>
-                              ) : (
-                                <span>{typeof err === "string" ? err : JSON.stringify(err)}</span>
-                              )}
-                            </div>
-                            {reason && (
-                              <div className="text-rd-text leading-relaxed">{reason}</div>
-                            )}
-                            {failingGates.length > 0 && (
-                              <div className="border border-rd-border bg-rd-bg2 divide-y divide-rd-border">
-                                {failingGates.map((g) => (
-                                  <div
-                                    key={g.name}
-                                    className="px-2 py-1.5 flex items-start gap-2"
-                                    data-testid={`submit-failing-gate-${g.name}`}
-                                  >
-                                    <XCircle size={12} weight="bold" className="text-rd-danger mt-0.5 shrink-0" />
-                                    <div className="flex-1 min-w-0">
-                                      <div className="text-rd-text">{g.name}</div>
-                                      <div className="text-[10px] text-rd-dim leading-relaxed mt-0.5">{g.reason}</div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()
-                    ) : (
-                      <div className="border border-rd-success bg-rd-bg2 p-3 text-[11px] font-mono space-y-1" data-testid={`submit-receipt-${intent.intent_id}`}>
-                        <div><span className="text-rd-dim">broker_order_id</span> <span className="text-rd-text">{submitResult.receipt?.broker_order_id}</span></div>
-                        <div><span className="text-rd-dim">side · notional</span> <span className="text-rd-text">{submitResult.receipt?.side} · ${Number(submitResult.receipt?.notional_usd).toFixed(2)}</span></div>
-                        <div><span className="text-rd-dim">status</span> <span className="text-rd-text">{submitResult.order?.status}</span></div>
-                        <div><span className="text-rd-dim">executed_at</span> <span className="text-rd-text">{submitResult.receipt?.executed_at}</span></div>
-                        {submitResult.receipt?.action_overridden && (
-                          <div className="text-rd-accent">
-                            <span className="text-rd-dim">action_override</span>{" "}
-                            <span>{submitResult.receipt?.original_action} → {submitResult.receipt?.action}</span>
-                          </div>
-                        )}
-                        {submitResult.receipt?.operator_override && (
-                          <div className="text-rd-accent">
-                            <span className="text-rd-dim">operator_override</span>{" "}
-                            <span>
-                              {(submitResult.receipt?.overridden_gate_names || []).length} gates bypassed · {submitResult.receipt?.override_reason}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
+                {/* Submit result block removed 2026-07-01 — MC no longer
+                    routes intents to the broker. The Sidecar Trader
+                    (background asyncio task) owns all execution and
+                    writes to `executions.sqlite` + Mongo mirror. */}
               </div>
               <div className="text-[11px] font-mono space-y-2">
                 <div className="label-eyebrow mb-2">Stamped by MC</div>
@@ -445,36 +353,10 @@ export default function Intents() {
   const [queueNote, setQueueNote] = useState("");
   const [expanded, setExpanded] = useState(null);
   const [dryRunByIntent, setDryRunByIntent] = useState({});
-  const [submitByIntent, setSubmitByIntent] = useState({});
   const [autoRefresh, setAutoRefresh] = useState(true);
-  // Submit modal — replaces the legacy prompt+confirm pair. Carries
-  // notional, BUY/SELL toggle, and operator override flag/reason.
-  const [submitModal, setSubmitModal] = useState({ open: false, intent: null });
-  // Single source of truth for caps — fetched on mount, refreshed on
-  // submit so any cap tuning the operator just made is reflected.
-  // Shape: { per_order_usd, per_day_usd, open_notional_usd, per_order_by_lane_usd: { <lane>: cap } }
-  const [caps, setCaps] = useState(null);
-
-  const loadCaps = useCallback(async () => {
-    try {
-      const res = await api.get("/config/exposure-caps");
-      setCaps(res.data || null);
-    } catch (e) {
-      // Caps endpoint unavailable — submit will fall back to a safe
-      // hardcoded minimum and warn.
-      console.warn("exposure-caps fetch failed:", e?.message);
-    }
-  }, []);
-
-  useEffect(() => { loadCaps(); }, [loadCaps]);
-
-  // Resolve effective per-order cap for an intent's lane.
-  const capForLane = useCallback((lane) => {
-    if (!caps) return null;
-    const byLane = caps.per_order_by_lane_usd || {};
-    if (lane && byLane[lane] != null) return Number(byLane[lane]);
-    return Number(caps.per_order_usd);
-  }, [caps]);
+  // 2026-07-01: submit/caps/modal state removed. MC is eyes-only;
+  // the Sidecar Trader owns execution. Dry-run stays because it's a
+  // pure gate-chain probe that never touches the broker.
 
   const load = useCallback(async () => {
     try {
@@ -554,144 +436,8 @@ export default function Intents() {
     }
   };
 
-  const runSubmit = async (intentId, lane) => {
-    // Always re-fetch caps right before opening the modal so the
-    // operator sees the current truth (the cap may have been retuned
-    // since page-load).
-    await loadCaps();
-    const cap = capForLane(lane);
-    if (cap == null) {
-      toast.error("Cap config unavailable — refresh the page and retry.");
-      return;
-    }
-    const intent = (intents || []).find((it) => it.intent_id === intentId);
-    if (!intent) {
-      toast.error("Intent vanished from the table — reload and retry.");
-      return;
-    }
-    setSubmitModal({ open: true, intent });
-  };
-
-  const performSubmit = async (payload) => {
-    const intentId = submitModal.intent?.intent_id;
-    if (!intentId) return;
-    setSubmitByIntent((m) => ({ ...m, [intentId]: { loading: true } }));
-    setExpanded(intentId);
-    setSubmitModal({ open: false, intent: null });
-    try {
-      const body = {
-        intent_id: intentId,
-        order_notional_usd: payload.order_notional_usd,
-        confirm: "execute",
-        // 2026-02-23: brain_name is REQUIRED on every submit body.
-        // The backend re-validates it against shared_intents.stack
-        // so a mismatch (wrong-row click, stale state) hard-fails
-        // BEFORE the broker call. Use the intent's emitting brain.
-        brain_name: submitModal.intent?.stack || "",
-      };
-      if (payload.operator_override) {
-        body.operator_override = true;
-        body.override_reason = payload.override_reason;
-      }
-      if (payload.action_override) {
-        body.action_override = payload.action_override;
-      }
-      // 2026-02-23 — if the dry-run flagged this intent as requiring
-      // operator override (non-seat-holder author), route through
-      // the dedicated /execution/submit-override endpoint so the
-      // override is explicit + audited under its own request kind.
-      const requiresOverride = !!(
-        submitModal.intent?.requires_operator_override
-        || submitModal.intent?.seat_authority === "requires_override"
-      );
-      const submitPath = (requiresOverride && payload.operator_override)
-        ? "/execution/submit-override"
-        : "/execution/submit";
-      const res = await api.post(submitPath, body);
-      setSubmitByIntent((m) => ({ ...m, [intentId]: res.data }));
-      const sideLabel = payload.action_override || submitModal.intent?.action || "";
-      const overrideTag = payload.operator_override ? " · OVERRIDE" : "";
-      toast.success(
-        `Order routed · ${sideLabel} $${payload.order_notional_usd.toFixed(2)}${overrideTag} · ${res.data?.order?.status || "submitted"}`,
-      );
-      load();
-    } catch (e) {
-      const status = e?.response?.status;
-      let detail = e?.response?.data?.detail;
-      // ── Prod proxy fallback (2026-02-19, P1) ──
-      // Some proxies (Cloudflare, ingress configs that strip 4xx
-      // bodies for security) silently drop the response body on 403,
-      // leaving `detail` undefined and the operator staring at a bare
-      // "HTTP 403". MC persists every submit block to
-      // `shared_gate_results`; fetch that audit row to recover the
-      // structured `blocked_by`/`reason`/`gates` payload so the UI
-      // can render the same detail it would have shown inline.
-      let auditFetchFailed = false;
-      let auditFetchStatus = null;
-      if (!detail || typeof detail === "string") {
-        try {
-          const audit = await api.get(
-            `/execution/last-submit-block?intent_id=${encodeURIComponent(intentId)}`,
-          );
-          if (audit?.data && audit.data.blocked_by) {
-            detail = {
-              blocked_by: audit.data.blocked_by,
-              reason: audit.data.reason,
-              gates: audit.data.gates,
-              kind: audit.data.kind,
-              _from_audit: true,
-            };
-          } else if (audit?.data) {
-            // 2026-02-19 (rev2): audit row exists but is missing
-            // `blocked_by` — surface what we DO have rather than
-            // leaving the red bar blank.
-            detail = {
-              blocked_by: audit.data.kind || "unknown",
-              reason:
-                audit.data.reason ||
-                "audit row found but no reason/gate detail was recorded; check backend logs around " +
-                  (audit.data.ts || "submit time"),
-              gates: audit.data.gates || [],
-              _from_audit: true,
-              _audit_partial: true,
-            };
-          }
-        } catch (auditErr) {
-          // 2026-02-19 (rev2): if the fallback ALSO fails, capture
-          // the status so the UI can tell the operator the audit
-          // pipeline itself is broken (vs. a real 403 with no body).
-          auditFetchFailed = true;
-          auditFetchStatus = auditErr?.response?.status || null;
-        }
-      }
-      // Guarantee the red bar has SOMETHING to render — never blank.
-      if (!detail) {
-        detail = {
-          blocked_by: `http_${status || "unknown"}`,
-          reason: auditFetchFailed
-            ? `Submit returned HTTP ${status || "?"} with no body, and the audit ` +
-              `fallback also failed (HTTP ${auditFetchStatus || "?"}). The block ` +
-              `reason was not persisted server-side — check backend logs for ` +
-              `intent ${intentId.slice(0, 8)}.`
-            : `Submit returned HTTP ${status || "?"} with no body and no audit ` +
-              `row was found. The request likely never reached the gate chain ` +
-              `(network / proxy / auth). Check backend logs for intent ` +
-              `${intentId.slice(0, 8)}.`,
-          gates: [],
-          _from_audit: false,
-          _audit_missing: true,
-        };
-      }
-      setSubmitByIntent((m) => ({
-        ...m,
-        [intentId]: { error: detail, status },
-      }));
-      const shortReason = typeof detail === "string"
-        ? detail
-        : (detail?.blocked_by ? `${detail.blocked_by}: ${detail.reason}` : (detail?.reason || `HTTP ${status || "?"}`));
-      toast.error(shortReason);
-    }
-  };
+  // 2026-07-01: runSubmit/performSubmit removed. Sidecar trader owns
+  // execution — no manual submit button on this page anymore.
 
   return (
     <div className="reveal" data-testid="intents-page">
@@ -701,7 +447,6 @@ export default function Intents() {
         sub="Intent envelopes emitted by the four brains. Every intent is a candidate; MC's gate chain decides if it lives. Schema pins may_execute=false and requires_gate_pass=true — brains cannot route an order through this surface."
         right={
           <div className="flex items-center gap-2">
-            <OperatorInjectIntent onSubmitted={load} />
             <button
               onClick={() => setAutoRefresh((v) => !v)}
               data-testid="intents-autorefresh"
@@ -749,18 +494,10 @@ export default function Intents() {
         </PanelErrorBoundary>
       </div>
 
-      {/* ─── Auto-Submit Policy Toggle (2026-02-19, Phase 1 throughput unlock) ───
-          The Post-Mortem above told us 100% of intents drop because
-          no human is clicking SUBMIT. This panel is the unlock —
-          a single toggle that lets the system auto-perform the
-          SUBMIT click on Tier 1 (conservative equity longs) while
-          every gate, every audit row, every receipt continues to
-          fire as before. */}
-      <div className="mb-4" data-testid="intents-auto-submit-policy-mount">
-        <PanelErrorBoundary label="Auto-Submit Policy">
-          <AutoSubmitPolicyPanel />
-        </PanelErrorBoundary>
-      </div>
+      {/* ─── Auto-Submit Policy panel removed 2026-07-01 — its backend
+          endpoint /admin/auto-submit/policy was deleted in Pass 2/3.
+          Auto-execution is now the Sidecar Trader's responsibility;
+          it fires when TRADER_ENABLED=true, no manual policy toggle. */}
 
       {/* ─── Tunables what-if dial (2026-02-19) ───
           Live read-only simulator that answers "if I lowered
@@ -844,14 +581,10 @@ export default function Intents() {
         </PanelErrorBoundary>
       </div>
 
-      {/* Legacy wrapper A/B switch — per-brain toggle so the operator
-          can confirm whether the penalty-stacking wrappers are
-          compressing size_bias and causing 403/502 cascades. */}
-      <div className="mt-3">
-        <PanelErrorBoundary panelName="Legacy Wrapper Toggle" testid="panel-error-wrapper-toggle">
-          <LegacyWrapperTogglePanel />
-        </PanelErrorBoundary>
-      </div>
+      {/* Legacy wrapper A/B toggle removed 2026-07-01 — the
+          /admin/wrappers endpoint was deleted in Pass 2/3 (the whole
+          legacy-wrapper concept is gone; the sidecar trader talks
+          directly to Webull). */}
 
       <SectionDivider
         title="Crypto Lane"
@@ -868,29 +601,10 @@ export default function Intents() {
         <ParabolicPhaseStrip />
       </div>
 
-      {/* Live exposure caps — fetched from /api/config/exposure-caps so
-          UI never drifts from the doctrine surface. */}
-      {caps && (
-        <div
-          className="mb-4 border border-rd-border bg-rd-bg px-3 py-2 flex flex-wrap items-center gap-x-4 gap-y-1"
-          data-testid="exposure-caps-strip"
-        >
-          <span className="text-[10px] uppercase tracking-widest text-rd-dim">Live caps</span>
-          <span className="font-mono text-[11px] text-rd-text">
-            EQUITY <span className="text-rd-dim">per-order</span>{" "}
-            <span className="text-rd-accent">${Number(caps.per_order_usd).toLocaleString()}</span>
-          </span>
-          {Object.entries(caps.per_order_by_lane_usd || {}).map(([lane, cap]) => (
-            <span key={lane} className="font-mono text-[11px] text-rd-text">
-              {lane.toUpperCase()} <span className="text-rd-dim">per-order</span>{" "}
-              <span className="text-rd-accent">${Number(cap).toLocaleString()}</span>
-            </span>
-          ))}
-          <span className="font-mono text-[10px] text-rd-dim ml-auto">
-            day ${Number(caps.per_day_usd).toLocaleString()} · open ${Number(caps.open_notional_usd).toLocaleString()}
-          </span>
-        </div>
-      )}
+      {/* Live exposure caps strip removed 2026-07-01 — /config/exposure-caps
+          was deleted in Pass 2/3. The Sidecar Trader's caps
+          (TRADER_PER_ORDER_USD_CAP + TRADER_DAILY_USD_CAP) show on
+          the Overview → Trade Tape tile instead. */}
 
       {/* Stats */}
       {stats && (
@@ -1034,9 +748,7 @@ export default function Intents() {
                     expanded={expanded === it.intent_id}
                     onToggle={() => setExpanded((e) => (e === it.intent_id ? null : it.intent_id))}
                     onDryRun={() => runDryRun(it.intent_id)}
-                    onSubmit={() => runSubmit(it.intent_id, it.lane)}
                     dryRunResult={dryRunByIntent[it.intent_id]}
-                    submitResult={submitByIntent[it.intent_id]}
                   />
                 ))}
               </tbody>
@@ -1045,18 +757,7 @@ export default function Intents() {
         )}
       </Card>
 
-      {/* Submit confirmation modal — replaces the legacy
-          window.prompt/confirm pair. Carries notional, BUY/SELL
-          toggle, and operator override flag/reason. */}
-      <SubmitOrderModal
-        open={submitModal.open}
-        intent={submitModal.intent}
-        capUsd={
-          submitModal.intent ? capForLane(submitModal.intent.lane) : null
-        }
-        onConfirm={performSubmit}
-        onClose={() => setSubmitModal({ open: false, intent: null })}
-      />
+      {/* SubmitOrderModal removed 2026-07-01 — no manual submit path. */}
     </div>
   );
 }
