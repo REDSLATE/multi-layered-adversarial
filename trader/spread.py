@@ -1,29 +1,35 @@
-"""Bid/ask spread poller — Kraken (crypto) + Webull (equity).
+"""Bid/ask spread poller — Kraken (crypto) + Webull OpenAPI (equity).
 
 Doctrine pin (2026-07-02):
-    Pull public quote endpoints on bounded loops. Compute bid/ask
-    spread in basis points. Cache newest reading per symbol in
-    memory for the risk gate; persist a rolling window to the local
-    trader store (JSONL + SQLite) for the operator dashboard.
+    Pull L1 quote endpoints on bounded loops. Compute bid/ask spread
+    in basis points. Cache newest reading per symbol in memory for
+    the risk gate; persist a rolling window to the local trader
+    store (JSONL + SQLite) for the operator dashboard.
 
-    NEVER touches Mongo. NEVER submits an order. Public endpoints
-    only — Kraken /public/Ticker for crypto, Webull's own public
-    quote gateway (`quotes-gw.webullbroker.com`) for equity. The
-    Webull gateway is the same one the Webull website itself hits,
-    unauthenticated, and returns bid/ask directly — no OpenAPI
-    credentials required. Yahoo's /v7/finance/quote was rejected
-    (2026-07-02) after operator flagged persistent 401/429/empty
-    responses in preview and prod.
+    NEVER touches Mongo. NEVER submits an order.
+
+    Crypto: Kraken /public/Ticker (unauthenticated).
+    Equity: Webull OpenAPI /openapi/market-data/stock/snapshot.
+            Requires the L1 market-data subscription active on the
+            operator's OpenAPI plan (separate from any in-app sub).
+            Auth via `X-Request-App-Key` + `X-Request-App-Secret`,
+            same env vars the trade adapter already uses.
 
 Two independent pollers run side by side (one per lane) so a Webull
-gateway hiccup can't stall the Kraken poller and vice versa. Both
-write into a single `spread_ticks` SQLite table with a `source`
-column (`kraken` / `webull`) and a shared in-memory cache keyed by
-SYMBOL.
+hiccup can't stall the Kraken poller and vice versa. Both write into
+a single `spread_ticks` SQLite table with a `source` column
+(`kraken` / `webull`) and a shared in-memory cache keyed by SYMBOL.
 
 Observability-first. Promote to hard risk gates with:
     TRADER_SPREAD_GATE_ENABLED=true          (crypto)
     TRADER_EQUITY_SPREAD_GATE_ENABLED=true   (equity)
+
+Same-broker doctrine (2026-07-02, operator directive):
+    Executing on Webull → we source Level 1 quotes from Webull too.
+    Eliminates cross-vendor quote drift between the data the brains
+    saw and the venue the order lands on. The MQTT stream variant
+    (`quotes-stream.webullsolutions.com`) is a natural upgrade path
+    once we outgrow the snapshot polling cadence.
 """
 from __future__ import annotations
 
@@ -40,34 +46,15 @@ from trader import config, store
 logger = logging.getLogger("trader.spread")
 
 KRAKEN_TICKER = "https://api.kraken.com/0/public/Ticker"
-# Webull's own public quote gateway — unauthenticated, same endpoint
-# the Webull website hits. Two-step: symbol → tickerId, then quote.
-WEBULL_SEARCH = "https://quotes-gw.webullbroker.com/api/search/pc/tickers"
-WEBULL_QUOTE = "https://quotes-gw.webullbroker.com/api/quote/tickerRealTimes/v5"
-
-# The gateway is picky about headers — a bare request returns 417
-# ("Expectation failed"). These headers mirror what the Webull web
-# app sends and unblock the endpoint from server side (verified
-# 2026-07-02 in preview).
-WEBULL_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36"
-    ),
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Origin": "https://www.webull.com",
-    "Referer": "https://www.webull.com/",
-    "App": "global",
-    "App-Group": "broker",
-    "Device-Type": "Web",
-    "Locale": "eng",
-    "OS": "web",
-    "Platform": "web",
-}
-
-# Cache resolved tickerIds so we don't re-search every poll cycle.
-_webull_id_cache: dict[str, int] = {}
+# Webull OpenAPI market-data snapshot — the ONLY reliable L1 source
+# for equities. Requires the L1 subscription to be active on the
+# operator's OpenAPI plan (separate from the in-app subscription).
+# Auth via `X-Request-App-Key` + `X-Request-App-Secret`.
+# Base URL is env-overridable so we can point at UAT
+# (`us-openapi-alb.uat.webullbroker.com`) or a regional prod endpoint
+# without a code change.
+WEBULL_OPENAPI_BASE_DEFAULT = "https://api.webull.com"
+WEBULL_SNAPSHOT_PATH = "/openapi/market-data/stock/snapshot"
 
 # In-memory cache: {symbol.upper() -> {bid, ask, last, spread_bps,
 # source, lane, ts_unix}}. The risk gate reads from here — never
@@ -146,74 +133,48 @@ async def fetch_kraken(client: httpx.AsyncClient, pair: str) -> Optional[dict]:
     return row
 
 
-# ─── Webull public quote gateway (equity) ─────────────────────────
+# ─── Webull OpenAPI market-data snapshot (equity) ─────────────────
 
-async def _resolve_webull_id(client: httpx.AsyncClient,
-                             ticker: str) -> Optional[int]:
-    """Symbol → Webull internal tickerId. Cached per-process because
-    tickerIds don't change for a given symbol."""
-    t = ticker.upper()
-    cached = _webull_id_cache.get(t)
-    if cached:
-        return cached
+def _webull_openapi_base() -> str:
+    import os
+    return os.environ.get("WEBULL_OPENAPI_BASE") or WEBULL_OPENAPI_BASE_DEFAULT
+
+
+def _webull_openapi_headers() -> Optional[dict]:
+    """Return the OpenAPI auth headers, or None if creds are missing.
+    Uses the SAME env vars the trade adapter uses so the operator
+    only manages one credential pair."""
+    import os
+    key = os.environ.get("WEBULL_APP_KEY")
+    secret = os.environ.get("WEBULL_APP_SECRET")
+    if not (key and secret):
+        return None
+    return {
+        "X-Request-App-Key": key,
+        "X-Request-App-Secret": secret,
+        "Accept": "application/json",
+    }
+
+
+def _parse_webull_snapshot(ticker_req: str, payload: dict) -> Optional[dict]:
+    """Webull OpenAPI /openapi/market-data/stock/snapshot response:
+        { "result": true, "data": {
+            "symbol": "AAPL", "latestPrice": 185.42,
+            "quotes": { "bidPrice": 185.40, "askPrice": 185.44, ... }
+        }}
+    We also tolerate flatter shapes some regional endpoints emit."""
+    if not payload:
+        return None
+    data = payload.get("data") or payload
+    quotes = data.get("quotes") or data
     try:
-        r = await client.get(
-            WEBULL_SEARCH,
-            params={"keyword": t, "pageIndex": 1, "pageSize": 20},
-            headers=WEBULL_HEADERS,
-        )
-        r.raise_for_status()
-        j = r.json()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("spread webull search failed ticker=%s err=%s", t, e)
+        bid = float(quotes.get("bidPrice") or quotes.get("bid_price") or 0)
+        ask = float(quotes.get("askPrice") or quotes.get("ask_price") or 0)
+    except (TypeError, ValueError):
         return None
-    items = (j or {}).get("data") or []
-    # Prefer an exact-symbol match; Webull returns symbols in `disSymbol`.
-    for it in items:
-        sym = (it.get("disSymbol") or it.get("symbol") or "").upper()
-        if sym == t and it.get("tickerId"):
-            try:
-                tid = int(it["tickerId"])
-            except (TypeError, ValueError):
-                continue
-            _webull_id_cache[t] = tid
-            return tid
-    logger.warning("spread webull no tickerId for ticker=%s (results=%d)",
-                   t, len(items))
-    return None
-
-
-def _parse_webull(ticker_req: str, entry: dict) -> Optional[dict]:
-    """Webull /tickerRealTimes response — extract bid[0].price and
-    ask[0].price. `entry` is the top-level dict (Webull returns a
-    single object, not an array, when queried by tickerId)."""
-    if not entry:
-        return None
-    bid = 0.0
-    ask = 0.0
-    try:
-        blist = entry.get("bidList") or []
-        alist = entry.get("askList") or []
-        if blist:
-            bid = float(blist[0].get("price") or 0)
-        if alist:
-            ask = float(alist[0].get("price") or 0)
-    except (TypeError, ValueError, IndexError):
-        return None
-    # Fallback to flat fields (some symbols surface `bid`/`ask` at root).
-    if bid <= 0:
-        try:
-            bid = float(entry.get("pPrice") or entry.get("bid") or 0)
-        except (TypeError, ValueError):
-            bid = 0.0
-    if ask <= 0:
-        try:
-            ask = float(entry.get("ask") or 0)
-        except (TypeError, ValueError):
-            ask = 0.0
     last = None
-    for k in ("close", "pPrice", "price"):
-        v = entry.get(k)
+    for k in ("latestPrice", "latest_price", "lastPrice", "last_price", "price"):
+        v = data.get(k)
         if v is not None:
             try:
                 last = float(v)
@@ -228,22 +189,50 @@ def _parse_webull(ticker_req: str, entry: dict) -> Optional[dict]:
 
 async def fetch_webull(client: httpx.AsyncClient,
                        ticker: str) -> Optional[dict]:
-    tid = await _resolve_webull_id(client, ticker)
-    if not tid:
+    """Pull an L1 snapshot from Webull's OpenAPI. Never raises — logs
+    and returns None on any failure. Requires the L1 market-data
+    subscription on the operator's OpenAPI plan."""
+    headers = _webull_openapi_headers()
+    if not headers:
+        logger.warning(
+            "spread webull skipped ticker=%s (WEBULL_APP_KEY/SECRET missing)",
+            ticker,
+        )
         return None
+    url = _webull_openapi_base() + WEBULL_SNAPSHOT_PATH
     try:
-        r = await client.get(f"{WEBULL_QUOTE}/{tid}", headers=WEBULL_HEADERS)
+        r = await client.get(
+            url, params={"symbol": ticker.upper()}, headers=headers,
+        )
         r.raise_for_status()
         j = r.json()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("spread webull quote fetch failed ticker=%s tid=%s err=%s",
-                       ticker, tid, e)
+    except httpx.HTTPStatusError as e:
+        # Surface auth / entitlement errors distinctly — operator needs
+        # to know if the account isn't provisioned for L1.
+        body = ""
+        try:
+            body = e.response.text[:200]
+        except Exception:  # noqa: BLE001
+            pass
+        logger.warning(
+            "spread webull HTTP %s ticker=%s body=%s",
+            e.response.status_code, ticker, body,
+        )
         return None
-    # Webull returns either a dict OR a list (varies per endpoint version).
-    entry = j[0] if isinstance(j, list) and j else j if isinstance(j, dict) else None
-    row = _parse_webull(ticker, entry or {})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("spread webull fetch failed ticker=%s err=%s",
+                       ticker, e)
+        return None
+    if not (j.get("result") is True or j.get("data")):
+        logger.warning("spread webull payload rejected ticker=%s payload=%s",
+                       ticker, str(j)[:200])
+        return None
+    row = _parse_webull_snapshot(ticker, j)
     if not row:
-        logger.warning("spread webull parse failed ticker=%s (no bid/ask)", ticker)
+        logger.warning(
+            "spread webull parse failed ticker=%s (no bid/ask in payload)",
+            ticker,
+        )
     return row
 
 

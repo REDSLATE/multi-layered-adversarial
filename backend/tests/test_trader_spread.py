@@ -29,7 +29,6 @@ def fresh_store(tmp_path):
     )
     # Clear the in-memory cache between tests
     spread._latest.clear()
-    spread._webull_id_cache.clear()
     yield
     store.close()
     loop.close()
@@ -101,16 +100,22 @@ async def test_fetch_kraken_api_error_returns_none(fresh_store):
     assert row is None
 
 
-# ─── Webull parsing + fetch ───────────────────────────────────────
+# ─── Webull OpenAPI parsing + fetch ───────────────────────────────
 
-def test_parse_webull_extracts_bid_ask_from_lists(fresh_store):
-    entry = {
-        "tickerId": 913255598,
-        "close": 240.55,
-        "bidList": [{"price": "240.50"}],
-        "askList": [{"price": "240.60"}],
+def test_parse_webull_extracts_bid_ask_from_snapshot(fresh_store):
+    payload = {
+        "result": True,
+        "msg": "Success",
+        "data": {
+            "symbol": "TSLA",
+            "latestPrice": 240.55,
+            "quotes": {
+                "bidPrice": 240.50, "bidSize": 200,
+                "askPrice": 240.60, "askSize": 150,
+            },
+        },
     }
-    row = spread._parse_webull("TSLA", entry)
+    row = spread._parse_webull_snapshot("TSLA", payload)
     assert row is not None
     assert row["pair"] == "TSLA"
     assert row["lane"] == "equity"
@@ -120,51 +125,74 @@ def test_parse_webull_extracts_bid_ask_from_lists(fresh_store):
     assert row["last"] == pytest.approx(240.55)
 
 
+def test_parse_webull_tolerates_snake_case(fresh_store):
+    """Regional endpoints emit snake_case; parser must handle both."""
+    payload = {
+        "data": {
+            "latest_price": 100.0,
+            "quotes": {"bid_price": 99.90, "ask_price": 100.10},
+        },
+    }
+    row = spread._parse_webull_snapshot("X", payload)
+    assert row is not None
+    assert row["bid"] == 99.90
+    assert row["ask"] == 100.10
+
+
 @pytest.mark.asyncio
-async def test_fetch_webull_resolves_ticker_and_quotes(fresh_store):
-    calls = []
+async def test_fetch_webull_uses_openapi_snapshot(fresh_store, monkeypatch):
+    monkeypatch.setenv("WEBULL_APP_KEY", "test-key")
+    monkeypatch.setenv("WEBULL_APP_SECRET", "test-secret")
+    seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(str(request.url))
-        u = str(request.url)
-        if "search/pc/tickers" in u:
-            return httpx.Response(200, json={
-                "data": [
-                    {"tickerId": 913255598, "disSymbol": "TSLA"},
-                    {"tickerId": 999, "disSymbol": "TSLAX"},
-                ]
-            })
-        if "tickerRealTimes" in u:
-            return httpx.Response(200, json={
-                "close": 240.55,
-                "bidList": [{"price": "240.5"}],
-                "askList": [{"price": "240.6"}],
-            })
-        return httpx.Response(404, json={})
+        seen["url"] = str(request.url)
+        seen["key"] = request.headers.get("X-Request-App-Key")
+        seen["secret"] = request.headers.get("X-Request-App-Secret")
+        return httpx.Response(200, json={
+            "result": True,
+            "data": {
+                "symbol": "TSLA", "latestPrice": 240.55,
+                "quotes": {"bidPrice": 240.50, "askPrice": 240.60},
+            },
+        })
 
     async with httpx.AsyncClient(transport=_mock_transport(handler)) as client:
         row = await spread.fetch_webull(client, "TSLA")
 
     assert row is not None
-    assert row["pair"] == "TSLA"
-    assert row["bid"] == pytest.approx(240.5)
-    assert row["ask"] == pytest.approx(240.6)
-    # tickerId got cached — a second call must not re-search
-    calls.clear()
-    async with httpx.AsyncClient(transport=_mock_transport(handler)) as client:
-        row2 = await spread.fetch_webull(client, "TSLA")
-    assert row2 is not None
-    assert all("search" not in c for c in calls), (
-        f"expected no re-search on cached tid, got {calls}"
-    )
+    assert row["bid"] == pytest.approx(240.50)
+    assert row["ask"] == pytest.approx(240.60)
+    assert "openapi/market-data/stock/snapshot" in seen["url"]
+    assert "symbol=TSLA" in seen["url"]
+    assert seen["key"] == "test-key"
+    assert seen["secret"] == "test-secret"
 
 
 @pytest.mark.asyncio
-async def test_fetch_webull_missing_ticker_returns_none(fresh_store):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"data": []})
+async def test_fetch_webull_missing_creds_returns_none(fresh_store, monkeypatch):
+    monkeypatch.delenv("WEBULL_APP_KEY", raising=False)
+    monkeypatch.delenv("WEBULL_APP_SECRET", raising=False)
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("must not hit network when creds are missing")
+
     async with httpx.AsyncClient(transport=_mock_transport(handler)) as client:
-        row = await spread.fetch_webull(client, "NOPE")
+        row = await spread.fetch_webull(client, "TSLA")
+    assert row is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_webull_returns_none_on_403(fresh_store, monkeypatch):
+    """Auth or entitlement failures must not crash the poller."""
+    monkeypatch.setenv("WEBULL_APP_KEY", "test-key")
+    monkeypatch.setenv("WEBULL_APP_SECRET", "test-secret")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"code": "SUBSCRIPTION_REQUIRED"})
+
+    async with httpx.AsyncClient(transport=_mock_transport(handler)) as client:
+        row = await spread.fetch_webull(client, "TSLA")
     assert row is None
 
 
@@ -200,17 +228,16 @@ async def test_poll_kraken_once_records_and_caches(fresh_store, monkeypatch):
 @pytest.mark.asyncio
 async def test_poll_webull_once_records_and_caches(fresh_store, monkeypatch):
     monkeypatch.setenv("TRADER_EQUITY_SPREAD_TICKERS", "TSLA")
+    monkeypatch.setenv("WEBULL_APP_KEY", "test-key")
+    monkeypatch.setenv("WEBULL_APP_SECRET", "test-secret")
 
     def handler(request: httpx.Request) -> httpx.Response:
-        u = str(request.url)
-        if "search/pc/tickers" in u:
-            return httpx.Response(200, json={
-                "data": [{"tickerId": 913255598, "disSymbol": "TSLA"}]
-            })
         return httpx.Response(200, json={
-            "close": 240.5,
-            "bidList": [{"price": "240.5"}],
-            "askList": [{"price": "240.6"}],
+            "result": True,
+            "data": {
+                "symbol": "TSLA", "latestPrice": 240.5,
+                "quotes": {"bidPrice": 240.5, "askPrice": 240.6},
+            },
         })
     async with httpx.AsyncClient(transport=_mock_transport(handler)) as client:
         out = await spread.poll_webull_once(client)

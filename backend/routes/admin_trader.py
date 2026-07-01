@@ -302,10 +302,10 @@ async def trader_spread(
                 ).lower() == "true",
             },
             "equity": {
-                # 2026-07-02 default OFF — Webull retired public bid/ask
-                # endpoints (API_DISABLED) and Yahoo /quote is unreliable.
+                # 2026-07-02 default ON — switched from retired public
+                # gateway to authenticated Webull OpenAPI snapshot.
                 "enabled": os.environ.get(
-                    "TRADER_EQUITY_SPREAD_ENABLED", "false"
+                    "TRADER_EQUITY_SPREAD_ENABLED", "true"
                 ).lower() == "true",
                 "tickers": os.environ.get("TRADER_EQUITY_SPREAD_TICKERS", ""),
                 "poll_sec": int(os.environ.get("TRADER_EQUITY_SPREAD_POLL_SEC", "20")),

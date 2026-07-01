@@ -208,12 +208,11 @@ def spread_stale_sec() -> int:
 # feeds module already uses. The `source` column distinguishes
 # `kraken` vs `yahoo` rows in `spread_ticks`.
 def equity_spread_enabled() -> bool:
-    # 2026-07-02 default flipped to OFF: Webull retired their public
-    # bid/ask endpoints (`API_DISABLED`), and Yahoo's /v7/finance/quote
-    # is unreliable per operator. Keep the plumbing in place — flip
-    # this to `true` once we have a data-source (Alpaca / Polygon /
-    # Tradier / Finnhub-paid) whose free tier returns real-time L1.
-    return env_bool("TRADER_EQUITY_SPREAD_ENABLED", default=False)
+    # 2026-07-02 default ON: switched from Webull's retired public
+    # gateway to the authenticated OpenAPI snapshot endpoint. When
+    # WEBULL_APP_KEY/SECRET are unset the fetcher short-circuits
+    # gracefully — nothing to poll if creds are missing.
+    return env_bool("TRADER_EQUITY_SPREAD_ENABLED", default=True)
 
 
 def equity_spread_tickers() -> tuple[str, ...]:
