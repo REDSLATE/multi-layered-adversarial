@@ -6,7 +6,6 @@ import PublicConnect from "@/components/PublicConnect";
 import KrakenBrokerTile from "@/components/KrakenBrokerTile";
 import LaneRoutingPill from "@/components/LaneRoutingPill";
 import MasterTradingSwitch from "@/components/MasterTradingSwitch";
-import WebullEntitlementsCard from "@/components/WebullEntitlementsCard";
 import WebullOtocoTestPanel from "@/components/WebullOtocoTestPanel";
 import WebullOtocoLivePanel from "@/components/WebullOtocoLivePanel";
 import TraderPostMortem from "@/components/TraderPostMortem";
@@ -545,7 +544,11 @@ export default function Intents() {
         testid="intents-section-equity"
         rightSlot={<LaneRoutingPill lane="equity" />}
       />
-      <WebullEntitlementsCard />
+      {/* WebullEntitlementsCard removed 2026-07-01 — endpoint worked
+          fine but nothing consumed the data: doctrine-enricher was
+          purged in Pass 2 and options-aware brain logic is deferred.
+          The sidecar trader submits orders via REST; it doesn't need
+          streaming entitlements. */}
 
       {/* Atomic OTOCO bracket — P1 Phase 2 (2026-02-19). Whole-share
           only; operator-driven so we can observe Webull's combo
