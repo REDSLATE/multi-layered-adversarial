@@ -9,10 +9,15 @@ import BracketOutcomeDistributionPanel from "@/components/BracketOutcomeDistribu
 import PromotionArtifactPanel from "@/components/PromotionArtifactPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import BrainDeepDiagnoseCard from "@/components/BrainDeepDiagnoseCard";
-import BrainMetricsTile from "@/components/BrainMetricsTile";
+// 2026-07-01 (Pass 2/3 cleanup, batch 6): removed 3 tiles that
+// hit Atlas heavy queries and timed out on shared-tier:
+//   * BrainMetricsTile        (MaxTimeMSExpired on multi-day aggregate)
+//   * SeatStageDropsTile      (endpoint 404 / Not Found)
+//   * ExecutionLifecycleFunnelTile (NetworkTimeout on shared-shard)
+// The Sidecar Trader's Trade Tape + Post-Mortem panels serve the
+// same operator question ("what did the trader do / why didn't it
+// fire?") from local SQLite, Mongo-independent.
 import AdvisorPerformanceTile from "@/components/AdvisorPerformanceTile";
-import SeatStageDropsTile from "@/components/SeatStageDropsTile";
-import ExecutionLifecycleFunnelTile from "@/components/ExecutionLifecycleFunnelTile";  // 2026-02-23 P3
 import NativeBrainRuntimeTile from "@/components/NativeBrainRuntimeTile";  // 2026-02-23 in-process brain migration
 import BrainInputHealthTile from "@/components/BrainInputHealthTile";  // 2026-02-23 instrument quality
 import HealthcheckTile from "@/components/HealthcheckTile";  // 2026-02-26 post-deploy validation
@@ -449,13 +454,7 @@ export default function Diagnostics() {
         <HealthcheckTile />
       </div>
 
-      <BrainMetricsTile />
-
       <AdvisorPerformanceTile />
-
-      <SeatStageDropsTile />
-
-      <ExecutionLifecycleFunnelTile />
 
       <NativeBrainRuntimeTile />
 
