@@ -5,8 +5,15 @@ import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
 import { ArrowUpRight } from "@phosphor-icons/react";
 import TechnicalsPanel from "@/components/TechnicalsPanel";
 import FeedersStrip from "@/components/FeedersStrip";
-import RosterPanel from "@/components/ParadoxRosterPanel";
-import AssignableRosterPanel from "@/components/RosterPanel";
+// 2026-07-01 (Pass 2/3 cleanup, batch 4): ParadoxRosterPanel and
+// RosterPanel removed. Both showed legacy 5-role / 6-role models
+// with `Opponent` + `Memory` + `Advisor` seats that don't exist
+// in the sidecar trader's canonical 4-role doctrine
+// (strategist · governor · executor · auditor).
+//
+// The authoritative seat view is now:
+//   * Overview → Trader Seats tile (in-memory state, mongo-independent)
+//   * Intents  → Quick Seat Switches (for actual reassignment)
 import LivePositionsPanel from "@/components/LivePositionsPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import MarketRegimeTape from "@/components/MarketRegimeTape";
@@ -259,13 +266,12 @@ export default function Overview() {
           {/* Shared Technical Feed — Mission-page panel.
               Each panel is isolated by an ErrorBoundary so one bad
               render (PROD blank-screen regression, 2026-02-17) can
-              only damage its own slot, not blank the whole page. */}
-          <PanelErrorBoundary panelName="Brain Roster" testid="panel-error-roster">
-            <RosterPanel />
-          </PanelErrorBoundary>
-          <PanelErrorBoundary panelName="Roster Assignment" testid="panel-error-roster-assign">
-            <AssignableRosterPanel />
-          </PanelErrorBoundary>
+              only damage its own slot, not blank the whole page.
+
+              2026-07-01 (batch 4): Roster panels removed. See import
+              comment above — canonical 4-role seat view lives in the
+              Trader Seats tile (already mounted in overview-trader-strip
+              above). */}
           <PanelErrorBoundary panelName="Live Positions" testid="panel-error-live-positions">
             <LivePositionsPanel />
           </PanelErrorBoundary>
