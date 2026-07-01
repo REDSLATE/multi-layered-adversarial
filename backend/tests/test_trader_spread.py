@@ -102,19 +102,36 @@ async def test_fetch_kraken_api_error_returns_none(fresh_store):
 
 # ─── Webull OpenAPI parsing + fetch ───────────────────────────────
 
-def test_parse_webull_extracts_bid_ask_from_snapshot(fresh_store):
-    payload = {
-        "result": True,
-        "msg": "Success",
-        "data": {
-            "symbol": "TSLA",
-            "latestPrice": 240.55,
-            "quotes": {
-                "bidPrice": 240.50, "bidSize": 200,
-                "askPrice": 240.60, "askSize": 150,
-            },
-        },
-    }
+def test_webull_sign_matches_docs_formula():
+    """Reproduce the exact formula from Webull's docs:
+        HMAC-SHA1(secret, key+ts+nonce+METHOD+path+body) → base64"""
+    import hmac
+    import hashlib
+    import base64
+    key = "dk_app_key_123"
+    secret = "your_app_secret_here"
+    ts = "2026-07-01T16:00:00Z"
+    nonce = "abc-999-noise"
+    method = "GET"
+    path = "/openapi/assets/balance"
+    body = ""
+    expected_stt = f"{key}{ts}{nonce}{method}{path}{body}"
+    expected = base64.b64encode(
+        hmac.new(secret.encode(), expected_stt.encode(), hashlib.sha1).digest()
+    ).decode()
+    got = spread._webull_sign(key, secret, ts, nonce, method, path, body)
+    assert got == expected
+
+
+def test_parse_webull_extracts_bid_ask_from_snapshot_array(fresh_store):
+    """Docs shape: array of snapshot objects with flat bid/ask."""
+    payload = [{
+        "symbol": "TSLA",
+        "price": "240.55",
+        "bid": "240.50", "bid_size": "200",
+        "ask": "240.60", "ask_size": "150",
+        "open": "240.00", "close": "240.55",
+    }]
     row = spread._parse_webull_snapshot("TSLA", payload)
     assert row is not None
     assert row["pair"] == "TSLA"
@@ -125,8 +142,8 @@ def test_parse_webull_extracts_bid_ask_from_snapshot(fresh_store):
     assert row["last"] == pytest.approx(240.55)
 
 
-def test_parse_webull_tolerates_snake_case(fresh_store):
-    """Regional endpoints emit snake_case; parser must handle both."""
+def test_parse_webull_tolerates_legacy_wrapped_shape(fresh_store):
+    """Regional endpoints wrap in `data.quotes` — parser must handle."""
     payload = {
         "data": {
             "latest_price": 100.0,
@@ -140,22 +157,21 @@ def test_parse_webull_tolerates_snake_case(fresh_store):
 
 
 @pytest.mark.asyncio
-async def test_fetch_webull_uses_openapi_snapshot(fresh_store, monkeypatch):
+async def test_fetch_webull_sends_all_9_headers(fresh_store, monkeypatch):
+    """Regression guard: missing headers => Webull returns 404. All
+    9 must be present and signature must match the docs formula."""
     monkeypatch.setenv("WEBULL_APP_KEY", "test-key")
     monkeypatch.setenv("WEBULL_APP_SECRET", "test-secret")
+    monkeypatch.setenv("WEBULL_ACCESS_TOKEN", "test-token")
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["url"] = str(request.url)
-        seen["key"] = request.headers.get("X-Request-App-Key")
-        seen["secret"] = request.headers.get("X-Request-App-Secret")
-        return httpx.Response(200, json={
-            "result": True,
-            "data": {
-                "symbol": "TSLA", "latestPrice": 240.55,
-                "quotes": {"bidPrice": 240.50, "askPrice": 240.60},
-            },
-        })
+        seen["headers"] = dict(request.headers)
+        return httpx.Response(200, json=[{
+            "symbol": "TSLA", "price": "240.55",
+            "bid": "240.50", "ask": "240.60",
+        }])
 
     async with httpx.AsyncClient(transport=_mock_transport(handler)) as client:
         row = await spread.fetch_webull(client, "TSLA")
@@ -163,10 +179,21 @@ async def test_fetch_webull_uses_openapi_snapshot(fresh_store, monkeypatch):
     assert row is not None
     assert row["bid"] == pytest.approx(240.50)
     assert row["ask"] == pytest.approx(240.60)
+    # URL correctness
     assert "openapi/market-data/stock/snapshot" in seen["url"]
-    assert "symbol=TSLA" in seen["url"]
-    assert seen["key"] == "test-key"
-    assert seen["secret"] == "test-secret"
+    assert "symbols=TSLA" in seen["url"]
+    assert "category=US_STOCK" in seen["url"]
+    # Every required header present
+    for h in [
+        "x-app-key", "x-app-secret", "x-timestamp",
+        "x-signature-version", "x-signature-algorithm",
+        "x-signature-nonce", "x-access-token", "x-version", "x-signature",
+    ]:
+        assert seen["headers"].get(h), f"missing required header: {h}"
+    assert seen["headers"]["x-app-key"] == "test-key"
+    assert seen["headers"]["x-access-token"] == "test-token"
+    assert seen["headers"]["x-signature-algorithm"] == "HMAC-SHA1"
+    assert seen["headers"]["x-version"] == "v2"
 
 
 @pytest.mark.asyncio
@@ -183,17 +210,47 @@ async def test_fetch_webull_missing_creds_returns_none(fresh_store, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_fetch_webull_returns_none_on_403(fresh_store, monkeypatch):
-    """Auth or entitlement failures must not crash the poller."""
+async def test_fetch_webull_missing_access_token_returns_none(fresh_store, monkeypatch):
+    """Webull requires x-access-token from the 2FA flow. Skip cleanly."""
     monkeypatch.setenv("WEBULL_APP_KEY", "test-key")
     monkeypatch.setenv("WEBULL_APP_SECRET", "test-secret")
+    monkeypatch.delenv("WEBULL_ACCESS_TOKEN", raising=False)
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(403, json={"code": "SUBSCRIPTION_REQUIRED"})
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("must not hit network when access_token is missing")
 
     async with httpx.AsyncClient(transport=_mock_transport(handler)) as client:
         row = await spread.fetch_webull(client, "TSLA")
     assert row is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_webull_returns_none_on_403(fresh_store, monkeypatch):
+    """Auth or entitlement failures must not crash the poller."""
+    monkeypatch.setenv("WEBULL_APP_KEY", "test-key")
+    monkeypatch.setenv("WEBULL_APP_SECRET", "test-secret")
+    monkeypatch.setenv("WEBULL_ACCESS_TOKEN", "test-token")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={
+            "error_code": "UNAUTHORIZED",
+            "message": "Insufficient permission",
+        })
+
+    async with httpx.AsyncClient(transport=_mock_transport(handler)) as client:
+        row = await spread.fetch_webull(client, "TSLA")
+    assert row is None
+
+
+def test_webull_category_defaults_to_us_stock(monkeypatch):
+    monkeypatch.delenv("TRADER_EQUITY_SPREAD_ETFS", raising=False)
+    assert spread._webull_category("TSLA") == "US_STOCK"
+
+
+def test_webull_category_flags_etfs_from_env(monkeypatch):
+    monkeypatch.setenv("TRADER_EQUITY_SPREAD_ETFS", "SPY, QQQ, IWM")
+    assert spread._webull_category("QQQ") == "US_ETF"
+    assert spread._webull_category("TSLA") == "US_STOCK"
 
 
 # ─── caching + persistence ───────────────────────────────────────
@@ -230,15 +287,13 @@ async def test_poll_webull_once_records_and_caches(fresh_store, monkeypatch):
     monkeypatch.setenv("TRADER_EQUITY_SPREAD_TICKERS", "TSLA")
     monkeypatch.setenv("WEBULL_APP_KEY", "test-key")
     monkeypatch.setenv("WEBULL_APP_SECRET", "test-secret")
+    monkeypatch.setenv("WEBULL_ACCESS_TOKEN", "test-token")
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={
-            "result": True,
-            "data": {
-                "symbol": "TSLA", "latestPrice": 240.5,
-                "quotes": {"bidPrice": 240.5, "askPrice": 240.6},
-            },
-        })
+        return httpx.Response(200, json=[{
+            "symbol": "TSLA", "price": "240.5",
+            "bid": "240.5", "ask": "240.6",
+        }])
     async with httpx.AsyncClient(transport=_mock_transport(handler)) as client:
         out = await spread.poll_webull_once(client)
 

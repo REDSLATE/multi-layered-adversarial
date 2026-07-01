@@ -46,15 +46,22 @@ from trader import config, store
 logger = logging.getLogger("trader.spread")
 
 KRAKEN_TICKER = "https://api.kraken.com/0/public/Ticker"
-# Webull OpenAPI market-data snapshot — the ONLY reliable L1 source
-# for equities. Requires the L1 subscription to be active on the
-# operator's OpenAPI plan (separate from the in-app subscription).
-# Auth via `X-Request-App-Key` + `X-Request-App-Secret`.
-# Base URL is env-overridable so we can point at UAT
-# (`us-openapi-alb.uat.webullbroker.com`) or a regional prod endpoint
-# without a code change.
-WEBULL_OPENAPI_BASE_DEFAULT = "https://api.webull.com"
+# Webull OpenAPI market-data snapshot — authenticated L1 quotes.
+# Base URL from docs: `us-openapi-alb.uat.webullbroker.com`. This
+# name reads "UAT" but is the documented base for individual/dev
+# accounts; prod-tier operators can override via WEBULL_OPENAPI_BASE.
+WEBULL_OPENAPI_BASE_DEFAULT = "https://us-openapi-alb.uat.webullbroker.com"
 WEBULL_SNAPSHOT_PATH = "/openapi/market-data/stock/snapshot"
+# Signature scheme (docs 2026-07-02):
+#   string_to_sign = app_key + timestamp + nonce + METHOD + path + body
+#   x-signature     = base64( HMAC-SHA1(app_secret, string_to_sign) )
+# All 9 headers below are required; a missing header => 404 Route
+# Not Found (Webull's dispatcher rejects unsigned requests at the
+# router level, not the auth layer, which is why the earlier attempt
+# looked like a bad URL).
+WEBULL_SIGNATURE_VERSION = "1.0"
+WEBULL_SIGNATURE_ALGO = "HMAC-SHA1"
+WEBULL_API_VERSION = "v2"
 
 # In-memory cache: {symbol.upper() -> {bid, ask, last, spread_bps,
 # source, lane, ts_unix}}. The risk gate reads from here — never
@@ -137,81 +144,179 @@ async def fetch_kraken(client: httpx.AsyncClient, pair: str) -> Optional[dict]:
 
 def _webull_openapi_base() -> str:
     import os
-    return os.environ.get("WEBULL_OPENAPI_BASE") or WEBULL_OPENAPI_BASE_DEFAULT
+    return (os.environ.get("WEBULL_OPENAPI_BASE") or
+            WEBULL_OPENAPI_BASE_DEFAULT)
 
 
-def _webull_openapi_headers() -> Optional[dict]:
-    """Return the OpenAPI auth headers, or None if creds are missing.
-    Uses the SAME env vars the trade adapter uses so the operator
-    only manages one credential pair."""
+def _webull_creds() -> Optional[tuple[str, str, str]]:
+    """Return (app_key, app_secret, access_token) or None if any is
+    missing. Same env vars as the trade adapter — plus the one-time
+    2FA-derived access token. If the access token env is unset we
+    still return the tuple with an empty string; Webull's 404 on a
+    missing token is explicit enough for the operator to notice."""
     import os
-    key = os.environ.get("WEBULL_APP_KEY")
-    secret = os.environ.get("WEBULL_APP_SECRET")
+    key = os.environ.get("WEBULL_APP_KEY") or ""
+    secret = os.environ.get("WEBULL_APP_SECRET") or ""
+    token = os.environ.get("WEBULL_ACCESS_TOKEN") or ""
+    # Strip any accidental quotes from the .env file (common footgun).
+    key = key.strip().strip('"').strip("'")
+    secret = secret.strip().strip('"').strip("'")
+    token = token.strip().strip('"').strip("'")
     if not (key and secret):
         return None
+    return key, secret, token
+
+
+def _webull_sign(app_key: str, app_secret: str, timestamp: str,
+                 nonce: str, method: str, path: str,
+                 body: str = "") -> str:
+    """Compute the base64(HMAC-SHA1) signature Webull expects.
+
+    string_to_sign = app_key + timestamp + nonce + METHOD + path + body
+
+    NB: `path` must be the request path WITHOUT the query string
+    (verified against dev.to guide + Webull SDK source, 2026-07-02).
+    `body` must be a minified JSON string for POSTs, or "" for GETs.
+    """
+    import hmac
+    import hashlib
+    import base64
+    stt = f"{app_key}{timestamp}{nonce}{method.upper()}{path}{body}"
+    digest = hmac.new(
+        app_secret.encode("utf-8"),
+        stt.encode("utf-8"),
+        hashlib.sha1,
+    ).digest()
+    return base64.b64encode(digest).decode("utf-8")
+
+
+def _webull_headers(app_key: str, app_secret: str, access_token: str,
+                    method: str, path: str, body: str = "") -> dict:
+    """Build the full 9-header set for a Webull OpenAPI request."""
+    import uuid
+    from datetime import datetime, timezone as _tz
+    ts = datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    nonce = uuid.uuid4().hex
+    sig = _webull_sign(app_key, app_secret, ts, nonce, method, path, body)
     return {
-        "X-Request-App-Key": key,
-        "X-Request-App-Secret": secret,
         "Accept": "application/json",
+        "x-app-key": app_key,
+        # Some Webull regional deployments require `x-app-secret` in
+        # headers too (documented in the params panel on the snapshot
+        # endpoint). Harmless when the server ignores it.
+        "x-app-secret": app_secret,
+        "x-timestamp": ts,
+        "x-signature-version": WEBULL_SIGNATURE_VERSION,
+        "x-signature-algorithm": WEBULL_SIGNATURE_ALGO,
+        "x-signature-nonce": nonce,
+        "x-access-token": access_token,
+        "x-version": WEBULL_API_VERSION,
+        "x-signature": sig,
     }
 
 
-def _parse_webull_snapshot(ticker_req: str, payload: dict) -> Optional[dict]:
-    """Webull OpenAPI /openapi/market-data/stock/snapshot response:
-        { "result": true, "data": {
-            "symbol": "AAPL", "latestPrice": 185.42,
-            "quotes": { "bidPrice": 185.40, "askPrice": 185.44, ... }
-        }}
-    We also tolerate flatter shapes some regional endpoints emit."""
+def _parse_webull_snapshot(ticker_req: str,
+                           payload) -> Optional[dict]:
+    """Webull returns an array of snapshot objects, one per requested
+    symbol. Each object contains flat `bid`, `ask`, `price`, `symbol`
+    fields (all as strings). We fetch one symbol per call for the
+    per-symbol cache to stay simple; batching is a future opt."""
     if not payload:
         return None
-    data = payload.get("data") or payload
-    quotes = data.get("quotes") or data
-    try:
-        bid = float(quotes.get("bidPrice") or quotes.get("bid_price") or 0)
-        ask = float(quotes.get("askPrice") or quotes.get("ask_price") or 0)
-    except (TypeError, ValueError):
+    entry = None
+    # Array form (per current docs)
+    if isinstance(payload, list):
+        want = ticker_req.upper()
+        entry = next(
+            (e for e in payload
+             if (e.get("symbol") or "").upper() == want),
+            payload[0] if payload else None,
+        )
+    # Object-wrapped form (some regional endpoints wrap in "data")
+    elif isinstance(payload, dict):
+        data = payload.get("data") or payload
+        if isinstance(data, list):
+            want = ticker_req.upper()
+            entry = next(
+                (e for e in data
+                 if (e.get("symbol") or "").upper() == want),
+                data[0] if data else None,
+            )
+        else:
+            # Legacy shape with a nested `quotes` block
+            quotes = data.get("quotes") if isinstance(data, dict) else None
+            entry = quotes if isinstance(quotes, dict) else data
+    if not isinstance(entry, dict):
         return None
-    last = None
-    for k in ("latestPrice", "latest_price", "lastPrice", "last_price", "price"):
-        v = data.get(k)
-        if v is not None:
+    # Bid / ask can be top-level (current docs) or under `quotes` (legacy).
+    def _pick(*keys):
+        for k in keys:
+            v = entry.get(k)
+            if v is None or v == "":
+                continue
             try:
-                last = float(v)
-                break
+                return float(v)
             except (TypeError, ValueError):
                 continue
+        return None
+    bid = _pick("bid", "bidPrice", "bid_price") or 0.0
+    ask = _pick("ask", "askPrice", "ask_price") or 0.0
+    last = _pick("price", "latestPrice", "latest_price",
+                 "lastPrice", "last_price", "close")
     return _row_from_quote(
         symbol=ticker_req, lane="equity", source="webull",
         bid=bid, ask=ask, last=last,
     )
 
 
+def _webull_category(ticker: str) -> str:
+    """Map a symbol to Webull's required `category` param. We default
+    to US_STOCK; operators tracking ETFs can hint via env
+    `TRADER_EQUITY_SPREAD_ETFS` (comma-separated symbols)."""
+    import os
+    etfs = {
+        s.strip().upper()
+        for s in (os.environ.get("TRADER_EQUITY_SPREAD_ETFS") or "").split(",")
+        if s.strip()
+    }
+    return "US_ETF" if ticker.upper() in etfs else "US_STOCK"
+
+
 async def fetch_webull(client: httpx.AsyncClient,
                        ticker: str) -> Optional[dict]:
     """Pull an L1 snapshot from Webull's OpenAPI. Never raises — logs
-    and returns None on any failure. Requires the L1 market-data
-    subscription on the operator's OpenAPI plan."""
-    headers = _webull_openapi_headers()
-    if not headers:
+    and returns None on any failure."""
+    creds = _webull_creds()
+    if not creds:
         logger.warning(
             "spread webull skipped ticker=%s (WEBULL_APP_KEY/SECRET missing)",
             ticker,
         )
         return None
-    url = _webull_openapi_base() + WEBULL_SNAPSHOT_PATH
-    try:
-        r = await client.get(
-            url, params={"symbol": ticker.upper()}, headers=headers,
+    app_key, app_secret, access_token = creds
+    if not access_token:
+        logger.warning(
+            "spread webull skipped ticker=%s (WEBULL_ACCESS_TOKEN missing — "
+            "run POST /openapi/auth/token/create + approve 2FA in the "
+            "Webull mobile app, then set env WEBULL_ACCESS_TOKEN)",
+            ticker,
         )
+        return None
+    path = WEBULL_SNAPSHOT_PATH
+    url = _webull_openapi_base() + path
+    headers = _webull_headers(app_key, app_secret, access_token, "GET", path)
+    params = {
+        "symbols": ticker.upper(),
+        "category": _webull_category(ticker),
+    }
+    try:
+        r = await client.get(url, params=params, headers=headers)
         r.raise_for_status()
         j = r.json()
     except httpx.HTTPStatusError as e:
-        # Surface auth / entitlement errors distinctly — operator needs
-        # to know if the account isn't provisioned for L1.
         body = ""
         try:
-            body = e.response.text[:200]
+            body = e.response.text[:240]
         except Exception:  # noqa: BLE001
             pass
         logger.warning(
@@ -223,15 +328,11 @@ async def fetch_webull(client: httpx.AsyncClient,
         logger.warning("spread webull fetch failed ticker=%s err=%s",
                        ticker, e)
         return None
-    if not (j.get("result") is True or j.get("data")):
-        logger.warning("spread webull payload rejected ticker=%s payload=%s",
-                       ticker, str(j)[:200])
-        return None
     row = _parse_webull_snapshot(ticker, j)
     if not row:
         logger.warning(
-            "spread webull parse failed ticker=%s (no bid/ask in payload)",
-            ticker,
+            "spread webull parse failed ticker=%s payload=%s",
+            ticker, str(j)[:240],
         )
     return row
 

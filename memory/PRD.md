@@ -25,14 +25,7 @@ Mongo-free hot path, JSONL + SQLite truth tape, bounded timeouts.
 - Tests: `/app/backend/tests/test_trader_spread.py` (16 cases green).
 - Live proof: preview backend produced 40+ Kraken XBTUSD ticks over
   ~10 min, spread stable around 0.02–0.28 bps.
-- **⚠️ Webull L1 access needs operator verification** — App Key
-  `bf678…` on `api.webull.com/openapi/market-data/stock/snapshot`
-  returned `404 Route Not Found`. Likely causes: (a) L1 subscription
-  not yet active on the OpenAPI plan, (b) newer OpenAPI requires
-  HMAC signature auth (timestamp + signature headers) that this
-  build doesn't send. Code handles 404 gracefully (no crash).
-  Configurable via `WEBULL_OPENAPI_BASE` env if a different base
-  URL is required for the account.
+- **⚠️ Webull L1 access needs one-time operator setup** — `api.webull.com/openapi/market-data/stock/snapshot` originally returned `404 Route Not Found`. Root cause identified 2026-07-02: (i) wrong base URL — correct one is `us-openapi-alb.uat.webullbroker.com`; (ii) missing required `category=US_STOCK` param; (iii) missing all 9 auth headers (HMAC-SHA1 signature over `key+ts+nonce+METHOD+path+body`, base64-encoded). All fixed. New blocker: `WEBULL_ACCESS_TOKEN` env var not set — operator must `POST /openapi/auth/token/create` + approve 2FA in Webull mobile app once, then paste the returned token into `backend/.env`. Poller keeps running gracefully in the meantime.
 
 ### ✅ Pass 3.5 — Frontend Rewire + Trade Tape Tile COMPLETED (2026-07-01)
 
