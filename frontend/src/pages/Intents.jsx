@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, RUNTIME_META, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, EmptyState, LoadingRow } from "@/components/ui-bits";
 import QuickSeatSwitches from "@/components/QuickSeatSwitches";
-import PublicConnect from "@/components/PublicConnect";
 import KrakenBrokerTile from "@/components/KrakenBrokerTile";
 import LaneRoutingPill from "@/components/LaneRoutingPill";
 import MasterTradingSwitch from "@/components/MasterTradingSwitch";
@@ -11,24 +10,20 @@ import WebullOtocoLivePanel from "@/components/WebullOtocoLivePanel";
 import TraderPostMortem from "@/components/TraderPostMortem";
 import InputProvenanceBadge from "@/components/InputProvenanceBadge";
 import ExecutionScoreBreakdown from "@/components/ExecutionScoreBreakdown";
-// 2026-07-01 (Pass 2/3 cleanup, batch 1): removed imports for panels
-// whose backend endpoints were deleted — LegacyWrapperTogglePanel,
-// AutoSubmitPolicyPanel, OperatorInjectIntent, SubmitOrderModal.
-// Sidecar Trader owns execution; MC is eyes-only on this page.
-//
-// 2026-07-01 (batch 2): additionally removed TunablesStrip
-// (/admin/auto-submit/tunables-simulator → 404) and
-// SeatRosterStrip (its backend query hits Atlas directly and
-// times out on the shared-tier connection; the Overview Trader
-// Seats tile already surfaces the same info via the
-// Mongo-independent in-memory state cache).
+// 2026-07-01 (Pass 2/3 cleanup, batches 7+8): removed imports for
+// panels whose endpoints returned successful responses but always
+// resolved to empty / falsely-flagged / deprecated data:
+//   * PublicConnect       — Public.com deprecated per Equity Lane heading
+//   * AutoRetireStrip     — /doctrine/retirement-candidates always []
+//   * DoctrineHealthPanel — /doctrine/promotion-status all samples=0
+//   * PipelineBlockerChip — /pipeline/recent-blocker-histogram total=0
+// Other operator-visible surfaces (TraderPostMortem, Trade Tape on
+// Overview, ParabolicPhaseStrip) already cover these operator
+// questions with live data.
 import ParabolicPhaseStrip from "@/components/ParabolicPhaseStrip";
 import BrokerSelectionMenu from "@/components/BrokerSelectionMenu";
 import DoctrineStrip from "@/components/DoctrineStrip";
-import AutoRetireStrip from "@/components/AutoRetireStrip";
-import DoctrineHealthPanel from "@/components/DoctrineHealthPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
-import PipelineBlockerChip from "@/components/PipelineBlockerChip";
 import SeatRegistryDriftBanner from "@/components/SeatRegistryDriftBanner";
 import { toast } from "sonner";
 import {
@@ -616,12 +611,10 @@ export default function Intents() {
         </div>
       )}
 
-      {/* Pipeline blocker histogram — at-a-glance "why intents aren't
-          flowing" with one-tap fix links. Lives just above the filter
-          strip so it's the first thing the operator sees. */}
-      <PanelErrorBoundary panelName="Pipeline Blocker Chip" testid="panel-error-blocker-chip">
-        <PipelineBlockerChip />
-      </PanelErrorBoundary>
+      {/* PipelineBlockerChip removed 2026-07-01 (batch 8) — the
+          `pipeline_receipts` collection is empty after the Pass 2
+          purge. TraderPostMortem below serves the same operator
+          question against the sidecar trader's local SQLite. */}
 
       {/* Filters */}
       <Card className="mb-4" testid="intents-filters">
@@ -687,18 +680,11 @@ export default function Intents() {
         </div>
       </Card>
 
-      {/* Seat-doctrinal auto-retire suggestions. Lane-scoped so the
-          operator only sees suggestions for the lane they're filtering. */}
-      <PanelErrorBoundary panelName="Auto-Retire Strip" testid="panel-error-autoretire">
-        <AutoRetireStrip lane={lane} />
-      </PanelErrorBoundary>
-
-      {/* Live doctrine-health summary. Compact mode keeps it scannable
-          alongside the auto-retire strip; the full /admin/doctrine page
-          has the deep view with ideal-snapshot + blockers + rejections. */}
-      <PanelErrorBoundary panelName="Doctrine Health" testid="panel-error-doctrine-health">
-        <DoctrineHealthPanel mode="compact" lane={lane} />
-      </PanelErrorBoundary>
+      {/* AutoRetireStrip + DoctrineHealthPanel removed 2026-07-01
+          (batch 8). AutoRetireStrip's `/admin/doctrine/retirement-
+          candidates` always returned `candidates: []` after the
+          Pass 2 purge; DoctrineHealthPanel's `/admin/doctrine/
+          promotion-status` always returned slices with samples=0. */}
 
       {err && (
         <div className="border border-rd-danger text-rd-danger px-3 py-2 mb-4 text-xs font-mono" data-testid="intents-error">

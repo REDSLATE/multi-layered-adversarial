@@ -34,12 +34,9 @@ import Redeye from "@/pages/Redeye";
 import BrainOperatorPage from "@/pages/BrainOperatorPage";
 import Discussion from "@/pages/Discussion";
 import Scorecards from "@/pages/Scorecards";
-// 2026-07-01 (Pass 2/3 cleanup, batch 5): Conflicts and
-// SafetyGatesAudit removed. Conflicts hit Atlas directly (read
-// timeouts on shared-tier). SafetyGatesAudit was tied to the
-// deleted 16-gate pipeline (HTTP 500 on prod). Both can be
-// rebuilt later from trader receipts if the operator needs them.
-import Doctrine from "@/pages/Doctrine";
+// 2026-07-01 (batch 8): Doctrine page removed — its `DoctrineHealthPanel`
+// showed `samples=0` across every doctrine_version slice (promotion
+// gate concept was tied to the deleted 16-gate pipeline).
 import DoctrineReference from "@/pages/DoctrineReference";
 import Positions from "@/pages/Positions";
 import PublicTraffic from "@/pages/PublicTraffic";
@@ -154,7 +151,6 @@ function App() {
             <Route path="brain-op/:brain" element={<BrainOperatorPage />} />
             <Route path="discussion" element={<Discussion />} />
             <Route path="scorecards" element={<Scorecards />} />
-            <Route path="doctrine" element={<Doctrine />} />
             <Route path="doctrine-reference" element={<DoctrineReference />} />
             <Route path="positions" element={<Positions />} />
             <Route path="public-traffic" element={<PublicTraffic />} />

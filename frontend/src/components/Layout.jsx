@@ -50,7 +50,7 @@ const SECTIONS = [
       { to: "/admin/overview", label: "Overview", icon: ChartBar, testid: "nav-overview" },
       { to: "/admin/discussion", label: "Discussion", icon: ChatCircleDots, testid: "nav-discussion" },
       { to: "/admin/scorecards", label: "Scorecards", icon: Trophy, testid: "nav-scorecards" },
-      { to: "/admin/doctrine", label: "Doctrine", icon: Shield, testid: "nav-doctrine" },
+      // 2026-07-01 (batch 8): Doctrine sidebar link removed — page deleted.
       { to: "/admin/doctrine-reference", label: "Doctrine Ref", icon: Shield, testid: "nav-doctrine-reference" },
       // 2026-07-01 (batch 5): Safety Gates + Conflicts links removed.
       // Their pages were deleted — both hit Atlas or 500-crashed.

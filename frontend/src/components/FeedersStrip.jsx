@@ -4,7 +4,6 @@ import { Card, Badge } from "@/components/ui-bits";
 import { Plug, Pulse, WarningCircle, Power, Copy } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import KrakenConnect from "./KrakenConnect";
-import PublicConnect from "./PublicConnect";
 
 const FEEDER_META = {
   kraken_pro: {
@@ -201,11 +200,9 @@ function FeederSlot({ feeder, isOpen, onToggle, endpoint }) {
               <KrakenConnect />
             </div>
           )}
-          {feeder.key === "public" && (
-            <div className="pb-2 mb-2 border-b border-rd-border">
-              <PublicConnect />
-            </div>
-          )}
+          {/* Public.com connect slot removed 2026-07-01 (batch 8) —
+              Public.com is deprecated per the Equity Lane heading;
+              sidecar trader routes equity via Webull only. */}
           {!feeder.is_broker && (
             <>
               <SetupLine label="Endpoint" value={`POST ${endpoint}`} />
