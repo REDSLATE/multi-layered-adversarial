@@ -418,7 +418,12 @@ async def list_events(
     since_hours: Optional[int] = Query(default=None, ge=1, le=24 * 365),
     _user: dict = Depends(get_current_user),  # noqa: B008
 ):
-    """Operator query interface — filterable list of Shelly events."""
+    """Operator query interface — filterable list of Shelly events.
+
+    Bounded by an 8s Atlas timeout so a slow/degraded index cannot
+    turn the dashboard into a NetworkTimeout wall — a hiccup returns
+    an empty page with a clean `error` marker instead of a 500.
+    """
     q: dict = {}
     if event_type:
         q["event_type"] = event_type
@@ -434,7 +439,26 @@ async def list_events(
         from datetime import timedelta
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=since_hours)).isoformat()
         q["ts"] = {"$gte": cutoff}
-    rows = await db[MC_SHELLY].find(q, {"_id": 0}).sort("ts", -1).to_list(limit)
+    try:
+        rows = await asyncio.wait_for(
+            db[MC_SHELLY].find(q, {"_id": 0}).sort("ts", -1).to_list(limit),
+            timeout=8.0,
+        )
+    except asyncio.TimeoutError:
+        return {
+            "items": [], "count": 0, "query": q,
+            "error": "mongo_timeout",
+            "message": (
+                "MongoDB Atlas read timed out after 8s. Retry, narrow "
+                "the window, or check Atlas health."
+            ),
+        }
+    except Exception as e:  # noqa: BLE001
+        return {
+            "items": [], "count": 0, "query": q,
+            "error": "mongo_error",
+            "message": f"{type(e).__name__}: {e}"[:240],
+        }
     return {"items": rows, "count": len(rows), "query": q}
 
 
@@ -445,82 +469,106 @@ async def stats(
 ):
     """Aggregated counters by position + event_type + outcome.
 
-    Pass rate per position = passes / (passes + fails) for events where
-    `position_at_event` was held at evaluation time."""
+    Same 8s bounded-timeout treatment as list_events — Atlas hangs
+    return empty stats with an `error` marker instead of 500.
+    """
     from datetime import timedelta
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=since_hours)).isoformat()
 
-    # Total counts
-    pipeline_event = [
-        {"$match": {"ts": {"$gte": cutoff}}},
-        {"$group": {"_id": "$event_type", "count": {"$sum": 1}}},
-    ]
-    by_event: list[dict] = []
-    async for d in db[MC_SHELLY].aggregate(pipeline_event):
-        by_event.append({"event_type": d["_id"], "count": d["count"]})
+    async def _compute() -> dict:
+        # Total counts
+        pipeline_event = [
+            {"$match": {"ts": {"$gte": cutoff}}},
+            {"$group": {"_id": "$event_type", "count": {"$sum": 1}}},
+        ]
+        by_event: list[dict] = []
+        async for d in db[MC_SHELLY].aggregate(pipeline_event):
+            by_event.append({"event_type": d["_id"], "count": d["count"]})
 
-    # Pass/fail by position
-    pipeline_pos = [
-        {"$match": {"ts": {"$gte": cutoff}, "event_type": {"$in": ["gate_pass", "gate_fail"]}}},
-        {"$group": {
-            "_id": {"position": "$position_at_event", "event_type": "$event_type"},
-            "count": {"$sum": 1},
-        }},
-    ]
-    pos_buckets: dict[str, dict[str, int]] = {}
-    async for d in db[MC_SHELLY].aggregate(pipeline_pos):
-        pos = d["_id"]["position"] or "NONE"
-        et = d["_id"]["event_type"]
-        pos_buckets.setdefault(pos, {"gate_pass": 0, "gate_fail": 0})[et] = d["count"]
-    by_position = []
-    for pos, b in pos_buckets.items():
-        total = b["gate_pass"] + b["gate_fail"]
-        rate = (b["gate_pass"] / total * 100) if total else None
-        by_position.append({
-            "position": pos,
-            "passes": b["gate_pass"],
-            "fails": b["gate_fail"],
-            "pass_rate_pct": round(rate, 1) if rate is not None else None,
-        })
+        # Pass/fail by position
+        pipeline_pos = [
+            {"$match": {"ts": {"$gte": cutoff}, "event_type": {"$in": ["gate_pass", "gate_fail"]}}},
+            {"$group": {
+                "_id": {"position": "$position_at_event", "event_type": "$event_type"},
+                "count": {"$sum": 1},
+            }},
+        ]
+        pos_buckets: dict[str, dict[str, int]] = {}
+        async for d in db[MC_SHELLY].aggregate(pipeline_pos):
+            pos = d["_id"]["position"] or "NONE"
+            et = d["_id"]["event_type"]
+            pos_buckets.setdefault(pos, {"gate_pass": 0, "gate_fail": 0})[et] = d["count"]
+        by_position = []
+        for pos, b in pos_buckets.items():
+            total = b["gate_pass"] + b["gate_fail"]
+            rate = (b["gate_pass"] / total * 100) if total else None
+            by_position.append({
+                "position": pos,
+                "passes": b["gate_pass"],
+                "fails": b["gate_fail"],
+                "pass_rate_pct": round(rate, 1) if rate is not None else None,
+            })
 
-    # W/L by brain
-    pipeline_wl = [
-        {"$match": {
-            "ts": {"$gte": cutoff},
-            "event_type": "position_closed",
-            "outcome": {"$in": ["win", "loss"]},
-        }},
-        {"$group": {
-            "_id": {"brain": "$brain", "outcome": "$outcome"},
-            "count": {"$sum": 1},
-        }},
-    ]
-    wl_buckets: dict[str, dict[str, int]] = {}
-    async for d in db[MC_SHELLY].aggregate(pipeline_wl):
-        b = d["_id"]["brain"] or "unknown"
-        oc = d["_id"]["outcome"]
-        wl_buckets.setdefault(b, {"win": 0, "loss": 0})[oc] = d["count"]
-    wl = []
-    for b, c in wl_buckets.items():
-        tot = c["win"] + c["loss"]
-        wl.append({
-            "brain": b,
-            "wins": c["win"],
-            "losses": c["loss"],
-            "hit_rate_pct": round(c["win"] / tot * 100, 1) if tot else None,
-        })
+        # W/L by brain
+        pipeline_wl = [
+            {"$match": {
+                "ts": {"$gte": cutoff},
+                "event_type": "position_closed",
+                "outcome": {"$in": ["win", "loss"]},
+            }},
+            {"$group": {
+                "_id": {"brain": "$brain", "outcome": "$outcome"},
+                "count": {"$sum": 1},
+            }},
+        ]
+        wl_buckets: dict[str, dict[str, int]] = {}
+        async for d in db[MC_SHELLY].aggregate(pipeline_wl):
+            b = d["_id"]["brain"] or "unknown"
+            oc = d["_id"]["outcome"]
+            wl_buckets.setdefault(b, {"win": 0, "loss": 0})[oc] = d["count"]
+        wl = []
+        for b, c in wl_buckets.items():
+            tot = c["win"] + c["loss"]
+            wl.append({
+                "brain": b,
+                "wins": c["win"],
+                "losses": c["loss"],
+                "hit_rate_pct": round(c["win"] / tot * 100, 1) if tot else None,
+            })
 
-    total = await db[MC_SHELLY].count_documents({})
-    in_window = await db[MC_SHELLY].count_documents({"ts": {"$gte": cutoff}})
+        total = await db[MC_SHELLY].count_documents({})
+        in_window = await db[MC_SHELLY].count_documents({"ts": {"$gte": cutoff}})
 
-    return {
-        "window_hours": since_hours,
-        "total_events_all_time": total,
-        "events_in_window": in_window,
-        "by_event_type": sorted(by_event, key=lambda r: -r["count"]),
-        "by_position": sorted(by_position, key=lambda r: -(r["passes"] + r["fails"])),
-        "win_loss_by_brain": sorted(wl, key=lambda r: -(r["wins"] + r["losses"])),
-    }
+        return {
+            "window_hours": since_hours,
+            "total_events_all_time": total,
+            "events_in_window": in_window,
+            "by_event_type": sorted(by_event, key=lambda r: -r["count"]),
+            "by_position": sorted(by_position, key=lambda r: -(r["passes"] + r["fails"])),
+            "win_loss_by_brain": sorted(wl, key=lambda r: -(r["wins"] + r["losses"])),
+        }
+
+    try:
+        return await asyncio.wait_for(_compute(), timeout=8.0)
+    except asyncio.TimeoutError:
+        return {
+            "window_hours": since_hours,
+            "total_events_all_time": 0, "events_in_window": 0,
+            "by_event_type": [], "by_position": [], "win_loss_by_brain": [],
+            "error": "mongo_timeout",
+            "message": (
+                "MongoDB Atlas aggregate timed out after 8s. Retry, "
+                "narrow the window, or check Atlas health."
+            ),
+        }
+    except Exception as e:  # noqa: BLE001
+        return {
+            "window_hours": since_hours,
+            "total_events_all_time": 0, "events_in_window": 0,
+            "by_event_type": [], "by_position": [], "win_loss_by_brain": [],
+            "error": "mongo_error",
+            "message": f"{type(e).__name__}: {e}"[:240],
+        }
 
 
 @router.get("/export.jsonl")

@@ -85,7 +85,19 @@ export default function McShelly() {
       ]);
       setEvents(evs.data?.items || []);
       setStats(st.data);
-      setErr("");
+      // Backend now surfaces `error` on Atlas hiccup instead of 500.
+      // Prefer the list-events error, fall back to stats. Empty when both ok.
+      const backendErr = evs.data?.error || st.data?.error;
+      if (backendErr) {
+        const msg = evs.data?.message || st.data?.message || backendErr;
+        setErr(
+          backendErr === "mongo_timeout"
+            ? `Atlas timeout — the read took over 8s. Try Reload, or narrow the window.`
+            : `Atlas error (${backendErr}): ${msg}`
+        );
+      } else {
+        setErr("");
+      }
     } catch (e) {
       setErr(e?.message || "Failed to load");
     } finally {
