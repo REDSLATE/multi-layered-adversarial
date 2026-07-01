@@ -7,6 +7,34 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ✅ Pass 3 — Mongo Off The Critical Path COMPLETED (2026-07-01)
+
+Operator directive: "No database before broker submit. Local receipt
+first. Small transactional DB second. Mongo third."
+
+**Storage layers (in strict priority order):**
+1. **Hot path** — in-memory dicts + `/app/trader/data/*.jsonl` (append-only, fsync per row)
+2. **Truth tape** — `/app/trader/data/executions.sqlite` (WAL mode)
+3. **Dashboard/archive** — Mongo (best-effort mirror via bounded queue; drops on timeout)
+
+**New modules:**
+- `/app/trader/store.py` — JSONL + SQLite + Mongo mirror worker
+- `/app/trader/state.py` — in-memory seat/flag cache with 60s background Mongo refresher
+- Rewritten: `seat.py`, `risk.py`, `audit.py` (all Mongo-free on hot path)
+
+**New MC endpoints:**
+- `GET  /api/admin/trader/health` — local store row counts + Mongo mirror lag
+- `POST /api/admin/trader/reload-caches` — force out-of-band Mongo→cache refresh
+- `GET  /api/admin/trader/{status,receipts,executions}` — now read from local SQLite (Atlas down = still works)
+
+**Guarantee:** When Atlas is unreachable, the trader still trades. Broker
+submits happen on cached seat/flag values, receipts land in JSONL + SQLite
+synchronously, and Mongo catches up when it recovers. MC's dashboard
+tiles keep serving from local SQLite.
+
+**Tests:** `/app/backend/tests/test_trader_{store,state,risk}.py` — 23 passing.
+
+
 ### ✅ Pass 2 — Bulk Delete COMPLETED (2026-07-01)
 
 Operator directive: "Pass 2 is a done deal. It's not trading either way, might as well delete the 11k."

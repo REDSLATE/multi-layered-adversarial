@@ -33,7 +33,7 @@ sys.path.insert(0, "/app")
 
 from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
 
-from trader import audit, brains, config, feeds, risk, seat  # noqa: E402
+from trader import audit, brains, config, feeds, risk, seat, state, store  # noqa: E402
 from trader.broker import (  # noqa: E402
     BrokerError, kraken_market_order, webull_market_order,
 )
@@ -303,22 +303,71 @@ async def main() -> None:
         )
         while True:
             await asyncio.sleep(60)
+
+    # ─── 1. Local store first (JSONL + SQLite) ────────────────────
+    # This MUST come up before Mongo. If Atlas is unreachable, the
+    # trader still needs a truth tape to make risk decisions and
+    # record broker fills.
+    store.init(config.sqlite_path(), config.jsonl_dir())
+
+    # ─── 2. Hydrate the in-memory cache from the last-known-good ──
+    # SQLite snapshot. Never fails; DEFAULT_SEATS is the ultimate
+    # fallback. This means a virgin deploy with Mongo unreachable
+    # will still see the operator's canonical angel pairings.
+    state.hydrate_from_sqlite()
+
+    # ─── 3. Mongo — used ONLY by the background mirror worker and
+    #      the background state refresher. Never touched on the
+    #      trader's hot path.
     db = _new_db()
+
+    # Best-effort one-shot hydrate from Mongo before the loop starts.
+    # Bounded by a short timeout so a dead Atlas never blocks boot.
+    try:
+        await asyncio.wait_for(state._refresh_once(db), timeout=8.0)
+        logger.info("state hydrated from mongo (boot)")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "state boot hydrate from mongo failed (using sqlite/defaults): %s", e,
+        )
+
+    # ─── 4. Start background workers ──────────────────────────────
+    refresh_task = asyncio.create_task(
+        state.refresh_loop(db), name="trader.state.refresh",
+    )
+    mirror_task = asyncio.create_task(
+        store.mongo_mirror_worker(db), name="trader.store.mongo_mirror",
+    )
+
     interval = config.interval_sec()
     logger.info(
         "trader STARTED interval=%ss per_order_cap=$%.2f daily_cap=$%.2f "
-        "crypto=%s equity=%s",
+        "crypto=%s equity=%s sqlite=%s",
         interval, config.per_order_cap_usd(), config.daily_cap_usd(),
-        config.crypto_pair(), config.equity_ticker(),
+        config.crypto_pair(), config.equity_ticker(), config.sqlite_path(),
     )
-    while True:
-        try:
-            r = await run_cycle(db)
-            n_fired = sum(1 for x in r["lanes"] if x.get("ok") and x.get("verdict") in ("BUY", "SELL"))
-            logger.info("cycle done lanes=%d fired=%d", len(r["lanes"]), n_fired)
-        except Exception as e:  # noqa: BLE001
-            logger.exception("cycle crashed: %s", e)
-        await asyncio.sleep(interval)
+    try:
+        while True:
+            try:
+                r = await run_cycle(db)
+                n_fired = sum(
+                    1 for x in r["lanes"]
+                    if x.get("ok") and x.get("verdict") in ("BUY", "SELL")
+                )
+                logger.info("cycle done lanes=%d fired=%d",
+                            len(r["lanes"]), n_fired)
+            except Exception as e:  # noqa: BLE001
+                logger.exception("cycle crashed: %s", e)
+            await asyncio.sleep(interval)
+    finally:
+        for t in (refresh_task, mirror_task):
+            t.cancel()
+        for t in (refresh_task, mirror_task):
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+        store.close()
 
 
 if __name__ == "__main__":

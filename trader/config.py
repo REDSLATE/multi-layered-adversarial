@@ -17,6 +17,11 @@ Optional env (sensible defaults):
     TRADER_CRYPTO_PAIR              — e.g. "XBTUSD"; default "XBTUSD"
     TRADER_EQUITY_TICKER            — e.g. "TSLA"; default "TSLA"
     TRADER_CONFIDENCE_THRESHOLD     — minimum brain confidence to fire; default 0.55
+    TRADER_SQLITE_PATH              — local truth-tape file;
+                                      default /app/trader/data/executions.sqlite
+    TRADER_JSONL_DIR                — append-only receipt dir;
+                                      default /app/trader/data
+    TRADER_CACHE_REFRESH_SEC        — Mongo→cache refresh cadence; default 60
 """
 from __future__ import annotations
 
@@ -86,3 +91,15 @@ def equity_ticker() -> str:
 
 def confidence_threshold() -> float:
     return env_float("TRADER_CONFIDENCE_THRESHOLD", 0.55)
+
+
+def sqlite_path() -> str:
+    return env_str("TRADER_SQLITE_PATH", "/app/trader/data/executions.sqlite")
+
+
+def jsonl_dir() -> str:
+    return env_str("TRADER_JSONL_DIR", "/app/trader/data")
+
+
+def cache_refresh_sec() -> int:
+    return env_int("TRADER_CACHE_REFRESH_SEC", 60)

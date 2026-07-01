@@ -1,21 +1,14 @@
-"""Audit — writes to MC's `executions` and the trader's own `trader_receipts`.
+"""Audit — thin wrapper over the local store.
 
-Two collections, one shared, one trader-only:
+Doctrine pin (2026-07-01):
+    "Write local JSONL receipt immediately. Same receipt to SQLite.
+     Sync to Mongo third."
 
-    executions       — the canonical audit, also written to by MC's
-                       old auto_router code path. The trader stamps
-                       `source: "trader"` on every row so MC tiles
-                       can filter to trader-truth.
-
-    trader_receipts  — per-cycle log, owned exclusively by the
-                       trader. One row per cycle PER lane (so two
-                       rows per cycle when both lanes are active).
-                       Captures: brain signals, seat snapshot, risk
-                       verdict, broker call result. This is the
-                       "what did the loop do this minute?" tape.
-
-Bookkeeping failure is logged but NEVER raised — broker truth is
-authoritative; audit writes cannot block a trade or kill the loop.
+This module used to write directly to Mongo. It now delegates to
+`trader.store`, which does JSONL → SQLite → best-effort Mongo mirror.
+Signatures are unchanged so `main.py` needs no other edits: the `db`
+argument is accepted and ignored (kept in the signature to preserve
+history + explicitness).
 """
 from __future__ import annotations
 
@@ -23,6 +16,8 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
+
+from trader import store
 
 
 logger = logging.getLogger("trader.audit")
@@ -71,7 +66,7 @@ async def write_execution(
     row = {
         "intent_id": intent_id,
         "ts": _now_iso(),
-        "source": "trader",  # ALWAYS stamped — distinguishes from MC
+        "source": "trader",
         "brain": (brain or "").lower() or None,
         "lane": (lane or "").lower() or None,
         "action": (action or "").upper() or None,
@@ -91,12 +86,8 @@ async def write_execution(
         "exception_msg": (exception_msg or "")[:2000] or None,
         "ok": bool(ok),
     }
-    try:
-        r = await db["executions"].insert_one(row)
-        return str(r.inserted_id)
-    except Exception as e:  # noqa: BLE001
-        logger.error("write_execution failed intent=%s err=%s", intent_id, e)
-        return None
+    store.record_execution(row)
+    return intent_id
 
 
 async def write_receipt(
@@ -114,27 +105,20 @@ async def write_receipt(
     broker_result: Optional[dict] = None,
     error: Optional[str] = None,
 ) -> Optional[str]:
-    """One per-cycle receipt — answers `what did the trader do this
-    minute on this lane?`. Operator-visible source of truth for the
-    sidecar's behavior."""
     row = {
         "cycle_id": cycle_id,
         "ts": _now_iso(),
         "lane": (lane or "").lower(),
         "symbol": symbol,
         "last_price": last_price,
-        "signals": signals,         # list of {brain, verdict, confidence, reason}
-        "chosen": chosen,           # the signal that fired (or None)
-        "seats": seats,             # snapshot of seat holders at decision time
-        "angels": angels,           # angel-name labels for those seats
-        "risk": risk_verdict,       # {ok, reason, notional_usd, spent_today_usd}
+        "signals": signals,
+        "chosen": chosen,
+        "seats": seats,
+        "angels": angels,
+        "risk": risk_verdict,
         "broker_result": _truncate(broker_result),
         "error": error,
         "source": "trader",
     }
-    try:
-        r = await db["trader_receipts"].insert_one(row)
-        return str(r.inserted_id)
-    except Exception as e:  # noqa: BLE001
-        logger.error("write_receipt failed cycle=%s err=%s", cycle_id, e)
-        return None
+    rowid = store.record_receipt(row)
+    return str(rowid) if rowid else None

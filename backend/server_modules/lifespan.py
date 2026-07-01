@@ -300,12 +300,33 @@ async def lifespan(app: FastAPI):
     # background asyncio task in this same process — same env, same
     # Mongo, same lifecycle. The task auto-stops on shutdown.
     import os as _os
+    import sys as _sys
+    # `/app` is the trader package's parent; add it once.
+    if "/app" not in _sys.path:
+        _sys.path.insert(0, "/app")
+
+    # 2026-07-01 (Path 3, operator directive): initialize the local
+    # trader store UNCONDITIONALLY — even when TRADER_ENABLED=false —
+    # so MC's `/api/admin/trader/*` endpoints can serve the local
+    # SQLite truth tape without depending on Mongo. This is what
+    # keeps the operator's dashboard alive when Atlas is degraded.
+    try:
+        from trader import config as _trader_config  # noqa: WPS433
+        from trader import store as _trader_store    # noqa: WPS433
+        from trader import state as _trader_state    # noqa: WPS433
+        _trader_store.init(
+            _trader_config.sqlite_path(),
+            _trader_config.jsonl_dir(),
+        )
+        _trader_state.hydrate_from_sqlite()
+        logger.info(
+            "trader.store initialized (unconditional, MC dashboard reads)",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.error("trader.store init failed (non-fatal): %s", e)
+
     if _os.environ.get("TRADER_ENABLED", "false").lower() == "true":
         try:
-            import sys as _sys
-            # `/app` is the trader package's parent; add it once.
-            if "/app" not in _sys.path:
-                _sys.path.insert(0, "/app")
             import asyncio as _asyncio
             from trader.main import main as _trader_main  # noqa: WPS433
             app.state.trader_task = _asyncio.create_task(_trader_main())

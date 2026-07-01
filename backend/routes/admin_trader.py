@@ -1,27 +1,23 @@
 """Trader admin routes — operator visibility for the sidecar trader.
 
-Doctrine (2026-06-30, Path 2):
-    MC = eyes only
-    Trader = authority
+Doctrine pin (2026-07-01, Path 3):
+    Reads come from the LOCAL trader store (SQLite + in-memory
+    caches), not Mongo. This is what keeps the dashboard alive when
+    Atlas is degraded.
 
-These endpoints expose the trader's truth to MC's UI so the operator
-can see what the sidecar is doing without touching Mongo directly.
+    Mongo still receives every row via the best-effort mirror
+    worker — but the dashboard doesn't wait for it.
 
 Endpoints:
-    GET  /api/admin/trader/status     — task alive? last cycle? env config?
-    GET  /api/admin/trader/receipts   — last N trader_receipts (per-cycle tape)
-    GET  /api/admin/trader/executions — last N executions where source=trader
-    POST /api/admin/trader/seed-seats — idempotent: writes the operator's
-                                        angel-name + brain pairings into
-                                        seat_registry. Safe to call multiple
-                                        times. Use this once after deploy
-                                        to materialize the assignments.
-
-All read endpoints are admin-gated. The trader has no operator-facing
-controls in v1 — it runs on env vars + the seat_registry. To halt
-it, the operator either sets TRADER_ENABLED=false and redeploys,
-or flips master_trading_switch to disarmed (the trader's Risk
-module will block every trade).
+    GET  /api/admin/trader/status         — task alive? last cycle? env?
+    GET  /api/admin/trader/health         — store counts + mirror lag
+    GET  /api/admin/trader/receipts       — last N receipts (local SQLite)
+    GET  /api/admin/trader/executions     — last N executions (local SQLite)
+    POST /api/admin/trader/reload-caches  — pokes the state refresher
+    POST /api/admin/trader/seed-seats     — writes the operator's canonical
+                                            angel-name + brain pairings into
+                                            seat_registry (Mongo). Safe to
+                                            call multiple times.
 """
 from __future__ import annotations
 
@@ -44,43 +40,55 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _today_prefix() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _import_trader():
+    """Lazy import — the trader package lives at /app/trader. Cheap
+    once cached by the interpreter."""
+    import sys
+    if "/app" not in sys.path:
+        sys.path.insert(0, "/app")
+    from trader import state, store   # noqa: WPS433
+    return state, store
+
+
 @router.get("/status")
 async def trader_status(_: dict = Depends(get_current_user)) -> dict:
-    """Operator visibility: is the trader alive and ticking?"""
+    """Operator visibility: is the trader alive and ticking?
+    Reads exclusively from local SQLite + in-memory state — this
+    endpoint MUST keep serving even when Atlas is unreachable."""
     enabled = os.environ.get("TRADER_ENABLED", "false").lower() == "true"
     broker_disabled = os.environ.get("BROKER_DISABLED", "false").lower() == "true"
     auto_router_off = os.environ.get("AUTO_ROUTER_ENABLED", "true").lower() == "false"
 
-    # Latest receipt = proxy for "loop is ticking".
-    last_receipt = await db["trader_receipts"].find_one(
-        {"source": "trader"}, sort=[("ts", -1)], projection={"_id": 0}
+    state, store = _import_trader()
+
+    # Last receipt = proxy for "loop is ticking".
+    recent = store.recent_receipts(limit=1)
+    last_receipt = recent[0] if recent else None
+
+    # Receipt count in the last 5 minutes — sanity check the loop
+    # is firing on schedule. Done via a lightweight SQLite COUNT.
+    five_min_iso = datetime.fromtimestamp(
+        datetime.now(timezone.utc).timestamp() - 300, tz=timezone.utc,
+    ).isoformat()
+    all_recent = store.recent_receipts(limit=500)
+    recent_count = sum(1 for r in all_recent if (r.get("ts") or "") >= five_min_iso)
+
+    last_exec_rows = store.recent_executions(limit=1)
+    last_execution = last_exec_rows[0] if last_exec_rows else None
+
+    today = _today_prefix()
+    fires_today_rows = store.recent_executions(limit=500, ok=True)
+    fires_today = sum(1 for r in fires_today_rows
+                      if (r.get("ts") or "").startswith(today))
+    spent_today = sum(
+        float(r.get("notional_usd") or 0.0)
+        for r in fires_today_rows
+        if (r.get("ts") or "").startswith(today)
     )
-    # Receipt count last 5 min — sanity check the loop is firing on schedule.
-    five_min_ago = datetime.now(timezone.utc).timestamp() - 300
-    recent_count = await db["trader_receipts"].count_documents(
-        {"ts": {"$gte": datetime.fromtimestamp(
-            five_min_ago, tz=timezone.utc).isoformat()
-        }},
-        maxTimeMS=4000,
-    )
-    last_execution = await db["executions"].find_one(
-        {"source": "trader"}, sort=[("ts", -1)], projection={"_id": 0}
-    )
-    today_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    fires_today = await db["executions"].count_documents(
-        {"source": "trader", "ok": True, "ts": {"$regex": f"^{today_prefix}"}},
-        maxTimeMS=4000,
-    )
-    spent_today = 0.0
-    pipeline = [
-        {"$match": {
-            "source": "trader", "ok": True,
-            "ts": {"$regex": f"^{today_prefix}"},
-        }},
-        {"$group": {"_id": None, "spent": {"$sum": "$notional_usd"}}},
-    ]
-    async for row in db["executions"].aggregate(pipeline, maxTimeMS=4000):
-        spent_today = float(row.get("spent") or 0.0)
 
     return {
         "ok": True,
@@ -113,6 +121,20 @@ async def trader_status(_: dict = Depends(get_current_user)) -> dict:
             "last_execution_broker": (last_execution or {}).get("broker"),
             "last_execution_ok": (last_execution or {}).get("ok"),
         },
+        "state": state.snapshot(),
+        "checked_at": _now_iso(),
+    }
+
+
+@router.get("/health")
+async def trader_health(_: dict = Depends(get_current_user)) -> dict:
+    """Local store health: row counts + Mongo mirror lag. Reads
+    only from SQLite; does not touch Mongo."""
+    state, store = _import_trader()
+    return {
+        "ok": True,
+        "store": store.counts(),
+        "state": state.snapshot(),
         "checked_at": _now_iso(),
     }
 
@@ -124,24 +146,14 @@ async def trader_receipts(
     lane: Optional[str] = Query(default=None),
     fired_only: bool = Query(default=False),
 ) -> dict:
-    """Most recent per-cycle receipts. Operator reads:
+    """Most recent per-cycle receipts, from local SQLite. Answers:
         what did the trader see this minute?
         what did each brain say?
         what did the seat doctrine pick?
         did risk block? did broker accept?
     """
-    q: dict = {"source": "trader"}
-    if lane:
-        q["lane"] = lane.lower()
-    if fired_only:
-        q["chosen.verdict"] = {"$in": ["BUY", "SELL"]}
-    cursor = (
-        db["trader_receipts"]
-        .find(q, {"_id": 0})
-        .sort("ts", -1)
-        .max_time_ms(8000)
-    )
-    rows = await cursor.to_list(limit)
+    _, store = _import_trader()
+    rows = store.recent_receipts(limit=limit, lane=lane, fired_only=fired_only)
     return {"ok": True, "count": len(rows), "items": rows}
 
 
@@ -152,28 +164,38 @@ async def trader_executions(
     lane: Optional[str] = Query(default=None),
     ok: Optional[bool] = Query(default=None),
 ) -> dict:
-    """Executions written by the trader. Only `source=trader` rows.
-
-    Each row carries the broker_response or exception_msg — this is
-    the long-awaited 'what did Kraken/Webull actually say?' tape.
-    """
-    q: dict = {"source": "trader"}
-    if lane:
-        q["lane"] = lane.lower()
-    if ok is not None:
-        q["ok"] = bool(ok)
-    cursor = (
-        db["executions"]
-        .find(q, {"_id": 0})
-        .sort("ts", -1)
-        .max_time_ms(8000)
-    )
-    rows = await cursor.to_list(limit)
+    """Executions written by the trader, from local SQLite. Each row
+    carries the broker_response or exception_msg — 'what did
+    Kraken/Webull actually say?' tape."""
+    _, store = _import_trader()
+    rows = store.recent_executions(limit=limit, lane=lane, ok=ok)
     return {"ok": True, "count": len(rows), "items": rows}
 
 
+@router.post("/reload-caches")
+async def trader_reload_caches(actor: dict = Depends(get_current_user)) -> dict:
+    """Force an out-of-band pull from Mongo → in-memory cache. Used
+    after the operator changes a seat assignment or flips the master
+    switch and doesn't want to wait for the 60s refresh interval."""
+    state, _ = _import_trader()
+    poked = state.request_manual_refresh()
+    return {
+        "ok": True,
+        "manual_refresh_queued": poked,
+        "note": (
+            "Refresh worker will run within a second; results visible "
+            "at GET /api/admin/trader/status → state.last_refresh_ok_ts."
+        ) if poked else (
+            "Refresh worker is not running (trader loop not started). "
+            "Set TRADER_ENABLED=true to activate the background refresher."
+        ),
+        "reloaded_at": _now_iso(),
+        "requested_by": actor.get("email"),
+    }
+
+
 # Operator-canonical angel→brain pairings for the trader.
-# Documented in /app/trader/seat.py::DEFAULT_SEATS. Repeated here so
+# Documented in /app/trader/state.py::DEFAULT_SEATS. Repeated here so
 # the seed endpoint can write them without importing the trader
 # module (decoupled from trader's lifecycle).
 _OPERATOR_SEAT_PAIRINGS = [
@@ -197,15 +219,9 @@ async def trader_seed_seats(actor: dict = Depends(get_current_user)) -> dict:
     """Idempotent seat-registry seeder.
 
     Writes the operator-canonical angel→brain pairings into the
-    `seat_registry` collection. Safe to call repeatedly — uses upsert
-    semantics with `$set` so an existing row's other fields (like
-    `last_changed_at` audit) are preserved.
-
-    Use this after a fresh deploy to materialize the assignments so
-    MC's seat tile shows them. The trader itself doesn't NEED this
-    call (it has DEFAULT_SEATS as a fallback), but the operator
-    benefits from having the canonical assignments visible in
-    Mongo for the seat tile + audit log.
+    `seat_registry` collection (Mongo). Safe to call repeatedly —
+    uses upsert semantics with `$set` so an existing row's other
+    fields (like `last_changed_at` audit) are preserved.
     """
     now = _now_iso()
     results = []
@@ -235,6 +251,13 @@ async def trader_seed_seats(actor: dict = Depends(get_current_user)) -> dict:
             "lane": p["lane"],
             "holder": p["holder"],
         })
+    # After seeding Mongo, poke the trader's state cache so the
+    # change is picked up without waiting for the 60s refresh.
+    try:
+        state, _ = _import_trader()
+        state.request_manual_refresh()
+    except Exception:  # noqa: BLE001
+        pass
     return {
         "ok": True,
         "applied_at": now,
