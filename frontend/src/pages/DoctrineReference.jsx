@@ -21,9 +21,9 @@ function FieldList({ items, mono = false }) {
   }
   return (
     <ul className="space-y-1">
-      {items.map((it, idx) => (
+      {items.map((it) => (
         <li
-          key={idx}
+          key={`${mono ? "mono" : "text"}-${String(it)}`}
           className={`text-[11px] ${mono ? "font-mono" : ""} leading-relaxed text-rd-text pl-3 relative before:content-['—'] before:absolute before:left-0 before:text-rd-dim`}
         >
           {it}

@@ -1506,8 +1506,11 @@ export default function IntentPostMortemPanel() {
                 />
                 <div className="text-rd-dim text-[9px] uppercase mt-1">timeline</div>
                 <div className="space-y-0.5 max-h-60 overflow-y-auto">
-                  {(traceState.result.timeline || []).map((ev, i) => (
-                    <div key={i} className="border-l-2 border-rd-border pl-2 py-0.5">
+                  {(traceState.result.timeline || []).map((ev) => (
+                    <div
+                      key={`${ev.ts || "no-ts"}-${ev.gate_name || ""}-${(ev.summary || "").slice(0, 40)}`}
+                      className="border-l-2 border-rd-border pl-2 py-0.5"
+                    >
                       <div className="text-rd-text">
                         <span className="text-rd-dim">[{(ev.ts || "").slice(11, 23)}]</span>{" "}
                         {ev.summary}

@@ -12,6 +12,8 @@ import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import MarketRegimeTape from "@/components/MarketRegimeTape";
 import PositionMisreadsCard from "@/components/PositionMisreadsCard";
 import DivergenceChopGauge from "@/components/DivergenceChopGauge";
+import TradeTape from "@/components/TradeTape";
+import TraderSeatViewer from "@/components/TraderSeatViewer";
 
 export default function Overview() {
   const [overview, setOverview] = useState(null);
@@ -188,6 +190,26 @@ export default function Overview() {
                 </Card>
               );
             })}
+          </div>
+
+          {/* P3 (2026-07-01) — Sidecar Trader observability.
+              Two tiles read from `/api/admin/trader/*`, which now
+              serves from local SQLite so these keep working during
+              an Atlas outage. TradeTape is the primary "what did
+              the trader do this minute?" surface; TraderSeatViewer
+              shows the 4×2 seat matrix + Mongo→cache freshness. */}
+          <div
+            className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 mb-6"
+            data-testid="overview-trader-strip"
+          >
+            <PanelErrorBoundary panelName="Trade Tape" testid="panel-error-trade-tape">
+              <div className="lg:col-span-2">
+                <TradeTape />
+              </div>
+            </PanelErrorBoundary>
+            <PanelErrorBoundary panelName="Trader Seats" testid="panel-error-trader-seats">
+              <TraderSeatViewer />
+            </PanelErrorBoundary>
           </div>
 
           {/* P2 (2026-06-10) — Live observability strip.

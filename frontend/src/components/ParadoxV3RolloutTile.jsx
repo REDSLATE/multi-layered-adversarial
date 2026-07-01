@@ -420,7 +420,7 @@ export default function ParadoxV3RolloutTile() {
                 Recent flips
               </div>
               <ul className="space-y-0.5 font-mono text-[9px] text-rd-dim">
-                {changes.slice(0, 5).map((c, i) => {
+                {changes.slice(0, 5).map((c) => {
                   const when = c.ts
                     ? new Date(c.ts).toLocaleString(undefined, {
                         month: "numeric", day: "numeric",
@@ -434,11 +434,12 @@ export default function ParadoxV3RolloutTile() {
                   const afterS = Array.isArray(c.after)
                     ? `[${c.after.join(",") || "∅"}]`
                     : String(c.after);
+                  const rowKey = `${c.ts || "no-ts"}-${c.flag}-${beforeS}-${afterS}`;
                   return (
                     <li
-                      key={i}
+                      key={rowKey}
                       className="flex items-baseline gap-1 truncate"
-                      data-testid={`v3-tile-audit-row-${i}`}
+                      data-testid={`v3-tile-audit-row-${c.flag}-${(c.ts || "").slice(0, 19)}`}
                     >
                       <span className="text-rd-dim shrink-0">{when}</span>
                       <span className="text-rd-text truncate">{flag}</span>

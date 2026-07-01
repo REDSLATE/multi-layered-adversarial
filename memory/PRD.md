@@ -7,7 +7,35 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
-### ✅ Pass 3 — Mongo Off The Critical Path COMPLETED (2026-07-01)
+### ✅ Pass 3.5 — Frontend Rewire + Trade Tape Tile COMPLETED (2026-07-01)
+
+Wired the new local-first backend into the operator dashboard:
+- **`TradeTape.jsx`** — primary tile on Overview: trader status strip
+  (enabled/alive/fires today/spent today/last cycle), lane filter,
+  fired-only toggle, and a dense 15-row per-cycle table (time · lane ·
+  symbol · executor · verdict · confidence · risk reason · broker
+  result). 15s auto-refresh, reads `/api/admin/trader/{status,receipts}`.
+- **`TraderSeatViewer.jsx`** — 4×2 seat grid tile: shows angel names +
+  brain holders per lane, Mongo→cache refresh freshness, `Reseed
+  canonical pairings` + `Force cache refresh` buttons. Reads
+  `/api/admin/trader/status.state`, writes `/seed-seats` +
+  `/reload-caches`.
+- Both wired into `Overview.jsx` in a new `overview-trader-strip`
+  row above the live regime strip.
+
+### ✅ P2 Security Fixes (2026-07-01)
+
+- **`eval()` in `/app/backend/ml/open_mythos/main.py:164`** — verified
+  as PyTorch `nn.Module.eval()` (switch to eval mode), NOT Python
+  builtin. Not a security issue. No change.
+- **`random.Random(seed)` in `shared/seed.py` + `routes/doctrine_training_export.py`**
+  — verified as intentional **deterministic** seeded sampling for
+  reproducible demo data / stable train-eval splits. `# noqa: S311`
+  already documents intent. Switching to `secrets` would break
+  determinism. No change.
+- **React `key={idx}` warnings** — fixed 5 files with fully **content-based** stable keys (no `idx`), per operator directive "if a dependency can stop the trade, remove it from the trade path" — same philosophy applied here: if index position can change the identity, use content, not index. Files: `DoctrineReference.jsx`, `IntentPostMortemPanel.jsx:1510`, `PipelineBlockerChip.jsx:239,262`, `ParadoxV3RolloutTile.jsx:439`, `FunnelDeltasTile.jsx:232`. Also proactively removed `idx` from the new `TradeTape.jsx` row loop.
+
+
 
 Operator directive: "No database before broker submit. Local receipt
 first. Small transactional DB second. Mongo third."

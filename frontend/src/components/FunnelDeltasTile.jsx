@@ -227,9 +227,9 @@ export default function FunnelDeltasTile() {
           the funnel moved + any anomalies. */}
       {Array.isArray(interp.notes) && interp.notes.length > 0 && (
         <div className="border-t border-rd-border pt-1.5 space-y-0.5 font-mono text-[9px]" data-testid="funnel-deltas-notes">
-          {interp.notes.map((note, i) => (
+          {interp.notes.map((note) => (
             <div
-              key={i}
+              key={`note-${String(note)}`}
               className={note.startsWith("⚠") ? "text-rd-warn" : "text-rd-dim"}
             >
               {note}

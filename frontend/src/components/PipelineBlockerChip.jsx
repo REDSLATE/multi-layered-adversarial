@@ -232,13 +232,13 @@ export default function PipelineBlockerChip() {
                 </div>
               ) : (
                 <div className="space-y-1">
-                  {blockers.slice(0, 6).map((b, idx) => {
+                  {blockers.slice(0, 6).map((b) => {
                     const { hint, hintTone, fixScroll } = classifyBlocker(b.reason);
                     return (
                       <div
-                        key={idx}
+                        key={`${b.source || "src"}-${b.reason || "r"}`}
                         className="font-mono text-[9px] pl-3 border-l-2 border-rd-border/40"
-                        data-testid={`pipeline-blocker-chip-${lane}-row-${idx}`}
+                        data-testid={`pipeline-blocker-chip-${lane}-row-${b.source || "src"}-${(b.reason || "r").replace(/[^a-z0-9]/gi, "").slice(0, 20)}`}
                       >
                         <div className="flex items-baseline justify-between gap-2">
                           <div className="min-w-0 flex-1">
@@ -259,7 +259,7 @@ export default function PipelineBlockerChip() {
                                   if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
                                 }}
                                 className="ml-1 underline hover:opacity-80"
-                                data-testid={`pipeline-blocker-chip-fix-${idx}`}
+                                data-testid={`pipeline-blocker-chip-fix-${b.source || "src"}-${(b.reason || "r").replace(/[^a-z0-9]/gi, "").slice(0, 20)}`}
                               >
                                 jump to fix
                               </button>
