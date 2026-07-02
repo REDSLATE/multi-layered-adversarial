@@ -22,6 +22,7 @@ import DivergenceChopGauge from "@/components/DivergenceChopGauge";
 import TradeTape from "@/components/TradeTape";
 import TraderSeatViewer from "@/components/TraderSeatViewer";
 import SpreadWatcher from "@/components/SpreadWatcher";
+import BrainPersonalities from "@/components/BrainPersonalities";
 
 export default function Overview() {
   const [overview, setOverview] = useState(null);
@@ -225,6 +226,12 @@ export default function Overview() {
               Optional risk gate; observability-only by default. */}
           <PanelErrorBoundary panelName="Spread Watcher" testid="panel-error-spread-watcher">
             <SpreadWatcher />
+          </PanelErrorBoundary>
+
+          {/* 2026-07-02 — Brain Personalities. Per-brain track
+              records (D+E). Preserves specialist identities. */}
+          <PanelErrorBoundary panelName="Brain Personalities" testid="panel-error-brain-personalities">
+            <BrainPersonalities />
           </PanelErrorBoundary>
 
           {/* P2 (2026-06-10) — Live observability strip.

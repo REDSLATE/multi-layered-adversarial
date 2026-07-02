@@ -376,6 +376,191 @@ async def webull_token_status(
     return {"ok": True, **_wa.status(), "checked_at": _now_iso()}
 
 
+@router.get("/dissent")
+async def trader_dissent(
+    _: dict = Depends(get_current_user),
+    window_hours: int = Query(default=24, ge=1, le=24 * 30),
+    lane: Optional[str] = Query(default=None),
+) -> dict:
+    """Per-brain dissent tracker (2026-07-02).
+
+    Preserves per-brain personality: shows how often each brain
+    disagrees with the executor's chosen verdict. Higher dissent
+    isn't good or bad on its own — it's a signal for where a
+    brain's weights diverge from the current executor doctrine.
+
+    Reads entirely from local SQLite; no Mongo dependency.
+    """
+    from datetime import datetime, timezone, timedelta
+    _, store_mod = _import_trader()
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(hours=window_hours)
+    ).isoformat()
+
+    # Pull enough rows to cover the window. `recent_receipts` sorts
+    # by ts DESC so we can early-stop once we're past the cutoff.
+    receipts = store_mod.recent_receipts(limit=10_000, lane=lane)
+    # Filter to the window.
+    receipts = [r for r in receipts if r.get("ts") and r["ts"] >= cutoff]
+
+    # Aggregation shape:
+    #   brains[brain] = {
+    #     "cycles": int,           # times this brain produced a signal
+    #     "dissents": int,         # verdict != executor.verdict
+    #     "vs": { other_brain: count_of_dissents_when_they_were_executor }
+    #   }
+    from collections import defaultdict
+    brains_agg: dict = defaultdict(
+        lambda: {"cycles": 0, "dissents": 0, "vs": defaultdict(int)}
+    )
+    total_cycles = 0
+    for r in receipts:
+        chosen = r.get("chosen") or {}
+        executor_brain = chosen.get("brain") or (
+            (r.get("seats") or {}).get("executor")
+        )
+        executor_verdict = chosen.get("verdict")
+        if not executor_brain or not executor_verdict:
+            continue
+        total_cycles += 1
+        for sig in r.get("signals") or []:
+            brain = sig.get("brain")
+            verdict = sig.get("verdict")
+            if not brain or not verdict:
+                continue
+            brains_agg[brain]["cycles"] += 1
+            if brain != executor_brain and verdict != executor_verdict:
+                brains_agg[brain]["dissents"] += 1
+                brains_agg[brain]["vs"][executor_brain] += 1
+    out = []
+    for brain, agg in brains_agg.items():
+        cycles = agg["cycles"] or 1
+        out.append({
+            "brain": brain,
+            "cycles": agg["cycles"],
+            "dissents": agg["dissents"],
+            "dissent_rate_pct": round(agg["dissents"] / cycles * 100, 1),
+            "top_dissents_vs": dict(
+                sorted(agg["vs"].items(), key=lambda kv: -kv[1])[:5]
+            ),
+        })
+    out.sort(key=lambda r: -r["dissent_rate_pct"])
+    return {
+        "ok": True,
+        "window_hours": window_hours,
+        "total_cycles": total_cycles,
+        "brains": out,
+        "checked_at": _now_iso(),
+    }
+
+
+@router.get("/brain-accuracy")
+async def trader_brain_accuracy(
+    _: dict = Depends(get_current_user),
+    window_hours: int = Query(default=24, ge=1, le=24 * 30),
+    lane: Optional[str] = Query(default=None),
+) -> dict:
+    """Per-brain execution outcome tracker (2026-07-02).
+
+    Joins receipts ↔ executions via `intent_id` and reports, per
+    brain that ACTED as executor:
+      * fires     — times this brain drove the executor seat
+      * fills     — executions where the broker accepted
+      * fill_rate_pct
+      * avg_confidence — signal confidence at fire time
+      * avg_spread_bps_at_fire, avg_quote_age_ms_at_fire
+      * avg_notional_usd
+      * broker_error_rate_pct
+
+    Position-outcome (win/loss/PnL) tracking is deferred until the
+    trader has round-trip position lifecycle; this endpoint
+    intentionally stops at the fill boundary so the numbers we
+    show are numbers we can defend.
+    """
+    from datetime import datetime, timezone, timedelta
+    _, store_mod = _import_trader()
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(hours=window_hours)
+    ).isoformat()
+
+    receipts = store_mod.recent_receipts(limit=10_000, lane=lane)
+    receipts = [r for r in receipts if r.get("ts") and r["ts"] >= cutoff]
+
+    executions = store_mod.recent_executions(limit=10_000, lane=lane)
+    exec_by_intent = {e["intent_id"]: e for e in executions}
+
+    from collections import defaultdict
+    agg: dict = defaultdict(lambda: {
+        "fires": 0, "fills": 0,
+        "conf_sum": 0.0, "conf_n": 0,
+        "spread_sum": 0.0, "spread_n": 0,
+        "age_sum": 0.0, "age_n": 0,
+        "notional_sum": 0.0, "notional_n": 0,
+        "broker_errors": 0,
+    })
+    for r in receipts:
+        chosen = r.get("chosen") or {}
+        brain = chosen.get("brain")
+        if not brain:
+            continue
+        # Only receipts that reached the fire path have a matching
+        # execution row — same `intent_id` shape as `trader-{cycle}-{lane}`.
+        intent_id = f"trader-{(r.get('cycle_id') or '')[:16]}-{r.get('lane')}"
+        exec_row = exec_by_intent.get(intent_id)
+        if not exec_row:
+            continue
+        a = agg[brain]
+        a["fires"] += 1
+        if exec_row.get("ok"):
+            a["fills"] += 1
+        if exec_row.get("exception_type"):
+            a["broker_errors"] += 1
+        conf = chosen.get("confidence")
+        if isinstance(conf, (int, float)):
+            a["conf_sum"] += float(conf)
+            a["conf_n"] += 1
+        q = r.get("quote") or {}
+        sp = q.get("spread_bps")
+        if isinstance(sp, (int, float)):
+            a["spread_sum"] += float(sp)
+            a["spread_n"] += 1
+        ag = q.get("quote_age_ms")
+        if isinstance(ag, (int, float)):
+            a["age_sum"] += float(ag)
+            a["age_n"] += 1
+        n = exec_row.get("notional_usd")
+        if isinstance(n, (int, float)):
+            a["notional_sum"] += float(n)
+            a["notional_n"] += 1
+
+    def _avg(num: float, den: int) -> Optional[float]:
+        return round(num / den, 4) if den else None
+
+    out = []
+    for brain, a in agg.items():
+        fires = a["fires"] or 1
+        out.append({
+            "brain": brain,
+            "fires": a["fires"],
+            "fills": a["fills"],
+            "fill_rate_pct": round(a["fills"] / fires * 100, 1),
+            "avg_confidence": _avg(a["conf_sum"], a["conf_n"]),
+            "avg_spread_bps_at_fire": _avg(a["spread_sum"], a["spread_n"]),
+            "avg_quote_age_ms_at_fire": _avg(a["age_sum"], a["age_n"]),
+            "avg_notional_usd": _avg(a["notional_sum"], a["notional_n"]),
+            "broker_error_rate_pct": round(
+                a["broker_errors"] / fires * 100, 1
+            ),
+        })
+    out.sort(key=lambda r: -r["fires"])
+    return {
+        "ok": True,
+        "window_hours": window_hours,
+        "brains": out,
+        "checked_at": _now_iso(),
+    }
+
+
 # Operator-canonical angel→brain pairings for the trader.
 # Documented in /app/trader/state.py::DEFAULT_SEATS. Repeated here so
 # the seed endpoint can write them without importing the trader

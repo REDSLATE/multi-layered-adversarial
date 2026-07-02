@@ -34,6 +34,7 @@ sys.path.insert(0, "/app")
 from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
 
 from trader import audit, brains, config, feeds, risk, seat, state, store  # noqa: E402
+from trader import feed_guard as _feed_guard  # noqa: E402
 from trader import spread as trader_spread  # noqa: E402
 from trader.broker import (  # noqa: E402
     BrokerError, kraken_market_order, webull_market_order,
@@ -139,6 +140,32 @@ async def run_lane(db, lane: str) -> dict:
     # Keep the receipt's `last_price` in sync with whatever the
     # brains ultimately saw (L1 mid > L1 last > OHLC close).
     quote_prov["last_price"] = last_price
+
+    # ── Feed guard (2026-07-02) — vet the L1 reading BEFORE brains
+    # run. On a rejection the trader stays hands-off and writes a
+    # `quote_rejected` receipt for the operator. Cheap in-memory
+    # checks; no network I/O.
+    if quote_row:
+        guard_ok, guard_reason, guard_details = _feed_guard.validate_l1(
+            symbol, {**quote_row, "l1_age_ms": quote_age_ms}, lane=lane,
+        )
+        if not guard_ok:
+            await audit.write_receipt(
+                db, cycle_id=cycle_id, lane=lane, symbol=symbol,
+                last_price=last_price, signals=[], chosen=None,
+                seats={}, angels={},
+                risk_verdict={
+                    "ok": False,
+                    "reason": f"quote_rejected:{guard_reason}",
+                    "guard_details": guard_details,
+                },
+                quote=quote_prov,
+            )
+            return {
+                "lane": lane, "ok": False,
+                "reason": "quote_rejected",
+                "guard_reason": guard_reason,
+            }
 
     # 2. all 4 brains opine
     signals = []
