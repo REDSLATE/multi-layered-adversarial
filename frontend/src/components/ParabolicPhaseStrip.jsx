@@ -53,6 +53,13 @@ export default function ParabolicPhaseStrip() {
 
   const counts = data?.counts || {};
   const symbols = data?.symbols || {};
+  // Atlas-slow (backend returned HTTP 200 with an `error` field) is
+  // a soft degrade, not an endpoint failure. Render it as a muted
+  // paused-tape banner rather than the loud red exception panel we
+  // use for real HTTP errors.
+  const softError = data?.error
+    ? { kind: data.error, message: data.message || data.error }
+    : null;
 
   return (
     <Card data-testid="parabolic-phase-strip" className="p-4">
@@ -76,6 +83,16 @@ export default function ParabolicPhaseStrip() {
       {err && (
         <div className="text-xs text-rose-400 mb-2" data-testid="parabolic-phase-error">
           {err}
+        </div>
+      )}
+
+      {softError && (
+        <div
+          className="text-[11px] text-amber-300/80 mb-2 flex items-center gap-2"
+          data-testid="parabolic-phase-soft-error"
+        >
+          <span className="opacity-60">◐</span>
+          <span>Phase map paused — {softError.message}</span>
         </div>
       )}
 
