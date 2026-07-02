@@ -321,6 +321,27 @@ function SetupQualityDetail({ seat, testid }) {
 
 export default function DoctrineStrip({ packet, intentId }) {
   const [open, setOpen] = useState(false);
+  // Operator-disabled advisory (2026-07-03): when the backend flag
+  // DOCTRINE_ADVISORY_ENABLED=false, the ingest path returns a stub
+  // packet in place of the scorecard. Render it as a subtle
+  // disabled-note, NOT as an empty/error state — this is a
+  // deliberate operator choice, not a failure.
+  if (packet?.advisory_disabled) {
+    return (
+      <div
+        className="px-3 py-2 bg-rd-bg border-t border-rd-border flex items-center gap-2 opacity-60"
+        data-testid={`doctrine-strip-${intentId}-disabled`}
+      >
+        <span className="text-[10px] font-mono uppercase tracking-widest text-rd-dim">
+          Doctrine
+        </span>
+        <span className="text-[10px] font-mono text-rd-muted">
+          advisory layer disabled by operator · sidecar trader is
+          authoritative for fires
+        </span>
+      </div>
+    );
+  }
   if (!packet || packet.error) {
     return (
       <div

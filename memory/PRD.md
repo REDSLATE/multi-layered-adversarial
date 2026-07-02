@@ -7,6 +7,36 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+## Doctrine — Advisory Layer Kill Switch (locked 2026-07-03)
+
+The `shared.doctrine.*` pipeline (gap_and_go, breakout_or_bailout, etc.)
+is **diagnostic-only** — zero downstream consumers outside `intents.py`
+read `doctrine_packet.*` fields. Verified via grep across every gate,
+coordinator, executor, auto_router, and shared module.
+
+The sidecar trader (`/app/trader/`) never imported these modules and
+never will — its own doctrine is `Market Data → Brain → Seat → Risk
+→ Broker` and nothing else.
+
+**Operator kill switch:** `DOCTRINE_ADVISORY_ENABLED` env var.
+* `true` (default) — router runs, packet built, Mongo audit row + Shelly
+  event written. Preserves preview + prod behavior for the training-data
+  pipeline (`doctrine_training_export.py` → OpenMythos JSONL).
+* `false` — `_build_and_persist_doctrine_packet` short-circuits to a
+  stub envelope. No router import, no Mongo write, no Shelly event.
+  UI renders a subtle "advisory layer disabled by operator" note in
+  place of the REJECT scorecard.
+
+**Why the switch exists:** the doctrine UI cards were misleading the
+operator into thinking rejections there were the reason live trades
+weren't firing. They're not — the sidecar trader doesn't consult
+them. The switch removes both the confusion and the latency without
+deleting code (so the training-data path can be revived if wanted).
+
+**Tests:** `backend/tests/test_doctrine_advisory_kill_switch.py`
+covers flag-off/no-router-touch, flag-off/no-writes, flag-on/preserves-
+current-shape, env parsing, and unset-default behavior. 5/5 green.
+
 ## Doctrine — Failure Surface Taxonomy (locked 2026-07-03)
 
 Every dashboard tile must render failures at a severity that matches

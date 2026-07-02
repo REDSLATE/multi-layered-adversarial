@@ -532,6 +532,53 @@ def _fractional_default_for_lane(
     return False
 
 
+def _doctrine_advisory_enabled() -> bool:
+    """Feature flag for the entire doctrine advisory pipeline.
+
+    Doctrine pin (2026-07-03, operator directive):
+        The doctrine layer is diagnostic-only — no gate, coordinator,
+        executor, auto-router, or sidecar consumes its fields. When
+        the operator wants MC's ingest hot path to match the sidecar
+        trader's discipline (Market Data → Brain → Seat → Risk →
+        Broker, nothing else), flip this OFF via env var.
+
+        OFF:
+          * `_build_and_persist_doctrine_packet` returns a stub
+            envelope; no `lane_doctrine_router` call.
+          * No `doctrine_sidecars` audit row written.
+          * No `BRAIN_DOCTRINE_SIDECAR_PACKET` Shelly event.
+          * UI receives `{"advisory_disabled": true, ...}` and
+            renders a subtle disabled-note in place of the scorecard.
+
+        Default `true` so preview keeps the current behavior; prod
+        opts into the simplification by setting the env var.
+    """
+    import os
+    raw = os.environ.get("DOCTRINE_ADVISORY_ENABLED", "true").strip().lower()
+    return raw in {"true", "1", "yes", "on"}
+
+
+def _doctrine_advisory_disabled_stub(
+    symbol: str, lane: Optional[str],
+) -> dict:
+    """Return-shape parity with `_doctrine_failure_packet` so callers
+    that already tolerate the failure envelope also tolerate the
+    disabled envelope. No side effects."""
+    return {
+        "advisory_disabled": True,
+        "reason": "operator_pin_2026_07_03: DOCTRINE_ADVISORY_ENABLED=false",
+        "doctrine_version": "advisory_disabled_v1",
+        "event_type": "BRAIN_DOCTRINE_SIDECAR_PACKET",
+        "lane": (lane or "").lower() or None,
+        "symbol": symbol,
+        "seats": {},
+        "base_labels": {
+            "score": None, "quality": None,
+            "labels": [], "reasons": [],
+        },
+    }
+
+
 async def _build_and_persist_doctrine_packet(
     *,
     intent_id: str,
@@ -572,7 +619,16 @@ async def _build_and_persist_doctrine_packet(
            `intent_id`. This is Shelly's training substrate.
         3. Shelly event `BRAIN_DOCTRINE_SIDECAR_PACKET` so the
            memory layer indexes it alongside the ingest row.
+
+    Operator kill switch:
+        `DOCTRINE_ADVISORY_ENABLED=false` short-circuits this entire
+        function to a no-op stub — no router import, no packet build,
+        no Mongo write, no Shelly event. See `_doctrine_advisory_enabled`
+        for the pin.
     """
+    if not _doctrine_advisory_enabled():
+        return _doctrine_advisory_disabled_stub(symbol, lane)
+
     lane_norm = (lane or "").lower()
 
     # Build the snapshot the labeler consumes. The brain may have
