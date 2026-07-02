@@ -415,7 +415,7 @@ async def test_dual_auth_accepts_operator(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_dual_auth_accepts_brain(monkeypatch):
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "sek-rit")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "sek-rit")
     from routes import market_data_snapshot as route_mod
     principal = await route_mod._dual_auth(
         x_brain_id="redeye",
@@ -427,7 +427,7 @@ async def test_dual_auth_accepts_brain(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_dual_auth_rejects_wrong_brain_token(monkeypatch):
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "sek-rit")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "sek-rit")
     from routes import market_data_snapshot as route_mod
     with pytest.raises(Exception) as exc:
         await route_mod._dual_auth(

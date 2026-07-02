@@ -41,15 +41,15 @@ def _preview_stamp() -> dict:
     return s
 
 
-def _alpha_token() -> str:
-    tok = os.environ.get("ALPHA_INGEST_TOKEN") or ""
+def _camino_token() -> str:
+    tok = os.environ.get("CAMINO_INGEST_TOKEN") or ""
     if not tok:
         # Read from .env directly so the test works in CI where this
         # env var may not be pre-exported.
         try:
             with open("/app/backend/.env") as f:
                 for line in f:
-                    if line.startswith("ALPHA_INGEST_TOKEN="):
+                    if line.startswith("CAMINO_INGEST_TOKEN="):
                         tok = line.split("=", 1)[1].strip().strip('"').strip("'")
                         break
         except OSError:
@@ -74,14 +74,14 @@ def test_post_rejects_unknown_brain(base_url):
     r = requests.post(
         f"{base_url}/api/admin/runtime/sidecar-checkin/notabrain",
         json={"stamp": _prod_stamp()},
-        headers={"X-Runtime-Token": _alpha_token() or "x"},
+        headers={"X-Runtime-Token": _camino_token() or "x"},
         timeout=15,
     )
     assert r.status_code == 404
 
 
 def test_post_prod_stamp_records_prod_verdict(base_url):
-    tok = _alpha_token()
+    tok = _camino_token()
     if not tok:
         return  # env not configured in this runner
 
@@ -101,7 +101,7 @@ def test_post_prod_stamp_records_prod_verdict(base_url):
 
 
 def test_post_preview_stamp_records_preview_verdict(base_url):
-    tok = _alpha_token()
+    tok = _camino_token()
     if not tok:
         return
 
@@ -118,7 +118,7 @@ def test_post_preview_stamp_records_preview_verdict(base_url):
 
 
 def test_post_policy_drift_when_hash_mismatch(base_url):
-    tok = _alpha_token()
+    tok = _camino_token()
     if not tok:
         return
 
@@ -139,7 +139,7 @@ def test_post_policy_drift_when_hash_mismatch(base_url):
 
 
 def test_post_invalid_when_stamp_shape_wrong(base_url):
-    tok = _alpha_token()
+    tok = _camino_token()
     if not tok:
         return
 
@@ -202,7 +202,7 @@ def test_get_single_brain_rejects_unknown(auth_client, base_url):
 
 
 def test_post_then_get_reflects_latest_stamp(auth_client, base_url):
-    tok = _alpha_token()
+    tok = _camino_token()
     if not tok:
         return
 
@@ -247,7 +247,7 @@ def test_post_sidecar_checkin_also_bumps_heartbeat(auth_client, base_url):
     heartbeat-status endpoint (no auth) so the test pins the
     operator-visible behavior, not the storage detail.
     """
-    tok = _alpha_token()
+    tok = _camino_token()
     if not tok:
         return
 

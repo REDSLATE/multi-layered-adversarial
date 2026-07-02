@@ -115,8 +115,8 @@ async def test_runtime_cannot_push_other_brain_memories(monkeypatch, clean_memor
     from fastapi import HTTPException, Response
     # Wipe REDEYE's token and set a fake camaro token; verify_runtime_token
     # will reject because the supplied token doesn't match REDEYE's env.
-    monkeypatch.setenv("CAMARO_INGEST_TOKEN", "tw-camaro-token")
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "tw-redeye-real-token")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "tw-camaro-token")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-redeye-real-token")
     batch = IngestBatchIn(
         batch_id="tw-batch-cross", brain="redeye",
         memories=[_mem("tw-mem-cross-1")],

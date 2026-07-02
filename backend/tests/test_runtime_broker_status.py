@@ -37,8 +37,8 @@ def _reset_cache():
 @pytest.fixture(autouse=True)
 async def _setup(monkeypatch):
     # Real brain ingest token — must match a participant
-    monkeypatch.setenv("CAMARO_INGEST_TOKEN", "tw-camaro-token")
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "tw-redeye-token")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "tw-camaro-token")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-redeye-token")
     _reset_cache()
     yield
     _reset_cache()

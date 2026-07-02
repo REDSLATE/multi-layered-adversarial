@@ -59,8 +59,8 @@ def test_unknown_lane_rejected_at_schema():
 
 
 def test_resolve_runtime_from_token_matches_env(monkeypatch):
-    monkeypatch.setenv("CAMARO_INGEST_TOKEN", "tw-cam")
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "tw-red")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "tw-cam")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-red")
     assert _resolve_runtime_from_token("tw-cam") == "camaro"
     assert _resolve_runtime_from_token("tw-red") == "redeye"
     assert _resolve_runtime_from_token("nope") is None
@@ -81,7 +81,7 @@ async def test_close_requires_token():
 @pytest.mark.asyncio
 async def test_close_rejects_bogus_token(monkeypatch):
     from fastapi import HTTPException
-    monkeypatch.setenv("CAMARO_INGEST_TOKEN", "real-camaro-token")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "real-camaro-token")
     body = CloseIn(symbol="AAPL", lane="equity")
     with pytest.raises(HTTPException) as exc:
         await close_position(body=body, x_runtime_token="forged-token")
@@ -92,7 +92,7 @@ async def test_close_rejects_bogus_token(monkeypatch):
 async def test_close_404_when_no_position(monkeypatch):
     """If the broker has no position for that symbol, refuse with 404."""
     from fastapi import HTTPException
-    monkeypatch.setenv("CAMARO_INGEST_TOKEN", "real-camaro-token")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "real-camaro-token")
     body = CloseIn(symbol="AAPL", lane="equity")
 
     fake_adapter = AsyncMock()
@@ -112,7 +112,7 @@ async def test_close_404_when_no_position(monkeypatch):
 async def test_close_503_when_broker_disconnected(monkeypatch):
     """Alpaca not connected → 503, not 500."""
     from fastapi import HTTPException
-    monkeypatch.setenv("CAMARO_INGEST_TOKEN", "real-camaro-token")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "real-camaro-token")
     body = CloseIn(symbol="AAPL", lane="equity")
 
     with patch(
@@ -129,7 +129,7 @@ async def test_close_long_routes_sell_through_gate_chain(monkeypatch):
     """A long position closes as a SELL routed through the SAME intent
     pipeline. The post_intent function is called, NOT the broker
     adapter directly — that's the no-bypass guarantee."""
-    monkeypatch.setenv("CAMARO_INGEST_TOKEN", "tw-camaro")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "tw-camaro")
 
     fake_adapter = AsyncMock()
     fake_adapter.list_positions = AsyncMock(return_value=[{
@@ -171,7 +171,7 @@ async def test_close_long_routes_sell_through_gate_chain(monkeypatch):
 @pytest.mark.asyncio
 async def test_close_short_routes_cover_through_gate_chain(monkeypatch):
     """A short position closes as a COVER."""
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "tw-redeye")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-redeye")
 
     fake_adapter = AsyncMock()
     fake_adapter.list_positions = AsyncMock(return_value=[{
@@ -205,7 +205,7 @@ async def test_close_short_routes_cover_through_gate_chain(monkeypatch):
 @pytest.mark.asyncio
 async def test_partial_close_halves_qty(monkeypatch):
     """fraction=0.5 → close half the qty."""
-    monkeypatch.setenv("ALPHA_INGEST_TOKEN", "tw-alpha")
+    monkeypatch.setenv("CAMINO_INGEST_TOKEN", "tw-alpha")
 
     fake_adapter = AsyncMock()
     fake_adapter.list_positions = AsyncMock(return_value=[{

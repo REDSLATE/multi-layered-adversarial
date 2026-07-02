@@ -37,10 +37,10 @@ def _token(env_key: str) -> str:
     raise RuntimeError(f"{env_key} missing")
 
 
-ALPHA_TOKEN = _token("ALPHA_INGEST_TOKEN")
-CAMARO_TOKEN = _token("CAMARO_INGEST_TOKEN")
-CHEVELLE_TOKEN = _token("CHEVELLE_INGEST_TOKEN")
-REDEYE_TOKEN = _token("REDEYE_INGEST_TOKEN")
+CAMINO_TOKEN = _token("CAMINO_INGEST_TOKEN")
+BARRACUDA_TOKEN = _token("BARRACUDA_INGEST_TOKEN")
+HELLCAT_TOKEN = _token("HELLCAT_INGEST_TOKEN")
+GTO_TOKEN = _token("GTO_INGEST_TOKEN")
 
 
 def _login() -> str:
@@ -80,7 +80,7 @@ class TestOutcomeIngest:
         tok = _login()
         # post a fresh alpha-long, then resolve it
         oid = _post_opinion(
-            "alpha", ALPHA_TOKEN, stance="long",
+            "alpha", CAMINO_TOKEN, stance="long",
             body=f"alpha test {time.time()}", topic="symbol:NVDA", confidence=0.66,
         )
         r = requests.post(
@@ -97,12 +97,12 @@ class TestOutcomeIngest:
     def test_chevelle_resolves_via_runtime_token(self):
         tok = _login()
         oid = _post_opinion(
-            "alpha", ALPHA_TOKEN, stance="long",
+            "alpha", CAMINO_TOKEN, stance="long",
             body=f"alpha test 2 {time.time()}", topic="symbol:AMD",
         )
         r = requests.post(
             f"{BASE_URL}/api/ingest/outcome",
-            headers={"X-Runtime-Token": CHEVELLE_TOKEN, "Content-Type": "application/json"},
+            headers={"X-Runtime-Token": HELLCAT_TOKEN, "Content-Type": "application/json"},
             json={"opinion_id": oid, "actual": "loss"},
             timeout=20,
         )
@@ -111,12 +111,12 @@ class TestOutcomeIngest:
     def test_chevelle_cannot_resolve_its_own_opinion(self):
         # post a chevelle opinion; chevelle then tries to resolve it → 403
         oid = _post_opinion(
-            "chevelle", CHEVELLE_TOKEN, stance="observation",
+            "chevelle", HELLCAT_TOKEN, stance="observation",
             body=f"chevelle observation {time.time()}", topic="free",
         )
         r = requests.post(
             f"{BASE_URL}/api/ingest/outcome",
-            headers={"X-Runtime-Token": CHEVELLE_TOKEN, "Content-Type": "application/json"},
+            headers={"X-Runtime-Token": HELLCAT_TOKEN, "Content-Type": "application/json"},
             json={"opinion_id": oid, "actual": "win"},
             timeout=20,
         )
@@ -125,12 +125,12 @@ class TestOutcomeIngest:
 
     def test_alpha_cannot_resolve_via_runtime_token(self):
         oid = _post_opinion(
-            "alpha", ALPHA_TOKEN, stance="long",
+            "alpha", CAMINO_TOKEN, stance="long",
             body=f"alpha self resolve attempt {time.time()}", topic="symbol:META",
         )
         r = requests.post(
             f"{BASE_URL}/api/ingest/outcome",
-            headers={"X-Runtime-Token": ALPHA_TOKEN, "Content-Type": "application/json"},
+            headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={"opinion_id": oid, "actual": "win"},
             timeout=20,
         )
@@ -138,10 +138,10 @@ class TestOutcomeIngest:
 
     def test_camaro_redeye_cannot_resolve_via_runtime_token(self):
         oid = _post_opinion(
-            "alpha", ALPHA_TOKEN, stance="long",
+            "alpha", CAMINO_TOKEN, stance="long",
             body=f"third party resolve attempt {time.time()}", topic="symbol:GOOG",
         )
-        for tok_name, tok in (("camaro", CAMARO_TOKEN), ("redeye", REDEYE_TOKEN)):
+        for tok_name, tok in (("camaro", BARRACUDA_TOKEN), ("redeye", GTO_TOKEN)):
             r = requests.post(
                 f"{BASE_URL}/api/ingest/outcome",
                 headers={"X-Runtime-Token": tok, "Content-Type": "application/json"},
@@ -162,7 +162,7 @@ class TestOutcomeIngest:
     def test_append_only_409_on_double_resolve(self):
         tok = _login()
         oid = _post_opinion(
-            "alpha", ALPHA_TOKEN, stance="long",
+            "alpha", CAMINO_TOKEN, stance="long",
             body=f"double resolve {time.time()}", topic="symbol:CRM",
         )
         r1 = requests.post(
@@ -181,7 +181,7 @@ class TestOutcomeIngest:
     def test_invalid_actual_422(self):
         tok = _login()
         oid = _post_opinion(
-            "alpha", ALPHA_TOKEN, stance="long",
+            "alpha", CAMINO_TOKEN, stance="long",
             body=f"invalid actual {time.time()}", topic="free",
         )
         r = requests.post(
@@ -236,7 +236,7 @@ class TestScorecard:
         r = requests.get(
             f"{BASE_URL}/api/runtime-discussion/scorecard",
             params={"caller": "alpha"},
-            headers={"X-Runtime-Token": ALPHA_TOKEN},
+            headers={"X-Runtime-Token": CAMINO_TOKEN},
             timeout=20,
         )
         assert r.status_code == 200, r.text
@@ -247,7 +247,7 @@ class TestScorecard:
         r = requests.get(
             f"{BASE_URL}/api/runtime-discussion/scorecard",
             params={"caller": "camaro"},
-            headers={"X-Runtime-Token": ALPHA_TOKEN},
+            headers={"X-Runtime-Token": CAMINO_TOKEN},
             timeout=20,
         )
         assert r.status_code == 401
@@ -280,7 +280,7 @@ class TestScorecardMath:
         ids = []
         for stance, conf, _ in rows:
             ids.append(_post_opinion(
-                "alpha", ALPHA_TOKEN, stance=stance,
+                "alpha", CAMINO_TOKEN, stance=stance,
                 body=f"fixture {sym} c={conf}", topic=f"symbol:{sym}", confidence=conf,
             ))
         for (oid, (_, _, actual)) in zip(ids, rows):

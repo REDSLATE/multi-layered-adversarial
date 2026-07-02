@@ -85,8 +85,8 @@ async def test_bogus_token_returns_401():
 
 
 def test_resolve_brain_from_token(monkeypatch):
-    monkeypatch.setenv("CAMARO_INGEST_TOKEN", "tw-cam")
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "tw-red")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "tw-cam")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-red")
     assert _resolve_runtime_from_token("tw-cam") == "camaro"
     assert _resolve_runtime_from_token("tw-red") == "redeye"
     assert _resolve_runtime_from_token("nope") is None
@@ -102,7 +102,7 @@ async def test_quarantine_contagion_excludes_safe_view(monkeypatch):
     Assert REDEYE's row is filtered out of peer_memories (contagion),
     AND that the quarantined_count includes it."""
     from db import db
-    monkeypatch.setenv("CAMARO_INGEST_TOKEN", "tw-cam")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "tw-cam")
     # Insert two memories
     await db["brain_memories"].delete_many({"memory_id": {"$regex": "^tw-link-"}})
     await db["shared_labeled_memories"].delete_many({"reason": {"$regex": "tw-link-"}})
@@ -188,7 +188,7 @@ async def test_quarantine_contagion_excludes_safe_view(monkeypatch):
 @pytest.mark.asyncio
 async def test_response_includes_per_brain_weights(monkeypatch):
     """Every response includes a weights_by_brain table for all 4 brains."""
-    monkeypatch.setenv("ALPHA_INGEST_TOKEN", "tw-alpha")
+    monkeypatch.setenv("CAMINO_INGEST_TOKEN", "tw-alpha")
     from routes.runtime_cross_brain_memories import _cache
     _cache.clear()
     result = await cross_brain_memories(
@@ -206,7 +206,7 @@ async def test_response_includes_per_brain_weights(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_response_includes_counts_by_brain(monkeypatch):
-    monkeypatch.setenv("ALPHA_INGEST_TOKEN", "tw-alpha")
+    monkeypatch.setenv("CAMINO_INGEST_TOKEN", "tw-alpha")
     from routes.runtime_cross_brain_memories import _cache
     _cache.clear()
     result = await cross_brain_memories(

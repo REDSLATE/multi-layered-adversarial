@@ -37,9 +37,9 @@ def _token(env_key: str) -> str:
     raise RuntimeError(f"{env_key} not in backend/.env")
 
 
-ALPHA_TOKEN = _token("ALPHA_INGEST_TOKEN")
-CAMARO_TOKEN = _token("CAMARO_INGEST_TOKEN")
-REDEYE_TOKEN = _token("REDEYE_INGEST_TOKEN")
+CAMINO_TOKEN = _token("CAMINO_INGEST_TOKEN")
+BARRACUDA_TOKEN = _token("BARRACUDA_INGEST_TOKEN")
+GTO_TOKEN = _token("GTO_INGEST_TOKEN")
 
 
 def _login() -> str:
@@ -88,7 +88,7 @@ class TestRolesManifest:
         r = requests.get(
             f"{BASE_URL}/api/runtime-discussion/roles-manifest",
             params={"caller": "redeye"},
-            headers={"X-Runtime-Token": REDEYE_TOKEN},
+            headers={"X-Runtime-Token": GTO_TOKEN},
             timeout=20,
         )
         assert r.status_code == 200, r.text
@@ -110,7 +110,7 @@ class TestRolesManifest:
         r = requests.get(
             f"{BASE_URL}/api/runtime-discussion/roles-manifest",
             params={"caller": "camaro"},
-            headers={"X-Runtime-Token": ALPHA_TOKEN},
+            headers={"X-Runtime-Token": CAMINO_TOKEN},
             timeout=20,
         )
         assert r.status_code == 401
@@ -123,7 +123,7 @@ class TestOpinionsPostAndThread:
         # Alpha posts a top-level opinion
         r1 = requests.post(
             f"{BASE_URL}/api/ingest/opinion",
-            headers={"X-Runtime-Token": ALPHA_TOKEN, "Content-Type": "application/json"},
+            headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={
                 "runtime": "alpha",
                 "topic": "symbol:AAPL",
@@ -143,7 +143,7 @@ class TestOpinionsPostAndThread:
         # REDEYE replies
         r2 = requests.post(
             f"{BASE_URL}/api/ingest/opinion",
-            headers={"X-Runtime-Token": REDEYE_TOKEN, "Content-Type": "application/json"},
+            headers={"X-Runtime-Token": GTO_TOKEN, "Content-Type": "application/json"},
             json={
                 "runtime": "redeye",
                 "topic": "symbol:AAPL",
@@ -179,7 +179,7 @@ class TestSchemaRejects:
     def test_rejects_may_execute_true(self):
         r = requests.post(
             f"{BASE_URL}/api/ingest/opinion",
-            headers={"X-Runtime-Token": ALPHA_TOKEN, "Content-Type": "application/json"},
+            headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={
                 "runtime": "alpha", "topic": "free", "stance": "observation",
                 "body": "sneaky", "may_execute": True,
@@ -192,7 +192,7 @@ class TestSchemaRejects:
     def test_rejects_invalid_stance(self):
         r = requests.post(
             f"{BASE_URL}/api/ingest/opinion",
-            headers={"X-Runtime-Token": ALPHA_TOKEN, "Content-Type": "application/json"},
+            headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={
                 "runtime": "alpha", "topic": "free", "stance": "EXECUTE",
                 "body": "no",
@@ -204,7 +204,7 @@ class TestSchemaRejects:
     def test_rejects_malformed_topic(self):
         r = requests.post(
             f"{BASE_URL}/api/ingest/opinion",
-            headers={"X-Runtime-Token": ALPHA_TOKEN, "Content-Type": "application/json"},
+            headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={
                 "runtime": "alpha", "topic": "no-colon-no-prefix", "stance": "observation",
                 "body": "no",
@@ -216,7 +216,7 @@ class TestSchemaRejects:
     def test_reply_to_nonexistent_returns_404(self):
         r = requests.post(
             f"{BASE_URL}/api/ingest/opinion",
-            headers={"X-Runtime-Token": ALPHA_TOKEN, "Content-Type": "application/json"},
+            headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={
                 "runtime": "alpha", "topic": "free", "stance": "observation",
                 "body": "ghost reply",
@@ -230,7 +230,7 @@ class TestSchemaRejects:
         # Alpha's token cannot post as Camaro
         r = requests.post(
             f"{BASE_URL}/api/ingest/opinion",
-            headers={"X-Runtime-Token": ALPHA_TOKEN, "Content-Type": "application/json"},
+            headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={
                 "runtime": "camaro", "topic": "free", "stance": "observation",
                 "body": "impersonation attempt",

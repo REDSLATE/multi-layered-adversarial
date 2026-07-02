@@ -100,7 +100,7 @@ async def test_audit_collection_writes_on_checkin(monkeypatch):
     import uuid
     from unittest.mock import MagicMock
 
-    monkeypatch.setenv("ALPHA_INGEST_TOKEN", "tripwire-token")
+    monkeypatch.setenv("CAMINO_INGEST_TOKEN", "tripwire-token")
 
     marker = f"tripwire-{uuid.uuid4()}"
     body = mod.CheckinRequest(stamp={

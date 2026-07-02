@@ -107,7 +107,7 @@ async def test_endpoint_rejects_empty_contribution(monkeypatch):
     monkeypatch.setenv("RISEDUAL_REJECT_EMPTY_CONTRIBUTIONS", "true")
     # Provide a token so the auth check passes — we want to test the
     # substance check, not the auth check.
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "tripwire-test-token")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tripwire-test-token")
 
     empty = SovereignContribution(mode="DTD")
     with pytest.raises(HTTPException) as exc:
@@ -133,7 +133,7 @@ async def test_endpoint_accepts_minimal_substantive_contribution(monkeypatch):
     from shared.sovereign_mode_guard import post_sovereign_contribution
 
     monkeypatch.setenv("RISEDUAL_REJECT_EMPTY_CONTRIBUTIONS", "true")
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "tripwire-test-token")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tripwire-test-token")
 
     minimal = SovereignContribution(mode="DTD", notes="tripwire-min-substance")
     # No exception — endpoint persists and returns. We don't assert on
@@ -155,7 +155,7 @@ async def test_endpoint_bypassed_when_flag_off(monkeypatch):
     from shared.sovereign_mode_guard import post_sovereign_contribution
 
     monkeypatch.setenv("RISEDUAL_REJECT_EMPTY_CONTRIBUTIONS", "false")
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "tripwire-test-token")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tripwire-test-token")
 
     empty = SovereignContribution(mode="DTD")
     # Should NOT raise — flag is off.

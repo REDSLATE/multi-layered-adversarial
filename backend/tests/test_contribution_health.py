@@ -64,7 +64,7 @@ async def test_endpoint_logs_pushed_200_with_request_id(
     """End-to-end: a successful POST writes one `pushed_200` row and
     echoes the request_id back in the response."""
     monkeypatch.setenv("RISEDUAL_REJECT_EMPTY_CONTRIBUTIONS", "true")
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "tripwire-token")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tripwire-token")
 
     result = await post_sovereign_contribution(
         body=SovereignContribution(mode="DTD", notes="real reasoning"),
@@ -91,7 +91,7 @@ async def test_endpoint_logs_rejected_422_with_empty_fields(
     from fastapi import HTTPException
 
     monkeypatch.setenv("RISEDUAL_REJECT_EMPTY_CONTRIBUTIONS", "true")
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "tripwire-token")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tripwire-token")
 
     with pytest.raises(HTTPException) as exc:
         await post_sovereign_contribution(

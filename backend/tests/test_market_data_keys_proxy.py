@@ -164,7 +164,7 @@ def test_auth_rejects_token_mismatch(monkeypatch):
     """Wrong token for a known brain → 401."""
     from fastapi import HTTPException
     from routes.market_data_keys import _authenticate
-    monkeypatch.setenv("CAMARO_INGEST_TOKEN", "the-correct-one")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "the-correct-one")
     with pytest.raises(HTTPException) as exc_info:
         _authenticate("camaro", "the-wrong-one")
     assert exc_info.value.status_code == 401
@@ -173,7 +173,7 @@ def test_auth_rejects_token_mismatch(monkeypatch):
 def test_auth_returns_canonical_brain_on_match(monkeypatch):
     """Correct token → returns lowercase canonical brain name."""
     from routes.market_data_keys import _authenticate
-    monkeypatch.setenv("CAMARO_INGEST_TOKEN", "matching-token")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "matching-token")
     out = _authenticate("CAMARO", "matching-token")
     assert out == "camaro"
 
@@ -186,7 +186,7 @@ async def test_endpoint_returns_only_whitelisted_fields(monkeypatch):
     """End-to-end: configured env vars come back via the endpoint;
     nothing else does."""
     from routes.market_data_keys import get_market_data_keys
-    monkeypatch.setenv("CAMARO_INGEST_TOKEN", "test-token")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "test-token")
     monkeypatch.setenv("FINNHUB_API_KEY", "test-finnhub-key")
     monkeypatch.setenv("POLYGON_API_KEY", "test-polygon-key")
     # Set a broker key in env — must NOT come back through the proxy.
@@ -213,7 +213,7 @@ async def test_endpoint_returns_only_whitelisted_fields(monkeypatch):
 async def test_endpoint_response_keys_match_whitelist_exactly(monkeypatch):
     """Every field returned by the endpoint must be in the whitelist."""
     from routes.market_data_keys import get_market_data_keys
-    monkeypatch.setenv("CAMARO_INGEST_TOKEN", "test-token")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "test-token")
     # Set every possible field — including a forbidden one.
     for field in MARKET_DATA_KEY_FIELDS:
         monkeypatch.setenv(field, f"value-{field}")
@@ -235,7 +235,7 @@ async def test_endpoint_does_not_return_unconfigured_fields(monkeypatch):
     """If a field has no env value, it's listed under unconfigured —
     NOT returned as an empty string in `keys`."""
     from routes.market_data_keys import get_market_data_keys
-    monkeypatch.setenv("CAMARO_INGEST_TOKEN", "test-token")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "test-token")
     # Clear all data fields
     for field in MARKET_DATA_KEY_FIELDS:
         monkeypatch.delenv(field, raising=False)

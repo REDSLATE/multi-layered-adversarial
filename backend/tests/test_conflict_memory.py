@@ -40,10 +40,10 @@ def _token(env_key: str) -> str:
     raise RuntimeError(f"{env_key} missing")
 
 
-ALPHA_TOKEN = _token("ALPHA_INGEST_TOKEN")
-CAMARO_TOKEN = _token("CAMARO_INGEST_TOKEN")
-CHEVELLE_TOKEN = _token("CHEVELLE_INGEST_TOKEN")
-REDEYE_TOKEN = _token("REDEYE_INGEST_TOKEN")
+CAMINO_TOKEN = _token("CAMINO_INGEST_TOKEN")
+BARRACUDA_TOKEN = _token("BARRACUDA_INGEST_TOKEN")
+HELLCAT_TOKEN = _token("HELLCAT_INGEST_TOKEN")
+GTO_TOKEN = _token("GTO_INGEST_TOKEN")
 
 
 def _login() -> str:
@@ -89,8 +89,8 @@ def _unique_topic(prefix: str = "symbol") -> str:
 class TestConflictDetection:
     def test_long_vs_short_creates_conflict(self):
         topic = _unique_topic()
-        a = _post_op("alpha", ALPHA_TOKEN, "long", topic)
-        r = _post_op("redeye", REDEYE_TOKEN, "short", topic)
+        a = _post_op("alpha", CAMINO_TOKEN, "long", topic)
+        r = _post_op("redeye", GTO_TOKEN, "short", topic)
         assert len(r["conflicts_detected"]) == 1
         # Validate persisted
         tok = _login()
@@ -103,43 +103,43 @@ class TestConflictDetection:
 
     def test_endorse_vs_veto_creates_conflict(self):
         topic = _unique_topic("regime")
-        _post_op("alpha", ALPHA_TOKEN, "endorse", topic)
-        r = _post_op("camaro", CAMARO_TOKEN, "veto", topic)
+        _post_op("alpha", CAMINO_TOKEN, "endorse", topic)
+        r = _post_op("camaro", BARRACUDA_TOKEN, "veto", topic)
         assert len(r["conflicts_detected"]) == 1
 
     def test_agree_vs_disagree_creates_conflict(self):
         topic = _unique_topic("theory")
-        _post_op("alpha", ALPHA_TOKEN, "agree", topic)
-        r = _post_op("redeye", REDEYE_TOKEN, "disagree", topic)
+        _post_op("alpha", CAMINO_TOKEN, "agree", topic)
+        r = _post_op("redeye", GTO_TOKEN, "disagree", topic)
         assert len(r["conflicts_detected"]) == 1
 
     def test_neutral_stance_does_not_conflict(self):
         topic = _unique_topic()
-        _post_op("alpha", ALPHA_TOKEN, "long", topic)
+        _post_op("alpha", CAMINO_TOKEN, "long", topic)
         # observation is neutral — should NOT trigger a conflict against the long
-        r = _post_op("camaro", CAMARO_TOKEN, "observation", topic)
+        r = _post_op("camaro", BARRACUDA_TOKEN, "observation", topic)
         assert r["conflicts_detected"] == []
 
     def test_same_runtime_does_not_conflict_with_itself(self):
         topic = _unique_topic()
-        _post_op("alpha", ALPHA_TOKEN, "long", topic)
+        _post_op("alpha", CAMINO_TOKEN, "long", topic)
         # Alpha posting an opposing stance on its own topic — not a peer conflict
-        r = _post_op("alpha", ALPHA_TOKEN, "short", topic)
+        r = _post_op("alpha", CAMINO_TOKEN, "short", topic)
         assert r["conflicts_detected"] == []
 
     def test_different_topic_does_not_conflict(self):
         t1 = _unique_topic()
         t2 = _unique_topic()
-        _post_op("alpha", ALPHA_TOKEN, "long", t1)
-        r = _post_op("redeye", REDEYE_TOKEN, "short", t2)
+        _post_op("alpha", CAMINO_TOKEN, "long", t1)
+        r = _post_op("redeye", GTO_TOKEN, "short", t2)
         assert r["conflicts_detected"] == []
 
     def test_idempotent_no_dup_conflict(self):
         # Posting the SAME opposing pair again should not create a duplicate
         # conflict — pair_ids is sorted and used as the dedupe key.
         topic = _unique_topic()
-        a = _post_op("alpha", ALPHA_TOKEN, "long", topic)
-        r1 = _post_op("redeye", REDEYE_TOKEN, "short", topic)
+        a = _post_op("alpha", CAMINO_TOKEN, "long", topic)
+        r1 = _post_op("redeye", GTO_TOKEN, "short", topic)
         assert len(r1["conflicts_detected"]) == 1
         # Now alpha tries another opposite — but first opposing pair already
         # exists; another short on same topic from a DIFFERENT alpha opinion
@@ -164,8 +164,8 @@ class TestConflictDetection:
 class TestAutoResolve:
     def test_resolve_one_outcome_does_not_resolve_conflict(self):
         topic = _unique_topic()
-        a = _post_op("alpha", ALPHA_TOKEN, "long", topic)
-        r = _post_op("redeye", REDEYE_TOKEN, "short", topic)
+        a = _post_op("alpha", CAMINO_TOKEN, "long", topic)
+        r = _post_op("redeye", GTO_TOKEN, "short", topic)
         cid = r["conflicts_detected"][0]
         out = _resolve(a["opinion_id"], "win")
         assert out["auto_resolved_conflicts"] == []  # waiting on the 2nd
@@ -175,8 +175,8 @@ class TestAutoResolve:
 
     def test_one_win_one_loss_auto_resolves_with_correct_winner(self):
         topic = _unique_topic()
-        a = _post_op("alpha", ALPHA_TOKEN, "long", topic)
-        r = _post_op("redeye", REDEYE_TOKEN, "short", topic)
+        a = _post_op("alpha", CAMINO_TOKEN, "long", topic)
+        r = _post_op("redeye", GTO_TOKEN, "short", topic)
         cid = r["conflicts_detected"][0]
         _resolve(a["opinion_id"], "loss")
         out2 = _resolve(r["opinion_id"], "win")
@@ -190,8 +190,8 @@ class TestAutoResolve:
 
     def test_both_losses_auto_stales_no_winner(self):
         topic = _unique_topic()
-        a = _post_op("alpha", ALPHA_TOKEN, "long", topic)
-        r = _post_op("redeye", REDEYE_TOKEN, "short", topic)
+        a = _post_op("alpha", CAMINO_TOKEN, "long", topic)
+        r = _post_op("redeye", GTO_TOKEN, "short", topic)
         cid = r["conflicts_detected"][0]
         _resolve(a["opinion_id"], "loss")
         _resolve(r["opinion_id"], "loss")
@@ -206,8 +206,8 @@ class TestAutoResolve:
 class TestManualResolve:
     def test_operator_can_pick_winner(self):
         topic = _unique_topic()
-        a = _post_op("alpha", ALPHA_TOKEN, "long", topic)
-        r = _post_op("redeye", REDEYE_TOKEN, "short", topic)
+        a = _post_op("alpha", CAMINO_TOKEN, "long", topic)
+        r = _post_op("redeye", GTO_TOKEN, "short", topic)
         cid = r["conflicts_detected"][0]
         tok = _login()
         m = requests.post(
@@ -224,8 +224,8 @@ class TestManualResolve:
 
     def test_resolve_to_non_participant_400(self):
         topic = _unique_topic()
-        _post_op("alpha", ALPHA_TOKEN, "long", topic)
-        r = _post_op("redeye", REDEYE_TOKEN, "short", topic)
+        _post_op("alpha", CAMINO_TOKEN, "long", topic)
+        r = _post_op("redeye", GTO_TOKEN, "short", topic)
         cid = r["conflicts_detected"][0]
         tok = _login()
         m = requests.post(
@@ -290,7 +290,7 @@ class TestDoctrineStillHolds:
     def test_may_execute_true_still_rejected(self):
         r = requests.post(
             f"{BASE_URL}/api/ingest/opinion",
-            headers={"X-Runtime-Token": ALPHA_TOKEN, "Content-Type": "application/json"},
+            headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={"runtime": "alpha", "topic": "free", "stance": "observation",
                   "body": "doctrine probe", "may_execute": True},
             timeout=20,
@@ -302,7 +302,7 @@ class TestDoctrineStillHolds:
         for stance in ("agree", "disagree", "refine", "retract", "hypothesis"):
             r = requests.post(
                 f"{BASE_URL}/api/ingest/opinion",
-                headers={"X-Runtime-Token": ALPHA_TOKEN, "Content-Type": "application/json"},
+                headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
                 json={"runtime": "alpha", "topic": "free", "stance": stance,
                       "body": f"loose stance {stance}"},
                 timeout=20,
@@ -314,7 +314,7 @@ class TestDoctrineStillHolds:
         for topic in ("regime:trend", "theory:momentum_decay", "signal:reclaim"):
             r = requests.post(
                 f"{BASE_URL}/api/ingest/opinion",
-                headers={"X-Runtime-Token": ALPHA_TOKEN, "Content-Type": "application/json"},
+                headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
                 json={"runtime": "alpha", "topic": topic, "stance": "observation",
                       "body": "loose topic"},
                 timeout=20,
@@ -324,7 +324,7 @@ class TestDoctrineStillHolds:
     def test_invalid_stance_still_rejected(self):
         r = requests.post(
             f"{BASE_URL}/api/ingest/opinion",
-            headers={"X-Runtime-Token": ALPHA_TOKEN, "Content-Type": "application/json"},
+            headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={"runtime": "alpha", "topic": "free", "stance": "EXECUTE",
                   "body": "no"},
             timeout=20,
@@ -334,7 +334,7 @@ class TestDoctrineStillHolds:
     def test_invalid_topic_kind_still_rejected(self):
         r = requests.post(
             f"{BASE_URL}/api/ingest/opinion",
-            headers={"X-Runtime-Token": ALPHA_TOKEN, "Content-Type": "application/json"},
+            headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={"runtime": "alpha", "topic": "BAD KIND:value", "stance": "observation",
                   "body": "no"},
             timeout=20,

@@ -66,7 +66,7 @@ async def test_runtime_list_requires_token(monkeypatch, seed_positions):
     """No `X-Runtime-Token` header → reject."""
     from fastapi import HTTPException
 
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "tw-token")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-token")
     with pytest.raises(HTTPException) as exc:
         await runtime_list_positions(
             runtime="redeye", status="open", symbol=None, limit=100,
@@ -77,7 +77,7 @@ async def test_runtime_list_requires_token(monkeypatch, seed_positions):
 
 async def test_runtime_list_returns_open_by_default(monkeypatch, seed_positions):
     """Default `status=open` returns the 2 open rows, not the closed one."""
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "tw-token")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-token")
     result = await runtime_list_positions(
         runtime="redeye", status="open", symbol=None, limit=100,
         x_runtime_token="tw-token",
@@ -93,7 +93,7 @@ async def test_runtime_list_returns_open_by_default(monkeypatch, seed_positions)
 
 async def test_runtime_list_filters_by_symbol(monkeypatch, seed_positions):
     """`symbol` filter narrows the result set."""
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "tw-token")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-token")
     result = await runtime_list_positions(
         runtime="redeye", status="open", symbol="AAPL", limit=100,
         x_runtime_token="tw-token",
@@ -104,7 +104,7 @@ async def test_runtime_list_filters_by_symbol(monkeypatch, seed_positions):
 
 async def test_runtime_list_supports_camaro_too(monkeypatch, seed_positions):
     """Endpoint is brain-agnostic — any valid runtime token works."""
-    monkeypatch.setenv("CAMARO_INGEST_TOKEN", "camaro-tw-token")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "camaro-tw-token")
     result = await runtime_list_positions(
         runtime="camaro", status="open", symbol=None, limit=100,
         x_runtime_token="camaro-tw-token",
@@ -116,7 +116,7 @@ async def test_runtime_list_supports_camaro_too(monkeypatch, seed_positions):
 async def test_runtime_list_doctrine_note_carries_stance_vocab(monkeypatch, seed_positions):
     """The doctrine_note must spell out the stance vocabulary so brain
     teams don't have to dig through docs."""
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "tw-token")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-token")
     result = await runtime_list_positions(
         runtime="redeye", status="open", symbol=None, limit=100,
         x_runtime_token="tw-token",
@@ -129,7 +129,7 @@ async def test_runtime_list_doctrine_note_carries_stance_vocab(monkeypatch, seed
 async def test_runtime_list_includes_stances_by_brain(monkeypatch, seed_positions):
     """Each row carries `stances_by_brain` so a brain can see what it
     has ALREADY stamped on this position (avoid double-posting)."""
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "tw-token")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-token")
     result = await runtime_list_positions(
         runtime="redeye", status="open", symbol="AAPL", limit=100,
         x_runtime_token="tw-token",

@@ -41,8 +41,8 @@ def _env(key: str) -> str:
 
 KRAKEN_TOKEN = _env("KRAKEN_FEEDER_TOKEN")
 TOS_TOKEN = _env("TOS_FEEDER_TOKEN")
-ALPHA_TOKEN = _env("ALPHA_INGEST_TOKEN")
-CAMARO_TOKEN = _env("CAMARO_INGEST_TOKEN")
+CAMINO_TOKEN = _env("CAMINO_INGEST_TOKEN")
+BARRACUDA_TOKEN = _env("BARRACUDA_INGEST_TOKEN")
 
 
 def _login() -> str:
@@ -289,7 +289,7 @@ class TestIngestAndRead:
         r = requests.get(
             f"{BASE_URL}/api/runtime-discussion/technical/{sym}",
             params={"caller": "alpha", "tf": "1h"},
-            headers={"X-Runtime-Token": ALPHA_TOKEN},
+            headers={"X-Runtime-Token": CAMINO_TOKEN},
             timeout=20,
         )
         assert r.status_code == 200, r.text
@@ -299,7 +299,7 @@ class TestIngestAndRead:
         r = requests.get(
             f"{BASE_URL}/api/runtime-discussion/technical/NVDA",
             params={"caller": "camaro", "tf": "1h"},
-            headers={"X-Runtime-Token": ALPHA_TOKEN},  # alpha token but claims camaro
+            headers={"X-Runtime-Token": CAMINO_TOKEN},  # alpha token but claims camaro
             timeout=20,
         )
         assert r.status_code == 401

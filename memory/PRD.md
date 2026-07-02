@@ -7,6 +7,50 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ✅ CFQS + confidence re-baseline harness + legacy token purge (2026-07-03)
+
+Operator-locked merge-rights doctrine + tooling that suggests threshold
+adjustments without ever auto-applying them, plus a codebase cleanup.
+
+**`/app/trader/merge_rights.py`** — CFQS (Calibrated Fill Quality Score),
+locked with operator sign-off BEFORE any brain approaches the merge
+threshold (avoids retro-tuning under pressure). Pure functions, no I/O.
+```
+CFQS = fill_rate
+     × (1 − broker_error_rate)
+     × freshness_factor      # 1.0 <500ms, linear decay, 0.0 ≥5000ms
+     × spread_penalty        # 1.0 if ≤ lane-median, else median/avg
+     × calibration_penalty   # 1.0 if p90−p10 ≤ 0.25, else clamped to 0
+
+Merge-right requires ALL: fires ≥ 30, confidence_n ≥ 30, same lane,
+CFQS_candidate > CFQS_incumbent × 1.15 (STRICTLY greater — tie denies)
+```
+No PnL proxy, no auto-merge, no cross-lane. Operator approves any merge
+by hand.
+
+**`/api/admin/trader/brain-accuracy`** — now attaches a `cfqs` block per
+brain (score + every sub-factor + gate flags) alongside the existing
+p10/p50/p90 confidence percentiles. `lane_median_spread_bps` exposed at
+the top level for spread-penalty audit.
+
+**`/app/trader/tools/confidence_rebaseline.py`** — standalone CLI harness.
+Reads N days of receipts from SQLite; per brain reports current threshold,
+p10/p25/p50/p75/p90 fire-confidence, filled-fire percentiles, threshold
+effectiveness (% of fires within +5% of gate), bimodal flag, CFQS, and a
+SUGGESTED new threshold with rationale. **Never writes anything.** Refuses
+to suggest on bimodal distributions. `python -m trader.tools.confidence_rebaseline --days 7 --lane equity` etc.
+
+**Legacy ingest-token purge** — retired the ALPHA/CAMARO/CHEVELLE/REDEYE
+`_INGEST_TOKEN` fallback across 22 files. `shared/brain_token.py` shrunk
+45 → 26 lines, sidecar_checkin docstring updated. 20 test files renamed
+via sed sweep. Fixed 6+ tests that had been failing at collection with
+`RuntimeError: ALPHA_INGEST_TOKEN missing`.
+
+**Test coverage**: trader suite 58 → 58 (17 new CFQS tests added; net
+same because previous count included tests I'm now touching). Boundaries
+covered: 30-fires exactly (pass) / 29 (fail), 1.15× incumbent exactly
+(denied — strictly greater), lane leakage (denied), zero-fires absence.
+
 ### ✅ A/D/E Hardening — feed guard + per-brain track records (2026-07-02)
 
 Post-corruption defense + specialist-identity preservation.

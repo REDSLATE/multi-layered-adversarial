@@ -460,7 +460,7 @@ async def trader_brain_accuracy(
     window_hours: int = Query(default=24, ge=1, le=24 * 30),
     lane: Optional[str] = Query(default=None),
 ) -> dict:
-    """Per-brain execution outcome tracker (2026-07-02).
+    """Per-brain execution outcome tracker (2026-07-03).
 
     Joins receipts ↔ executions via `intent_id` and reports, per
     brain that ACTED as executor:
@@ -468,9 +468,13 @@ async def trader_brain_accuracy(
       * fills     — executions where the broker accepted
       * fill_rate_pct
       * avg_confidence — signal confidence at fire time
+      * confidence_p10 / p50 / p90 — DISTRIBUTION (bimodal detector)
       * avg_spread_bps_at_fire, avg_quote_age_ms_at_fire
+      * quote_age_ms_p50 — median freshness (CFQS input)
       * avg_notional_usd
       * broker_error_rate_pct
+      * cfqs — Calibrated Fill Quality Score + merge-rights gates
+               (see /app/trader/merge_rights.py for the locked formula)
 
     Position-outcome (win/loss/PnL) tracking is deferred until the
     trader has round-trip position lifecycle; this endpoint
@@ -548,14 +552,33 @@ async def trader_brain_accuracy(
         except statistics.StatisticsError:
             return round(sum(vals) / len(vals), 4)
 
-    out = []
+    # Also need the p50 quote age per brain for the CFQS freshness
+    # factor. Keep the raw list so we can percentile it below.
+    age_lists: dict = {}
+    for r in receipts:
+        chosen = r.get("chosen") or {}
+        brain = chosen.get("brain")
+        if not brain or brain not in agg:
+            continue
+        intent_id = f"trader-{(r.get('cycle_id') or '')[:16]}-{r.get('lane')}"
+        if intent_id not in exec_by_intent:
+            continue
+        q = r.get("quote") or {}
+        ag = q.get("quote_age_ms")
+        if isinstance(ag, (int, float)):
+            age_lists.setdefault(brain, []).append(float(ag))
+
+    # First pass: per-brain averages, so the SECOND pass can compute
+    # the lane-median spread to feed CFQS's spread_penalty.
+    prelim = []
     for brain, a in agg.items():
         fires = a["fires"] or 1
         conf_list = a["confidences"]
-        out.append({
+        prelim.append({
             "brain": brain,
             "fires": a["fires"],
             "fills": a["fills"],
+            "broker_errors": a["broker_errors"],
             "fill_rate_pct": round(a["fills"] / fires * 100, 1),
             "avg_confidence": (
                 round(sum(conf_list) / len(conf_list), 4)
@@ -571,15 +594,56 @@ async def trader_brain_accuracy(
             "confidence_n": len(conf_list),
             "avg_spread_bps_at_fire": _avg(a["spread_sum"], a["spread_n"]),
             "avg_quote_age_ms_at_fire": _avg(a["age_sum"], a["age_n"]),
+            "quote_age_ms_p50": _pct(age_lists.get(brain, []), 0.50),
             "avg_notional_usd": _avg(a["notional_sum"], a["notional_n"]),
             "broker_error_rate_pct": round(
                 a["broker_errors"] / fires * 100, 1
             ),
         })
+
+    # Lane-median spread — CFQS's spread_penalty compares each brain
+    # against the median of its peers on the SAME lane. Cross-lane
+    # comparison is doctrinally banned (crypto ≠ equity regime).
+    # When the endpoint is called with a `lane` filter, all rows are
+    # already same-lane, so the median is over all of them.
+    spread_samples = [
+        p["avg_spread_bps_at_fire"] for p in prelim
+        if isinstance(p["avg_spread_bps_at_fire"], (int, float))
+    ]
+    lane_median_spread_bps: Optional[float] = None
+    if spread_samples:
+        import statistics
+        lane_median_spread_bps = round(
+            statistics.median(spread_samples), 4
+        )
+
+    # Second pass: attach CFQS + merge-rights breakdown per brain.
+    from trader.merge_rights import compute_cfqs
+
+    out = []
+    for p in prelim:
+        cfqs = compute_cfqs(
+            fires=p["fires"],
+            fills=p["fills"],
+            broker_errors=p["broker_errors"],
+            confidence_n=p["confidence_n"],
+            p50_quote_age_ms=p["quote_age_ms_p50"],
+            avg_spread_bps=p["avg_spread_bps_at_fire"],
+            lane_median_spread_bps=lane_median_spread_bps,
+            confidence_p10=p["confidence_p10"],
+            confidence_p90=p["confidence_p90"],
+        )
+        # `broker_errors` is a computation input, not an operator-
+        # facing field — drop it before emitting.
+        p.pop("broker_errors", None)
+        p["cfqs"] = cfqs.to_dict()
+        out.append(p)
+
     out.sort(key=lambda r: -r["fires"])
     return {
         "ok": True,
         "window_hours": window_hours,
+        "lane_median_spread_bps": lane_median_spread_bps,
         "brains": out,
         "checked_at": _now_iso(),
     }

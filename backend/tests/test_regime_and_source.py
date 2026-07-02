@@ -34,9 +34,9 @@ def _token(env_key: str) -> str:
     raise RuntimeError(f"{env_key} missing")
 
 
-ALPHA_TOKEN = _token("ALPHA_INGEST_TOKEN")
-CAMARO_TOKEN = _token("CAMARO_INGEST_TOKEN")
-CHEVELLE_TOKEN = _token("CHEVELLE_INGEST_TOKEN")
+CAMINO_TOKEN = _token("CAMINO_INGEST_TOKEN")
+BARRACUDA_TOKEN = _token("BARRACUDA_INGEST_TOKEN")
+HELLCAT_TOKEN = _token("HELLCAT_INGEST_TOKEN")
 
 
 def _login() -> str:
@@ -85,7 +85,7 @@ def _resolve(tok: str, oid: str, actual: str) -> None:
 class TestRegimeSchema:
     def test_opinion_accepts_snake_case_regime(self):
         oid = _post_opinion(
-            "camaro", CAMARO_TOKEN, stance="observation",
+            "camaro", BARRACUDA_TOKEN, stance="observation",
             body=f"regime ok {time.time()}", topic="free", regime="trend",
         )
         # Fetch the opinion back and confirm regime persisted.
@@ -104,7 +104,7 @@ class TestRegimeSchema:
     def test_opinion_rejects_bad_regime(self):
         r = requests.post(
             f"{BASE_URL}/api/ingest/opinion",
-            headers={"X-Runtime-Token": CAMARO_TOKEN, "Content-Type": "application/json"},
+            headers={"X-Runtime-Token": BARRACUDA_TOKEN, "Content-Type": "application/json"},
             json={
                 "runtime": "camaro", "topic": "free", "stance": "observation",
                 "body": "bad regime", "regime": "Trend Up!",
@@ -115,7 +115,7 @@ class TestRegimeSchema:
 
     def test_opinion_optional_regime_persists_as_null(self):
         oid = _post_opinion(
-            "camaro", CAMARO_TOKEN, stance="observation",
+            "camaro", BARRACUDA_TOKEN, stance="observation",
             body=f"no regime {time.time()}", topic="free",
         )
         tok = _login()
@@ -141,7 +141,7 @@ class TestCamaroRegimeBreakdown:
         trend_ids = []
         for i, actual in enumerate(["win", "win", "loss"]):
             oid = _post_opinion(
-                "camaro", CAMARO_TOKEN, stance="endorse",
+                "camaro", BARRACUDA_TOKEN, stance="endorse",
                 body=f"endorse trend {suffix}-{i}",
                 topic=f"symbol:R{suffix}T{i}",
                 confidence=0.7, regime="trend",
@@ -153,7 +153,7 @@ class TestCamaroRegimeBreakdown:
         chop_ids = []
         for i, actual in enumerate(["loss", "loss"]):
             oid = _post_opinion(
-                "camaro", CAMARO_TOKEN, stance="endorse",
+                "camaro", BARRACUDA_TOKEN, stance="endorse",
                 body=f"endorse chop {suffix}-{i}",
                 topic=f"symbol:R{suffix}C{i}",
                 confidence=0.6, regime="chop",
@@ -200,7 +200,7 @@ class TestChevelleSourceBreakdown:
         ]
         for i, (evidence, actual) in enumerate(fixtures):
             oid = _post_opinion(
-                "chevelle", CHEVELLE_TOKEN, stance="observation",
+                "chevelle", HELLCAT_TOKEN, stance="observation",
                 body=f"src test {suffix}-{i}",
                 topic=f"symbol:SRC{suffix}{i}",
                 evidence=evidence, confidence=0.5,

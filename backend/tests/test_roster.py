@@ -40,8 +40,8 @@ def _env(key: str) -> str:
     raise RuntimeError(f"{key} missing")
 
 
-CAMARO_TOKEN = _env("BARRACUDA_INGEST_TOKEN")
-ALPHA_TOKEN = _env("CAMINO_INGEST_TOKEN")
+BARRACUDA_TOKEN = _env("BARRACUDA_INGEST_TOKEN")
+CAMINO_TOKEN = _env("CAMINO_INGEST_TOKEN")
 
 
 def _login() -> str:
@@ -411,7 +411,7 @@ class TestOpinionStamping:
         suffix = int(time.time())
         r = requests.post(
             f"{BASE_URL}/api/ingest/opinion",
-            headers={"X-Runtime-Token": CAMARO_TOKEN, "Content-Type": "application/json"},
+            headers={"X-Runtime-Token": BARRACUDA_TOKEN, "Content-Type": "application/json"},
             json={
                 "runtime": "barracuda",
                 "topic": f"symbol:ROSTER{suffix}",
@@ -452,7 +452,7 @@ class TestOpinionStamping:
             suffix = int(time.time())
             r = requests.post(
                 f"{BASE_URL}/api/ingest/opinion",
-                headers={"X-Runtime-Token": ALPHA_TOKEN, "Content-Type": "application/json"},
+                headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
                 json={
                     "runtime": "camino",
                     "topic": f"symbol:STAMP{suffix}",

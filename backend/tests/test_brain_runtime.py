@@ -45,7 +45,7 @@ pytestmark = [pytest.mark.tripwire]
 async def test_roster_brain_caller_cannot_peek_other_brain(monkeypatch):
     """A brain authenticating with its own token MUST NOT be able to
     pass `caller=other_brain` and see another brain's seats."""
-    monkeypatch.setenv("REDEYE_INGEST_TOKEN", "redeye-sek-rit")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "redeye-sek-rit")
     principal = await br._dual_auth(
         x_brain_id="redeye",
         x_runtime_token="redeye-sek-rit",

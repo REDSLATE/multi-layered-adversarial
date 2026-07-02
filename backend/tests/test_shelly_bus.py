@@ -93,7 +93,7 @@ async def test_propose_rejects_wrong_brain_with_correct_token():
         r = await c.post(
             "/api/mc-shelly/memory/propose",
             json=_body("alpha", "TESTBADAUTH", "x"),
-            headers={"X-Runtime-Token": os.environ["CAMARO_INGEST_TOKEN"]},
+            headers={"X-Runtime-Token": os.environ["BARRACUDA_INGEST_TOKEN"]},
         )
     assert r.status_code == 401
 
@@ -106,7 +106,7 @@ async def test_propose_rejects_tampered_authority():
         r = await c.post(
             "/api/mc-shelly/memory/propose",
             json=bad,
-            headers={"X-Runtime-Token": os.environ["ALPHA_INGEST_TOKEN"]},
+            headers={"X-Runtime-Token": os.environ["CAMINO_INGEST_TOKEN"]},
         )
     assert r.status_code == 400
     assert "authority" in r.text.lower()
@@ -121,7 +121,7 @@ async def test_first_proposal_stored_unverified_in_pen():
         r = await c.post(
             "/api/mc-shelly/memory/propose",
             json=_body("alpha", sym, "first sighting"),
-            headers={"X-Runtime-Token": os.environ["ALPHA_INGEST_TOKEN"]},
+            headers={"X-Runtime-Token": os.environ["CAMINO_INGEST_TOKEN"]},
         )
     assert r.status_code == 200
     out = r.json()
@@ -153,7 +153,7 @@ async def test_two_brain_convergence_canonicalizes():
         r1 = await c.post(
             "/api/mc-shelly/memory/propose",
             json=_body("alpha", sym, text),
-            headers={"X-Runtime-Token": os.environ["ALPHA_INGEST_TOKEN"]},
+            headers={"X-Runtime-Token": os.environ["CAMINO_INGEST_TOKEN"]},
         )
         assert r1.json()["accepted"] is False
 
@@ -161,7 +161,7 @@ async def test_two_brain_convergence_canonicalizes():
         r2 = await c.post(
             "/api/mc-shelly/memory/propose",
             json=_body("camaro", sym, text),
-            headers={"X-Runtime-Token": os.environ["CAMARO_INGEST_TOKEN"]},
+            headers={"X-Runtime-Token": os.environ["BARRACUDA_INGEST_TOKEN"]},
         )
     body = r2.json()
     assert body["accepted"] is True

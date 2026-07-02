@@ -116,11 +116,9 @@ def _expected_token(brain: str) -> str:
     """Same shape as `shared/heartbeat_ping.py` — per-brain ingest
     token from `.env`. Returns "" if unset so misconfiguration is loud.
 
-    2026-02-20 rename: routes the lookup through the shared
-    `expected_ingest_token` helper which tries the new canonical
-    env var first (CAMINO/BARRACUDA/HELLCAT/GTO_INGEST_TOKEN) and
-    falls back to the legacy slot (ALPHA/CAMARO/CHEVELLE/REDEYE_INGEST_TOKEN).
-    Lets prod auth survive a partial rename rollout.
+    Routes through `shared.brain_token.expected_ingest_token`, which
+    reads the canonical `<BRAIN>_INGEST_TOKEN` env var (legacy
+    ALPHA/CAMARO/CHEVELLE/REDEYE fallbacks were retired 2026-07-03).
     """
     from shared.brain_token import expected_ingest_token
     return expected_ingest_token(brain)

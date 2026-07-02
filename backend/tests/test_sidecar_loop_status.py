@@ -142,8 +142,8 @@ import os
 import requests  # noqa: E402
 
 
-def _alpha_token() -> str:
-    return os.environ.get("ALPHA_INGEST_TOKEN", "")
+def _camino_token() -> str:
+    return os.environ.get("CAMINO_INGEST_TOKEN", "")
 
 
 def _prod_stamp(policy_hash_value: str) -> dict:
@@ -167,9 +167,9 @@ def _prod_stamp(policy_hash_value: str) -> dict:
 def test_post_loop_status_roundtrips_to_diagnose(auth_client, base_url):
     """A POST with `loop_status` must persist and re-surface on
     /api/admin/brain/emission-diagnose/{brain}."""
-    tok = _alpha_token()
+    tok = _camino_token()
     if not tok:
-        pytest.skip("ALPHA_INGEST_TOKEN not set in this env")
+        pytest.skip("CAMINO_INGEST_TOKEN not set in this env")
     from shared.runtime.platform_survival import policy_hash
     fresh_iso = datetime.now(timezone.utc).isoformat()
 
@@ -211,9 +211,9 @@ def test_post_loop_status_roundtrips_to_diagnose(auth_client, base_url):
 def test_post_without_loop_status_still_works(auth_client, base_url):
     """Backward-compat: a brain that doesn't ship the extension must
     keep working. `loop_health` defaults to 'unknown' for that brain."""
-    tok = _alpha_token()
+    tok = _camino_token()
     if not tok:
-        pytest.skip("ALPHA_INGEST_TOKEN not set in this env")
+        pytest.skip("CAMINO_INGEST_TOKEN not set in this env")
     from shared.runtime.platform_survival import policy_hash
 
     body = {"stamp": _prod_stamp(policy_hash())}  # NO loop_status
