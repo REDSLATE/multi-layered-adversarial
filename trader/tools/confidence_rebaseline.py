@@ -7,6 +7,28 @@ Locked doctrine (2026-07-03, operator directive):
      confidence distribution, and SUGGESTS a new floor. It never
      writes anything, never restarts anything, never touches env."
 
+Sign-off shape (locked 2026-07-03, matches merge-rights):
+    This harness reads receipts produced by the brains whose
+    thresholds it is tuning — same recursive-trust problem as
+    merge-rights (a model proposing changes to its own operating
+    parameters based on its own output). Therefore:
+
+        harness suggests → optional `--diff` generates advisory
+        patch → HUMAN applies by hand. Auto-apply is BANNED.
+
+    The bimodal-refusal check below is the only formal backstop
+    inside the harness. A single missed edge case (tri-modal,
+    near-threshold bimodal, etc.) would write to prod if
+    auto-apply were ever wired. Keeping the human in the loop
+    makes that class of miss recoverable.
+
+Runtime dependency (P1a in PRD backlog):
+    This tool reads `/app/trader/data/executions.sqlite`. That
+    directory is CURRENTLY EPHEMERAL — until the persistent
+    volume ships, a pod restart mid-session wipes the history
+    this harness needs. Do not tune constants off a session
+    that spans a restart until the volume is mounted.
+
 What this tool does
 ────────────────────
 Reads the trader's local SQLite (the truth tape) for a window of

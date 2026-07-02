@@ -40,6 +40,22 @@ effectiveness (% of fires within +5% of gate), bimodal flag, CFQS, and a
 SUGGESTED new threshold with rationale. **Never writes anything.** Refuses
 to suggest on bimodal distributions. `python -m trader.tools.confidence_rebaseline --days 7 --lane equity` etc.
 
+**Doctrine pin — harness sign-off shape (locked 2026-07-03)**
+The re-baseline harness reads receipts produced by the brains whose
+thresholds it is tuning. That is the same recursive-trust problem as
+merge-rights (a model proposing changes to its own operating parameters
+based on its own output). Therefore the sign-off model matches
+merge-rights EXACTLY:
+
+    harness suggests → optional `--diff` generates an advisory
+    patch to BRAIN_DEFAULTS → HUMAN applies the patch by hand.
+
+Auto-apply is banned by doctrine. Reason: the bimodal-refusal check is
+the only formal backstop in the harness; a single missed edge case
+(tri-modal, near-threshold bimodal, etc.) would write to prod if
+auto-apply were ever enabled. Human-in-the-loop makes that class of
+miss recoverable.
+
 **Legacy ingest-token purge** — retired the ALPHA/CAMARO/CHEVELLE/REDEYE
 `_INGEST_TOKEN` fallback across 22 files. `shared/brain_token.py` shrunk
 45 → 26 lines, sidecar_checkin docstring updated. 20 test files renamed
@@ -564,7 +580,19 @@ _route_one:
 ## Test Credentials
 See `/app/memory/test_credentials.md`.
 
-## Backlog (P1/P2)
+## Backlog (P1/P2) — sequencing matters
+
+**BLOCKING sequence (P1a → P1b — do in order):**
+- **P1a — Persistent volume for `/app/trader/data/`** (DevOps). Must
+  precede tuning: if the pod restarts mid-session before this ships,
+  `executions.sqlite` history the re-baseline harness needs is wiped
+  and the "clean session" input starves. Also protects
+  `webull_token.json` from re-triggering the 2FA push on every deploy.
+- **P1b — Tune the 10 env-var trading constants from live Trade Tape**
+  (blocked by P1a — needs the volume to protect the receipts it will
+  read from).
+
+**Independent P1/P2 items:**
 - Pass 2 bulk-delete commit (~11,000 lines)
 - New admin tiles for `executions`, `seat_registry`, `brain_registry`
 - POST endpoints for `seat_registry` operator assignment
@@ -572,5 +600,10 @@ See `/app/memory/test_credentials.md`.
 - Resolve `auto_submit_policy ↔ execution` circular import (cleaned by
   the deletion in Pass 2)
 - `IntentPostMortemPanel.jsx` refactor (1400+ lines)
+- Regime tagger overlay (held per operator directive: redeploy →
+  re-baseline → then regime tags)
 - Train OpenMythos on RISE JSONL
 - Hot-Brain Router into active pipeline
+- `--diff` mode on `confidence_rebaseline.py` (emits advisory patch
+  to `BRAIN_DEFAULTS`; **doctrine-locked as human-applied, never
+  auto-applied — see harness sign-off pin above**)
