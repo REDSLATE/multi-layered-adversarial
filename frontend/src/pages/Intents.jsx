@@ -188,7 +188,23 @@ function IntentRow({ intent, expanded, onToggle, onDryRun, dryRunResult }) {
           </span>
         </td>
         <td className="px-3 py-2 font-mono text-xs text-rd-text">
-          {Number(intent.confidence).toFixed(3)}
+          {/* Conviction rendering (2026-07-03): HOLD/WATCH intents are
+              non-actionable, so a high number here is visual noise for
+              a fast-scanning operator. Mute those cases. Backend
+              semantic is UNCHANGED — a confident HOLD is valid data. */}
+          {(intent.action === "HOLD" || intent.action === "WATCH") ? (
+            <span
+              className="text-rd-dim opacity-50"
+              title="Conviction shown muted because verdict is non-actionable (HOLD/WATCH)"
+              data-testid={`intent-conf-muted-${intent.intent_id}`}
+            >
+              {Number(intent.confidence).toFixed(3)}
+            </span>
+          ) : (
+            <span data-testid={`intent-conf-${intent.intent_id}`}>
+              {Number(intent.confidence).toFixed(3)}
+            </span>
+          )}
         </td>
         <td className="px-3 py-2 font-mono text-xs text-rd-text">
           {Number(intent.risk_multiplier).toFixed(3)}

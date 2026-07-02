@@ -7,6 +7,45 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+## Doctrine — Failure Surface Taxonomy (locked 2026-07-03)
+
+Every dashboard tile must render failures at a severity that matches
+the operator's required response. Getting this wrong either desensitizes
+the operator (loud errors for background degrade) or hides real
+emergencies (soft banners for broken execution).
+
+| Failure class    | Surface           | Rationale                          |
+|------------------|-------------------|------------------------------------|
+| Mongo/Atlas read | **soft-degrade**  | Dashboard tape; not on hot path.   |
+|                  | muted amber       | Tile keeps rendering last-known.   |
+| Trader loop      | **loud red**      | Execution engine down = money at   |
+|                  |                   | risk. Wake the operator.           |
+| Broker call      | **loud red**      | Order state uncertain. Requires    |
+|                  |                   | reconciliation.                    |
+| Risk block       | **normal receipt**| By-design gate; not a failure.     |
+|                  | rejection tape    | Log with reason, move on.          |
+
+Applied precedents (do not weaken):
+* `/api/admin/parabolic/phases` — soft-degrade (this pin, 2026-07-03)
+* `/api/mc/shelly/events` — soft-degrade (2026-07-02)
+* Trader `main.py` execution loop — loud, kills the tick if broker fails
+* Feed guard rejections — normal `quote_rejected:<reason>` receipts
+
+### ✅ Parabolic Phase Map soft-degrade + HOLD conviction muting (2026-07-03)
+
+`GET /api/admin/parabolic/phases` was leaking raw `NetworkTimeout`
+strings into the operator's view when Atlas got slow. Fixed by mirroring
+the `mc_shelly` pattern: `asyncio.wait_for(..., timeout=8.0)` + HTTP 200
+with zero counts + `error="mongo_timeout"` + human-readable message.
+Frontend renders soft-degrade as a muted amber ◐ banner distinct from
+the red exception panel used for real endpoint failures. 3 pytest cases
+pin the regression (timeout, exception, happy-path with edge cases).
+
+Cosmetic: HOLD/WATCH intents in the Intents queue now render their
+conviction column muted (opacity 50%, dim color). Backend semantic
+unchanged — a confident HOLD is valid data — but a fast-scanning
+operator no longer reads "CONF 1.000 → HOLD" as an inconsistency.
+
 ### ✅ CFQS + confidence re-baseline harness + legacy token purge (2026-07-03)
 
 Operator-locked merge-rights doctrine + tooling that suggests threshold
