@@ -492,7 +492,7 @@ async def trader_brain_accuracy(
     from collections import defaultdict
     agg: dict = defaultdict(lambda: {
         "fires": 0, "fills": 0,
-        "conf_sum": 0.0, "conf_n": 0,
+        "confidences": [],  # keep the full list so we can report percentiles
         "spread_sum": 0.0, "spread_n": 0,
         "age_sum": 0.0, "age_n": 0,
         "notional_sum": 0.0, "notional_n": 0,
@@ -503,8 +503,6 @@ async def trader_brain_accuracy(
         brain = chosen.get("brain")
         if not brain:
             continue
-        # Only receipts that reached the fire path have a matching
-        # execution row — same `intent_id` shape as `trader-{cycle}-{lane}`.
         intent_id = f"trader-{(r.get('cycle_id') or '')[:16]}-{r.get('lane')}"
         exec_row = exec_by_intent.get(intent_id)
         if not exec_row:
@@ -517,8 +515,7 @@ async def trader_brain_accuracy(
             a["broker_errors"] += 1
         conf = chosen.get("confidence")
         if isinstance(conf, (int, float)):
-            a["conf_sum"] += float(conf)
-            a["conf_n"] += 1
+            a["confidences"].append(float(conf))
         q = r.get("quote") or {}
         sp = q.get("spread_bps")
         if isinstance(sp, (int, float)):
@@ -536,15 +533,42 @@ async def trader_brain_accuracy(
     def _avg(num: float, den: int) -> Optional[float]:
         return round(num / den, 4) if den else None
 
+    def _pct(vals: list, q: float) -> Optional[float]:
+        """Percentile via statistics.quantiles; returns None if the
+        sample can't produce a meaningful boundary."""
+        if not vals:
+            return None
+        import statistics
+        if len(vals) < 2:
+            return round(vals[0], 4)
+        try:
+            qs = statistics.quantiles(sorted(vals), n=100)
+            idx = min(max(int(q * 100) - 1, 0), 98)
+            return round(qs[idx], 4)
+        except statistics.StatisticsError:
+            return round(sum(vals) / len(vals), 4)
+
     out = []
     for brain, a in agg.items():
         fires = a["fires"] or 1
+        conf_list = a["confidences"]
         out.append({
             "brain": brain,
             "fires": a["fires"],
             "fills": a["fills"],
             "fill_rate_pct": round(a["fills"] / fires * 100, 1),
-            "avg_confidence": _avg(a["conf_sum"], a["conf_n"]),
+            "avg_confidence": (
+                round(sum(conf_list) / len(conf_list), 4)
+                if conf_list else None
+            ),
+            # Confidence DISTRIBUTION — surface p10/p50/p90 so a
+            # re-baseline pass can spot bimodal splits that a mean
+            # would hide (e.g. one bucket confident-right, one bucket
+            # confident-wrong at similar avg but very different tails).
+            "confidence_p10": _pct(conf_list, 0.10),
+            "confidence_p50": _pct(conf_list, 0.50),
+            "confidence_p90": _pct(conf_list, 0.90),
+            "confidence_n": len(conf_list),
             "avg_spread_bps_at_fire": _avg(a["spread_sum"], a["spread_n"]),
             "avg_quote_age_ms_at_fire": _avg(a["age_sum"], a["age_n"]),
             "avg_notional_usd": _avg(a["notional_sum"], a["notional_n"]),
