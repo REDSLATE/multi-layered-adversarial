@@ -7,6 +7,25 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ✅ A/D/E Hardening — feed guard + per-brain track records (2026-07-02)
+
+Post-corruption defense + specialist-identity preservation.
+
+**A) `/app/trader/feed_guard.py`** — 5 sanity checks vet the L1 reading BEFORE brains consume it: staleness (max_age_ms), absurd spread ceiling, spread anomaly vs 30-tick rolling median, price jump vs median, dual-source divergence. Rejections write a `quote_rejected:<reason>` receipt so the tape shows the operator *why* the trader stayed hands-off. Fully env-tunable. Wired in `main.py` right after L1 overlay, before brains.
+
+**D) `GET /api/admin/trader/dissent`** — per-brain dissent tracker over receipts. Reports `cycles`, `dissents`, `dissent_rate_pct`, `top_dissents_vs` (who each brain disagrees with most). Purely local SQLite reads.
+
+**E) `GET /api/admin/trader/brain-accuracy`** — joins receipts↔executions by intent_id. Per-brain `fires`, `fills`, `fill_rate_pct`, `avg_confidence`, `avg_spread_bps_at_fire`, `avg_quote_age_ms_at_fire`, `avg_notional_usd`, `broker_error_rate_pct`. Position-outcome tracking (win/loss/PnL) deferred until round-trip position lifecycle wiring exists.
+
+**UI**: `BrainPersonalities.jsx` tile below SpreadWatcher on Overview. Per-brain rows never averaged. Dissent-vs-executor at-a-glance. Time window selector (1h / 4h / 24h / 7d).
+
+**Doctrine bookmarks** (operator directive, encoded for future):
+1. Per-brain track records isolated — never averaged
+2. Provenance preserved on future experience-sharing (advisory, not auto-apply)
+3. Merge into shared doctrine only after N trades + statistical significance + acceptable risk-adjusted performance
+
+**Test coverage**: 58/58 green (feed_guard: 7, dissent+accuracy: 4, receipt_quote: 2, spread + stream + store + webull_auth: 45). testing_agent verified 100% (8/8 live endpoints + 3/3 auth enforcement, zero issues).
+
 ### ✅ Receipts carry L1 quote provenance (2026-07-02)
 
 Every trader receipt now stamps the exact L1 quote the brains saw at decision-time:
