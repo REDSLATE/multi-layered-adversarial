@@ -85,8 +85,48 @@ def crypto_pair() -> str:
     return env_str("TRADER_CRYPTO_PAIR", "XBTUSD")
 
 
+def crypto_pairs() -> tuple[str, ...]:
+    """Multi-pair crypto lane (2026-07-03 narrow-universe doctrine).
+
+    Comma-separated Kraken pair codes, e.g. `TRADER_CRYPTO_PAIRS=BTCUSD,SOLUSD`.
+    Backward-compatible: if unset OR the parsed list is empty (e.g. an
+    env var containing only whitespace/commas), falls back to
+    `(crypto_pair(),)`. This is deliberate — a typo in the env var
+    must not silently disable the whole lane.
+
+    Doctrine: depth over breadth. All four brains score the same 2 pairs
+    so their dissent/accuracy tracks compare on equal data.
+    """
+    raw = env_str("TRADER_CRYPTO_PAIRS", "").strip()
+    parsed = tuple(
+        p.strip().upper() for p in raw.split(",") if p.strip()
+    ) if raw else ()
+    return parsed or (crypto_pair(),)
+
+
 def equity_ticker() -> str:
     return env_str("TRADER_EQUITY_TICKER", "TSLA")
+
+
+def equity_tickers() -> tuple[str, ...]:
+    """Multi-ticker equity lane (2026-07-03 narrow-universe doctrine).
+
+    Comma-separated symbols, e.g. `TRADER_EQUITY_TICKERS=NVDA,SPY`.
+    Backward-compatible with the singular `TRADER_EQUITY_TICKER` env var.
+    If parsed list is empty (typo, only commas, only whitespace), falls
+    back to `(equity_ticker(),)` — a broken env must not silently
+    disable the whole lane.
+
+    Note: distinct from `equity_spread_tickers()` — that one drives the
+    Yahoo/Webull spread poller (can be wider than what's traded). This
+    one drives the brain/tick loop (what's actually traded). Keep them
+    aligned or the poller wastes cycles on symbols the brains don't touch.
+    """
+    raw = env_str("TRADER_EQUITY_TICKERS", "").strip()
+    parsed = tuple(
+        t.strip().upper() for t in raw.split(",") if t.strip()
+    ) if raw else ()
+    return parsed or (equity_ticker(),)
 
 
 def confidence_threshold() -> float:

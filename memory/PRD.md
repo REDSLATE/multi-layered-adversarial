@@ -7,6 +7,45 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+## Doctrine — Narrow Universe (locked 2026-07-03)
+
+**Depth over breadth.** Stage 1 constrains the sidecar to 2 tickers per
+lane so every failure becomes a case study, every brain sees the same
+market data (making the dissent tracker + CFQS + confidence re-baseline
+harness statistically meaningful), and the operator swaps "why didn't
+anything trade today?" for the tractable "why didn't NVDA trade at 10:32?"
+
+**Operator picks (Stage 1):**
+- Equity: `NVDA, SPY` — NVDA stresses breakout/momentum brains, SPY
+  stresses trend/mean-reversion brains
+- Crypto: `XBTUSD, SOLUSD` — BTC for large-stable-trend regime, SOL
+  for high-vol pump-and-fade regime
+
+**Config surface:**
+- `TRADER_EQUITY_TICKERS` (comma-separated, default falls back to
+  singular `TRADER_EQUITY_TICKER`)
+- `TRADER_CRYPTO_PAIRS` (same shape)
+- `TRADER_EQUITY_SPREAD_TICKERS` / `TRADER_SPREAD_PAIRS` — kept aligned
+  with the trading universe so the spread poller never watches symbols
+  the brains don't trade
+- `AUTO_ROUTER_ENABLED=false` on prod — Path 1 (MC auto-router) retired
+  when TRADER_ENABLED=true, sidecar is the sole trading authority
+
+**Backward compatibility:** if only the singular env vars are set (Stage 0
+configs), the plural helpers fall back to `(singular_value,)`. An empty
+plural string ALSO falls back — a typo can't silently disable a lane.
+
+**Progression:**
+- Stage 1 (now): 2 tickers per lane — prove end-to-end reliability
+- Stage 2: expand to 5 per lane — verify performance doesn't degrade
+- Stage 3: 20-50 per lane — tune resource usage + scheduling
+- Stage 4: full universe
+
+**Tests:** `backend/tests/test_trader_multi_ticker.py` — 11 cases
+covering comma-parse, whitespace, case-normalization, empty/all-commas
+fallback, Stage-1 picks, and a regression guard on `main.run_cycle`
+so a future refactor can't reintroduce the singular helpers silently.
+
 ## Doctrine — Advisory Layer Kill Switch (locked 2026-07-03)
 
 The `shared.doctrine.*` pipeline (gap_and_go, breakout_or_bailout, etc.)

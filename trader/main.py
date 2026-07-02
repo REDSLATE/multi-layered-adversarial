@@ -27,6 +27,7 @@ import os
 import sys
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 # Make /app importable so `from trader import ...` works.
 sys.path.insert(0, "/app")
@@ -71,10 +72,19 @@ SIDE_MAP = {"BUY": "buy", "SELL": "sell"}
 EQUITY_SIDE_MAP = {"BUY": "BUY", "SELL": "SELL"}
 
 
-async def run_lane(db, lane: str) -> dict:
-    """One full lane cycle. Returns a result dict for diagnostics."""
+async def run_lane(db, lane: str, symbol: Optional[str] = None) -> dict:
+    """One full lane/symbol cycle. Returns a result dict for diagnostics.
+
+    `symbol` is optional for backward compat — when omitted, the FIRST
+    entry of the plural ticker list is used. In practice `run_cycle`
+    iterates all tickers per lane and always passes an explicit symbol.
+    """
     cycle_id = uuid.uuid4().hex
-    symbol = config.crypto_pair() if lane == "crypto" else config.equity_ticker()
+    if symbol is None:
+        symbol = (
+            config.crypto_pairs()[0] if lane == "crypto"
+            else config.equity_tickers()[0]
+        )
 
     # ── L1 quote overlay (2026-07-02) — assembled BEFORE the OHLC
     # fetch so a fetch-fail receipt still captures the live L1 the
@@ -355,19 +365,40 @@ async def run_lane(db, lane: str) -> dict:
 
 
 async def run_cycle(db) -> dict:
-    """One pass: both lanes, sequentially."""
+    """One pass: iterate all configured symbols per lane, sequentially.
+
+    2026-07-03 narrow-universe doctrine: each lane can have N tickers
+    (default N=1 for backward compat). Sequential within a lane so
+    the daily-cap accounting sees fully-committed prior fires before
+    deciding on the next.
+    """
     cycle_start = _now_iso()
     out = {"cycle_start": cycle_start, "lanes": []}
     for lane in config.LANES:
-        try:
-            r = await asyncio.wait_for(run_lane(db, lane), timeout=90)
-            out["lanes"].append(r)
-        except asyncio.TimeoutError:
-            logger.error("[%s] cycle timeout", lane)
-            out["lanes"].append({"lane": lane, "ok": False, "reason": "cycle_timeout"})
-        except Exception as e:  # noqa: BLE001
-            logger.exception("[%s] cycle exception: %s", lane, e)
-            out["lanes"].append({"lane": lane, "ok": False, "reason": f"exception:{e}"})
+        symbols = (
+            config.crypto_pairs() if lane == "crypto"
+            else config.equity_tickers()
+        )
+        for symbol in symbols:
+            try:
+                r = await asyncio.wait_for(
+                    run_lane(db, lane, symbol=symbol), timeout=90,
+                )
+                out["lanes"].append(r)
+            except asyncio.TimeoutError:
+                logger.error("[%s/%s] cycle timeout", lane, symbol)
+                out["lanes"].append({
+                    "lane": lane, "symbol": symbol,
+                    "ok": False, "reason": "cycle_timeout",
+                })
+            except Exception as e:  # noqa: BLE001
+                logger.exception(
+                    "[%s/%s] cycle exception: %s", lane, symbol, e,
+                )
+                out["lanes"].append({
+                    "lane": lane, "symbol": symbol,
+                    "ok": False, "reason": f"exception:{e}",
+                })
     out["cycle_end"] = _now_iso()
     return out
 
@@ -424,7 +455,9 @@ async def main() -> None:
         "trader STARTED interval=%ss per_order_cap=$%.2f daily_cap=$%.2f "
         "crypto=%s equity=%s sqlite=%s",
         interval, config.per_order_cap_usd(), config.daily_cap_usd(),
-        config.crypto_pair(), config.equity_ticker(), config.sqlite_path(),
+        ",".join(config.crypto_pairs()),
+        ",".join(config.equity_tickers()),
+        config.sqlite_path(),
     )
     try:
         while True:
