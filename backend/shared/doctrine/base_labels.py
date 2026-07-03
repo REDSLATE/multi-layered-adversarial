@@ -191,7 +191,20 @@ def build_doctrine_labels(snapshot: Dict[str, Any]) -> DoctrineLabels:
         reasons.append("fade_off_session_peak")
 
     # ── spread / liquidity ─────────────────────────────────────────
-    if spread_bps <= 75.0:
+    # Spread quality guard (2026-07-03, operator directive):
+    # Sentinel and stale after-hours values ("SPREAD_BPS_UNKNOWN=9999",
+    # frozen close-price echoes yielding 500-2000 bps) are NOT real
+    # market conditions. Treating them as `SPREAD_TOO_WIDE` slams the
+    # doctrine quality to REJECT and cascades through the seat chain.
+    # When the snapshot explicitly marks quality as stale/sentinel,
+    # skip the spread verdict entirely — informational label only, no
+    # score deduction. Live-quality quotes go through the normal
+    # <=75 bps threshold.
+    spread_quality = str(snapshot.get("spread_quality", "live")).lower()
+    if spread_quality in ("stale", "sentinel"):
+        labels.append("SPREAD_QUALITY_UNKNOWN")
+        reasons.append("stale_or_sentinel_quote_no_penalty")
+    elif spread_bps <= 75.0:
         labels.append("SPREAD_ACCEPTABLE")
     else:
         score -= 0.15

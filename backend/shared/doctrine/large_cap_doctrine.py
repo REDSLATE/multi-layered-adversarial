@@ -147,7 +147,16 @@ def _build_large_cap_labels(snapshot: Dict[str, Any]) -> _LargeCapLabels:
         reasons.append("weak_market_regime")
 
     # ── spread ──
-    if spread_bps <= 10.0:
+    # Spread quality guard (2026-07-03, operator directive):
+    # Stale/sentinel quotes must not force SPREAD_TOO_WIDE. Same
+    # rationale as base_labels.py — a stale after-hours quote is
+    # "no fresh quote", not a real wide spread. Live quality goes
+    # through the normal tight/acceptable/wide ladder.
+    spread_quality = str(snapshot.get("spread_quality", "live")).lower()
+    if spread_quality in ("stale", "sentinel"):
+        labels.append("SPREAD_QUALITY_UNKNOWN")
+        reasons.append("stale_or_sentinel_quote_no_penalty")
+    elif spread_bps <= 10.0:
         labels.append("SPREAD_TIGHT")
     elif spread_bps <= 25.0:
         labels.append("SPREAD_ACCEPTABLE")

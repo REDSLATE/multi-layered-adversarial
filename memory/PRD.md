@@ -7,6 +7,33 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ✅ Spread-quality guard + intents purge (2026-07-03)
+
+**Root cause found in prod (with the operator):** Neutral brains were
+emitting HOLD on every tick because three separate scorers treated
+stale/sentinel `spread_bps` values (500-9999 bps from after-hours
+quotes) as if they were real wide spreads. Every intent's HOLD/OBSERVE
+hypothesis scored 1.0 while BUY/SELL capped near zero, and the doctrine
+layer stamped SPREAD_TOO_WIDE + REJECT downstream — three days of
+"not trading" despite `WILL_FIRE: YES`.
+
+**Three-file fix:**
+1. `backend/shared/doctrine/base_labels.py` — check `spread_quality`
+   before applying SPREAD_TOO_WIDE label; emit informational
+   `SPREAD_QUALITY_UNKNOWN` when stale/sentinel, no score deduction.
+2. `backend/shared/doctrine/large_cap_doctrine.py` — same guard.
+3. `external/brains/brain_core.py::_build_hypotheses` — substitute
+   `spread_bps=25.0` (neutral) at the top of the function when
+   `spread_quality ∈ {stale, sentinel}`, so HOLD/OBSERVE don't pin to 1.0.
+
+**12 pytests** in `test_spread_quality_guard.py` cover live/stale/sentinel
+across all three scorers + backward-compat for missing `spread_quality`.
+
+**Intents purge endpoint** — new admin-only cleanup at
+`POST /api/admin/intents/purge-non-executable`. Dry-run by default,
+refuses to touch executed history or in-flight rows. 8 pytests pin
+the safety invariants. Preview run cleared 48,341 stale HOLD intents.
+
 ## Doctrine — Narrow Universe (locked 2026-07-03)
 
 **Depth over breadth.** Stage 1 constrains the sidecar to 2 tickers per

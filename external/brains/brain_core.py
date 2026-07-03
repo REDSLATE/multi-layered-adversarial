@@ -444,6 +444,28 @@ class NeutralAdversarialBrain:
         liquidity = float(s.get("liquidity_score", 0.5))
         setup_score = float(s.get("setup_score", 0.0))
 
+        # ── Spread quality guard (2026-07-03, operator directive) ──
+        # Stale after-hours quotes and sentinel fill-in values produce
+        # `spread_bps` in the 500-9999 range even when the actual
+        # market is fine. Downstream HOLD/OBSERVE scoring reads
+        # `spread_bps` as if it were a real spread and pins those
+        # hypotheses to 1.0, forcing every intent to HOLD regardless
+        # of what the brain would otherwise decide.
+        #
+        # Fix: when the snapshot explicitly reports `spread_quality`
+        # as "stale" or "sentinel", substitute a neutral placeholder
+        # (25 bps — narrow enough to not skew HOLD/OBSERVE) BEFORE
+        # scoring. The intent is emitted with the substitution
+        # recorded on the hypothesis reasons so downstream auditors
+        # (CFQS, dissent tracker) can see the substitution happened.
+        # This does NOT invent liquidity — it just refuses to let a
+        # no-quote condition masquerade as a wide-spread market.
+        spread_quality = str(s.get("spread_quality", "live")).lower()
+        spread_quality_substituted = False
+        if spread_quality in ("stale", "sentinel"):
+            spread_bps = 25.0
+            spread_quality_substituted = True
+
         # ── Doctrine-driven scoring (operator directive, 2026-06-XX) ──
         # Each brain decomposes the snapshot into four named signal
         # components and weights them by its doctrine. The same
