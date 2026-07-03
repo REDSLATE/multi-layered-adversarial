@@ -338,3 +338,7 @@ def register_routers(api_router: APIRouter) -> None:
     # Verifier — Lessons, Brain Report Cards, and the Setup Memory
     # confidence-adjuster kill switch. All read-only or admin-only.
     api_router.include_router(verifier_router)
+    # Intents purge — admin-only cleanup for non-executable HOLD/WATCH
+    # intents. Dry-run by default; refuses to touch executed history.
+    from routes.intents_purge_admin import router as intents_purge_router
+    api_router.include_router(intents_purge_router)
