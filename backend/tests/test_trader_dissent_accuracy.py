@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from datetime import datetime, timezone
 
 import pytest
 
@@ -15,6 +16,14 @@ sys.path.insert(0, "/app")
 sys.path.insert(0, "/app/backend")
 
 from trader import audit, store  # noqa: E402
+
+
+def _now_iso() -> str:
+    """Current UTC time as ISO-8601. Used for test seed timestamps so the
+    24h lookback window in the endpoints under test doesn't age out.
+    (Regression: hardcoded 2026-07-02 strings caused the whole suite to
+    silently start failing once real time passed that date.)"""
+    return datetime.now(timezone.utc).isoformat()
 
 
 @pytest.fixture()
@@ -33,13 +42,15 @@ def fresh_store(tmp_path):
 
 async def _seed_cycle(
     *, cycle_id: str, executor_brain: str, executor_verdict: str,
-    signals: list, ts: str = "2026-07-02T12:00:00+00:00",
+    signals: list, ts: str | None = None,
     lane: str = "equity", symbol: str = "TSLA",
     quote: dict | None = None,
 ):
     """Write one receipt row with the shape the endpoints consume.
     `chosen.confidence` is taken from the executor's own signal so
     per-cycle avg_confidence math is realistic."""
+    if ts is None:
+        ts = _now_iso()
     exec_sig = next(
         (s for s in signals if s.get("brain") == executor_brain), {},
     )
@@ -155,7 +166,7 @@ async def test_brain_accuracy_reports_fires_and_fills(fresh_store):
     )
     store.record_execution({
         "intent_id": "trader-c-fire-1-equity",
-        "ts": "2026-07-02T12:00:01+00:00",
+        "ts": _now_iso(),
         "brain": "camino", "lane": "equity", "action": "BUY",
         "symbol": "TSLA", "notional_usd": 5.0,
         "ok": True, "broker": "webull", "broker_order_id": "wb-1",
@@ -175,7 +186,7 @@ async def test_brain_accuracy_reports_fires_and_fills(fresh_store):
     )
     store.record_execution({
         "intent_id": "trader-c-fire-2-equity",
-        "ts": "2026-07-02T12:00:02+00:00",
+        "ts": _now_iso(),
         "brain": "camino", "lane": "equity", "action": "BUY",
         "symbol": "TSLA", "notional_usd": 5.0,
         "ok": False,

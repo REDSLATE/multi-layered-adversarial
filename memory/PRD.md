@@ -7,6 +7,21 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ✅ Time-drift test fix (2026-02-XX)
+
+`backend/tests/test_trader_dissent_accuracy.py` — `_seed_cycle` and both
+`store.record_execution` calls now use `datetime.now(timezone.utc).isoformat()`
+via a new `_now_iso()` helper instead of hardcoded `"2026-07-02T12:00:00+00:00"`
+strings. Root cause: the D and E aggregator endpoints filter rows to
+`now - window_hours` (24h default), so hardcoded seed timestamps aged out
+of the lookback window once real wall-clock time passed 2026-07-03.
+
+Verified: all 4 tests in the file green. Full 88-test regression across
+this session's newly-added trader test files (CFQS, phase admin, doctrine
+kill switch, multi-ticker, purge, spread-quality, warmup, spread) also
+green. No production code touched.
+
+
 ### ✅ Warmup progress endpoint (2026-07-03)
 
 `GET /api/admin/trader/warmup-progress` — per-symbol OHLCV bar counts
