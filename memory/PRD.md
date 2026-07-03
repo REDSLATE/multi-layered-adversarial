@@ -7,6 +7,36 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ✅ Warmup progress endpoint (2026-07-03)
+
+`GET /api/admin/trader/warmup-progress` — per-symbol OHLCV bar counts
+across the configured universe, against the research-layer's 50-bar
+warmup floor. Answers the operator question "why isn't NVDA firing
+yet?" during the first ~50 minutes after a redeploy in one glance.
+
+**Deliberately SEPARATE from `/api/admin/trader/status`.** The status
+endpoint promises to serve even when Atlas is unreachable (reads only
+local SQLite + in-memory state). Adding a Mongo query would break
+that promise. The warmup endpoint hits Mongo but degrades gracefully
+via `asyncio.wait_for(timeout=8s)` + soft-error envelope, matching the
+failure-surface doctrine.
+
+**Response shape:** per-symbol `bars/required/ready/pct_complete`, plus
+top-level `all_ready`, `ready_count`, `total_symbols`. Not-ready symbols
+sort first so operators see blockers at the top.
+
+**7 pytests:** happy path (all ready), partial readiness (blockers-first
+sort), pct-complete boundaries (0/50/100/200 → 0/50/100/100), Atlas
+timeout soft-degrade, Atlas exception soft-degrade, empty universe →
+vacuous all_ready, singular-env-var backward-compat.
+
+**Doctrine pin — Atlas-touching endpoint contract:**
+Any new endpoint that hits Atlas must either (a) tolerate slow/dead
+Atlas gracefully with a soft-error envelope, or (b) live on a page the
+operator can tolerate not seeing during Atlas incidents. Never let a
+dashboard tile freeze the whole app. Precedents: `/parabolic-phase/phases`,
+`/mc/shelly/events`, this endpoint.
+
 ### ✅ Spread-quality guard + intents purge (2026-07-03)
 
 **Root cause found in prod (with the operator):** Neutral brains were

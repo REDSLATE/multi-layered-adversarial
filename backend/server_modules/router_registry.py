@@ -342,3 +342,8 @@ def register_routers(api_router: APIRouter) -> None:
     # intents. Dry-run by default; refuses to touch executed history.
     from routes.intents_purge_admin import router as intents_purge_router
     api_router.include_router(intents_purge_router)
+    # Trader warmup progress — per-symbol bar counts vs the research
+    # layer's 50-bar warmup floor. Separate endpoint from /status so
+    # /status stays Atlas-free.
+    from routes.trader_warmup_admin import router as trader_warmup_router
+    api_router.include_router(trader_warmup_router)
