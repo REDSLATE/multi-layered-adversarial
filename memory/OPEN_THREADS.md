@@ -6,27 +6,43 @@ items tracked here so no assumption quietly becomes doctrine by default.
 
 ---
 
-## 🔴 P0 — blocking, awaits external input
+## 🔴 P0 — REOPENED as prod-side issue (operator confirmed data source)
 
-### 1. "25→10/hr crypto emission drop" — data-source ambiguity
+### 1. "25→10/hr crypto emission drop" — CONFIRMED PRODUCTION
 
-**Question:** was the operator dashboard reporting this drop reading:
-  - (a) production intents only,
-  - (b) preview intents only,
-  - (c) `shared_intents` collection pooling both pods?
+**Answered 2026-07-04 by operator:** the dashboard reporting the drop was reading
+**production intents**, not preview or pooled `shared_intents`.
 
-**Why it matters:** determines whether (c) closed as won't-fix (preview hibernation is
-platform behavior, documented) OR reopens as a real prod-side issue that this
-investigation hasn't touched. All the log analysis in this session was against
-`/var/log/supervisor/backend.*.log` on this preview pod — I have no prod-pod
-observability from here.
+**Implication:** the entire preview-hibernation trace I did this session does NOT
+explain the observed prod-side drop. That was noise from a different environment.
+The prod-side crypto lane genuinely dropped emission rate ~60% in the observed
+window, and this session did not touch that root cause.
 
-**Blocked on:** operator knowledge of which dashboard the "25→10" figure came from.
-Cannot be inferred from data.
+**Blocked on:** I have no prod-pod observability from this preview container.
+Cannot pull prod supervisor logs, prod backend logs, or prod-pod supervisor state.
+Options:
+  - Operator pulls prod backend logs for the relevant window (07-01 → 07-04 UTC)
+    and shares the crypto-related lines (kraken, httpx, timeout, circuit, connection)
+    for the same edge-of-silence-window analysis I did on preview.
+  - OR operator triggers a diagnostic pull from prod (equivalent of the
+    `bar_crypto.json` pull I ran, but hitting prod's `/api/intents` endpoint)
+    so I can bucket prod's actual crypto emissions by hour and see the actual
+    shape of the drop before speculating on cause.
+  - OR the operator inspects prod-side pod lifecycle events directly — if prod
+    is ALSO hibernating (unlikely for a production tier but possible), then
+    this closes as platform-behavior on both sides.
 
-**Do not close as "probably preview" by default.** This is the exact pattern of
-assumption that would have masked the equity HOLD-collapse root cause if left
-undisturbed.
+**Do NOT assume the fix pattern from equity applies.** The equity investigation
+resolved into a schema-drift bug in an enricher. The prod-side crypto drop could
+be anything — a Kraken client circuit trip, a genuinely broken poll loop, a
+per-symbol subscription drop, a memory leak causing partial-hangs, an intent
+persistence bug swallowing writes silently. Fresh raw-data-first investigation
+required.
+
+**Recommended next step (when operator has bandwidth):** share a prod-side pull of
+`GET /api/intents?stack=barracuda&lane=crypto&limit=500&sort=newest` — same query I
+ran against preview earlier — plus a hint at which hours the drop was observed.
+Enough to reopen the trace against real prod data.
 
 ---
 
@@ -56,16 +72,48 @@ this is answered.
 
 ## 🟢 P2 — ready to ship / already shipped, low blast radius
 
-### 3. Observation-receipts marooned under legacy names — DRAFT READY
+### 3. Observation-receipts marooned under legacy names — SHIPPED
 
-**Status:** sign-off doc drafted at `/app/memory/SIGNOFF_observation_receipts_legacy_names.md`
+**Status:** IMPLEMENTED + MIGRATED + VERIFIED 2026-07-04
 
-**Fix:** endpoint alias resolution using existing `canonicalize_stack()` from
-`brain_legend.py`, plus a one-shot idempotent migration script.
+**Files changed:**
+  - `backend/shared/observation_receipts.py` — endpoint at line 210 now canonicalizes
+    the `brain` query parameter via `canonicalize_stack()`. Legacy names
+    (alpha/camaro/chevelle/redeye) resolve to canonical names before DB filtering.
+  - `backend/scripts/migrate_observation_receipts_legacy_brain_names.py` — one-shot
+    idempotent migration script. Executed with `--apply`.
 
-**Rows affected:** 8,553 (alpha: 42, camaro: 8,511, chevelle: 0, redeye: 0).
+**Migration result:**
+```
+   alpha → camino         42 rows   ← updated 42
+  camaro → barracuda    8511 rows   ← updated 8511
+chevelle → hellcat         0 rows
+  redeye → gto             0 rows
+Total rows updated: 8553
+```
 
-**No blockers.** Can ship any time — approve, run dry-run, run apply, done.
+Original brain names preserved in `brain_original_legacy` field for audit trail
+and reversibility.
+
+**Post-migration /counts endpoint output:**
+```
+  barracuda/crypto: total=1
+  barracuda/equity: total=8510
+  camino/equity:    total=42
+```
+
+**End-to-end verification (via live curl):**
+  - `?brain=barracuda&lane=equity` → returns 2 rows (was 0 before). Rows carry
+    `brain_original_legacy: "camaro"` — audit trail intact.
+  - `?brain=camaro&lane=equity` → returns 2 rows via alias resolution (was HTTP 400
+    before). Same underlying data.
+  - `?brain=nonexistent&lane=equity` → still returns `HTTP 400 unknown brain`.
+    Guard intact against genuinely-unknown names.
+
+**Idempotence confirmed:** second run of migration script touches 0 rows.
+
+**Rollback available:** restore legacy names via `brain_original_legacy` field
+per §8 of `SIGNOFF_observation_receipts_legacy_names.md`.
 
 ### 3b. Webull token Mongo mirror — SHIPPED
 

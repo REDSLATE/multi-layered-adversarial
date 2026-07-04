@@ -45,6 +45,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from auth import get_current_user
 from db import db
 from namespaces import OBSERVATION_RECEIPTS, RUNTIMES
+from shared.brain_legend import CANONICAL_BRAINS, canonicalize_stack
 
 
 logger = logging.getLogger(__name__)
@@ -208,9 +209,16 @@ async def list_observation_receipts(
     operator visibility into the learning queue."""
     q: dict = {}
     if brain:
-        if brain not in RUNTIMES:
+        # Accept both canonical AND legacy names; canonicalize at boundary.
+        # Doctrine (P2, 2026-07-04): historical rows were filed under the
+        # legacy stack names (alpha/camaro/chevelle/redeye) that predated
+        # the 2026-06-09 rename. A one-shot migration canonicalizes them
+        # in place; this alias resolution ensures legacy-name queries
+        # continue to work regardless of migration state.
+        canonical = canonicalize_stack(brain)
+        if canonical not in CANONICAL_BRAINS:
             raise HTTPException(status_code=400, detail=f"unknown brain {brain!r}")
-        q["brain"] = brain
+        q["brain"] = canonical
     if lane:
         if lane not in {"equity", "crypto"}:
             raise HTTPException(status_code=400, detail=f"unknown lane {lane!r}")
