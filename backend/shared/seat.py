@@ -49,11 +49,15 @@ The Seat is INTENTIONALLY thin. It does not:
 
 What it DOES:
     1. Look up all 4 seat holders for the intent's lane.
-    2. Verify the emitting brain holds either the strategist or executor
-       seat (strategist proposes; executor self-fires).
+    2. Verify the lane has an executor seat filled (hard block if not).
     3. Read the governor's `risk_multiplier`.
-    4. Stamp the auditor on the decision for the executions row.
-    5. Return a single `SeatDecision` — fire or pass.
+    4. If the emitting brain is NOT strategist/executor for the lane,
+       route the intent as a COUNCIL PARTICIPANT at 50% size (2026-07-04
+       doctrine correction — brain identity influences weight, does not
+       block execution). Legitimate hard blocks live at RoadGuard, risk
+       caps, kill switch, broker availability — not seat identity.
+    5. Stamp the auditor on the decision for the executions row.
+    6. Return a single `SeatDecision` — fire or pass.
 """
 from __future__ import annotations
 
@@ -272,16 +276,24 @@ async def decide(intent: dict[str, Any]) -> SeatDecision:
     Rules (linear, no loops):
         1. action must be directional (BUY/SELL/SHORT/COVER).
         2. lane must be present.
-        3. executor seat must be filled.
-        4. emitting brain must hold strategist OR executor seat.
-        5. governor's risk_multiplier is read once and stamped on the
+        3. executor seat must be filled (hard block if not).
+        4. governor's risk_multiplier is read once and stamped on the
            returned decision. Caller multiplies notional by it.
-        6. auditor is stamped on the decision (for the executions row).
+        5. If the emitting brain holds strategist OR executor for the
+           lane → verdict='fire' at governor's full multiplier.
+        6. If the emitting brain holds NEITHER strategist NOR executor
+           for the lane → still verdict='fire' but at 50% of the
+           governor's multiplier ('council participant' path, 2026-07-04
+           doctrine). This replaces the pre-2026-07-04 behavior of
+           returning verdict='pass' for non-seat brains, which was
+           blocking 50% of intent volume as 'unauthorized_brain' and
+           starving execution across the fleet.
+        7. auditor is stamped on the decision (for the executions row).
 
-    Anything that fails this single pass returns `pass`. Caller
-    writes one executions row and stops. No re-route. No retry on
-    the same intent (auto_router stamps gate_state so the next tick
-    skips it).
+    Anything that fails checks 1–3 returns `pass` (never reaches broker).
+    Everything else fires — with the size differential encoded via
+    risk_multiplier so downstream execution sees the doctrine as a
+    sizing signal, not an authorization signal.
     """
     action = (intent.get("action") or "").upper()
     lane = (intent.get("lane") or "").lower()
@@ -320,14 +332,38 @@ async def decide(intent: dict[str, Any]) -> SeatDecision:
             **base,
         )
     if brain not in {seats.get("strategist"), seats.get("executor")}:
+        # ─── 2026-07-04 doctrine correction ────────────────────────
+        # Old behavior: brain not holding strategist/executor seat →
+        # verdict="pass" → auto_router stamps `gate_state='advisory_only'`
+        # → intent never reaches broker. This starved execution across
+        # the fleet because every intent from the 2 non-seat brains
+        # in each lane (50% of emitted volume) got shelved.
+        #
+        # Operator doctrine intent: "4 brains discuss → Seat decides →
+        # Governor sizes → RoadGuard blocks danger only." Brain identity
+        # should INFLUENCE weighting/sizing, not BLOCK execution outright.
+        # Only these are legitimate hard blocks: no lane executor, kill
+        # switch, broker unavailable, RoadGuard danger, risk cap exceeded,
+        # invalid symbol/order, market/lane disabled. Brain-seat-identity
+        # is NOT on that list.
+        #
+        # New behavior: non-seat-brain intents route to the executor as
+        # "council participant" fires, with a 50% size dampener applied
+        # via risk_multiplier. Preserves execution flow while keeping
+        # off-seat brains' size contribution measurably lower than
+        # authorized-seat brains' full-size fires. Governor's own
+        # risk_multiplier still applies on top.
+        council_mult = float(mult) * 0.50
+        base_council = dict(base)
+        base_council["risk_multiplier"] = council_mult
         return SeatDecision(
-            verdict="pass",
+            verdict="fire",
             reason=(
-                f"unauthorized_brain:{brain!r} holds neither "
-                f"strategist({seats.get('strategist')!r}) nor "
-                f"executor({seats.get('executor')!r}) seat for {lane}"
+                f"non_seat_brain_routes_to_executor:{brain} "
+                f"(strategist={seats.get('strategist')} executor={seats.get('executor')} "
+                f"— routing as council participant at 50% size)"
             ),
-            **base,
+            **base_council,
         )
 
     return SeatDecision(
