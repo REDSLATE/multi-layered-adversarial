@@ -48,11 +48,15 @@ verification passes. Verification command included in the sign-off doc's Section
 false-negative results in the verification window if the pod is cold. Warm-hit
 protocol documented in the doc.
 
+**CFQS pre-fix-fires decision (§6a):** operator must choose Option A/B/C for how to
+treat pre-fix fires against the 30-fire minimum. Doc will not proceed to code until
+this is answered.
+
 ---
 
-## 🟢 P2 — ready to ship, low blast radius, no market-data exposure
+## 🟢 P2 — ready to ship / already shipped, low blast radius
 
-### 3. Observation-receipts marooned under legacy names
+### 3. Observation-receipts marooned under legacy names — DRAFT READY
 
 **Status:** sign-off doc drafted at `/app/memory/SIGNOFF_observation_receipts_legacy_names.md`
 
@@ -62,6 +66,35 @@ protocol documented in the doc.
 **Rows affected:** 8,553 (alpha: 42, camaro: 8,511, chevelle: 0, redeye: 0).
 
 **No blockers.** Can ship any time — approve, run dry-run, run apply, done.
+
+### 3b. Webull token Mongo mirror — SHIPPED
+
+**Status:** IMPLEMENTED + TESTED 2026-07-04
+
+**File:** `/app/trader/webull_auth.py` — added `_mongo_collection()`, `_read_from_mongo()`,
+`_write_to_mongo()`; hooked `_write_to_disk()` to also mirror to Mongo, hooked
+`_read_from_disk()` to fall back to Mongo and rehydrate disk if file missing.
+
+**Collection:** `webull_token` singleton doc (`_id="current"`) on the existing MongoDB.
+Same instance the rest of the app uses. External-managed, survives pod redeploys.
+
+**Test file:** `/app/backend/tests/test_webull_token_mongo_mirror.py` — 6 tests, all pass:
+  - write-to-disk also mirrors to Mongo
+  - post-redeploy simulation: file wipe + read → restores from Mongo AND rehydrates disk
+  - both-empty state returns None cleanly
+  - `get_token()` E2E works after simulated redeploy
+  - writes are idempotent upsert (no doc accumulation on token refresh)
+  - Mongo unreachable degrades gracefully to disk-only (pre-fix behavior floor)
+
+**Operator workflow now:**
+  1. One-time (per 15-day token TTL): run 2FA push via `/api/admin/trader/webull-token-create`
+  2. Token gets written to both `/app/trader/data/webull_token.json` AND Mongo `webull_token` singleton
+  3. On next redeploy: disk gets wiped; first read after boot pulls from Mongo and rehydrates disk
+  4. No re-run of 2FA required until the 15-day server-side TTL expires
+
+**Unblocks:** live-money trading continuity across deploys. Without this, every deploy
+required a fresh 2FA push, making it structurally impossible to leave live trading
+enabled through a code push.
 
 ---
 

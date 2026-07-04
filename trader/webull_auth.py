@@ -51,15 +51,101 @@ def _token_path() -> Path:
     return Path(_config.jsonl_dir()) / _DEFAULT_TOKEN_FILENAME
 
 
-def _read_from_disk() -> Optional[dict]:
-    p = _token_path()
-    if not p.exists():
+# ── Mongo mirror (2026-07-04, operator directive P1a) ────────────────
+# The disk path (`/app/trader/data/webull_token.json`) is EPHEMERAL —
+# it lives on the pod's writable overlay and gets wiped on every
+# redeploy. That means every deploy forced the operator to re-run
+# the 2FA push flow to reissue a token, which made it impossible to
+# leave live-money trading enabled across deploys.
+#
+# Fix: mirror the token payload to a MongoDB singleton collection
+# (`webull_token`, doc `_id="current"`). MongoDB is external-managed
+# and survives redeploys. On startup, if the disk file is missing
+# but Mongo has a payload, rehydrate disk from Mongo transparently.
+#
+# One-time 2FA cost per token TTL (15 days server-side) instead of
+# per-deploy. Sync `pymongo` used deliberately — reads/writes happen
+# once per 15-day cycle, no perf concern, and this avoids threading
+# an async-motor handle through sync callers (`_read_from_disk` is
+# called from sync `get_token()` on every quote fetch).
+_MONGO_COLL_NAME = "webull_token"
+_MONGO_DOC_ID = "current"
+
+
+def _mongo_collection():
+    """Return the pymongo sync collection handle, or None if the
+    environment isn't configured. Never raises."""
+    try:
+        import pymongo  # noqa: WPS433
+    except ImportError:
+        return None
+    url = os.environ.get("MONGO_URL")
+    name = os.environ.get("DB_NAME")
+    if not url or not name:
         return None
     try:
-        return json.loads(p.read_text())
+        client = pymongo.MongoClient(url, serverSelectionTimeoutMS=3000)
+        return client[name][_MONGO_COLL_NAME]
     except Exception as e:  # noqa: BLE001
-        logger.warning("webull_token read failed path=%s err=%s", p, e)
+        logger.warning("webull_token mongo handle failed: %s", e)
         return None
+
+
+def _read_from_mongo() -> Optional[dict]:
+    coll = _mongo_collection()
+    if coll is None:
+        return None
+    try:
+        doc = coll.find_one({"_id": _MONGO_DOC_ID})
+        if not doc:
+            return None
+        doc.pop("_id", None)
+        return doc
+    except Exception as e:  # noqa: BLE001
+        logger.warning("webull_token mongo read failed: %s", e)
+        return None
+
+
+def _write_to_mongo(payload: dict) -> None:
+    coll = _mongo_collection()
+    if coll is None:
+        return
+    try:
+        coll.replace_one(
+            {"_id": _MONGO_DOC_ID},
+            {**payload, "_id": _MONGO_DOC_ID},
+            upsert=True,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("webull_token mongo write failed: %s", e)
+
+
+def _read_from_disk() -> Optional[dict]:
+    p = _token_path()
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except Exception as e:  # noqa: BLE001
+            logger.warning("webull_token read failed path=%s err=%s", p, e)
+            # fall through to mongo restore
+
+    # Disk empty (fresh pod / post-redeploy) — try Mongo mirror.
+    mongo_payload = _read_from_mongo()
+    if mongo_payload:
+        logger.info(
+            "webull_token restored from Mongo mirror path=%s "
+            "(disk was empty — likely post-redeploy)", p,
+        )
+        # Rehydrate disk for subsequent fast reads.
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(mongo_payload, indent=2))
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "webull_token disk rehydrate failed path=%s err=%s", p, e,
+            )
+        return mongo_payload
+    return None
 
 
 def _write_to_disk(payload: dict) -> None:
@@ -69,6 +155,11 @@ def _write_to_disk(payload: dict) -> None:
         p.write_text(json.dumps(payload, indent=2))
     except Exception as e:  # noqa: BLE001
         logger.warning("webull_token write failed path=%s err=%s", p, e)
+    # Mirror to Mongo for redeploy persistence. Best-effort — if
+    # Mongo is unreachable, disk write still succeeded and the
+    # current pod keeps working; next redeploy would lose the token
+    # but that's the pre-fix behavior, not a regression.
+    _write_to_mongo(payload)
 
 
 def get_token() -> Optional[str]:

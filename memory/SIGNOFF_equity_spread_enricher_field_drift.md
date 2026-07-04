@@ -236,11 +236,28 @@ Which means for the currently-locked CFQS gate:
 
 - **30-fires-minimum + 15%-beat-margin gate on Barracuda equity:** any fires counted against pre-fix data were counted against **substituted spread inputs**, not measured ones. If Barracuda hits 30 fires between now and when this ships, those 30 fires' expectancy calculations included a fictional spread axis on every one.
 
-- **Recommended:** flag pre-fix-window fires with a `spread_input_substituted=True` marker (or exclude them from the 30-count entirely) rather than letting them contribute silently. Otherwise the gate could unlock the next ladder rung on partially-synthetic evidence, and by the time the discrepancy surfaces, real capital will be sized against it.
+### 6a. Operator decision required BEFORE ship — how to treat pre-fix fires against the 30-count
 
-- **The crypto lane is not affected** — Kraken public ticker has its own live-quote path, and the earlier hypothesis-scoring bug we chased didn't materially move crypto (`hold%` stayed 0–12% throughout the observed window). Crypto's CFQS counter is safe to keep counting.
+Three options, sign-off doc will not proceed to code until one is chosen:
 
-This is the meaningful downstream effect the fixes have on operator-facing gates. Flagging it here because it belongs in the sign-off, not in the code comments.
+- **Option A — Discard.** Reset the CFQS fire counter for Barracuda-equity to 0 at fix ship-time. Only count post-fix fires toward the 30-fire minimum. Cleanest audit trail; longest time-to-gate-decision (need a full re-accumulation window).
+- **Option B — Flag but count.** Keep pre-fix fires in the count, but add a `spread_input_substituted=True` marker on each. Gate decision proceeds on schedule, but the operator reading the final expectancy report knows what fraction of the sample was against synthetic inputs.
+- **Option C — Blend.** Keep pre-fix fires with the marker AND raise the fire minimum from 30 → e.g. 45 to compensate for degraded-signal fraction. Preserves audit trail without letting a gate pass on partially-fictional evidence.
+
+Recommendation absent operator input: **Option A**. The reason the gate exists is to defend against approving parameters on thin/untrustworthy evidence. Counting synthetic-input fires against the gate's minimum defeats the gate's purpose regardless of how well-marked those fires are.
+
+### 6b. Framing pin — DO NOT quietly upgrade this fix's claim
+
+This sign-off is: **"remove a known blindspot in the input pipeline."**
+
+This sign-off is NOT: "make trading better."
+
+The fix removes a false constraint on the brain's input space. Whether the brain does something better with the correct input than with the substituted default is an empirical question that requires a full post-fix observation window to answer. Two failure modes to be alert for:
+
+- **Under-conservative reversal:** if Barracuda was being *held back* by inflated spread penalties on the substituted 25 bps, the fix will unlock more fires. That's the expected direction.
+- **Over-conservative reversal:** if the substituted 25 bps was *understating* real spreads on some names (e.g. mid-caps with genuinely wider RTH spreads), the fix will *reduce* fires. That would also be correct behavior — the brain is now seeing accurate market quality — but it means the fire rate could go DOWN after ship, not UP. Do not interpret a fire-rate drop as a regression until the underlying spread inputs have been audited for the affected symbols.
+
+This is the caveat: **fixed the input, unknown effect on output.** If the sign-off gets summarized elsewhere as "should trade better now," that summary is wrong.
 
 ## 7. Deploy sequencing recommendation
 
