@@ -25,15 +25,40 @@ sys.path.insert(0, '/app/backend')
 from shared.market_data.webull_quotes import get_quotes_client
 c = get_quotes_client()
 now = time.time()
-for sym in ('NVDA','SPY','AAL','AAPL','TSLA','MSFT','QQQ'):
-    s = c.equity_snapshot(sym)
-    ltt = s.get('last_trade_time') if s else None
-    qt = s.get('quote_time') if s else None
-    def age(v):
-        return (now - float(v)/1000.0) if v else 'MISSING'
-    print(f'{sym}: last_trade_age={age(ltt):.1f}s  quote_age={age(qt):.1f}s')
+# Tiered by liquidity so we can distinguish uniform-fail from liquidity-tiered results:
+# TIER_MEGA — sub-cent spread expected, should tick every second
+# TIER_ETF  — highly liquid basket, should also tick tightly
+# TIER_MID  — mid-cap single names, may tick less frequently
+# TIER_THIN — thinner names, may have gappy ticks even during RTH
+UNIV = [
+    ('MEGA', ['NVDA','MSFT','AAPL','AMZN','META','GOOGL','TSLA']),
+    ('ETF',  ['SPY','QQQ','IWM','DIA']),
+    ('MID',  ['AAL','F','PLTR']),
+    ('THIN', ['AMC','GME','SPCE']),
+]
+for tier, syms in UNIV:
+    for sym in syms:
+        s = c.equity_snapshot(sym)
+        if not s:
+            print(f'{tier:5} {sym:6}: SDK returned None'); continue
+        ltt = s.get('last_trade_time'); qt = s.get('quote_time')
+        def age(v): return (now - float(v)/1000.0) if v else float('inf')
+        # Fix #2 evidence: also capture bps + bid/ask now that book is open
+        bps = s.get('bps'); bid = s.get('bid'); ask = s.get('ask'); price = s.get('price')
+        print(f'{tier:5} {sym:6}: ltt_age={age(ltt):>7.1f}s  qt_age={age(qt):>7.1f}s  '
+              f'bps={bps!r:>10}  bid={bid!r:>10}  ask={ask!r:>10}  price={price!r}')
 "
 ```
+
+**Interpretation matrix (three distinct outcomes to distinguish):**
+
+| Outcome | Pattern | Fix scope |
+|---|---|---|
+| **Uniform pass** | All tiers show `ltt_age < 60s`, `qt_age < 15s` during RTH | Fix #1 as drafted, ships alone first |
+| **Liquidity-tiered pass** | MEGA/ETF show sub-minute ages; MID/THIN show gappy or stale ages | Fix #1 ships with a caveat: `stale_threshold_sec` should become liquidity-tiered (e.g., 15s for MEGA/ETF, 60s for MID, 300s for THIN) rather than one global 15s threshold. Non-trivial doctrine addition — needs its own sub-review before shipping. |
+| **Uniform fail** | Even NVDA/SPY show hours-old timestamps during RTH | Field-name-drift theory is falsified. `last_trade_time`/`quote_time` are session-close-only fields, not intraday. Whole sign-off package pivots to `received_at`-clock proxy design. Different investigation. |
+
+**Also captured in the same Monday pull:** `bps`, `bid`, `ask`, `price` per symbol. Reason: the Saturday probe showed `bps=0` on all 9 ETFs and negative on AAL/AMC. Those may be closed-session artifacts (the SDK returning last-good stale bid + a placeholder ask that was never re-quoted during the shutdown) rather than intrinsic bugs. If Monday's open-hours pull shows those same symbols reporting sane positive `bps` values, then fix #2's plausibility gate becomes optional defense-in-depth rather than required-for-correctness — and can be deferred out of the initial patch. If they persist during RTH, fix #2 is confirmed necessary and stays in.
 
 **Do not ship fixes #1/#2/#3 until this verification passes.** If verification fails, the sign-off package needs to be rewritten around a different mechanism (likely a `received_at` clock proxy for freshness estimation, plus a stricter subscription-entitlement audit).
 
