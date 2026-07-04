@@ -1,0 +1,133 @@
+# Open threads — 2026-07-04 investigation
+
+Session context: multi-round diagnosis of equity HOLD-collapse (07-02 06:00 UTC) that resolved
+into three distinct root causes plus several defer-able side findings. Both closed and open
+items tracked here so no assumption quietly becomes doctrine by default.
+
+---
+
+## 🔴 P0 — blocking, awaits external input
+
+### 1. "25→10/hr crypto emission drop" — data-source ambiguity
+
+**Question:** was the operator dashboard reporting this drop reading:
+  - (a) production intents only,
+  - (b) preview intents only,
+  - (c) `shared_intents` collection pooling both pods?
+
+**Why it matters:** determines whether (c) closed as won't-fix (preview hibernation is
+platform behavior, documented) OR reopens as a real prod-side issue that this
+investigation hasn't touched. All the log analysis in this session was against
+`/var/log/supervisor/backend.*.log` on this preview pod — I have no prod-pod
+observability from here.
+
+**Blocked on:** operator knowledge of which dashboard the "25→10" figure came from.
+Cannot be inferred from data.
+
+**Do not close as "probably preview" by default.** This is the exact pattern of
+assumption that would have masked the equity HOLD-collapse root cause if left
+undisturbed.
+
+---
+
+## 🟡 P1 — awaits Monday market open
+
+### 2. Equity spread enricher fix — Monday 07-06 13:35 UTC verification
+
+**Status:** sign-off doc drafted at `/app/memory/SIGNOFF_equity_spread_enricher_field_drift.md`
+
+**Binding gate:** cannot ship fixes #1/#2/#3 in that doc until Monday-market-open
+verification passes. Verification command included in the sign-off doc's Section 0.
+
+**Three outcomes to distinguish** (see doc Section 0):
+  - Uniform pass across liquidity tiers → ship fix #1 as drafted
+  - Liquidity-tiered pass → sub-review needed on threshold banding by liquidity tier
+  - Uniform fail → field-name theory falsified, package needs rewrite
+
+**Confounder awareness (§0b in the doc):** preview-pod hibernation can produce
+false-negative results in the verification window if the pod is cold. Warm-hit
+protocol documented in the doc.
+
+---
+
+## 🟢 P2 — ready to ship, low blast radius, no market-data exposure
+
+### 3. Observation-receipts marooned under legacy names
+
+**Status:** sign-off doc drafted at `/app/memory/SIGNOFF_observation_receipts_legacy_names.md`
+
+**Fix:** endpoint alias resolution using existing `canonicalize_stack()` from
+`brain_legend.py`, plus a one-shot idempotent migration script.
+
+**Rows affected:** 8,553 (alpha: 42, camaro: 8,511, chevelle: 0, redeye: 0).
+
+**No blockers.** Can ship any time — approve, run dry-run, run apply, done.
+
+---
+
+## ⚪ P3 — filed for later, low impact
+
+### 4. `sovereign_mode_guard` ImportError firing 5,372 times
+
+**File:** `/app/external/brains/runner.py:1961` — `from shared.sovereign_mode_guard import ...`
+
+**Impact:** background heartbeat loop, wrapped in try/except at line 1914. Does NOT
+swallow intents. Effect is observability-only: MC's `sovereign_state.{brain}.updated_at`
+goes stale → `STALE_SOVEREIGN` chip on `/api/admin/brain-emission/diagnose`. Log noise
+of ~200-250 WARNING lines per hour.
+
+**Fix options:**
+  - (a) Restore `shared/sovereign_mode_guard.py` from git snapshot / `.revert_snapshots/`
+  - (b) Wrap the import in try/except that silences after first failure to stop log spam
+
+### 5. Missing `kraken_credentials` singleton in DB
+
+**Source:** `trader/spread_stream.py` (dormant sidecar, `TRADER_ENABLED=false`).
+
+**Impact:** noise only. Sidecar poller starts, fails to authenticate, logs warning, retries.
+Does not touch live intent-emission path.
+
+**Fix:** either insert the credentials doc OR gate the poller start on `TRADER_ENABLED`
+to stop running when sidecar is disabled. Trivial either way.
+
+### 6. Webull client re-initializing more than needed
+
+**Symptom:** `_check_token_enable result is False` logged twice per snapshot call
+(~88ms apart). Suggests `get_quotes_client()` is not memoizing the client handle
+correctly across calls.
+
+**Impact:** performance-only. ~1 extra HTTP round-trip per snapshot call for token-config
+lookup. Not a correctness issue.
+
+**Fix:** confirm client-cache logic in `webull_quotes.py` — should be a singleton or
+module-level lazy init.
+
+---
+
+## ⚫ Filed as "not a bug, platform behavior"
+
+### 7. Preview-environment pod hibernation
+
+**Behavior:** Kubernetes evicting idle preview pods after ~30-90 min idle, cold-starting
+on activity resumption. Produces 6-14 hour gaps in log stream + intent stream.
+
+**Confirmed via:** `/var/log/supervisor/supervisord.log` — every silence window flagged in
+the crypto investigation aligns exactly with a supervisor restart gap.
+
+**Action:** none. Platform behavior. Documented in `SIGNOFF_equity_spread_enricher_field_drift.md`
+§0b so future analysts don't misattribute hibernation gaps to code bugs.
+
+---
+
+## Closed with confidence this session
+
+- Equity HOLD-collapse mechanism: `brain_core.py` spread-quality guard shipped ~07-03 03:00
+  UTC and IS working on current intents (verified via 07-04 06:12 UTC fresh AAL BUY).
+- `_check_token_enable = False`: red herring. Verified via SDK source. Gates token
+  cache warm-up, not real-time entitlement.
+- Argmax "tie-breaker" theory: superseded. `min_gap` per-brain per-lane already exists
+  in `brain_tuning_cache.py`. Not the right fix layer even if it were needed.
+- Reweighting-at-scoring-layer theory: superseded. Coordinated hold/observe boost was
+  explained by market-quality inputs, not a scoring parameter change.
+- External-brains architecture: not sidecars, in-process modules imported by
+  `backend/routes/brain_runtime.py`.

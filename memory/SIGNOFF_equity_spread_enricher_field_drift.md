@@ -62,6 +62,24 @@ for tier, syms in UNIV:
 
 **Do not ship fixes #1/#2/#3 until this verification passes.** If verification fails, the sign-off package needs to be rewritten around a different mechanism (likely a `received_at` clock proxy for freshness estimation, plus a stricter subscription-entitlement audit).
 
+### 0b. Confounder to watch during Monday verification — preview-pod hibernation
+
+Separately traced during this session's crypto investigation: preview backend pods on this cluster get spun down after ~30–90 min of idle time, then cold-start on new traffic. Observation window `07-02 06:00 → 07-04 05:38 UTC` contains **four separate multi-hour outages** (up to 14.4h each) where the backend process was NOT running — cross-referenced against `/var/log/supervisor/supervisord.log` lifecycle events. During those windows, zero intents get emitted from either lane, zero logs get written, and any staleness metric measured against wall-clock will show as `dead`.
+
+**Implication for Monday's verification:** if the verification command is invoked cold against a hibernated preview pod, the first snapshot fetches will be against a client that's still initializing — potentially returning `None` or partial data. **Warm the pod with a preliminary hit before running the verification block:**
+
+```bash
+# Warm the pod first — trigger an HTTP handler so the backend is fully warm
+API_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d '=' -f2)
+curl -s "$API_URL/api/health" >/dev/null
+sleep 3
+# THEN run the Section 0 verification block
+```
+
+Additionally: **any hourly cadence numbers pulled from `shared_intents` for cross-checking Monday's fix will be biased by whichever pod (preview vs prod) happened to be up during the sample window.** Post-Monday, when comparing pre-fix vs post-fix `spread_quality='live'` rates, filter by `pod_hostname` (or `evidence.pod_hostname` on the intent doc) to avoid attributing hibernation gaps to the fix's efficacy or lack thereof.
+
+Not a fix requirement — just a note to prevent misdiagnosis of the verification result.
+
 ## 0a. Red herring investigated and cleared
 
 The initial hypothesis that `_check_token_enable result is False` (logged twice per snapshot call) might indicate a structural entitlement issue was investigated by reading the Webull SDK source at `/root/.venv/lib/python3.11/site-packages/webull/core/http/initializer/client_initializer.py:90–115`. Finding: this flag is a **server-side config toggle** that only gates whether the SDK proactively warms its token cache on init. It does **not** gate real-time entitlement, does not force delayed-data mode, and does not indicate auth failure. Real-time entitlement is verified independently via `get_app_subscriptions()` which returns `us_stock_quotes: true` for the current account. The log line is benign noise, not a signal.
