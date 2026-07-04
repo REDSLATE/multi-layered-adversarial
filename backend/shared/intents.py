@@ -277,6 +277,19 @@ class IntentIn(BaseModel):
     decision_id: Optional[str] = Field(default=None, max_length=64)
     regime: Optional[str] = Field(default=None, max_length=48)
 
+    # ─── strategy_id (2026-07-04, evidence-layer prep, step 1/5) ───
+    # Optional. When provided, the brain is explicitly naming the
+    # strategy identifier this intent belongs to (e.g.
+    # `large_cap_momentum_v1`, `crypto_breakdown_v1`). When absent,
+    # MC derives it from `evidence.doctrine` in `_post_intent_impl`
+    # so the field is ALWAYS populated on the persisted doc — that
+    # invariant is what the future `strategy_evidence` collection
+    # will join against. Doctrine name → `{doctrine}_v1` unless the
+    # brain overrides. See `/app/memory/OPEN_THREADS.md` for the
+    # broader evidence-evaluator design context. Purely metadata
+    # in this slice — does NOT influence any gate or sizing yet.
+    strategy_id: Optional[str] = Field(default=None, max_length=64)
+
     # ─── Doctrine sidecar input (2026-02-17, equity-only) ───
     # Optional snapshot of market facts that drives the small-account
     # doctrine labeler (`shared.doctrine.base_labels`). When provided
@@ -1108,6 +1121,20 @@ async def _post_intent_impl(
         "doctrine_packet": doctrine_packet,
         "decision_id": body.decision_id,
         "regime": body.regime,
+        # ─── strategy_id (2026-07-04, evidence-layer prep, step 1/5) ───
+        # Always populated. Precedence: explicit brain-provided value >
+        # `evidence.doctrine` with `_v1` suffix > "unknown_strategy".
+        # Downstream `strategy_evidence` collection joins on this key,
+        # so an always-populated value is the invariant that lets the
+        # evidence layer be built later without a schema migration.
+        "strategy_id": (
+            body.strategy_id
+            or (
+                f"{evidence.get('doctrine')}_v1"
+                if isinstance(evidence, dict) and evidence.get("doctrine")
+                else "unknown_strategy"
+            )
+        ),
         # ─── Honesty telemetry — brain-side ground truth ───
         # Captures the SEPARATION between market judgment and execution
         # judgment so a blocked trade never silently becomes "HOLD".
@@ -1777,6 +1804,20 @@ async def admin_post_intent(
         "doctrine_packet": doctrine_packet,
         "decision_id": body.decision_id,
         "regime": body.regime,
+        # ─── strategy_id (2026-07-04, evidence-layer prep, step 1/5) ───
+        # Always populated. Precedence: explicit brain-provided value >
+        # `evidence.doctrine` with `_v1` suffix > "unknown_strategy".
+        # Downstream `strategy_evidence` collection joins on this key,
+        # so an always-populated value is the invariant that lets the
+        # evidence layer be built later without a schema migration.
+        "strategy_id": (
+            body.strategy_id
+            or (
+                f"{evidence.get('doctrine')}_v1"
+                if isinstance(evidence, dict) and evidence.get("doctrine")
+                else "unknown_strategy"
+            )
+        ),
         "may_execute": False,
         "requires_gate_pass": True,
         "seat_at_post_time": seat,

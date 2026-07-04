@@ -115,6 +115,40 @@ and reversibility.
 **Rollback available:** restore legacy names via `brain_original_legacy` field
 per §8 of `SIGNOFF_observation_receipts_legacy_names.md`.
 
+### 3c. Evidence layer prep — step 1/5 SHIPPED (strategy_id stamping)
+
+**Status:** IMPLEMENTED + VERIFIED LIVE 2026-07-04
+
+**Files changed:**
+  - `backend/shared/intents.py` — added `strategy_id: Optional[str]` field to `IntentIn` model
+    (line ~277), plus derivation logic in both doc-build sites (lines ~1109 and ~1791 range).
+    Precedence: explicit brain value > `evidence.doctrine` + `_v1` > `"unknown_strategy"`.
+    Always populated on the persisted doc — invariant guarantees future
+    `strategy_evidence` collection can join on this key without a schema migration.
+  - `backend/tests/test_intent_strategy_id_stamping.py` — 9 tests: model shape,
+    validation bounds, and derivation semantics. All pass.
+
+**Live verification:** fresh intents from 07-04 11:47 UTC (immediately after deploy)
+carry the correct derivation:
+```
+  gto/NVDA/BUY       strategy_id='momentum_v1'        (evidence.doctrine='momentum')
+  barracuda/NVDA/BUY strategy_id='mean_reversion_v1'  (evidence.doctrine='mean_reversion')
+  camino/NVDA/BUY    strategy_id='trend_v1'           (evidence.doctrine='trend')
+  hellcat/*/*/*      strategy_id='breakout_v1'        (evidence.doctrine='breakout')
+```
+
+Four brains × their existing doctrines produce four distinct strategy_ids
+automatically — no brain-side code change required.
+
+**What this unblocks:** the persistence-shape invariant for the future
+evidence layer (steps 2–5 in the operator's build order). Steps 2–5 held
+until Monday equity verification lands and observation-receipt resolver
+is built (dependency: need graded outcomes before evidence scores are
+meaningful).
+
+**Downstream coupling:** zero. Field is metadata-only in this slice.
+No gate reads it, no sizing changes, no execution routing changes.
+
 ### 3b. Webull token Mongo mirror — SHIPPED
 
 **Status:** IMPLEMENTED + TESTED 2026-07-04
