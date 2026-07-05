@@ -1,3 +1,86 @@
+## 2026-02-17 (later) — Intent-clearance funnel: the Monday tuning tile
+
+**Purpose:** Answer ONE question fast — "Of everything a brain emitted
+in the last N hours, exactly how many survived each gate on the way to
+a live broker fill, and where's the next dam?"
+
+**Endpoint:** `GET /api/admin/intent-clearance-funnel?hours=24&lane=all`
+
+**Stages (in order):**
+    emitted            → any BUY/SELL/SHORT/COVER intent
+    seat_cleared       → gate_state ∉ {advisory_only, pending}
+    risk_sized         → risk_multiplier > 0
+    roadguard_cleared  → gate_state ∈ {passed, dry_run_passed, dry_run_blocked}
+                         (the last state is the operator lane-toggle,
+                         not a RoadGuard failure)
+    broker_submitted   → an `executions` row exists linked by intent_id
+    broker_accepted    → execution.ok == True
+    filled             → execution.broker_status == 'FILLED'
+
+**Top-line fields:**
+    clearance_rate       – filled / emitted
+    top_block_reason     – dominant blocker across all drops
+    first_failed_stage   – earliest stage where count < prev
+    stages[]             – per-stage {count, clearance_rate, drop_from_prev, drop_pct_of_prev}
+    drops{stage → info}  – per-stage {count, top_block_reasons[≤3], sample_intent_ids[≤5]}
+
+**Breakdowns:** by `lane`, `brain`, `symbol`, `side`, `gate_state`,
+`reject_reason` — each with emitted vs broker_accepted per bucket.
+
+**Bugs caught + fixed during build:**
+1. `$or` clobber: composing `{**window, "$or": [risk_multiplier ...]}`
+   silently overwrote the window's `$or`, letting stale rows leak past
+   filters (initial run reported 25k > 2k drops — impossible). Fixed
+   via a new `_compose(*clauses)` helper that wraps multi-clause
+   queries in `$and`.
+2. Breakdowns ignored the time window: `_breakdown()` was receiving
+   only the lane clause, not the ts filter, so bucket totals showed
+   all-time counts instead of window counts. Now takes
+   `base_clauses = [window_clause, lane_clause]`.
+3. `first_failed_stage` mis-reported on zero-emitted windows (said
+   `seat_cleared` for empty datasets). Guarded with `n_emitted > 0`.
+
+**Regression suite** — `test_intent_clearance_funnel.py`, 9 tests:
+   - `_compose` behavior on 0/1/N clauses (bug #1's canary).
+   - Semantic filter assertions (advisory_only excluded, positive
+     risk_multiplier required, dry_run_blocked counts as roadguard-cleared).
+   - Monotonicity: each stage count ≤ predecessor.
+   - `first_failed_stage` names first drop.
+   - Zero-emitted returns sane defaults (no div-by-zero, no false
+     first_failed_stage).
+All 9 pass.
+
+**First real reading (preview, 168h window, 2026-02-17):**
+   ```
+   emitted           11,040  (100.00%)
+   seat_cleared       2,001  ( 18.12%)   ← 82% loss to executor_seat_vacant
+   risk_sized             0  (  0.00%)   ← 100% risk_multiplier=0 downstream of seat
+   roadguard_cleared      0
+   broker_submitted       0
+   broker_accepted        0
+   filled                 0
+
+   top_block_reason:   executor_seat_vacant:crypto
+   first_failed_stage: seat_cleared
+   ```
+   Interpretation: the seat-drift fix (shipped earlier the same day)
+   will decay these numbers over the next 24h as fresh intents flow
+   in. Second dam already visible in the risk-drop reasons:
+   `lane_execution_enabled: operator has NOT enabled execution for
+   lane='equity'` (364 hits/week) — the operator's kill switch.
+
+**Runtime finding surfaced during build (not part of this task):**
+   Post-restart intents on 2026-07-05 07:20+ are all stuck at
+   `gate=pending, last_submit_ts=None, last_submit_by=None`. The
+   auto-router isn't picking them up. This is a separate blocker
+   from the seat fix — likely the intent-router polling loop needs
+   restart or has a startup ordering issue with the new lifespan
+   hooks. Flagged for next session; the funnel already reports the
+   pending count in the seat_drop's `top_block_reasons`.
+
+---
+
+
 ## 2026-02-17 (later) — Seat schema-drift fix + 0% clearance root cause
 
 **Problem:** Preview showed 0 intents clearing to execution over the
