@@ -565,8 +565,19 @@ async def _sweep_expired_unrouted() -> int:
         datetime.now(timezone.utc) - timedelta(minutes=expire_min)
     ).isoformat()
     try:
-        result = await asyncio.wait_for(
-            db[SHARED_INTENTS].update_many(
+        # 2026-02-28: hard batch cap + Mongo-side deadline. On prod's
+        # multi-million-row `shared_intents`, an unbounded update_many
+        # over `ingest_ts < cutoff` could scan a huge slice and blow
+        # past the 12s asyncio timeout below. We DELIBERATELY cap at
+        # 500 stamps per tick — old-and-not-terminal intents leak
+        # slowly over successive ticks instead of one giant sweep
+        # that could starve the routing scan (same collection).
+        # `max_time_ms(3000)` fails at the DB layer if the query
+        # can't complete within 3s, well under the asyncio deadline.
+        expired_ids: list[str] = []
+        cur = (
+            db[SHARED_INTENTS]
+            .find(
                 {
                     "ingest_ts": {"$lt": expire_cutoff},
                     "executed": {"$ne": True},
@@ -575,6 +586,19 @@ async def _sweep_expired_unrouted() -> int:
                         "submitted", "expired_unrouted",
                     ]},
                 },
+                {"intent_id": 1, "_id": 0},
+            )
+            .max_time_ms(3000)
+            .limit(500)
+        )
+        async for d in cur:
+            if d.get("intent_id"):
+                expired_ids.append(d["intent_id"])
+        if not expired_ids:
+            return 0
+        result = await asyncio.wait_for(
+            db[SHARED_INTENTS].update_many(
+                {"intent_id": {"$in": expired_ids}},
                 {"$set": {
                     "gate_state": "expired_unrouted",
                     "expired_at": _now_iso(),
@@ -584,7 +608,7 @@ async def _sweep_expired_unrouted() -> int:
                     ),
                 }},
             ),
-            timeout=8.0,
+            timeout=5.0,
         )
         stamped = int(result.modified_count or 0)
         if stamped:

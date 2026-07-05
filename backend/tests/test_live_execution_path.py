@@ -850,17 +850,48 @@ async def test_expired_unrouted_sweep_stamps_stale_intents():
     """DRIFT #2 (visibility gap): intents older than
     `AUTO_ROUTER_EXPIRE_MIN` that never reached a terminal state must
     be stamped `gate_state=expired_unrouted` so the operator can see
-    aged-out intents in the funnel instead of them silently vanishing."""
+    aged-out intents in the funnel instead of them silently vanishing.
+
+    2026-02-28 prod-hotfix refactor: the sweeper is now two-phase to
+    protect against Mongo timeouts on multi-million-row prod:
+      1. `find(...).limit(500).max_time_ms(3000)` collects intent_ids
+      2. scoped `update_many({intent_id: $in [...]})` on the small set
+    """
     from shared import auto_router as ar
 
-    calls: list[dict] = []
+    find_calls: list[dict] = []
+    update_calls: list[dict] = []
+
+    class FakeCursor:
+        def __init__(self, docs):
+            self.docs = docs
+        def max_time_ms(self, ms):
+            find_calls[-1]["max_time_ms"] = ms
+            return self
+        def limit(self, n):
+            find_calls[-1]["limit"] = n
+            return self
+        def __aiter__(self):
+            self._i = 0
+            return self
+        async def __anext__(self):
+            if self._i >= len(self.docs):
+                raise StopAsyncIteration
+            d = self.docs[self._i]
+            self._i += 1
+            return d
 
     class FakeResult:
         def __init__(self, n): self.modified_count = n
 
     class FakeColl:
+        def find(self, query, projection=None):
+            find_calls.append({"query": query, "projection": projection})
+            return FakeCursor([
+                {"intent_id": f"stale-{i}"} for i in range(7)
+            ])
         async def update_many(self, query, update):
-            calls.append({"query": query, "update": update})
+            update_calls.append({"query": query, "update": update})
             return FakeResult(7)
 
     fake_db = MagicMock()
@@ -870,15 +901,24 @@ async def test_expired_unrouted_sweep_stamps_stale_intents():
         stamped = await ar._sweep_expired_unrouted()
 
     assert stamped == 7
-    assert len(calls) == 1
-    q = calls[0]["query"]
-    # Must filter to non-executed, non-terminal, old intents.
+    # Phase 1: find scoped to old, non-executed, non-terminal intents
+    # with a bounded batch and a Mongo-side deadline.
+    assert len(find_calls) == 1
+    q = find_calls[0]["query"]
     assert q["executed"] == {"$ne": True}
     assert q["ingest_ts"]["$lt"]  # some ISO cutoff
     excluded = set(q["gate_state"]["$nin"])
     assert {"blocked", "advisory_only", "submitted", "expired_unrouted"} <= excluded
-    # Must set the terminal marker.
-    u = calls[0]["update"]["$set"]
+    assert find_calls[0]["limit"] == 500
+    assert find_calls[0]["max_time_ms"] == 3000
+
+    # Phase 2: update_many restricted to the collected intent_ids
+    # (never a broad range-scan).
+    assert len(update_calls) == 1
+    upd_q = update_calls[0]["query"]
+    assert "intent_id" in upd_q
+    assert upd_q["intent_id"]["$in"] == [f"stale-{i}" for i in range(7)]
+    u = update_calls[0]["update"]["$set"]
     assert u["gate_state"] == "expired_unrouted"
     assert "expired_at" in u
     assert "aged_past_router_window" in u["expire_reason"]
@@ -891,14 +931,28 @@ async def test_expired_unrouted_sweep_respects_expire_min_env(monkeypatch):
     redeploy. Default is 120 min per the 2026-02-28 doctrine."""
     from shared import auto_router as ar
 
-    calls: list[dict] = []
+    update_calls: list[dict] = []
+
+    class FakeCursor:
+        def max_time_ms(self, ms): return self
+        def limit(self, n): return self
+        def __aiter__(self):
+            self._i = 0
+            return self
+        async def __anext__(self):
+            if self._i >= 1:
+                raise StopAsyncIteration
+            self._i += 1
+            return {"intent_id": "stale-0"}
 
     class FakeResult:
         def __init__(self, n): self.modified_count = n
 
     class FakeColl:
+        def find(self, query, projection=None):
+            return FakeCursor()
         async def update_many(self, query, update):
-            calls.append({"query": query, "update": update})
+            update_calls.append({"query": query, "update": update})
             return FakeResult(0)
 
     fake_db = MagicMock()
@@ -908,7 +962,48 @@ async def test_expired_unrouted_sweep_respects_expire_min_env(monkeypatch):
     with patch.object(ar, "db", fake_db):
         await ar._sweep_expired_unrouted()
 
-    assert "aged_past_router_window:30min" == calls[0]["update"]["$set"]["expire_reason"]
+    assert update_calls[0]["update"]["$set"]["expire_reason"] == (
+        "aged_past_router_window:30min"
+    )
+
+
+@pytest.mark.asyncio
+async def test_expired_unrouted_sweep_short_circuits_when_no_stale_intents():
+    """DRIFT #2 refinement (2026-02-28): if phase-1 find returns
+    empty, the sweeper must NOT call `update_many` at all. This
+    saves an unnecessary DB round-trip on healthy ticks and — more
+    importantly on prod — avoids a wide-range update on a hot
+    collection when there's nothing to stamp."""
+    from shared import auto_router as ar
+
+    update_calls: list[dict] = []
+
+    class EmptyCursor:
+        def max_time_ms(self, ms): return self
+        def limit(self, n): return self
+        def __aiter__(self):
+            return self
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    class FakeColl:
+        def find(self, query, projection=None):
+            return EmptyCursor()
+        async def update_many(self, query, update):
+            update_calls.append({"query": query})
+            return MagicMock(modified_count=99)
+
+    fake_db = MagicMock()
+    fake_db.__getitem__ = MagicMock(return_value=FakeColl())
+
+    with patch.object(ar, "db", fake_db):
+        stamped = await ar._sweep_expired_unrouted()
+
+    assert stamped == 0
+    assert update_calls == [], (
+        "sweeper called update_many on empty phase-1 result — "
+        "wasted round-trip and potential wide scan on prod."
+    )
 
 
 @pytest.mark.asyncio

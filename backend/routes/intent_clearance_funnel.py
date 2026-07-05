@@ -197,6 +197,25 @@ async def _top_reasons(coll_name: str, query: dict, reason_fields: list[str],
     return out
 
 
+# 2026-02-28 (prod hotfix — Mongo timeout on funnel endpoint):
+# multi-million-row `shared_intents` prod scale meant the unbounded
+# `find()` calls below could enumerate 100K+ intent_ids into memory
+# before the executions join. On the Atlas cluster this exceeded the
+# 15s socket timeout and surfaced as
+#   `NetworkTimeout: ...:27017: The read operation timed out`
+# — same collection the auto-router `_tick` reads, so BOTH the
+# operator's funnel view AND live routing stalled simultaneously.
+#
+# The hard cap below is a defensive ceiling: 5,000 intents is enough
+# to compute an accurate count for any operator-viewable window
+# (typical 24h emissions ≪ 5k), and if the window is wider than that
+# the funnel is already showing "too much to reason about" so
+# capping is honest rather than misleading. `max_time_ms(8000)`
+# fails fast at the DB layer instead of holding the client open.
+_FUNNEL_ID_SCAN_LIMIT = 5000
+_FUNNEL_DB_DEADLINE_MS = 8000
+
+
 async def _linked_executions_count(intent_query: dict, exec_query: dict) -> int:
     """Count DISTINCT intent_ids in `executions` whose intent_id is in
     the set matching `intent_query`. Distinct-on-intent-id matters
@@ -204,7 +223,13 @@ async def _linked_executions_count(intent_query: dict, exec_query: dict) -> int:
     rows (each retry attempt writes one). Without distinct-counting
     the funnel would report broker_submitted > emitted."""
     ids = []
-    async for d in db["shared_intents"].find(intent_query, {"intent_id": 1, "_id": 0}):
+    cur = (
+        db["shared_intents"]
+        .find(intent_query, {"intent_id": 1, "_id": 0})
+        .max_time_ms(_FUNNEL_DB_DEADLINE_MS)
+        .limit(_FUNNEL_ID_SCAN_LIMIT)
+    )
+    async for d in cur:
         if d.get("intent_id"):
             ids.append(d["intent_id"])
     if not ids:
@@ -214,7 +239,9 @@ async def _linked_executions_count(intent_query: dict, exec_query: dict) -> int:
         {"$group": {"_id": "$intent_id"}},
         {"$count": "n"},
     ]
-    async for r in db["executions"].aggregate(pipeline):
+    async for r in db["executions"].aggregate(
+        pipeline, maxTimeMS=_FUNNEL_DB_DEADLINE_MS,
+    ):
         return int(r.get("n") or 0)
     return 0
 
@@ -222,16 +249,28 @@ async def _linked_executions_count(intent_query: dict, exec_query: dict) -> int:
 async def _linked_execution_samples(intent_query: dict, exec_query: dict,
                                     limit: int = _SAMPLE_LIMIT) -> list[str]:
     ids: list[str] = []
-    async for d in db["shared_intents"].find(intent_query, {"intent_id": 1, "_id": 0}):
+    cur = (
+        db["shared_intents"]
+        .find(intent_query, {"intent_id": 1, "_id": 0})
+        .max_time_ms(_FUNNEL_DB_DEADLINE_MS)
+        .limit(_FUNNEL_ID_SCAN_LIMIT)
+    )
+    async for d in cur:
         if d.get("intent_id"):
             ids.append(d["intent_id"])
     if not ids:
         return []
     out: list[str] = []
-    cur = db["executions"].find(
-        {**exec_query, "intent_id": {"$in": ids}},
-        {"intent_id": 1, "_id": 0},
-    ).sort("_id", -1).limit(limit)
+    cur = (
+        db["executions"]
+        .find(
+            {**exec_query, "intent_id": {"$in": ids}},
+            {"intent_id": 1, "_id": 0},
+        )
+        .sort("_id", -1)
+        .max_time_ms(_FUNNEL_DB_DEADLINE_MS)
+        .limit(limit)
+    )
     async for d in cur:
         v = d.get("intent_id")
         if v:

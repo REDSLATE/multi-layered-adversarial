@@ -1,4 +1,114 @@
-## 2026-02-28 (later²) — Doctrine change: crypto lane no longer vacant by default
+## 2026-02-28 (final push) — Webull field drift fix + prod Mongo timeout hotfix
+
+Two operator-prioritized P0 fixes shipped together.
+
+### FIX #1 — Webull SDK timestamp field drift (spread quality restoration)
+
+**Symptom:** 41% of last-24h equity intents were being sized against
+a 25-bps SENTINEL spread. Operator flagged as "synthetic signals
+taking over."
+
+**Root cause:** `shared/snapshot_enrich/equity_doctrine.py::_quote_age_seconds`
+only probed the legacy field names `mkTradeTimeTs` / `tradeTimeTs`,
+but the current Webull SDK payload carries `quote_time` / `last_trade_time`
+instead. Result: every equity snapshot returned `age=None` → tagger
+downgraded to `stale` → spread substituted with 25-bps default from
+the 2026-07-03 sentinel guard.
+
+**Fix:** two-line probe extension. Preference order:
+`mkTradeTimeTs → tradeTimeTs → quote_time → last_trade_time`.
+Legacy fields kept in front so payloads that still carry them win;
+new fields added at the tail for post-2026-07 SDK shape. Purely
+additive — worst case (fields still absent) is unchanged behavior.
+
+**Verification:** Monday 07-06 RTH check per sign-off doc — expect
+`spread_quality='live'` rate to jump from ~1.5% → ≥90% on the
+Barracuda universe. Sign-off doc at
+`/app/memory/SIGNOFF_equity_spread_enricher_field_drift.md`.
+
+**Scope discipline:** Only fix #1 of the sign-off applied. Fixes #2
+(sdk_bps sanity) and #3 (sentinel cap) are separate defensive
+additions that await operator sign-off + Monday-RTH data.
+
+**Test coverage:** 8 new regression tests in
+`tests/test_equity_doctrine_spread_enricher.py`:
+  * `test_extended_parser_reads_quote_time_from_current_sdk_payload`
+  * `test_extended_parser_reads_last_trade_time_from_current_sdk_payload`
+  * `test_extended_parser_prefers_quote_time_over_last_trade_time`
+  * `test_legacy_parser_still_reads_mkTradeTimeTs`
+  * `test_legacy_field_wins_over_new_when_both_present`
+  * `test_timeless_snapshot_still_returns_none`
+  * `test_non_dict_input_returns_none`
+  * `test_malformed_timestamp_falls_through_to_iso_probe`
+
+### FIX #2 — Prod Mongo NetworkTimeout on shared_intents (P0 crypto-lane recovery)
+
+**Symptom:** production reported crypto hadn't fired in 2 days.
+Operator query on `/api/admin/intent-clearance-funnel?hours=48&lane=crypto`
+returned `NetworkTimeout: customer-apps-shard-00-01.kndgvm.mongodb.net:27017`.
+
+**Root cause:** Same `shared_intents` collection is read by BOTH
+the operator funnel AND `shared/auto_router.py::_tick`'s routing
+scan. Multi-million-row prod scale + no covering index for the
+`(window, lane, action)` filter combo → both queries fell back to
+collection scans that exceeded the 15s Atlas socket timeout.
+When routing scans die, no intents get routed → operator sees
+"crypto hasn't fired."
+
+**Three surgical fixes:**
+
+1. **New compound index** on `shared_intents`:
+   `[("lane", 1), ("ingest_ts", -1), ("action", 1)]` named
+   `shared_intents_lane_ingest_action_idx`. Covers the funnel's
+   `{lane, ingest_ts: $gte}` count AND the auto-router's
+   `{ingest_ts: $gte, action: $in [...]}` scan in a single index.
+   `lane` first (equality — perfect prefix), `ingest_ts` second
+   (range + sort), `action` third (in-index $in evaluation).
+   Preview latency observed: 48h crypto funnel query dropped
+   from 15s+ timeout to **1.9s response**.
+
+2. **Bounded funnel joins** in
+   `routes/intent_clearance_funnel.py::_linked_executions_count`
+   + `_linked_execution_samples`:
+   * `.limit(_FUNNEL_ID_SCAN_LIMIT=5000)` on the intent-id scan
+     so a runaway window can't enumerate 100K+ IDs into memory.
+   * `.max_time_ms(_FUNNEL_DB_DEADLINE_MS=8000)` on both the
+     `find` and the executions aggregate — fail fast at DB layer.
+
+3. **Two-phase `_sweep_expired_unrouted`** in
+   `shared/auto_router.py`:
+   * Phase 1: `find(...).limit(500).max_time_ms(3000)` collects
+     stale intent_ids into a bounded batch.
+   * Phase 2: scoped `update_many({intent_id: $in [...]})` on
+     the collected set only.
+   Prior behavior: unbounded `update_many` on `ingest_ts < cutoff`
+   could scan the same collection the auto-router was trying to
+   read, starving routing every 30s. Prod-tested pattern.
+
+**Test coverage:** existing sweeper tests updated + 1 new test
+locking in the empty-phase-1 short-circuit invariant.
+
+### Result
+
+* **92/92** pipeline+doctrine tests green (was 83).
+* Preview funnel `hours=48&lane=crypto` latency: **~2s** (was
+  timing out).
+* Auto-router: `task_alive=true, last_tick_error=null`.
+* No behavior change on the hot path for healthy queries — the
+  bounded joins only cap catastrophic scans, not normal ones.
+
+**Files changed:**
+  * `backend/shared/snapshot_enrich/equity_doctrine.py` — 4-line probe extension
+  * `backend/shared/auto_router.py` — two-phase sweep
+  * `backend/routes/intent_clearance_funnel.py` — bounded joins + max_time_ms
+  * `backend/db.py` — new compound index
+  * `backend/external/brains/runner.py` — (earlier this session) paradox_v2 corpse removed
+  * `backend/tests/test_equity_doctrine_spread_enricher.py` — NEW (8 tests)
+  * `backend/tests/test_live_execution_path.py` — sweeper tests updated + new empty-phase test
+
+---
+
+
 
 ### The problem
 

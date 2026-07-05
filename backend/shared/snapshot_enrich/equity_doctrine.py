@@ -211,17 +211,34 @@ def _quote_age_seconds(snap: Dict[str, Any]) -> Optional[float]:
     row.
 
     Webull's snapshot payload exposes several timestamp fields
-    depending on session: `tradeTime`, `mkTradeTime`, `mkTradeTimeTs`
-    (ms epoch). We trust any of them when present. ABSENCE means the
-    snapshot didn't carry a timestamp — the caller should treat the
-    quote as untimed (downgraded to `stale` so RoadGuard refuses to
-    hard-block on it).
+    depending on SDK version + session:
+      * `mkTradeTimeTs` / `tradeTimeTs` — legacy ms-epoch fields
+      * `quote_time` / `last_trade_time` — 2026-07 SDK payload (ms epoch)
+      * `mkTradeTime` / `tradeTime` — ISO-ish string fields
+
+    ABSENCE means the snapshot didn't carry a timestamp — the caller
+    should treat the quote as untimed (downgraded to `stale` so
+    RoadGuard refuses to hard-block on it).
+
+    2026-02-28 field-drift fix: prior versions only probed the two
+    legacy `Ts` fields, neither of which is populated by current
+    Webull SDK payloads. Result was 41% of equity intents in
+    preview being sized against a 25-bps sentinel spread. Adding
+    `quote_time` / `last_trade_time` to the probe chain restores
+    real timing. Preference order: `quote_time` first (more recent —
+    session-active ask/bid time), `last_trade_time` second (last
+    actual print, doesn't advance after RTH close).
     """
     import time as _time
     if not isinstance(snap, dict):
         return None
     # ms-epoch field (preferred — least ambiguity)
-    ts_ms = snap.get("mkTradeTimeTs") or snap.get("tradeTimeTs")
+    ts_ms = (
+        snap.get("mkTradeTimeTs")
+        or snap.get("tradeTimeTs")
+        or snap.get("quote_time")       # Webull SDK 2026-07 payload
+        or snap.get("last_trade_time")  # Webull SDK 2026-07 payload
+    )
     if ts_ms:
         try:
             return max(0.0, _time.time() - float(ts_ms) / 1000.0)

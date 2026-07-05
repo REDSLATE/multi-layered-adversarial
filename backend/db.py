@@ -422,6 +422,35 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         deadline_s=heavy_deadline_s,
         name="shared_intents_action_created_idx",
     )
+    # 2026-02-28 (P0 prod hotfix — funnel + auto_router NetworkTimeout):
+    # The intent-clearance funnel does `count_documents({ingest_ts:
+    # {$gte: X}, lane: <L>})` and the auto-router `_tick` scans
+    # `find({ingest_ts: {$gte: X}, action: $in [...], gate_state:
+    # $nin [...]})`. On prod's multi-million-row `shared_intents`,
+    # neither had a covering index for the WINDOW+LANE combination —
+    # each query fell back to a collection scan that exceeded the
+    # 15s Atlas socket timeout. Symptom: crypto stopped firing on
+    # prod for 2+ days AND the funnel returned
+    # `NetworkTimeout: ...:27017: The read operation timed out`.
+    #
+    # This compound index covers both callers:
+    #   * `lane` first (equality filter — perfect for index prefix)
+    #   * `ingest_ts` desc (matches the funnel's `$gte` range +
+    #     the auto-router's descending sort in one motion)
+    #   * `action` last (auto-router's `$in [BUY/SELL/SHORT/COVER]`
+    #     filter can be applied in-index over the small post-lane
+    #     post-window set)
+    #
+    # The auto-router without a lane filter still benefits — Mongo
+    # can use the prefix `(lane, ingest_ts)` when `lane` is omitted
+    # by iterating the two lane buckets separately (fast IXSCAN
+    # rather than COLLSCAN).
+    await _safe_create_index(
+        db.shared_intents,
+        [("lane", 1), ("ingest_ts", -1), ("action", 1)],
+        deadline_s=heavy_deadline_s,
+        name="shared_intents_lane_ingest_action_idx",
+    )
     await db.shared_brain_opinions.create_index([("runtime", 1), ("topic", 1), ("posted_at", -1)])
     await db.shared_brain_outcomes.create_index([("opinion_id", 1), ("resolved_at", -1)])
     # Shelly memory regex search was the worst offender (~25-40ms scan);
