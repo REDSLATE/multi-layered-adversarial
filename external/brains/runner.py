@@ -50,12 +50,14 @@ from typing import Optional
 
 import httpx
 # 2026-06-22 — `HTTPException` was previously imported only inside
-# `_emit_intent`, but four sibling `except HTTPException as he:` blocks
-# (in `_post_directional_opinion`, `_post_brain_vote`, and two other
-# fire-and-forget posters) reference the name at MODULE scope. That
-# silently raised `NameError: name 'HTTPException' is not defined`
-# every time one of those calls hit a 422/4xx, masking the real
-# rejection reason. Hoisting the import here is the minimal fix.
+# `_emit_intent`, but sibling `except HTTPException as he:` blocks
+# (in `_post_directional_opinion` and two other fire-and-forget
+# posters) reference the name at MODULE scope. That silently raised
+# `NameError: name 'HTTPException' is not defined` every time one
+# of those calls hit a 422/4xx, masking the real rejection reason.
+# Hoisting the import here is the minimal fix.
+# (2026-02-28: `_post_brain_vote` removed as part of the paradox_v2
+# corpse cleanup, so it no longer appears in the list above.)
 from fastapi import HTTPException
 
 from .brain_core import BrainIntent, NeutralAdversarialBrain
@@ -1528,18 +1530,14 @@ class BrainRunner:
                     "opinion post failed brain=%s sym=%s err=%s",
                     self.brain_id, intent.symbol, exc,
                 )
-            # Paradox v2 wire-up (2026-02-19): cast an immutable
-            # BrainVote alongside the intent. Strict fire-and-forget —
-            # never blocks trading on a vote-cast failure. Calibration
-            # and negative-knowledge live in MC (hydrated from Mongo);
-            # the brain only ships raw confidence + symbol + regime.
-            try:
-                await self._post_brain_vote(http, intent)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "brain_vote post failed brain=%s sym=%s err=%s",
-                    self.brain_id, intent.symbol, exc,
-                )
+            # 2026-02-28: paradox_v2 BrainVote wire-up removed. The
+            # `_post_brain_vote` call and its target module (`routes.
+            # paradox_v2`) were deleted in the 2026-07-01 Pass 2
+            # cleanup, but this call site survived — every intent
+            # emission logged `brain_vote post failed ... err=No
+            # module named 'routes.paradox_v2'`. `seat_registry` is
+            # the single source of truth for seat/vote state now;
+            # no side-channel vote-cast is needed.
             if self._intent_count % 10 == 1:
                 logger.info(
                     "neutral_brain intent posted brain=%s display=%s "
@@ -1624,53 +1622,11 @@ class BrainRunner:
                 stance, datetime.now(timezone.utc),
             )
 
-    async def _post_brain_vote(
-        self, http: httpx.AsyncClient, intent,
-    ) -> None:
-        """POST a Paradox v2 BrainVote alongside the intent.
-
-        Strict fire-and-forget: any failure (network, 422, server-side
-        guard rejection) is logged and ignored. The vote never gates
-        the intent flow.
-
-        Calibration + negative-knowledge live SERVER-SIDE now. The
-        runner ships raw signals (raw_confidence, symbol, lane,
-        regime, stance, reasoning) to /api/v2/votes/emit and MC:
-          * checks per-brain NegativeKnowledge — if a pattern fires,
-            the persisted vote becomes ABSTAIN automatically,
-          * otherwise calibrates raw → calibrated via Bayesian
-            shrinkage against the brain's historical bucket,
-          * persists the immutable BrainVote (invariants enforced).
-
-        Fire-and-forget remains strict: any failure is logged and
-        ignored. The vote never gates intent flow.
-        """
-        stance_map = {"BUY": "BUY", "SELL": "SELL", "HOLD": "HOLD"}
-        stance = stance_map.get(intent.action, "HOLD")
-        raw_conf = float(intent.confidence)
-        regime = getattr(self, "_current_regime", None) or "unknown"
-        body = {
-            "brain": self.brain_id,
-            "stance": stance,
-            "raw_confidence": raw_conf,
-            "symbol": intent.symbol,
-            "lane": intent.lane,
-            "regime": regime,
-            "reasoning": [
-                f"intent {intent.intent_id} {intent.action} "
-                f"on {intent.symbol} (lane={intent.lane}, regime={regime})"
-            ],
-        }
-        # 2026-02-20 — direct in-process call. No HTTP, no token.
-        from routes.paradox_v2 import submit_vote_in_process, EmitVoteRequest
-        try:
-            await submit_vote_in_process(EmitVoteRequest(**body))
-        except HTTPException as he:
-            logger.debug("in_process vote rejected brain=%s sym=%s status=%s detail=%s",
-                         self.brain_id, intent.symbol, he.status_code, str(he.detail)[:160])
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("in_process vote error brain=%s sym=%s: %s",
-                         self.brain_id, intent.symbol, exc)
+    # 2026-02-28: `_post_brain_vote` method removed. It called
+    # `routes.paradox_v2.submit_vote_in_process` which was deleted
+    # in the 2026-07-01 Pass 2 cleanup. `seat_registry` is now the
+    # single source of truth for vote/seat state — no side-channel
+    # vote-cast is needed.
 
     async def _discussion_loop(self) -> None:
         """Cross-brain discussion loop — lightweight dissent-only.
