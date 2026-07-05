@@ -35,6 +35,42 @@ from namespaces import (
 router = APIRouter(tags=["data_stack_phase1"])
 
 
+# ── Fake-symbol guard (2026-02-28) ────────────────────────────────
+# On 2026-07-05 the operator noticed 35 all-time `barracuda BUY
+# DEMOB6B6` intents in `shared_intents` — Finnhub's sandbox tier
+# was returning synthetic round-number bars (last_close=100.0,
+# sma20=102.0, sma50=105.0) for a symbol that had been added to
+# `patterns_universe` during testing and never removed. Every
+# universe-scan tick fetched fake data for that symbol; the
+# doctrine correctly rejected the intents downstream, but the
+# audit trail was still polluted. This guard prevents future
+# demo/test symbols from being added AND filters them out of
+# read paths so any pre-existing pollution stops flowing to the
+# brain runners.
+#
+# Case-insensitive prefix match — matches DEMOB6B6 (Finnhub-
+# sandbox), any TEST_/MOCK_/FAKE_/SAMPLE_/EXAMPLE_ variants a
+# developer might type by accident, and SYN_ (would collide with
+# our own "synthetic signal" nomenclature and confuse the audit).
+import re as _re
+_FAKE_SYMBOL_RE = _re.compile(
+    r"^(DEMO|TEST|SYN|MOCK|FAKE|SAMPLE|EXAMPLE)", _re.IGNORECASE,
+)
+
+
+def _is_fake_symbol(sym: str) -> bool:
+    if not isinstance(sym, str) or not sym:
+        return False
+    return bool(_FAKE_SYMBOL_RE.match(sym.strip()))
+
+
+def _filter_fake_symbols(rows: list[dict]) -> list[dict]:
+    """Read-side defense: drop demo/test symbol rows from any
+    already-polluted `patterns_universe` docs. Keeps the response
+    honest until an operator runs the delete."""
+    return [r for r in rows if not _is_fake_symbol((r or {}).get("symbol"))]
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -129,7 +165,7 @@ async def universe_list(
         "symbol", 1,
     ).to_list(1000)
     return {
-        "items": rows, "count": len(rows),
+        "items": _filter_fake_symbols(rows), "count": len(rows),
         "doctrine": (
             "Watchlist scope only — adding a symbol grants no execution "
             "authority. Brains may opt in to scanning it; seat holder "
@@ -163,7 +199,12 @@ async def universe_public():
         {"active": {"$ne": False}},
         {"_id": 0, "symbol": 1, "lane": 1, "active": 1},
     ).sort("symbol", 1).to_list(1000)
-    return {"items": rows, "count": len(rows)}
+    # 2026-02-28: strip demo/test symbols from what the brain
+    # sidecars see. This is the endpoint every brain hits at boot
+    # and every N ticks — if it hands them `DEMOB6B6`, the runner
+    # will scan Finnhub's sandbox tier and emit fake intents.
+    filtered = _filter_fake_symbols(rows)
+    return {"items": filtered, "count": len(filtered)}
 
 
 @router.post("/admin/patterns/universe")
@@ -172,6 +213,21 @@ async def universe_add(
     user: dict = Depends(get_current_user),
 ):
     """Add (or reactivate) a symbol in the watchlist. Idempotent."""
+    # 2026-02-28 guard: reject demo/test/mock/fake/sample/example
+    # symbols outright. Prevents the DEMOB6B6-class pollution
+    # (Finnhub sandbox returned synthetic bars for it) from ever
+    # re-entering the universe.
+    if _is_fake_symbol(body.symbol):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"symbol {body.symbol!r} matches the fake-symbol prefix "
+                f"guard (DEMO/TEST/SYN/MOCK/FAKE/SAMPLE/EXAMPLE). "
+                f"These often resolve to sandbox/mock data from "
+                f"upstream providers and produce synthetic intents "
+                f"that pollute the audit trail."
+            ),
+        )
     doc = {
         "symbol": body.symbol,
         "note": body.note,
