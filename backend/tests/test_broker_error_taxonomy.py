@@ -173,6 +173,10 @@ def route_one_setup():
 
     risk_mod = MagicMock()
     risk_mod.check = fake_risk_check
+    # 2026-02-28: the cap-authority guard reads `risk.per_order_cap()`.
+    # Default it high so it never conflicts with the pair-floor size-up
+    # (these tests focus on broker error taxonomy, not cap-vs-floor).
+    risk_mod.per_order_cap = MagicMock(return_value=10000.0)
 
     executions_mod = MagicMock()
     executions_mod.record = AsyncMock()

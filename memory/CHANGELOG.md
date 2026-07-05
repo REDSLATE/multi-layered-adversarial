@@ -1,4 +1,110 @@
-## 2026-02-28 — Live Execution Path regression suite + orphan cleanup
+## 2026-02-28 (later) — Pipeline drift-review P0 patch (cap-authority + audit-truth + expiry)
+
+Operator drift review of the live-execution path identified 6 issues:
+this patch fixes 4 as P0 (safety + audit truth), the 5th (broker
+reconciliation) is parked as P1, and the 6th (`MAX_PER_TICK` value)
+is a config decision awaiting observed burst-rate data.
+
+### DRIFT #1 (safety hole) — Kraken pair-floor bypassed per-order cap
+
+**Before:** Order of operations was `Seat → Risk → Pair-Floor → Broker`.
+Risk approved $5, floor sized up to $15, broker got $15 — silently past
+the per-order cap.
+
+**After:** Reordered to `Seat → Governor mult → Pair-Floor → cap-guard →
+Risk → Broker`. Risk now sees the AUTHORITATIVE final notional.
+
+**New terminal block:** `pair_floor_exceeds_per_order_cap` — when the
+Kraken floor exceeds the operator's per-order cap, the intent is
+blocked honestly instead of shipping past the cap or silently
+recreating the volume-minimum-not-met loop. Cap is authority; floor
+is exchange constraint.
+
+**New helper:** `shared.risk.per_order_cap()` public accessor so the
+auto-router's cap-guard doesn't duplicate env-parse logic.
+
+### DRIFT #5 (audit hole) — Pair-floor reject skipped executions.record
+
+Every other pass through `_route_one` writes exactly one execution row
+("one row per attempt" doctrine). The pair-floor reject path (`policy=
+reject`) short-circuited without recording, breaking the funnel
+denominator. Now records with `broker_status=blocked_by_pair_floor`,
+`exception_type=PairFloorReject`.
+
+### DRIFT #6 (audit truth) — Success path underreported notional
+
+Broker got `final_notional` (post-floor / post-cap) but
+`executions.record()`, the return dict, and the log line all still
+used the PRE-floor value `rc.notional_usd`. The audit trail lied about
+what actually shipped by up to 3x on crypto size-ups.
+
+**Fix:** Introduced `shipped_notional = final_notional` explicit
+variable used consistently across audit + return + log. Also added
+`final_notional_usd` field to the intent's success stamp for durable
+join-free lookup.
+
+Also — for the equity lane, risk's silent `min(n, per_order)` clip
+now propagates to the broker call via `final_notional = rc.notional_usd`
+reassignment after risk passes. Without this, a $100 equity intent
+with a $10 cap would ship as $100 while audit recorded $10.
+
+### DRIFT #2 (visibility gap) — expired_unrouted sweeper
+
+**Before:** `_tick` only sampled intents within `AUTO_ROUTER_LOOKBACK_MIN`
+(60 min). Anything older that hadn't been terminally stamped silently
+vanished from the funnel — the operator saw the intent emitted, then
+nothing.
+
+**After:** New `_sweep_expired_unrouted()` runs at the top of each
+`_tick`. Terminally stamps intents older than `AUTO_ROUTER_EXPIRE_MIN`
+(default 120 min — double the lookback so late arrivals aren't cut off)
+with `gate_state=expired_unrouted`, plus `expired_at`, `expired_by`, and
+`expire_reason` fields for the funnel.
+
+`_tick`'s sample query also adds `expired_unrouted` to its `$nin`
+exclusion list so the sweeper's stamp is never re-picked in a hot loop.
+
+### PARKED as P1
+
+* **DRIFT #4 (reconciliation gap):** `gate_state="submitted"` is
+  currently terminal. If Webull/Kraken cancels/rejects post-submit,
+  the intent freezes. Needs a separate broker-reconciliation worker
+  that polls `broker_order` status and either flips to `filled` or
+  re-enters routing on cancel/reject. Deliberately parked so the P0
+  safety patch ships clean.
+
+### PARKED as ops decision
+
+* **DRIFT #3 (rate cap):** `AUTO_ROUTER_MAX_PER_TICK=5` may be too low
+  for 4-brains × 2-lanes emitting. Config decision — revisit after
+  observing actual burst rate from Trade Tape.
+
+### Test coverage
+
+`test_live_execution_path.py` grew from 13 → 21 tests. New assertions:
+  * pair-floor exceeding cap → `pair_floor_exceeds_per_order_cap` block
+  * pair-floor at/below cap → normal size-up
+  * equity risk downsize ships CLIPPED notional (broker + audit + return)
+  * success stamps `final_notional_usd` on the intent doc
+  * pair-floor reject writes executions.record()
+  * `_sweep_expired_unrouted` filters + stamp shape
+  * `AUTO_ROUTER_EXPIRE_MIN` env override
+  * `_tick` query excludes `expired_unrouted`
+  * default expire window is 120 min
+
+**Result:** 77/77 pipeline tests green (was 69 before). Pipeline drift
+is now fenced at every stage.
+
+**Files changed:**
+  * `backend/shared/auto_router.py` — reorder + guard + sweeper + audit truth
+  * `backend/shared/risk/check.py` — expose `per_order_cap()`
+  * `backend/shared/risk/__init__.py` — re-export
+  * `backend/tests/test_live_execution_path.py` — +8 regression tests
+  * `backend/tests/test_broker_error_taxonomy.py` — mock `per_order_cap`
+
+---
+
+
 
 ### Task 1: Modern regression suite for live execution path
 

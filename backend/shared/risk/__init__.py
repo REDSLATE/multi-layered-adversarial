@@ -16,6 +16,6 @@ Both live here because both are "risk." Each module is pure
 deterministic math except `check.py` which is async (reads broker
 freeze, lane toggle, executions for daily spend).
 """
-from shared.risk.check import RiskCheck, check  # noqa: F401
+from shared.risk.check import RiskCheck, check, per_order_cap  # noqa: F401
 
-__all__ = ["RiskCheck", "check"]
+__all__ = ["RiskCheck", "check", "per_order_cap"]

@@ -62,6 +62,16 @@ def _per_order_cap() -> float:
         return 10.0
 
 
+def per_order_cap() -> float:
+    """Public accessor for the per-order USD cap. Callers use this to
+    reason about the cap without duplicating the env-parse logic — e.g.
+    the auto-router's cap-authority guard checks it against the Kraken
+    pair-floor before calling risk.check (2026-02-28 doctrine: cap is
+    authority, floor is exchange constraint; if they conflict, block
+    honestly)."""
+    return _per_order_cap()
+
+
 def _daily_cap() -> float:
     try:
         return float(os.environ.get("RISEDUAL_CAP_DAILY_USD", "1000"))

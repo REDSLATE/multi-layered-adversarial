@@ -74,6 +74,17 @@ AUTO_ROUTER_MAX_PER_TICK = int(os.environ.get("AUTO_ROUTER_MAX_PER_TICK", "5"))
 AUTO_ROUTER_MAX_BROKER_RETRIES = int(
     os.environ.get("AUTO_ROUTER_MAX_BROKER_RETRIES", "5")
 )
+# ── Expiration sweeper (2026-02-28) ──────────────────────────────
+# `_tick` only samples intents within `AUTO_ROUTER_LOOKBACK_MIN`. Any
+# transient-error intent that aged past the lookback silently vanished
+# from the funnel because it was never terminally stamped. This env
+# controls how old (in minutes) an unrouted intent can be before the
+# sweeper stamps it `gate_state=expired_unrouted`. Default 120min —
+# double the lookback so a legit late-arriving intent isn't cut off
+# by racing the two windows.
+AUTO_ROUTER_EXPIRE_MIN = int(
+    os.environ.get("AUTO_ROUTER_EXPIRE_MIN", "120")
+)
 AUTO_ROUTER_EMAIL = "auto-router@mission-control"
 
 _TASK: Optional[asyncio.Task] = None
@@ -156,11 +167,137 @@ async def _route_one(intent: dict) -> dict:
             "lane": sd.lane,
         }
 
-    # ── 2. Risk hard limits ──────────────────────────────────────
-    # Governor's risk multiplier is applied here — ONE PASS, no
-    # callback. SeatDecision already carries it; we just multiply.
+    # ── 2. Governor multiplier applied here — ONE PASS ──────────
+    # Doctrine reorder (2026-02-28): the governor's risk_multiplier
+    # is applied to the intent's requested notional BEFORE anything
+    # downstream sees it. The result (`adjusted_notional`) is the
+    # authoritative starting point for both pair-floor and risk.
     adjusted_notional = max(0.0, notional_raw * sd.risk_multiplier)
-    rc = await risk.check(intent, notional_usd=adjusted_notional)
+    final_notional = adjusted_notional
+
+    # ── 2a. Kraken per-pair notional floor (crypto only) ────────
+    # Doctrine reorder (2026-02-28): pair-floor NOW runs BEFORE risk
+    # so `risk.check` sees the actual notional we intend to send to
+    # the broker. Previously floor ran AFTER risk, which allowed the
+    # per-order cap to be silently bypassed for crypto: risk approves
+    # $5 → floor sizes up to $15 → broker gets $15 (past cap). With
+    # this order, the cap-authority guard below catches the conflict
+    # and blocks honestly.
+    if (intent.get("lane") or "").lower() == "crypto":
+        from shared.kraken_pair_floors import apply_floor  # noqa: WPS433
+        far = await apply_floor(
+            (intent.get("symbol") or "").upper(),
+            adjusted_notional,
+        )
+        if not far.allowed:
+            # Operator chose `policy=reject` for this pair. Terminate —
+            # BUT audit the attempt first. Every pass through this
+            # function writes exactly ONE execution row (doctrine); the
+            # pre-fix code skipped the audit here, breaking the funnel
+            # denominator and the "one row per attempt" contract.
+            await executions.record(
+                intent=intent,
+                seat_verdict=sd.verdict,
+                seat_holder=sd.executor,
+                seat_reason=sd.reason,
+                strategist=sd.strategist,
+                governor=sd.governor,
+                executor=sd.executor,
+                auditor=sd.auditor,
+                angels=sd.angels,
+                risk_multiplier=sd.risk_multiplier,
+                risk_ok=False,
+                risk_reason="pair_floor_reject",
+                notional_usd=adjusted_notional,
+                broker_status="blocked_by_pair_floor",
+                exception_type="PairFloorReject",
+                exception_msg=(far.reject_reason or "")[:500],
+                ok=False,
+            )
+            try:
+                await db[SHARED_INTENTS].update_one(
+                    {"intent_id": intent_id},
+                    {"$set": {
+                        "gate_state": "blocked",
+                        "last_submit_ts": _now_iso(),
+                        "last_submit_by": AUTO_ROUTER_EMAIL,
+                        "broker_reason": "notional_below_pair_floor",
+                        "broker_error_bucket": "min_order_notional",
+                        "broker_error_detail": far.reject_reason,
+                    }},
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return {"verdict": "blocked",
+                    "reason": "notional_below_pair_floor",
+                    "detail": far.reject_reason}
+        final_notional = far.notional_usd
+        if far.adjusted:
+            logger.info(
+                "auto_router pair-floor size_up $%.4f → $%.4f for %s",
+                far.original_notional, far.notional_usd, far.floor.pair,
+            )
+            # ── Cap-authority guard (2026-02-28 doctrine) ──────────
+            # Cap is authority. Floor is exchange constraint. If the
+            # floor exceeds the operator-set per-order cap, block
+            # honestly with `pair_floor_exceeds_per_order_cap` so the
+            # operator can either raise the cap or set the pair's
+            # policy=reject / disable trading on it. Silently letting
+            # risk clip the floor would just recreate the original
+            # Kraken volume-minimum-not-met rejection loop.
+            cap = risk.per_order_cap()
+            if far.notional_usd > cap:
+                detail = (
+                    f"floor=${far.notional_usd:.4f}>cap=${cap:.4f} "
+                    f"for {far.floor.pair}"
+                )
+                await executions.record(
+                    intent=intent,
+                    seat_verdict=sd.verdict,
+                    seat_holder=sd.executor,
+                    seat_reason=sd.reason,
+                    strategist=sd.strategist,
+                    governor=sd.governor,
+                    executor=sd.executor,
+                    auditor=sd.auditor,
+                    angels=sd.angels,
+                    risk_multiplier=sd.risk_multiplier,
+                    risk_ok=False,
+                    risk_reason=f"pair_floor_exceeds_per_order_cap:{detail}",
+                    notional_usd=far.notional_usd,
+                    broker_status="blocked_by_cap_authority",
+                    exception_type="PairFloorExceedsCap",
+                    exception_msg=detail,
+                    ok=False,
+                )
+                try:
+                    await db[SHARED_INTENTS].update_one(
+                        {"intent_id": intent_id},
+                        {"$set": {
+                            "gate_state": "blocked",
+                            "last_submit_ts": _now_iso(),
+                            "last_submit_by": AUTO_ROUTER_EMAIL,
+                            "broker_reason": "pair_floor_exceeds_per_order_cap",
+                            "broker_error_bucket": "min_order_notional",
+                            "broker_error_detail": detail,
+                        }},
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                return {"verdict": "blocked",
+                        "reason": "pair_floor_exceeds_per_order_cap",
+                        "floor_usd": far.notional_usd,
+                        "cap_usd": cap,
+                        "pair": far.floor.pair}
+
+    # ── 3. Risk hard limits ──────────────────────────────────────
+    # Now risk sees the TRUE final notional going to the broker.
+    # For crypto, the cap-authority guard above already ensured
+    # `final_notional <= per_order_cap`, so risk's internal
+    # `min(n, per_order)` is a no-op on that lane. For equity,
+    # risk still silently clips at the cap — which is correct
+    # behavior for the equity lane (no external floor to conflict).
+    rc = await risk.check(intent, notional_usd=final_notional)
     if not rc.ok:
         await executions.record(
             intent=intent,
@@ -192,47 +329,14 @@ async def _route_one(intent: dict) -> dict:
             pass
         return {"verdict": "blocked", "reason": rc.reason}
 
-    # ── 2b. Kraken per-pair notional floor (crypto only) ────────
-    # 2026-02-17: 91 crypto intents/hour were dying at Kraken's
-    # per-pair `ordermin` (volume-minimum-not-met). This step raises
-    # the notional up to the operator-configured floor (default
-    # policy `size_up`) or terminates the intent with a clear reason
-    # if the operator has set `policy=reject`. Equity lane is
-    # untouched — Kraken's floor doesn't apply to Webull orders.
+    # Adopt risk's authoritative notional. For crypto this is a no-op
+    # (cap-authority guard above already ensured floor ≤ cap, so risk
+    # doesn't clip). For equity, this is where risk's silent per-order
+    # cap actually takes effect — the broker receives the CLIPPED value,
+    # never the raw governor-scaled value. Without this reassignment,
+    # a $100 equity intent with $10 cap would ship as $100 to the
+    # broker while the executions row records $10.
     final_notional = rc.notional_usd
-    floor_note = None
-    if (intent.get("lane") or "").lower() == "crypto":
-        from shared.kraken_pair_floors import apply_floor  # noqa: WPS433
-        far = await apply_floor(
-            (intent.get("symbol") or "").upper(),
-            rc.notional_usd,
-        )
-        if not far.allowed:
-            # Operator chose `policy=reject` for this pair. Terminate.
-            try:
-                await db[SHARED_INTENTS].update_one(
-                    {"intent_id": intent_id},
-                    {"$set": {
-                        "gate_state": "blocked",
-                        "last_submit_ts": _now_iso(),
-                        "last_submit_by": AUTO_ROUTER_EMAIL,
-                        "broker_reason": "notional_below_pair_floor",
-                        "broker_error_bucket": "min_order_notional",
-                        "broker_error_detail": far.reject_reason,
-                    }},
-                )
-            except Exception:  # noqa: BLE001
-                pass
-            return {"verdict": "blocked",
-                    "reason": "notional_below_pair_floor",
-                    "detail": far.reject_reason}
-        final_notional = far.notional_usd
-        if far.adjusted:
-            floor_note = (
-                f"size_up ${far.original_notional:.4f} → ${far.notional_usd:.4f} "
-                f"for {far.floor.pair} (floor)"
-            )
-            logger.info("auto_router pair-floor size_up %s", floor_note)
 
     # ── 3. Broker ────────────────────────────────────────────────
     from shared.broker_router import (  # noqa: WPS433
@@ -376,6 +480,13 @@ async def _route_one(intent: dict) -> dict:
         }
 
     # ── 4. Success ───────────────────────────────────────────────
+    # Doctrine (2026-02-28): the audit trail, return payload, and log
+    # line all record what ACTUALLY shipped to the broker — i.e.
+    # `final_notional` (= rc.notional_usd for equity; = far.notional_usd
+    # after pair-floor for crypto). Pre-fix code stamped `rc.notional_usd`
+    # in all three places, which lied by up-to-3x when the pair-floor
+    # sized crypto orders up.
+    shipped_notional = final_notional
     await db[SHARED_INTENTS].update_one(
         {"intent_id": intent_id},
         {"$set": {
@@ -383,6 +494,7 @@ async def _route_one(intent: dict) -> dict:
             "executed_at": _now_iso(),
             "executed_by": AUTO_ROUTER_EMAIL,
             "gate_state": "submitted",
+            "final_notional_usd": shipped_notional,
             "broker_order": {
                 k: order.get(k) for k in (
                     "id", "order_id", "broker", "broker_symbol", "canonical",
@@ -405,7 +517,7 @@ async def _route_one(intent: dict) -> dict:
         risk_multiplier=sd.risk_multiplier,
         risk_ok=rc.ok,
         risk_reason=rc.reason,
-        notional_usd=rc.notional_usd,
+        notional_usd=shipped_notional,
         broker=order.get("broker"),
         broker_order_id=order.get("id") or order.get("order_id"),
         broker_status=order.get("status") or "submitted",
@@ -416,17 +528,74 @@ async def _route_one(intent: dict) -> dict:
         "auto_router OK intent=%s symbol=%s action=%s notional=%.2f "
         "broker=%s order_id=%s",
         intent_id, intent.get("symbol"), intent.get("action"),
-        rc.notional_usd, order.get("broker"),
+        shipped_notional, order.get("broker"),
         order.get("id") or order.get("order_id"),
     )
     return {
         "verdict": "executed",
         "intent_id": intent_id,
-        "final_notional": rc.notional_usd,
-        "notional_usd": rc.notional_usd,
+        "final_notional": shipped_notional,
+        "notional_usd": shipped_notional,
         "broker": order.get("broker"),
         "order_id": order.get("id") or order.get("order_id"),
     }
+
+
+async def _sweep_expired_unrouted() -> int:
+    """Terminally stamp intents older than `AUTO_ROUTER_EXPIRE_MIN` that
+    were never routed to a terminal state.
+
+    Rationale (2026-02-28): `_tick` only SAMPLES within
+    `AUTO_ROUTER_LOOKBACK_MIN` (60 min by default). Anything older that
+    hadn't already been stamped `blocked` / `advisory_only` / `submitted`
+    silently vanished from the funnel — the operator saw the intent
+    emitted, then nothing. This sweeper closes that gap by writing an
+    explicit `gate_state=expired_unrouted` on age-outs.
+
+    Default expire window is DOUBLE the lookback (120 min vs 60 min) so
+    a legitimate late-arriving intent isn't cut off by racing the two
+    windows. Returns the number of intents stamped this pass.
+    """
+    try:
+        expire_min = int(os.environ.get("AUTO_ROUTER_EXPIRE_MIN",
+                                        str(AUTO_ROUTER_EXPIRE_MIN)))
+    except (TypeError, ValueError):
+        expire_min = AUTO_ROUTER_EXPIRE_MIN
+    expire_cutoff = (
+        datetime.now(timezone.utc) - timedelta(minutes=expire_min)
+    ).isoformat()
+    try:
+        result = await asyncio.wait_for(
+            db[SHARED_INTENTS].update_many(
+                {
+                    "ingest_ts": {"$lt": expire_cutoff},
+                    "executed": {"$ne": True},
+                    "gate_state": {"$nin": [
+                        "blocked", "no_trade", "advisory_only",
+                        "submitted", "expired_unrouted",
+                    ]},
+                },
+                {"$set": {
+                    "gate_state": "expired_unrouted",
+                    "expired_at": _now_iso(),
+                    "expired_by": AUTO_ROUTER_EMAIL,
+                    "expire_reason": (
+                        f"aged_past_router_window:{expire_min}min"
+                    ),
+                }},
+            ),
+            timeout=8.0,
+        )
+        stamped = int(result.modified_count or 0)
+        if stamped:
+            logger.info(
+                "auto_router expired_unrouted sweep stamped %d intents "
+                "older than %d min", stamped, expire_min,
+            )
+        return stamped
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("expired_unrouted sweep failed: %s", exc)
+        return 0
 
 
 async def _tick() -> list[dict]:
@@ -439,8 +608,16 @@ async def _tick() -> list[dict]:
     intent's lane/brain combo is evaluated inline by `_route_one`.
 
     Stale intents (older than AUTO_ROUTER_LOOKBACK_MIN, default 60m)
-    are NOT picked up — that's the operator-curated history boundary.
+    are NOT picked up by the routing sample — that's the operator-
+    curated history boundary. But we DO run `_sweep_expired_unrouted`
+    each tick to stamp anything past `AUTO_ROUTER_EXPIRE_MIN` (default
+    120m) so aged-out intents remain visible in the funnel as
+    `expired_unrouted` rather than silently vanishing.
     """
+    # Sweep first — cheap update_many, and it keeps the funnel honest
+    # even in ticks where the sample query returns nothing.
+    await _sweep_expired_unrouted()
+
     try:
         lookback_min = int(os.environ.get("AUTO_ROUTER_LOOKBACK_MIN", "60"))
     except (TypeError, ValueError):
@@ -454,8 +631,12 @@ async def _tick() -> list[dict]:
         "action": {"$in": ["BUY", "SELL", "SHORT", "COVER"]},
         "symbol": {"$ne": None},
         # Honest queue: don't re-process intents already terminally
-        # stamped by an earlier tick (blocked or advisory_only).
-        "gate_state": {"$nin": ["blocked", "no_trade", "advisory_only", "submitted"]},
+        # stamped by an earlier tick (blocked, advisory_only, submitted,
+        # or aged-out via the expiration sweeper).
+        "gate_state": {"$nin": [
+            "blocked", "no_trade", "advisory_only", "submitted",
+            "expired_unrouted",
+        ]},
     }
     sample = await asyncio.wait_for(
         (
