@@ -1,3 +1,89 @@
+## 2026-02-17 (later) — Seat schema-drift fix + 0% clearance root cause
+
+**Problem:** Preview showed 0 intents clearing to execution over the
+last 500 BUY/SELL emissions. **369 (74%) stamped `advisory_only`, 131
+(26%) stuck `pending`, 0 fired.**
+
+**Root cause (2 orthogonal schema-drift bugs in `shared/seat.py`):**
+
+1. **Reader → wrong collection.** `get_holder()` hardcoded
+   `db["shared_brain_roster"]` (0 docs — dead namespace). Canonical
+   collection is `brain_roster` (per `namespaces.BRAIN_ROSTER`), which
+   is where `shared/roster.py` writes. Result: `get_lane_seats()`
+   returned all-None → `seat.decide()` returned `verdict="pass"` →
+   `auto_router` stamped `advisory_only`. 100% of intents dead.
+
+2. **Wrong crypto executor key.** Fallback built the lookup key as
+   `f"{lane}_{role}"` → `"crypto_executor"`. But per the 2026-06-18
+   roster migration, the canonical crypto-executor key is just
+   `"crypto"`. So even a correctly-populated roster couldn't resolve
+   the crypto executor.
+
+**Why prod trades and preview doesn't:** Prod had `seat_registry`
+populated directly (bypassing the broken fallback). Preview relied
+purely on the roster fallback → total starvation.
+
+**Fix (`shared/seat.py`, ~40 lines):**
+  - Imported `BRAIN_ROSTER` from `namespaces`; reader now uses
+    `db[BRAIN_ROSTER]` — single source of truth for the collection name.
+  - Rewrote the fallback-key builder to know the canonical keys:
+    equity uses bare role names; crypto uses `crypto_strategist /
+    crypto / crypto_governor / crypto_auditor`. The bare
+    `"crypto_executor"` string is retained ONLY as a tail fallback
+    for stale writers.
+  - Doctrine written into the docstring so future maintainers cannot
+    reintroduce the drift without deliberately editing it out:
+    ```
+    seat_registry = primary authority
+    brain_roster  = valid fallback
+    shared_brain_roster = dead namespace (do NOT reintroduce)
+    crypto executor key = "crypto" (NOT "crypto_executor")
+    ```
+
+**Regression suite (`test_seat_reads_canonical_roster.py`, 8 tests):**
+  - Belt-and-suspenders string-scan asserts no live `db["shared_brain_roster"]`
+    reference can be reintroduced.
+  - Static import assertion: `from namespaces import BRAIN_ROSTER` +
+    `db[BRAIN_ROSTER]` must both be present.
+  - Behavioral tests: equity executor via roster fallback, crypto
+    executor via canonical `"crypto"` key, legacy `"crypto_executor"`
+    alias tolerated, canonical wins over alias, seat_registry wins
+    over roster, no holder → None.
+
+All 8 tests pass. Also verified no regression on existing
+`test_seat_council_participant_doctrine.py` (17/17 combined).
+
+**One-shot hygiene migration**
+(`backend/scripts/migrate_brain_roster_to_seat_registry.py`):
+  - Reads `brain_roster.current.assignments` and upserts each
+    non-null (lane, role) into `seat_registry` as the canonical
+    write path.
+  - Idempotent (rerun is a no-op except for `last_changed_at`).
+  - Collapses the `"crypto_executor"` legacy alias into `"crypto"`
+    en route.
+  - Applied 2026-02-17: 8 rows written (4 equity + 4 crypto).
+
+**Post-fix verification (2026-02-17):**
+  - `get_lane_seats("equity")` → all 4 seats resolved from
+    `seat_registry` primary path.
+  - `get_lane_seats("crypto")` → all 4 seats resolved.
+  - Live `seat.decide()` on preview:
+    - equity + camino/BUY → `fire @ 100% (executor_self_fires)`
+    - crypto + camino/BUY → `fire @ 100% (strategist_proposes)`
+    - equity + hellcat/BUY → `fire @ 50% (council_participant)`
+    - equity + gto/BUY → `fire @ 50% (council_participant)`
+  - `executor_seat_vacant:<lane>` reason no longer appears on new
+    directional intents in either lane.
+
+**Doctrine invariants pinned by the test suite:**
+    seat_registry           = PRIMARY authority
+    brain_roster            = VALID FALLBACK
+    shared_brain_roster     = DEAD NAMESPACE (do not read, do not write)
+    crypto executor key     = "crypto" (NOT "crypto_executor")
+
+---
+
+
 ## 2026-02-17 (later) — Webull Connect UI (operator-input credential flow)
 
 **Problem:** Operator had no UI to enter Webull App Key / App Secret /
