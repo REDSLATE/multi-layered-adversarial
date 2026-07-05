@@ -41,7 +41,8 @@ ALLOWED_FILES: set[str] = {
     # `stack` label alongside the canonical resolution.
     "routes/admin_intents_post_mortem.py",
     "routes/admin_paradox_v3.py",
-    "routes/admin_brain_metrics.py",
+    # `routes/admin_brain_metrics.py` retired 2026-02-28 — endpoint had
+    # no frontend consumer and referenced a deleted namespace constant.
     "routes/intent_inspect.py",
     "routes/admin_intents_funnel.py",  # projection only; group uses stack_canonical
     "routes/scorecard_by_brain.py",    # surfaces stack as historical column

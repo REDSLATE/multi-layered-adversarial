@@ -69,33 +69,22 @@ def test_auth_me_with_token(admin_token):
 
 
 # ── Brain metrics ─────────────────────────────────────────────────
-def test_brain_metrics_24h(admin_token):
-    r = requests.get(
-        f"{BASE_URL}/api/admin/brain-metrics?hours=24",
-        headers={"Authorization": f"Bearer {admin_token}"},
-        timeout=60,
-    )
-    assert r.status_code == 200, f"got {r.status_code}: {r.text[:400]}"
-    data = r.json()
-    # KPI payload — accept either flat or nested. We just verify it's
-    # a dict with content.
-    assert isinstance(data, dict)
-    assert len(data) > 0
-
-
-def test_brain_metrics_history_72h(admin_token):
-    r = requests.get(
-        f"{BASE_URL}/api/admin/brain-metrics/history?hours=72",
-        headers={"Authorization": f"Bearer {admin_token}"},
-        timeout=60,
-    )
-    assert r.status_code == 200, f"got {r.status_code}: {r.text[:400]}"
-    data = r.json()
-    assert isinstance(data, (list, dict))
+# The /api/admin/brain-metrics endpoints were retired 2026-02-28.
+# They were half-broken (referenced deleted PIPELINE_RECEIPTS_COLL)
+# and had no frontend consumer. Live-path metrics now live at
+# /api/admin/intent-clearance-funnel.
 
 
 # ── Roster ────────────────────────────────────────────────────────
 def test_admin_roster_seats(admin_token):
+    """Live-preview smoke test for /api/admin/roster.
+
+    Doctrine (2026-02-28): assert SCHEMA only — the 8 canonical role
+    keys must be present and typed correctly. Do NOT assert specific
+    seat holders — those rotate via the operator UI, and pinning them
+    here creates false-positive test failures every time a seat is
+    reassigned. The seat-authority regression is fenced by
+    `test_seat_reads_canonical_roster.py` in unit form."""
     r = requests.get(
         f"{BASE_URL}/api/admin/roster",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -103,19 +92,19 @@ def test_admin_roster_seats(admin_token):
     )
     assert r.status_code == 200, f"got {r.status_code}: {r.text[:400]}"
     data = r.json()
-    # Expected 8 seat keys
     expected = {
         "strategist", "executor", "governor", "auditor",
         "crypto_strategist", "crypto", "crypto_governor", "crypto_auditor",
     }
-    # Seats live under `assignments` in this API shape.
     seats = data.get("assignments") or data.get("seats") or data
     assert isinstance(seats, dict), f"unexpected roster shape: {data}"
     missing = expected - set(seats.keys())
     assert not missing, f"missing seat keys: {missing}; got {list(seats.keys())}"
-    # Spot check known values from the operator's request.
-    assert seats["executor"] == "camino", f"executor={seats['executor']}"
-    assert seats["strategist"] == "barracuda", f"strategist={seats['strategist']}"
-    assert seats["governor"] == "hellcat"
-    assert seats["auditor"] == "gto"
-    print(f"seat map: {seats}")
+    # Every value must be either a brain name (str) or None (vacant).
+    for role, holder in seats.items():
+        if role not in expected:
+            continue
+        assert holder is None or isinstance(holder, str), (
+            f"seat {role} holder has unexpected type: {type(holder)}"
+        )
+

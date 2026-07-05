@@ -128,9 +128,10 @@ from routes.admin_hot_brain_router import (
 from routes.admin_spread_quality import (
     router as admin_spread_quality_router,
 )
-from routes.admin_brain_metrics import (
-    router as admin_brain_metrics_router,
-)
+# admin_brain_metrics retired 2026-02-28 — route was orphaned (no
+# frontend consumer) and broken (references PIPELINE_RECEIPTS_COLL
+# which was deleted in the 2026-02-27 architectural reduction).
+# Live-path metrics now live at /api/admin/intent-clearance-funnel.
 from routes.admin_advisor_performance import (
     router as admin_advisor_performance_router,
 )
@@ -217,7 +218,6 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(seat_nudges_router)
     api_router.include_router(admin_hot_brain_router)
     api_router.include_router(admin_spread_quality_router)
-    api_router.include_router(admin_brain_metrics_router)
     api_router.include_router(admin_advisor_performance_router)
     api_router.include_router(admin_trader_router)  # 2026-06-30 sidecar trader
     api_router.include_router(webull_credentials_router)  # 2026-02-17 operator-input Webull connect
