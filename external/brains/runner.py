@@ -1958,7 +1958,18 @@ class BrainRunner:
             )[:2048],
         }
         # 2026-02-20 — direct in-process call. No HTTP, no token.
-        from shared.sovereign_mode_guard import submit_sovereign_in_process, SovereignContribution
+        # 2026-02-17: `shared.sovereign_mode_guard` was removed in a
+        # prior arch cleanup. This block still tries to import it and
+        # was generating ~5000+ lines/day of ImportError log noise. If
+        # the module isn't present, silently no-op the sovereign path
+        # — the brain-level shadow bookkeeping continues to run.
+        # If sovereign mode is ever restored, drop the try/except.
+        try:
+            from shared.sovereign_mode_guard import (  # noqa: WPS433
+                submit_sovereign_in_process, SovereignContribution,
+            )
+        except ImportError:
+            return
         try:
             await submit_sovereign_in_process(
                 body=SovereignContribution(**body),

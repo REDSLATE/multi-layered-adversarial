@@ -192,6 +192,48 @@ async def _route_one(intent: dict) -> dict:
             pass
         return {"verdict": "blocked", "reason": rc.reason}
 
+    # ── 2b. Kraken per-pair notional floor (crypto only) ────────
+    # 2026-02-17: 91 crypto intents/hour were dying at Kraken's
+    # per-pair `ordermin` (volume-minimum-not-met). This step raises
+    # the notional up to the operator-configured floor (default
+    # policy `size_up`) or terminates the intent with a clear reason
+    # if the operator has set `policy=reject`. Equity lane is
+    # untouched — Kraken's floor doesn't apply to Webull orders.
+    final_notional = rc.notional_usd
+    floor_note = None
+    if (intent.get("lane") or "").lower() == "crypto":
+        from shared.kraken_pair_floors import apply_floor  # noqa: WPS433
+        far = await apply_floor(
+            (intent.get("symbol") or "").upper(),
+            rc.notional_usd,
+        )
+        if not far.allowed:
+            # Operator chose `policy=reject` for this pair. Terminate.
+            try:
+                await db[SHARED_INTENTS].update_one(
+                    {"intent_id": intent_id},
+                    {"$set": {
+                        "gate_state": "blocked",
+                        "last_submit_ts": _now_iso(),
+                        "last_submit_by": AUTO_ROUTER_EMAIL,
+                        "broker_reason": "notional_below_pair_floor",
+                        "broker_error_bucket": "min_order_notional",
+                        "broker_error_detail": far.reject_reason,
+                    }},
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return {"verdict": "blocked",
+                    "reason": "notional_below_pair_floor",
+                    "detail": far.reject_reason}
+        final_notional = far.notional_usd
+        if far.adjusted:
+            floor_note = (
+                f"size_up ${far.original_notional:.4f} → ${far.notional_usd:.4f} "
+                f"for {far.floor.pair} (floor)"
+            )
+            logger.info("auto_router pair-floor size_up %s", floor_note)
+
     # ── 3. Broker ────────────────────────────────────────────────
     from shared.broker_router import (  # noqa: WPS433
         BrokerRouteBlocked, route_order,
@@ -199,7 +241,7 @@ async def _route_one(intent: dict) -> dict:
     try:
         order = await route_order(
             intent,
-            notional_usd=rc.notional_usd,
+            notional_usd=final_notional,
             client_order_id=f"ar-{intent_id[:24]}",
         )
     except BrokerRouteBlocked as exc:

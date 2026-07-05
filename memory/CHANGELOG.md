@@ -1,3 +1,78 @@
+## 2026-02-17 (later) — Kraken per-pair notional floor + P2 log-spam silencer
+
+### 1. Kraken per-pair notional floor (min_notional dam fix)
+
+**Problem:** 91 crypto intents/hour dying at Kraken with
+`EGeneral:Invalid arguments:volume minimum not met` — auto-router
+sized orders below Kraken's per-pair `ordermin` (base-coin volume
+minimum).
+
+**Design:** Per-pair floor expressed in USD notional (operator-native).
+
+**Doctrine** (locked by tests):
+    policy="size_up"      → raise notional to the floor (default)
+    policy="reject"       → terminate below the floor
+    min_notional_usd=0    → EXPLICITLY UNGATED, never adjust
+    unknown pair          → env `KRAKEN_DEFAULT_MIN_NOTIONAL_USD`
+                            (default 5.0)
+
+**Endpoints** (`/api/admin/kraken/pair-floors`):
+    GET    /                        list all + defaults
+    GET    /{pair:path}              effective floor (with is_default flag)
+    PUT    /                        bulk upsert
+    DELETE /{pair:path}              remove explicit floor (→ default)
+
+**Storage:** `kraken_pair_floors` collection. Doc shape:
+    { _id: "BTC/USD", min_notional_usd, policy, updated_at,
+      updated_by, notes }
+
+**Runtime integration:** `_route_one` in `shared/auto_router.py` now
+carries a "step 2b" between risk check and broker call. Crypto lane
+only — equity is untouched (Kraken's floor doesn't apply to Webull).
+Above floor → passthrough. Below floor + size_up → raise notional
+(logged). Below floor + reject → terminate with `broker_reason=
+notional_below_pair_floor`, `broker_error_bucket=min_order_notional`.
+
+**Files:**
+  - `backend/shared/kraken_pair_floors.py` — 175 lines. In-process
+    30-second TTL cache + `invalidate_cache()` for route mutations.
+  - `backend/routes/kraken_pair_floors.py` — 4 endpoints, 130 lines.
+  - `backend/shared/auto_router.py::_route_one` — step 2b integration
+    (~35 new lines).
+  - `backend/tests/test_kraken_pair_floors.py` — 8 tests.
+  - Router registered in `server_modules/router_registry.py`.
+
+**Tests (8):** size_up raises, reject terminates with reason, `0` is
+ungated, above-floor passthrough, unknown pair uses env default,
+`get_floor` shape, `ALLOWED_POLICIES` = exactly `{size_up, reject}`,
+`invalidate_cache()` forces refetch. All pass.
+
+**Live smoke (2026-02-17):**
+  - PUT 2 floors → written=2 ✅
+  - GET BTC/USD explicit → `is_default=false` ✅
+  - GET SOL/USD unconfigured → `is_default=true`, uses env default 5.0 ✅
+  - DELETE BTC/USD → deleted=1 ✅
+
+### 2. P2 — sovereign_mode_guard ImportError silencer
+
+**Problem:** `external/brains/runner.py:1961` imports
+`shared.sovereign_mode_guard` which was removed in a prior arch
+cleanup. Every neutral-brain tick logged the ImportError → 5,000+
+noise lines/day.
+
+**Fix:** Guard the import in `try: ... except ImportError: return`.
+Brain-level shadow bookkeeping continues; only the sovereign
+submission path is silently no-op'd. If the module is ever restored,
+drop the try/except (comment documents the reason).
+
+**Verification (30s post-restart observation window):**
+  - `sovereign_mode_guard` mentions in backend logs: **0** (was ~200/min).
+  - `sovereign_loop error` mentions: **0**.
+  - Log signal is now clean; other real errors are readable again.
+
+---
+
+
 ## 2026-02-17 (later) — Seats reverse-sync recovery endpoint
 
 Promoted this morning's ad-hoc python restore into an operator-facing

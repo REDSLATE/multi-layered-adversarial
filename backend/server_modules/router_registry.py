@@ -138,6 +138,7 @@ from routes.admin_trader import router as admin_trader_router  # 2026-06-30 side
 from routes.webull_credentials import router as webull_credentials_router  # 2026-02-17 operator-input flow
 from routes.intent_clearance_funnel import router as intent_clearance_funnel_router  # 2026-02-17 monday tuning tile
 from routes.seats_reverse_sync import router as seats_reverse_sync_router  # 2026-02-17 recovery tool
+from routes.kraken_pair_floors import router as kraken_pair_floors_router  # 2026-02-17 min_notional dam fix
 from routes.admin_system_flags import router as admin_system_flags_router
 from routes.admin_brain_legend import router as admin_brain_legend_router  # 2026-02-23
 from routes.admin_execution_lifecycle_funnel import router as admin_execution_lifecycle_funnel_router  # 2026-02-23 P3
@@ -222,6 +223,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(webull_credentials_router)  # 2026-02-17 operator-input Webull connect
     api_router.include_router(intent_clearance_funnel_router)  # 2026-02-17 monday tuning tile
     api_router.include_router(seats_reverse_sync_router)  # 2026-02-17 recovery tool
+    api_router.include_router(kraken_pair_floors_router)  # 2026-02-17 min_notional dam fix
     api_router.include_router(admin_system_flags_router)
     api_router.include_router(admin_brain_legend_router)  # 2026-02-23 dual-field migration
     api_router.include_router(admin_execution_lifecycle_funnel_router)  # 2026-02-23 P3 lifecycle funnel
