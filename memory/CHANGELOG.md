@@ -70,6 +70,27 @@ validation (length bounds, required fields) is what /connect enforces.
     right above the existing 2FA token row. All fields render, buttons
     wired to the correct endpoints. Screenshot verified.
 
+**Follow-up (same day) — integrated 2FA push inside the modal:**
+Per operator request, the ConnectedView now includes a `TokenPushCard`
+component that owns the entire 2FA lifecycle in-modal:
+  - Shows current token badge (ACTIVE / EXPIRED / NOT ISSUED / CHECKING).
+  - Single "Trigger 2FA push" button calls the pre-existing
+    `POST /api/admin/trader/webull-token-create`.
+  - On success, an auto-poller ticks `webull-token-status` every 4 s for
+    3 min waiting for the operator's mobile-app approval — badge flips
+    to ACTIVE the moment the server-side status becomes NORMAL, without
+    the operator needing to click anything else.
+  - Toasts + inline hint text guide the operator ("polling every 4 s ·
+    3-minute window" while active; "Push wait timed out" on window
+    expiry).
+  - Consolidates what was previously TWO click surfaces (Connect Webull
+    modal → close → find 2FA strip → click Reissue) into one flow.
+The pre-existing 2FA token strip in `SpreadWatcher.jsx` remains
+untouched — no regression to the standalone flow for operators who
+prefer that entry point. Screenshot verified: modal shows the redacted
+key preview + auth-state card + 2FA-token card with correct EXPIRED
+badge (real state from the current preview environment).
+
 ---
 
 

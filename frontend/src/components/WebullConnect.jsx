@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { KeyholeIcon, ShieldCheck, Warning, Trash, ArrowsClockwise } from "@phosphor-icons/react";
+import { KeyholeIcon, ShieldCheck, Warning, Trash, ArrowsClockwise, Lightning, DeviceMobile } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const REGION_OPTIONS = ["us", "hk", "jp"];
@@ -329,6 +329,8 @@ function ConnectedView({ status, onChange, onClose }) {
         )}
       </Card>
 
+      <TokenPushCard onProbe={onChange} />
+
       <DialogFooter className="flex items-center justify-between gap-2">
         <Button
           variant="outline"
@@ -355,6 +357,157 @@ function ConnectedView({ status, onChange, onClose }) {
         </Button>
       </DialogFooter>
     </div>
+  );
+}
+
+function TokenPushCard({ onProbe }) {
+  const [tokenStatus, setTokenStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [pollActive, setPollActive] = useState(false);
+  const [pushMsg, setPushMsg] = useState("");
+
+  const refreshToken = useCallback(async () => {
+    try {
+      const { data } = await api.get("/admin/trader/webull-token-status");
+      setTokenStatus(data);
+      return data;
+    } catch (e) {
+      // 404 = no token yet, expected on first setup — stay silent.
+      if (e?.response?.status !== 404) {
+        toast.error(e?.response?.data?.detail || e.message);
+      }
+      return null;
+    }
+  }, []);
+
+  useEffect(() => { refreshToken(); }, [refreshToken]);
+
+  // Poll aggressively for 3 minutes after a push is triggered so the
+  // status flips from PENDING → NORMAL without the operator needing to
+  // click Refresh. Push approval usually lands within 30-60s but we
+  // give ample buffer for slow networks.
+  useEffect(() => {
+    if (!pollActive) return;
+    let cancelled = false;
+    const started = Date.now();
+    const tick = async () => {
+      const s = await refreshToken();
+      if (cancelled) return;
+      const activated = s?.status === "NORMAL" || (s?.present && !s?.expired);
+      if (activated) {
+        setPollActive(false);
+        setPushMsg("Token approved and active.");
+        toast.success("Webull token active");
+        await onProbe?.();
+        return;
+      }
+      if (Date.now() - started > 180_000) {
+        setPollActive(false);
+        setPushMsg("Push wait timed out. Check the Webull app or re-trigger.");
+        return;
+      }
+      setTimeout(tick, 4000);
+    };
+    setTimeout(tick, 3500);
+    return () => { cancelled = true; };
+  }, [pollActive, refreshToken, onProbe]);
+
+  const triggerPush = async () => {
+    setBusy(true);
+    setPushMsg("");
+    try {
+      const { data } = await api.post("/admin/trader/webull-token-create");
+      setPushMsg(
+        data?.message ||
+        "Push sent. Approve the notification in your Webull mobile app.",
+      );
+      setPollActive(true);
+      toast.success("2FA push sent — approve on your phone");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const present = tokenStatus?.present;
+  const expired = tokenStatus?.expired;
+  const activated = present && !expired;
+  const expiresIn = tokenStatus?.expires_in_hours;
+
+  return (
+    <Card className="p-3" data-testid="webull-token-push-card">
+      <div className="text-[10px] uppercase tracking-widest text-rd-dim mb-2 flex items-baseline gap-2">
+        <DeviceMobile size={11} weight="bold" />
+        2FA access token
+      </div>
+
+      <div className="text-[11px] font-mono flex items-baseline gap-2 flex-wrap mb-2">
+        {tokenStatus === null && (
+          <Badge color="#71717A" testid="webull-token-status-loading">CHECKING…</Badge>
+        )}
+        {activated && (
+          <>
+            <Badge color="#22C55E" testid="webull-token-status-active">ACTIVE</Badge>
+            {expiresIn != null && (
+              <span className="text-rd-dim">expires in {expiresIn}h</span>
+            )}
+            {tokenStatus?.preview && (
+              <span className="text-rd-text">· {tokenStatus.preview}</span>
+            )}
+          </>
+        )}
+        {present && expired && (
+          <>
+            <Badge color="#EF4444" testid="webull-token-status-expired">EXPIRED</Badge>
+            <span className="text-rd-dim">re-issue required</span>
+          </>
+        )}
+        {tokenStatus && !present && (
+          <>
+            <Badge color="#F59E0B" testid="webull-token-status-missing">NOT ISSUED</Badge>
+            <span className="text-rd-dim">
+              trigger a push to activate. Server-side TTL: 15 days.
+            </span>
+          </>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <Button
+          size="sm"
+          onClick={triggerPush}
+          disabled={busy || pollActive}
+          data-testid="webull-trigger-push-btn"
+          className={activated ? "" : "bg-rd-text text-rd-bg hover:bg-rd-muted"}
+          variant={activated ? "outline" : "default"}
+        >
+          <Lightning size={12} weight="bold" className="mr-1" />
+          {busy
+            ? "SENDING…"
+            : pollActive
+            ? "AWAITING APPROVAL…"
+            : activated
+            ? "Re-issue token"
+            : "Trigger 2FA push"}
+        </Button>
+
+        {pollActive && (
+          <span className="text-[10px] font-mono text-rd-warning">
+            polling every 4s · 3-minute window
+          </span>
+        )}
+      </div>
+
+      {pushMsg && (
+        <div
+          className="text-[10px] font-mono text-rd-text mt-2 pt-2 border-t border-rd-border leading-relaxed"
+          data-testid="webull-push-msg"
+        >
+          {pushMsg}
+        </div>
+      )}
+    </Card>
   );
 }
 
