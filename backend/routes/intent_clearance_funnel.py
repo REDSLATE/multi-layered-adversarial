@@ -111,22 +111,37 @@ def _seat_cleared_filter() -> dict:
 
 
 def _risk_sized_filter() -> dict:
-    """Governor gave a non-zero size multiplier."""
+    """Governor gave a non-zero size multiplier. Also honors the
+    presence of `broker_error_bucket` — that field is only set by
+    `_route_one` AFTER risk cleared, so its presence proves the intent
+    got past this stage even if the final `gate_state` is now `blocked`
+    from a broker-terminal stamp."""
     return {
         "action": {"$in": _DIRECTIONAL_ACTIONS},
         "gate_state": {"$nin": ["advisory_only", "pending"]},
-        "risk_multiplier": {"$gt": 0},
+        "$or": [
+            {"risk_multiplier": {"$gt": 0}},
+            {"broker_error_bucket": {"$exists": True}},
+        ],
     }
 
 
 def _roadguard_cleared_filter() -> dict:
     """RoadGuard didn't block on danger. `dry_run_blocked` (with
     lane_execution_enabled reason) counts as RoadGuard-cleared —
-    RoadGuard did its job, only the operator toggle stopped it."""
+    RoadGuard did its job, only the operator toggle stopped it. Also
+    honors `broker_error_bucket` presence for the same reason
+    documented on `_risk_sized_filter` — reaching the broker implies
+    everything upstream cleared."""
     return {
         "action": {"$in": _DIRECTIONAL_ACTIONS},
-        "gate_state": {"$in": ["passed", "dry_run_passed", "dry_run_blocked"]},
-        "risk_multiplier": {"$gt": 0},
+        "$or": [
+            {
+                "gate_state": {"$in": ["passed", "dry_run_passed", "dry_run_blocked"]},
+                "risk_multiplier": {"$gt": 0},
+            },
+            {"broker_error_bucket": {"$exists": True}},
+        ],
     }
 
 
@@ -183,19 +198,25 @@ async def _top_reasons(coll_name: str, query: dict, reason_fields: list[str],
 
 
 async def _linked_executions_count(intent_query: dict, exec_query: dict) -> int:
-    """Count `executions` docs whose intent_id is in the set matching
-    `intent_query`. Runs as one aggregation to avoid pulling every
-    intent_id back to the client."""
+    """Count DISTINCT intent_ids in `executions` whose intent_id is in
+    the set matching `intent_query`. Distinct-on-intent-id matters
+    because a single failing intent can generate multiple `executions`
+    rows (each retry attempt writes one). Without distinct-counting
+    the funnel would report broker_submitted > emitted."""
     ids = []
     async for d in db["shared_intents"].find(intent_query, {"intent_id": 1, "_id": 0}):
         if d.get("intent_id"):
             ids.append(d["intent_id"])
     if not ids:
         return 0
-    return await db["executions"].count_documents({
-        **exec_query,
-        "intent_id": {"$in": ids},
-    })
+    pipeline = [
+        {"$match": {**exec_query, "intent_id": {"$in": ids}}},
+        {"$group": {"_id": "$intent_id"}},
+        {"$count": "n"},
+    ]
+    async for r in db["executions"].aggregate(pipeline):
+        return int(r.get("n") or 0)
+    return 0
 
 
 async def _linked_execution_samples(intent_query: dict, exec_query: dict,
@@ -328,6 +349,28 @@ async def intent_clearance_funnel(
         ("filled",            n_filled),
     ]
 
+    # Monotonicity clamp: no stage may exceed its predecessor. Data-race
+    # anomalies (e.g. an intent stamped `advisory_only` after already
+    # touching the broker) can otherwise briefly violate this and
+    # confuse the operator reading the tile. Clamp is conservative —
+    # we truncate to the earlier stage's count, never upshift.
+    clamped: list[tuple[str, int]] = []
+    running_max = None
+    for name, n in stage_counts:
+        if running_max is not None and n > running_max:
+            n = running_max
+        clamped.append((name, n))
+        running_max = n
+    stage_counts = clamped
+    # Also update the module-local names used below for drop math.
+    _by_name = dict(clamped)
+    n_seat_cleared      = _by_name["seat_cleared"]
+    n_risk_sized        = _by_name["risk_sized"]
+    n_roadguard_cleared = _by_name["roadguard_cleared"]
+    n_broker_submitted  = _by_name["broker_submitted"]
+    n_broker_accepted   = _by_name["broker_accepted"]
+    n_filled            = _by_name["filled"]
+
     stages = []
     prev = n_emitted or 1
     first_failed_stage: Optional[str] = None
@@ -365,12 +408,16 @@ async def intent_clearance_funnel(
         "sample_intent_ids": await _sample_ids("shared_intents", seat_drop_q),
     }
 
-    # Risk drop: seat cleared but risk_multiplier <= 0 (or missing)
+    # Risk drop: seat cleared but neither risk-sized nor reached-broker
+    # (i.e., stuck with risk_multiplier ≤ 0 AND no broker attempt).
     risk_drop_q = _compose(*base, _seat_cleared_filter(),
-                            {"$or": [
-                                {"risk_multiplier": {"$lte": 0}},
-                                {"risk_multiplier": None},
-                                {"risk_multiplier": {"$exists": False}},
+                            {"$and": [
+                                {"$or": [
+                                    {"risk_multiplier": {"$lte": 0}},
+                                    {"risk_multiplier": None},
+                                    {"risk_multiplier": {"$exists": False}},
+                                ]},
+                                {"broker_error_bucket": {"$exists": False}},
                             ]})
     drops["risk_sized"] = {
         "count": await _count("shared_intents", risk_drop_q),
@@ -382,9 +429,11 @@ async def intent_clearance_funnel(
     }
 
     # RoadGuard drop: risk sized but gate_state NOT in the passed set
+    # AND no broker attempt (i.e., NOT terminated by broker either).
     roadguard_drop_q = _compose(*base, _risk_sized_filter(),
                                  {"gate_state": {"$nin": ["passed", "dry_run_passed",
-                                                          "dry_run_blocked"]}})
+                                                          "dry_run_blocked"]},
+                                  "broker_error_bucket": {"$exists": False}})
     drops["roadguard_cleared"] = {
         "count": await _count("shared_intents", roadguard_drop_q),
         "top_block_reasons": await _top_reasons(
@@ -409,7 +458,10 @@ async def intent_clearance_funnel(
         ),
     }
 
-    # Broker-accepted drop: submitted but broker rejected
+    # Broker-accepted drop: submitted but broker rejected. Dedupe by
+    # intent_id so an intent that retried 5 times before being terminated
+    # counts ONCE in the top-reasons histogram — otherwise historical
+    # retry-storm intents would dominate the display.
     submitted_ids: list[str] = []
     async for d in db["shared_intents"].find(_q(_roadguard_cleared_filter),
                                               {"intent_id": 1, "_id": 0}):
@@ -418,12 +470,17 @@ async def intent_clearance_funnel(
 
     rejected_reasons: Counter[str] = Counter()
     rejected_samples: list[str] = []
+    seen_intent_ids: set[str] = set()
     if submitted_ids:
         cur = db["executions"].find(
             {"intent_id": {"$in": submitted_ids}, "ok": False},
             {"exception_msg": 1, "broker_response": 1, "intent_id": 1, "_id": 0},
         ).sort("_id", -1)
         async for d in cur:
+            iid = d.get("intent_id")
+            if not iid or iid in seen_intent_ids:
+                continue
+            seen_intent_ids.add(iid)
             reason = None
             if d.get("exception_msg"):
                 reason = str(d["exception_msg"])[:120]
@@ -433,8 +490,8 @@ async def intent_clearance_funnel(
                           or "broker_rejected_no_detail")[:120]
             reason = reason or "unknown_broker_rejection"
             rejected_reasons[reason] += 1
-            if len(rejected_samples) < _SAMPLE_LIMIT and d.get("intent_id"):
-                rejected_samples.append(d["intent_id"])
+            if len(rejected_samples) < _SAMPLE_LIMIT:
+                rejected_samples.append(iid)
 
     drops["broker_accepted"] = {
         "count": max(0, n_broker_submitted - n_broker_accepted),

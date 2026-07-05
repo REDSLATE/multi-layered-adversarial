@@ -63,6 +63,17 @@ AUTO_ROUTER_NOTIONAL_USD = float(os.environ.get("AUTO_ROUTER_NOTIONAL_USD", "10"
 #
 # `tests/test_auto_router_max_per_tick.py` pins this contract.
 AUTO_ROUTER_MAX_PER_TICK = int(os.environ.get("AUTO_ROUTER_MAX_PER_TICK", "5"))
+# Broker-retry ceiling for the truly-transient error class. Beyond
+# this the intent is terminally stamped `gate_state=blocked` with
+# `broker_reason=broker_retry_exhausted` so the tick queue drains
+# instead of looping the same failing intent forever. Doctrine
+# (2026-02-17): no intent retries indefinitely. Deterministic errors
+# (market_closed, insufficient_funds, min_order_notional, etc.) go
+# terminal on the first attempt; transient errors get this many
+# retries before being terminated.
+AUTO_ROUTER_MAX_BROKER_RETRIES = int(
+    os.environ.get("AUTO_ROUTER_MAX_BROKER_RETRIES", "5")
+)
 AUTO_ROUTER_EMAIL = "auto-router@mission-control"
 
 _TASK: Optional[asyncio.Task] = None
@@ -226,11 +237,26 @@ async def _route_one(intent: dict) -> dict:
     except Exception as exc:  # noqa: BLE001
         exc_type = type(exc).__name__
         exc_msg = str(exc)[:1000]
-        logger.exception(
+
+        # ── Broker-error taxonomy (2026-02-17 doctrine) ────────
+        # Classify the failure. Deterministic buckets (market_closed,
+        # insufficient_funds, min_order_notional, invalid_order_args,
+        # auth_or_permission) are TERMINAL on the first attempt.
+        # Transient buckets (rate_limited, network_transient, unknown)
+        # get retried up to AUTO_ROUTER_MAX_BROKER_RETRIES times
+        # before being terminated with `broker_retry_exhausted`.
+        # No intent retries indefinitely — that was the pre-2026-02-17
+        # bug that head-of-lined the queue on Sunday's market_closed.
+        from shared.broker_error_taxonomy import classify  # noqa: WPS433
+        err = classify(exc)
+        retry_count_before = int(intent.get("broker_retry_count") or 0)
+
+        logger.error(
             "auto_router broker call raised intent=%s symbol=%s action=%s "
-            "exc=%s msg=%s",
+            "exc=%s bucket=%s terminal=%s retry_count=%d msg=%s",
             intent_id, intent.get("symbol"), intent.get("action"),
-            exc_type, exc_msg,
+            exc_type, err.bucket, err.is_terminal,
+            retry_count_before, exc_msg,
         )
         await executions.record(
             intent=intent,
@@ -248,14 +274,63 @@ async def _route_one(intent: dict) -> dict:
             notional_usd=rc.notional_usd,
             exception_type=exc_type,
             exception_msg=exc_msg,
+            broker_status=f"broker_error:{err.bucket}",
             ok=False,
         )
-        # Do NOT stamp the intent terminally — broker errors are
-        # transient; let the next tick retry.
+
+        # Decide the terminal disposition of the INTENT itself.
+        should_terminate = err.is_terminal
+        terminal_reason = err.bucket
+        if not err.is_terminal:
+            new_retry_count = retry_count_before + 1
+            if new_retry_count >= AUTO_ROUTER_MAX_BROKER_RETRIES:
+                should_terminate = True
+                terminal_reason = "broker_retry_exhausted"
+
+        if should_terminate:
+            try:
+                await db[SHARED_INTENTS].update_one(
+                    {"intent_id": intent_id},
+                    {"$set": {
+                        "gate_state": "blocked",
+                        "last_submit_ts": _now_iso(),
+                        "last_submit_by": AUTO_ROUTER_EMAIL,
+                        "broker_reason": terminal_reason,
+                        "broker_error_detail": err.detail,
+                        "broker_error_bucket": err.bucket,
+                    }},
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return {
+                "verdict": "blocked",
+                "reason": terminal_reason,
+                "broker_error_bucket": err.bucket,
+                "exception_type": exc_type,
+            }
+
+        # Transient path — bump the retry counter and leave the intent
+        # eligible for the next tick. Runs a bounded number of times
+        # before the `should_terminate` branch above catches it.
+        try:
+            await db[SHARED_INTENTS].update_one(
+                {"intent_id": intent_id},
+                {"$set": {
+                    "last_submit_ts": _now_iso(),
+                    "last_submit_by": AUTO_ROUTER_EMAIL,
+                    "broker_error_bucket": err.bucket,
+                    "broker_error_detail": err.detail,
+                },
+                 "$inc": {"broker_retry_count": 1}},
+            )
+        except Exception:  # noqa: BLE001
+            pass
         return {
             "verdict": "error",
             "reason": exc_msg,
             "exception_type": exc_type,
+            "broker_error_bucket": err.bucket,
+            "broker_retry_count": retry_count_before + 1,
         }
 
     # ── 4. Success ───────────────────────────────────────────────

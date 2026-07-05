@@ -68,22 +68,33 @@ def test_seat_cleared_excludes_advisory_only_and_pending():
 
 def test_risk_sized_requires_positive_multiplier():
     """advisory_only stamps `risk_multiplier=0`. Requiring `>0` is what
-    separates advisory-shaped rows from genuinely-sized ones."""
+    separates advisory-shaped rows from genuinely-sized ones. Also
+    honors `broker_error_bucket` presence — an intent that reached the
+    broker MUST have cleared risk, even if the current gate_state is
+    now `blocked` from a broker-terminal stamp."""
     from routes.intent_clearance_funnel import _risk_sized_filter
     f = _risk_sized_filter()
-    assert f["risk_multiplier"] == {"$gt": 0}
+    or_clauses = f["$or"]
+    assert {"risk_multiplier": {"$gt": 0}} in or_clauses
+    assert {"broker_error_bucket": {"$exists": True}} in or_clauses
 
 
 def test_roadguard_cleared_counts_dry_run_blocked():
     """`dry_run_blocked` is the operator's lane kill-switch — RoadGuard
     let the intent through, the operator toggled the lane off. That
     MUST count as roadguard-cleared or the funnel misattributes the
-    drop to RoadGuard when it's really an operator flag."""
+    drop to RoadGuard when it's really an operator flag. Also honors
+    `broker_error_bucket` for terminal broker-stamped intents."""
     from routes.intent_clearance_funnel import _roadguard_cleared_filter
     f = _roadguard_cleared_filter()
-    assert "dry_run_blocked" in f["gate_state"]["$in"]
-    assert "passed" in f["gate_state"]["$in"]
-    assert "dry_run_passed" in f["gate_state"]["$in"]
+    or_clauses = f["$or"]
+    # Positive gate-state branch:
+    gate_branch = next(c for c in or_clauses if "gate_state" in c)
+    assert "dry_run_blocked" in gate_branch["gate_state"]["$in"]
+    assert "passed" in gate_branch["gate_state"]["$in"]
+    assert "dry_run_passed" in gate_branch["gate_state"]["$in"]
+    # Broker-reached branch:
+    assert {"broker_error_bucket": {"$exists": True}} in or_clauses
 
 
 # ─── End-to-end funnel semantics (mocked db) ────────────────────────

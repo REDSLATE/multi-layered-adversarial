@@ -1,3 +1,134 @@
+## 2026-02-17 (later) — Broker-error taxonomy + terminal-block doctrine
+
+**Root cause of the pending-intent pileup:** `shared/auto_router.py::_route_one`
+handled generic broker exceptions by recording them to `executions` but
+explicitly declined to stamp the intent as terminal — the pre-existing
+comment read *"broker errors are transient; let the next tick retry"*.
+
+On Sunday 2026-02-17, that assumption broke loudly:
+    - Webull equity → `HTTP 417 INVALID_PARAMETER: The time you sent is
+      not supported.` (market closed — will fail every retry until Monday)
+    - Kraken → `EOrder:Insufficient funds` (balance won't change)
+    - Kraken → `EGeneral:Invalid arguments:volume minimum not met`
+      (order size won't change)
+
+All three are DETERMINISTIC. The tick query sorted newest-first and
+picked 5 intents per tick; since the failing intents never got a
+terminal stamp, they immediately re-matched the query the next tick.
+Result: 194+ pending BUY/SELL intents accumulating, head-of-lining
+the queue against fresh post-seat-fix intents.
+
+**Doctrine correction (operator-pinned 2026-02-17):**
+
+> No intent retries forever. Permanent broker failure → terminal block
+> immediately. Transient broker failure → bounded retries, then
+> terminal block.
+
+**Reason buckets (`shared/broker_error_taxonomy.py`):**
+
+    TERMINAL (stamped `gate_state=blocked` on FIRST attempt):
+      market_closed         Sunday/holiday/pre-open
+      insufficient_funds    account balance
+      min_order_notional    below broker per-pair minimum
+      invalid_order_args    malformed 4xx request
+      auth_or_permission    401 / 403
+
+    TRANSIENT (`broker_retry_count` +1; terminated at
+    `AUTO_ROUTER_MAX_BROKER_RETRIES=5` with reason
+    `broker_retry_exhausted`):
+      rate_limited          429 / throttling
+      network_transient     5xx / timeout / conn reset
+      unknown               safe default — retry a few, then terminate
+
+**Precedence discipline:** `market_closed` beats `invalid_order_args`
+(Webull's Sunday response contains BOTH strings). `min_order_notional`
+beats `invalid_order_args` (Kraken's `EGeneral:Invalid arguments:
+volume minimum not met` also contains both). Both precedence
+invariants are locked by tests below.
+
+**Modules:**
+  - `shared/broker_error_taxonomy.py` (new — 155 lines; pure-function
+    classifier returning `BrokerErrorClass(bucket, is_terminal, detail)`).
+  - `shared/auto_router.py::_route_one` — replaced the "do NOT stamp"
+    branch with terminal-vs-transient dispatch. Terminal buckets set
+    `gate_state=blocked, broker_reason=<bucket>, broker_error_bucket=
+    <bucket>, broker_error_detail=<msg[:120]>`. Transient buckets
+    `$inc broker_retry_count 1` and update `last_submit_ts`; when the
+    counter reaches `AUTO_ROUTER_MAX_BROKER_RETRIES`, terminate with
+    reason `broker_retry_exhausted`.
+  - `shared/auto_router.py` — new env `AUTO_ROUTER_MAX_BROKER_RETRIES`
+    (default 5).
+
+**Funnel improvements (`routes/intent_clearance_funnel.py`) — needed to
+correctly report on the new terminal-stamped intents:**
+  - `_risk_sized_filter` and `_roadguard_cleared_filter` now honor
+    `broker_error_bucket` presence — reaching the broker proves the
+    intent cleared risk + roadguard, even if `gate_state` is now
+    `blocked` from a broker-terminal stamp.
+  - `_linked_executions_count` now COUNTS DISTINCT intent_ids —
+    previously counted execution rows, which inflated broker_submitted
+    to N × retries (1425 vs the true 252 in the first live test).
+  - Broker-reject `top_block_reasons` histogram now dedupes by
+    intent_id — a retry-storm intent counts once, not N times.
+  - Added monotonicity clamp on stage counts to shield the tile from
+    momentary data-race anomalies (e.g. an intent stamped both
+    `advisory_only` and `broker_error_bucket` from a sweeper race).
+
+**Regression suite** — `test_broker_error_taxonomy.py`, 13 tests:
+  - Bucket assignment for all real-world exception messages captured
+    from `/var/log/supervisor/backend.err.log` on 2026-02-17.
+  - Precedence guards (`market_closed` beats `invalid_order_args`;
+    `min_order_notional` beats `invalid_order_args`).
+  - `detail` field bounded to ≤120 chars.
+  - `TERMINAL_BUCKETS` and `TRANSIENT_BUCKETS` are disjoint and named
+    exactly as documented.
+  - End-to-end `_route_one` behavior:
+      * Terminal error → stamp intent immediately + record execution
+      * Transient error → increment retry counter, no terminal stamp
+      * Transient error at retry_count=cap-1 → terminate with
+        `broker_retry_exhausted`, preserve original bucket
+      * Deterministic (min_order_notional) never increments the counter
+All 13 pass. Combined with funnel + seat tests: 39/39 focused tests
+green. Full suite collects 2822 tests, 0 collection errors.
+
+**Verified end-to-end on live preview data (2026-02-17 Sunday):**
+
+BEFORE fix — 40-minute observation window:
+    - 194+ pending BUY/SELL intents accumulating
+    - Auto-router touched 0 new intents in the last 40 min
+    - The same 5 intents retrying every 30s, generating 1425 execution
+      rows across ~252 distinct intents
+
+AFTER fix — 30-second observation window:
+    - Queue drained 194 → 181 in 45s
+    - 24 equity intents terminal-stamped `market_closed`
+    - 10 crypto intents terminal-stamped `min_order_notional`
+    - Funnel now shows honest signal:
+        emitted           312 (100.00%)
+        seat_cleared      278 ( 89.10%)   ← seat fix landing on new intents
+        risk_sized        278 ( 89.10%)
+        roadguard_cleared 278 ( 89.10%)
+        broker_submitted  278 ( 89.10%)
+        broker_accepted     0 (  0.00%)   ← Sunday reality: broker rejects all
+        filled              0
+    - top_block_reason: Webull Sunday market_closed
+    - Deduped rejection histogram (per distinct intent):
+        175 market_closed  (equity — will clear Monday RTH)
+         91 min_order_notional  (crypto — need order sizing tuning)
+         20 insufficient_funds  (crypto — need account top-up)
+
+**Doctrine invariants pinned by the taxonomy tests:**
+    Deterministic broker failure → terminal block IMMEDIATELY
+    Transient broker failure → bounded retries, then terminal block
+    market_closed / insufficient_funds / min_order_notional /
+        invalid_order_args / auth_or_permission = TERMINAL
+    rate_limited / network_transient / unknown = TRANSIENT
+    market_closed precedes invalid_order_args (Webull Sunday case)
+    min_order_notional precedes invalid_order_args (Kraken min-vol case)
+
+---
+
+
 ## 2026-02-17 (later) — Intent-clearance funnel: the Monday tuning tile
 
 **Purpose:** Answer ONE question fast — "Of everything a brain emitted
