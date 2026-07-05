@@ -66,6 +66,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
 from db import db
+from namespaces import BRAIN_ROSTER
 
 
 _SEAT_COLL = "seat_registry"
@@ -135,19 +136,31 @@ def _seat_id(lane: str, role: str) -> str:
 async def get_holder(lane: str, role: str = "executor") -> Optional[str]:
     """Current holder of (lane, role), or None if vacant.
 
-    Reads from `seat_registry` first (new home). Falls back to the
-    legacy `shared_brain_roster.assignments` to preserve existing
-    operator seat assignments during the architectural reduction.
+    Authority order (doctrine 2026-02-17, operator-pinned):
+        1. `seat_registry` (primary) — new home for per-lane/role holders.
+        2. `brain_roster.assignments` (valid fallback) — the roster
+           writes here via `shared/roster.py`, keyed by
+           `namespaces.BRAIN_ROSTER`.
+        3. Nothing else. `shared_brain_roster` is a DEAD NAMESPACE — do
+           NOT reintroduce it. The previous drift (reader hardcoded
+           `"shared_brain_roster"` while writer used `BRAIN_ROSTER =
+           "brain_roster"`) blocked 100% of intents in preview by
+           returning `verdict="pass"` → auto_router → `advisory_only`.
 
-    Legacy roster key convention:
-        equity executor    → "executor"
+    Canonical assignment-key convention (per 2026-06-18 roster migration
+    in shared/roster.py):
         equity strategist  → "strategist"
         equity governor    → "governor"
+        equity executor    → "executor"
         equity auditor     → "auditor"
-        crypto executor    → "crypto_executor"
         crypto strategist  → "crypto_strategist"
         crypto governor    → "crypto_governor"
+        crypto executor    → "crypto"            ← NOT "crypto_executor"
         crypto auditor     → "crypto_auditor"
+
+    `"crypto_executor"` is a LEGACY ALIAS that the roster migration
+    already collapses on write. We tolerate it here as a last-resort
+    fallback in case an old operator tool still writes the alias.
     """
     if not lane:
         return None
@@ -159,9 +172,28 @@ async def get_holder(lane: str, role: str = "executor") -> Optional[str]:
 
     lane_l = (lane or "").lower()
     role_l = (role or "executor").lower()
-    legacy_keys = [role_l] if lane_l == "equity" else []
-    legacy_keys.append(f"{lane_l}_{role_l}")
-    roster = await db["shared_brain_roster"].find_one(
+
+    # Build candidate roster keys in preference order — canonical first,
+    # legacy alias last. First non-empty holder wins.
+    legacy_keys: list[str] = []
+    if lane_l == "equity":
+        # Equity uses the bare role name as the canonical key.
+        legacy_keys.append(role_l)
+    elif lane_l == "crypto":
+        if role_l == "executor":
+            # Canonical key for the crypto executor seat is just "crypto"
+            # (per the 2026-06-18 shared/roster.py migration). The bare
+            # `"crypto_executor"` string is retained ONLY as a tail
+            # fallback for any stale writer.
+            legacy_keys.append("crypto")
+        else:
+            legacy_keys.append(f"crypto_{role_l}")
+    # Tail fallback for any lane/role we didn't special-case.
+    tail = f"{lane_l}_{role_l}"
+    if tail not in legacy_keys:
+        legacy_keys.append(tail)
+
+    roster = await db[BRAIN_ROSTER].find_one(
         {}, {"_id": 0, "assignments": 1}
     )
     assignments = (roster or {}).get("assignments") or {}
