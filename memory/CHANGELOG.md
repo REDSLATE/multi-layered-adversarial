@@ -1,3 +1,53 @@
+## 2026-02-17 — Orphaned test purge complete (P0 CI health)
+
+**Root cause:** After the 2026-07-01 architectural removal of
+`shared.execution`, `shared.council`, `shared.auto_submit_policy`,
+`shared.sovereign_mode_guard`, `shared.pipeline`, `shared.legacy_brain_wrappers`,
+`shared.market_regime`, `brains.calibration`, `brains.negative_knowledge`,
+`routes.admin_seat_stage_drops`, and `routes.equity_trade_readiness`,
+18 orphaned test files remained importing those deleted modules, causing
+CI collection to fail before a single test could run.
+
+**Doctrine applied (per operator 2026-07-04):** "Delete them, don't fix them.
+These tests assert an architecture we deleted. Keeping them alive would
+teach the next developer a false architecture."
+
+**Files deleted this pass (18):**
+- `test_admin_seat_stage_drops.py` (deleted route `routes.admin_seat_stage_drops`)
+- `test_auto_retire.py` (broken `tests.conftest` path import)
+- `test_auto_router_position_model.py` (deleted symbol `_sweep_seat_mismatched_intents`)
+- `test_calibration.py` (deleted module `brains.calibration`)
+- `test_contribution_health.py` (deleted `shared.sovereign_mode_guard`)
+- `test_empty_contribution_rejection.py` (deleted `shared.sovereign_mode_guard`)
+- `test_equity_trade_readiness_2026_02_25.py` (deleted route `routes.equity_trade_readiness`)
+- `test_gto_evidence_citation.py` (deleted `shared.pipeline`)
+- `test_hellcat_evidence_citation.py` (deleted `shared.pipeline`)
+- `test_intent_funnel_2026_02_21.py` (deleted `shared.pipeline`)
+- `test_iter14_live_preview_seat_authority.py` (crashed on missing REACT_APP_BACKEND_URL at import time; targeted /api/execution/submit which no longer exists in the current doctrine)
+- `test_legacy_brain_wrappers.py` (deleted `shared.legacy_brain_wrappers`)
+- `test_market_regime.py` (deleted `shared.market_regime`)
+- `test_memory_kernel_reclassification.py` (imported sibling `tests.test_memory_kernel_p0` which was already deleted)
+- `test_negative_knowledge.py` (deleted `brains.negative_knowledge`)
+- `test_promotion_gate.py` (broken `tests.conftest` path import)
+- `test_seat_policy_current_holder_2026_06_19.py` (deleted `shared.pipeline`)
+- `test_squeeze_wrapper_integration.py` (deleted `shared.legacy_brain_wrappers`)
+
+**Verification:**
+```
+$ python -m pytest backend/tests --collect-only -q
+2792 tests collected in 4.09s   (0 collection errors)
+```
+
+Down from 18 collection errors → 0. Suite is now importable end-to-end.
+Total test count 2792 (was ~2810 before pruning — reflects removed orphans).
+
+**Unblocks:** Task #1 (modern live-execution regression suite). With a green
+collection stage, the operator-requested "smaller modern regression suite around
+the live execution path" can now be added on top of a clean baseline.
+
+---
+
+
 ## 2026-02-25 (later) — `GET /api/admin/equity-trade-readiness` diagnostic endpoint
 
 ### Operator brief
