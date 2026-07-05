@@ -1,3 +1,82 @@
+## 2026-02-17 (later) — Seats reverse-sync recovery endpoint
+
+Promoted this morning's ad-hoc python restore into an operator-facing
+button per doctrine: `seat_registry = source of truth`, `brain_roster
+= repaired mirror`, never delete registry rows, before/after diff,
+audit-log every write, refuse if registry is corrupt.
+
+**Endpoint:** `POST /api/admin/seats/reverse-sync-from-registry`
+    Body: `{"dry_run": bool}` (default false).
+
+**Response shape:**
+```json
+{
+  "ok": true, "dry_run": bool, "writes_applied": 0|1,
+  "before": {...brain_roster.assignments before...},
+  "after":  {...intended assignments...},
+  "diff":   [{"key": ..., "before": ..., "after": ...}, ...],
+  "registry_snapshot": {seat_id → holder}
+}
+```
+
+**Guards (all locked by tests):**
+  - 409 Conflict if `seat_registry` is missing ANY of the 8 canonical
+    seats (equity + crypto × {strategist, governor, executor,
+    auditor}). Refuses to run so a corrupt source doesn't propagate.
+  - Extra non-canonical rows in the registry are IGNORED (warning
+    logged) — they don't map to any brain_roster key, but their
+    presence isn't dangerous.
+  - `seat_registry` is READ-ONLY through this endpoint. No
+    delete_one / delete_many / drop calls exist in the module. Tests
+    assert that no delete method is ever called on the collection.
+  - `dry_run=true` returns full before/after/diff without touching
+    `brain_roster` — but STILL writes an audit row so every
+    operator-triggered evaluation is traceable.
+  - Canonical crypto executor lands under key `"crypto"` — NOT
+    `"crypto_executor"` (dead alias). Explicitly tested.
+  - Every apply increments `brain_roster.seat_epoch` so downstream
+    watchers see the version bump.
+
+**Files:**
+  - `backend/routes/seats_reverse_sync.py` — 205 lines.
+  - `backend/tests/test_seats_reverse_sync.py` — 9 tests covering
+    happy path, diff shape, refuse-on-missing, refuse-on-empty,
+    tolerate-extras, no-registry-delete, dry-run safety, audit
+    invariant, canonical crypto-executor key.
+  - `backend/server_modules/router_registry.py` — router mounted.
+
+**Live smoke verified 2026-02-17:**
+  - Dry-run against the healed preview returns `diff=[]` (roster
+    already matches registry from this morning's ad-hoc restore).
+  - All 8 canonical rows visible in `registry_snapshot`.
+  - Correct canonical crypto executor key (`"crypto": "gto"`, no
+    `"crypto_executor"`).
+
+**Total 2026-02-17 test additions:** 9 (reverse-sync) + 13 (taxonomy)
++ 9 (funnel) + 8 (seat-drift) = 39 new tests, all passing. Focused
+suite (all new + happy-path smoke): 51/51 green. Full suite: 2791/2829
+collect, 38 destructive deselected.
+
+**Recovery playbook (operator quick-ref):**
+    1. If `brain_roster.assignments` gets wiped or corrupted for any
+       reason (stray test, UI bug, bad migration, etc.):
+    2. Optionally preview:
+          POST /api/admin/seats/reverse-sync-from-registry
+          {"dry_run": true}
+       → check the `diff` field to see what would change.
+    3. Apply:
+          POST /api/admin/seats/reverse-sync-from-registry
+          {"dry_run": false}
+    4. Verify by re-checking the funnel or the roster UI.
+
+    If step 3 refuses with 409, the REGISTRY itself is missing seats.
+    That's the case where the operator must manually populate the
+    missing rows in `seat_registry` first (via Quick Seat Switches UI
+    or direct Mongo insert) before reverse-syncing.
+
+---
+
+
 ## 2026-02-17 (later) — Destructive-test quarantine + stale-endpoint pruning
 
 **Incident:** During routine "any pre-existing failures?" diligence,
