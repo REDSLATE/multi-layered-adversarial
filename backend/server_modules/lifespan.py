@@ -199,6 +199,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("webull credential hydration failed (non-fatal): %s", e)
 
+    # Kraken pair-floor auto-seeder (2026-02-17) — background task
+    # that periodically fetches Kraken's AssetPairs + Ticker, computes
+    # `ordermin × mid` per pair, and upserts the result as a default
+    # floor. Operator-set rows are NEVER overwritten. Startup is
+    # non-blocking; the task swallows its own errors and never
+    # crashes the server.
+    try:
+        from shared.kraken_auto_seed import start_background_task
+        app.state.kraken_auto_seed_task = await start_background_task()
+        logger.info("kraken_auto_seed background task started")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("kraken_auto_seed task failed to start (non-fatal): %s", e)
+
 
     # Exposure caps override — same pattern. 2026-06-18 (live pilot):
     # Prod hit cap_per_day=$50 two hours before market open with no

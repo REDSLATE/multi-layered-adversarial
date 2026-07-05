@@ -1,3 +1,56 @@
+## 2026-02-28 — Live Execution Path regression suite + orphan cleanup
+
+### Task 1: Modern regression suite for live execution path
+
+**Problem:** The 2026-02-27 architectural reduction ("Brain → Seat → Risk
+→ Broker") deleted the 20-gate legacy chain. The 18 orphaned tests
+that asserted against the retired model were purged, leaving the
+current pipeline (`shared/auto_router.py::_route_one`) without a
+regression fence.
+
+**Delivered:** `/app/backend/tests/test_live_execution_path.py` —
+13 tests covering the whole doctrine end-to-end via `_route_one`:
+
+  * happy path: intent stamped `executed=True gate_state=submitted`,
+    execution row with `ok=True`
+  * seat verdict='pass' (non-directional action) → advisory_only,
+    broker never called
+  * vacant executor seat → blocked, broker never called
+  * governor risk_multiplier reduces notional BEFORE risk.check
+  * council-participant 50% dampener on non-seat brains
+  * risk block (lane disabled) → gate_state=blocked
+  * crypto pair-floor size_up raises broker notional
+  * crypto pair-floor reject terminates intent with correct bucket
+  * equity intent never consults Kraken pair-floor (lane isolation)
+  * `BrokerRouteBlocked` stamps intent + execution row correctly
+  * execution row stamps ALL 4 seat holders + 4 angel names
+  * exactly one execution row per attempt (audit denominator)
+  * success stamps `executed=True` + full broker_order embed
+
+### Task 2: Frontend dead-route sweep
+
+Confirmed zero references to the removed `/api/admin/paradox-v3/status`
+and `/api/admin/brain-metrics/health` endpoints anywhere under
+`/app/frontend/src`. Backend has no route registration for either.
+`test_admin_gets_happy_path.py` already documents both as retired.
+
+### Orphan cleanup (2 more test files)
+
+Deleted `tests/test_auto_router_max_per_tick.py` and
+`tests/test_auto_router_terminal_writeback_2026_06_22.py` — both
+referenced the removed `_sweep_seat_mismatched_intents` helper and
+the pre-2026-02-27 rate-cap sampling pattern (`* 4`). Same class
+of orphan as the 18 already purged this session. Their intent
+(rate-cap enforcement, terminal writeback for non-executed verdicts)
+is now covered by the new `test_live_execution_path.py` suite.
+
+**Result:** 69/69 pipeline tests green. No behavior change — this is
+pure test-suite health. Live execution path is now fenced against
+silent doctrinal drift.
+
+---
+
+
 ## 2026-02-17 (later) — Kraken per-pair notional floor + P2 log-spam silencer
 
 ### 1. Kraken per-pair notional floor (min_notional dam fix)

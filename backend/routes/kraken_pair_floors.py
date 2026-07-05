@@ -114,6 +114,10 @@ async def upsert_pair_floors(body: BulkPairFloorsIn,
             "updated_at": now,
             "updated_by": actor,
             "notes": f.notes,
+            "source": "operator",
+            # Doctrine 2026-02-17: operator writes ALWAYS win. The
+            # auto-seeder MUST skip any doc with this flag set.
+            "operator_override": True,
         }
         await db[COLLECTION].update_one(
             {"_id": f.pair},
@@ -138,3 +142,20 @@ async def delete_pair_floor(pair: str = Path(..., description="e.g. BTC/USD"),
         raise HTTPException(status_code=404, detail=f"no floor configured for {p}")
     logger.info("kraken pair-floor delete by=%s pair=%s", user.get("email"), p)
     return {"ok": True, "deleted": r.deleted_count, "pair": p}
+
+
+@router.post("/pair-floors/auto-seed")
+async def auto_seed_pair_floors(_user: dict = Depends(get_current_user)):
+    """On-demand run of the Kraken auto-seeder. Fetches
+    `/0/public/AssetPairs` + `/Ticker`, computes `ordermin × mid` per
+    pair, upserts as `source=kraken_auto_seed, operator_override=false`.
+
+    Operator-set rows (`operator_override=true`) are ALWAYS skipped —
+    this endpoint cannot overwrite them. See doctrine in
+    `shared/kraken_auto_seed`.
+
+    Never blocks trading — a failed Kraken API call returns
+    `{ok: false, reason: "kraken_api_unreachable"}` without side-effects.
+    """
+    from shared.kraken_auto_seed import run_once  # noqa: WPS433
+    return await run_once()
