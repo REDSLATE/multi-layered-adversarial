@@ -181,67 +181,9 @@ def test_reason_outside_rth():
 
 
 # ── Integration: auto-submit gate ──────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_matches_tier_1_blocks_equity_after_hours(monkeypatch):
-    """The whole point of this module — `matches_tier_1` MUST refuse
-    equity intents when `is_equity_rth()` returns False."""
-    from shared import auto_submit_policy
-    from shared.auto_submit_policy import matches_tier_1, set_policy
-
-    monkeypatch.delenv("RISEDUAL_BYPASS_MARKET_HOURS", raising=False)
-    set_policy(
-        enabled=True,
-        confidence_min=0.0,
-        allowed_actions=["BUY", "SELL"],
-        allowed_lanes=["equity", "crypto"],
-        allowed_brains=["barracuda"],
-        required_dry_run_state="passed",
-    )
-
-    # Freeze "now" to a Sunday by monkeypatching market_hours.
-    import shared.market_hours as mh
-    monkeypatch.setattr(mh, "is_equity_rth", lambda now_utc=None: False)
-    monkeypatch.setattr(
-        mh, "market_hours_reason",
-        lambda now_utc=None: "equity_after_hours: weekend",
-    )
-
-    intent = {
-        "action": "BUY",
-        "lane": "equity",
-        "stack": "barracuda",
-        "confidence": 0.99,
-        "dry_run_state": "passed",
-    }
-    ok, reason = await matches_tier_1(intent)
-    assert ok is False
-    assert reason.startswith("equity_after_hours")
-
-    # Crypto on the SAME closed clock must skip the market-hours gate
-    # — but we stub the seat lookup so it doesn't trip the seat
-    # pre-check (different doctrine, unrelated to market hours).
-    from shared import executor_seat as es
-    from shared import seat_policy as sp
-
-    async def fake_get_seat_holder(seat_name):  # noqa: ARG001
-        return "barracuda"
-
-    monkeypatch.setattr(es, "get_seat_holder", fake_get_seat_holder)
-    monkeypatch.setattr(es, "seats_with_execute",
-                        lambda lane: ["ISRAFEL"])
-    monkeypatch.setattr(sp, "seat_may_execute_lane",
-                        lambda seat, lane: True)
-
-    intent_crypto = {
-        "action": "BUY",
-        "lane": "crypto",
-        "stack": "barracuda",
-        "confidence": 0.99,
-        "dry_run_state": "passed",
-    }
-    ok2, reason2 = await matches_tier_1(intent_crypto)
-    assert ok2 is True, f"crypto must trade 24/7: {reason2}"
-
-    auto_submit_policy.reset_policy_for_tests()
+# (Historical integration test `test_matches_tier_1_blocks_equity_after_hours`
+# removed 2026-07-04 — imported `shared.auto_submit_policy` which was
+# deleted in the 2026-07-01 refactor. Market-hours logic itself is
+# still covered by the unit tests above; the integration path against
+# the current execution flow lives in
+# `test_seat_council_participant_doctrine.py` and related suites.)

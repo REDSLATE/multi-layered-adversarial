@@ -115,34 +115,7 @@ def test_compose_crypto_accepts_slash_separator():
 
 
 # ─── universe gate uses the bare form ────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_symbol_in_universe_gate_strips_prefix_before_lookup(monkeypatch):
-    """Confirms `_evaluate_gates` queries `patterns_universe` with the
-    BARE ticker even when the intent carries the canonical form."""
-    captured = {}
-
-    class _FakeColl:
-        async def find_one(self, q, *_a, **_kw):
-            # Pin the EXACT query shape the gate uses.
-            captured["q"] = q
-            return {"symbol": "AAPL", "lane": "equity", "active": True}
-
-    class _FakeDB:
-        def __getitem__(self, _name):
-            return _FakeColl()
-
-    # The gate imports `db` from a couple of places — patch both call
-    # sites. We just need the patterns-universe lookup to be observable.
-    import shared.execution as ex
-    monkeypatch.setattr(ex, "db", _FakeDB())
-
-    # We can't easily call the full `_evaluate_gates` here because it
-    # depends on a long fixture chain. Instead we verify the strip
-    # helper does the right thing and that the gate's code path
-    # reads through it — implementation-level pin.
-    from shared.broker_symbol_resolver import _strip_canonical_prefix
-    intent_symbol = "EQ:AAPL"
-    bare = _strip_canonical_prefix(intent_symbol.upper().strip())
-    assert bare == "AAPL"
-    # And the helper would forward `bare` to the find_one, not "EQ:AAPL".
+# (Historical test `test_symbol_in_universe_gate_strips_prefix_before_lookup`
+# removed 2026-07-04 — imported `shared.execution` which was deleted in the
+# 2026-07-01 refactor. Behavior is covered by the `compose` and
+# `_strip_canonical_prefix` tests above.)

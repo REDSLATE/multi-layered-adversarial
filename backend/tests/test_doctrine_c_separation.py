@@ -203,14 +203,3 @@ def test_mc_does_not_reblock_confidence_floor():
 # ───── RoadGuard doctrine: PURE MATH ─────────────────────────────────
 
 
-@pytest.mark.tripwire
-def test_roadguard_spread_floor_is_a_pure_function_of_snapshot():
-    """RoadGuard does not look at confidence, conviction, or any brain
-    signal. Only the snapshot's `spread_bps` against the lane cap."""
-    # We test through the live gate evaluator by importing the
-    # snapshot-only path (no brain context needed).
-    # Verify the symbolic spread cap is what doctrine says.
-    from shared.execution import _evaluate_gates  # noqa: F401 — import-only smoke
-    # Existence + import works; behavioral coverage lives in
-    # test_execution_gates_doctrine_c.py (broader integration test).
-    assert True

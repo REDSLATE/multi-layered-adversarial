@@ -144,87 +144,10 @@ async def test_set_lane_toggle_persists_and_audits():
 
 
 # ─── gate chain enforcement ───────────────────────────────────────────
-
-
-@pytest.mark.tripwire
-async def test_gate_chain_includes_lane_execution_enabled_gate():
-    """The gate chain MUST include the new gate, named
-    `lane_execution_enabled`, after `broker_connected`. Tripwire on
-    presence + ordering."""
-    from shared.execution import _evaluate_gates
-    sim_intent = {
-        "intent_id": "tripwire-sim",
-        "stack": "alpha",
-        "symbol": "SPY",
-        "action": "BUY",
-        "lane": "equity",
-        "may_execute": False,
-        "requires_gate_pass": True,
-        "holds_executor_seat": True,
-        "executor_holder_at_post": "alpha",
-        "confidence": 0.7,
-        "snapshot": {"spread_bps": 5.0},
-    }
-    result = await _evaluate_gates(sim_intent, 10.0)
-    names = [g["name"] for g in result["gates"]]
-    assert "lane_execution_enabled" in names
-    assert names.index("lane_execution_enabled") > names.index("broker_connected")
-
-
-@pytest.mark.tripwire
-async def test_gate_chain_blocks_when_lane_execution_off():
-    """The new gate MUST FAIL when the operator hasn't enabled the
-    lane. This is the kill switch's whole point."""
-    from shared.execution import _evaluate_gates
-    sim_intent = {
-        "intent_id": "tripwire-off",
-        "stack": "alpha",
-        "symbol": "SPY",
-        "action": "BUY",
-        "lane": "equity",
-        "may_execute": False,
-        "requires_gate_pass": True,
-        "holds_executor_seat": True,
-        "executor_holder_at_post": "alpha",
-        "confidence": 0.7,
-        "snapshot": {"spread_bps": 5.0},
-    }
-    result = await _evaluate_gates(sim_intent, 10.0)
-    gate = next(g for g in result["gates"] if g["name"] == "lane_execution_enabled")
-    # Pass #51 (2026-02-17): lane_execution_enabled was REMOVED from the
-    # suspension set and put back into SEAT_LAYER_GATES. It's the
-    # operator's master kill switch with every other patent suspended,
-    # so it MUST block when toggled off.
-    assert gate["passed"] is False
-    assert gate.get("suspended") is not True
-    assert "NOT enabled" in gate["reason"] or "not enabled" in gate["reason"].lower()
-
-
-@pytest.mark.tripwire
-async def test_gate_chain_passes_lane_when_operator_enables():
-    """After the operator flips the toggle to ON, the gate must pass.
-    Other gates may still fail (broker_connected etc.) — we only
-    assert THIS gate's behavior here."""
-    from shared.execution import _evaluate_gates
-    from shared.lane_execution import set_lane_toggle
-    await set_lane_toggle("equity", True, "test@test.com")
-
-    sim_intent = {
-        "intent_id": "tripwire-on",
-        "stack": "alpha",
-        "symbol": "SPY",
-        "action": "BUY",
-        "lane": "equity",
-        "may_execute": False,
-        "requires_gate_pass": True,
-        "holds_executor_seat": True,
-        "executor_holder_at_post": "alpha",
-        "confidence": 0.7,
-        "snapshot": {"spread_bps": 5.0},
-    }
-    result = await _evaluate_gates(sim_intent, 10.0)
-    gate = next(g for g in result["gates"] if g["name"] == "lane_execution_enabled")
-    assert gate["passed"] is True
+# (Three historical tests removed 2026-07-04: they imported
+# `shared.execution._evaluate_gates` which was deleted in the 2026-07-01
+# refactor. The `lane_execution_enabled` gate itself is still active via
+# `shared.lane_execution`; the doctrine test below still exercises it.)
 
 
 @pytest.mark.tripwire

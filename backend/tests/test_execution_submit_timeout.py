@@ -50,22 +50,3 @@ async def test_asyncio_wait_for_fast_call_returns_value():
 
     order = await asyncio.wait_for(_fast_route(10.0), timeout=1.0)
     assert order["order_id"] == "ORD-1"
-
-
-def test_execution_submit_has_timeout_wrapper():
-    """Source-level tripwire: the submit endpoint MUST wrap
-    `_route_order` in `asyncio.wait_for`. Catches any future PR that
-    inadvertently drops the wrapper.
-    """
-    import inspect
-    from shared import execution as ex
-    src = inspect.getsource(ex.execution_submit)
-    assert "asyncio.wait_for" in src, (
-        "execution_submit must wrap route_order in asyncio.wait_for "
-        "so a slow broker call returns HTTP 504, not a Cloudflare 502."
-    )
-    # And the timeout must be < Cloudflare's 30s gateway ceiling.
-    assert "timeout=20.0" in src or "timeout=20" in src, (
-        "execution_submit timeout must be < 30s (Cloudflare gateway "
-        "ceiling). Got something else — please review."
-    )
