@@ -1,4 +1,74 @@
-## 2026-02-28 (later) — Pipeline drift-review P0 patch (cap-authority + audit-truth + expiry)
+## 2026-02-28 (later²) — Doctrine change: crypto lane no longer vacant by default
+
+### The problem
+
+Observed 2026-07-05: 869 crypto intents emitted / 0 executed in a
+24h window. Funnel `top_block_reason=executor_seat_vacant:crypto`
+for 492 of the drops. Root cause: `DEFAULT_ASSIGNMENTS` in
+`shared/roster.py` shipped with all 4 crypto seats set to `None`
+under the pre-existing "Paradox v2 doctrine: crypto starts vacant"
+stance. Every `POST /api/admin/roster/reset` — including the
+operator UI's "Reset to Defaults" button — silently re-vacated
+the crypto lane, requiring 4 additional clicks to trade again.
+
+### The change
+
+`DEFAULT_ASSIGNMENTS` now mirrors equity's populated mapping into
+crypto:
+
+```
+                     equity       crypto
+    strategist       barracuda    barracuda
+    executor         camino       camino  (canonical key "crypto")
+    governor         hellcat      gto     ← distinct, keeps risk-regime
+                                          independent across lanes
+    auditor          None         None    ← operator-assigned (mirror)
+```
+
+Split the two governor seats across the two governor-eligible brains
+(`hellcat`, `gto`) so lane-level sizing decisions stay independent.
+
+### Applied to live DB
+
+Three seats assigned via `POST /api/admin/roster/assign`:
+  * `crypto_strategist` → barracuda
+  * `crypto`            → camino
+  * `crypto_governor`   → gto
+
+`seat_registry` gate_view now resolves all three via source=roster.
+
+### Regression fence
+
+New non-destructive test file: `test_roster_default_assignments_doctrine.py`
+(6 tests) pins:
+  * crypto executor default is `camino` (top invariant)
+  * crypto_strategist=barracuda, crypto_governor=gto
+  * both auditor seats remain vacant
+  * governor defaults use only governor-eligible brains
+  * the two governor seats are held by different brains
+  * every brain in the fleet appears in the map at least once
+
+Updated destructive test `test_roster.py::test_default_assignments_include_crypto_lane`
+(was `test_redeye_not_seated_by_default`) — inverted the assertion:
+after `/reset`, crypto executor MUST be populated, not vacant.
+
+### Remaining crypto-lane blocker
+
+Kraken connection state: `connected=false, execution_enabled=false,
+poller_running=false`. Operator-side (needs Kraken API key input via
+the credentials UI + execution toggle + poller start). No code change
+needed on our side.
+
+**Files changed:**
+  * `backend/shared/roster.py` — DEFAULT_ASSIGNMENTS + docstring
+  * `backend/tests/test_roster.py` — updated destructive assertion
+  * `backend/tests/test_roster_default_assignments_doctrine.py` — NEW (6 tests)
+
+**Test result:** 83/83 pipeline+doctrine tests green.
+
+---
+
+
 
 Operator drift review of the live-execution path identified 6 issues:
 this patch fixes 4 as P0 (safety + audit truth), the 5th (broker

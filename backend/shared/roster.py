@@ -69,27 +69,42 @@ ROLES: tuple[str, ...] = (
 )
 BRAINS: tuple[str, ...] = DISCUSSION_PARTICIPANTS  # ("camino", "barracuda", "hellcat", "gto")
 
-# Default seat → brain assignment. Operator-pinned defaults for the
-# equity lane (strategist=camaro, executor=alpha, governor=chevelle);
-# auditor + every crypto seat start vacant so the operator slots them
-# explicitly. A brain MAY hold one equity seat AND one crypto seat
-# simultaneously — eligibility (below) only restricts Governor seats.
-# Default seat → brain assignment. Operator-pinned defaults for the
-# equity lane (strategist=camaro, executor=alpha, governor=chevelle).
-# All other seats start vacant. CRYPTO LANE INTENTIONALLY VACANT:
-# per Paradox v2 doctrine, restrictions belong to the SEAT (capital,
-# trust list, autonomy state) not to the BRAIN. The seat decides who
-# it trusts; defaulting a brain into a seat re-introduces the exact
-# coupling we're removing. Operator (or the seat's verifier-driven
-# promotion path) is the only way a brain enters the crypto seat.
+# Default seat → brain assignment.
+#
+# 2026-02-28 DOCTRINE UPDATE — crypto lane is no longer vacant by
+# default. The prior "seats start vacant per Paradox v2" stance
+# meant every `POST /api/admin/roster/reset` (including operator
+# UI clicks on "Reset to Defaults") silently disabled the entire
+# crypto lane for hours until the operator re-assigned all four
+# seats by hand. Symptom (observed 2026-07-05): 492 crypto intents
+# emitted / 0 executed in a 24h window, funnel top block reason
+# `executor_seat_vacant:crypto`. Operator changed the doctrine:
+# the reset target should be a WORKING lane, not a lane that
+# requires 4 additional clicks before it can trade.
+#
+# Mirror mapping (equity ↔ crypto):
+#   strategist  ↔ crypto_strategist    → barracuda
+#   executor    ↔ crypto (canonical)   → camino
+#   governor    ↔ crypto_governor      → gto  ← different from equity so
+#                                              no brain holds BOTH lanes'
+#                                              governor seats; keeps risk-
+#                                              regime decisions independent.
+#   auditor     ↔ crypto_auditor       → None (operator-assigned; both
+#                                              lanes mirror this vacancy
+#                                              intentionally).
+#
+# All 4 brains (camino, barracuda, hellcat, gto) are present in the
+# default map at least once. Any operator reassignment via
+# /api/admin/roster/assign or /swap remains fully supported; this
+# only changes what /reset restores to.
 DEFAULT_ASSIGNMENTS: dict[str, Optional[str]] = {
     "strategist":        "barracuda",
     "executor":          "camino",
     "governor":          "hellcat",
     "auditor":           None,
-    "crypto_strategist": None,
-    "crypto":            None,
-    "crypto_governor":   None,
+    "crypto_strategist": "barracuda",
+    "crypto":            "camino",
+    "crypto_governor":   "gto",
     "crypto_auditor":    None,
 }
 
@@ -210,13 +225,14 @@ async def get_roster() -> dict:
             for r in missing:
                 assignments[r] = None
             dirty = True
-        # ── Paradox v2 doctrine note (2026-02-19) ──
-        # The crypto seat intentionally remains vacant by default.
-        # Restrictions and trust lists belong to the SEAT, not the
-        # brain — we never auto-seat a brain just to "unblock" the
-        # lane. Lane unblocking is the seat's own responsibility via
-        # its trust list + autonomy state (observe → shadow →
-        # toehold → auto_execute). Any previous backfill was reverted.
+        # ── 2026-02-28 doctrine ──
+        # The crypto lane defaults to a WORKING mirror of equity
+        # (see DEFAULT_ASSIGNMENTS above). The prior "crypto starts
+        # vacant per Paradox v2" stance was reverted after 492
+        # crypto intents/24h died at seat with `executor_seat_vacant`
+        # every time /roster/reset was called. `get_roster()` still
+        # never overrides existing values — the doctrine only affects
+        # /reset and the first-seed path below.
         if dirty:
             doc["assignments"] = assignments
             await db[BRAIN_ROSTER].update_one(

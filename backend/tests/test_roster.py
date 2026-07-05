@@ -354,19 +354,31 @@ class TestEligibility:
         assert r.status_code == 400
         assert "currently occupy" in r.text.lower()
 
-    def test_redeye_not_seated_by_default(self):
-        """REDEYE is NOT seated by default — it lives across positions
-        via stances. Crypto seat starts vacant; the operator (or the
-        seat's verifier-driven autonomy progression) is the only path
-        for a brain to enter the crypto seat. Restrictions belong to
-        the seat, not the brain (Paradox v2 doctrine)."""
+    def test_default_assignments_include_crypto_lane(self):
+        """2026-02-28 DOCTRINE UPDATE — the crypto lane is no longer
+        vacant by default. `/roster/reset` MUST restore a working
+        4-seat crypto mapping so the operator can trade the lane
+        without 4 extra clicks. Auditor seats (both lanes) remain
+        vacant intentionally — operator-assigned only."""
         tok = _login()
         _reset(tok)
         r = requests.get(f"{BASE_URL}/api/admin/roster", headers=_hdr(tok), timeout=10)
         a = r.json()["assignments"]
+        # Both auditor seats remain vacant (operator-assigned only).
         assert a.get("auditor") is None
-        assert a.get("crypto") is None
-        assert "gto" not in {v for v in a.values() if v}
+        assert a.get("crypto_auditor") is None
+        # Crypto executor MUST be populated — that's the seat that
+        # gates all crypto execution via seat.decide().
+        assert a.get("crypto") == "camino", (
+            f"crypto executor seat expected 'camino' post-reset; got "
+            f"{a.get('crypto')!r}. If this fails, the doctrine has "
+            f"reverted to the pre-2026-02-28 'crypto starts vacant' "
+            f"stance and the lane will silently disable on every reset."
+        )
+        assert a.get("crypto_strategist") == "barracuda"
+        assert a.get("crypto_governor") == "gto"
+        # gto now appears in the default mapping (crypto_governor).
+        assert "gto" in {v for v in a.values() if v}
 
 
 class TestTenure:
