@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { Card, Badge, EmptyState } from "@/components/ui-bits";
 import { ArrowsClockwise, WaveTriangle } from "@phosphor-icons/react";
+import WebullConnect from "@/components/WebullConnect";
 
 const SOURCE_COLOR = { kraken: "#8B5CF6", webull: "#F59E0B" };
 const LANE_COLOR = { equity: "#F59E0B", crypto: "#8B5CF6" };
@@ -155,6 +156,11 @@ export default function SpreadWatcher() {
         className="flex flex-wrap items-center gap-2 mb-2 pb-3 border-b border-rd-border"
         data-testid="spread-watcher-webull-auth"
       >
+        <span className="text-[10px] uppercase tracking-widest text-rd-dim">
+          webull creds
+        </span>
+        <WebullConnect />
+        <div className="w-full h-px" />
         <span className="text-[10px] uppercase tracking-widest text-rd-dim">
           webull token
         </span>

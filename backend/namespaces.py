@@ -114,6 +114,14 @@ ALT_DATA_MACRO = "alt_data_macro"            # FRED series cache
 KRAKEN_CREDENTIALS = "kraken_credentials"
 KRAKEN_AUDIT_LOG = "kraken_audit_log"
 
+# Webull broker credentials (2026-02-17) — parity with Kraken. Singleton
+# doc keyed `"singleton"` on `webull_credentials`. Holds app_key +
+# encrypted app_secret + account_id + region + environment. NOT the
+# 2FA-derived access token — that continues to live in `webull_token`
+# (both on disk + Mongo mirror per 2026-07-04 P1a).
+WEBULL_CREDENTIALS = "webull_credentials"
+WEBULL_AUDIT_LOG = "webull_audit_log"
+
 # Brain Roster — dynamic role assignment across the four brains.
 # Doctrine: the roster is descriptive metadata. Assigning Camaro to
 # "executor" does NOT grant Camaro execution authority. `may_execute`

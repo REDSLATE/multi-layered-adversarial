@@ -1,3 +1,78 @@
+## 2026-02-17 (later) — Webull Connect UI (operator-input credential flow)
+
+**Problem:** Operator had no UI to enter Webull App Key / App Secret /
+Account ID. Editing `backend/.env` was the only way to (re)configure
+them. Kraken had a parallel UI (`POST /admin/kraken/connect` +
+`KrakenConnect.jsx`) since 2026-06; Webull had never been given the
+equivalent.
+
+**Delivered:**
+
+*Backend* — Mongo-backed singleton with Fernet-encrypted app_secret:
+  - `POST   /api/admin/webull/connect`   — structural validation, encrypt,
+    persist to `webull_credentials.singleton`, hot-hydrate in-process env.
+  - `GET    /api/admin/webull/status`    — redacted preview OR
+    `{connected:false, env_configured, cred_source:"env"|"none"}`.
+  - `POST   /api/admin/webull/probe`     — reports live token status via
+    the existing `webull_token.status()` helper (closest thing to an
+    auth-works signal without triggering a fresh 2FA push).
+  - `DELETE /api/admin/webull/disconnect` — wipe singleton + clear env.
+
+*Modules:*
+  - `backend/routes/webull_credentials.py` (new — 210 lines)
+  - `backend/shared/webull_credentials.py` (new — cred resolver + env
+    hydrator; async for FastAPI routes, sync for trader threads)
+  - `backend/namespaces.py` (added `WEBULL_CREDENTIALS`, `WEBULL_AUDIT_LOG`)
+  - `backend/server_modules/router_registry.py` (mount new router)
+  - `backend/server_modules/lifespan.py` (call `hydrate_env_from_mongo` on
+    boot — env still wins if present per backward-compat doctrine)
+
+*Frontend:*
+  - `frontend/src/components/WebullConnect.jsx` (new — modeled on
+    `KrakenConnect.jsx`; App Key + App Secret + Account ID inputs, region
+    (us/hk/jp) and environment (pro/paper) toggles, ENV-ONLY badge when
+    creds live only in `.env`, "SAVE CREDS" CTA, connected view with
+    redacted preview + auth-state card + re-probe/disconnect actions.)
+  - `frontend/src/components/SpreadWatcher.jsx` (mount new component in
+    the existing Webull strip on the Overview page, immediately above
+    the pre-existing 2FA token row).
+
+**Why no live pre-token probe?**
+Webull's current OpenAPI (`api.webull.com`) requires HMAC-SHA1 signed
+requests AND the 2FA-derived x-access-token for every meaningful call.
+The two endpoints that only need app_key+app_secret (`/openapi/auth/
+token/create`) trigger a mobile push — an unacceptable side effect for
+a "test connection" click. Legacy unsigned probe URLs
+(`u1strade.webullbroker.com`) return DNS failures from this deploy
+(host deprecated). Real validation now happens the first time the
+operator clicks "init token" in the Webull 2FA strip — that call fails
+loudly with 401 if the app_key/app_secret are wrong. Structural
+validation (length bounds, required fields) is what /connect enforces.
+
+**Doctrine invariants:**
+  - Env wins if set (backward compat for pre-migration deploys).
+  - Ciphertext never leaves the backend — UI reads redacted previews only.
+  - Save auto-hydrates process env → trader threads pick up the new
+    keys on next tick without supervisor restart.
+  - Disconnect clears env vars in the running process; on supervisor
+    restart, `.env` values reload if present. Operator-safe.
+
+**Verified end-to-end 2026-02-17:**
+  - GET /status (env baseline) → `{connected:false, env_configured:true, cred_source:"env"}` ✅
+  - POST /connect (short creds) → 422 with per-field Pydantic errors ✅
+  - POST /connect (valid structural) → 200, redacted preview, singleton
+    persisted, `cred_source:"mongo"` ✅
+  - POST /probe → token expiry state surfaced from existing `webull_auth.status()` ✅
+  - DELETE /disconnect → doc removed, env cleared, status returns
+    `env_configured:false` ✅
+  - Backend restart → `.env` values reload cleanly, no orphaned state ✅
+  - Frontend: modal opens on Overview page in the Spread Watcher strip,
+    right above the existing 2FA token row. All fields render, buttons
+    wired to the correct endpoints. Screenshot verified.
+
+---
+
+
 ## 2026-02-17 — Orphaned test purge complete (P0 CI health)
 
 **Root cause:** After the 2026-07-01 architectural removal of

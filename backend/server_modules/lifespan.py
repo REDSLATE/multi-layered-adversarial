@@ -185,6 +185,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("webull_min_notional_floor refresh failed (non-fatal): %s", e)
 
+    # Webull broker credentials (2026-02-17) — hydrate in-process env
+    # from the Mongo `webull_credentials` singleton if the operator
+    # previously connected via POST /api/admin/webull/connect. Env
+    # wins if already set (backward compat for pre-migration `.env`
+    # deploys). Never blocks startup — Mongo unreachable is logged
+    # and skipped.
+    try:
+        from shared.webull_credentials import hydrate_env_from_mongo
+        hydrated = await hydrate_env_from_mongo(db)
+        if hydrated:
+            logger.info("webull creds hydrated from mongo singleton into process env")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("webull credential hydration failed (non-fatal): %s", e)
+
+
     # Exposure caps override — same pattern. 2026-06-18 (live pilot):
     # Prod hit cap_per_day=$50 two hours before market open with no
     # way to flip the env var from a phone. Mongo override lets the
