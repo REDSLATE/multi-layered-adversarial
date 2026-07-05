@@ -1,5 +1,9 @@
 """Memory provenance tests.
 
+⚠ DESTRUCTIVE — calls `POST /api/admin/roster/reset` against the live
+backend. Marked `@pytest.mark.destructive`; skipped by default per
+`pytest.ini`. See 2026-02-17 seat-wipe incident.
+
 Stance ingestion optionally carries `memory_sources` + `confidence_origin`
 so future audits can trace memory poisoning / reinforcement loops.
 
@@ -12,7 +16,10 @@ operator pins lane-filtering behavior.
 import os
 import uuid
 
+import pytest
 import requests
+
+pytestmark = pytest.mark.destructive
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL")
 if not BASE_URL:

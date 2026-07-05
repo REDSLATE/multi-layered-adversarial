@@ -26,6 +26,13 @@ from __future__ import annotations
 
 import pytest
 
+# ⚠ Only the LIVE-API test in this module is destructive (it hits
+# /api/executor/rotate + /api/admin/roster/assign + /api/admin/roster/reset
+# against the operator's live backend, wiping seat state). The
+# source-level tripwire test at the top of the file is pure static
+# analysis and safe. We mark only the destructive test below with
+# `@pytest.mark.destructive`; the tripwire runs on every suite pass.
+
 
 # ─── source-level tripwires ───────────────────────────────────────────
 
@@ -73,6 +80,7 @@ def _legacy_holder(base_url: str, token: str) -> str | None:
     return (r.json() or {}).get("holder")
 
 
+@pytest.mark.destructive
 def test_executor_seat_assignment_auto_wipes_legacy_doc(
     auth_client, base_url, admin_token,
 ):

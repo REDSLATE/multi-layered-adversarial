@@ -1,3 +1,71 @@
+## 2026-02-17 (later) — Destructive-test quarantine + stale-endpoint pruning
+
+**Incident:** During routine "any pre-existing failures?" diligence,
+main agent ran the full `pytest backend/tests` suite against the LIVE
+preview backend. Two tests (`test_roster.py` + `test_legacy_executor_
+auto_wipe.py`) POST to `/api/admin/roster/reset` and `/api/admin/roster/
+assign` — they wiped `brain_roster.current.assignments.crypto*` before
+the operator noticed. **This was self-inflicted damage.**
+
+**Why the runtime survived:** The seat-registry primary-authority
+migration from earlier the same day (canonical rows in `seat_registry`)
+meant `get_lane_seats()` resolved seats via the primary path, ignoring
+the wiped fallback. The doctrine `seat_registry = primary authority /
+brain_roster = valid fallback` paid off exactly the way it was
+designed to. `brain_roster` was reverse-synced from `seat_registry`
+in-place (no operator re-entry required).
+
+**Hardening: `pytest -m destructive` marker + default deselect**
+
+`pytest.ini` now carries `addopts = -m "not destructive"` — a normal
+`pytest backend/tests` run SKIPS destructive tests entirely. Opt-in
+only via `pytest -m destructive` and ONLY against a scratch DB.
+
+Files marked `@pytest.mark.destructive` (module-level `pytestmark`):
+  - `test_roster.py` — 24 tests. Hits roster/reset, roster/assign,
+    roster/swap, roster/eligibility/reset.
+  - `test_quorum_and_provenance.py` — 8 tests. Hits roster/reset for
+    memory-provenance setup.
+  - `test_system_flags_live_api.py` — 10 tests. Mutates system flags.
+
+Files marked at test-function level (source-tripwire tests in the
+same file stay non-destructive):
+  - `test_legacy_executor_auto_wipe.py` — 1 test marked
+    (`test_executor_seat_assignment_auto_wipes_legacy_doc`); the
+    source-level tripwire test is safe.
+
+Total: 38 tests now correctly deselected on a default suite run
+(2783 tests collect vs 2821 total).
+
+**Bonus: retired two dead smoke-test endpoints** (per operator doctrine
+"don't preserve dead architecture"):
+  - `GET /api/admin/paradox-v3/status` — not registered anywhere.
+    Grep confirmed only tests referenced it. Removed from
+    `test_admin_gets_happy_path.py`, and reworked the 3 assertion
+    sites in `test_system_flags_live_api.py` to hit the still-alive
+    `/api/admin/system-flags` GET instead.
+  - `GET /api/admin/brain-metrics/health` — also not registered.
+    Removed from the happy-path list. Also grep-confirmed no other
+    reference in backend or frontend code.
+
+**Verification:**
+  - `pytest backend/tests --collect-only -q` → 2783/2821 collected, 38 deselected.
+  - `pytest test_admin_gets_happy_path.py` → 3/3 pass (was 3/5 before).
+  - Focused suite (funnel + taxonomy + seat drift + happy-path) → 33/33 pass.
+  - Runtime `get_lane_seats()` still resolves all 8 seats correctly on
+    both lanes after the incident + restore.
+
+**Doctrine invariants added:**
+    Live-API tests that mutate operator-curated state (roster, seats,
+    system flags, broker credentials) MUST carry
+    `@pytest.mark.destructive`. The marker is default-deselected via
+    pytest.ini. Attempting to run a destructive test against preview
+    or prod now requires the operator to explicitly opt in with `-m
+    destructive`.
+
+---
+
+
 ## 2026-02-17 (later) — Broker-error taxonomy + terminal-block doctrine
 
 **Root cause of the pending-intent pileup:** `shared/auto_router.py::_route_one`

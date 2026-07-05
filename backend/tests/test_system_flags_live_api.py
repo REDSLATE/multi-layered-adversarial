@@ -1,5 +1,9 @@
 """Live API smoke for the new DB-backed system_flags admin router.
 
+⚠ DESTRUCTIVE — mutates operator-curated system flags on the live
+backend. Marked `@pytest.mark.destructive`; skipped by default per
+`pytest.ini`. See 2026-02-17 seat-wipe incident.
+
 Targets the preview MC backend (REACT_APP_BACKEND_URL from frontend/.env)
 through the public ingress. Verifies:
 
@@ -10,14 +14,21 @@ through the public ingress. Verifies:
   * POST paradox-v3-brains accepts empty list (explicit "no brains")
   * POST trigger-watcher + trigger-refire round-trip
   * GET /api/admin/system-flags/changes reverse chronological shape
-  * GET /api/admin/paradox-v3/status now includes db_flags block
   * Leaves the DB clean (deletes the doc + audit rows) after the suite
+
+NOTE 2026-02-17: the pre-existing `GET /api/admin/paradox-v3/status`
+assertions were removed — that endpoint is not registered in the
+current runtime (grep confirmed only these tests referenced it, no
+frontend or route code). Retiring the assertions rather than adding
+a compatibility route so we don't preserve dead architecture.
 """
 from __future__ import annotations
 
 import os
 import pytest
 import requests
+
+pytestmark = pytest.mark.destructive
 
 BASE = os.environ.get(
     "REACT_APP_BACKEND_URL",
@@ -138,13 +149,16 @@ def test_trigger_watcher_round_trip(admin_headers):
     assert r.status_code == 200, r.text
     assert r.json()["effective_trigger_watcher_enabled"] is True
 
-    # Reflected in paradox-v3 status
-    s = requests.get(f"{BASE}/api/admin/paradox-v3/status", headers=admin_headers, timeout=15)
+    # Reflected in the system-flags read-back (was previously verified
+    # via /api/admin/paradox-v3/status; that endpoint was retired and
+    # the check moved here — same guarantee, still-alive endpoint).
+    s = requests.get(f"{BASE}/api/admin/system-flags", headers=admin_headers, timeout=15)
     assert s.status_code == 200, s.text
     sj = s.json()
-    # Some status routes nest the value differently — check both common shapes.
-    assert "db_flags" in sj, f"status missing db_flags: {sj.keys()}"
-    assert sj["db_flags"].get("trigger_watcher_enabled") is True
+    effective = sj.get("effective") or sj
+    assert effective.get("trigger_watcher_enabled") is True, (
+        f"trigger_watcher_enabled not reflected in system-flags: {sj.keys()}"
+    )
 
 
 def test_trigger_refire_round_trip(admin_headers):
@@ -157,8 +171,9 @@ def test_trigger_refire_round_trip(admin_headers):
     assert r.status_code == 200, r.text
     assert r.json()["effective_trigger_refire_enabled"] is True
 
-    s = requests.get(f"{BASE}/api/admin/paradox-v3/status", headers=admin_headers, timeout=15)
-    assert s.json()["db_flags"].get("trigger_refire_enabled") is True
+    s = requests.get(f"{BASE}/api/admin/system-flags", headers=admin_headers, timeout=15)
+    effective = (s.json() or {}).get("effective") or s.json()
+    assert effective.get("trigger_refire_enabled") is True
 
 
 def test_changes_feed_shape_and_order(admin_headers):
@@ -187,19 +202,25 @@ def test_changes_feed_shape_and_order(admin_headers):
     assert rows[0]["ts"] >= rows[1]["ts"]
 
 
-def test_paradox_v3_status_includes_db_flags_and_effective_brains(admin_headers):
+def test_paradox_v3_brains_reflected_in_effective_flags(admin_headers):
+    """Rewired 2026-02-17: was `test_paradox_v3_status_includes_...`
+    which hit the retired /api/admin/paradox-v3/status endpoint. The
+    same guarantee (DB-backed setter reflects into effective read) is
+    still checked here via the live /api/admin/system-flags GET."""
     # Set known state
     requests.post(
         f"{BASE}/api/admin/system-flags/paradox-v3-brains",
         headers=admin_headers, json={"brains": ["camino"]}, timeout=15,
     )
-    s = requests.get(f"{BASE}/api/admin/paradox-v3/status", headers=admin_headers, timeout=15)
+    s = requests.get(f"{BASE}/api/admin/system-flags", headers=admin_headers, timeout=15)
     assert s.status_code == 200, s.text
     sj = s.json()
-    assert "flags" in sj and "db_flags" in sj
-    # brains_on_v3 should reflect DB-backed effective value
-    brains_on_v3 = sj.get("brains_on_v3") or sj.get("db_flags", {}).get("paradox_v3_brains")
-    assert "camino" in (brains_on_v3 or [])
+    # effective_paradox_v3_brains is the DB-backed effective value.
+    effective = sj.get("effective") or sj
+    brains = effective.get("paradox_v3_brains") or effective.get("effective_paradox_v3_brains")
+    assert "camino" in (brains or []), (
+        f"paradox-v3-brains setter didn't reflect into effective read: {sj}"
+    )
 
 
 def test_zzz_cleanup(admin_headers):

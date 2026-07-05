@@ -32,8 +32,13 @@ def auth_headers(token):
     "/api/admin/flags",
     "/api/admin/diagnostics",
     "/api/admin/system-flags",
-    "/api/admin/paradox-v3/status",
-    "/api/admin/brain-metrics/health",
+    # Two stale smoke-test endpoints REMOVED 2026-02-17 per operator
+    # doctrine "don't preserve dead architecture":
+    #   • /api/admin/paradox-v3/status  — retired subsystem, no route
+    #   • /api/admin/brain-metrics/health — never registered in this
+    #     runtime; grep confirmed only this test list referenced it
+    #     (no frontend, no other backend code). If either endpoint is
+    #     ever rebuilt, re-add the corresponding entry here.
 ])
 def test_admin_get_happy_path(auth_headers, path):
     t0 = time.time()

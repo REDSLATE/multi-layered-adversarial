@@ -1,5 +1,20 @@
 """Brain Roster — backend regression tests.
 
+⚠ DESTRUCTIVE — this suite calls `POST /api/admin/roster/reset` and
+`POST /api/admin/roster/assign` against the live backend. Running it
+against a preview / prod deployment WIPES operator-curated seat
+assignments. Marked `@pytest.mark.destructive` — the top-level
+`pytest.ini` deselects the marker by default. Opt in explicitly via
+`pytest -m destructive` and ONLY against a scratch DB.
+
+Root cause of the 2026-02-17 preview seat-wipe: a routine full-suite
+run without `-m` filtering executed these tests against the preview
+backend and cleared `brain_roster.current.assignments.crypto*`. The
+seat_registry doctrine (primary authority) saved us — runtime
+resolution kept working via the fallback path — but the operator's
+UI briefly showed vacant crypto seats until the reverse-sync
+restore.
+
 Verifies:
   - Default assignment is created on first GET.
   - Assign a brain to a new role correctly vacates their old role.
@@ -16,7 +31,10 @@ Verifies:
 import os
 import time
 
+import pytest
 import requests
+
+pytestmark = pytest.mark.destructive
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL")
 if not BASE_URL:
