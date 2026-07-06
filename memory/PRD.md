@@ -31,6 +31,31 @@ outcome_resolved, rotation) + 90d TTL; `routes/brain_memory_ingest.py`
 **Snapshot:** git tag `pre-shelly-rewrite` / branch
 `snapshot/pre-shelly-rewrite`. Rollback via checkout.
 
+
+### ✅ Dead-tile cleanup: 3 diagnostics surfaces removed (2026-07-06)
+
+**Operator directive:** *"nothing here has ever earned its keep."*
+
+Screenshot showed **Decisions Feed**, **Promotion Artifact / Evidence
+Feed**, and **Brain Health** tiles throwing Mongo Atlas timeouts in
+prod. None had worked since install. Rather than hardening dead
+queries with `.max_time_ms()` bounds, removed:
+
+- `backend/shared/decisions_feed.py` (~390 LOC)
+- `backend/shared/promotion_artifact_report.py`
+- `backend/routes/brain_health.py`
+- `frontend/src/components/BrainHealthTile.jsx`
+- `frontend/src/components/PromotionArtifactPanel.jsx`
+- `DecisionsFeed()` + its constants from `pages/Diagnostics.jsx`
+- 4 orphaned test files, trimmed 1 more
+- 3 router-registry imports + include_router calls
+
+Snapshot `pre-dead-tile-cleanup` created before deletion. 38/38
+regression tests pass. Diagnostics page renders clean, deleted
+endpoints return 404 as expected. Three fewer heavy Atlas queries
+per page load.
+
+
 **Verified:** backend boots clean, kept endpoints 200, deleted routes
 
 ### ✅ Equity market-closed pre-flight gate (2026-07-06)

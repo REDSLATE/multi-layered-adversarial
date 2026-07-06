@@ -43,7 +43,6 @@ from shared.intents import router as intents_router
 from shared.executor_seat import router as executor_router
 from shared.auditor_seat import router as auditor_router
 from shared.seat_nudges import router as seat_nudges_router
-from shared.decisions_feed import router as decisions_router
 from shared.doctrine_routes import router as doctrine_router
 from shared.live_positions import router as live_positions_router
 from shared.brain_lane_policy import router as brain_lane_policy_router
@@ -69,9 +68,6 @@ from shared.calibration.snapshot_completeness import (
 from shared.lane_execution import router as lane_execution_router
 from shared.coordinator.routes import router as coordinator_router
 from shared.runtime_bundles import router as runtime_bundles_router
-from shared.promotion_artifact_report import (
-    router as promotion_artifact_report_router,
-)
 from shared.public_api.news import router as public_news_router
 from shared.public_api.dark_pool import router as public_darkpool_router
 from shared.observation_receipts import router as observation_receipts_router
@@ -92,7 +88,6 @@ from routes.heartbeat_reconciler_admin import (
     router as heartbeat_reconciler_admin_router,
 )
 from routes.brain_outages import router as brain_outages_router
-from routes.brain_health import router as brain_health_router
 from routes.market_data_snapshot import router as market_data_snapshot_router
 from routes.brain_runtime import router as brain_runtime_router
 from routes.daily_snapshots import router as daily_snapshots_router
@@ -270,7 +265,6 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(opinion_silence_watchdog_router)
     api_router.include_router(heartbeat_reconciler_admin_router)
     api_router.include_router(brain_outages_router)
-    api_router.include_router(brain_health_router)
     api_router.include_router(market_data_snapshot_router)
     api_router.include_router(daily_snapshots_router)
     api_router.include_router(finnhub_backfill_router)
@@ -302,11 +296,9 @@ def register_routers(api_router: APIRouter) -> None:
 
     api_router.include_router(coordinator_router)
     api_router.include_router(runtime_bundles_router)
-    api_router.include_router(promotion_artifact_report_router)
     api_router.include_router(public_news_router)
     api_router.include_router(public_darkpool_router)
     api_router.include_router(diagnostics_router)
-    api_router.include_router(decisions_router)
     api_router.include_router(doctrine_router)
     api_router.include_router(doctrine_scorecard_router)
     api_router.include_router(doctrine_auto_retire_router)

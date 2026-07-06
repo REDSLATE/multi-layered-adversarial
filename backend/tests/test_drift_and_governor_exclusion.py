@@ -86,59 +86,8 @@ def test_diagnostics_runtime_rows_carry_new_tier(auth_client, base_url):
         )
 
 
-# ─── Promotion artifact — excludes governors ─────────────────────────
-
-
-@pytest.mark.tripwire
-async def test_promotion_artifact_excludes_governors_unit():
-    """Direct unit test of the report function. Set chevelle's
-    authority_state to 'governor' (its default), then call the all-
-    brains endpoint and assert chevelle is excluded."""
-    from db import db
-    from namespaces import SHARED_AUTHORITY_STATE
-
-    # Ensure chevelle is governor (its default authority).
-    await db[SHARED_AUTHORITY_STATE].update_one(
-        {"runtime": "chevelle"},
-        {"$set": {"runtime": "chevelle", "authority_state": "governor"}},
-        upsert=True,
-    )
-    # camaro is the default trading-shadow brain — should remain on-ladder.
-    await db[SHARED_AUTHORITY_STATE].update_one(
-        {"runtime": "camaro"},
-        {"$set": {"runtime": "camaro", "authority_state": "observer"}},
-        upsert=True,
-    )
-
-    from shared.promotion_artifact_report import get_promotion_artifact_all
-    # Call the FastAPI route function directly so we don't need an HTTP
-    # client + auth shim. `_user` is unused inside the body.
-    result = await get_promotion_artifact_all(
-        hours=24, benchmark_brain="alpha", _user={"email": "test@test.com"},
-    )
-    report_brains = [r["brain"] for r in result["reports"]]
-    assert "chevelle" not in report_brains, (
-        "Chevelle (governor) must not appear in promotion-artifact reports; "
-        f"got {report_brains!r}"
-    )
-    assert "chevelle" in result.get("excluded_governors", []), (
-        "excluded_governors list must surface the skipped governor for UI"
-    )
-    assert "alpha" not in report_brains  # benchmark always excluded
-    # camaro stays (non-governor, non-benchmark).
-    assert "camaro" in report_brains
-
-
-@pytest.mark.tripwire
-def test_promotion_artifact_response_shape_includes_excluded(auth_client, base_url):
-    """Locked contract: the response must carry an `excluded_governors`
-    array so the operator UI can surface "off-ladder" brains without
-    inferring them from a missing row."""
-    r = auth_client.get(
-        f"{base_url}/api/admin/promotion-artifact?hours=24&benchmark_brain=alpha",
-        timeout=30,
-    )
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert "excluded_governors" in body
-    assert isinstance(body["excluded_governors"], list)
+# ─── Promotion artifact tests REMOVED 2026-07-06 ─────────────────────
+# The Promotion Artifact tile + `shared/promotion_artifact_report.py`
+# module were deleted because the surface never worked in production.
+# The governor-exclusion tripwire that lived here becomes moot with
+# the report gone. Heartbeat-tier tripwires above remain.

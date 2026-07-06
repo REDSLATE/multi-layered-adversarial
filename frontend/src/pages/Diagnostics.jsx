@@ -3,10 +3,8 @@ import { api, getRuntimeMeta, fmtTime, relTime } from "@/lib/api";
 import { PageHeader, Card, Badge, LoadingRow } from "@/components/ui-bits";
 import VRLScorecardsPanel from "@/components/VRLScorecardsPanel";
 import SidecarCheckinPanel from "@/components/SidecarCheckinPanel";
-import BrainHealthTile from "@/components/BrainHealthTile";
 import LaneExecutionTogglesPanel from "@/components/LaneExecutionTogglesPanel";
 import BracketOutcomeDistributionPanel from "@/components/BracketOutcomeDistributionPanel";
-import PromotionArtifactPanel from "@/components/PromotionArtifactPanel";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import BrainDeepDiagnoseCard from "@/components/BrainDeepDiagnoseCard";
 // 2026-07-01 (Pass 2/3 cleanup, batch 6): removed 3 tiles that
@@ -25,8 +23,13 @@ import HealthcheckTile from "@/components/HealthcheckTile";  // 2026-02-26 post-
 // it monitored was deleted (brains run in-process now), and the
 // `/admin/runtime/sidecar-imposter-scan` endpoint went with it — the
 // stale tile was throwing HTTP 404 on every page load.
-// CompositeLivenessCard + the legacy runtimes table dropped (2026-02-19)
-//   — BrainHealthTile is the modern composite that absorbs both.
+// 2026-07-06 — deleted three dead-on-arrival tiles per operator
+// directive: DecisionsFeed, PromotionArtifactPanel, BrainHealthTile.
+// All three had been throwing Mongo Atlas timeouts in production
+// since install and had no operational value that wasn't already
+// served by other surfaces (Intent Clearance Funnel, per-collection
+// direct queries, sidecar-checkin + opinion-watchdog endpoints).
+// Removing them cuts three heavy Atlas queries per page load.
 
 const BRAINS_FOR_FILTER = ["all", "camino", "barracuda", "hellcat", "gto"];
 
@@ -57,191 +60,6 @@ function LazyDetails({ summary, defaultOpen = false, children, testid }) {
         {hasOpened ? children : null}
       </div>
     </details>
-  );
-}
-const KIND_LABEL = {
-  receipt: "RECEIPT",
-  sovereign_audit: "SOV-AUDIT",
-  intent: "INTENT",
-  engine_audit: "ENGINE",
-  // Back-compat: any cached rows with the legacy label still render.
-  training_signal: "ENGINE",
-};
-const KIND_COLOR = {
-  receipt: "#10B981",
-  sovereign_audit: "#DC2626",
-  intent: "#3B82F6",
-  engine_audit: "#64748B",
-  training_signal: "#64748B",
-};
-
-function DecisionsFeed() {
-  const [items, setItems] = useState(null);
-  const [counts, setCounts] = useState({});
-  const [brain, setBrain] = useState("all");
-  const [err, setErr] = useState("");
-  const [expanded, setExpanded] = useState(null);
-
-  const load = useCallback(async () => {
-    try {
-      const params = { limit: 60 };
-      if (brain !== "all") params.brain = brain;
-      const { data } = await api.get("/admin/decisions", { params });
-      setItems(data?.items || []);
-      setCounts(data?.counts_per_source || {});
-      setErr("");
-    } catch (e) {
-      setErr(e?.response?.data?.detail || e.message);
-    }
-  }, [brain]);
-
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => {
-    const t = setInterval(load, 12000);
-    return () => clearInterval(t);
-  }, [load]);
-
-  // "Pre-gate row" = a contribution audit row that has no substance.
-  // (The 2026-05-24 empty-contribution gate now blocks these at ingest,
-  // so this count should trend to zero for new traffic. Historical rows
-  // can still match.) The "(empty payload)" branch covers non-
-  // contribution sovereign rows that legitimately carry no payload.
-  const emptyPayloadCount = useMemo(
-    () => (items || []).filter((r) => {
-      const s = r.summary || "";
-      return s.includes("(no substance") || s.includes("(empty payload)");
-    }).length,
-    [items],
-  );
-
-  return (
-    <Card className="p-0 overflow-hidden" testid="decisions-feed">
-      <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-rd-border bg-rd-bg3">
-        <div className="label-eyebrow text-rd-dim">Decisions feed</div>
-        <span className="text-[10px] font-mono text-rd-dim">
-          unified across receipts · sovereign-audit · intents · training rows
-        </span>
-        <div className="ml-auto flex flex-wrap items-center gap-1.5">
-          {BRAINS_FOR_FILTER.map((b) => {
-            const active = b === brain;
-            const meta = b === "all" ? null : getRuntimeMeta(b);
-            return (
-              <button
-                key={b}
-                onClick={() => setBrain(b)}
-                data-testid={`decisions-filter-${b}`}
-                className={
-                  "px-2 py-1 text-[10px] font-mono uppercase tracking-wider border " +
-                  (active
-                    ? "border-rd-text text-rd-text bg-rd-bg"
-                    : "border-rd-border text-rd-dim hover:text-rd-text")
-                }
-                style={active && meta ? { borderColor: meta.color, color: meta.color } : undefined}
-              >
-                {b}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {err && (
-        <div className="px-4 py-2 text-xs font-mono text-rd-danger border-b border-rd-border">
-          {err}
-        </div>
-      )}
-
-      {/* Per-collection counts strip — surfaces which stores the brain
-          actually writes to. Critical for diagnosing REDEYE-style
-          "decisions exist but in a different collection" issues. */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 px-4 py-2 bg-rd-bg text-[10px] font-mono text-rd-dim border-b border-rd-border">
-        {Object.entries(counts).map(([coll, n]) => (
-          <span key={coll}>
-            <span className="text-rd-text">{coll}</span>: {n}
-          </span>
-        ))}
-        {emptyPayloadCount > 0 && (
-          <span className="ml-auto text-rd-danger">
-            ⚠ {emptyPayloadCount} skeleton row{emptyPayloadCount === 1 ? "" : "s"} (empty payload — engine not emitting substance)
-          </span>
-        )}
-      </div>
-
-      {!items && <LoadingRow />}
-      {items && items.length === 0 && (
-        <div className="px-4 py-6 text-center text-rd-dim font-mono text-xs">
-          no decisions captured for this filter
-        </div>
-      )}
-
-      {items && items.length > 0 && (
-        <div className="max-h-[500px] overflow-y-auto">
-          <table className="w-full text-xs font-mono">
-            <thead className="sticky top-0 bg-rd-bg3 text-rd-dim uppercase tracking-widest z-10">
-              <tr>
-                <th className="text-left px-3 py-2 border-b border-rd-border">When</th>
-                <th className="text-left px-3 py-2 border-b border-rd-border">Brain</th>
-                <th className="text-left px-3 py-2 border-b border-rd-border">Kind</th>
-                <th className="text-left px-3 py-2 border-b border-rd-border">Summary</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((r, i) => {
-                const rowKey = r.id || `${r.ts}-${r.source || r.brain || "x"}-${i}`;
-                const meta = r.brain ? getRuntimeMeta(r.brain) : null;
-                const isOpen = expanded === rowKey;
-                const isSkeleton = (r.summary || "").includes("(no substance") || (r.summary || "").includes("(empty payload)");
-                return (
-                  <React.Fragment key={rowKey}>
-                    <tr
-                      className="border-b border-rd-border hover:bg-rd-bg cursor-pointer"
-                      onClick={() => setExpanded(isOpen ? null : rowKey)}
-                      data-testid={`decisions-row-${i}`}
-                    >
-                      <td className="px-3 py-1.5 text-rd-dim whitespace-nowrap">
-                        {r.ts ? relTime(r.ts) : "—"}
-                      </td>
-                      <td className="px-3 py-1.5 whitespace-nowrap">
-                        {meta ? (
-                          <span style={{ color: meta.color }} className="font-bold">
-                            {meta.label}
-                          </span>
-                        ) : (
-                          <span className="text-rd-dim">{r.brain || "—"}</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-1.5">
-                        <Badge color={KIND_COLOR[r.kind] || "#A1A1AA"}>
-                          {KIND_LABEL[r.kind] || r.kind}
-                        </Badge>
-                      </td>
-                      <td
-                        className="px-3 py-1.5 text-rd-text"
-                        style={isSkeleton ? { color: "#F59E0B" } : undefined}
-                      >
-                        {r.summary || "—"}
-                      </td>
-                    </tr>
-                    {isOpen && (
-                      <tr className="bg-rd-bg">
-                        <td colSpan={4} className="px-3 py-3">
-                          <div className="text-[10px] text-rd-dim mb-1.5">
-                            source: <span className="text-rd-text">{r.source_collection}</span>
-                          </div>
-                          <pre className="text-[10px] text-rd-text bg-rd-bg2 border border-rd-border p-2 overflow-x-auto leading-snug">
-                            {JSON.stringify(r.raw, null, 2)}
-                          </pre>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Card>
   );
 }
 
@@ -550,17 +368,11 @@ export default function Diagnostics() {
           </div>
 
           {/* Legacy Runtimes table + CompositeLivenessCard dropped
-              2026-02-19 — BrainHealthTile is the modern single-glance
-              composite that absorbs both. STALE HEARTBEAT alert is
-              now surfaced inline by BrainHealthTile's regression
-              detector. */}
-
-          {/* STALE HEARTBEAT alert preserved as a thin banner even
-              though the full legacy Runtimes table was dropped
-              2026-02-19 (BrainHealthTile absorbs the per-brain
-              freshness signal more clearly). This alert is the
-              loudest signal — any dead heartbeat needs operator
-              eyes immediately. */}
+              2026-02-19. The BrainHealthTile that briefly replaced
+              them was itself removed 2026-07-06 as dead-on-arrival
+              in prod. STALE HEARTBEAT alert below is preserved as
+              the loudest liveness signal — any dead heartbeat needs
+              operator eyes immediately. */}
           {data.runtimes.some((r) => r.heartbeat_tier === "dead") && (
             <div
               className="bg-rd-danger/15 border border-rd-danger px-4 py-2 mb-4 text-[11px] font-mono text-rd-danger"
@@ -574,13 +386,10 @@ export default function Diagnostics() {
             </div>
           )}
 
-          {/* Unified decisions feed — surfaces every brain's output
-              regardless of which collection the engine wrote it to.
-              REDEYE's contributions, Chevelle's authority_calls, Camaro
-              intents, and MC training rows all appear here. */}
-          <div className="mt-6">
-            <DecisionsFeed />
-          </div>
+          {/* Unified decisions feed — REMOVED 2026-07-06 (dead-on-arrival
+              in prod). Operator alternatives: Intent Clearance Funnel
+              (`/admin/intent-clearance-funnel`) and per-collection direct
+              queries. */}
 
           {/* Live-trade diagnose — surfaces the EXACT gate blocking
               live execution on each lane. Built after the operator
@@ -609,28 +418,14 @@ export default function Diagnostics() {
               The Sidecar Trader's TradeTape (on Overview) now surfaces
               the actual lane-blocking reason per cycle. */}
 
-          {/* Promotion artifact — shadow-proposal vs alpha-fill evidence.
-              Operators read this to decide whether a challenger brain
-              has earned promotion to an executor seat. Verdicts here
-              are advisory; the Patent-J countersign at
-              /admin/promotion/proposals is still the only path to flip
-              authority. */}
-          <div className="mt-6">
-            <PanelErrorBoundary panelName="PromotionArtifactPanel">
-              <PromotionArtifactPanel />
-            </PanelErrorBoundary>
-          </div>
+          {/* Promotion artifact — REMOVED 2026-07-06 (dead-on-arrival
+              in prod). Promotion decisions still land through Patent J
+              countersign at `/admin/promotion/proposals`. */}
 
-          {/* Brain-Health composite tile — single-glance fleet
-              readiness. Joins sidecar-checkin + opinion-watchdog +
-              data-keys-audit + sovereign-audit-log per (role, lane).
-              Built so post-redeploy verification collapses to one
-              page glance instead of three curls. Read-only. */}
-          <div className="mt-6">
-            <PanelErrorBoundary panelName="BrainHealthTile">
-              <BrainHealthTile />
-            </PanelErrorBoundary>
-          </div>
+          {/* Brain-Health composite tile — REMOVED 2026-07-06
+              (dead-on-arrival in prod). Post-redeploy sanity now goes
+              through the 3 underlying endpoints directly: sidecar-checkin,
+              opinion-silence-watchdog, and seat-walk. */}
 
           {/* Sidecar check-ins — Lazy-mounted (2026-02-19). Deep
               per-brain identity stamp inspection. The page-level

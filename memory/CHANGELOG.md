@@ -1,3 +1,84 @@
+## 2026-07-06 — Dead-tile cleanup: Decisions Feed + Promotion Artifact + Brain Health
+
+**Operator directive (verbatim):**
+> All three, same treatment, same reasoning — nothing here has ever
+> earned its keep, and reviving Brain Health later (if you actually
+> want the rollup) is a fresh, deliberate build rather than a patch
+> to code that's been dead on arrival.
+
+### Context
+Screenshot of prod Diagnostics page showed three tiles throwing
+Mongo Atlas timeouts:
+- **Decisions Feed** — `NetworkTimeout ... customer-apps-shard-00-02`
+- **Promotion Artifact / Evidence Feed** — `ExecutionTimeout: MaxTimeMSExpired`
+- **Brain Health** — same NetworkTimeout
+
+None of the three had EVER worked in production since install.
+Rather than papering over dead surfaces with `.max_time_ms(3000)`
+bounds and new indexes, we cut them.
+
+### Snapshot
+`git tag pre-dead-tile-cleanup` + auto-commit before deletions.
+Rollback with `git checkout pre-dead-tile-cleanup`.
+
+### Deleted — backend
+- `backend/shared/decisions_feed.py` (~390 lines) — unified feed across
+  `shared_adl_receipts`, `shared_intents`, `sovereign_audit_log`,
+  `mc_shelly`. Operator alternative: Intent Clearance Funnel +
+  per-collection direct queries.
+- `backend/shared/promotion_artifact_report.py` — shadow-proposal vs
+  live-fill comparison for challenger→seat promotion evidence.
+  Operator alternative: Patent J countersign flow in
+  `shared/promotion.py` (unchanged and untouched).
+- `backend/routes/brain_health.py` — composite rollup of
+  sidecar-checkin + opinion-freshness + seat-walk into one dot.
+  Operator alternative: the 3 underlying endpoints, which work.
+- Tests: `test_decisions_feed_label_rename.py`,
+  `test_promotion_artifact_report.py`, `test_brain_health.py`,
+  `test_contribution_renderer.py`. Trimmed
+  `test_drift_and_governor_exclusion.py` to keep the heartbeat-tier
+  tripwires and drop the promotion-artifact governor-exclusion tests
+  (moot without the report).
+
+### Deleted — frontend
+- `frontend/src/components/BrainHealthTile.jsx`
+- `frontend/src/components/PromotionArtifactPanel.jsx`
+- `DecisionsFeed()` function + its `KIND_LABEL`/`KIND_COLOR` constants
+  in `pages/Diagnostics.jsx`
+- The three render sites for `<DecisionsFeed />`,
+  `<PromotionArtifactPanel />`, `<BrainHealthTile />`
+- Historical comments referring to `BrainHealthTile` as "modern"
+  reworded to record that it too was cut
+
+### Wire unwiring
+`backend/server_modules/router_registry.py` — 3 imports removed
+(`decisions_router`, `promotion_artifact_report_router`,
+`brain_health_router`), 3 `include_router(...)` calls removed.
+Also: a mid-edit slip that briefly deleted `doctrine_router` import
+was caught and reverted before commit.
+
+### Verification
+- Backend boots clean; `root=200`, no ImportError
+- Deleted endpoints correctly 404:
+  - `GET /api/admin/decisions`
+  - `GET /api/admin/promotion-artifact`
+  - `GET /api/admin/runtime/brain-health/{brain}`
+- Diagnostics page renders without red errors; healthy tiles
+  preserved (Runtime Health, Advisor Performance, Native Brain
+  Runtimes, Sidecar Check-ins, Bracket Outcomes, Quantum, VRL)
+- 38/38 regression tests pass (`test_live_execution_path.py`,
+  `test_drift_and_governor_exclusion.py`,
+  `test_patterns_universe_fake_symbol_guard.py`)
+
+### Effect
+Three fewer heavy Atlas queries per Diagnostics page load. Three
+fewer red banners for the operator to visually filter out. If Brain
+Health composite value is ever wanted again, it's a fresh build
+against known-working endpoints, not a resurrection of dead code.
+
+---
+
+
 ## 2026-07-06 — Equity market-closed pre-flight gate
 
 **Operator directive (verbatim):**
