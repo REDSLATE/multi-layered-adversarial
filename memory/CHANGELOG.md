@@ -100,6 +100,39 @@ Injected synthetic `submitted` equity intent with fake
   monitored (near-boundary log fires when a requeue enters the
   stall risk window).
 
+### Verified: `pipeline_receipts` interaction with requeue is safe
+Operator flagged a potential blocker: "One receipt per intent" is
+stated as doctrine in the auto_router module header (line 6);
+does the requeue-then-resubmit cycle collide with a unique index
+on `pipeline_receipts.intent_id`?
+
+**Trace findings (definitive):**
+- YES, `pipeline_receipts` has a unique index on `intent_id`
+  (`intent_id_1`, `unique=True`). This is a **stranded legacy
+  artifact** — not created by current `db.py:579-590` index init
+  code but present in Mongo from an earlier era's migration.
+- ZERO code writes to `pipeline_receipts` anywhere. Only reads
+  (from `routes/pipeline_blocker_histogram.py`).
+- The `shared.pipeline.execution_pipeline` module referenced in
+  the auto_router header doesn't exist. The "One receipt per
+  intent" line is documentation of a subsystem that was
+  refactored out. The unique index is a scar from that era.
+- Collection has 0 rows on preview.
+- `_route_one` and `_sweep_submitted_broker_orders` neither
+  read from nor write to `pipeline_receipts`. Confirmed by
+  full-tree grep.
+
+**Verdict:** The retry flow is functionally safe. Zero write path
+means the stranded unique index cannot fire.
+
+**Latent trap flagged for future:** if anyone wires up the
+"unified pipeline" the header describes without knowing about
+the stranded unique index, the first duplicate-write would crash
+a tick. Suggested cleanup (deferred, separate task): either
+delete the unused collection + its indexes, or rewrite the
+stale docstring in `auto_router.py:6` to prevent future
+confusion.
+
 ### Snapshot / rollback
 `git tag pre-dead-tile-cleanup` (previous session) still valid.
 This session's changes: auto_router.py, broker_error_taxonomy.py,
