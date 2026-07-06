@@ -148,6 +148,53 @@ def position_of_brain(positions: dict[str, Optional[str]], brain: Optional[str])
     return "NONE"
 
 
+# ─────────────────────────── write filter (2026-02-28 doctrine shift) ───────────────────────────
+#
+# **Doctrine change: Shelly is now an audit trail, not the memory store.**
+#
+# Before 2026-02-28, Shelly was written on every event under the
+# "MC remembers what it observed" doctrine. Last-24h split proved that
+# posture was broken:
+#
+#     BRAIN_DOCTRINE_SIDECAR_PACKET   3,505 rows  ← noise
+#     intent_ingested                 3,482 rows  ← noise
+#     position_opened                     0 rows
+#     position_closed                     0 rows
+#     order_routed                        0 rows
+#     order_filled                        0 rows
+#     outcome_resolved                    0 rows
+#     rotation                            0 rows
+#
+# 99.9% of writes carried no learning signal. Shelly had become a
+# hot-path event log, not a memory. Meanwhile the ACTUAL learning
+# substrate is elsewhere — the Evidence Store (evidence + outcomes +
+# regime + witness), which is what the confidence-rebaseline and
+# Trade Tape work has been building.
+#
+# NEW POSTURE:
+#   * Shelly = thin audit trail of terminal-lifecycle + governance events
+#   * Evidence Store = primary learning substrate
+#
+# Consequences:
+#   * Everything not in `LEARNING_EVENTS` returns immediately from
+#     record() with no DB touch. No noop-uuid — an empty string.
+#     Callers already treat the return as opaque.
+#   * `hypothesis_request` intentionally dropped — operator ad-hoc
+#     queries are audit, not learning.
+#   * `position_managing` intentionally dropped — mid-lifecycle
+#     updates are ephemeral; only terminal (`position_closed`)
+#     carries the learning signal.
+
+LEARNING_EVENTS: frozenset[str] = frozenset({
+    "position_opened",
+    "position_closed",
+    "order_routed",       # broker accepted the order (submitted state)
+    "order_filled",       # actual broker fill (whole or partial)
+    "outcome_resolved",   # WIN/LOSS/BE from bracket_outcome_resolver
+    "rotation",           # seat / roster change (auditable authority shift)
+})
+
+
 # ─────────────────────────── write API ───────────────────────────
 
 async def record(
@@ -166,13 +213,10 @@ async def record(
     gate_name: Optional[str] = None,
     extra: Optional[dict] = None,
 ) -> str:
-    """Write one Shelly row. Returns event_id. Never raises — Shelly
-    write failures must not break the operational flow that triggered
-    them. Failures log to stderr.
-    """
-    if event_type not in EVENT_TYPES:
-        # Allow unknown types — future-proof. Just log.
-        pass
+    """Write one Shelly row IFF `event_type` is in `LEARNING_EVENTS`.
+    Returns event_id on write, empty string on drop. Never raises."""
+    if event_type not in LEARNING_EVENTS:
+        return ""
     positions = await positions_at_now()
     held_position = position_of_brain(positions, brain)
     event_id = str(uuid.uuid4())

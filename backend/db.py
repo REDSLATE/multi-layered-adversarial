@@ -453,6 +453,26 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     )
     await db.shared_brain_opinions.create_index([("runtime", 1), ("topic", 1), ("posted_at", -1)])
     await db.shared_brain_outcomes.create_index([("opinion_id", 1), ("resolved_at", -1)])
+    # 2026-02-28 — MC Shelly noise cleanup companion. On preview the
+    # collection had grown to 1.86M rows / 528 MB (data + indexes)
+    # because Shelly was writing every intent_ingested and every
+    # sidecar packet. After the record()-side allowlist filter,
+    # this TTL sweeps the historical bulk over 90 days without
+    # touching the daily .jsonl file archive (which stays as the
+    # long-term training substrate). Chosen conservatively — 90d
+    # is enough for outcome-resolver joins on ~14d bracket windows
+    # plus plenty of headroom for operator review.
+    try:
+        await db.mc_shelly.create_index(
+            [("ts", 1)],
+            name="mc_shelly_ts_ttl_90d",
+            expireAfterSeconds=90 * 24 * 3600,
+        )
+    except Exception:  # noqa: BLE001
+        # TTL index may exist with different `expireAfterSeconds`.
+        # Mongo doesn't allow mutating TTL in place — operator can
+        # drop and recreate via a maintenance script if needed.
+        pass
     # Shelly memory regex search was the worst offender (~25-40ms scan);
     # a TEXT index pivots it to indexed token lookup.
     try:
