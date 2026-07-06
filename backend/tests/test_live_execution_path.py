@@ -187,7 +187,8 @@ def route_one_scaffold():
     }
 
 
-def _apply_patches(s, *, broker_result=None, broker_raises=None, floor_result=None):
+def _apply_patches(s, *, broker_result=None, broker_raises=None, floor_result=None,
+                   market_open=True, extended_hours_enabled=False):
     """Assemble the standard patch stack for `_route_one`. Returns the
     context manager that the test must enter with `with ... :`."""
     from contextlib import ExitStack
@@ -241,6 +242,29 @@ def _apply_patches(s, *, broker_result=None, broker_raises=None, floor_result=No
     ))
     stack.enter_context(patch(
         "shared.kraken_pair_floors.apply_floor", fake_apply_floor, create=True,
+    ))
+    # 2026-07-06 — equity market-closed pre-flight gate added.
+    # These tests exercise the sunny-day pipeline and assume the
+    # market is open. Patch the RTH gate and the extended-hours flag
+    # so scaffold-based tests behave the same on any wall clock.
+    # `market_open=False` flips this to exercise the pre-flight block.
+    stack.enter_context(patch(
+        "shared.market_hours.is_equity_rth", return_value=market_open,
+    ))
+    stack.enter_context(patch(
+        "shared.market_hours.is_equity_extended_hours",
+        return_value=market_open,
+    ))
+    stack.enter_context(patch(
+        "shared.market_hours.market_hours_reason",
+        return_value=(
+            "test-scaffold-market-open" if market_open
+            else "equity_after_hours: test scaffold; next open ..."
+        ),
+    ))
+    stack.enter_context(patch(
+        "routes.equity_extended_hours_admin.get_equity_extended_hours_enabled",
+        new=AsyncMock(return_value=extended_hours_enabled), create=True,
     ))
 
     s["broker_calls"] = broker_calls
@@ -1038,3 +1062,151 @@ async def test_expire_min_default_is_120():
         if saved is not None:
             os.environ["AUTO_ROUTER_EXPIRE_MIN"] = saved
         importlib.reload(ar)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 11. EQUITY MARKET-CLOSED PRE-FLIGHT (2026-07-06)
+# ═══════════════════════════════════════════════════════════════════
+# Doctrine (operator, 2026-07-06):
+#   Market closed is NOT a broker error, it is a known routing
+#   condition. Equity intents outside RTH must be terminally blocked
+#   BEFORE the Webull round-trip so we don't burn the API rate budget
+#   on doomed orders. Crypto lane is untouched (Kraken 24/7).
+#
+# Before this gate: every Sunday equity intent hit Webull, got HTTP
+# 417 "The time you sent is not supported", was classified
+# `bucket=market_closed`, and terminal-stamped. Cost: ~2,000 wasted
+# Webull calls/day + 19,223 error log lines + rising 429 rate-limit
+# risk that threatened Monday's opening bell.
+
+
+@pytest.mark.asyncio
+async def test_market_closed_equity_intent_blocked_before_broker(route_one_scaffold):
+    """Equity + market closed → NO broker.route_order call →
+    executions row with `broker_status=market_closed_preflight`."""
+    s = route_one_scaffold
+    s["seat_mod"].decide = AsyncMock(return_value=_seat_fire())
+    s["risk_mod"].check = AsyncMock(return_value=_RiskOK())
+
+    with _apply_patches(s, market_open=False):
+        r = await s["ar"]._route_one(_intent())
+
+    # Broker was NEVER called.
+    assert len(s["broker_calls"]) == 0
+
+    # Verdict + reason.
+    assert r["verdict"] == "blocked"
+    assert r["reason"] == "market_closed_preflight"
+    assert r["extended_hours_enabled"] is False
+    assert "detail" in r
+
+    # Audit row: one per attempt, market_closed_preflight status.
+    assert s["executions_mod"].record.await_count == 1
+    kwargs = s["executions_mod"].record.await_args.kwargs
+    assert kwargs["broker_status"] == "market_closed_preflight"
+    assert kwargs["ok"] is False
+
+    # Intent stamped for the funnel: gate_state=blocked,
+    # broker_error_bucket=market_closed (so the operator sees WHY),
+    # broker_reason=market_closed_preflight (so it's distinguished
+    # from a real broker-side rejection).
+    stamps = [d["update"]["$set"] for d in s["updated_docs"]
+              if "gate_state" in d["update"].get("$set", {})]
+    assert len(stamps) == 1
+    stamp = stamps[0]
+    assert stamp["gate_state"] == "blocked"
+    assert stamp["broker_reason"] == "market_closed_preflight"
+    assert stamp["broker_error_bucket"] == "market_closed"
+    assert "broker_error_detail" in stamp
+
+
+@pytest.mark.asyncio
+async def test_market_closed_crypto_intent_still_reaches_broker(route_one_scaffold):
+    """Same market-closed clock, but crypto lane → gate does NOT
+    fire → broker IS called (Kraken 24/7)."""
+    s = route_one_scaffold
+    s["seat_mod"].decide = AsyncMock(return_value=_seat_fire(lane="crypto"))
+    s["risk_mod"].check = AsyncMock(return_value=_RiskOK())
+
+    with _apply_patches(s, market_open=False):
+        r = await s["ar"]._route_one(_intent(
+            lane="crypto", symbol="BTC/USD",
+        ))
+
+    # Broker IS called for crypto regardless of clock.
+    assert len(s["broker_calls"]) == 1
+    assert r["verdict"] == "executed"
+
+
+@pytest.mark.asyncio
+async def test_market_open_equity_intent_reaches_broker(route_one_scaffold):
+    """Market open sunny-day: equity gate passes → broker IS called.
+    Baseline that the existing 22 scaffold-based tests already rely on;
+    this pins it explicitly against the pre-flight gate."""
+    s = route_one_scaffold
+    s["seat_mod"].decide = AsyncMock(return_value=_seat_fire())
+    s["risk_mod"].check = AsyncMock(return_value=_RiskOK())
+
+    with _apply_patches(s, market_open=True):
+        r = await s["ar"]._route_one(_intent())
+
+    assert len(s["broker_calls"]) == 1
+    assert r["verdict"] == "executed"
+
+
+@pytest.mark.asyncio
+async def test_after_hours_with_extended_flag_reaches_broker(route_one_scaffold):
+    """Extended-hours flag ON + intent inside 04:00-20:00 ET window →
+    broker IS called. The gate consults `is_equity_extended_hours`
+    when the operator has flipped the runtime flag on."""
+    s = route_one_scaffold
+    s["seat_mod"].decide = AsyncMock(return_value=_seat_fire())
+    s["risk_mod"].check = AsyncMock(return_value=_RiskOK())
+
+    # market_open=True here means both is_equity_rth and
+    # is_equity_extended_hours return True. The relevant flip is that
+    # the extended-hours OPERATOR flag is now on — the gate should
+    # honor it and pass through.
+    with _apply_patches(s, market_open=True, extended_hours_enabled=True):
+        r = await s["ar"]._route_one(_intent())
+
+    assert len(s["broker_calls"]) == 1
+    assert r["verdict"] == "executed"
+
+
+@pytest.mark.asyncio
+async def test_preflight_block_is_not_a_broker_error(route_one_scaffold):
+    """The pre-flight block MUST NOT masquerade as a broker error.
+    Doctrine: `broker_status=market_closed_preflight`, NOT
+    `broker_error:market_closed`. The funnel error-metrics classifier
+    keys on `broker_error:` prefix — a pre-flight block that
+    smuggled that prefix would inflate broker-side error rates
+    and hide the honest "market closed" signal from the operator."""
+    s = route_one_scaffold
+    s["seat_mod"].decide = AsyncMock(return_value=_seat_fire())
+    s["risk_mod"].check = AsyncMock(return_value=_RiskOK())
+
+    with _apply_patches(s, market_open=False):
+        await s["ar"]._route_one(_intent())
+
+    kwargs = s["executions_mod"].record.await_args.kwargs
+    status = kwargs["broker_status"]
+    # Positive: the pre-flight sentinel.
+    assert status == "market_closed_preflight"
+    # Negative: NOT the broker-error prefix.
+    assert not status.startswith("broker_error:")
+
+
+@pytest.mark.asyncio
+async def test_preflight_writes_exactly_one_execution_row(route_one_scaffold):
+    """One-row-per-attempt contract must survive the new gate. The
+    denominator of the funnel (executions.count()) depends on it."""
+    s = route_one_scaffold
+    s["seat_mod"].decide = AsyncMock(return_value=_seat_fire())
+    s["risk_mod"].check = AsyncMock(return_value=_RiskOK())
+
+    with _apply_patches(s, market_open=False):
+        await s["ar"]._route_one(_intent())
+
+    assert s["executions_mod"].record.await_count == 1
+

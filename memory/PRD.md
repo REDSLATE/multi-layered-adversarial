@@ -32,6 +32,29 @@ outcome_resolved, rotation) + 90d TTL; `routes/brain_memory_ingest.py`
 `snapshot/pre-shelly-rewrite`. Rollback via checkout.
 
 **Verified:** backend boots clean, kept endpoints 200, deleted routes
+
+### ✅ Equity market-closed pre-flight gate (2026-07-06)
+
+**Operator directive:** *"Market closed is not a broker error. It is
+a known routing condition."*
+
+Added a lane-aware pre-flight in `auto_router.py::_route_one` between
+Risk and Broker: equity + market closed → skip Webull entirely, stamp
+`gate_state=blocked`, `broker_reason=market_closed_preflight`,
+`broker_error_bucket=market_closed`, write ONE audit row with
+`broker_status=market_closed_preflight` (NOT the `broker_error:`
+prefix). Consults `is_equity_rth()` or `is_equity_extended_hours()`
+based on the runtime flag. Crypto untouched.
+
+Also flipped `RISEDUAL_BRACKET_OUTCOMES_ENABLED=true` in backend/.env
+so Advisor Performance / Win-rate tiles populate.
+
+**Live impact:** eliminated ~2,000 wasted Webull calls/day, 13k+ HTTP
+417 log lines, and rising 429 rate-limit risk that threatened
+Monday's opening bell. 28/28 regression tests pass (22 existing +
+6 new in section 11 of `test_live_execution_path.py`).
+
+
 404, no shelly-related pytest failures.
 
 

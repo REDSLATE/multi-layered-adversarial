@@ -1,3 +1,88 @@
+## 2026-07-06 — Equity market-closed pre-flight gate
+
+**Operator directive (verbatim):**
+> Market closed is not a broker error. It is a known routing condition.
+
+Before: every Sunday equity intent hit Webull, got HTTP 417 "The time
+you sent is not supported" (Webull's weekend rejection worded as a
+timestamp error), was classified `bucket=market_closed` by the
+broker-error taxonomy, and terminal-stamped. Cost measured on preview:
+
+- 13,158 Webull HTTP 417 errors in the accumulated log
+- 1,520 shared_intents rows carrying the misleading 417 error detail
+- Rising HTTP 429 "TOO_MANY_REQUESTS" on `webull_get_account` — the
+  retry storm was tripping Webull's rate limit and would have locked
+  us out of Monday's opening bell
+
+### Fix (surgical, ~50 LOC in one function)
+
+`shared/auto_router.py::_route_one` — inserted a NEW gate step
+`3a. Equity market-closed pre-flight` between Risk check (step 3)
+and Broker call (step 4). Consults `shared.market_hours.is_equity_rth`
+(or `is_equity_extended_hours` when the operator has flipped the
+Mongo `equity_extended_hours` flag on). If market is closed:
+
+1. **NO Webull round-trip.** Broker call is skipped entirely.
+2. **`gate_state=blocked`** stamped on the intent.
+3. **`broker_reason=market_closed_preflight`** — sentinel value that
+   distinguishes this from a real broker-side rejection.
+4. **`broker_error_bucket=market_closed`** — funnel operator sees the
+   honest blocker.
+5. **`broker_error_detail=<market_hours_reason()>`** — human string
+   like "weekend (Sunday); next open 2026-07-07T13:30:00+00:00".
+6. **One executions row written** with
+   `broker_status=market_closed_preflight` — preserves the
+   one-row-per-attempt audit contract, but critically NOT with a
+   `broker_error:` prefix so broker-error metrics stay clean.
+
+### Crypto lane untouched
+The gate is `if lane == "equity"`. Kraken trades 24/7 and its rejects
+have their own bucket (`insufficient_funds`, `min_order_notional`).
+
+### Brain-runner gate deliberately NOT added (per operator)
+Brains continue to emit equity intents on the weekend so MC can
+observe signal quality. The gate only stops the wasted broker
+round-trip — the funnel still shows the intents landing.
+
+### Also enabled
+`RISEDUAL_BRACKET_OUTCOMES_ENABLED=true` in `backend/.env` — turns on
+the bracket outcome resolver so Advisor Performance / Win-rate tiles
+populate now that filled orders will start flowing again.
+
+### Regression coverage
+6 new tests in `backend/tests/test_live_execution_path.py`
+(sections 11):
+- `test_market_closed_equity_intent_blocked_before_broker`
+- `test_market_closed_crypto_intent_still_reaches_broker`
+- `test_market_open_equity_intent_reaches_broker`
+- `test_after_hours_with_extended_flag_reaches_broker`
+- `test_preflight_block_is_not_a_broker_error`
+- `test_preflight_writes_exactly_one_execution_row`
+
+Existing 22 tests updated: `_apply_patches` scaffold now patches
+`is_equity_rth=True` by default, exposing a `market_open` knob for
+the 6 new tests. All 28 tests pass.
+
+### Live verification (preview, ~10 min after deploy)
+- **35 preflight blocks recorded** (`broker_reason=market_closed_preflight`),
+  23 of them since the deploy at 03:26 UTC
+- **Legacy 417 audit rows FROZEN** at 1,520 (no new Webull-side
+  rejections)
+- **0 new HTTP 417 log lines** since restart (was accumulating ~5/min
+  before the fix)
+- **Crypto lane still ticking** normally — ETH/USD size-up entries
+  every ~30s
+- **Funnel** now shows honest `market_closed_preflight` blocker
+  instead of the misleading "Webull 417 INVALID_PARAMETER"
+
+### Rollback
+`git checkout pre-shelly-rewrite` (that tag is BEFORE this change).
+Or delete section 3a from `auto_router.py::_route_one` and remove
+section 11 tests from `test_live_execution_path.py`.
+
+---
+
+
 ## 2026-07-06 — Shelly rewrite: lean learning recorder ONLY
 
 **Operator directive:** "Rewrite Shelly as a lean learning recorder only.

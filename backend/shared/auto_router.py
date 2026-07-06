@@ -338,6 +338,78 @@ async def _route_one(intent: dict) -> dict:
     # broker while the executions row records $10.
     final_notional = rc.notional_usd
 
+    # ── 3a. Equity market-closed pre-flight (2026-07-06) ────────────
+    # Doctrine (operator, 2026-07-06): market_closed is NOT a broker
+    # error, it's a known routing condition. Skip the Webull round-
+    # trip entirely for equity intents outside RTH (or the extended-
+    # hours window when the operator has flipped that flag on).
+    #
+    # Prior behavior: every Sunday equity intent hit Webull, got HTTP
+    # 417 "The time you sent is not supported" (Webull's weekend
+    # rejection), was classified `bucket=market_closed`, and was
+    # terminal-stamped. Cost: ~2,000 wasted Webull calls/day, 19,223
+    # error log lines, and a rising 429 rate-limit risk that
+    # threatened the next RTH open.
+    #
+    # Now: check ET market hours locally BEFORE calling the broker.
+    # Write an honest audit row (broker_status=market_closed_preflight,
+    # NOT `broker_error:market_closed`) so the funnel shows the true
+    # blocker without polluting broker-error metrics. Crypto lane is
+    # untouched (Kraken trades 24/7).
+    lane = (intent.get("lane") or "").lower()
+    if lane == "equity":
+        from shared.market_hours import (  # noqa: WPS433
+            is_equity_extended_hours,
+            is_equity_rth,
+            market_hours_reason,
+        )
+        from routes.equity_extended_hours_admin import (  # noqa: WPS433
+            get_equity_extended_hours_enabled,
+        )
+        ext_hours_on = await get_equity_extended_hours_enabled()
+        market_open = (
+            is_equity_extended_hours() if ext_hours_on else is_equity_rth()
+        )
+        if not market_open:
+            reason = market_hours_reason()
+            await executions.record(
+                intent=intent,
+                seat_verdict=sd.verdict,
+                seat_holder=sd.executor,
+                seat_reason=sd.reason,
+                strategist=sd.strategist,
+                governor=sd.governor,
+                executor=sd.executor,
+                auditor=sd.auditor,
+                angels=sd.angels,
+                risk_multiplier=sd.risk_multiplier,
+                risk_ok=rc.ok,
+                risk_reason=rc.reason,
+                notional_usd=final_notional,
+                broker_status="market_closed_preflight",
+                ok=False,
+            )
+            try:
+                await db[SHARED_INTENTS].update_one(
+                    {"intent_id": intent_id},
+                    {"$set": {
+                        "gate_state": "blocked",
+                        "last_submit_ts": _now_iso(),
+                        "last_submit_by": AUTO_ROUTER_EMAIL,
+                        "broker_reason": "market_closed_preflight",
+                        "broker_error_bucket": "market_closed",
+                        "broker_error_detail": reason[:500],
+                    }},
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return {
+                "verdict": "blocked",
+                "reason": "market_closed_preflight",
+                "detail": reason,
+                "extended_hours_enabled": ext_hours_on,
+            }
+
     # ── 3. Broker ────────────────────────────────────────────────
     from shared.broker_router import (  # noqa: WPS433
         BrokerRouteBlocked, route_order,
