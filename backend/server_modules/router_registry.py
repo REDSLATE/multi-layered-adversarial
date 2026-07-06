@@ -78,6 +78,7 @@ from routes.orphan_inspection_routes import router as orphan_inspection_router
 from routes.orphan_replay_routes import router as orphan_replay_router
 from routes.broker_freeze_routes import router as broker_freeze_router
 from routes.broker_reconcile_routes import router as broker_reconcile_router
+from routes.kraken_manual_reconcile import router as kraken_manual_reconcile_router
 from routes.sidecar_diagnostics import router as sidecar_diagnostics_router
 from routes.data_stack_admin import router as data_stack_admin_router
 from routes.market_data_keys import router as market_data_keys_router
@@ -259,6 +260,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(orphan_replay_router)
     api_router.include_router(broker_freeze_router)
     api_router.include_router(broker_reconcile_router)
+    api_router.include_router(kraken_manual_reconcile_router)
     api_router.include_router(sidecar_diagnostics_router)
     api_router.include_router(data_stack_admin_router)
     api_router.include_router(market_data_keys_router)

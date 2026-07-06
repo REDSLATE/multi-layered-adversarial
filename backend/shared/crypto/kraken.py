@@ -496,3 +496,127 @@ def to_internal_bar(symbol: str, tf: str, row: list) -> dict:
         "c": float(row[4]),
         "v": float(row[6]),
     }
+
+
+
+# ══════════════════════════════════════════════════════════════════
+# Order-status reconciliation (2026-07-06)
+# ══════════════════════════════════════════════════════════════════
+# `query_order(txid, ...)` gives the auto_router reconcile sweep
+# the same capability Webull's `WebullAdapter.get_order(order_id)`
+# provides: fetch the CURRENT state of an already-submitted order
+# so MC can transition `gate_state='submitted'` → `filled` /
+# `broker_rejected` when the exchange gets around to acting.
+#
+# Kraken's canonical response for `/0/private/QueryOrders`
+# (from Kraken REST docs — locked here as the fixture format for
+# `tests/test_kraken_query_order.py`):
+#
+#   result = {
+#     "<TXID>": {
+#        "status": "closed",        # pending | open | closed | canceled | expired
+#        "vol":       "1.25000000", # requested volume (string decimal)
+#        "vol_exec":  "1.25000000", # executed volume
+#        "cost":      "37526.20",   # cost in quote currency
+#        "price":     "30021.40",   # avg filled price
+#        "reason":    None,         # populated on canceled/expired
+#        "closetm":   1616666559.8974,
+#        "opentm":    1616666559.8974,
+#        "descr":     {"pair": ..., "type": "buy", "ordertype": "limit", ...},
+#        ...
+#     }
+#   }
+#
+# We normalize to the same shape Webull.get_order returns so the
+# auto_router sweep can consume either broker with identical logic:
+#
+#   {
+#      "status": "FILLED" | "CANCELED" | "EXPIRED" | "WORKING",
+#      "filled_qty": float | None,
+#      "filled_avg_price": float | None,
+#      "filled_at": iso-8601 str | None,
+#      "reject_reason": str | None,
+#      "raw": {...}                  # the untouched Kraken order dict
+#   }
+
+
+_KRAKEN_STATUS_MAP = {
+    "closed":   "FILLED",     # partial-fill semantics: closed means
+                              # order lifecycle ended — if vol_exec
+                              # < vol the exchange booked whatever
+                              # was possible and stopped. We treat
+                              # any closed order as terminal-filled;
+                              # partial-fill accounting is a
+                              # deliberate non-goal (see CHANGELOG).
+    "canceled": "CANCELED",
+    "expired":  "EXPIRED",
+    "open":     "WORKING",    # sweep no-ops these; poll again.
+    "pending":  "WORKING",
+}
+
+
+def _normalize_kraken_order(txid: str, raw: dict) -> dict:
+    """Map Kraken's order dict to Webull-shaped `get_order` response.
+
+    Deliberately does NO API call — pure translation, so the response
+    fixture can be tested in isolation without a live account. This
+    is the ONLY place Kraken's response schema is decoded; any drift
+    in that schema surfaces here and only here.
+    """
+    kraken_status = str(raw.get("status") or "").lower()
+    status = _KRAKEN_STATUS_MAP.get(kraken_status, "WORKING")
+
+    def _f(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    vol_exec = _f(raw.get("vol_exec"))
+    price = _f(raw.get("price"))
+    closetm = raw.get("closetm")
+    try:
+        filled_at = (
+            datetime.fromtimestamp(float(closetm), tz=timezone.utc).isoformat()
+            if closetm else None
+        )
+    except (TypeError, ValueError):
+        filled_at = None
+
+    return {
+        "status": status,
+        "filled_qty": vol_exec if status == "FILLED" else None,
+        "filled_avg_price": price if status == "FILLED" else None,
+        "filled_at": filled_at if status == "FILLED" else None,
+        "reject_reason": (
+            str(raw.get("reason")) if raw.get("reason") else None
+        ),
+        "txid": txid,
+        "raw": raw,
+    }
+
+
+async def query_order(
+    txid: str,
+    public_key: str,
+    private_key_b64: str,
+) -> dict:
+    """Fetch the current state of a Kraken order by txid, normalized
+    to the Webull-adapter response shape.
+
+    Raises KrakenError if the API returns errors (including
+    `EOrder:Unknown order`). The auto_router sweep catches those
+    exceptions and treats them as `counts["errors"]++, skip`.
+    """
+    result = await call_private(
+        "/0/private/QueryOrders",
+        public_key,
+        private_key_b64,
+        {"txid": str(txid)},
+    )
+    if not isinstance(result, dict) or txid not in result:
+        # Kraken returns `result={}` if the txid is unknown. The sweep
+        # should NOT retry indefinitely against a missing order — surface
+        # as a KrakenError so the exception path caps it.
+        raise KrakenError([f"EOrder:Unknown order — txid={txid} not in result"])
+    return _normalize_kraken_order(txid, result[txid])

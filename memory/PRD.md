@@ -32,6 +32,37 @@ outcome_resolved, rotation) + 90d TTL; `routes/brain_memory_ingest.py`
 `snapshot/pre-shelly-rewrite`. Rollback via checkout.
 
 
+### ✅ Option C: Kraken manual reconcile endpoint (2026-07-06)
+
+Operator flipped from Option A → C ("build the adapter capability +
+manual-trigger endpoint, don't auto-fire on preview without live
+smoke-test capability").
+
+Shipped:
+- `shared/crypto/kraken.py::query_order(txid, pub, priv)` —
+  normalizes Kraken's `/0/private/QueryOrders` response to the same
+  shape `WebullAdapter.get_order` returns. Single decode point for
+  Kraken schema.
+- `routes/kraken_manual_reconcile.py::POST /api/admin/kraken-reconcile/reconcile-intent`
+  — operator-triggered, single-intent reconciliation. Reuses the
+  auto_router sweep's state-machine transitions (Filled / Terminal /
+  Transient-under-cap / Working). Stamps `reconciled_manually:True`
+  for audit trail.
+- 13 new pytests: 6 adapter-mapper (fixtures locked to Kraken's
+  documented QueryOrders format) + 7 endpoint state-machine.
+- **65/65 tests pass.**
+- Live-smoke verified on preview: not-found path returns clean
+  diagnostic; equity-lane intent correctly rejected with HTTP 400.
+
+**Monday plan:** operator invokes endpoint selectively when they
+see a stuck crypto intent. First live Kraken response contact is a
+deliberate operator action, not a background firehose.
+
+**Follow-up:** promote to auto-sweep after Monday's data confirms
+adapter fixtures match reality. ~15 LOC + 4 tests.
+
+
+
 ### ✅ P1 shipped — Broker reconciliation sweep (2026-07-06)
 
 **Operator sign-off:** Option 2 + `pending` + near-boundary log +

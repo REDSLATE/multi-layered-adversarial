@@ -1,3 +1,109 @@
+## 2026-07-06 — Option C: Kraken manual reconcile endpoint
+
+**Operator sign-off (updated):** switched from Option A (build auto-
+sweep for crypto) to Option C (build the adapter capability + a
+manual-trigger endpoint, DON'T auto-fire on preview since there's
+no way to smoke-test against a live funded Kraken account).
+
+### Rationale
+"Green test hiding an ungenerated real signal" — the exact failure
+mode we spent this session refusing to accept in the taxonomy bug.
+Shipping an auto-firing background sweep that has never seen a real
+Kraken response would be the same trap. Better to ship a deliberate
+operator-triggered endpoint that produces its FIRST live Kraken
+response contact when the operator invokes it on a real Monday
+stuck intent — not as a background firehose.
+
+### The build
+
+**1. `shared/crypto/kraken.py::query_order()`** (~90 LOC):
+   * New public function: `async def query_order(txid, public_key, private_key_b64) -> dict`
+   * Calls Kraken's `/0/private/QueryOrders` via the existing
+     `call_private()` primitive
+   * Normalizes response to the same shape `WebullAdapter.get_order`
+     returns: `{status, filled_qty, filled_avg_price, filled_at,
+     reject_reason, txid, raw}`
+   * `_normalize_kraken_order()` helper — the ONLY place Kraken's
+     response schema is decoded; any schema drift surfaces here
+   * Status map (from Kraken docs):
+     - `closed` → `FILLED`
+     - `canceled` → `CANCELED`
+     - `expired` → `EXPIRED`
+     - `open`/`pending` → `WORKING` (no-op, keep polling)
+     - unknown → `WORKING` (defensive default)
+
+**2. `routes/kraken_manual_reconcile.py`** (~280 LOC):
+   * New route: `POST /api/admin/kraken-reconcile/reconcile-intent`
+   * Body: `{intent_id?: str, txid?: str}` (one required)
+   * Auth: `Depends(get_current_user)` — operator only
+   * Loads intent, fetches Kraken creds via `get_active_keys()`,
+     calls `query_order()`, applies the SAME state-machine
+     transitions the auto_router equity sweep uses
+   * Returns rich diagnostic dict: `{found_intent, intent_id,
+     kraken_txid, kraken_status, kraken_response_shape,
+     action_taken, new_gate_state, detail}`
+   * `action_taken` values: `filled`, `rejected_terminal`,
+     `rejected_retry`, `no_change`, `adapter_error`,
+     `no_credentials`, `not_found`
+   * Rejects equity-lane intents with HTTP 400 (honest error
+     message: use the auto-sweep for equity)
+   * Stamps `reconciled_manually: True` so the audit trail
+     distinguishes operator action from auto-sweep
+
+**3. `test_kraken_manual_reconcile.py`** (~320 LOC, 13 tests):
+   * 6 adapter-mapper tests locked against Kraken's documented
+     QueryOrders response format:
+     - `closed` → FILLED, `canceled` → CANCELED with reason,
+       `expired` → EXPIRED, `open` → WORKING, unknown status
+       → WORKING (defensive), malformed numeric fields → None
+       (survives without crash)
+   * 7 endpoint state-machine tests:
+     - Filled updates intent + returns filled action
+     - Open is no-op (no DB write)
+     - Canceled+transient bucket → requeue pending
+     - Canceled+terminal bucket → broker_rejected
+     - Missing credentials → `no_credentials` action
+     - Equity intent → HTTP 400 with honest error
+     - Not-found intent → `not_found` action
+
+### Live-verification gap (accepted per Option C)
+Tests use fixture responses modeled on Kraken's DOCUMENTED format,
+not real Kraken responses. First live contact is the operator's
+Monday manual invocation. That is a deliberate operator action, not
+a background firehose. If the fixtures drift from reality, the
+operator sees the drift in the endpoint's diagnostic response
+(specifically `kraken_response_shape`) and can decide on the fix
+with real data in hand.
+
+### Follow-up path
+Promote to auto-sweep after Monday's manual invocations confirm
+the adapter shape matches reality. Estimated work: extend
+`_sweep_submitted_broker_orders` from `lane='equity'` to
+`lane: $in ['equity','crypto']` with per-intent adapter dispatch.
+~15 LOC + 4 tests.
+
+### Verification
+- 65/65 tests pass (52 pre-existing + 13 new Kraken)
+- Backend boots clean, no ImportError
+- Endpoint live-tested on preview:
+  - Not-found intent → clean `action_taken: not_found` diagnostic
+  - Equity intent → HTTP 400 with honest routing message
+- Snapshot: `git tag p1-reconcile-shipped`
+
+### Non-goals still deferred
+- **Partial-fill accounting** — canceled orders that had partial
+  fills currently drop the partial fill. `_normalize_kraken_order`
+  explicitly returns `filled_qty=None` on CANCELED to avoid
+  bleeding a stray vol_exec into MC's position math.
+- **Auto-sweep for crypto** — deliberate; see follow-up path above.
+- **Multi-txid batch query** — Kraken's QueryOrders accepts up to
+  20 txids per call. The manual endpoint queries one at a time
+  because the operator inspects each stuck intent individually.
+  If auto-sweep is promoted, batching becomes worthwhile.
+
+---
+
+
 ## 2026-07-06 — P1: Broker reconciliation sweep + taxonomy ordering fix
 
 **Operator sign-off:** Option 2 (leave `ingest_ts` alone, rely on
