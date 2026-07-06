@@ -1,3 +1,53 @@
+## 2026-07-06 — Paper/dry_run mode elimination + dead env-flag cleanup
+
+**Trigger:** Operator observed brain check-ins stamping `broker_mode="paper"`
+on Diagnostics UI. Reality: system has been LIVE-armed for real-money
+trading since the $500 pilot. The "paper" default was misleading residue
+from the ladder-era external-sidecar deploy.
+
+### Fixes shipped
+1. **`test_neutral_brain_identity_stamp.py` (P0 blocker):** removed stray
+   `result["errors"]` line + duplicate assert leftover from a bad
+   search-and-replace that broke pytest collection. All 13 tests green.
+2. **`.env` set `RISEDUAL_BROKER_MODE="live"`** — was previously unset;
+   check-ins now stamp `broker_mode=live` and pass MC's `BAD_BROKER_MODE`
+   gate. Verified via `/api/admin/runtime/sidecar-checkin` — all 4 brains
+   report `live`.
+3. **`platform_survival.py`:** dropped "paper/live" from the
+   `broker_verify_receipt` doctrine string (live-only single-stack).
+4. **`WebullConnect.jsx`:** removed `"paper"` from `ENV_OPTIONS` so
+   operator UI cannot silently re-connect Webull in the paper sandbox.
+5. **`LaneExecutionTogglesPanel.jsx`:** stripped "(or paper fills for
+   Alpaca)" from the enable-lane confirmation copy.
+
+### Dead env-var cleanup
+Removed three fully-retired flags from `/app/backend/.env`:
+- `PHASE6_ENFORCE_ENABLED`
+- `CAMARO_EXECUTOR_ENFORCE_ENABLED`
+- `CHEVELLE_AUTHORITY_ENABLED`
+
+These were declared dead in `flags.py`'s doctrine comment (2026-02-17
+authority-lives-on-seats rev3) — no consumer reads them anymore, and the
+`/admin/flags` endpoint returns `enforce_flags: {}` as a bwd-compat stub.
+
+### Kept (verified as ACTIVELY USED, do NOT prune)
+- `PARADOX_MA_CANARY_*` — canary strategy runner
+- `OPPONENT_MODE` — `role_health.py` + `paradox_record.py` audit tier
+- `DEPLOY_MODE` — `flags.py`, `diagnostics.py`, `meta_routes.py`
+- `BRAIN_ENV_NAME` — legacy fallback in `runner.py::_identity_env_name`,
+  still safe as belt-and-suspenders under `RISEDUAL_ENV`
+- `LADDER_MICRO_PAPER_USD` — this is a sizing-LADDER route ($ cap), not
+  a paper broker mode; the ladder still exists and is the sizing
+  authority per `learning_ladder.py`
+
+### Verification
+- `pytest tests/test_neutral_brain_identity_stamp.py` — 13 passed
+- `pytest tests/test_broker_connected_override.py test_broker_router_mc_receipt.py test_intent_clearance_funnel.py test_kraken_manual_reconcile.py` — 50 passed
+- Backend restarts cleanly; identity log line now reads `broker_mode=live`
+- `/api/admin/flags` returns `broker_live_order_enabled: true`,
+  `enforce_flags: {}`
+
+
 ## 2026-07-06 — Option C: Kraken manual reconcile endpoint
 
 **Operator sign-off (updated):** switched from Option A (build auto-

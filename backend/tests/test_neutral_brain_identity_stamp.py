@@ -188,5 +188,3 @@ def test_default_stamp_fails_validation(monkeypatch):
     assert result["ok"] is False
     assert "ENV_NOT_PROD" in result["errors"]
     assert "MC_URL_NOT_PROD" in result["errors"]
- result["errors"]
-    assert "MC_URL_NOT_PROD" in result["errors"]

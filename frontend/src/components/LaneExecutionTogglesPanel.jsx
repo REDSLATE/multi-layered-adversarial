@@ -150,8 +150,7 @@ export default function LaneExecutionTogglesPanel() {
             <div className="text-xs font-mono text-rd-dim leading-relaxed mb-4">
               This allows MC to route orders on the {confirming.lane} lane through
               its connected broker. Intents that pass the full gate chain will
-              be submitted to the broker for real fills (or paper fills for
-              Alpaca). This action is audit-logged.
+              be submitted to the broker for real fills. This action is audit-logged.
             </div>
             <div className="flex items-center justify-end gap-2">
               <button

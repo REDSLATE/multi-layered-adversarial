@@ -256,7 +256,7 @@ def mc_canonical_gate(intent: Dict[str, Any]) -> Dict[str, Any]:
 
 def broker_verify_receipt(receipt: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Broker adapter calls this before any paper/live order.
+    Broker adapter calls this before any live order.
     Broker refuses orders without MC receipt.
     """
 

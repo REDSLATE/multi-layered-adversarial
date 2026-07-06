@@ -7,6 +7,39 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ✅ Paper/dry_run mode elimination + dead env-flag cleanup (2026-07-06)
+
+**Operator directive:** eliminate `paper` and `dry_run` from the codebase
+— system is single-stack, LIVE-armed for real money. Also clean up old
+env slots that aren't used anymore.
+
+**Fixed:**
+- P0: `test_neutral_brain_identity_stamp.py` IndentationError from a
+  botched search-and-replace (stray `result["errors"]` line 191).
+  Tests: 13/13 passing.
+- `.env`: added `RISEDUAL_BROKER_MODE="live"` — check-ins now stamp
+  `broker_mode=live` instead of `unset`/`paper`. Verified via
+  `/api/admin/runtime/sidecar-checkin`.
+- Removed three retired enforce-flag env vars: `PHASE6_ENFORCE_ENABLED`,
+  `CAMARO_EXECUTOR_ENFORCE_ENABLED`, `CHEVELLE_AUTHORITY_ENABLED`
+  (declared dead by `flags.py`'s 2026-02-17 authority-on-seats rev3).
+- UI copy: `WebullConnect` no longer offers `"paper"` in ENV_OPTIONS;
+  `LaneExecutionTogglesPanel` stripped the `(or paper fills for Alpaca)`
+  copy from the enable-lane dialog.
+- `platform_survival.broker_verify_receipt` docstring updated to "live"
+  only.
+
+**Kept as ACTIVE (not dead):** `PARADOX_MA_CANARY_*` (canary runner),
+`OPPONENT_MODE` (role_health / paradox_record audit tier), `DEPLOY_MODE`
+(flags/diagnostics/meta_routes), `BRAIN_ENV_NAME` (legacy fallback in
+runner.py), `LADDER_MICRO_PAPER_USD` (sizing ladder route, NOT broker
+mode — the ladder is the sizing authority).
+
+**Gate check:** `BAD_BROKER_MODE` in `platform_survival.py:93` strictly
+rejects any `broker_mode != "live"` — enforcement is unchanged and now
+matches reality.
+
+
 ### ✅ Shelly rewrite — lean learning recorder ONLY (2026-07-06)
 
 **Operator directive:** Shelly must be a lean learning recorder, not

@@ -16,7 +16,7 @@ import { KeyholeIcon, ShieldCheck, Warning, Trash, ArrowsClockwise, Lightning, D
 import { toast } from "sonner";
 
 const REGION_OPTIONS = ["us", "hk", "jp"];
-const ENV_OPTIONS = ["pro", "paper"];
+const ENV_OPTIONS = ["pro"];
 
 /**
  * WebullConnect — App Key / App Secret / Account ID input modal +
