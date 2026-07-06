@@ -61,7 +61,12 @@ AUTO_ROUTER_NOTIONAL_USD = float(os.environ.get("AUTO_ROUTER_NOTIONAL_USD", "10"
 #       is in flight; doesn't bound the burst rate across DIFFERENT
 #       symbols.
 #
-# `tests/test_auto_router_max_per_tick.py` pins this contract.
+# Coverage note (2026-07-06): the previous
+# `tests/test_auto_router_max_per_tick.py` was deleted in a prior
+# cleanup. This contract is currently NOT under direct pytest
+# coverage — the `.to_list(AUTO_ROUTER_MAX_PER_TICK)` call in `_tick`
+# is the only enforcement point. Re-add a small regression test if
+# this bound ever needs to change or a race condition is suspected.
 AUTO_ROUTER_MAX_PER_TICK = int(os.environ.get("AUTO_ROUTER_MAX_PER_TICK", "5"))
 # Broker-retry ceiling for the truly-transient error class. Beyond
 # this the intent is terminally stamped `gate_state=blocked` with
