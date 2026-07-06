@@ -59,6 +59,28 @@ def build_doctrine_labels(snapshot: Dict[str, Any]) -> DoctrineLabels:
 
     symbol = str(snapshot.get("symbol", "UNKNOWN"))
 
+    # ── NO_DATA short-circuit (2026-07-06 operator directive) ──
+    # When the equity enricher explicitly failed OR the snapshot has
+    # none of the doctrine-facing fields populated, do NOT run the
+    # per-field labeling — every default (spread_bps=999, gap=0,
+    # rvol=0, has_news=False, float=999999, pattern="") is a
+    # manufactured value, not real market data. Return NO_DATA so
+    # the seat builders + UI render "no data" honestly instead of
+    # cascading into a REJECT that looks like a per-symbol verdict.
+    enrichment_status = str(snapshot.get("enrichment_status", "")).lower()
+    _doctrine_fields = ("gap_pct", "relative_volume", "spread_bps",
+                        "price", "pattern", "market_regime")
+    _no_doctrine_fields = not any(k in snapshot for k in _doctrine_fields)
+    if enrichment_status in {"failed", "no_symbol"} or _no_doctrine_fields:
+        why = enrichment_status or "snapshot_missing_all_doctrine_fields"
+        return DoctrineLabels(
+            symbol=symbol,
+            score=0.0,
+            quality="NO_DATA",
+            labels=["ENRICHMENT_UNAVAILABLE"],
+            reasons=[f"no_data:{why}"],
+        )
+
     price = float(snapshot.get("price", 0.0))
     gap_pct = float(snapshot.get("gap_pct", 0.0))
     relative_volume = float(snapshot.get("relative_volume", 0.0))
@@ -67,6 +89,13 @@ def build_doctrine_labels(snapshot: Dict[str, Any]) -> DoctrineLabels:
     pattern = str(snapshot.get("pattern", "")).lower()
     market_regime = str(snapshot.get("market_regime", "unknown")).lower()
     spread_bps = float(snapshot.get("spread_bps", 999.0))
+    # ── Fields Webull cannot supply under our current entitlement
+    # (has_news, float_millions). When the enricher marks them
+    # unavailable, we skip the corresponding penalties so absence-of-
+    # data doesn't masquerade as adverse-data.
+    _unavailable = set(snapshot.get("enrichment_unavailable_fields") or [])
+    has_news_unavailable = "has_news" in _unavailable
+    float_unavailable = "float_millions" in _unavailable
     # New: time-of-day filter (Toolkit: 7am-11am EST trading window).
     # Snapshot may pass `hour_et` (0-23) when available; absence is
     # treated as informational, not penalized.
@@ -109,12 +138,21 @@ def build_doctrine_labels(snapshot: Dict[str, Any]) -> DoctrineLabels:
     if has_news:
         score += 0.15
         labels.append("NEWS_CATALYST")
+    elif has_news_unavailable:
+        # Webull entitlement gap — do NOT penalize absence of data.
+        # Add an informational label so the operator can filter, and
+        # so the audit trail is honest about the missing source.
+        labels.append("NEWS_DATA_UNAVAILABLE")
     else:
         labels.append("NO_NEWS_RISK")
         reasons.append("no_news_catalyst")
 
     # ── float / supply imbalance ───────────────────────────────────
-    if float_millions <= 20.0:
+    if float_unavailable:
+        # Same treatment as `has_news`: absent-source is not
+        # adverse-data. No score change, informational label only.
+        labels.append("FLOAT_DATA_UNAVAILABLE")
+    elif float_millions <= 20.0:
         score += 0.15
         labels.append("LOW_FLOAT_SUPPLY_IMBALANCE")
         # Tier upgrade: <10M is "cold market" threshold per Toolkit.

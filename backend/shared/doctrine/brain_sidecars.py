@@ -75,6 +75,79 @@ def build_all_brain_doctrine_packets(
     labels = set(base.labels)
     holders = seat_holders or {}
 
+    # ── NO_DATA short-circuit (2026-07-06 operator directive) ──
+    # When the enricher explicitly failed (or the snapshot has none of
+    # the doctrine-facing fields), the labeler returns quality="NO_DATA"
+    # to signal "we couldn't score this trade". Return neutral seat
+    # bodies instead of the REJECT cascade so the UI can render an
+    # honest "no data" tile rather than a per-symbol advisory verdict
+    # built entirely on default field values. This is Option B of the
+    # operator's 2026-07-06 fix: the panel MUST fail loud, not lie.
+    if base.quality == "NO_DATA":
+        return {
+            "event_type": "BRAIN_DOCTRINE_SIDECAR_PACKET",
+            "doctrine_version": DOCTRINE_VERSION,
+            "lane": "equity",
+            "symbol": base.symbol,
+            "base_labels": {
+                "score": base.score,
+                "quality": "NO_DATA",
+                "labels": base.labels,
+                "reasons": base.reasons,
+            },
+            "seats": {
+                "strategist": {
+                    "role": "strategist",
+                    "seat": EQUITY_SEAT_MAP["strategist"],
+                    "holder": holders.get("strategist"),
+                    "conviction_delta": 0.0,
+                    "lesson": "No data available — strategist advisory suspended for this intent.",
+                    "may_execute": False,
+                    "may_override_direction": False,
+                    "no_data": True,
+                },
+                "adversary": {
+                    "role": "adversary",
+                    "seat": EQUITY_SEAT_MAP["adversary"],
+                    "holder": holders.get("auditor"),
+                    "challenge_required": False,
+                    "challenge_strength": 0.0,
+                    "objections": [],
+                    "lesson": "No data available — auditor advisory suspended.",
+                    "may_execute": False,
+                    "may_override_direction": False,
+                    "no_data": True,
+                },
+                "governor": {
+                    "role": "governor",
+                    "seat": EQUITY_SEAT_MAP["governor"],
+                    "holder": holders.get("governor"),
+                    "risk_multiplier": 1.0,
+                    "governor_action": "modulate",
+                    "block_reasons": [],
+                    "display_status": "NO_DATA",
+                    "reason": None,
+                    "execution_effect": "NO_DATA",
+                    "lesson": "No data available — governor advisory suspended.",
+                    "may_execute": False,
+                    "may_override_direction": False,
+                    "no_data": True,
+                },
+                "execution_judge": {
+                    "role": "execution_judge",
+                    "seat": EQUITY_SEAT_MAP["execution_judge"],
+                    "holder": holders.get("executor"),
+                    "execution_ready": None,
+                    "execution_checks": {},
+                    "lesson": "No data available — execution advisory suspended.",
+                    "may_execute": False,
+                    "may_create_direction": False,
+                    "requires_existing_trade_intent": True,
+                    "no_data": True,
+                },
+            },
+        }
+
     strategist = _build_strategist(base, labels, holders.get("strategist"))
     adversary = _build_adversary(base, labels, holders.get("auditor"))
     governor = _build_governor(base, labels, holders.get("governor"), snapshot)

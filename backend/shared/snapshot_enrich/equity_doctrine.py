@@ -432,6 +432,16 @@ def _enrich_sync(symbol: str, base: Dict[str, Any]) -> Dict[str, Any]:
     # actually drove the decision.
     out["primary_source"] = "webull"
     out.setdefault("data_council", []).append("webull")
+    # ── Enrichment status (2026-07-06 operator directive) ──
+    # Stamp the enrichment outcome explicitly so downstream (doctrine
+    # labeler, UI) can distinguish "we tried and got real data" from
+    # "we tried and it failed, defaults are stand-ins". The two
+    # Webull-unavailable-under-entitlement fields (has_news,
+    # float_millions) are stamped as "unknown, non-penalizing" so the
+    # doctrine layer can skip the NO_NEWS_RISK / no-LOW_FLOAT penalties
+    # that otherwise fire against absence-of-data.
+    out["enrichment_status"] = "live"
+    out["enrichment_unavailable_fields"] = ["has_news", "float_millions"]
     return out
 
 
@@ -442,13 +452,24 @@ async def enrich_equity_doctrine_snapshot(
     executor so the brain tick loop never blocks on HTTP.
 
     Returns the original `base_snapshot` unchanged on ANY failure —
-    fail-soft is the contract.
+    fail-soft is the contract. The returned snapshot is STAMPED with
+    `enrichment_status ∈ {"live", "failed", "no_symbol"}` so the
+    doctrine labeler and UI can render honest "no data" instead of a
+    manufactured REJECT built on defaults.
     """
     if not symbol:
+        base_snapshot = dict(base_snapshot or {})
+        base_snapshot["enrichment_status"] = "no_symbol"
         return base_snapshot
     try:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _enrich_sync, symbol, base_snapshot)
     except Exception as e:  # noqa: BLE001
         logger.warning("equity enricher failed sym=%s err=%s", symbol, e)
-        return base_snapshot
+        # Stamp the failure explicitly so the doctrine layer + UI
+        # short-circuit to NO_DATA instead of manufacturing a REJECT
+        # from all-default fields.
+        failed = dict(base_snapshot or {})
+        failed["enrichment_status"] = "failed"
+        failed["enrichment_error"] = repr(e)
+        return failed

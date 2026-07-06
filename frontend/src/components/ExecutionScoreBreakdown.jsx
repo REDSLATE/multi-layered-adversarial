@@ -133,6 +133,86 @@ export default function ExecutionScoreBreakdown({
   const breakdown = computeBreakdown(packet);
   const failingGates = intent?.failing_gates || [];
 
+  // ── NO_DATA short-circuit (2026-07-06 operator directive) ──
+  // When the backend labeler returns quality="NO_DATA" (because the
+  // equity enricher failed / snapshot lacks doctrine-facing fields),
+  // do NOT render a manufactured 0% score. Show an honest "no data"
+  // panel so the operator immediately knows the panel is not scoring
+  // real per-symbol facts — and can look at the intent's snapshot +
+  // gate chain instead. Option B of the 2026-07-06 fix.
+  const noData =
+    packet?.base_labels?.quality === "NO_DATA" ||
+    (Array.isArray(packet?.base_labels?.labels) &&
+      packet.base_labels.labels.includes("ENRICHMENT_UNAVAILABLE"));
+  if (noData) {
+    const reason =
+      (Array.isArray(packet?.base_labels?.reasons) &&
+        packet.base_labels.reasons[0]) ||
+      "snapshot enrichment unavailable";
+    return (
+      <div
+        className="space-y-2 text-[11px]"
+        data-testid={`exec-score-${intent?.intent_id || "unknown"}-no-data`}
+      >
+        <div className="flex items-baseline gap-4 font-mono">
+          <span className="text-slate-400 uppercase tracking-wider text-[10px]">
+            execution score
+          </span>
+          <span
+            className="text-base font-semibold text-amber-300"
+            data-testid={`exec-score-${intent?.intent_id}-no-data-badge`}
+          >
+            NO DATA
+          </span>
+          <span className="text-slate-500">
+            snapshot enrichment failed — advisory suspended
+          </span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5 font-mono">
+          {["strategist", "auditor", "governor", "executor"].map((label) => (
+            <div
+              key={label}
+              className="bg-slate-950/40 border border-slate-800 rounded px-2 py-1.5 opacity-60"
+              data-testid={`exec-score-component-${label}-no-data`}
+            >
+              <div className="text-[9px] uppercase tracking-wider text-slate-500">
+                {label}
+              </div>
+              <div className="text-sm text-slate-500">—</div>
+              <div className="text-[9px] text-slate-500 truncate">
+                no data
+              </div>
+            </div>
+          ))}
+        </div>
+        {failingGates.length > 0 && (
+          <div className="pt-2 border-t border-slate-800">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+              actual block (gate chain)
+            </div>
+            <div className="space-y-1">
+              {failingGates.slice(0, 3).map((g, i) => (
+                <div
+                  key={`${g.name || g.gate || i}-${i}`}
+                  className="font-mono text-[10px] text-red-300"
+                  data-testid={`exec-score-failing-gate-${g.name || g.gate || i}`}
+                >
+                  <span className="text-slate-400">└─</span>{" "}
+                  <span className="text-amber-300">{g.name || g.gate || "?"}</span>
+                  {g.reason ? ` — ${g.reason}` : ""}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="text-[9px] text-slate-600 italic pt-1">
+          {reason} · check intent.snapshot for enrichment_status and
+          intent.gate_state for the real verdict.
+        </div>
+      </div>
+    );
+  }
+
   if (!breakdown) {
     return (
       <div
