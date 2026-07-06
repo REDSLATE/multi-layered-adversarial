@@ -368,10 +368,12 @@ def _identity_git_sha() -> str:
 
 
 def _identity_broker_mode() -> str:
-    """One of `paper | live | dry_run`. MC's validator rejects anything
-    else with BAD_BROKER_MODE. Default `paper` — safe for any env."""
-    raw = _env("RISEDUAL_BROKER_MODE") or "paper"
-    return raw if raw in ("paper", "live", "dry_run") else "paper"
+    """Sole legal value: `live`. MC's `BAD_BROKER_MODE` gate rejects
+    anything else (2026-07-06 — paper/dry_run removed, single-stack
+    reality). If `RISEDUAL_BROKER_MODE` is unset or wrong, we still
+    stamp the raw value so the panel surfaces the misconfiguration
+    instead of silently masking it as `paper`."""
+    return _env("RISEDUAL_BROKER_MODE") or "unset"
 
 
 def _checkin_stamp(brain_id: str, display_name: str) -> dict:

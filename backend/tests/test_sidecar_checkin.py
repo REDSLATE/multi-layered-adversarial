@@ -24,7 +24,7 @@ def _prod_stamp() -> dict:
         "platform": "railway",
         "mc_url": "https://mission.risedual.ai",
         "db_name": "risedual_prod",
-        "broker_mode": "paper",
+        "broker_mode": "live",
         "sidecar_room": "alpha-room",
         "sidecar_version": "1.0.0",
         "policy_hash": policy_hash(),

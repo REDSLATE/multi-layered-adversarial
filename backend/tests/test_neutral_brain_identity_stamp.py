@@ -130,15 +130,17 @@ def test_db_name_legacy_fallback(monkeypatch):
 
 
 def test_broker_mode_clamps_to_legal_values(monkeypatch):
-    """Anything outside {paper, live, dry_run} silently clamps to
-    `paper` so MC's BAD_BROKER_MODE gate never fires from a typo."""
+    """2026-07-06: `paper`/`dry_run` were removed. `live` is the sole
+    legal value. Unset or invalid values stamp through as-is so the
+    identity panel surfaces the misconfiguration instead of masking
+    it as `paper`."""
     _reset_env(monkeypatch)
     monkeypatch.setenv("RISEDUAL_BROKER_MODE", "garbage")
-    assert _checkin_stamp("alpha", "Camino")["stamp"]["broker_mode"] == "paper"
+    assert _checkin_stamp("alpha", "Camino")["stamp"]["broker_mode"] == "garbage"
     monkeypatch.setenv("RISEDUAL_BROKER_MODE", "live")
     assert _checkin_stamp("alpha", "Camino")["stamp"]["broker_mode"] == "live"
-    monkeypatch.setenv("RISEDUAL_BROKER_MODE", "dry_run")
-    assert _checkin_stamp("alpha", "Camino")["stamp"]["broker_mode"] == "dry_run"
+    monkeypatch.delenv("RISEDUAL_BROKER_MODE", raising=False)
+    assert _checkin_stamp("alpha", "Camino")["stamp"]["broker_mode"] == "unset"
 
 
 def test_full_prod_stamp_passes_validation(monkeypatch):
@@ -152,7 +154,7 @@ def test_full_prod_stamp_passes_validation(monkeypatch):
     monkeypatch.setenv("RISEDUAL_MC_URL", "https://mission.risedual.ai")
     monkeypatch.setenv("RISEDUAL_DB_NAME", "risedual_prod")
     monkeypatch.setenv("RISEDUAL_GIT_SHA", "abc1234")
-    monkeypatch.setenv("RISEDUAL_BROKER_MODE", "paper")
+    monkeypatch.setenv("RISEDUAL_BROKER_MODE", "live")
     monkeypatch.setenv("RISEDUAL_PLATFORM", "emergent")
     monkeypatch.setenv("RISEDUAL_APP_NAME", "risedual")
     monkeypatch.setenv("RISEDUAL_SIDECAR_VERSION", "neutral-camino-v1")
@@ -185,4 +187,6 @@ def test_default_stamp_fails_validation(monkeypatch):
     result = stamp.validate_for_prod_sidecar()
     assert result["ok"] is False
     assert "ENV_NOT_PROD" in result["errors"]
+    assert "MC_URL_NOT_PROD" in result["errors"]
+ result["errors"]
     assert "MC_URL_NOT_PROD" in result["errors"]

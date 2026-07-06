@@ -110,7 +110,7 @@ async def test_audit_collection_writes_on_checkin(monkeypatch):
         "platform": "test",
         "mc_url": "https://mission.risedual.ai",
         "db_name": "risedual_db",
-        "broker_mode": "paper",
+        "broker_mode": "live",
         "sidecar_room": "test-room",
         "sidecar_version": "tripwire",
         "policy_hash": mod.policy_hash(),

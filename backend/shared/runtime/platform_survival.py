@@ -90,7 +90,7 @@ class RuntimeStamp:
         if self.db_name in ("", "preview", "test", "unknown"):
             errors.append("BAD_OR_UNKNOWN_DB_NAME")
 
-        if self.broker_mode not in ("paper", "live", "dry_run"):
+        if self.broker_mode != "live":
             errors.append("BAD_BROKER_MODE")
 
         return {
