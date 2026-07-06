@@ -109,9 +109,24 @@ def classify(exc: BaseException) -> BrokerErrorClass:
             or "invalid_signature" in msg):
         return BrokerErrorClass("auth_or_permission", True, _detail(raw))
 
+    # ─── RATE LIMIT (TRANSIENT) — must peel off BEFORE the 4xx
+    # catch-all below. Webull's throttle response reads
+    # `HTTP Status: 429, TOO_MANY_REQUESTS, ...` which contains
+    # "http status: 4" — without this ordering, every 429 would
+    # be misclassified as `invalid_order_args` (terminal) and the
+    # retry cap in `auto_router._sweep_submitted_broker_orders`
+    # would be defeated on the single most likely RTH rejection
+    # (2026-07-06 ordering fix — see test_broker_error_taxonomy.py
+    # regression anchor `test_classify_webull_429_transient`).
+    if ("429" in msg
+            or "rate limit" in msg
+            or "too many requests" in msg
+            or "eapi:rate limit exceeded" in msg):
+        return BrokerErrorClass("rate_limited", False, _detail(raw))
+
     # Generic 4xx / malformed request. Kept LAST among TERMINAL so
     # market_closed / insufficient_funds / min_order_notional /
-    # auth_or_permission can peel off first.
+    # auth_or_permission / rate_limited can peel off first.
     if ("http status: 4" in msg
             or "invalid_parameter" in msg
             or "invalid arguments" in msg
@@ -122,12 +137,6 @@ def classify(exc: BaseException) -> BrokerErrorClass:
         return BrokerErrorClass("invalid_order_args", True, _detail(raw))
 
     # ─── TRANSIENT ────────────────────────────────────────────────
-    if ("429" in msg
-            or "rate limit" in msg
-            or "too many requests" in msg
-            or "eapi:rate limit exceeded" in msg):
-        return BrokerErrorClass("rate_limited", False, _detail(raw))
-
     if ("timeout" in msg
             or "timed out" in msg
             or "connection" in msg

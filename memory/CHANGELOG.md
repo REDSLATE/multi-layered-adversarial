@@ -1,3 +1,113 @@
+## 2026-07-06 — P1: Broker reconciliation sweep + taxonomy ordering fix
+
+**Operator sign-off:** Option 2 (leave `ingest_ts` alone, rely on
+120min expire backstop) + `gate_state='pending'` on requeue + near-
+boundary log for slow retry cycles + fix taxonomy ordering NOW
+(not later).
+
+### The problem (handoff P1)
+`auto_router` marks intents as `gate_state='submitted'`, but if the
+broker rejects/cancels the order later there was no closed-loop
+reconciliation. Intents got stuck forever. Advisor Performance
+tiles couldn't count wins because outcomes never resolved.
+
+### The build
+1. **`_sweep_submitted_broker_orders()` in `auto_router.py`** —
+   every scheduled tick, polls Webull for `gate_state='submitted'`
+   equity intents whose `broker_order.id` exists and `executed_at`
+   is >30s old. Cap 25 per sweep, `.max_time_ms(3000)`,
+   `asyncio.wait_for(timeout=8)` per broker call, entire sweep
+   under a 15s outer wait_for.
+
+2. **State transitions:**
+   - `FILLED` → `gate_state='filled'` + stamp `filled_qty` /
+     `filled_avg_price` / `filled_at` on the intent doc. No new
+     executions row (original submit row is the audit).
+   - `CANCELLED/REJECTED/EXPIRED` → run `classify()` from the
+     existing `broker_error_taxonomy`:
+     - Terminal bucket (`market_closed`, `insufficient_funds`,
+       `min_order_notional`, `invalid_order_args`,
+       `auth_or_permission`) OR retry_count ≥ 3 →
+       `gate_state='broker_rejected'` (final).
+     - Transient bucket (`rate_limited`, `network_transient`,
+       `unknown`) under cap → `gate_state='pending'`,
+       `submit_retry_count += 1`, `$unset broker_order/executed_at`.
+       Intent re-enters routing on the next tick, treated
+       identically to a fresh emission.
+   - `PARTIAL_FILLED/WORKING/PENDING_CANCEL` → no-op, poll again
+     next tick.
+   - Broker exception → caught, logged, `counts["errors"]++`, no
+     state change. Sibling intents in the batch still process.
+
+3. **Near-boundary log:** when a requeue lands on an intent already
+   past 75% of the 60min lookback window (age > 45min), a WARNING
+   log fires + `counts["requeue_near_boundary"]++`. Converts the
+   theoretical 60-120min stall zone into an observable event.
+
+4. **Rate-limit gate (smoke-test finding):** `intents.py:107-109`
+   calls `force_one_tick()` as a ~50ms latency optimization on
+   every intent insert. Without a gate, a burst of 5 brain
+   emissions in 7s would trigger 5 back-to-back reconcile sweeps
+   → 5N Webull `get_order` calls → HTTP 429 rate-limit spiral. The
+   gate skips the sweep if the previous run was <25s ago. Silent
+   skip (no log) so operator sees only real sweep activity.
+
+### The taxonomy ordering bug (surfaced by the tests, fixed now)
+Pre-fix ordering in `broker_error_taxonomy.py` had the
+`invalid_order_args` catch-all (`"http status: 4"`) BEFORE the
+`rate_limited` block (`"429"`, `"rate limit"`). Webull's REAL 429
+response format:
+```
+HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests
+```
+was being misclassified as `invalid_order_args` (**terminal**) —
+which would have defeated the retry cap for the single most likely
+broker rejection during Monday RTH volume. Moved `rate_limited`
+block above `invalid_order_args`. Regression anchor added:
+`test_classify_webull_429_transient`.
+
+### Test coverage
+- **51 tests pass** (`test_live_execution_path.py` + `test_broker_error_taxonomy.py`)
+- 10 new reconcile-specific: Filled transition, Terminal bucket,
+  Transient reject under cap, Transient reject at cap, Partial/
+  Working no-op, Broker exception isolation, Near-boundary
+  warning, Crypto-lane exclusion, Adapter unavailable, Rate-limit
+  gate.
+- 1 new taxonomy regression: Webull 429 → rate_limited.
+
+### Live verification on preview
+Injected synthetic `submitted` equity intent with fake
+`broker_order.id`. Waited for scheduled tick. Result:
+- Exactly ONE sweep ran at the next natural tick (24s later)
+- Webull returned HTTP 417 ORDER_NOT_FOUND for the fake id
+- Exception was caught, `counts={polled:1, errors:1}`, INFO
+  summary line published
+- Synthetic intent remained at `gate_state='submitted'`
+  untouched (adapter errors don't corrupt state)
+- Then fired 5 concurrent `force_one_tick()` calls: all 5
+  returned HTTP 200 but only ONE sweep ran (the first) —
+  4 subsequent were silently rate-limited. Confirmed no
+  burst-triggered sweep storm.
+
+### Explicit non-goals (deferred to future tasks)
+- **Kraken/crypto reconciliation:** Kraken adapter lacks
+  `get_order` symmetry — would need `call_private("QueryOrders",…)`
+  added. Separate task.
+- **Partial-fill accounting:** currently just "leave alone."
+- **Timestamp bump on requeue (Option 1a/1b):** deliberately
+  skipped per operator directive. 60-120min stall zone accepted
+  as bounded, non-silent (120min expire sweep is backstop),
+  monitored (near-boundary log fires when a requeue enters the
+  stall risk window).
+
+### Snapshot / rollback
+`git tag pre-dead-tile-cleanup` (previous session) still valid.
+This session's changes: auto_router.py, broker_error_taxonomy.py,
+test_live_execution_path.py, test_broker_error_taxonomy.py.
+
+---
+
+
 ## 2026-07-06 — Dead-tile cleanup: Decisions Feed + Promotion Artifact + Brain Health
 
 **Operator directive (verbatim):**

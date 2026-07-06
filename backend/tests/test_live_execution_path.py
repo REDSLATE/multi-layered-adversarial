@@ -1210,3 +1210,414 @@ async def test_preflight_writes_exactly_one_execution_row(route_one_scaffold):
 
     assert s["executions_mod"].record.await_count == 1
 
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 12. BROKER RECONCILIATION SWEEP (2026-07-06 · P1)
+# ═══════════════════════════════════════════════════════════════════
+# Doctrine (operator sign-off 2026-07-06):
+#   * Poll Webull for `gate_state='submitted'` equity intents whose
+#     fills/rejects haven't been observed. Close the loop.
+#   * Terminal-bucket rejects (insufficient_funds, market_closed,
+#     invalid_order_args, auth_or_permission, min_order_notional)
+#     go straight to `broker_rejected` on first observation.
+#   * Transient rejects (rate_limited, network_transient, unknown)
+#     get retried up to RECONCILE_MAX_RETRIES=3, then terminal.
+#   * Retry flips gate_state to `pending` (the canonical fresh-
+#     emission state) — pipeline treats it identically to a fresh
+#     intent. ingest_ts is preserved; the 120min expire sweep is the
+#     backstop for the 60-120min stall zone.
+#   * Near-boundary log: warn when a requeue lands on an intent
+#     already past 75% of the 60min lookback window.
+#   * Any broker adapter exception is caught — one bad poll cannot
+#     crash the tick or corrupt sibling intents.
+
+
+def _submitted_intent(intent_id="rec-1", order_id="wbull-42",
+                      submit_retry_count=0, ingest_ts=None,
+                      executed_at=None, lane="equity"):
+    """Build a submitted-state intent doc matching what the sweep
+    query returns."""
+    from datetime import datetime, timezone
+    if ingest_ts is None:
+        ingest_ts = datetime.now(timezone.utc).isoformat()
+    if executed_at is None:
+        executed_at = datetime.now(timezone.utc).isoformat()
+    return {
+        "intent_id": intent_id,
+        "symbol": "NVDA",
+        "action": "BUY",
+        "lane": lane,
+        "stack": "barracuda",
+        "ingest_ts": ingest_ts,
+        "executed_at": executed_at,
+        "broker_order": {"id": order_id, "broker": "webull",
+                         "status": "submitted"},
+        "submit_retry_count": submit_retry_count,
+    }
+
+
+class _FakeCursor:
+    """Minimal async-iterable stand-in for the Mongo cursor. Supports
+    the .max_time_ms(...).limit(...) fluent chain and async iteration."""
+
+    def __init__(self, docs):
+        self._docs = list(docs)
+
+    def max_time_ms(self, _ms):
+        return self
+
+    def limit(self, _n):
+        return self
+
+    def __aiter__(self):
+        self._it = iter(self._docs)
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._it)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+
+class _ReconcileFake:
+    """Captures every update_one call issued by the sweep so tests can
+    assert what the state machine wrote."""
+
+    def __init__(self, docs, get_order_side_effect):
+        self.docs = docs
+        self.updates: list[dict] = []
+        self.query_capture: dict = {}
+        self.adapter = MagicMock()
+        self.adapter.get_order = AsyncMock(side_effect=get_order_side_effect)
+
+    def build_db_mock(self):
+        coll = MagicMock()
+
+        def _find(query, projection=None):
+            # Capture the query so tests can assert lane=equity, etc.
+            self.query_capture.update(query)
+            return _FakeCursor(self.docs)
+        coll.find = _find
+
+        async def _update_one(query, update):
+            self.updates.append({"query": query, "update": update})
+        coll.update_one = _update_one
+        db_mock = MagicMock()
+        db_mock.__getitem__ = MagicMock(return_value=coll)
+        return db_mock
+
+
+def _patch_reconcile(fake):
+    """Context manager that patches the 4 seams the sweep uses:
+    db, get_webull_adapter, classify (leave real), and executions."""
+    from contextlib import ExitStack
+    stack = ExitStack()
+    stack.enter_context(patch("shared.auto_router.db", new=fake.build_db_mock()))
+    stack.enter_context(patch(
+        "shared.broker_router.get_webull_adapter",
+        new=AsyncMock(return_value=fake.adapter),
+    ))
+    return stack
+
+
+@pytest.fixture(autouse=True)
+def _reset_reconcile_rate_limit():
+    """Every reconcile test starts with a clean rate-limit gate — a
+    previous test's sweep run must not suppress the next test's sweep."""
+    from shared import auto_router as ar
+    ar._LAST_RECONCILE_SWEEP_TS = None
+    yield
+    ar._LAST_RECONCILE_SWEEP_TS = None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_filled_transitions_intent_to_filled():
+    """get_order returns FILLED → gate_state='filled' + fill fields stamped."""
+    from shared import auto_router as ar
+
+    docs = [_submitted_intent(intent_id="rec-fill-1", order_id="wb-42")]
+    get_order_returns = [{
+        "status": "FILLED",
+        "filled_qty": 1.0,
+        "filled_avg_price": 500.25,
+        "filled_at": "2026-07-06T14:00:00+00:00",
+    }]
+    fake = _ReconcileFake(docs, get_order_returns)
+
+    with _patch_reconcile(fake):
+        counts = await ar._sweep_submitted_broker_orders()
+
+    # Query targeted equity + submitted state
+    assert fake.query_capture.get("gate_state") == "submitted"
+    assert fake.query_capture.get("lane") == "equity"
+
+    # One filled transition, one update_one
+    assert counts["filled"] == 1
+    assert counts["rejected_terminal"] == 0
+    assert counts["rejected_retry"] == 0
+    assert len(fake.updates) == 1
+    set_doc = fake.updates[0]["update"]["$set"]
+    assert set_doc["gate_state"] == "filled"
+    assert set_doc["broker_order.filled_qty"] == 1.0
+    assert set_doc["broker_order.filled_avg_price"] == 500.25
+
+
+@pytest.mark.asyncio
+async def test_reconcile_terminal_bucket_reject_goes_broker_rejected():
+    """Rejection with a TERMINAL taxonomy bucket (e.g. insufficient
+    funds) goes straight to `broker_rejected` on first observation —
+    no retry."""
+    from shared import auto_router as ar
+
+    docs = [_submitted_intent(intent_id="rec-term-1", submit_retry_count=0)]
+    # broker_error_taxonomy.classify() reads the reject reason string.
+    get_order_returns = [{
+        "status": "REJECTED",
+        "reject_reason": "EOrder:Insufficient funds",
+    }]
+    fake = _ReconcileFake(docs, get_order_returns)
+
+    with _patch_reconcile(fake):
+        counts = await ar._sweep_submitted_broker_orders()
+
+    assert counts["rejected_terminal"] == 1
+    assert counts["rejected_retry"] == 0
+    assert len(fake.updates) == 1
+    set_doc = fake.updates[0]["update"]["$set"]
+    assert set_doc["gate_state"] == "broker_rejected"
+    assert set_doc["broker_reason"] == "insufficient_funds"
+    assert set_doc["broker_error_terminal"] is True
+    # retry_count preserved at 0 — never incremented for terminal buckets
+    assert set_doc["submit_retry_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_transient_reject_under_cap_requeues_as_pending():
+    """Transient reject (rate limit) at retry_count=0 → pending +
+    retry_count=1, broker_order unset, executed=False."""
+    from shared import auto_router as ar
+
+    docs = [_submitted_intent(intent_id="rec-tran-1", submit_retry_count=0)]
+    # REAL Webull 429 format — verbatim from prod log. The pre-2026-07-06
+    # taxonomy misclassified this as `invalid_order_args` (terminal)
+    # because "http status: 4" hit the 4xx catch-all before `rate_limited`
+    # got its turn. After the ordering fix in broker_error_taxonomy.py,
+    # this must classify as `rate_limited` (transient) so RTH rate-limit
+    # rejections trigger the retry path — not go straight to terminal.
+    get_order_returns = [{
+        "status": "REJECTED",
+        "reject_reason": (
+            "Webull submit_market_order failed: HTTP Status: 429, "
+            "Code: TOO_MANY_REQUESTS, Msg: Too many requests, please "
+            "retry later."
+        ),
+    }]
+    fake = _ReconcileFake(docs, get_order_returns)
+
+    with _patch_reconcile(fake):
+        counts = await ar._sweep_submitted_broker_orders()
+
+    assert counts["rejected_retry"] == 1
+    assert counts["rejected_terminal"] == 0
+    assert len(fake.updates) == 1
+    set_doc = fake.updates[0]["update"]["$set"]
+    unset_doc = fake.updates[0]["update"]["$unset"]
+    assert set_doc["gate_state"] == "pending"
+    assert set_doc["executed"] is False
+    assert set_doc["submit_retry_count"] == 1
+    assert set_doc["last_reject_bucket"] == "rate_limited"
+    # Broker order + executed_at cleared so the intent looks fresh to
+    # the next tick's routing sample.
+    assert "broker_order" in unset_doc
+    assert "executed_at" in unset_doc
+
+
+@pytest.mark.asyncio
+async def test_reconcile_transient_reject_at_cap_goes_broker_rejected():
+    """A transient reject on an intent already at retry_count=3 goes
+    terminal — the retry ceiling wins over the transient classification."""
+    from shared import auto_router as ar
+
+    docs = [_submitted_intent(intent_id="rec-cap-1", submit_retry_count=3)]
+    get_order_returns = [{
+        "status": "REJECTED",
+        "reject_reason": "connection timed out",
+    }]
+    fake = _ReconcileFake(docs, get_order_returns)
+
+    with _patch_reconcile(fake):
+        counts = await ar._sweep_submitted_broker_orders()
+
+    assert counts["rejected_terminal"] == 1
+    assert counts["rejected_retry"] == 0
+    set_doc = fake.updates[0]["update"]["$set"]
+    assert set_doc["gate_state"] == "broker_rejected"
+    # Bucket is still `network_transient` — the taxonomy classification
+    # is correct; the ceiling is what promoted it to terminal.
+    assert set_doc["broker_reason"] == "network_transient"
+    assert set_doc["broker_error_terminal"] is False  # taxonomy says transient
+    assert set_doc["submit_retry_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_reconcile_partial_and_working_are_no_ops():
+    """PARTIAL_FILLED / WORKING / SUBMITTED / PENDING_CANCEL — not
+    terminal on the broker side; sweep should leave the intent alone."""
+    from shared import auto_router as ar
+
+    docs = [
+        _submitted_intent(intent_id="rec-part-1", order_id="a"),
+        _submitted_intent(intent_id="rec-work-1", order_id="b"),
+    ]
+    get_order_returns = [
+        {"status": "PARTIAL_FILLED", "filled_qty": 0.5},
+        {"status": "WORKING"},
+    ]
+    fake = _ReconcileFake(docs, get_order_returns)
+
+    with _patch_reconcile(fake):
+        counts = await ar._sweep_submitted_broker_orders()
+
+    assert counts["no_change"] == 2
+    assert counts["filled"] == 0
+    assert counts["rejected_terminal"] == 0
+    assert counts["rejected_retry"] == 0
+    # No writes at all.
+    assert len(fake.updates) == 0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_broker_exception_is_caught_and_counted():
+    """A broker exception on one intent must not crash the sweep or
+    corrupt sibling intents in the same batch."""
+    from shared import auto_router as ar
+
+    docs = [
+        _submitted_intent(intent_id="rec-err-1", order_id="err"),
+        _submitted_intent(intent_id="rec-fill-2", order_id="ok"),
+    ]
+
+    # First call raises, second returns FILLED.
+    call_count = {"n": 0}
+
+    async def _side_effect(_order_id):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("Webull SDK timeout")
+        return {"status": "FILLED", "filled_qty": 1.0,
+                "filled_avg_price": 500.0}
+
+    fake = _ReconcileFake(docs, None)
+    fake.adapter.get_order = AsyncMock(side_effect=_side_effect)
+
+    with _patch_reconcile(fake):
+        counts = await ar._sweep_submitted_broker_orders()
+
+    assert counts["errors"] == 1
+    assert counts["filled"] == 1  # sibling intent still succeeds
+    # Exactly one write — for the sibling that filled. The errored
+    # intent gets NO write (leave it in `submitted` for the next tick).
+    assert len(fake.updates) == 1
+    assert fake.updates[0]["update"]["$set"]["gate_state"] == "filled"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_near_boundary_warning_increments_counter():
+    """When a requeue lands on an intent already past 75% of the
+    60min lookback (i.e. ingest_ts > 45min ago), the near-boundary
+    counter increments — so the operator can spot slow retry cycles
+    that risk stalling in the 60-120min zone."""
+    from datetime import datetime, timedelta, timezone
+    from shared import auto_router as ar
+
+    old_ingest = (
+        datetime.now(timezone.utc) - timedelta(minutes=50)
+    ).isoformat()
+    docs = [_submitted_intent(intent_id="rec-bdy-1",
+                              submit_retry_count=0,
+                              ingest_ts=old_ingest)]
+    # REAL Webull 429 format — see comment in the under-cap test above.
+    get_order_returns = [{
+        "status": "REJECTED",
+        "reject_reason": (
+            "Webull submit_market_order failed: HTTP Status: 429, "
+            "Code: TOO_MANY_REQUESTS, Msg: Too many requests."
+        ),
+    }]
+    fake = _ReconcileFake(docs, get_order_returns)
+
+    with _patch_reconcile(fake):
+        counts = await ar._sweep_submitted_broker_orders()
+
+    assert counts["rejected_retry"] == 1
+    assert counts["requeue_near_boundary"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_query_filter_excludes_crypto_lane():
+    """The sweep query pins lane='equity' at Mongo level so crypto
+    intents never appear in the cursor. Kraken adapter has no
+    get_order symmetry; crypto reconciliation is a separate task."""
+    from shared import auto_router as ar
+
+    fake = _ReconcileFake(docs=[], get_order_side_effect=[])
+
+    with _patch_reconcile(fake):
+        await ar._sweep_submitted_broker_orders()
+
+    # Verify the actual query issued to Mongo pins the lane.
+    assert fake.query_capture.get("lane") == "equity"
+    assert fake.query_capture.get("gate_state") == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_returns_zero_counts_when_adapter_unavailable():
+    """If get_webull_adapter returns None (broker not configured), the
+    sweep must exit cleanly with all-zero counts. No DB query, no crash."""
+    from shared import auto_router as ar
+
+    # Reset the interval gate so this test isn't polluted by a prior
+    # sweep run in the same session.
+    ar._LAST_RECONCILE_SWEEP_TS = None
+
+    with patch("shared.broker_router.get_webull_adapter",
+               new=AsyncMock(return_value=None)):
+        counts = await ar._sweep_submitted_broker_orders()
+
+    assert counts["polled"] == 0
+    assert counts["filled"] == 0
+    assert counts["errors"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rate_limits_back_to_back_calls():
+    """The sweep MUST rate-limit itself to `RECONCILE_MIN_INTERVAL_SEC`.
+    `intents.py` fires `force_one_tick()` on every intent insert as a
+    latency optimization — without this gate, a burst of intents
+    would trigger a Webull `get_order` storm and trip HTTP 429."""
+    from shared import auto_router as ar
+
+    ar._LAST_RECONCILE_SWEEP_TS = None
+
+    docs = [_submitted_intent(intent_id="rec-rl-1")]
+    get_order_returns = [{"status": "FILLED",
+                          "filled_qty": 1.0, "filled_avg_price": 100.0}]
+    fake = _ReconcileFake(docs, get_order_returns)
+
+    with _patch_reconcile(fake):
+        # First call: runs, polls, fills.
+        c1 = await ar._sweep_submitted_broker_orders()
+        # Immediate second call: must be rate-limited (no broker call).
+        c2 = await ar._sweep_submitted_broker_orders()
+
+    assert c1["polled"] == 1
+    assert c1["filled"] == 1
+    assert c1["skipped_rate_limited"] == 0
+
+    assert c2["polled"] == 0
+    assert c2["filled"] == 0
+    assert c2["skipped_rate_limited"] == 1
+    # Adapter was called only once total (first sweep only).
+    assert fake.adapter.get_order.await_count == 1

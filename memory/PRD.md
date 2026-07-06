@@ -32,6 +32,42 @@ outcome_resolved, rotation) + 90d TTL; `routes/brain_memory_ingest.py`
 `snapshot/pre-shelly-rewrite`. Rollback via checkout.
 
 
+### ✅ P1 shipped — Broker reconciliation sweep (2026-07-06)
+
+**Operator sign-off:** Option 2 + `pending` + near-boundary log +
+taxonomy ordering fix.
+
+`_sweep_submitted_broker_orders()` in `auto_router.py` polls Webull
+every scheduled tick for `gate_state='submitted'` equity intents.
+Filled → `gate_state='filled'` + fill data stamped. Rejected via
+`classify()` from existing `broker_error_taxonomy`: terminal buckets
+or retry_count ≥ 3 → `broker_rejected`; transient under cap →
+`gate_state='pending'` (canonical fresh-emission state, requeues
+identically to a fresh intent). Cap 25/tick, `.max_time_ms(3000)`,
+15s outer wait_for. Broker exception isolated per-intent.
+
+**Rate-limit gate** (smoke-test finding): `intents.py` calls
+`force_one_tick()` on every intent insert (~50ms latency opt).
+Without a gate, brain emission bursts would trigger reconcile
+storms. Sweep now skips itself if last run was <25s ago.
+
+**Taxonomy ordering fix** (surfaced by reconcile tests): the
+`invalid_order_args` catch-all (`"http status: 4"`) was greedily
+misclassifying Webull's real 429 format (`HTTP Status: 429,
+TOO_MANY_REQUESTS`) as **terminal**, defeating the retry cap for
+the single most likely RTH rejection. Moved `rate_limited` block
+before `invalid_order_args`. Regression anchor test added.
+
+**Coverage:** 51/51 tests pass. 10 new reconcile-specific + 1
+taxonomy regression.
+
+**Live-verified on preview:** synthetic stuck intent → polled by
+next scheduled tick → Webull 417 exception caught → `errors=1`,
+`no_change=0`, intent state preserved. 5 concurrent
+`force_one_tick()` calls: only 1 sweep ran, 4 silently rate-limited.
+
+
+
 ### ✅ Dead-tile cleanup: 3 diagnostics surfaces removed (2026-07-06)
 
 **Operator directive:** *"nothing here has ever earned its keep."*

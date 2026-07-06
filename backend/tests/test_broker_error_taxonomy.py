@@ -90,6 +90,34 @@ def test_classify_rate_limited_transient():
     assert r.is_terminal is False
 
 
+# Regression anchor (2026-07-06):
+# The pre-fix ordering had `invalid_order_args` before `rate_limited`.
+# Webull's real 429 response reads:
+#   "HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests"
+# which contains "http status: 4" — the 4xx catch-all in
+# `invalid_order_args` greedily grabbed it and misclassified as
+# TERMINAL. That defeated the retry cap for the single most likely
+# broker rejection during RTH volume (rate-limit throttling). The
+# fix reorders the classify() function to peel `rate_limited` off
+# BEFORE the generic 4xx clause. This test locks that ordering.
+WEBULL_429 = (
+    "Webull submit_market_order failed: HTTP Status: 429, "
+    "Code: TOO_MANY_REQUESTS, Msg: Too many requests, please retry later."
+)
+
+
+def test_classify_webull_429_transient():
+    """Webull's REAL 429 wire format contains 'http status: 4' — must
+    still classify as rate_limited (transient), NOT invalid_order_args."""
+    from shared.broker_error_taxonomy import classify
+    r = classify(RuntimeError(WEBULL_429))
+    assert r.bucket == "rate_limited", (
+        f"Webull 429 misclassified as {r.bucket!r}. The 4xx catch-all "
+        "in invalid_order_args must NOT peel off before rate_limited."
+    )
+    assert r.is_terminal is False
+
+
 def test_classify_network_timeout_transient():
     from shared.broker_error_taxonomy import classify
     r = classify(RuntimeError(NETWORK_TIMEOUT))

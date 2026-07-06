@@ -699,6 +699,313 @@ async def _sweep_expired_unrouted() -> int:
         return 0
 
 
+# ─── Broker reconciliation sweep (2026-07-06) ─────────────────────────
+# Poll Webull for the current status of intents MC submitted but whose
+# fills/rejects haven't been observed. Fixes P1 stuck-`submitted` bug
+# from the handoff: intents that got submitted but later filled or
+# rejected by the broker were never transitioning to their terminal
+# state — MC had no closed-loop reconciliation.
+#
+# Design pins (operator sign-off 2026-07-06):
+#   * Equity lane only. Kraken adapter lacks `get_order` symmetry;
+#     crypto reconciliation is a separate task.
+#   * Skip fresh submits (<30s old) — broker hasn't touched them.
+#   * Cap 25 intents per tick to bound Webull API calls under 429 risk.
+#   * `.max_time_ms(3000)` bounding, `asyncio.wait_for` timeout guards.
+#   * On rejection: classify() via existing broker_error_taxonomy —
+#     terminal buckets (insufficient_funds, market_closed, etc.) go
+#     straight to `broker_rejected`; transient buckets get retried up
+#     to RECONCILE_MAX_RETRIES (3), then also go terminal.
+#   * On retry: flip `gate_state='pending'` (the canonical fresh-
+#     emission state; the pipeline treats it identically). Preserve
+#     `ingest_ts` — an aged-out `pending` intent still gets caught by
+#     `_sweep_expired_unrouted` at 120min. Between 60min and 120min
+#     it's in a stall zone but NOT silent. Log a WARNING when a
+#     requeue happens on an intent already past 75% of the lookback
+#     window so the operator can spot slow retry cycles.
+#   * On Filled: update the intent doc only — do NOT write a new
+#     executions row. The original submit-time row is the audit;
+#     reconciliation just updates the fill fields.
+RECONCILE_MAX_RETRIES = 3
+RECONCILE_MIN_AGE_SEC = 30
+RECONCILE_BATCH_CAP = 25
+RECONCILE_BOUNDARY_WARN_MIN = 45  # 75% of default 60min lookback
+# Minimum wall-clock gap between two sweep runs. The auto_router
+# scheduled tick fires every 30s (AUTO_ROUTER_INTERVAL_SEC), but
+# `force_one_tick()` is ALSO invoked out-of-band on every intent
+# insert (see shared/intents.py:_run_auto_router_kick — a ~50ms
+# latency optimization for fresh brain emissions). Without this
+# gate, a burst of 5 intents in 7s would trigger 5 back-to-back
+# reconcile sweeps → 5N Webull `get_order` calls → HTTP 429. This
+# gate keeps the scheduled 30s cadence but skips the redundant
+# kicker-triggered runs (2026-07-06 smoke-test finding).
+RECONCILE_MIN_INTERVAL_SEC = 25
+_LAST_RECONCILE_SWEEP_TS: Optional[datetime] = None
+
+
+async def _sweep_submitted_broker_orders() -> dict:
+    """Poll Webull for the current status of `gate_state='submitted'`
+    equity intents. Transitions them to `filled`, `broker_rejected`,
+    or (on transient reject under retry cap) back to `pending` for
+    re-routing on the next tick.
+
+    Returns a counts dict for observability. Never raises — a broker
+    outage or DB slowness cannot crash the auto-router tick.
+    """
+    counts = {
+        "polled": 0,
+        "filled": 0,
+        "rejected_terminal": 0,
+        "rejected_retry": 0,
+        "no_change": 0,
+        "errors": 0,
+        "requeue_near_boundary": 0,
+        "skipped_rate_limited": 0,
+    }
+    # Rate-limit: skip if a sweep ran within the last
+    # RECONCILE_MIN_INTERVAL_SEC seconds. Protects Webull's per-second
+    # `get_order` budget when `force_one_tick()` is called back-to-
+    # back from intents.py on every intent insert.
+    global _LAST_RECONCILE_SWEEP_TS
+    now_utc = datetime.now(timezone.utc)
+    if _LAST_RECONCILE_SWEEP_TS is not None:
+        elapsed = (now_utc - _LAST_RECONCILE_SWEEP_TS).total_seconds()
+        if elapsed < RECONCILE_MIN_INTERVAL_SEC:
+            counts["skipped_rate_limited"] = 1
+            return counts
+    _LAST_RECONCILE_SWEEP_TS = now_utc
+
+    try:
+        # Local imports keep the module-level import graph clean and
+        # avoid any circular pull at auto_router boot.
+        from shared.broker_router import get_webull_adapter  # noqa: WPS433
+        from shared.broker_error_taxonomy import classify  # noqa: WPS433
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("reconcile sweep: adapter/classify import failed: %s", exc)
+        return counts
+
+    try:
+        adapter = await get_webull_adapter()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("reconcile sweep: get_webull_adapter failed: %s", exc)
+        return counts
+    if adapter is None:
+        return counts
+
+    poll_cutoff = (now_utc - timedelta(seconds=RECONCILE_MIN_AGE_SEC)).isoformat()
+
+    try:
+        cur = (
+            db[SHARED_INTENTS]
+            .find(
+                {
+                    "gate_state": "submitted",
+                    "lane": "equity",
+                    "broker_order.id": {"$exists": True, "$ne": None},
+                    "executed_at": {"$lt": poll_cutoff},
+                },
+                {
+                    "_id": 0, "intent_id": 1, "symbol": 1, "action": 1,
+                    "lane": 1, "stack": 1, "ingest_ts": 1, "executed_at": 1,
+                    "broker_order": 1, "submit_retry_count": 1,
+                },
+            )
+            .max_time_ms(3000)
+            .limit(RECONCILE_BATCH_CAP)
+        )
+        pending_intents: list[dict] = []
+        async for d in cur:
+            pending_intents.append(d)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("reconcile sweep: query failed: %s", exc)
+        return counts
+
+    for intent in pending_intents:
+        counts["polled"] += 1
+        intent_id = intent.get("intent_id")
+        bo_meta = intent.get("broker_order") or {}
+        order_id = bo_meta.get("id") or bo_meta.get("order_id")
+        if not intent_id or not order_id:
+            counts["errors"] += 1
+            continue
+
+        try:
+            bo = await asyncio.wait_for(
+                adapter.get_order(str(order_id)),
+                timeout=8.0,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "reconcile poll failed intent=%s order_id=%s: %s",
+                intent_id, order_id, exc,
+            )
+            counts["errors"] += 1
+            continue
+
+        status = (bo.get("status") or "").upper()
+
+        # ── FILLED ─────────────────────────────────────────────
+        if status == "FILLED":
+            try:
+                await db[SHARED_INTENTS].update_one(
+                    {"intent_id": intent_id},
+                    {"$set": {
+                        "gate_state": "filled",
+                        "filled_at": _now_iso(),
+                        "reconciled_by": AUTO_ROUTER_EMAIL,
+                        "broker_order.status": "FILLED",
+                        "broker_order.filled_qty": bo.get("filled_qty"),
+                        "broker_order.filled_avg_price": bo.get("filled_avg_price"),
+                        "broker_order.filled_at": bo.get("filled_at"),
+                    }},
+                )
+                counts["filled"] += 1
+                logger.info(
+                    "reconcile FILLED intent=%s order_id=%s filled_qty=%s "
+                    "avg_price=%s",
+                    intent_id, order_id,
+                    bo.get("filled_qty"), bo.get("filled_avg_price"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "reconcile FILLED update failed intent=%s: %s",
+                    intent_id, exc,
+                )
+                counts["errors"] += 1
+            continue
+
+        # ── REJECTED / CANCELLED / EXPIRED ─────────────────────
+        if status in {"CANCELLED", "CANCELED", "REJECTED", "EXPIRED"}:
+            reject_reason = str(
+                bo.get("reject_reason")
+                or bo.get("status_detail")
+                or bo.get("last_error")
+                or status
+            )
+            err = classify(reject_reason)
+            retry_count = int(intent.get("submit_retry_count") or 0)
+
+            if err.is_terminal or retry_count >= RECONCILE_MAX_RETRIES:
+                try:
+                    await db[SHARED_INTENTS].update_one(
+                        {"intent_id": intent_id},
+                        {"$set": {
+                            "gate_state": "broker_rejected",
+                            "rejected_at": _now_iso(),
+                            "reconciled_by": AUTO_ROUTER_EMAIL,
+                            "broker_reason": err.bucket,
+                            "broker_error_detail": err.detail,
+                            "broker_error_terminal": bool(err.is_terminal),
+                            "submit_retry_count": retry_count,
+                        }},
+                    )
+                    counts["rejected_terminal"] += 1
+                    logger.info(
+                        "reconcile REJECTED (terminal) intent=%s bucket=%s "
+                        "retries=%d/%d",
+                        intent_id, err.bucket, retry_count,
+                        RECONCILE_MAX_RETRIES,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "reconcile REJECTED-terminal update failed intent=%s: %s",
+                        intent_id, exc,
+                    )
+                    counts["errors"] += 1
+                continue
+
+            # Transient reject under cap → requeue as `pending`.
+            try:
+                # Near-boundary check: if the intent is already >75%
+                # of the way to lookback expiry, log a WARNING so the
+                # operator can spot slow retry cycles that risk
+                # stalling in the 60-120min zone before the expire
+                # sweep catches them.
+                age_min = _minutes_since_iso(intent.get("ingest_ts"), now_utc)
+                near_boundary = (
+                    age_min is not None
+                    and age_min > RECONCILE_BOUNDARY_WARN_MIN
+                )
+                if near_boundary:
+                    counts["requeue_near_boundary"] += 1
+                    logger.warning(
+                        "reconcile requeue NEAR BOUNDARY intent=%s "
+                        "age_min=%.1f retry=%d/%d bucket=%s — approaching "
+                        "60min lookback; expire-sweep backstop at 120min",
+                        intent_id, age_min, retry_count + 1,
+                        RECONCILE_MAX_RETRIES, err.bucket,
+                    )
+
+                await db[SHARED_INTENTS].update_one(
+                    {"intent_id": intent_id},
+                    {
+                        "$set": {
+                            "gate_state": "pending",
+                            "executed": False,
+                            "submit_retry_count": retry_count + 1,
+                            "last_reject_at": _now_iso(),
+                            "last_reject_bucket": err.bucket,
+                            "last_reject_detail": err.detail,
+                            "reconciled_by": AUTO_ROUTER_EMAIL,
+                        },
+                        "$unset": {
+                            "broker_order": "",
+                            "executed_at": "",
+                            "executed_by": "",
+                        },
+                    },
+                )
+                counts["rejected_retry"] += 1
+                logger.info(
+                    "reconcile REJECTED (retry %d/%d) intent=%s bucket=%s "
+                    "→ requeued as pending",
+                    retry_count + 1, RECONCILE_MAX_RETRIES,
+                    intent_id, err.bucket,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "reconcile REJECTED-retry update failed intent=%s: %s",
+                    intent_id, exc,
+                )
+                counts["errors"] += 1
+            continue
+
+        # ── PARTIAL / WORKING / SUBMITTED / PENDING_CANCEL ─────
+        # Not yet terminal on the broker side; leave alone and poll
+        # again next tick.
+        counts["no_change"] += 1
+
+    if counts["polled"]:
+        logger.info(
+            "auto_router reconcile sweep: polled=%d filled=%d "
+            "rejected_terminal=%d rejected_retry=%d no_change=%d "
+            "errors=%d requeue_near_boundary=%d",
+            counts["polled"], counts["filled"],
+            counts["rejected_terminal"], counts["rejected_retry"],
+            counts["no_change"], counts["errors"],
+            counts["requeue_near_boundary"],
+        )
+    return counts
+
+
+def _minutes_since_iso(iso_str: Optional[str], now_utc: datetime) -> Optional[float]:
+    """Best-effort parse of an ISO-8601 UTC timestamp string → age in
+    minutes from `now_utc`. Returns None on parse failure so callers
+    can skip the near-boundary log without crashing."""
+    if not iso_str:
+        return None
+    try:
+        # fromisoformat handles the standard "+00:00" suffix; Python's
+        # ISO parser is picky about the `Z` shorthand so normalize it.
+        s = iso_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (now_utc - dt).total_seconds() / 60.0
+    except (TypeError, ValueError):
+        return None
+
+
 async def _tick() -> list[dict]:
     """One scan pass. Picks up at most AUTO_ROUTER_MAX_PER_TICK unexecuted
     intents and routes them through Seat → Risk → Broker.
@@ -718,6 +1025,14 @@ async def _tick() -> list[dict]:
     # Sweep first — cheap update_many, and it keeps the funnel honest
     # even in ticks where the sample query returns nothing.
     await _sweep_expired_unrouted()
+    # Reconcile submitted broker orders (2026-07-06). Independently
+    # timeout-guarded; a broker outage cannot block routing.
+    try:
+        await asyncio.wait_for(_sweep_submitted_broker_orders(), timeout=15.0)
+    except asyncio.TimeoutError:
+        logger.warning("reconcile sweep exceeded 15s timeout")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("reconcile sweep raised unexpectedly: %s", exc)
 
     try:
         lookback_min = int(os.environ.get("AUTO_ROUTER_LOOKBACK_MIN", "60"))
