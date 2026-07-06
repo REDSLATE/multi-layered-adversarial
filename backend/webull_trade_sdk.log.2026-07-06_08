@@ -1,0 +1,273 @@
+278121964761504 2026-07-06 08:15:03,000 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/detail",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29",
+    "client_order_id": "SMOKETEST-ORDER-cb606af9"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-06T08:15:02Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "8c3253cc-ed05-56dd-91bf-e6817bcb94f8",
+    "x-signature": "5QiBKWeJNBii0Vv688sQnbuUie4=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'ORDER_NOT_FOUND', 'error_code': 'ORDER_NOT_FOUND'} ServerException:HTTP Status: 417, Code: ORDER_NOT_FOUND, Msg: ORDER_NOT_FOUND, RequestID: e3b3c004-8d3f-4a18-8ecc-79b2775a03a8
+278121964761504 2026-07-06 08:15:03,001 webull.core.client ERROR get_response exception. {
+  "error_code": "ORDER_NOT_FOUND",
+  "error_msg": "ORDER_NOT_FOUND",
+  "http_status": 417,
+  "request_id": "e3b3c004-8d3f-4a18-8ecc-79b2775a03a8"
+}
+278121991172512 2026-07-06 08:15:04,930 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/detail",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29",
+    "client_order_id": "SMOKETEST-ORDER-cb606af9"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-06T08:15:04Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "2760fdd0-9aed-5f78-8564-bceb6e4fe31b",
+    "x-signature": "esgl7ml2zxVGDmB7I1/ATgHEg9Y=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'ORDER_NOT_FOUND', 'error_code': 'ORDER_NOT_FOUND'} ServerException:HTTP Status: 417, Code: ORDER_NOT_FOUND, Msg: ORDER_NOT_FOUND, RequestID: 6c77ff5b-528b-4b35-b744-91acf5f79d12
+278121991172512 2026-07-06 08:15:04,930 webull.core.client ERROR get_response exception. {
+  "error_code": "ORDER_NOT_FOUND",
+  "error_msg": "ORDER_NOT_FOUND",
+  "http_status": 417,
+  "request_id": "6c77ff5b-528b-4b35-b744-91acf5f79d12"
+}
+278121395646880 2026-07-06 08:15:05,966 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/detail",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29",
+    "client_order_id": "SMOKETEST-ORDER-cb606af9"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-06T08:15:05Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "c4374ce5-c1ae-5f99-ba12-e37e0cabded6",
+    "x-signature": "lBx+Y4wcfdq9q6jS5G1zgj8ydVY=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: bdf49f10-f36b-4d01-8f1b-368576076382
+278121395646880 2026-07-06 08:15:05,967 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "bdf49f10-f36b-4d01-8f1b-368576076382"
+}
+278121991172512 2026-07-06 08:15:08,314 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/detail",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29",
+    "client_order_id": "SMOKETEST-ORDER-cb606af9"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-06T08:15:08Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "cbc12b27-fd66-5662-b6bd-8ca5d9709287",
+    "x-signature": "7TD9XfxyGNnKdErH3jTWo7AX1aw=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'ORDER_NOT_FOUND', 'error_code': 'ORDER_NOT_FOUND'} ServerException:HTTP Status: 417, Code: ORDER_NOT_FOUND, Msg: ORDER_NOT_FOUND, RequestID: da6f36b3-0d86-4e11-a87f-1be19c906f1f
+278121991172512 2026-07-06 08:15:08,315 webull.core.client ERROR get_response exception. {
+  "error_code": "ORDER_NOT_FOUND",
+  "error_msg": "ORDER_NOT_FOUND",
+  "http_status": 417,
+  "request_id": "da6f36b3-0d86-4e11-a87f-1be19c906f1f"
+}
+278121982718368 2026-07-06 08:15:09,703 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/detail",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29",
+    "client_order_id": "SMOKETEST-ORDER-cb606af9"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-06T08:15:09Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "e593dfaf-e6af-560c-bce7-cb11f0642e1d",
+    "x-signature": "w3Lbaax2vhf61fK8tsm1h/kL9F8=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'ORDER_NOT_FOUND', 'error_code': 'ORDER_NOT_FOUND'} ServerException:HTTP Status: 417, Code: ORDER_NOT_FOUND, Msg: ORDER_NOT_FOUND, RequestID: b624c2d2-7963-4d94-9912-dcbc2e11693f
+278121982718368 2026-07-06 08:15:09,703 webull.core.client ERROR get_response exception. {
+  "error_code": "ORDER_NOT_FOUND",
+  "error_msg": "ORDER_NOT_FOUND",
+  "http_status": 417,
+  "request_id": "b624c2d2-7963-4d94-9912-dcbc2e11693f"
+}
+278121991172512 2026-07-06 08:15:35,231 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/detail",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29",
+    "client_order_id": "SMOKETEST-ORDER-cb606af9"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-06T08:15:35Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "d1372fa0-6847-5076-8183-dd2f9e93abc8",
+    "x-signature": "I2hrFQX/DW8a3zN/y8uZlLPj2lY=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'ORDER_NOT_FOUND', 'error_code': 'ORDER_NOT_FOUND'} ServerException:HTTP Status: 417, Code: ORDER_NOT_FOUND, Msg: ORDER_NOT_FOUND, RequestID: 93c3868b-e20c-47c5-a714-ee50e4523762
+278121991172512 2026-07-06 08:15:35,232 webull.core.client ERROR get_response exception. {
+  "error_code": "ORDER_NOT_FOUND",
+  "error_msg": "ORDER_NOT_FOUND",
+  "http_status": 417,
+  "request_id": "93c3868b-e20c-47c5-a714-ee50e4523762"
+}
+275291809051040 2026-07-06 08:21:15,633 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/detail",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29",
+    "client_order_id": "SMOKE4-ORD-5d09d24d"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-06T08:21:15Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "b287e512-5045-5f64-a39e-667c30ca73c8",
+    "x-signature": "Giv5zxDU2z1ab5t/zyQ8LxrdKXs=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'ORDER_NOT_FOUND', 'error_code': 'ORDER_NOT_FOUND'} ServerException:HTTP Status: 417, Code: ORDER_NOT_FOUND, Msg: ORDER_NOT_FOUND, RequestID: 5fca4868-3ae3-40cf-9b7b-9628d1f7268d
+275291809051040 2026-07-06 08:21:15,634 webull.core.client ERROR get_response exception. {
+  "error_code": "ORDER_NOT_FOUND",
+  "error_msg": "ORDER_NOT_FOUND",
+  "http_status": 417,
+  "request_id": "5fca4868-3ae3-40cf-9b7b-9628d1f7268d"
+}
