@@ -1,3 +1,75 @@
+## 2026-07-06 — Shelly rewrite: lean learning recorder ONLY
+
+**Operator directive:** "Rewrite Shelly as a lean learning recorder only.
+Keep auto_router, Seat, Risk, Kraken/Webull, roster, and the live
+execution path intact. Shelly should not replace MC. It should feed
+MC better evidence."
+
+### Snapshot
+Tag `pre-shelly-rewrite` + branch `snapshot/pre-shelly-rewrite` committed
+before any destructive change. Rollback via `git checkout pre-shelly-rewrite`.
+
+### DELETED (the ambitious Shelly layers)
+- `backend/shelly/` (10 files): `contracts.py`, `local_shelly.py`,
+  `mc_shelly.py`, `pipeline.py`, `embeddings.py`, `verified_facts.py`
+  (L3), `memory_profile.py` (MEMORY.md), `routes.py`, `sync_db.py`,
+  `__init__.py`. This was: per-brain LocalShelly, cross-brain
+  reasoning receipts, semantic-embedding retrieval, verified-fact
+  certification, RISEDUAL wiki curator, MEMORY.md renderer.
+- `backend/shared/shelly_bus/` (3 files): brain→MC memory proposal
+  trust-scoring bus, `X-Runtime-Token` ingest endpoint.
+- `backend/routes/shelly_admin_extension.py`: admin surface for L3
+  verified facts + L6 wiki + MEMORY.md per brain.
+- 5 test files that imported deleted modules: `test_shelly_pipeline`,
+  `test_shelly_extension`, `test_shelly_bus`,
+  `test_shelly_phase2_embeddings`, `test_brain_identity_normalization`.
+
+### KEPT (the lean learning recorder)
+- `backend/shared/mc_shelly.py` — LEARNING_EVENTS filter
+  (position_opened, position_closed, order_routed, order_filled,
+  outcome_resolved, rotation) + 90-day TTL. Everything else the
+  brains emit returns immediately with no DB touch.
+- `backend/routes/brain_memory_ingest.py` — separate `brain_memories`
+  collection (untouched; not part of the ambitious layer).
+- Frontend `pages/McShelly.jsx` — reads the kept `/api/mc/shelly/*`
+  endpoints (list, stats, export, backfill).
+
+### UNTOUCHED (live execution path per operator directive)
+- `shared/auto_router.py`, `shared/seat.py`, `shared/risk/check.py`,
+  `shared/roster.py`, all broker adapters (Webull, Kraken, Public),
+  `shared/intents.py`, `shared/live_positions.py`,
+  `shared/doctrine_injection.py` — all continue calling
+  `shared.mc_shelly.record_async(...)` and get the same lean
+  learning-events surface.
+
+### Wire changes
+- `backend/server_modules/router_registry.py` — removed 3 imports and
+  3 `include_router(...)` calls for the deleted routers. The KEPT
+  `mc_shelly_router` stays.
+
+### Verification
+- Backend boots cleanly (`root=200`, no ImportError/ModuleNotFoundError).
+- `/api/mc/shelly/stats?since_hours=24` → 200 with real data
+  (6,995 events in last 24h, 1.86M lifetime).
+- `/api/mc/shelly/?limit=3` → 200 with real event rows.
+- Deleted route surfaces confirmed 404:
+  `/api/admin/shelly/verified-facts/*`,
+  `/api/admin/shelly/wiki/*`,
+  `/api/admin/shelly/status`,
+  `/api/mc-shelly/memory/propose`.
+- pytest suite: 0 shelly-related failures (unrelated pre-existing
+  legacy-brain-name test remains failing — not from this change).
+
+### Design intent (operator quote, doctrine-pinned)
+> "Shelly should not replace MC. It should feed MC better evidence."
+
+The lean recorder is now the single Shelly surface. If MC needs
+richer learning later, that layer will be built on the Evidence
+Store — not by resurrecting the ambitious Shelly package.
+
+---
+
+
 ## 2026-02-28 (final push) — Webull field drift fix + prod Mongo timeout hotfix
 
 Two operator-prioritized P0 fixes shipped together.

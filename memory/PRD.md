@@ -7,6 +7,35 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ✅ Shelly rewrite — lean learning recorder ONLY (2026-07-06)
+
+**Operator directive:** Shelly must be a lean learning recorder, not
+a parallel MC. The Evidence Store is the learning substrate; Shelly
+feeds MC better evidence.
+
+**Deleted:** `backend/shelly/` package (LocalShelly, MCShelly cross-brain
+reasoning, verified-facts L3, RISEDUAL wiki L6, MEMORY.md renderer,
+Phase-2 embeddings, pipeline orchestrator), `backend/shared/shelly_bus/`
+(trust-scored brain memory proposals), `routes/shelly_admin_extension.py`,
+5 dependent test files. Router registry unwired.
+
+**Kept:** `backend/shared/mc_shelly.py` — LEARNING_EVENTS whitelist
+(position_opened, position_closed, order_routed, order_filled,
+outcome_resolved, rotation) + 90d TTL; `routes/brain_memory_ingest.py`
+(separate `brain_memories` collection).
+
+**Untouched (per directive):** `auto_router`, `seat`, `risk`, `roster`,
+`brokers` (Webull/Kraken/Public), `intents`, `live_positions`,
+`doctrine_injection`. All continue calling `shared.mc_shelly.record_async`.
+
+**Snapshot:** git tag `pre-shelly-rewrite` / branch
+`snapshot/pre-shelly-rewrite`. Rollback via checkout.
+
+**Verified:** backend boots clean, kept endpoints 200, deleted routes
+404, no shelly-related pytest failures.
+
+
+
 ### ✅ Time-drift test fix (2026-02-XX)
 
 `backend/tests/test_trader_dissent_accuracy.py` — `_seed_cycle` and both

@@ -76,8 +76,6 @@ from shared.public_api.news import router as public_news_router
 from shared.public_api.dark_pool import router as public_darkpool_router
 from shared.observation_receipts import router as observation_receipts_router
 from shared.learning_ladder import router as learning_ladder_router
-from shared.shelly_bus.mc_shelly_ingest import router as shelly_bus_router
-from shelly import router as shelly_router
 
 from routes.memory_kernel_routes import router as memory_kernel_router
 from routes.orphan_inspection_routes import router as orphan_inspection_router
@@ -109,7 +107,6 @@ from routes.rise_ai_threads_routes import router as rise_ai_threads_router
 from routes.brain_emission_diagnose import router as brain_emission_diagnose_router
 from routes.seat_registry_diagnose import router as seat_registry_diagnose_router
 from routes.rise_ai_admin import router as rise_ai_admin_router
-from routes.shelly_admin_extension import router as shelly_admin_extension_router
 from routes.brain_doctrine_hint import router as brain_doctrine_hint_router
 from routes.storage_rollup import router as storage_rollup_router
 from routes.trading_controls import router as trading_controls_router
@@ -278,7 +275,6 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(daily_snapshots_router)
     api_router.include_router(finnhub_backfill_router)
     api_router.include_router(brain_runtime_router)
-    api_router.include_router(shelly_router)
     api_router.include_router(brain_memory_ingest_router)
     api_router.include_router(learning_scoreboard_router)
     api_router.include_router(runtime_broker_status_router)
@@ -294,8 +290,6 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(brain_emission_diagnose_router)
     api_router.include_router(seat_registry_diagnose_router)
     api_router.include_router(rise_ai_admin_router)
-    api_router.include_router(shelly_admin_extension_router)
-    api_router.include_router(shelly_bus_router)
     api_router.include_router(brain_doctrine_hint_router)
     api_router.include_router(lane_execution_router)
     api_router.include_router(observation_receipts_router)
