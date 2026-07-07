@@ -77,15 +77,35 @@ def test_router_dispatches_to_micro_pullback_v1():
 
 
 def test_router_falls_back_to_small_account_when_strategy_absent():
-    snap = _good_gap_and_go_snapshot()  # no strategy field
+    """2026-02-19 refresh: fallback requires an EXPLICIT small-cap
+    opt-in (market_cap_band="small" or strategy hint). Without it
+    the classifier returns UNKNOWN → NO_DATA. This test now asserts
+    that the small-cap builder still fires when the operator opts
+    in via market_cap_band, even with no strategy hint."""
+    snap = _good_gap_and_go_snapshot(market_cap_band="small")  # no strategy field
     packet = build_lane_doctrine_packet(snap, seat_holders=None)
     assert packet["doctrine_version"] == "small_account_sidecar_v1"
 
 
 def test_router_falls_back_on_unknown_strategy():
-    snap = _good_gap_and_go_snapshot(strategy="moon_breakout")
+    """Unknown strategy + explicit small-cap band → small-account
+    sidecar (the strategy-specific builders reject the unknown hint
+    and the classifier's band-based routing takes over)."""
+    snap = _good_gap_and_go_snapshot(
+        strategy="moon_breakout", market_cap_band="small",
+    )
     packet = build_lane_doctrine_packet(snap, seat_holders=None)
     assert packet["doctrine_version"] == "small_account_sidecar_v1"
+
+
+def test_router_returns_no_data_when_no_classification_hint():
+    """2026-02-19 invariant: no market_cap_band, no strategy hint,
+    unpinned symbol → NO_DATA. Never a silent doctrine default."""
+    snap = _good_gap_and_go_snapshot(symbol="ZZZZ_UNPINNED")
+    # No strategy, no market_cap_band → UNKNOWN → NO_DATA packet.
+    packet = build_lane_doctrine_packet(snap, seat_holders=None)
+    assert packet["base_labels"]["quality"] == "NO_DATA"
+    assert packet["doctrine_version"] == "unknown_universe_no_data_v1"
 
 
 # ─── gap_and_go behavior ─────────────────────────────────────────────

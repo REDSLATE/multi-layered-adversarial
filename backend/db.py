@@ -451,6 +451,27 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         deadline_s=heavy_deadline_s,
         name="shared_intents_lane_ingest_action_idx",
     )
+    # 2026-02-19 (P1 prod hotfix — operator dashboard NetworkTimeout):
+    # The Intents page + Phase Map filter `shared_intents` by
+    # `symbol` alone (no `stack`, no `lane`). The 2026-06-XX
+    # `(stack, symbol, ingest_ts)` compound above is leading-on-
+    # `stack`, so the mongo planner CAN'T use it when the operator
+    # filters by symbol without also filtering by stack — which is
+    # the default operator flow on the symbol-drill-down panel.
+    # Query fell back to COLLSCAN on a multi-million-row
+    # collection → NetworkTimeout at the 15s socket cap.
+    #
+    # `(symbol, ingest_ts)` is the surgical fix: symbol equality
+    # uses the index prefix, `ingest_ts -1` covers the descending
+    # sort. Bounded IXSCAN, no in-memory sort. Uses
+    # `_safe_create_index` because the initial build on prod's
+    # ~5M rows would otherwise blow the 6s deadline default.
+    await _safe_create_index(
+        db.shared_intents,
+        [("symbol", 1), ("ingest_ts", -1)],
+        deadline_s=heavy_deadline_s,
+        name="shared_intents_symbol_ingest_idx",
+    )
     await db.shared_brain_opinions.create_index([("runtime", 1), ("topic", 1), ("posted_at", -1)])
     await db.shared_brain_outcomes.create_index([("opinion_id", 1), ("resolved_at", -1)])
     # 2026-02-28 — MC Shelly noise cleanup companion. On preview the

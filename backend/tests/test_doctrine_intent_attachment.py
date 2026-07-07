@@ -79,6 +79,11 @@ async def test_equity_a_quality_packet_shape():
         "price": 7.5, "gap_pct": 22, "relative_volume": 8,
         "has_news": True, "float_millions": 10, "pattern": "pullback",
         "market_regime": "strong", "spread_bps": 40,
+        # 2026-02-19: explicit small-cap opt-in required (classifier
+        # no longer silently defaults unclassified equities into any
+        # doctrine — it emits NO_DATA to keep classification gaps
+        # visible in the funnel).
+        "market_cap_band": "small",
     }
     packet = await _build_and_persist_doctrine_packet(
         intent_id="test-eq-a-1", stack="alpha", lane="equity",
@@ -148,6 +153,12 @@ async def test_audit_row_written_to_doctrine_sidecars_collection():
         "price": 7.5, "gap_pct": 22, "relative_volume": 8,
         "has_news": True, "float_millions": 10, "pattern": "pullback",
         "market_regime": "strong", "spread_bps": 40,
+        # 2026-02-19: classifier requires an explicit hint. This test
+        # is exercising the small-account audit row, so opt in via
+        # market_cap_band. Without this, the classifier returns
+        # UNKNOWN and the audit row would be for the NO_DATA short-
+        # circuit packet instead.
+        "market_cap_band": "small",
     }
 
     try:

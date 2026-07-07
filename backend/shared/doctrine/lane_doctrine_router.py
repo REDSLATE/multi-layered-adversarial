@@ -1,12 +1,14 @@
 """Lane-aware doctrine router.
 
-Single entry point for the intent ingest path. Inspects `snapshot["lane"]`
-and routes to the correct twin doctrine. Unknown / missing lane gets a
-hard REJECT packet so the operator can see "no doctrine" was applied
-without the absence being silent.
+Single entry point for the intent ingest path. Delegates to the
+`doctrine.registry` for dispatch — the registry classifies the
+snapshot via `universe_classifier` and picks the correct doctrine
+builder.
 
-Doctrine pins (2026-02-17):
+Doctrine pins (2026-02-17, refreshed 2026-02-19):
     * TWO LANES, no third. `equity` and `crypto`. Anything else → REJECT.
+    * Universe classifier + registry own dispatch. This router is now
+      a thin lane-level guard + delegation shim.
     * Twin doctrine — equity sidecar in `shared.doctrine.brain_sidecars`,
       crypto sidecar in `shared.crypto.doctrine.crypto_brain_sidecars`.
       Neither imports the other. Lazy imports preserve that. Regression
@@ -29,68 +31,24 @@ def build_lane_doctrine_packet(
 ) -> Dict[str, Any]:
     lane = str(snapshot.get("lane") or "").lower()
 
-    if lane == "equity":
-        # Strategy split (2026-02-17, source-aligned): when the
-        # snapshot carries a known strategy hint, dispatch to that
-        # strategy's doctrine version. Unknown / missing → fall back
-        # to the generic small-account sidecar. Patent J can then
-        # graduate (lane, seat, doctrine_version) slices indepedently.
-        strategy = str(snapshot.get("strategy") or "").lower()
-        market_cap_band = str(snapshot.get("market_cap_band") or "").lower()
-        # 2026-02-20 (operator directive): INVERT the routing default.
-        # Brain runtime does not reliably set `market_cap_band` on
-        # snapshots, which previously routed every equity emission to
-        # the small-cap doctrine (`base_labels.py`), where any stock
-        # priced > $20 (i.e., the entire production watchlist:
-        # AAPL/MSFT/NVDA/MSTR/ABNB) auto-REJECTed at the
-        # `SMALL_ACCOUNT_PRICE_VALID` check.
-        #
-        # New default: equity → large_cap_doctrine UNLESS the snapshot
-        # explicitly flags small/micro-cap. Operators on a large-cap
-        # watchlist now route correctly even without a calibrated
-        # market_cap_band feed. Small-cap day-trade strategies opt IN
-        # via `strategy ∈ {gap_and_go, micro_pullback}` or
-        # `market_cap_band ∈ {small, micro, nano}`.
-        explicit_small_cap = (
-            strategy in ("gap_and_go", "micro_pullback")
-            or market_cap_band in ("small", "micro", "nano")
-        )
-        if not explicit_small_cap:
-            from shared.doctrine.large_cap_doctrine import (  # noqa: WPS433
-                build_large_cap_doctrine_packet,
-            )
-            return build_large_cap_doctrine_packet(snapshot, seat_holders)
-        if strategy in ("gap_and_go", "micro_pullback"):
-            from shared.doctrine.strategy_doctrines import (  # noqa: WPS433
-                build_strategy_packet,
-            )
-            packet = build_strategy_packet(strategy, snapshot, seat_holders)
-            if packet is not None:
-                return packet
-        from shared.doctrine.brain_sidecars import (  # noqa: WPS433
-            build_all_brain_doctrine_packets,
-        )
-        return build_all_brain_doctrine_packets(snapshot, seat_holders)
+    if lane not in ("equity", "crypto"):
+        return {
+            "event_type": "BRAIN_DOCTRINE_SIDECAR_PACKET",
+            "doctrine_version": "unknown_lane_reject_v1",
+            "lane": lane or "UNKNOWN",
+            "symbol": snapshot.get("symbol", "UNKNOWN"),
+            "base_labels": {
+                "score": 0.0,
+                "quality": "REJECT",
+                "labels": ["UNKNOWN_LANE"],
+                "reasons": ["doctrine router received unknown lane"],
+            },
+            "seats": {},
+        }
 
-    if lane == "crypto":
-        from shared.crypto.doctrine.crypto_brain_sidecars import (  # noqa: WPS433
-            build_crypto_brain_doctrine_packet,
-        )
-        return build_crypto_brain_doctrine_packet(snapshot, seat_holders)
-
-    return {
-        "event_type": "BRAIN_DOCTRINE_SIDECAR_PACKET",
-        "doctrine_version": "unknown_lane_reject_v1",
-        "lane": lane or "UNKNOWN",
-        "symbol": snapshot.get("symbol", "UNKNOWN"),
-        "base_labels": {
-            "score": 0.0,
-            "quality": "REJECT",
-            "labels": ["UNKNOWN_LANE"],
-            "reasons": ["doctrine router received unknown lane"],
-        },
-        "seats": {},
-    }
+    # Delegate to the registry — it classifies + dispatches.
+    from shared.doctrine.registry import dispatch  # noqa: WPS433
+    return dispatch(snapshot, seat_holders)
 
 
 def hoist_packet_audit_fields(packet: Dict[str, Any]) -> Dict[str, Any]:

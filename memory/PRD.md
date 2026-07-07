@@ -7,6 +7,35 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### 🎯 NEXT WORK ITEM (top priority — operator-agreed 2026-07-07 late session)
+
+**Universe classifier + doctrine router pattern.** 24h of HOLD/REJECT on the curated 20+20 revealed a domain mismatch: the existing equity doctrine (`base_labels.py`) is a *small-cap momentum scanner* (rewards low-float, gappers, RVOL spikes, news catalysts) applied to a *large-cap watchlist* (NVDA, MSFT, SPY, QQQ, META, etc.). Large-caps never trigger those labels → score ~0.0 → REJECT quality → strategist emits HOLD indefinitely.
+
+**Architecture (operator-shaped):**
+```
+Symbol → classify_symbol() → route to doctrine variant
+                              ├── large_cap
+                              ├── small_cap_momentum
+                              ├── etf
+                              └── crypto (exists)
+                              ↓
+                          DoctrineLabels (same shape, different evidence)
+                              ↓
+                     Seat / Governor / RoadGuard / Verifier / execution (UNCHANGED)
+```
+
+**Work breakdown:**
+1. Add `classify_symbol(symbol, snapshot) -> Literal["large_cap", "small_cap_momentum", "etf", "crypto"]`
+2. Rename existing `build_doctrine_labels` → `build_small_cap_doctrine` (honest name)
+3. Build `build_large_cap_doctrine` — rewards: VWAP accept/reject, MTF MA alignment, RS vs SPY, volume acceleration vs symbol's own avg, break-and-retest, sector leadership, trend continuation after pullback
+4. Registry: `DOCTRINE_BY_CLASS = {...}` — router in `doctrine/__init__.py`
+5. Reclassify current watchlist: 17 large-cap, 3 ETF, 0 small-cap; consider adding 3-5 small-cap momentum names back (AMC, GME, BTDR, etc.) as a bridge until large-cap variant ships
+
+**Explicitly NOT do:** lower quality thresholds to compensate. Weak evidence + low threshold = trades on the wrong signal. Address root cause (evidence layer), not the acceptance criteria.
+
+**Ordering:** build large-cap doctrine first, then observe performance for 1-2 weeks of RTH, THEN revisit thresholds/weights based on real Trade Tape data, not assumptions.
+
+
 ### ✅ Session 2026-07-07 (late): Witness W/L resolver activated (was dormant 8 days)
 
 **Built:**

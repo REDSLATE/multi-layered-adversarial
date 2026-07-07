@@ -38,8 +38,19 @@ async def neutral_brains_status():
         return {
             "enabled": is_enabled(),
             "roster": [
-                {"brain_id": b, "display_name": d, "token_env": t}
-                for b, d, t in BRAIN_ROSTER
+                {
+                    "brain_id": b,
+                    "display_name": d,
+                    "token_env": t,
+                    "legacy_token_env": legacy,
+                }
+                # 2026-02-19 (P2 fix): BRAIN_ROSTER became a 4-tuple on
+                # 2026-02-20 rename (added `legacy_fallback_env` so the
+                # runner can self-heal against prod's pre-rename token
+                # names). This unpack was still 3-tuple and returned
+                # 500 on every hit. Expose the legacy env name too so
+                # the dashboard can render the fallback source.
+                for b, d, t, legacy in BRAIN_ROSTER
             ],
             "runners": runtime_stats(),
         }

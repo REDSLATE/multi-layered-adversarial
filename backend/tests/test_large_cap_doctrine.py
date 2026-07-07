@@ -64,12 +64,29 @@ def test_router_dispatches_to_large_cap_when_market_cap_band_mega():
 
 
 @pytest.mark.tripwire
-def test_router_falls_back_to_small_account_when_no_large_cap_flags():
-    snap = _large_cap_clean(strategy=None, market_cap_band=None)
+def test_router_falls_back_to_small_account_when_explicit_small_cap_band():
+    # An explicit small-cap band routes to the small-account sidecar
+    # (post-2026-02-19: unclassified equities go to NO_DATA, so the
+    # small-account path must be OPTED into via band or strategy).
+    snap = _large_cap_clean(strategy=None, market_cap_band="small")
     packet = build_lane_doctrine_packet(snap, seat_holders=None)
-    # Without large-cap flags we MUST NOT promote the snapshot into
-    # large-cap doctrine — falls back to small-account.
     assert packet["doctrine_version"] == "small_account_sidecar_v1"
+
+
+@pytest.mark.tripwire
+def test_router_returns_no_data_when_no_classification_hints():
+    """2026-02-19 operator directive: unclassified equity must fail
+    LOUD into NO_DATA, never silently score under a default doctrine."""
+    snap = {
+        "lane": "equity",
+        "symbol": "ZZZZ_NOT_ON_ANY_ROSTER",
+        "price": 12.34,
+    }
+    packet = build_lane_doctrine_packet(snap, seat_holders=None)
+    assert packet["base_labels"]["quality"] == "NO_DATA"
+    assert packet["doctrine_version"] == "unknown_universe_no_data_v1"
+    assert "UNKNOWN_UNIVERSE" in packet["base_labels"]["labels"]
+    assert packet["universe_class"] == "UNKNOWN"
 
 
 # ─── shape parity ────────────────────────────────────────────────────

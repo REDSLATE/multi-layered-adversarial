@@ -73,6 +73,25 @@ def _build_large_cap_labels(snapshot: Dict[str, Any]) -> _LargeCapLabels:
       * News catalyst still counts but absence is not punished.
       * Spread: still labeled, but the cap is bps (already tight for
         mega-caps), so SPREAD_TOO_WIDE rarely fires.
+
+    2026-02-19 momentum-origination enhancement (operator directive):
+    Large-caps rarely gap ≥1% and rarely see 3x RVOL. The doctrine
+    used to plateau at C_QUALITY for the whole watchlist because the
+    only positive signals were flags no mega-cap actually hits during
+    RTH. New scoring signals — all sourced from the equity enricher,
+    all optional (missing = silent, never penalizing):
+
+      * `vwap_distance_pct` — price vs VWAP (institutional midline).
+        Positive = above VWAP → bullish tilt; negative = below →
+        bearish tilt. Small band around zero is neutral.
+      * `velocity_1m` / `velocity_5m` — momentum acceleration. High
+        positive velocity = origination; sustained negative =
+        breakdown. Parabolic-phase penalties still apply on top.
+      * `rvol_acceleration` — RVOL delta over the last few minutes.
+        Volume expanding INTO the move is the mega-cap origination
+        signature. Contracting on the move = fade risk.
+      * `price_above_emas` — daily 20/50/200 EMA stack. When True
+        AND regime not weak, the tape has structural bull tilt.
     """
     symbol = str(snapshot.get("symbol", "UNKNOWN"))
     gap_pct = float(snapshot.get("gap_pct", 0.0))
@@ -81,6 +100,12 @@ def _build_large_cap_labels(snapshot: Dict[str, Any]) -> _LargeCapLabels:
     market_regime = str(snapshot.get("market_regime", "unknown")).lower()
     spread_bps = float(snapshot.get("spread_bps", 999.0))
     fractional_supported = bool(snapshot.get("fractional_supported", False))
+    # New momentum-origination signals (all optional).
+    vwap_distance_pct = snapshot.get("vwap_distance_pct")
+    velocity_1m = snapshot.get("velocity_1m")
+    velocity_5m = snapshot.get("velocity_5m")
+    rvol_acceleration = snapshot.get("rvol_acceleration")
+    price_above_emas = snapshot.get("price_above_emas")
 
     # 2026-02-20: baseline raised 0.30 → 0.40 per operator directive.
     # A large-cap on a sleepy day now clears C_QUALITY (≥0.40) on
@@ -137,6 +162,77 @@ def _build_large_cap_labels(snapshot: Dict[str, Any]) -> _LargeCapLabels:
         labels.append("NEWS_CATALYST")
     # Absence is silent — large-caps move on flow, not news, every day
 
+    # ── VWAP tilt (institutional midline) ──
+    # Doctrine pin (2026-02-19): VWAP is the mega-cap operator's
+    # tell for institutional participation. Above VWAP on a
+    # green-light regime = origination-friendly; below VWAP = fade
+    # / mean-reversion tape. Small band (<0.10%) around zero is
+    # neutral. Missing = silent (do NOT default to 0 — that would
+    # register as "at VWAP" which is a real signal).
+    if isinstance(vwap_distance_pct, (int, float)):
+        vd = float(vwap_distance_pct)
+        if vd >= 0.5:
+            score += 0.10
+            labels.append("VWAP_BULL_TILT")
+            if vd >= 1.5:
+                score += 0.05
+                labels.append("VWAP_STRONG_BULL_TILT")
+        elif vd <= -0.5:
+            score += 0.05  # still a signal — direction is DOWN
+            labels.append("VWAP_BEAR_TILT")
+            if vd <= -1.5:
+                score += 0.03
+                labels.append("VWAP_STRONG_BEAR_TILT")
+
+    # ── velocity / momentum origination ──
+    # Doctrine pin (2026-02-19): Sustained 5m velocity is the
+    # mega-cap continuation signal. Absolute value counts because
+    # the brain emits directional (BUY on +vel, SELL on -vel);
+    # the score-boost here just says "there IS a directional
+    # move" — the strategist seat converts velocity sign to
+    # BUY/SELL conviction.
+    if isinstance(velocity_5m, (int, float)):
+        v = abs(float(velocity_5m))
+        if v >= 0.5:
+            score += 0.05
+            labels.append("MOMENTUM_5M_ACTIVE")
+            if v >= 1.5:
+                score += 0.05
+                labels.append("MOMENTUM_5M_STRONG")
+    if isinstance(velocity_1m, (int, float)):
+        v = abs(float(velocity_1m))
+        if v >= 0.25:
+            labels.append("MOMENTUM_1M_ACTIVE")  # informational only
+
+    # ── RVOL acceleration (volume expanding into the move) ──
+    # Doctrine pin (2026-02-19): Volume expanding INTO price motion
+    # is the origination fingerprint. Contracting on price motion
+    # = late move / fade risk. `rvol_acceleration` is a positive
+    # number when RVOL is accelerating over the last N bars.
+    if isinstance(rvol_acceleration, (int, float)):
+        ra = float(rvol_acceleration)
+        if ra >= 0.20:
+            score += 0.05
+            labels.append("RVOL_ACCELERATING")
+            if ra >= 0.50:
+                score += 0.03
+                labels.append("RVOL_STRONG_ACCELERATION")
+
+    # ── EMA stack alignment (structural bull tilt) ──
+    # Doctrine pin (2026-02-19): 20/50/200 daily EMA stack in order
+    # means the mega-cap is in a structural uptrend. This is a
+    # dampener on downside risk more than a booster on upside
+    # (large-caps in an EMA stack rarely fade hard intraday), so
+    # the score bump is modest.
+    if price_above_emas is True:
+        score += 0.05
+        labels.append("EMA_STACK_ALIGNED")
+    elif price_above_emas is False:
+        # Explicit False — the enricher tested and the stack is
+        # broken. Small penalty to reflect trend risk.
+        score -= 0.03
+        labels.append("EMA_STACK_BROKEN")
+
     # ── regime ──
     if market_regime in {"strong", "green_light", "momentum"}:
         score += 0.10
@@ -172,12 +268,19 @@ def _build_large_cap_labels(snapshot: Dict[str, Any]) -> _LargeCapLabels:
     # the only labels are LARGE_CAP_LIQUID and (optionally)
     # FRACTIONAL_SUPPORTED. Neutral noise like SPREAD_ACCEPTABLE
     # doesn't disqualify (it's a "nothing wrong" tag, not a signal),
-    # but any of {GAPPER, RVOL, NEWS, GREEN_LIGHT} firing means the
-    # brain has a real lean and shouldn't be toehold-clamped.
+    # but any of {GAPPER, RVOL, NEWS, GREEN_LIGHT, VWAP, MOMENTUM,
+    # RVOL_ACCEL, EMA_STACK} firing means the brain has a real lean
+    # and shouldn't be toehold-clamped.
     quality_positive_labels = {
         "GAPPER_LARGE_CAP", "STRONG_GAPPER_LARGE_CAP",
         "ELEVATED_RELATIVE_VOLUME", "HIGH_RELATIVE_VOLUME",
         "NEWS_CATALYST", "MARKET_GREEN_LIGHT",
+        # 2026-02-19 momentum-origination signals
+        "VWAP_BULL_TILT", "VWAP_STRONG_BULL_TILT",
+        "VWAP_BEAR_TILT", "VWAP_STRONG_BEAR_TILT",
+        "MOMENTUM_5M_ACTIVE", "MOMENTUM_5M_STRONG",
+        "RVOL_ACCELERATING", "RVOL_STRONG_ACCELERATION",
+        "EMA_STACK_ALIGNED",
     }
     if not (set(labels) & quality_positive_labels):
         labels.append("BASELINE_ONLY_TOEHOLD")
@@ -198,6 +301,74 @@ def _build_large_cap_labels(snapshot: Dict[str, Any]) -> _LargeCapLabels:
     )
 
 
+def _direction_bias(snapshot: Dict[str, Any], labels_set: set) -> Dict[str, Any]:
+    """Compute a directional bias hint from the momentum signals.
+
+    Doctrine pin (2026-02-19): Large-cap brains historically emitted
+    HOLD indefinitely because the doctrine only scored SETUP QUALITY
+    but never a directional sign. This hint is the missing signal —
+    a `strategy_bias ∈ {BUY, SELL, NEUTRAL}` plus a `bias_strength`
+    (0-1) built from velocity sign, VWAP tilt, and EMA stack. Brains
+    read this off the doctrine packet to pick a direction; the seat
+    layer still owns final action + sizing.
+    """
+    votes = 0.0
+    total_weight = 0.0
+
+    v5 = snapshot.get("velocity_5m")
+    if isinstance(v5, (int, float)):
+        v = float(v5)
+        # Strong 5m velocity is worth 2 units; light is 1.
+        w = 2.0 if abs(v) >= 1.5 else (1.0 if abs(v) >= 0.5 else 0.0)
+        if w > 0.0:
+            votes += w if v > 0 else -w
+            total_weight += w
+
+    vd = snapshot.get("vwap_distance_pct")
+    if isinstance(vd, (int, float)):
+        d = float(vd)
+        w = 1.5 if abs(d) >= 1.5 else (1.0 if abs(d) >= 0.5 else 0.0)
+        if w > 0.0:
+            votes += w if d > 0 else -w
+            total_weight += w
+
+    if "EMA_STACK_ALIGNED" in labels_set:
+        votes += 0.5
+        total_weight += 0.5
+    elif "EMA_STACK_BROKEN" in labels_set:
+        votes -= 0.5
+        total_weight += 0.5
+
+    # Parabolic-phase overrides — topping/fade skew short, accumulation long.
+    phase = str(snapshot.get("parabolic_phase") or "").lower()
+    if phase == "topping" or phase == "fade":
+        votes -= 1.0
+        total_weight += 1.0
+    elif phase == "accumulation":
+        votes += 0.5
+        total_weight += 0.5
+
+    if total_weight <= 0.0:
+        return {
+            "strategy_bias": "NEUTRAL",
+            "bias_strength": 0.0,
+            "bias_reasons": ["no_directional_signals"],
+        }
+
+    strength = abs(votes) / total_weight
+    if strength < 0.20:
+        return {
+            "strategy_bias": "NEUTRAL",
+            "bias_strength": round(strength, 4),
+            "bias_reasons": ["signals_conflict_below_threshold"],
+        }
+    return {
+        "strategy_bias": "BUY" if votes > 0 else "SELL",
+        "bias_strength": round(strength, 4),
+        "bias_reasons": [],
+    }
+
+
 def build_large_cap_doctrine_packet(
     snapshot: Dict[str, Any],
     seat_holders: Optional[Dict[str, str]] = None,
@@ -214,6 +385,7 @@ def build_large_cap_doctrine_packet(
     execution_judge = _build_execution_judge(
         base, labels, holders.get(EQUITY_SEAT_MAP["execution_judge"]),
     )
+    direction = _direction_bias(snapshot, labels)
 
     return {
         "event_type": "BRAIN_DOCTRINE_SIDECAR_PACKET",
@@ -226,6 +398,7 @@ def build_large_cap_doctrine_packet(
             "labels": base.labels,
             "reasons": base.reasons,
         },
+        "direction": direction,
         "seats": {
             "strategist": strategist,
             "adversary": adversary,
@@ -251,14 +424,34 @@ def _build_strategist(base, labels, holder):
         cd += 0.04
     if "NEWS_CATALYST" in labels:
         cd += 0.03
+    # 2026-02-19 momentum-origination: reward directional signals.
+    # The strategist seat converts these into BUY / SELL conviction
+    # downstream; the sign lives on the intent (via strategy_bias),
+    # not here — this seat only says "we have conviction, and how
+    # much" (higher = more).
+    if "MOMENTUM_5M_STRONG" in labels:
+        cd += 0.06
+    elif "MOMENTUM_5M_ACTIVE" in labels:
+        cd += 0.03
+    if "VWAP_STRONG_BULL_TILT" in labels or "VWAP_STRONG_BEAR_TILT" in labels:
+        cd += 0.04
+    elif "VWAP_BULL_TILT" in labels or "VWAP_BEAR_TILT" in labels:
+        cd += 0.02
+    if "RVOL_STRONG_ACCELERATION" in labels:
+        cd += 0.03
+    elif "RVOL_ACCELERATING" in labels:
+        cd += 0.02
+    if "EMA_STACK_ALIGNED" in labels:
+        cd += 0.02
     return {
         "role": "strategist",
         "seat": EQUITY_SEAT_MAP["strategist"],
         "holder": holder,
         "conviction_delta": round(cd, 4),
         "lesson": (
-            "Large-cap day trades reward elevated RVOL + small "
-            "directional gaps. News is a tailwind, not a requirement."
+            "Large-cap day trades reward VWAP tilt, sustained 5m "
+            "velocity, and RVOL expanding INTO the move. News is a "
+            "tailwind, not a requirement."
         ),
         "may_execute": False,
         "may_override_direction": False,
