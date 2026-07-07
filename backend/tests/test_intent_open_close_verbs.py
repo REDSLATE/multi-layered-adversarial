@@ -25,7 +25,7 @@ pytestmark = [pytest.mark.tripwire]
 
 def test_legacy_buy_still_accepted():
     i = IntentIn(
-        stack="alpha", action="BUY", symbol="AAPL", lane="equity",
+        stack="camino", action="BUY", symbol="AAPL", lane="equity",
         confidence=0.6, rationale="legacy buy",
     )
     assert i.action == "BUY"
@@ -33,7 +33,7 @@ def test_legacy_buy_still_accepted():
 
 def test_legacy_sell_still_accepted():
     i = IntentIn(
-        stack="alpha", action="SELL", symbol="AAPL", lane="equity",
+        stack="camino", action="SELL", symbol="AAPL", lane="equity",
         confidence=0.6, rationale="legacy sell",
     )
     assert i.action == "SELL"
@@ -41,7 +41,7 @@ def test_legacy_sell_still_accepted():
 
 def test_legacy_short_still_accepted():
     i = IntentIn(
-        stack="redeye", action="SHORT", symbol="TSLA", lane="equity",
+        stack="gto", action="SHORT", symbol="TSLA", lane="equity",
         confidence=0.6, rationale="legacy short",
     )
     assert i.action == "SHORT"
@@ -49,7 +49,7 @@ def test_legacy_short_still_accepted():
 
 def test_legacy_cover_still_accepted():
     i = IntentIn(
-        stack="redeye", action="COVER", symbol="TSLA", lane="equity",
+        stack="gto", action="COVER", symbol="TSLA", lane="equity",
         confidence=0.6, rationale="legacy cover",
     )
     assert i.action == "COVER"
@@ -57,7 +57,7 @@ def test_legacy_cover_still_accepted():
 
 def test_hold_still_accepted():
     i = IntentIn(
-        stack="alpha", action="HOLD", symbol="AAPL", lane="equity",
+        stack="camino", action="HOLD", symbol="AAPL", lane="equity",
         confidence=0.3, rationale="hold",
     )
     assert i.action == "HOLD"
@@ -70,7 +70,7 @@ def test_open_verb_schema_valid():
     """OPEN is a valid action at the schema level. The validation that
     `direction` must be present runs in post_intent, not Pydantic."""
     i = IntentIn(
-        stack="camaro", action="OPEN", direction="long",
+        stack="barracuda", action="OPEN", direction="long",
         symbol="BTC", lane="crypto", confidence=0.7,
         rationale="open btc long",
     )
@@ -80,7 +80,7 @@ def test_open_verb_schema_valid():
 
 def test_close_verb_schema_valid():
     i = IntentIn(
-        stack="camaro", action="CLOSE", symbol="BTC", lane="crypto",
+        stack="barracuda", action="CLOSE", symbol="BTC", lane="crypto",
         confidence=0.9, rationale="close btc",
     )
     assert i.action == "CLOSE"
@@ -90,7 +90,7 @@ def test_invalid_direction_rejected():
     """direction must be 'long' or 'short' if set."""
     with pytest.raises(ValidationError):
         IntentIn(
-            stack="camaro", action="OPEN", direction="north",
+            stack="barracuda", action="OPEN", direction="north",
             symbol="BTC", lane="crypto", confidence=0.7,
             rationale="invalid direction",
         )
@@ -100,7 +100,7 @@ def test_invalid_action_still_rejected():
     """Random strings are still rejected by the Literal."""
     with pytest.raises(ValidationError):
         IntentIn(
-            stack="camaro", action="YOLO", symbol="BTC",
+            stack="barracuda", action="YOLO", symbol="BTC",
             lane="crypto", confidence=0.7, rationale="yolo",
         )
 
@@ -108,7 +108,7 @@ def test_invalid_action_still_rejected():
 def test_direction_optional_for_legacy_verbs():
     """BUY / SHORT / SELL / COVER do not require direction."""
     i = IntentIn(
-        stack="alpha", action="BUY", symbol="AAPL", lane="equity",
+        stack="camino", action="BUY", symbol="AAPL", lane="equity",
         confidence=0.6, rationale="no direction needed",
     )
     assert i.direction is None

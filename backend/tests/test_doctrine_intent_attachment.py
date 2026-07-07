@@ -23,7 +23,7 @@ async def test_crypto_lane_now_returns_crypto_packet():
     from shared.intents import _build_and_persist_doctrine_packet
     result = await _build_and_persist_doctrine_packet(
         intent_id="test-crypto-1",
-        stack="redeye",
+        stack="gto",
         lane="crypto",
         symbol="BTC/USD",
         action="BUY",
@@ -58,7 +58,7 @@ async def test_missing_lane_returns_unknown_lane_reject():
     from shared.intents import _build_and_persist_doctrine_packet
     result = await _build_and_persist_doctrine_packet(
         intent_id="test-nolane-1",
-        stack="alpha",
+        stack="camino",
         lane=None,
         symbol="AAPL",
         action="BUY",
@@ -86,7 +86,7 @@ async def test_equity_a_quality_packet_shape():
         "market_cap_band": "small",
     }
     packet = await _build_and_persist_doctrine_packet(
-        intent_id="test-eq-a-1", stack="alpha", lane="equity",
+        intent_id="test-eq-a-1", stack="camino", lane="equity",
         symbol="NVDA", action="BUY", confidence=0.78,
         snapshot=snap, ingest_method="test",
     )
@@ -104,7 +104,7 @@ async def test_equity_with_empty_snapshot_still_returns_packet():
     """No facts ⇒ REJECT quality, but the packet still attaches."""
     from shared.intents import _build_and_persist_doctrine_packet
     packet = await _build_and_persist_doctrine_packet(
-        intent_id="test-eq-empty-1", stack="alpha", lane="equity",
+        intent_id="test-eq-empty-1", stack="camino", lane="equity",
         symbol="AAPL", action="BUY", confidence=0.5,
         snapshot=None, ingest_method="test",
     )
@@ -127,7 +127,7 @@ async def test_packet_never_grants_execution_authority():
         "market_regime": "strong", "spread_bps": 40,
     }
     packet = await _build_and_persist_doctrine_packet(
-        intent_id="test-readonly-1", stack="alpha", lane="equity",
+        intent_id="test-readonly-1", stack="camino", lane="equity",
         symbol="NVDA", action="BUY", confidence=0.99,
         snapshot=snap, ingest_method="test",
     )
@@ -163,7 +163,7 @@ async def test_audit_row_written_to_doctrine_sidecars_collection():
 
     try:
         await _build_and_persist_doctrine_packet(
-            intent_id=intent_id, stack="alpha", lane="equity",
+            intent_id=intent_id, stack="camino", lane="equity",
             symbol="NVDA", action="BUY", confidence=0.7,
             snapshot=snap, ingest_method="test_audit",
         )
@@ -175,7 +175,7 @@ async def test_audit_row_written_to_doctrine_sidecars_collection():
 
     assert row is not None, "audit row was not written to doctrine_sidecars"
     assert row["intent_id"] == intent_id
-    assert row["stack"] == "alpha"
+    assert row["stack"] == "camino"
     assert row["lane"] == "equity"
     assert row["symbol"] == "NVDA"
     assert row["quality"] == "A_QUALITY"
@@ -184,8 +184,8 @@ async def test_audit_row_written_to_doctrine_sidecars_collection():
     assert row["adversary_challenge_required"] is False
     assert row["governor_action"] == "modulate"
     assert row["doctrine_version"] == "small_account_sidecar_v1"
-    # holder metadata (alpha is in equity executor seat by default seed)
-    assert row["execution_judge_holder"] in {"alpha", None}
+    # holder metadata (camino is in equity executor seat by default seed)
+    assert row["execution_judge_holder"] in {"camino", None}
     # ── legacy brain-named aliases (back-compat; deprecated) ────────
     assert row["camaro_execution_ready"] is True
     assert row["redeye_challenge_required"] is False

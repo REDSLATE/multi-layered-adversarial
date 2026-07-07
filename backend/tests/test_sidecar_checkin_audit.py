@@ -104,7 +104,7 @@ async def test_audit_collection_writes_on_checkin(monkeypatch):
 
     marker = f"tripwire-{uuid.uuid4()}"
     body = mod.CheckinRequest(stamp={
-        "app_name": "alpha",
+        "app_name": "camino",
         "env_name": "prod",
         "git_sha": marker,
         "platform": "test",
@@ -128,7 +128,7 @@ async def test_audit_collection_writes_on_checkin(monkeypatch):
     fake_req.client = MagicMock(host="10.0.0.1")
 
     resp = await mod.post_sidecar_checkin(
-        request=fake_req, body=body, brain="alpha",
+        request=fake_req, body=body, brain="camino",
         x_runtime_token="tripwire-token",
     )
     assert resp.verdict == "prod"
@@ -139,7 +139,7 @@ async def test_audit_collection_writes_on_checkin(monkeypatch):
     assert audit_row is not None, (
         "audit row not written — defense-in-depth audit is broken"
     )
-    assert audit_row["runtime"] == "alpha"
+    assert audit_row["runtime"] == "camino"
     assert audit_row["verdict"] == "prod"
     # X-Forwarded-For should win over client.host
     assert audit_row["source_ip"] == "203.0.113.42"
@@ -157,7 +157,7 @@ async def test_imposter_scan_flags_two_sustained_identities():
     import uuid
     from datetime import datetime, timezone
 
-    runtime = "alpha"
+    runtime = "camino"
     marker = f"imposter-tripwire-{uuid.uuid4()}"
     now_epoch = datetime.now(timezone.utc).timestamp()
     docs = []

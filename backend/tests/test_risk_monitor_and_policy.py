@@ -129,7 +129,7 @@ def test_max_hold_time_holds_fresh(client: requests.Session):
 
 def test_intent_equity_creates(client: requests.Session):
     body = {
-        "stack": "alpha", "action": "BUY", "symbol": "NVDA",
+        "stack": "camino", "action": "BUY", "symbol": "NVDA",
         "confidence": 0.7, "risk_multiplier": 0.1,
         "rationale": "test intent equity NVDA",
     }
@@ -142,7 +142,7 @@ def test_intent_equity_creates(client: requests.Session):
 
 def test_intent_crypto_creates(client: requests.Session):
     body = {
-        "stack": "redeye", "action": "BUY", "symbol": "BTC/USD",
+        "stack": "gto", "action": "BUY", "symbol": "BTC/USD",
         "confidence": 0.6, "risk_multiplier": 0.1,
         "rationale": "test intent crypto BTC",
     }
@@ -152,7 +152,7 @@ def test_intent_crypto_creates(client: requests.Session):
 
 def test_intent_crypto_lane_pin_rejects_equity(client: requests.Session):
     body = {
-        "stack": "redeye", "action": "BUY", "symbol": "BTC/USD",
+        "stack": "gto", "action": "BUY", "symbol": "BTC/USD",
         "confidence": 0.6, "risk_multiplier": 0.1,
         "rationale": "lane pin test",
         "lane": "equity",  # mismatched
@@ -181,12 +181,12 @@ def test_brain_lane_policy_full_cycle(client: requests.Session):
 
     # POST is retired → 410 Gone with a redirect-to-roster hint.
     r = client.post(f"{BASE_URL}/api/admin/brain-lane-policy",
-                    json={"brain": "alpha", "lane": "crypto", "allowed": False}, timeout=10)
+                    json={"brain": "camino", "lane": "crypto", "allowed": False}, timeout=10)
     assert r.status_code == 410, r.text
     assert "seat" in r.text.lower() or "roster" in r.text.lower()
 
     # DELETE is also retired (or no-op pass) — accept either to avoid
     # over-pinning. The doctrine pin is: brain × lane mutes can't be
     # mutated via this endpoint anymore.
-    r = client.delete(f"{BASE_URL}/api/admin/brain-lane-policy/alpha/crypto", timeout=10)
+    r = client.delete(f"{BASE_URL}/api/admin/brain-lane-policy/camino/crypto", timeout=10)
     assert r.status_code in (200, 204, 404, 410), r.text

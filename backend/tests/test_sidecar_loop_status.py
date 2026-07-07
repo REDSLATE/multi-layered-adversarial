@@ -149,14 +149,14 @@ def _camino_token() -> str:
 def _prod_stamp(policy_hash_value: str) -> dict:
     """Minimal valid prod stamp shape."""
     return {
-        "app_name": "alpha",
+        "app_name": "camino",
         "env_name": "prod",
         "git_sha": "loopstatus_e2e",
         "platform": "railway",
         "mc_url": "https://mission.risedual.ai",
         "db_name": "risedual_prod",
         "broker_mode": "live",
-        "sidecar_room": "alpha-room",
+        "sidecar_room": "camino-room",
         "sidecar_version": "1.0.0",
         "policy_hash": policy_hash_value,
         "local_execution_authority": False,
@@ -185,7 +185,7 @@ def test_post_loop_status_roundtrips_to_diagnose(auth_client, base_url):
         },
     }
     r = requests.post(
-        f"{base_url}/api/admin/runtime/sidecar-checkin/alpha",
+        f"{base_url}/api/admin/runtime/sidecar-checkin/camino",
         json=body,
         headers={"X-Runtime-Token": tok},
         timeout=15,
@@ -194,7 +194,7 @@ def test_post_loop_status_roundtrips_to_diagnose(auth_client, base_url):
 
     # Read via emission-diagnose
     r2 = auth_client.get(
-        f"{base_url}/api/admin/brain/emission-diagnose/alpha", timeout=15,
+        f"{base_url}/api/admin/brain/emission-diagnose/camino", timeout=15,
     )
     assert r2.status_code == 200, r2.text
     body2 = r2.json()
@@ -218,7 +218,7 @@ def test_post_without_loop_status_still_works(auth_client, base_url):
 
     body = {"stamp": _prod_stamp(policy_hash())}  # NO loop_status
     r = requests.post(
-        f"{base_url}/api/admin/runtime/sidecar-checkin/alpha",
+        f"{base_url}/api/admin/runtime/sidecar-checkin/camino",
         json=body,
         headers={"X-Runtime-Token": tok},
         timeout=15,
@@ -226,7 +226,7 @@ def test_post_without_loop_status_still_works(auth_client, base_url):
     assert r.status_code == 200, r.text
 
     r2 = auth_client.get(
-        f"{base_url}/api/admin/brain/emission-diagnose/alpha", timeout=15,
+        f"{base_url}/api/admin/brain/emission-diagnose/camino", timeout=15,
     )
     assert r2.status_code == 200, r2.text
     sc = r2.json().get("sidecar_checkin") or {}

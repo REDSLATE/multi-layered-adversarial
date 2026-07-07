@@ -18,14 +18,14 @@ from shared.runtime.platform_survival import RuntimeStamp, policy_hash
 
 def _prod_stamp() -> dict:
     return {
-        "app_name": "alpha",
+        "app_name": "camino",
         "env_name": "prod",
         "git_sha": "abc12345",
         "platform": "railway",
         "mc_url": "https://mission.risedual.ai",
         "db_name": "risedual_prod",
         "broker_mode": "live",
-        "sidecar_room": "alpha-room",
+        "sidecar_room": "camino-room",
         "sidecar_version": "1.0.0",
         "policy_hash": policy_hash(),
         "local_execution_authority": False,
@@ -62,7 +62,7 @@ def _camino_token() -> str:
 
 def test_post_rejects_bad_token(base_url):
     r = requests.post(
-        f"{base_url}/api/admin/runtime/sidecar-checkin/alpha",
+        f"{base_url}/api/admin/runtime/sidecar-checkin/camino",
         json={"stamp": _prod_stamp()},
         headers={"X-Runtime-Token": "definitely-not-the-real-token"},
         timeout=15,
@@ -86,7 +86,7 @@ def test_post_prod_stamp_records_prod_verdict(base_url):
         return  # env not configured in this runner
 
     r = requests.post(
-        f"{base_url}/api/admin/runtime/sidecar-checkin/alpha",
+        f"{base_url}/api/admin/runtime/sidecar-checkin/camino",
         json={"stamp": _prod_stamp()},
         headers={"X-Runtime-Token": tok},
         timeout=15,
@@ -106,7 +106,7 @@ def test_post_preview_stamp_records_preview_verdict(base_url):
         return
 
     r = requests.post(
-        f"{base_url}/api/admin/runtime/sidecar-checkin/alpha",
+        f"{base_url}/api/admin/runtime/sidecar-checkin/camino",
         json={"stamp": _preview_stamp()},
         headers={"X-Runtime-Token": tok},
         timeout=15,
@@ -125,7 +125,7 @@ def test_post_policy_drift_when_hash_mismatch(base_url):
     drifted = _prod_stamp()
     drifted["policy_hash"] = "stale_hash_deadbeef" * 2  # arbitrary wrong hash
     r = requests.post(
-        f"{base_url}/api/admin/runtime/sidecar-checkin/alpha",
+        f"{base_url}/api/admin/runtime/sidecar-checkin/camino",
         json={"stamp": drifted},
         headers={"X-Runtime-Token": tok},
         timeout=15,
@@ -144,8 +144,8 @@ def test_post_invalid_when_stamp_shape_wrong(base_url):
         return
 
     r = requests.post(
-        f"{base_url}/api/admin/runtime/sidecar-checkin/alpha",
-        json={"stamp": {"app_name": "alpha"}},  # missing all required fields
+        f"{base_url}/api/admin/runtime/sidecar-checkin/camino",
+        json={"stamp": {"app_name": "camino"}},  # missing all required fields
         headers={"X-Runtime-Token": tok},
         timeout=15,
     )
@@ -172,19 +172,19 @@ def test_get_list_returns_one_row_per_brain(auth_client, base_url):
     assert "rows" in body
     runtimes = {row["runtime"] for row in body["rows"]}
     # Every known brain has a row (never-seen brains get verdict="never")
-    assert {"alpha", "camaro", "chevelle", "redeye"}.issubset(runtimes)
+    assert {"camino", "barracuda", "hellcat", "gto"}.issubset(runtimes)
 
 
 def test_get_single_brain_returns_never_for_silent_sidecar(auth_client, base_url):
     r = auth_client.get(
-        f"{base_url}/api/admin/runtime/sidecar-checkin/redeye",
+        f"{base_url}/api/admin/runtime/sidecar-checkin/gto",
         timeout=15,
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["runtime"] == "redeye"
-    # redeye hasn't checked in in this test run (and we don't clean up
-    # alpha to keep tests independent) — verdict is either "never" or
+    assert body["runtime"] == "gto"
+    # gto hasn't checked in in this test run (and we don't clean up
+    # camino to keep tests independent) — verdict is either "never" or
     # whatever was previously persisted. Just assert the contract.
     assert body["verdict"] in ("never", "prod", "preview", "policy_drift", "invalid")
     assert "mc_policy_hash" in body
@@ -208,7 +208,7 @@ def test_post_then_get_reflects_latest_stamp(auth_client, base_url):
 
     # Record a clean prod check-in
     r = requests.post(
-        f"{base_url}/api/admin/runtime/sidecar-checkin/alpha",
+        f"{base_url}/api/admin/runtime/sidecar-checkin/camino",
         json={"stamp": _prod_stamp()},
         headers={"X-Runtime-Token": tok},
         timeout=15,
@@ -217,12 +217,12 @@ def test_post_then_get_reflects_latest_stamp(auth_client, base_url):
 
     # GET single-brain detail
     r = auth_client.get(
-        f"{base_url}/api/admin/runtime/sidecar-checkin/alpha",
+        f"{base_url}/api/admin/runtime/sidecar-checkin/camino",
         timeout=15,
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["runtime"] == "alpha"
+    assert body["runtime"] == "camino"
     assert body["verdict"] == "prod"
     assert body["freshness"] in ("fresh", "stale")  # just persisted → fresh
     assert body["checkin_count"] >= 1
@@ -253,7 +253,7 @@ def test_post_sidecar_checkin_also_bumps_heartbeat(auth_client, base_url):
 
     # Fire a clean prod check-in.
     r = requests.post(
-        f"{base_url}/api/admin/runtime/sidecar-checkin/alpha",
+        f"{base_url}/api/admin/runtime/sidecar-checkin/camino",
         json={"stamp": _prod_stamp()},
         headers={"X-Runtime-Token": tok},
         timeout=15,
@@ -263,7 +263,7 @@ def test_post_sidecar_checkin_also_bumps_heartbeat(auth_client, base_url):
     # Read heartbeat-status. Heartbeat age must be < a few seconds —
     # i.e., the check-in just bumped it.
     r = requests.get(
-        f"{base_url}/api/heartbeat-status/alpha",
+        f"{base_url}/api/heartbeat-status/camino",
         timeout=15,
     )
     assert r.status_code == 200, r.text

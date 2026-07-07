@@ -31,7 +31,7 @@ async def test_admin_proxy_persists_snapshot_to_intent_doc(auth_client, base_url
     intact. Reads back via Mongo directly (no runtime-token dance)."""
     from db import db
     body = {
-        "stack": "camaro",
+        "stack": "barracuda",
         "symbol": "TRIPWIRE_SPREAD_A",
         "action": "BUY",
         "confidence": 0.75,
@@ -66,7 +66,7 @@ async def test_admin_proxy_handles_missing_snapshot_as_empty_dict(auth_client, b
     `.get('spread_bps')` without crashing."""
     from db import db
     body = {
-        "stack": "camaro",
+        "stack": "barracuda",
         "symbol": "TRIPWIRE_SPREAD_B",
         "action": "BUY",
         "confidence": 0.75,
@@ -111,7 +111,7 @@ async def test_gate_chain_reads_persisted_snapshot_after_admin_ingest(auth_clien
 
     # Fresh ingest with a healthy spread.
     body = {
-        "stack": "camaro",
+        "stack": "barracuda",
         "symbol": "TRIPWIRE_GATE_CHAIN",
         "action": "BUY",
         "confidence": 0.78,
@@ -150,10 +150,10 @@ async def test_gate_chain_fails_roadguard_on_wide_spread():
     # underlying check (even if the gate is currently suspended).
     intent = {
         "intent_id": "tripwire-roadguard-wide",
-        "stack": "camaro", "symbol": "WIDE_SPREAD_TEST",
+        "stack": "barracuda", "symbol": "WIDE_SPREAD_TEST",
         "action": "BUY", "lane": "equity",
         "may_execute": False, "requires_gate_pass": True,
-        "holds_executor_seat": True, "executor_holder_at_post": "camaro",
+        "holds_executor_seat": True, "executor_holder_at_post": "barracuda",
         "confidence": 0.75,
         "snapshot": {"spread_bps": 80.0},
     }

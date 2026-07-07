@@ -1,3 +1,39 @@
+## 2026-02-19 — P0 Large-Cap Momentum Origination Doctrine + P1 hotfixes + roster-rename test sweep
+
+### P0 shipped: Universe Classifier + Doctrine Registry + enhanced Large-Cap doctrine
+- **`backend/shared/doctrine/universe_classifier.py`** — pure symbol → universe-class dispatch.
+  Classes: `CRYPTO`, `SMALL_CAP_MOMENTUM`, `LARGE_CAP`, `ETF`, `UNKNOWN`.
+  Precedence: crypto-lane → explicit small-cap opt-in (band or gap/pullback strategy) → explicit large/mega band → pinned ETF roster → pinned mega-cap roster → **UNKNOWN** (fail-loud, no silent large-cap default).
+  Operator-vetted invariant: no lane fallback. An equity with no roster hit, no band, no strategy hint MUST resolve to UNKNOWN; the registry emits NO_DATA (not REJECT) so classification gaps stay visible in the funnel instead of quietly getting scored under a default doctrine.
+  Pinned rosters: 48 large-caps (mirrors `_MEGA_CAP_SYMBOLS`), 28 sector/broad-market ETFs.
+- **`backend/shared/doctrine/registry.py`** — `DoctrineRegistry` with `register(uc, builder)` and `dispatch(snapshot, seat_holders)`. Wires four builders on import: large-cap, small-cap momentum (dispatches to strategy-specific builders when `strategy` hint present), ETF (routes through large-cap builder, stamped ETF for Patent J), crypto. UNKNOWN → `NO_DATA` short-circuit packet (`doctrine_version=unknown_universe_no_data_v1`).
+- **`backend/shared/doctrine/large_cap_doctrine.py`** — momentum-origination scoring signals landed:
+  - `VWAP_BULL_TILT` / `VWAP_STRONG_BULL_TILT` / `VWAP_BEAR_TILT` / `VWAP_STRONG_BEAR_TILT` (VWAP tilt as institutional midline)
+  - `MOMENTUM_5M_ACTIVE` / `MOMENTUM_5M_STRONG` + `MOMENTUM_1M_ACTIVE` (sustained velocity → continuation signature)
+  - `RVOL_ACCELERATING` / `RVOL_STRONG_ACCELERATION` (volume expanding INTO the move)
+  - `EMA_STACK_ALIGNED` / `EMA_STACK_BROKEN` (structural bull/breakdown tilt)
+  All new fields optional; missing = silent (never negative signal — the invariant that recovered from tonight's `has_news=False` / `float_millions=999999` silent-default bug class).
+- **`direction` block** on the packet: `strategy_bias ∈ {BUY, SELL, NEUTRAL}` + `bias_strength ∈ [0, 1]` derived from velocity sign + VWAP tilt + EMA stack + parabolic-phase override. This is the missing directional hint — brains can now emit BUY vs SELL on NVDA/MSFT instead of HOLDing forever.
+- **`backend/shared/doctrine/lane_doctrine_router.py`** — collapsed to a thin lane-guard + registry-delegation shim (all classification logic moved to universe_classifier + registry).
+
+### P1 shipped
+- **`shared_intents` compound index** `[(symbol, 1), (ingest_ts, -1)]` added via `_safe_create_index` in `backend/db.py`. Fixes the operator dashboard NetworkTimeout when filtering by symbol without a stack pin (Intents page + Phase Map symbol drill-down). Existing `(stack, symbol, ingest_ts)` couldn't cover symbol-only queries — planner fell back to COLLSCAN on a multi-million row collection.
+- **`meta_routes.py` 4-tuple unpacking fix** — `BRAIN_ROSTER` became a 4-tuple on 2026-02-20 rename (added `legacy_fallback_env` so the runner can self-heal against pre-rename token names). `/api/admin/neutral-brains/status` still unpacked 3-tuple and returned 500 on every hit. Endpoint now returns brain_id + display_name + token_env + legacy_token_env for all 4 brains.
+
+### Test sweep: roster-rename stragglers
+- Baseline (clean `main`): **70 backend test failures**, most of them stale references to the legacy roster names (`alpha`/`camaro`/`chevelle`/`redeye`) after the 2026-02-20 rename to `camino`/`barracuda`/`hellcat`/`gto`.
+- Swept 9 test files with word-boundary sed: `test_sidecar_checkin.py`, `test_sidecar_checkin_audit.py`, `test_sidecar_loop_status.py`, `test_intent_snapshot_persistence.py`, `test_intent_open_close_verbs.py`, `test_risk_monitor_and_policy.py`, `test_runtime_broker_status.py`, `test_runtime_position_discovery.py`, `test_doctrine_intent_attachment.py`.
+- Legacy DB-field aliases (`camaro_execution_ready`, `chevelle_governor_action`, `redeye_challenge_required`) preserved intact — those are intentional legacy aliases per `lane_doctrine_router.py:73-74`. Word-boundary regex correctly left compound identifiers alone.
+- **Net: 33 pre-existing test failures fixed, 0 regressions introduced.**
+- Remaining 37 baseline failures are all Category C (features not landed / dead-module refs / missing endpoints — e.g. `shared.execution`, `routes.admin_paradox_v3`, `shared.pipeline`, `/api/heartbeat-status/{brain}`, `_sweep_seat_mismatched_intents`) — separate tickets, not roster-related.
+
+### New test coverage
+- **`backend/tests/test_universe_classifier_and_registry.py`** (15 tests) — classifier precedence rules, unknown-symbol → UNKNOWN loud-fail invariant, registry NO_DATA short-circuit, ETF-vs-large-cap routing, all 4 default builders wired.
+- **`backend/tests/test_large_cap_momentum_origination.py`** (16 tests) — momentum-origination label firing (VWAP/velocity/RVOL/EMA), direction-bias BUY/SELL/NEUTRAL correctness, parabolic-phase override, and the core operator invariant: NVDA with strong momentum signals must clear at least B_QUALITY (no more indefinite HOLD).
+
+**All 43 new tests + 62/63 legacy doctrine tests green. Zero lint errors.**
+
+
 ## 2026-07-07 (late session) — Witness W/L resolver activated
 
 **Context:** polygon witness worker had been landing rows since 2026-06-28 (8 days) as DEFAULT-HOSTILE UNTRUSTED. Credibility ledger schema shipped 2026-02-23 with promotion doctrine baked in, but the resolver code that turns witness rows into `samples`/`wins`/`losses` was never written. Operator confirmed dormancy; built the MVP resolver.

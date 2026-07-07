@@ -37,8 +37,8 @@ def _reset_cache():
 @pytest.fixture(autouse=True)
 async def _setup(monkeypatch):
     # Real brain ingest token — must match a participant
-    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "tw-camaro-token")
-    monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-redeye-token")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "tw-barracuda-token")
+    monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-gto-token")
     _reset_cache()
     yield
     _reset_cache()
@@ -75,16 +75,16 @@ async def test_per_lane_endpoint_requires_token():
 async def test_per_lane_endpoint_rejects_bad_lane():
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as exc:
-        await broker_status_lane(lane="ftx", x_runtime_token="tw-camaro-token")
+        await broker_status_lane(lane="ftx", x_runtime_token="tw-barracuda-token")
     assert exc.value.status_code == 400
 
 
 @pytest.mark.asyncio
 async def test_unified_endpoint_returns_both_lanes():
-    result = await broker_status_all(x_runtime_token="tw-camaro-token")
+    result = await broker_status_all(x_runtime_token="tw-barracuda-token")
     assert "crypto" in result
     assert "equity" in result
-    assert result["asked_by"] == "camaro"
+    assert result["asked_by"] == "barracuda"
     assert result["cache_ttl_seconds"] == 10.0
 
 
@@ -92,8 +92,8 @@ async def test_unified_endpoint_returns_both_lanes():
 async def test_any_brain_can_read():
     """Token validation matches against ANY brain's env token."""
     for token, expected_brain in (
-        ("tw-camaro-token", "camaro"),
-        ("tw-redeye-token", "redeye"),
+        ("tw-barracuda-token", "barracuda"),
+        ("tw-gto-token", "gto"),
     ):
         result = await broker_status_all(x_runtime_token=token)
         assert result["asked_by"] == expected_brain
@@ -121,7 +121,7 @@ async def test_response_never_includes_full_keys():
         upsert=True,
     )
     try:
-        result = await broker_status_all(x_runtime_token="tw-camaro-token")
+        result = await broker_status_all(x_runtime_token="tw-barracuda-token")
         crypto = result["crypto"]
         # Hard assertions: full secret fields must not be in the response
         # AT ANY DEPTH.

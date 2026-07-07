@@ -69,7 +69,7 @@ async def test_runtime_list_requires_token(monkeypatch, seed_positions):
     monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-token")
     with pytest.raises(HTTPException) as exc:
         await runtime_list_positions(
-            runtime="redeye", status="open", symbol=None, limit=100,
+            runtime="gto", status="open", symbol=None, limit=100,
             x_runtime_token=None,
         )
     assert exc.value.status_code in (401, 403)
@@ -79,7 +79,7 @@ async def test_runtime_list_returns_open_by_default(monkeypatch, seed_positions)
     """Default `status=open` returns the 2 open rows, not the closed one."""
     monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-token")
     result = await runtime_list_positions(
-        runtime="redeye", status="open", symbol=None, limit=100,
+        runtime="gto", status="open", symbol=None, limit=100,
         x_runtime_token="tw-token",
     )
     assert "items" in result
@@ -95,7 +95,7 @@ async def test_runtime_list_filters_by_symbol(monkeypatch, seed_positions):
     """`symbol` filter narrows the result set."""
     monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-token")
     result = await runtime_list_positions(
-        runtime="redeye", status="open", symbol="AAPL", limit=100,
+        runtime="gto", status="open", symbol="AAPL", limit=100,
         x_runtime_token="tw-token",
     )
     ids = {p["position_id"] for p in result["items"]}
@@ -104,12 +104,12 @@ async def test_runtime_list_filters_by_symbol(monkeypatch, seed_positions):
 
 async def test_runtime_list_supports_camaro_too(monkeypatch, seed_positions):
     """Endpoint is brain-agnostic — any valid runtime token works."""
-    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "camaro-tw-token")
+    monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "barracuda-tw-token")
     result = await runtime_list_positions(
-        runtime="camaro", status="open", symbol=None, limit=100,
-        x_runtime_token="camaro-tw-token",
+        runtime="barracuda", status="open", symbol=None, limit=100,
+        x_runtime_token="barracuda-tw-token",
     )
-    assert result["runtime"] == "camaro"
+    assert result["runtime"] == "barracuda"
     assert result["count"] >= 2  # seed positions plus any pre-existing
 
 
@@ -118,7 +118,7 @@ async def test_runtime_list_doctrine_note_carries_stance_vocab(monkeypatch, seed
     teams don't have to dig through docs."""
     monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-token")
     result = await runtime_list_positions(
-        runtime="redeye", status="open", symbol=None, limit=100,
+        runtime="gto", status="open", symbol=None, limit=100,
         x_runtime_token="tw-token",
     )
     note = result["doctrine_note"]
@@ -131,7 +131,7 @@ async def test_runtime_list_includes_stances_by_brain(monkeypatch, seed_position
     has ALREADY stamped on this position (avoid double-posting)."""
     monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-token")
     result = await runtime_list_positions(
-        runtime="redeye", status="open", symbol="AAPL", limit=100,
+        runtime="gto", status="open", symbol="AAPL", limit=100,
         x_runtime_token="tw-token",
     )
     assert result["items"], "AAPL position should be present"
