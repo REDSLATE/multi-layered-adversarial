@@ -321,6 +321,17 @@ async def get_brain_status(
             "brain": brain,
             "ok": False,
             "error": "in_process_build_failed",
+            # 2026-02-19 (operator diagnostic gap fix): surface the
+            # exception class + message on the response body itself
+            # so operators without shell/log access can diagnose
+            # from the UI dev-tools Network tab or any curl. Admin-
+            # authenticated endpoint, so no public exposure risk.
+            # Truncated to 200 chars so a wall-of-stacktrace doesn't
+            # dominate the response body. Prior behavior stripped
+            # `exc` and left only `"in_process_build_failed"` — fine
+            # when the operator had `grep backend.log`, invisible
+            # when they don't.
+            "error_detail": f"{type(exc).__name__}: {str(exc)[:200]}",
             "doctrine": "in_process_runtime_status",
             "ts": _now().isoformat(),
         }
