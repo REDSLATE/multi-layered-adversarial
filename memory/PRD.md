@@ -7,6 +7,26 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ✅ Session 2026-07-06 (evening): Watchlist cull to 20+20 + silent-brain incident resolved + doctrine NO_DATA short-circuit staged
+
+**Live prod actions this session:**
+- Trimmed `patterns_universe` from 48 equity + 8 crypto → 20 + 20 by daily $ volume (via API calls against prod, already live)
+- Confirmed brain intent stream recovered post-redeploy (NVDA, MSFT HOLD intents flowing)
+- Operator has per-lane kill switches, zero live-money exposure through the incident
+
+**Staged code changes (preview, ship on next redeploy):**
+- Option A/B doctrine work: NO_DATA short-circuit + enricher status stamping (kills the manufactured `-26%/-38%/-88%/-80%` fingerprint on symbols with failed enrichment)
+- Paper/dry_run cosmetic cleanup (WebullConnect ENV_OPTIONS, LaneExecutionTogglesPanel copy)
+- Three dead env flags removed from `.env`
+- 32 test cases added (`test_doctrine_no_data_short_circuit.py`, `test_equity_enricher_status_stamp.py`), all passing
+
+**Outstanding tech debt (not blocking):**
+- Missing `shared_intents.symbol` index causes `?symbol=X` timeouts on prod's admin Intents page
+- `meta_routes.py:42` 3-tuple/4-tuple unpack drift breaks `/api/admin/neutral-brains/status` observability
+- `deploy_mode="execute"` typo on prod (canonical is `"execution"`)
+- Runtime log source on Emergent deploy panel not yet identified — only build logs visible
+
+
 ### ✅ Paper/dry_run mode elimination + dead env-flag cleanup (2026-07-06)
 
 **Operator directive:** eliminate `paper` and `dry_run` from the codebase

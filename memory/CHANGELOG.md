@@ -1,3 +1,60 @@
+## 2026-07-06 — Incident: silent brains during Monday RTH + watchlist cull + doctrine NO_DATA short-circuit
+
+### Live incident (operator-diagnosed and resolved)
+- Brain intent loop went silent between 11:59-13:02 UTC (equity last emit 11:59, crypto last 13:02). Heartbeat check-in loop stayed alive the whole time — classic asyncio silent-task-death shape.
+- Operator resolved by redeploying prod (Deployment 100 → new). Fresh pod respawn brought `_intent_loop` back. Post-restart: NVDA + MSFT (HOLD) intents flowing within seconds.
+- Zero live-money exposure during the incident (operator has per-lane kill switches; no directional intents cleared gates).
+- **Root cause unconfirmed**: was likely a wedged async task from a transient in-memory state, not a deterministic bug. Fresh boot logs would have shown it but "View Logs" on the deploy panel only surfaces build logs — runtime log source not yet identified on this platform.
+
+### Watchlist cull (executed live against prod via API)
+- Trimmed `patterns_universe` from 48 equity + 8 crypto → **20 equity + 20 crypto** by daily $ volume.
+- **Equity (20)**: AAPL, AMD, AMZN, BA, BABA, BTDR, GME, GOOG, META, MSFT, NFLX, NVDA, ORCL, PFE, QQQ, SHOP, SPY, TSLA, TSM, WMT
+- **Crypto (20)**: AAVE, ADA, ALGO, ARB, ATOM, AVAX, BNB, BTC, DOGE, DOT, ETH, FIL, INJ, LINK, LTC, MATIC, NEAR, SOL, UNI, XRP (all /USD)
+- Removed `FB` (dead ticker → replaced with `META`), added SPY/QQQ/META/TSM (top-daily-volume that were missing).
+- Rationale: eliminates the A-alphabet scan noise (AMH/AII/AFG/AWK) that was polluting the doctrine panel, and focuses each tick's compute budget on symbols with real market depth.
+- API mechanics: `POST /api/admin/patterns/universe` for adds, `DELETE /api/admin/patterns/universe/{sym}` for soft-deactivate.
+- Neutral brain universe cache refreshes every 20 ticks (~10 min at 30s cadence), so new list becomes authoritative within 10 min of any prod pod's start.
+
+### Symbol-source audit (defense-in-depth for the 20+20)
+Confirmed the ONLY collection that can inject symbols into the intent stream is `patterns_universe`. Two adjacent flows exist but do NOT feed intents:
+- `paradox_watchlist` (separate collection) — only consumed by `paradox_scanner`, which runs on-demand via admin endpoint only, no background loop. Writes to `paradox_candidates`, not `shared_intents`.
+- Polygon news witness — background hourly loop, calls `article_to_witness_rows()` WITHOUT `symbol_universe` filter (verified at `polygon_witness.py:485-490`). Emits witness rows for any news symbol, but witness rows are context-only. Symbols outside `patterns_universe` never get evaluated by a brain regardless.
+- Hardcoded `FALLBACK_UNIVERSE` and `FALLBACK_BY_LANE` — only fire when patterns_universe is empty. With 20+20 curated, they're inactive.
+
+### Code changes staged in preview this session (will ship with next redeploy)
+**Runtime-behavior:**
+- `backend/shared/snapshot_enrich/equity_doctrine.py` — enricher stamps `enrichment_status: live/failed/no_symbol` and lists `enrichment_unavailable_fields = ["has_news", "float_millions"]`.
+- `backend/shared/doctrine/base_labels.py` — added `NO_DATA` short-circuit: empty snapshots return `quality="NO_DATA"` instead of manufacturing REJECT from defaults. Honors `has_news_unavailable` and `float_unavailable` flags to skip absence-of-data penalties.
+- `backend/shared/doctrine/brain_sidecars.py` — under `NO_DATA`, seat bodies return neutral values (strategist Δ=0, no objections, risk_multiplier=1.0, execution_ready=None). Kills the `-26%/-38%/-88%/-80%` fingerprint operator saw earlier tonight for symbols with missing enrichment.
+- `frontend/src/components/ExecutionScoreBreakdown.jsx` — new NO_DATA panel branch renders honest "NO DATA — enrichment failed" instead of a fake 0% score.
+
+**Cosmetic:**
+- `backend/tests/test_neutral_brain_identity_stamp.py` — fixed P0 IndentationError from botched paper→live search-and-replace.
+- `backend/shared/runtime/platform_survival.py` — docstring wording (`"paper/live"` → `"live"`).
+- `frontend/src/components/WebullConnect.jsx` — removed `"paper"` from ENV_OPTIONS.
+- `frontend/src/components/LaneExecutionTogglesPanel.jsx` — stripped "(or paper fills for Alpaca)" copy.
+
+**`.env`:**
+- Removed `PHASE6_ENFORCE_ENABLED`, `CAMARO_EXECUTOR_ENFORCE_ENABLED`, `CHEVELLE_AUTHORITY_ENABLED` (all confirmed dead by `flags.py` doctrine comment).
+- Added `RISEDUAL_BROKER_MODE="live"` (preview; operator separately added this to prod deploy config).
+
+**New tests:**
+- `backend/tests/test_doctrine_no_data_short_circuit.py` — 12 tests, all passing. Locks in NO_DATA behavior and the anti-regression for the `-26/-38/-88/-80` fingerprint.
+- `backend/tests/test_equity_enricher_status_stamp.py` — 3 async tests, all passing. Locks in the enricher's status-stamping contract.
+
+### Confirmed factually via HTTP probes tonight
+- Prod's Mongo cluster is on `customer-apps.kndgvm.mongodb.net` (shared Atlas project — hostname pattern suggests multi-tenant).
+- Shard-00-02 replica intermittently times out on symbol-filtered queries against `shared_intents` — no index on `symbol` field. `db.py:349-360` documents this exact gap in its own comment. `?symbol=AMH` returns `NetworkTimeout` / `ExecutionTimeout` intermittently, unfiltered queries respond fine (2.4s).
+- Prod's `meta_routes.py:42` unpacks `BRAIN_ROSTER` as 3-tuple but roster is now 4-tuple → `/api/admin/neutral-brains/status` returns misleading `enabled:false` fallback via the exception path.
+- Both bugs are real and outstanding, neither is blocking tonight.
+
+### Outstanding tech debt (not blocking, ship whenever)
+1. Add `shared_intents.symbol` compound index: `db.shared_intents.create_index([("symbol", 1), ("ingest_ts", -1)])` — fixes admin Intents page symbol filter.
+2. Fix `meta_routes.py:42` 3-tuple/4-tuple unpack — restores working brain-status endpoint.
+3. `deploy_mode="execute"` on prod is a typo drift from canonical `"execution"` — `/health` and `/admin/flags` return different values because of the derived-mode fallback.
+4. Runtime log source on the deploy platform is unidentified — "View Logs" only shows build logs.
+
+
 ## 2026-07-06 — Paper/dry_run mode elimination + dead env-flag cleanup
 
 **Trigger:** Operator observed brain check-ins stamping `broker_mode="paper"`
