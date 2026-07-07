@@ -1,3 +1,32 @@
+## 2026-07-07 (late session) — Witness W/L resolver activated
+
+**Context:** polygon witness worker had been landing rows since 2026-06-28 (8 days) as DEFAULT-HOSTILE UNTRUSTED. Credibility ledger schema shipped 2026-02-23 with promotion doctrine baked in, but the resolver code that turns witness rows into `samples`/`wins`/`losses` was never written. Operator confirmed dormancy; built the MVP resolver.
+
+### Shipped (preview, awaits redeploy)
+- **`backend/verifier/witness_resolver.py`** — resolver core:
+  - `classify_outcome(side, return_bps)` — pure classification (BUY/SELL win on ±50bps, HOLD win in quiet ±50bps window)
+  - `SourceAggregate` — samples/wins/losses/verified_alpha rollup
+  - `next_status(status, samples, win_rate, alpha)` — promotion state machine matching pinned doctrine (UNTRUSTED→WATCHLIST at samples≥50 + wr>0.50, WATCHLIST→TRUSTED at samples≥200 + alpha>0.02)
+  - `resolve_source(source, price_fetcher, ...)` — main entry, idempotent, updates ledger + flips `influence_allowed` on all source's rows on promotion/demotion
+  - Configurable via module constants: `RESOLUTION_HORIZON_HOURS=24`, `MIN_MOVE_BPS_FOR_DIRECTIONAL_WIN=50`, `HOLD_WINDOW_BPS=50`
+- **`backend/routes/admin_external_signals.py`** — added `POST /api/admin/verifier/resolve-witnesses/{source}` with dry_run default=True. Real price fetcher wires to `shared_ohlcv_bars` via `bar_source.load_recent_bars` — broker-primary priority (webull/kraken_pro), lane auto-detected from symbol (`/` → crypto 1h, else equity 1d), returns close of last bar at-or-before target ts, None when no coverage.
+- **`backend/tests/test_witness_resolver.py`** — 26 tests: 13 classification, 5 aggregation, 9 promotion transitions, 5 DB integration (with fake fetcher).
+- **`backend/tests/test_witness_resolver_price_fetcher.py`** — 6 tests validating real OHLCV-bar price fetch against seeded data.
+
+**All 32 tests green in 0.23s, 0 lint errors.**
+
+### Scope explicitly deferred (documented as follow-up)
+- Orthogonality tracking — MVP uses raw win rate for `orthogonal_win_rate`. Full doctrine credits witness only on calls no brain independently made.
+- Scheduled/nightly execution — MVP is admin-trigger only. Add background loop after first manual passes produce sane numbers.
+- Regime-conditional scoring, drawdown per stance, RoadGuard manipulation-flag integration.
+- Full `verified_alpha` attribution vs baseline — MVP uses net avg return per stance / 10000.
+
+### Expected first-run behavior post-redeploy
+- 741 accumulated polygon rows exist; those with `bar_close_ts >24h old` AND with OHLCV bars covering both endpoints resolve.
+- Rows on symbols outside patterns_universe (which is most of polygon's news feed) will report `skipped_price_missing` since operator isn't warming OHLCV bars for arbitrary symbols. This is correct — witnesses on symbols with no market-data coverage cannot credibly be scored.
+- Over time, polygon rows on the 20+20 curated watchlist accumulate and resolve; if `samples≥50` + `orthogonal_win_rate>0.50`, polygon promotes to WATCHLIST and `influence_allowed=True` flips on all its rows.
+
+
 ## 2026-07-06 — Incident: silent brains during Monday RTH + watchlist cull + doctrine NO_DATA short-circuit
 
 ### Live incident (operator-diagnosed and resolved)

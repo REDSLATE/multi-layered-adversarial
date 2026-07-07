@@ -7,6 +7,22 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ✅ Session 2026-07-07 (late): Witness W/L resolver activated (was dormant 8 days)
+
+**Built:**
+- `backend/verifier/witness_resolver.py` — full MVP resolver: classification, aggregation, promotion state machine, idempotent DB path
+- `backend/routes/admin_external_signals.py` — `POST /api/admin/verifier/resolve-witnesses/{source}` endpoint with real price-history fetcher wired to `shared_ohlcv_bars` (broker-primary priority)
+- 32 tests, all passing, 0 lint errors
+
+**Deferred to follow-up:**
+- Orthogonality tracking (MVP uses raw win rate)
+- Scheduled nightly execution (MVP is admin-trigger only)
+- Regime-conditional scoring + drawdown per stance
+- Full `verified_alpha` attribution vs baseline
+
+**Ships on next redeploy.** Operator can then hit the endpoint (`?dry_run=true` first) and observe polygon resolutions from the 741 accumulated rows.
+
+
 ### ✅ Session 2026-07-06 (evening): Watchlist cull to 20+20 + silent-brain incident resolved + doctrine NO_DATA short-circuit staged
 
 **Live prod actions this session:**
