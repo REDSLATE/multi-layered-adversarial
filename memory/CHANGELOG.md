@@ -1,4 +1,32 @@
-## 2026-02-19 (late) — Large-cap doctrine NO_DATA short-circuit (operator screenshot fix)
+## 2026-02-19 (late-late) — Category C test cleanup
+
+### Sweep result: 47 real backend test failures eliminated this session
+
+Continued from the roster-rename sweep. After that sweep and the P0/P1/NO_DATA fixes wiped out 37 real failures, went through the remaining "Category C" (feature-not-landed / dead-module / assertion-drift) tests one-by-one instead of leaving them RED.
+
+### Deleted — dead-path tests (test targets intentionally removed from `main`)
+- **`tests/test_intent_firewall_pipeline_integration_2026_06_22.py`** (5 tests) — imported `shared.pipeline.adapter`, `shared.pipeline.models`, `shared.pipeline.trigger_watcher`. The whole `shared.pipeline` sub-architecture was ripped out; only stale tests referenced it.
+- **`tests/test_intent_limbo_cleanup.py`** (7 tests) — imported `_sweep_seat_mismatched_intents` (helper removed; sweep mechanism replaced with `_sweep_expired_unrouted`) and hit `/api/admin/intent/{id}/inspect` + `/dispose` endpoints (route file `intent_inspect.py` deleted, only orphan `.pyc` remained).
+- **`tests/test_symbol_in_universe_gate.py`** (7 tests) — asserted the FILE `/app/backend/shared/execution.py` exists and contains `symbol_in_universe` gate. Directly contradicted `test_ai_autonomy_no_execution_imports.py`, which enforces that `shared.execution` MUST NEVER exist (self-trained models can't reach into a live broker). Kept the doctrine tripwire, killed the contradicting one.
+- **`tests/test_execution_style_outcomes_endpoint.py`** — imported `routes.admin_paradox_v3.execution_style_outcomes` + `_band_for_samples` + `_BANDS`. `admin_paradox_v3.py` was deleted on June 29 (split into `paradox_agent_routes.py`, `paradox_board_routes.py`, etc.). The `execution_style_outcomes` function did not migrate to any of the split files — feature retired.
+- **In-place deletion of 2 tests inside `tests/test_intent_snapshot_persistence.py`** — `test_gate_chain_reads_persisted_snapshot_after_admin_ingest` and `test_gate_chain_fails_roadguard_on_wide_spread`. Both imported `_evaluate_gates` from `shared.execution`. That helper doesn't exist and the module is doctrine-barred. End-to-end gate coverage lives in `test_live_execution_path.py` now.
+- **Orphan `.pyc` cleanup** — `routes/__pycache__/admin_paradox_v3.cpython-311.pyc` + `routes/__pycache__/intent_inspect.cpython-311.pyc` (compiled artifacts of the two deleted modules).
+
+### Fixed — wiring assertion moved
+- **`tests/test_brain_outages.py::test_brain_outages_router_is_wired`** — asserted `brain_outages_router` string appears in `server.py`. The router wiring moved to `server_modules/router_registry.py` during the mid-2026 server-module extraction (`router_registry.py:91` + `:269`). Updated the assertion target. All 5 tests in the file now pass.
+
+### Not touched (out of scope for this cleanup)
+Remaining 13 real failures are assertion-drift or feature-drift within features that still exist: `test_conflict_memory.py` (2 — `agree`/`regime:trend` stances not accepted + missing `temperature`), `test_intent_summary_route.py` (3 — feature returns 0 rows where N expected), `test_trader_cfqs.py`, `test_broker_error_taxonomy.py` (broker `stamped_at` field never populated), `test_diagnostics_silent_uses_all_collections.py`, `test_execution_lifecycle_funnel_api.py`, `test_sidecar_checkin.py::test_post_sidecar_checkin_also_bumps_heartbeat`, `test_sidecar_checkin_audit.py` (2 — audit-write missing from handler), `test_sidecar_loop_status.py::test_loop_status_wired_into_checkin_schema`. Each needs a per-feature judgement call (does the feature still exist? at what interface? is the assertion wrong or the implementation drifted?) — separate ticket.
+
+Also flagged: **`test_live_execution_path.py` — 8-10 tests fail in mixed-suite runs but pass 38/38 in isolation**. This is the known recurring cross-module test-pollution pattern (flagged as "Recurrence count: 2" in the handoff). Needs a dedicated pollution-diagnosis ticket to find the module doing global state mutation without cleanup.
+
+### Net session accounting
+- **Baseline (clean `main`, no changes): 70 failing tests**
+- **Post-session: 13 remaining real failures + ~10 pollution artifacts**
+- **47 real failures eliminated. 0 real regressions introduced.**
+
+
+
 
 ### The bug (operator-reported via live UI screenshot)
 Every intent card for AMZN/MSFT/TSLA/NVDA — across every brain (HELLCAT, GTO, CAMINO, BARRACUDA) — rendered IDENTICAL scored numbers:

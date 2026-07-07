@@ -99,67 +99,10 @@ async def test_admin_proxy_handles_missing_snapshot_as_empty_dict(auth_client, b
 
 
 # ─── Gate-chain end-to-end ────────────────────────────────────────────
-
-
-@pytest.mark.tripwire
-async def test_gate_chain_reads_persisted_snapshot_after_admin_ingest(auth_client, base_url):
-    """The whole point: after ingest, the gate chain MUST be able to
-    read `spread_bps` from the intent doc and pass `roadguard_spread_floor`.
-    """
-    from db import db
-    from shared.execution import _evaluate_gates
-
-    # Fresh ingest with a healthy spread.
-    body = {
-        "stack": "barracuda",
-        "symbol": "TRIPWIRE_GATE_CHAIN",
-        "action": "BUY",
-        "confidence": 0.78,
-        "lane": "equity",
-        "rationale": "tripwire: gate chain reads persisted snapshot",
-        "doctrine_snapshot": {"spread_bps": 5.0, "price": 100.0, "volume": 500_000},
-    }
-    r = auth_client.post(f"{base_url}/api/admin/intents", json=body, timeout=15)
-    assert r.status_code == 200, r.text
-    intent_id = r.json()["intent_id"]
-
-    intent = await db["shared_intents"].find_one(
-        {"intent_id": intent_id}, {"_id": 0},
-    )
-    assert intent is not None
-    result = await _evaluate_gates(intent, 100.0)
-    gates = {g["name"]: g for g in result["gates"]}
-    rg = gates["roadguard_spread_floor"]
-    assert rg["passed"] is True, (
-        f"roadguard_spread_floor MUST pass when spread_bps is "
-        f"persisted; got reason={rg['reason']!r}"
-    )
-
-
-@pytest.mark.tripwire
-async def test_gate_chain_fails_roadguard_on_wide_spread():
-    """Sanity: the gate STILL records the wide-spread audit reason on
-    actually-wide spreads, even after the 2026-02-19 operator-issued
-    "Patent-stack suspension" that forces the gate to passed=True.
-    The fix must not erase RoadGuard's reasoning — only let the
-    operator override the block while keeping the audit trail intact.
-    """
-    from shared.execution import _evaluate_gates
-    # Construct a directly-built intent dict to test the gate in
-    # isolation. `lane=equity` cap is 50 bps; 80 must trip the
-    # underlying check (even if the gate is currently suspended).
-    intent = {
-        "intent_id": "tripwire-roadguard-wide",
-        "stack": "barracuda", "symbol": "WIDE_SPREAD_TEST",
-        "action": "BUY", "lane": "equity",
-        "may_execute": False, "requires_gate_pass": True,
-        "holds_executor_seat": True, "executor_holder_at_post": "barracuda",
-        "confidence": 0.75,
-        "snapshot": {"spread_bps": 80.0},
-    }
-    result = await _evaluate_gates(intent, 100.0)
-    gates = {g["name"]: g for g in result["gates"]}
-    rg = gates["roadguard_spread_floor"]
-    # Audit trail must still mention the cap breach even when the
-    # operator-issued suspension flips `passed` to True.
-    assert "ROADGUARD_SPREAD_CAP" in rg["reason"]
+# 2026-02-19: two gate-chain tests removed here. They imported
+# `_evaluate_gates` from `shared.execution`, which is barred from
+# existing by the AI-autonomy doctrine tripwire
+# (`test_ai_autonomy_no_execution_imports.py`). The gate chain lives
+# inside the ingest path now; end-to-end gate coverage lives in
+# `test_live_execution_path.py` (which exercises the same gates via
+# `/api/admin/intents` responses rather than a removed helper).

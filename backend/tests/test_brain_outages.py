@@ -20,11 +20,15 @@ import pytest
 
 @pytest.mark.tripwire
 def test_brain_outages_router_is_wired():
-    with open("/app/backend/server.py") as f:
+    # 2026-02-19: router wiring moved from `server.py` to
+    # `server_modules/router_registry.py` during the ~mid-2026
+    # server-module extraction. Check the current wiring point.
+    with open("/app/backend/server_modules/router_registry.py") as f:
         src = f.read()
     assert "brain_outages_router" in src, (
-        "brain-outages admin route is not included in server.py — "
-        "operators have no way to see recurrence patterns"
+        "brain-outages admin route is not included in "
+        "server_modules/router_registry.py — operators have no way "
+        "to see recurrence patterns"
     )
 
 
