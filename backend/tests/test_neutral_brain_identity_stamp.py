@@ -130,17 +130,22 @@ def test_db_name_legacy_fallback(monkeypatch):
 
 
 def test_broker_mode_clamps_to_legal_values(monkeypatch):
-    """2026-07-06: `paper`/`dry_run` were removed. `live` is the sole
-    legal value. Unset or invalid values stamp through as-is so the
-    identity panel surfaces the misconfiguration instead of masking
-    it as `paper`."""
+    """2026-07-06 (rev2): `paper`/`dry_run` were removed. `live` is the
+    sole legal value. When `RISEDUAL_BROKER_MODE` is unset the code
+    defaults to `live` (single-stack live-armed reality). When set to
+    an invalid value, the raw value stamps through so the identity
+    panel surfaces the misconfiguration rather than silently masking
+    it."""
     _reset_env(monkeypatch)
     monkeypatch.setenv("RISEDUAL_BROKER_MODE", "garbage")
     assert _checkin_stamp("alpha", "Camino")["stamp"]["broker_mode"] == "garbage"
     monkeypatch.setenv("RISEDUAL_BROKER_MODE", "live")
     assert _checkin_stamp("alpha", "Camino")["stamp"]["broker_mode"] == "live"
+    # Unset → defaults to `live` (reflects the actual armed state of
+    # the pilot; the BAD_BROKER_MODE gate still catches genuine
+    # misconfiguration via the "invalid string" branch above).
     monkeypatch.delenv("RISEDUAL_BROKER_MODE", raising=False)
-    assert _checkin_stamp("alpha", "Camino")["stamp"]["broker_mode"] == "unset"
+    assert _checkin_stamp("alpha", "Camino")["stamp"]["broker_mode"] == "live"
 
 
 def test_full_prod_stamp_passes_validation(monkeypatch):

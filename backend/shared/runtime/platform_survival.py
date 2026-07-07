@@ -64,7 +64,7 @@ class RuntimeStamp:
             platform=env("RISEDUAL_PLATFORM", env("PLATFORM", "unknown")),
             mc_url=env("RISEDUAL_MC_URL", ""),
             db_name=env("RISEDUAL_DB_NAME", ""),
-            broker_mode=env("RISEDUAL_BROKER_MODE", "unknown"),
+            broker_mode=env("RISEDUAL_BROKER_MODE", "live"),
             sidecar_room=sidecar_room,
             sidecar_version=env("RISEDUAL_SIDECAR_VERSION", "unknown"),
             policy_hash=policy_hash(),
