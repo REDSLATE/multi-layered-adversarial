@@ -7,19 +7,109 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
-### 🎯 NEXT WORK ITEM (top priority — operator-agreed 2026-07-07 late session)
+### 🚨 NEXT WORK ITEM — P0 UNSTARTED (top priority — do NOT skip past this)
 
-**Universe classifier + doctrine router pattern.** ✅ **SHIPPED 2026-02-19**. See CHANGELOG for full details. Summary:
+**Wire `enrich_equity_doctrine_snapshot` into the live equity ingest path.**
+
+#### Root cause (confirmed 2026-02-19, not hypothesis)
+Live equity ingest never calls `enrich_equity_doctrine_snapshot`. The
+only caller in the codebase is `routes/webull_admin.py:96` — a Webull
+admin diagnostic endpoint that operators hit manually to inspect one
+symbol at a time. It is NOT wired into the live ingest path in
+`shared/intents.py`.
+
+Evidence from prod (2026-07-07):
+- `shared_intents.count_documents({'lane':'equity'})` = **28,286**
+- `shared_intents.count_documents({'snapshot.enrichment_status':{'$exists':true}})` = **1,995**
+- **~93% of all-time equity intents were persisted without any enrichment stamp.**
+- The 1,995 that DO carry a stamp appear to be intents where the brain
+  itself pre-enriched its `doctrine_snapshot` (Camino, based on field
+  patterns like `webull_enriched: true` shipping from the brain side).
+  The other three brains ship minimal snapshots.
+
+The live ingest path only spread-enriches via
+`shared/market_data/spread_enrichment.py::enrich_snapshot_spread`. It
+never runs the full equity doctrine enricher (gap_pct, RVOL, VWAP,
+velocity, EMA stack, market_regime, has_news, float_millions, etc.).
+
+#### Fix scope (unstarted — must be done before this can close)
+1. **Locate the current live ingest entry point.** The
+   `external/brains/runner.py` docstring reference in the handoff is
+   STALE (that path does not exist in the current tree). The real
+   ingest entry point is `shared/intents.py` in the
+   `_ingest_intent_common` (or equivalent) helper called by the
+   admin/ingest routes — see the three `"snapshot": enriched_snapshot`
+   writes at lines 719, 1183, 1834.
+2. **Wire `enrich_equity_doctrine_snapshot`** to run AFTER
+   `enrich_snapshot_spread` and BEFORE the intent doc is persisted —
+   only on `lane == "equity"`. Crypto has its own separate enricher
+   at `shared/snapshot_enrich/crypto_doctrine.py`.
+3. **Decide fail-open vs fail-loud on enrichment failure.** The
+   enricher already returns the base_snapshot with
+   `enrichment_status="failed"` + `enrichment_error` stamped on it
+   (fail-soft contract). Confirm this matches what we want at the
+   ingest layer — the doctrine will now NO_DATA-short-circuit on
+   `enrichment_status="failed"`, which is honest. Alternative is to
+   reject the intent at ingest with a 4xx if enrichment fails; my
+   recommendation is fail-soft + NO_DATA (matches existing pattern,
+   surfaces the gap visibly, doesn't drop signal).
+4. **Check per-intent Webull HTTP latency is acceptable.** The
+   enricher makes at least one Webull REST call per intent (see
+   `_enrich_sync` in `shared/snapshot_enrich/equity_doctrine.py`).
+   Under load (all 4 brains × 20 equity symbols × ~5s cadence) that's
+   ~16 calls/sec sustained. Confirm the Webull rate budget accepts
+   this; if not, cache per-symbol per-N-seconds inside the enricher.
+5. **Add tests.** At minimum: (a) ingest with `lane="equity"` calls
+   the enricher exactly once, (b) enrichment failure results in
+   `snapshot.enrichment_status="failed"` on the persisted intent doc,
+   (c) enrichment success results in `snapshot.enrichment_status="live"`
+   + the enriched fields (gap_pct, VWAP, velocity_5m, etc.) present.
+
+#### Do NOT do before this ships
+**No enrichment funnel / provenance dashboard / classification-funnel
+panel work.** Measuring a gap that is already diagnosed, whose cause
+is known, and whose fix is a single well-scoped code change adds no
+value over just closing it. Telemetry is worthwhile AFTER the fix
+lands to monitor for regressions — not before.
+
+#### Critical dependency note
+**The 2026-02-19 large-cap doctrine work (Universe Classifier,
+Doctrine Registry, VWAP/velocity/RVOL/EMA momentum-origination
+scoring, direction.strategy_bias) is inert until this wiring fix
+lands.** All of it reads its scoring signals off the SAME snapshot
+that the enricher populates. Without the enricher in the live path,
+every large-cap intent will correctly (and honestly) NO_DATA-short-
+circuit — but the brains still won't emit directional BUY/SELL
+intents on NVDA/MSFT/AMZN/etc. because there's nothing for the
+doctrine to score.
+
+Whoever picks this up next: DO NOT deploy tonight's session and
+conclude the large-cap doctrine fix has landed. It has landed as
+CODE. It cannot fire until the enricher is wired in the ingest path.
+
+---
+
+### ✅ Universe classifier + doctrine router pattern — SHIPPED 2026-02-19
+
+See CHANGELOG for full details. Summary:
 - `shared/doctrine/universe_classifier.py` — pure symbol → universe-class dispatch (`CRYPTO`/`SMALL_CAP_MOMENTUM`/`LARGE_CAP`/`ETF`/`UNKNOWN`). Operator-vetted: no silent lane fallback — unclassified equities fail loud into `UNKNOWN` → NO_DATA (never a scored default doctrine).
 - `shared/doctrine/registry.py` — 4 builders wired (large-cap, small-cap momentum with strategy dispatch, ETF, crypto). UNKNOWN → NO_DATA short-circuit.
-- `shared/doctrine/large_cap_doctrine.py` enhanced with VWAP tilt / 5m velocity / RVOL acceleration / EMA-stack scoring signals + `direction.strategy_bias ∈ {BUY, SELL, NEUTRAL}` derivation. Brains can now emit directional intents on NVDA/MSFT instead of indefinite HOLDs.
+- `shared/doctrine/large_cap_doctrine.py` enhanced with VWAP tilt / 5m velocity / RVOL acceleration / EMA-stack scoring signals + `direction.strategy_bias ∈ {BUY, SELL, NEUTRAL}` derivation. Blocked by the ingest-wiring fix above.
+- `shared/doctrine/large_cap_doctrine.py` NO_DATA short-circuit — symmetric with `base_labels.py` and `brain_sidecars.py`; empty/failed-enrichment snapshots return quality="NO_DATA" with neutral seats + `no_data=True` flag instead of an identical scored REJECT (the operator-screenshotted bug).
 - `lane_doctrine_router.py` collapsed to a thin lane-guard + registry-delegation shim.
-- 31 new tripwire tests green (16 momentum-origination + 15 classifier/registry).
+- P1 hotfixes: `[(symbol, 1), (ingest_ts, -1)]` compound index on `shared_intents`; `meta_routes.py` 4-tuple unpacking bug on `BRAIN_ROSTER`.
+- Test cleanup: 47 real backend test failures eliminated (34 roster-rename sweep, 3 router-inversion updates, 4 dead-path file deletions, 2 in-place test deletions, 1 wiring-assertion fix, 3 for the doctrine changes).
+- 66/66 doctrine tests green, 0 lint errors, 0 real regressions introduced.
 
-**Follow-up work (P2, not started):**
-- Observe 1-2 weeks of live RTH Trade Tape data to tune large-cap doctrine weights (raise/lower score contributions on labels that empirically predict outcomes vs those that don't).
+**Follow-up work (P2, blocked by the P0 above):**
+- Observe 1-2 weeks of live RTH Trade Tape data to tune large-cap doctrine weights (only meaningful AFTER the enricher wiring lands and real signals start flowing).
 - Consider dedicated ETF doctrine (currently ETFs route through large-cap builder) once ETF sample size supports Patent J graduation.
 - OpenMythos training on the RISE JSONL substrate that's been accumulating.
+
+**Also open (unchanged from prior sessions):**
+- Mongo timeout in `risk_check.py` — separate production blocker, kept on the board.
+- 13 remaining Category C test failures (assertion drift within features that still exist — conflict_memory, intent_summary, sidecar audit-write, broker `stamped_at`, etc.) — per-test judgement calls, separate ticket.
+- `test_live_execution_path.py` cross-suite test pollution — passes 38/38 in isolation, fails 8-10 in mixed-suite runs. Recurring issue flagged in handoff, needs dedicated pollution-source diagnosis.
 
 
 ### ✅ Session 2026-07-07 (late): Witness W/L resolver activated (was dormant 8 days)
