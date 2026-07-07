@@ -1,4 +1,39 @@
-## 2026-02-19 — P0 Large-Cap Momentum Origination Doctrine + P1 hotfixes + roster-rename test sweep
+## 2026-02-19 (late) — Large-cap doctrine NO_DATA short-circuit (operator screenshot fix)
+
+### The bug (operator-reported via live UI screenshot)
+Every intent card for AMZN/MSFT/TSLA/NVDA — across every brain (HELLCAT, GTO, CAMINO, BARRACUDA) — rendered IDENTICAL scored numbers:
+- Execution 0% · threshold 50% · missed by 50%
+- Strategist -12% (Δ=-0.12) · Auditor -30% (3 objs, cs=0.74 required) · Governor -85% (RISK_DOWN, mult=0.15) · Executor -80% (3 checks failed)
+- Doctrine REJECT · score 0.35 · `large_cap_doctrine_reject`
+
+All cards carried the `NO PROVENANCE` badge — the enricher hadn't populated ANY doctrine fields on the snapshot.
+
+### Root cause
+`large_cap_doctrine.py` was missing the NO_DATA short-circuit that `base_labels.py` + `brain_sidecars.py` already had. On a provenance-free snapshot every default value (spread_bps=999, gap=0, rvol=0, has_news=False, VWAP/velocity/RVOL-accel/EMA=None) collapsed into an IDENTICAL scored REJECT: SPREAD_TOO_WIDE fired, everything else was silent, and the seat builders computed the same conviction_delta / objections / risk_multiplier on every symbol. Exact same "silent fallback default" bug class we vetoed on the classifier side earlier the same session — the doctrine side was missing the symmetric guard.
+
+### Fix
+- **`_build_large_cap_labels`** — added the same NO_DATA short-circuit `base_labels.py` uses: when `enrichment_status ∈ {failed, no_symbol}` OR the snapshot has none of `{gap_pct, relative_volume, spread_bps, price, pattern, market_regime}`, return `_LargeCapLabels(score=0.0, quality="NO_DATA", labels=["ENRICHMENT_UNAVAILABLE"])` before any per-field labeling runs.
+- **`build_large_cap_doctrine_packet`** — checks `base.quality == "NO_DATA"` after labeling and returns a neutral packet with `no_data=True` on every seat, `strategy_bias="NEUTRAL"`, and `display_status="NO_DATA"` on governor. Symmetric with `brain_sidecars.py`, so the UI's existing `ExecutionScoreBreakdown.jsx` NO_DATA-panel renders the amber "snapshot enrichment failed — advisory suspended" tile automatically.
+- **`test_large_cap_no_data_short_circuit.py`** (7 tripwires) — pin the invariant. Includes a direct reproduction test of the operator's screenshot: 4 different symbols with provenance-free snapshots must ALL return NO_DATA (not a scored REJECT).
+- **`test_doctrine_intent_attachment.py::test_equity_with_empty_snapshot_still_returns_packet`** updated — previously pinned the old bug behavior (`quality="REJECT"`); now correctly asserts `quality="NO_DATA"` + neutral seats.
+
+### Verified behavior
+```
+AMZN: quality=NO_DATA score=0.0 strat_delta=0.0 gov_mult=1.0 gov_status=NO_DATA no_data=True
+MSFT: quality=NO_DATA score=0.0 strat_delta=0.0 gov_mult=1.0 gov_status=NO_DATA no_data=True
+TSLA: quality=NO_DATA score=0.0 strat_delta=0.0 gov_mult=1.0 gov_status=NO_DATA no_data=True
+NVDA: quality=NO_DATA score=0.0 strat_delta=0.0 gov_mult=1.0 gov_status=NO_DATA no_data=True
+
+--- populated snapshot control ---
+NVDA-populated: quality=A_QUALITY score=1.000 direction=BUY bias_strength=1.0
+```
+
+Empty snapshots short-circuit; populated snapshots still score normally. UI will render "NO DATA / advisory suspended" instead of identical scored REJECTs the moment this deploys.
+
+**66/66 doctrine tests green, 0 lint errors, 0 new regressions.**
+
+
+
 
 ### P0 shipped: Universe Classifier + Doctrine Registry + enhanced Large-Cap doctrine
 - **`backend/shared/doctrine/universe_classifier.py`** — pure symbol → universe-class dispatch.

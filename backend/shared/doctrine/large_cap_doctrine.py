@@ -94,6 +94,42 @@ def _build_large_cap_labels(snapshot: Dict[str, Any]) -> _LargeCapLabels:
         AND regime not weak, the tape has structural bull tilt.
     """
     symbol = str(snapshot.get("symbol", "UNKNOWN"))
+
+    # ── NO_DATA short-circuit (2026-02-19 operator directive) ──
+    # SYMMETRIC WITH `base_labels.py::build_doctrine_labels`.
+    # When the equity enricher explicitly failed OR the snapshot has
+    # none of the doctrine-facing fields populated, do NOT run the
+    # per-field labeling — every default here is a manufactured
+    # value, not real market data:
+    #   * spread_bps → 999.0 → triggers SPREAD_TOO_WIDE penalty
+    #   * gap_pct → 0.0 → no gap label (silent)
+    #   * relative_volume → 0.0 → no RVOL label (silent)
+    #   * market_regime → "unknown" → no green-light bonus
+    #   * has_news → False → no catalyst bonus (silent)
+    #   * VWAP/velocity/RVOL-accel/EMA-stack → None → silent
+    # Result was a per-empty-snapshot IDENTICAL scored REJECT
+    # (score ~0.35, "large_cap_doctrine_reject") for every symbol
+    # that hit the classifier with no enricher provenance — the
+    # exact "silent fallback default" bug class the operator vetoed
+    # on the classifier side earlier today. Fix: short-circuit to
+    # NO_DATA so the UI renders "no data" honestly instead of
+    # cascading into a REJECT that looks like a per-symbol verdict.
+    enrichment_status = str(snapshot.get("enrichment_status", "")).lower()
+    # Same field set as `base_labels.py` so the two doctrines agree
+    # on what "populated snapshot" means.
+    _doctrine_fields = ("gap_pct", "relative_volume", "spread_bps",
+                        "price", "pattern", "market_regime")
+    _no_doctrine_fields = not any(k in snapshot for k in _doctrine_fields)
+    if enrichment_status in {"failed", "no_symbol"} or _no_doctrine_fields:
+        why = enrichment_status or "snapshot_missing_all_doctrine_fields"
+        return _LargeCapLabels(
+            symbol=symbol,
+            score=0.0,
+            quality="NO_DATA",
+            labels=["ENRICHMENT_UNAVAILABLE"],
+            reasons=[f"no_data:{why}"],
+        )
+
     gap_pct = float(snapshot.get("gap_pct", 0.0))
     rvol = float(snapshot.get("relative_volume", 0.0))
     has_news = bool(snapshot.get("has_news", False))
@@ -378,6 +414,87 @@ def build_large_cap_doctrine_packet(
     base = _build_large_cap_labels(snapshot)
     labels = set(base.labels)
     holders = seat_holders or {}
+
+    # ── NO_DATA short-circuit (2026-02-19 operator directive) ──
+    # SYMMETRIC WITH `brain_sidecars.build_all_brain_doctrine_packets`.
+    # When `_build_large_cap_labels` returns quality="NO_DATA" (the
+    # enricher failed OR the snapshot has no doctrine fields), we
+    # MUST NOT run the seat builders. Every seat scored against a
+    # `_LargeCapLabels(score=0.0, labels=["ENRICHMENT_UNAVAILABLE"])`
+    # would collapse to the same conviction_delta/objections/mult
+    # numbers across every symbol — the operator's screenshot bug.
+    # Return neutral seat bodies with `no_data=True` so the UI
+    # renders "no data" honestly instead of a per-symbol advisory
+    # verdict built on default field values.
+    if base.quality == "NO_DATA":
+        return {
+            "event_type": "BRAIN_DOCTRINE_SIDECAR_PACKET",
+            "doctrine_version": DOCTRINE_VERSION,
+            "lane": "equity",
+            "symbol": base.symbol,
+            "base_labels": {
+                "score": base.score,
+                "quality": "NO_DATA",
+                "labels": base.labels,
+                "reasons": base.reasons,
+            },
+            "direction": {
+                "strategy_bias": "NEUTRAL",
+                "bias_strength": 0.0,
+                "bias_reasons": ["no_data:enrichment_unavailable"],
+            },
+            "seats": {
+                "strategist": {
+                    "role": "strategist",
+                    "seat": EQUITY_SEAT_MAP["strategist"],
+                    "holder": holders.get(EQUITY_SEAT_MAP["strategist"]),
+                    "conviction_delta": 0.0,
+                    "lesson": "No data available — strategist advisory suspended for this intent.",
+                    "may_execute": False,
+                    "may_override_direction": False,
+                    "no_data": True,
+                },
+                "adversary": {
+                    "role": "adversary",
+                    "seat": EQUITY_SEAT_MAP["adversary"],
+                    "holder": holders.get(EQUITY_SEAT_MAP["adversary"]),
+                    "challenge_required": False,
+                    "challenge_strength": 0.0,
+                    "objections": [],
+                    "lesson": "No data available — auditor advisory suspended.",
+                    "may_execute": False,
+                    "may_override_direction": False,
+                    "no_data": True,
+                },
+                "governor": {
+                    "role": "governor",
+                    "seat": EQUITY_SEAT_MAP["governor"],
+                    "holder": holders.get(EQUITY_SEAT_MAP["governor"]),
+                    "risk_multiplier": 1.0,
+                    "governor_action": "modulate",
+                    "block_reasons": [],
+                    "display_status": "NO_DATA",
+                    "reason": None,
+                    "execution_effect": "NO_DATA",
+                    "lesson": "No data available — governor advisory suspended.",
+                    "may_execute": False,
+                    "may_override_direction": False,
+                    "no_data": True,
+                },
+                "execution_judge": {
+                    "role": "execution_judge",
+                    "seat": EQUITY_SEAT_MAP["execution_judge"],
+                    "holder": holders.get(EQUITY_SEAT_MAP["execution_judge"]),
+                    "execution_ready": None,
+                    "execution_checks": {},
+                    "lesson": "No data available — execution advisory suspended.",
+                    "may_execute": False,
+                    "may_create_direction": False,
+                    "requires_existing_trade_intent": True,
+                    "no_data": True,
+                },
+            },
+        }
 
     strategist = _build_strategist(base, labels, holders.get(EQUITY_SEAT_MAP["strategist"]))
     adversary = _build_adversary(base, labels, holders.get(EQUITY_SEAT_MAP["adversary"]))

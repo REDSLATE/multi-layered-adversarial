@@ -101,7 +101,14 @@ async def test_equity_a_quality_packet_shape():
 
 
 async def test_equity_with_empty_snapshot_still_returns_packet():
-    """No facts ⇒ REJECT quality, but the packet still attaches."""
+    """No facts ⇒ NO_DATA quality (2026-02-19 operator directive),
+    but the packet still attaches so the audit trail is intact.
+    Historically this test pinned quality="REJECT" — that was the
+    exact "silent scored REJECT on empty snapshot" bug the operator
+    called out via screenshot (identical numbers across every
+    symbol). Both the small-cap sidecar and large-cap doctrine now
+    short-circuit to NO_DATA when the enricher can't populate any
+    doctrine fields."""
     from shared.intents import _build_and_persist_doctrine_packet
     packet = await _build_and_persist_doctrine_packet(
         intent_id="test-eq-empty-1", stack="camino", lane="equity",
@@ -109,11 +116,15 @@ async def test_equity_with_empty_snapshot_still_returns_packet():
         snapshot=None, ingest_method="test",
     )
     assert packet is not None
-    assert packet["base_labels"]["quality"] == "REJECT"
-    # 2026-02-17 (graceful degrade): REJECT-quality intents downshift
-    # governor from "block" to "modulate" so the packet can still be
-    # attached and audited rather than being silently filtered.
+    assert packet["base_labels"]["quality"] == "NO_DATA"
+    # NO_DATA seats must be neutral, never penalizing.
     assert packet["seats"]["governor"]["governor_action"] == "modulate"
+    assert packet["seats"]["governor"]["risk_multiplier"] == 1.0
+    assert packet["seats"]["strategist"]["conviction_delta"] == 0.0
+    # Every seat carries the `no_data: True` flag so the UI renders
+    # the "advisory suspended" panel instead of a scored verdict.
+    for role in ("strategist", "adversary", "governor", "execution_judge"):
+        assert packet["seats"][role].get("no_data") is True, role
 
 
 # ─── safety pins: read-only attachment ──────────────────────────────────
