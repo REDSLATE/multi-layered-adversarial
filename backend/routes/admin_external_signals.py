@@ -150,6 +150,130 @@ async def list_source_credibility(_user=Depends(get_current_user)):
     }
 
 
+@router.post("/admin/verifier/resolve-witnesses/{source}")
+async def resolve_witnesses(
+    source: str,
+    horizon_hours: int = Query(default=24, ge=1, le=168),
+    dry_run: bool = Query(
+        default=True,
+        description=(
+            "Default True: report what WOULD happen without writing. "
+            "Explicitly pass ?dry_run=false to actually run the resolver, "
+            "update the ledger, and (if thresholds hit) promote/demote."
+        ),
+    ),
+    _user=Depends(get_current_user),
+):
+    """Force-run the witness W/L resolver for a given source.
+
+    2026-07-07: The Verifier's witness-outcome resolver was dormant
+    since 2026-06-28 (schema shipped, resolver code missing). This
+    endpoint is the operator's manual trigger — MVP does not schedule
+    the resolver in a background loop yet; the operator runs this
+    endpoint on demand and reviews the summary.
+
+    Price fetching:
+        Uses `shared_ohlcv_bars` as the canonical price history
+        source, honoring the broker-primary priority in
+        `shared.research.bar_source.SOURCE_PRIORITY`. Equity symbols
+        resolve at 1d timeframe, crypto pairs at 1h. Returns None
+        when no bar is on file for the target timestamp — the row
+        is then counted as `skipped_price_missing`, not misclassified.
+    """
+    from verifier.witness_resolver import resolve_source  # noqa: WPS433
+    from shared.research.bar_source import (
+        DEFAULT_TF_BY_LANE, load_recent_bars,
+    )
+    from datetime import datetime, timedelta, timezone
+
+    async def _price_from_ohlcv_bars(symbol: str, ts_iso: str):
+        """Look up the close price for `symbol` at-or-before `ts_iso`.
+
+        Doctrine:
+            The resolver's job is to compare the price at witness
+            emission time to the price `horizon_hours` later. Both
+            calls arrive here; we return the close of the last bar
+            whose `ts` <= target_ts. Broker-primary bars are always
+            preferred (webull for equity, kraken_pro for crypto);
+            polygon/finnhub are consulted only when the broker has
+            no bars on file.
+        """
+        # Lane inference: crypto pairs carry a `/USD` (or `/USDT`, etc.).
+        # Equity tickers are alphanumeric without a slash.
+        lane = "crypto" if "/" in symbol else "equity"
+        tf = DEFAULT_TF_BY_LANE.get(lane, "1d")
+
+        try:
+            target = datetime.fromisoformat(str(ts_iso).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+
+        # Pull recent bars (broker-priority-picked source under the
+        # hood). Then find the last bar whose ts is <= target.
+        # Limit 120: a 1d timeframe covers ~4 months back, 1h covers
+        # 5 days — enough for any horizon this endpoint accepts
+        # (max 168h = 7 days).
+        bars, src = await load_recent_bars(symbol, tf=tf, limit=200)
+        if not bars:
+            return None
+
+        best_price: Optional[float] = None
+        for bar in bars:  # bars come oldest → newest
+            try:
+                bar_ts = datetime.fromisoformat(
+                    str(bar.get("ts")).replace("Z", "+00:00"),
+                )
+            except (TypeError, ValueError):
+                continue
+            if bar_ts <= target:
+                best_price = float(bar.get("c") or 0.0) or None
+            else:
+                break
+        return best_price
+
+    if dry_run:
+        now = datetime.now(timezone.utc)
+        cutoff = (now - timedelta(hours=horizon_hours)).isoformat()
+        pending = await db[EXTERNAL_SIGNALS].count_documents({
+            "source": source,
+            "resolution_outcome": {"$exists": False},
+            "bar_close_ts": {"$lte": cutoff},
+        })
+        return {
+            "dry_run": True,
+            "source": source,
+            "horizon_hours": horizon_hours,
+            "rows_pending_resolution": pending,
+            "note": (
+                "Dry run. Pass ?dry_run=false to actually resolve. "
+                "Price source: shared_ohlcv_bars (broker-primary via "
+                "bar_source.pick_source). Rows with no bar coverage "
+                "at the target timestamp will be counted as "
+                "skipped_price_missing rather than misclassified."
+            ),
+        }
+
+    summary = await resolve_source(
+        source,
+        _price_from_ohlcv_bars,
+        horizon_hours=horizon_hours,
+    )
+    return {
+        "dry_run": False,
+        "source": summary.source,
+        "rows_examined": summary.rows_examined,
+        "rows_resolved": summary.rows_resolved,
+        "rows_undetermined": summary.rows_undetermined,
+        "rows_skipped_price_missing": summary.rows_skipped_price_missing,
+        "rows_skipped_too_recent": summary.rows_skipped_too_recent,
+        "aggregate_before": summary.aggregate_before,
+        "aggregate_after": summary.aggregate_after,
+        "status_before": summary.status_before,
+        "status_after": summary.status_after,
+        "status_changed": summary.status_changed,
+    }
+
+
 # ──────────────────────── Seat-bound cleaned context ────────────────────────
 
 
