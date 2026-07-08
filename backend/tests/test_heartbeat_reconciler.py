@@ -27,7 +27,9 @@ import pytest
 
 @pytest.mark.tripwire
 def test_reconciler_helper_exists_and_is_wired():
-    """The reconciler must exist and be started from server.py."""
+    """The reconciler must exist and be started from the server-boot
+    lifespan/router-registry modules (server.py itself was slimmed
+    down 2026-06 — imports live in `server_modules/`)."""
     with open("/app/backend/shared/runtime/heartbeat_reconciler.py") as f:
         rec_src = f.read()
     assert "async def perform_reconcile(" in rec_src
@@ -37,15 +39,18 @@ def test_reconciler_helper_exists_and_is_wired():
         "to tell reconciled bumps apart from real pings"
     )
 
-    with open("/app/backend/server.py") as f:
-        server_src = f.read()
-    assert "heartbeat_reconciler import" in server_src, (
-        "server.py never imports the reconciler — boot wiring missing"
+    with open("/app/backend/server_modules/lifespan.py") as f:
+        lifespan_src = f.read()
+    assert "heartbeat_reconciler import" in lifespan_src, (
+        "lifespan.py never imports the reconciler — boot wiring missing"
     )
-    assert "_start_heartbeat_reconciler" in server_src, (
+    assert "_start_heartbeat_reconciler" in lifespan_src, (
         "reconciler worker is not started on app boot"
     )
-    assert "heartbeat_reconciler_admin_router" in server_src, (
+
+    with open("/app/backend/server_modules/router_registry.py") as f:
+        registry_src = f.read()
+    assert "heartbeat_reconciler_admin_router" in registry_src, (
         "admin route for on-demand reconcile is not included"
     )
 
@@ -67,7 +72,7 @@ async def test_reconciler_bumps_when_audit_is_newer():
     from db import db
     from shared.runtime.heartbeat_reconciler import perform_reconcile
 
-    brain = "alpha"
+    brain = "camino"
     await _purge_brain(db, brain)
 
     now = datetime.now(timezone.utc)
@@ -110,7 +115,7 @@ async def test_reconciler_refuses_ancient_audit_rows():
     from db import db
     from shared.runtime.heartbeat_reconciler import perform_reconcile
 
-    brain = "alpha"
+    brain = "camino"
     await _purge_brain(db, brain)
 
     now = datetime.now(timezone.utc)
@@ -144,7 +149,7 @@ async def test_reconciler_noop_when_heartbeat_already_fresh():
     from db import db
     from shared.runtime.heartbeat_reconciler import perform_reconcile
 
-    brain = "alpha"
+    brain = "camino"
     await _purge_brain(db, brain)
 
     now = datetime.now(timezone.utc)

@@ -50,7 +50,7 @@ class TestConflictMatrix:
         )
         assert r.status_code == 200
         d = r.json()
-        assert set(d["brains"]) == {"alpha", "camaro", "chevelle", "redeye"}
+        assert set(d["brains"]) == {"camino", "barracuda", "hellcat", "gto"}
         # 4 brains → 6 unique unordered pairs.
         assert len(d["cells"]) == 6
         seen_pairs = set()

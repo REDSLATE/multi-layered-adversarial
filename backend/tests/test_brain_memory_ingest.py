@@ -94,7 +94,7 @@ async def clean_memories():
 async def test_runtime_requires_token(clean_memories):
     from fastapi import HTTPException, Response
     batch = IngestBatchIn(
-        batch_id="tw-batch-1", brain="redeye",
+        batch_id="tw-batch-1", brain="gto",
         memories=[_mem("tw-mem-auth-1")],
     )
     with pytest.raises(HTTPException) as exc:
@@ -118,7 +118,7 @@ async def test_runtime_cannot_push_other_brain_memories(monkeypatch, clean_memor
     monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "tw-camaro-token")
     monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-redeye-real-token")
     batch = IngestBatchIn(
-        batch_id="tw-batch-cross", brain="redeye",
+        batch_id="tw-batch-cross", brain="gto",
         memories=[_mem("tw-mem-cross-1")],
     )
     with pytest.raises(HTTPException) as exc:
@@ -137,7 +137,7 @@ async def test_admin_ingest_accepts_batch(clean_memories):
     from fastapi import Response
     batch = IngestBatchIn(
         batch_id="tw-batch-ok",
-        brain="redeye",
+        brain="gto",
         memories=[_mem(f"tw-mem-ok-{i}") for i in range(5)],
     )
     result = await admin_ingest_memories(
@@ -157,7 +157,7 @@ async def test_ingest_is_idempotent(clean_memories):
     from fastapi import Response
     memories = [_mem(f"tw-mem-idem-{i}") for i in range(3)]
     batch = IngestBatchIn(
-        batch_id="tw-batch-idem", brain="redeye", memories=memories,
+        batch_id="tw-batch-idem", brain="gto", memories=memories,
     )
     first = await admin_ingest_memories(
         body=batch, response=Response(), user={"email": "t@o.io"},
@@ -174,7 +174,7 @@ async def test_ingest_is_idempotent(clean_memories):
 
     # Stored row count unchanged.
     total = await db[BRAIN_MEMORIES].count_documents(
-        {"brain": "redeye", "memory_id": {"$regex": "^tw-mem-idem-"}},
+        {"brain": "gto", "memory_id": {"$regex": "^tw-mem-idem-"}},
     )
     assert total == 3
 
@@ -183,7 +183,7 @@ async def test_ingest_is_idempotent(clean_memories):
 async def test_ingest_stamps_provenance(clean_memories):
     from fastapi import Response
     batch = IngestBatchIn(
-        batch_id="tw-batch-prov", brain="redeye",
+        batch_id="tw-batch-prov", brain="gto",
         memories=[_mem("tw-mem-prov-1")],
     )
     await admin_ingest_memories(
@@ -209,7 +209,7 @@ async def test_ingest_stamps_provenance(clean_memories):
 async def test_ingest_audit_row_written(clean_memories):
     from fastapi import Response
     batch = IngestBatchIn(
-        batch_id="tw-batch-audit", brain="redeye",
+        batch_id="tw-batch-audit", brain="gto",
         memories=[_mem(f"tw-mem-audit-{i}") for i in range(2)],
     )
     await admin_ingest_memories(
@@ -221,7 +221,7 @@ async def test_ingest_audit_row_written(clean_memories):
     assert audit is not None
     assert audit["received"] == 2
     assert audit["stored"] == 2
-    assert audit["brain"] == "redeye"
+    assert audit["brain"] == "gto"
     assert "ingested_by" in audit
     assert audit["ingested_by"].startswith("admin:")
 
@@ -232,7 +232,7 @@ async def test_data_unavailable_routed_to_dead_collection(clean_memories):
     `brain_memories_dead` and never counted as a real outcome."""
     from fastapi import Response
     batch = IngestBatchIn(
-        batch_id="tw-batch-dead", brain="redeye",
+        batch_id="tw-batch-dead", brain="gto",
         memories=[_mem("tw-mem-dead-1", mode="data_unavailable")],
     )
     result = await admin_ingest_memories(
@@ -255,7 +255,7 @@ def test_batch_size_capped():
     with pytest.raises(Exception):
         IngestBatchIn(
             batch_id="tw-too-big",
-            brain="redeye",
+            brain="gto",
             memories=[_mem(f"tw-mem-big-{i}") for i in range(501)],
         )
 
@@ -393,7 +393,7 @@ async def test_summary_returns_row_per_brain(clean_memories):
     """Even when no memories exist, summary returns one row per brain."""
     result = await memories_summary(brain=None, _user={"email": "t@o.io"})
     brains = {b["brain"] for b in result["brains"]}
-    assert brains == {"alpha", "camaro", "chevelle", "redeye"}
+    assert brains == {"camino", "barracuda", "hellcat", "gto"}
 
 
 @pytest.mark.asyncio
@@ -401,7 +401,7 @@ async def test_summary_computes_win_rate(clean_memories):
     """Mixed wins/losses produce a sensible win_rate."""
     from fastapi import Response
     batch = IngestBatchIn(
-        batch_id="tw-batch-win", brain="redeye",
+        batch_id="tw-batch-win", brain="gto",
         memories=[
             _mem("tw-mem-win-1", outcome=1),
             _mem("tw-mem-win-2", outcome=1),
@@ -412,7 +412,7 @@ async def test_summary_computes_win_rate(clean_memories):
     await admin_ingest_memories(
         body=batch, response=Response(), user={"email": "t@o.io"},
     )
-    result = await memories_summary(brain="redeye", _user={"email": "t@o.io"})
+    result = await memories_summary(brain="gto", _user={"email": "t@o.io"})
     redeye = result["brains"][0]
     # Mid-test the live DB may already contain other redeye rows (the
     # tripwire only owns the tw-mem-* range), so assert on the win_rate

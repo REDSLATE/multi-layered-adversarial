@@ -106,8 +106,11 @@ async def _per_brain_weights() -> dict[str, dict]:
     ]
     counts: dict[str, dict[str, int]] = {}
     async for r in db[SHARED_OUTCOMES].aggregate(pipeline):
-        brain = (r["_id"]["brain"] or "").lower()
-        label = (r["_id"]["label"] or "").lower()
+        # `$group._id` OMITS fields that don't exist on the source doc,
+        # so an outcome row missing `actual` produces `_id = {brain: ...}`
+        # with no `label` key. Use `.get()` to survive that case.
+        brain = (r["_id"].get("brain") or "").lower()
+        label = (r["_id"].get("label") or "").lower()
         if not brain or label not in {"win", "loss"}:
             continue
         bucket = counts.setdefault(brain, {"wins": 0, "losses": 0})

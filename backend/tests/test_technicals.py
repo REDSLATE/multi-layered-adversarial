@@ -288,7 +288,7 @@ class TestIngestAndRead:
 
         r = requests.get(
             f"{BASE_URL}/api/runtime-discussion/technical/{sym}",
-            params={"caller": "alpha", "tf": "1h"},
+            params={"caller": "camino", "tf": "1h"},
             headers={"X-Runtime-Token": CAMINO_TOKEN},
             timeout=20,
         )
@@ -298,7 +298,7 @@ class TestIngestAndRead:
     def test_runtime_read_token_mismatch_401(self):
         r = requests.get(
             f"{BASE_URL}/api/runtime-discussion/technical/NVDA",
-            params={"caller": "camaro", "tf": "1h"},
+            params={"caller": "barracuda", "tf": "1h"},
             headers={"X-Runtime-Token": CAMINO_TOKEN},  # alpha token but claims camaro
             timeout=20,
         )

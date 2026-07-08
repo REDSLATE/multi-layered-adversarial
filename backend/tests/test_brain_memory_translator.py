@@ -24,15 +24,16 @@ from services.brain_memory_translator import (
 # ───── normalize_stack() ──────────────────────────────────────────────
 
 
-def test_stack_red_eye_variants_collapse_to_redeye():
-    assert normalize_stack("REDEYE") == "redeye"
-    assert normalize_stack("red_eye") == "redeye"
-    assert normalize_stack("Red-Eye") == "redeye"
-    assert normalize_stack("redeye") == "redeye"
+def test_stack_red_eye_variants_collapse_to_gto():
+    """`red_eye` / `red-eye` dialects collapse to the canonical `gto`
+    brain name (alias migration Feb 2026)."""
+    assert normalize_stack("RED_EYE") == "gto"
+    assert normalize_stack("red_eye") == "gto"
+    assert normalize_stack("Red-Eye") == "gto"
 
 
 def test_stack_canonical_passthrough():
-    for canon in ("alpha", "camaro", "chevelle", "redeye"):
+    for canon in ("camino", "barracuda", "hellcat", "gto"):
         assert normalize_stack(canon) == canon
         assert normalize_stack(canon.upper()) == canon
 
@@ -195,7 +196,7 @@ def test_redeye_dialect_translated():
             "score": 0.91,
         },
     )
-    assert stack == "redeye"
+    assert stack == "gto"
     assert mtype == "execution"
     assert payload["symbol"] == "BTC-USD"
     assert payload["broker_order_id"] == "kr-99"
@@ -248,7 +249,7 @@ def test_translation_breadcrumb_preserved():
 def test_canonical_stacks_locked():
     """The 4 canonical stacks must remain stable for the kernel."""
     canonical = {STACK_ALIASES[k] for k in STACK_ALIASES}
-    assert canonical == {"alpha", "camaro", "chevelle", "redeye"}
+    assert canonical == {"camino", "barracuda", "hellcat", "gto"}
 
 
 @pytest.mark.tripwire

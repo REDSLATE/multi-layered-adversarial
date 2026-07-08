@@ -87,8 +87,8 @@ async def test_bogus_token_returns_401():
 def test_resolve_brain_from_token(monkeypatch):
     monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "tw-cam")
     monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-red")
-    assert _resolve_runtime_from_token("tw-cam") == "camaro"
-    assert _resolve_runtime_from_token("tw-red") == "redeye"
+    assert _resolve_runtime_from_token("tw-cam") == "barracuda"
+    assert _resolve_runtime_from_token("tw-red") == "gto"
     assert _resolve_runtime_from_token("nope") is None
 
 
@@ -110,7 +110,7 @@ async def test_quarantine_contagion_excludes_safe_view(monkeypatch):
         {
             "memory_id": "tw-link-camaro-1",
             "decision_id": "tw-link-camaro-dec-1",
-            "brain": "camaro",
+            "brain": "barracuda",
             "symbol": "AAPL",
             "lane": "equity",
             "decided_at": "2026-05-20T10:00:00+00:00",
@@ -126,7 +126,7 @@ async def test_quarantine_contagion_excludes_safe_view(monkeypatch):
         {
             "memory_id": "tw-link-redeye-1",
             "decision_id": "tw-link-redeye-dec-1",
-            "brain": "redeye",
+            "brain": "gto",
             "symbol": "AAPL",
             "lane": "equity",
             "decided_at": "2026-05-20T11:00:00+00:00",
@@ -143,7 +143,7 @@ async def test_quarantine_contagion_excludes_safe_view(monkeypatch):
     # Camaro files a quarantine label on REDEYE's memory
     await db["shared_labeled_memories"].insert_one({
         "id": "tw-link-quar-1",
-        "runtime": "camaro",
+        "runtime": "barracuda",
         "label": "quarantine",
         "reason": "decision_id=tw-link-redeye-dec-1 reason=unsafe",
         "payload_summary": "tw-link-quar test",
@@ -170,7 +170,7 @@ async def test_quarantine_contagion_excludes_safe_view(monkeypatch):
         assert "tw-link-camaro-1" in peer_ids
         # Source-tag is present
         cam_row = next(m for m in result["peer_memories"] if m["memory_id"] == "tw-link-camaro-1")
-        assert cam_row["source_brain"] == "camaro"
+        assert cam_row["source_brain"] == "barracuda"
         # Weight is attached
         assert "source_weight" in cam_row
         # Quarantine flag explicit on the quarantined row
@@ -195,7 +195,7 @@ async def test_response_includes_per_brain_weights(monkeypatch):
         symbol="NOEXIST-tw", x_runtime_token="tw-alpha",
     )
     assert set(result["weights_by_brain"].keys()) == {
-        "alpha", "camaro", "chevelle", "redeye",
+        "camino", "barracuda", "hellcat", "gto",
     }
     for brain, info in result["weights_by_brain"].items():
         assert "wins" in info
@@ -213,5 +213,5 @@ async def test_response_includes_counts_by_brain(monkeypatch):
         symbol="NOEXIST-tw", x_runtime_token="tw-alpha",
     )
     assert set(result["counts_by_brain"].keys()) == {
-        "alpha", "camaro", "chevelle", "redeye",
+        "camino", "barracuda", "hellcat", "gto",
     }

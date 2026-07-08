@@ -43,7 +43,7 @@ class _StubRunner(runner.BrainRunner):
     intent-loop scoring logic can be exercised deterministically."""
 
     def __init__(self, universe, scores_by_symbol):
-        super().__init__(brain_id="alpha", display_name="Camino", token="t")
+        super().__init__(brain_id="camino", display_name="Camino", token="t")
         self._universe = list(universe)
         self._scores_by_symbol = dict(scores_by_symbol)
         self.posted: list[tuple[str, str]] = []
@@ -160,5 +160,12 @@ async def test_score_failures_degrade_not_drop():
     assert set(syms) == {"AAPL", "MSFT", "TSLA"}, (
         f"all symbols should be ranked even on partial failure, got {syms}"
     )
-    # MSFT (flaky) should rank at the bottom (0.0)
-    assert ranked[-1] == ("equity", "MSFT", 0.0)
+    # MSFT (flaky) must rank at or below the others — a score failure
+    # degrades the symbol but must never drop it from the ranking.
+    # (Absolute score is not pinned because a UCB-style exploration
+    # bonus is added on top of the base score; see `_rank_universe`.)
+    msft_row = next(row for row in ranked if row[1] == "MSFT")
+    others = [row for row in ranked if row[1] != "MSFT"]
+    assert all(msft_row[2] <= o[2] for o in others), (
+        f"score-failed MSFT should rank at/below others, got {ranked}"
+    )

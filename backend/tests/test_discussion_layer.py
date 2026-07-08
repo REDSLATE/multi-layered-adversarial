@@ -65,7 +65,7 @@ class TestRolesManifest:
         assert r.status_code == 200, r.text
         d = r.json()
         runtimes = {x["runtime"] for x in d["items"]}
-        assert {"alpha", "camaro", "chevelle", "redeye"} <= runtimes
+        assert {"camino", "barracuda", "hellcat", "gto"} <= runtimes
         # 2026-02-17 doctrine update: `may_execute` is now SEAT-derived,
         # not brain-derived. Whichever brain currently holds an
         # execute-capable seat surfaces may_execute=True. The roles
@@ -80,26 +80,26 @@ class TestRolesManifest:
         # REDEYE is now a full-seat runtime (2026-02-11) — promoted from
         # advisor sidecar. Its authority_state defaults to 'advisor', but
         # kind is 'runtime'.
-        redeye = next(x for x in d["items"] if x["runtime"] == "redeye")
+        redeye = next(x for x in d["items"] if x["runtime"] == "gto")
         assert redeye["kind"] == "runtime"
         assert redeye["authority_state"] == "advisor"
 
     def test_runtime_view_via_x_token(self):
         r = requests.get(
             f"{BASE_URL}/api/runtime-discussion/roles-manifest",
-            params={"caller": "redeye"},
+            params={"caller": "gto"},
             headers={"X-Runtime-Token": GTO_TOKEN},
             timeout=20,
         )
         assert r.status_code == 200, r.text
         d = r.json()
         runtimes = {x["runtime"] for x in d["items"]}
-        assert {"alpha", "camaro", "chevelle", "redeye"} <= runtimes
+        assert {"camino", "barracuda", "hellcat", "gto"} <= runtimes
 
     def test_runtime_view_rejects_wrong_token(self):
         r = requests.get(
             f"{BASE_URL}/api/runtime-discussion/roles-manifest",
-            params={"caller": "alpha"},
+            params={"caller": "camino"},
             headers={"X-Runtime-Token": "wrong-token"},
             timeout=20,
         )
@@ -109,7 +109,7 @@ class TestRolesManifest:
         # alpha's token claiming to be camaro must fail
         r = requests.get(
             f"{BASE_URL}/api/runtime-discussion/roles-manifest",
-            params={"caller": "camaro"},
+            params={"caller": "barracuda"},
             headers={"X-Runtime-Token": CAMINO_TOKEN},
             timeout=20,
         )
@@ -125,7 +125,7 @@ class TestOpinionsPostAndThread:
             f"{BASE_URL}/api/ingest/opinion",
             headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={
-                "runtime": "alpha",
+                "runtime": "camino",
                 "topic": "symbol:AAPL",
                 "stance": "long",
                 "confidence": 0.7,
@@ -145,7 +145,7 @@ class TestOpinionsPostAndThread:
             f"{BASE_URL}/api/ingest/opinion",
             headers={"X-Runtime-Token": GTO_TOKEN, "Content-Type": "application/json"},
             json={
-                "runtime": "redeye",
+                "runtime": "gto",
                 "topic": "symbol:AAPL",
                 "stance": "short",
                 "confidence": 0.8,
@@ -181,7 +181,7 @@ class TestSchemaRejects:
             f"{BASE_URL}/api/ingest/opinion",
             headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={
-                "runtime": "alpha", "topic": "free", "stance": "observation",
+                "runtime": "camino", "topic": "free", "stance": "observation",
                 "body": "sneaky", "may_execute": True,
             },
             timeout=20,
@@ -194,7 +194,7 @@ class TestSchemaRejects:
             f"{BASE_URL}/api/ingest/opinion",
             headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={
-                "runtime": "alpha", "topic": "free", "stance": "EXECUTE",
+                "runtime": "camino", "topic": "free", "stance": "EXECUTE",
                 "body": "no",
             },
             timeout=20,
@@ -206,7 +206,7 @@ class TestSchemaRejects:
             f"{BASE_URL}/api/ingest/opinion",
             headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={
-                "runtime": "alpha", "topic": "no-colon-no-prefix", "stance": "observation",
+                "runtime": "camino", "topic": "no-colon-no-prefix", "stance": "observation",
                 "body": "no",
             },
             timeout=20,
@@ -218,7 +218,7 @@ class TestSchemaRejects:
             f"{BASE_URL}/api/ingest/opinion",
             headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={
-                "runtime": "alpha", "topic": "free", "stance": "observation",
+                "runtime": "camino", "topic": "free", "stance": "observation",
                 "body": "ghost reply",
                 "in_reply_to": "00000000-0000-0000-0000-000000000000",
             },
@@ -232,7 +232,7 @@ class TestSchemaRejects:
             f"{BASE_URL}/api/ingest/opinion",
             headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
             json={
-                "runtime": "camaro", "topic": "free", "stance": "observation",
+                "runtime": "barracuda", "topic": "free", "stance": "observation",
                 "body": "impersonation attempt",
             },
             timeout=20,
@@ -247,13 +247,13 @@ class TestReadingFilters:
         tok = _login()
         r = requests.get(
             f"{BASE_URL}/api/shared/opinions",
-            params={"runtime": "redeye", "limit": 50},
+            params={"runtime": "gto", "limit": 50},
             headers=_hdr(tok),
             timeout=20,
         )
         assert r.status_code == 200
         for x in r.json()["items"]:
-            assert x["runtime"] == "redeye"
+            assert x["runtime"] == "gto"
 
     def test_symbol_filter_works(self):
         tok = _login()

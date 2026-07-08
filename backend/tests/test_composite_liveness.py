@@ -165,7 +165,7 @@ def test_never_contacted_is_NEVER():
 
 def test_endpoint_surfaces_composite_liveness(auth_client, base_url):
     r = auth_client.get(
-        f"{base_url}/api/admin/brain/emission-diagnose/alpha", timeout=15,
+        f"{base_url}/api/admin/brain/emission-diagnose/camino", timeout=15,
     )
     assert r.status_code == 200, r.text
     body = r.json()

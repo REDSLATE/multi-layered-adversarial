@@ -99,16 +99,16 @@ def test_funnel_lane_crypto_excludes_equity(auth_headers):
     assert all(v == 0 for v in d["by_lane"]["equity"].values()), d["by_lane"]
 
 
-# ---- Unknown lane string ignored (treated as no filter) ----
-def test_funnel_invalid_lane_ignored(auth_headers):
+# ---- Unknown lane string strictly rejected ----
+# (2026-06-24) The endpoint now validates the `lane` param and
+# returns 422 for anything other than "equity"/"crypto"/omitted,
+# instead of silently ignoring bad values (previous lenient
+# behavior masked operator typos on the diagnostics dashboard).
+def test_funnel_invalid_lane_rejected(auth_headers):
     r = _get_funnel(auth_headers, lane="foo")
-    assert r.status_code == 200
-    d = r.json()
-    # endpoint echoes lane_filter as given but ignores it for the query
-    assert d["lane_filter"] == "foo"
-    # since lane='foo' doesn't filter, both lanes should be available
-    # (sum equals total_executed across both)
-    assert sum(d["bucket_counts"].values()) == d["total_executed"]
+    assert r.status_code == 422, r.text
+    detail = r.json().get("detail", "")
+    assert "lane" in str(detail).lower()
 
 
 # ---- Bounds validation ----

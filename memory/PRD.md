@@ -25,6 +25,10 @@ trading, comprehensive provenance + health tracking.
 
 **⚠️ 2026-02-20: OPEN OBSERVATION — Crypto lane silent in fingerprints.** All 4 brains' crypto-lane fingerprints show `intent_count=0` for the trailing hour, despite Camino holding the crypto seat and the market being open 24/7. Not blocking; deferred. First step for future trace: `/api/admin/intents?lane=crypto&limit=50` — if empty, check `_route_one` upstream signal path.
 
+**✅ 2026-02-20: P3 Cleanup SHIPPED.** (a) 614 synthetic ToS rows swept from `shared_indicator_snapshots` (only NVDA + SPY real tickers remain in thinkorswim source). (b) Category C assertion-drift eradicated — brought failing tests from ~60 down to 0 real failures. Bulk brain-name migration across 37 test files. Dead-endpoint test files (last-submit-block, heartbeat-status) deleted. Alias-translator contract, refactored-code inspection targets, and schema-drift seed rows all updated. (c) 4 production bugs surfaced & fixed: cross-brain-memories KeyError guard, intent-clearance-funnel Phase-C stack grouping, external_signals dedup partial index, sidecar-checkin docstring. (d) 65,572 legacy brain-name rows migrated in data-plane collections; audit-log tables intentionally preserved.
+
+**🔵 Known P4 (test hygiene, deferred)**: `test_broker_error_taxonomy` × 4 flakes on xdist parallel workers due to shared collection state — all pass in serial and in isolation. Add a per-test collection prefix + fixture isolation before enabling xdist in CI.
+
 **✅ 2026-02-20: Kraken 1d bar feeder SHIPPED.** `source="kraken_pro"` `tf="1d"` bars now land on boot + hourly poll. Crypto RVOL 20-day baseline gap closed.
 
 **✅ 2026-02-20: Feature Coverage Report tuning SHIPPED.** Stale threshold 120→180min (3× poll interval); `session_features_v2` group updated with `rvol_acceleration`/`trend_score` now-shipped fields.

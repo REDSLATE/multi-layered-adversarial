@@ -540,8 +540,17 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # Idempotency: `dedup_key` is unique — TradingView retries cannot
     # double-write. Diagnostics tile queries by `received_at` DESC
     # (recent witnesses) and by `(symbol, received_at)` (per-symbol).
+    #
+    # `partialFilterExpression` on `dedup_key: {$type: "string"}` —
+    # not every witness writer stamps a dedup_key today (e.g., resolver
+    # scratch rows in tests); a non-partial unique index would reject
+    # any second such doc with dedup_key=null. Uniqueness is still
+    # strictly enforced for the string values that DO get set.
     await db.external_signals.create_index(
-        "dedup_key", unique=True, name="external_signals_dedup_unique",
+        "dedup_key",
+        unique=True,
+        name="external_signals_dedup_unique",
+        partialFilterExpression={"dedup_key": {"$type": "string"}},
     )
     await db.external_signals.create_index(
         [("received_at", -1)], name="external_signals_recent_idx",

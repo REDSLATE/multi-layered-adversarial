@@ -37,36 +37,37 @@ pytestmark = [pytest.mark.tripwire]
 
 def test_checkin_handler_records_source_ip():
     """The POST handler MUST capture source IP at the edge (X-Forwarded-For
-    fallback to client.host) and persist it to the audit collection."""
-    src = inspect.getsource(mod.post_sidecar_checkin)
-    assert "x-forwarded-for" in src.lower(), (
+    fallback to client.host) and persist it to the audit collection via
+    `sidecar_checkin_core`. The handler extracts, the core inserts."""
+    handler_src = inspect.getsource(mod.post_sidecar_checkin)
+    assert "x-forwarded-for" in handler_src.lower(), (
         "DOCTRINE VIOLATION: source-IP capture removed from the "
         "checkin handler. Defense-in-depth against rogue sidecars "
         "impersonating a brain is gone."
     )
-    assert "sidecar_checkin_audit" in src, (
-        "DOCTRINE VIOLATION: audit-log insert removed from checkin "
-        "handler. The upserted doc loses dupe-pod evidence on every "
-        "write — without the audit append we can't catch the Alpha "
-        "preview-impersonation pattern."
+    core_src = inspect.getsource(mod.sidecar_checkin_core)
+    assert "sidecar_checkin_audit" in core_src, (
+        "DOCTRINE VIOLATION: audit-log insert removed from the "
+        "sidecar_checkin_core helper. The upserted doc loses "
+        "dupe-pod evidence on every write — without the audit "
+        "append we can't catch the Alpha preview-impersonation "
+        "pattern."
     )
 
 
 def test_audit_insert_is_best_effort():
     """Audit-log failure MUST NEVER block a legitimate checkin.
     Source-scan: the insert is inside a try/except that doesn't
-    re-raise."""
-    src = inspect.getsource(mod.post_sidecar_checkin)
-    # Find the audit insert. Ensure it sits inside a try block whose
-    # except does NOT re-raise.
+    re-raise. The insert lives in `sidecar_checkin_core`
+    (extracted from the handler 2026-06-24 for direct in-process
+    callers)."""
+    src = inspect.getsource(mod.sidecar_checkin_core)
     assert 'await db["sidecar_checkin_audit"].insert_one' in src
-    # Find the except clause that follows the audit insert.
     audit_idx = src.index('await db["sidecar_checkin_audit"].insert_one')
     tail = src[audit_idx:audit_idx + 800]
     assert "except Exception" in tail, (
         "audit insert lacks an except clause"
     )
-    # The except body must be a `pass` (or comment), not `raise`.
     except_idx = tail.index("except Exception")
     except_body = tail[except_idx:except_idx + 200]
     assert "raise" not in except_body, (

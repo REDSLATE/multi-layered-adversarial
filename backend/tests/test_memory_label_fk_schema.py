@@ -34,7 +34,7 @@ def test_memory_label_in_accepts_memory_id():
     """`MemoryLabelIn` MUST accept the new FK fields."""
     from shared.ingest import MemoryLabelIn
     m = MemoryLabelIn(
-        runtime="alpha", label="quarantine",
+        runtime="camino", label="quarantine",
         reason="poisoned",
         memory_id="mem-abc-123",
         decision_id="dec-xyz-789",
@@ -46,7 +46,7 @@ def test_memory_label_in_accepts_memory_id():
 def test_memory_label_in_remains_back_compat():
     """Legacy emitters (no FK fields) MUST still validate."""
     from shared.ingest import MemoryLabelIn
-    m = MemoryLabelIn(runtime="camaro", label="safe", payload_summary="ok")
+    m = MemoryLabelIn(runtime="barracuda", label="safe", payload_summary="ok")
     assert m.memory_id is None
     assert m.decision_id is None
 
@@ -64,7 +64,7 @@ async def test_fk_persisted_on_insert():
     await _clear_memory_collection()
     doc = {
         "id": "test-1",
-        "runtime": "alpha",
+        "runtime": "camino",
         "label": "quarantine",
         "reason": "test poison",
         "payload_summary": "",
@@ -88,7 +88,7 @@ async def test_quarantine_set_uses_fk_directly():
     await _clear_memory_collection()
     await db[SHARED_MEMORY].insert_one({
         "id": "test-q-1",
-        "runtime": "alpha",
+        "runtime": "camino",
         "label": "quarantine",
         "memory_id": "mem-q-fk",
         "decision_id": None,
@@ -109,7 +109,7 @@ async def test_quarantine_set_falls_back_to_regex():
     await _clear_memory_collection()
     await db[SHARED_MEMORY].insert_one({
         "id": "test-legacy",
-        "runtime": "alpha",
+        "runtime": "camino",
         "label": "quarantine",
         "memory_id": None,
         "decision_id": None,
@@ -131,7 +131,7 @@ async def test_fk_and_legacy_rows_union():
     await db[SHARED_MEMORY].insert_many([
         {
             "id": "test-mix-fk",
-            "runtime": "alpha", "label": "quarantine",
+            "runtime": "camino", "label": "quarantine",
             "memory_id": "mem-mix-1", "decision_id": None,
             "payload_summary": "", "reason": "",
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -139,7 +139,7 @@ async def test_fk_and_legacy_rows_union():
         },
         {
             "id": "test-mix-legacy",
-            "runtime": "camaro", "label": "quarantine",
+            "runtime": "barracuda", "label": "quarantine",
             "memory_id": None, "decision_id": None,
             "payload_summary": "decision_id=mix-legacy-2",
             "reason": "",
@@ -162,7 +162,7 @@ async def test_backfill_idempotent_on_already_fk_rows():
     await _clear_memory_collection()
     await db[SHARED_MEMORY].insert_one({
         "id": "test-bf-1",
-        "runtime": "alpha", "label": "quarantine",
+        "runtime": "camino", "label": "quarantine",
         "memory_id": "already-set",
         "decision_id": None,
         "payload_summary": "decision_id=should-be-ignored",
@@ -187,7 +187,7 @@ async def test_backfill_writes_fk_from_legacy_payload():
     await _clear_memory_collection()
     await db[SHARED_MEMORY].insert_one({
         "id": "test-bf-legacy",
-        "runtime": "alpha", "label": "quarantine",
+        "runtime": "camino", "label": "quarantine",
         "memory_id": None,
         "decision_id": None,
         "payload_summary": "memory_id=bf-mem decision_id=bf-dec",
@@ -212,7 +212,7 @@ async def test_backfill_dry_run_writes_nothing():
     await _clear_memory_collection()
     await db[SHARED_MEMORY].insert_one({
         "id": "test-bf-dry",
-        "runtime": "alpha", "label": "quarantine",
+        "runtime": "camino", "label": "quarantine",
         "memory_id": None,
         "decision_id": None,
         "payload_summary": "decision_id=dry-dec",

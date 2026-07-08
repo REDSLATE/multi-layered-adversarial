@@ -19,7 +19,7 @@ from shared.intents import IntentIn
 
 
 _BASE = dict(
-    stack="alpha",
+    stack="camino",
     action="BUY",
     symbol="AAPL",
     lane="equity",

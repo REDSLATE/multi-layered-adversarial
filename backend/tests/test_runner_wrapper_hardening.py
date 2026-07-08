@@ -85,7 +85,7 @@ def test_stats_exposes_loop_health():
     from external.brains.runner import BrainRunner
     # Construct a runner without starting it — stats should be safe to
     # read at any time.
-    r = BrainRunner(brain_id="alpha", display_name="Camino", token="x" * 20)
+    r = BrainRunner(brain_id="camino", display_name="Camino", token="x" * 20)
     stats = r.stats
     assert "loop_health" in stats
     lh = stats["loop_health"]
@@ -106,7 +106,14 @@ def test_no_scalar_httpx_client_construction_in_loops():
     """Regression guard — no loop may construct
     `httpx.AsyncClient(timeout=HTTP_TIMEOUT_SEC)` directly anymore.
     All HTTP clients in loop bodies must go through `_create_http_client`
-    (which applies the phased timeouts + zero keep-alive doctrine)."""
+    (which applies the phased timeouts + zero keep-alive doctrine).
+
+    Note (2026-02-20): `_checkin_loop` was refactored to call
+    `sidecar_checkin_core` directly in-process — same runtime = same
+    trust boundary, no HTTP hop needed. It's excluded from the
+    _create_http_client requirement because it doesn't construct an
+    HTTP client at all now. It IS still checked for the legacy
+    scalar-timeout pattern so a regression there is still caught."""
     from external.brains.runner import BrainRunner
     for loop_name in ("_intent_loop", "_checkin_loop", "_sovereign_loop"):
         src = inspect.getsource(getattr(BrainRunner, loop_name))
@@ -115,6 +122,13 @@ def test_no_scalar_httpx_client_construction_in_loops():
             f"{loop_name} reintroduced raw httpx.AsyncClient — must "
             "use _create_http_client() for May-14 hardening"
         )
+        if loop_name == "_checkin_loop":
+            # In-process — must NOT construct any HTTP client at all.
+            assert "httpx.AsyncClient" not in src, (
+                "_checkin_loop reintroduced HTTP; it should call "
+                "sidecar_checkin_core directly in-process"
+            )
+            continue
         assert "_create_http_client" in src, (
             f"{loop_name} not using _create_http_client"
         )

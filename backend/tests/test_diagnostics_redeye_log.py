@@ -38,17 +38,24 @@ def test_namespaces_export_redeye_decision_log():
 
 
 def test_runtime_log_count_routes_redeye_to_decision_log():
-    """`_runtime_log_count('redeye')` MUST read from
-    `redeye_decision_log`, NOT fall back to SHARED_OPINIONS."""
+    """`_runtime_log_count('gto')` MUST read from the RedEye team's
+    `redeye_decision_log` collection, NOT fall back to SHARED_OPINIONS.
+
+    Note (2026-02-20): the brain identity migrated from "redeye" to
+    the canonical "gto" name. The COLLECTION name stays `redeye_decision_log`
+    because it's owned by the RedEye team (external contract, see
+    MC_HANDOFF_redeye_decision_log.md)."""
     src = inspect.getsource(diag_mod._runtime_log_count)
-    assert "REDEYE_DECISION_LOG" in src or '"redeye"' in src, (
-        "diagnostics._runtime_log_count no longer references REDEYE "
-        "explicitly — RedEye will fall back to opinion-count and the "
-        "dashboard will show the wrong metric."
+    assert "REDEYE_DECISION_LOG" in src, (
+        "diagnostics._runtime_log_count no longer references "
+        "REDEYE_DECISION_LOG — gto will fall back to opinion-count "
+        "and the dashboard will show the wrong metric."
     )
-    # Belt-and-braces: make sure redeye is in the routing dict literal.
-    assert '"redeye"' in src, (
-        "redeye missing from the per-brain collection map"
+    # Belt-and-braces: make sure the canonical brain key `gto` is in
+    # the routing dict literal.
+    assert '"gto"' in src, (
+        "canonical brain key 'gto' missing from the per-brain "
+        "collection map"
     )
 
 
@@ -66,9 +73,9 @@ async def test_runtime_log_count_redeye_reads_redeye_collection(monkeypatch):
         "_test_marker": True,
     })
     try:
-        count = await diag_mod._runtime_log_count("redeye")
+        count = await diag_mod._runtime_log_count("gto")
         assert count >= 1, (
-            "_runtime_log_count('redeye') returned 0 with a row "
+            "_runtime_log_count('gto') returned 0 with a row "
             "present in redeye_decision_log — wiring is wrong, MC "
             "is still reading the opinion fallback."
         )

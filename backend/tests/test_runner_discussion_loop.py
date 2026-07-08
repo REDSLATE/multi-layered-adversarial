@@ -39,6 +39,41 @@ from external.brains.runner import (  # noqa: E402
 )
 
 
+# ── in-process reply capture ──────────────────────────────────────
+# 2026-02-20 changed `_post_dissent_reply` from HTTP POST to a direct
+# in-process call `submit_opinion_in_process(OpinionIn(**body))` — see
+# runner.py around line 1830. `_FakeHttp.posts` is no longer touched
+# by the dissent path. This fixture patches the in-process submitter
+# and exposes captured OpinionIn payloads via `.body` on a wrapper
+# shaped like the old `posts` entries, so existing assertions keep
+# working with minimal churn.
+
+
+class _Submitted:
+    def __init__(self, opin_in):
+        self.body = opin_in.model_dump()
+        # Legacy fields the old HTTP path recorded that some assertions
+        # touch — kept as None to signal "not applicable in-process".
+        self.url = None
+        self.headers = None
+
+
+@pytest.fixture(autouse=True)
+def submit_recorder(monkeypatch):
+    """Capture every in-process dissent submission."""
+    captured: list[_Submitted] = []
+
+    async def _fake_submit(opin_in):
+        captured.append(_Submitted(opin_in))
+        return {"opinion_id": "REPLY-OK"}
+
+    # Patch on the module where the runner imports it from.
+    import shared.opinions as opinions_mod
+    monkeypatch.setattr(opinions_mod, "submit_opinion_in_process", _fake_submit)
+    yield captured
+    captured.clear()
+
+
 # ── helpers ───────────────────────────────────────────────────────
 
 
@@ -90,7 +125,7 @@ class _FakeHttp:
         return _FakeResponse(200, {"opinion_id": "REPLY-OK"})
 
 
-def _runner(brain_id: str = "alpha") -> BrainRunner:
+def _runner(brain_id: str = "camino") -> BrainRunner:
     return BrainRunner(brain_id=brain_id, display_name="Camino", token="tok-test")
 
 
@@ -104,27 +139,27 @@ def _seed_my_stance(r: BrainRunner, symbol: str, stance: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_dissent_when_peer_short_and_we_are_long():
+async def test_dissent_when_peer_short_and_we_are_long(submit_recorder):
     """The whole reason the loop exists: peer says short, we say long
     → exactly one `disagree` reply with `in_reply_to` pointing at
     the peer's opinion_id."""
-    r = _runner("alpha")
+    r = _runner("camino")
     _seed_my_stance(r, "NVDA", "long")
     http = _FakeHttp({
-        "items": [_peer_opinion("OP-1", "camaro", "NVDA", "short")],
+        "items": [_peer_opinion("OP-1", "barracuda", "NVDA", "short")],
     })
 
     await r._discussion_tick(http)
 
-    assert len(http.posts) == 1, "exactly one reply expected"
-    body = http.posts[0]["body"]
+    assert len(submit_recorder) == 1, "exactly one reply expected"
+    body = submit_recorder[0].body
     assert body["stance"] == "disagree"
     assert body["in_reply_to"] == "OP-1"
     assert body["topic"] == "symbol:NVDA"
-    assert body["runtime"] == "alpha"
+    assert body["runtime"] == "camino"
     assert body["may_execute"] is False
     # Evidence carries the peer's context for the audit trail.
-    assert body["evidence"]["peer_runtime"] == "camaro"
+    assert body["evidence"]["peer_runtime"] == "barracuda"
     assert body["evidence"]["peer_stance"] == "short"
     assert body["evidence"]["my_stance"] == "long"
     # Counter incremented + idempotency record set.
@@ -133,128 +168,128 @@ async def test_dissent_when_peer_short_and_we_are_long():
 
 
 @pytest.mark.asyncio
-async def test_dissent_when_peer_long_and_we_are_short():
+async def test_dissent_when_peer_long_and_we_are_short(submit_recorder):
     """Reverse direction also conflicts."""
-    r = _runner("alpha")
+    r = _runner("camino")
     _seed_my_stance(r, "AAPL", "short")
     http = _FakeHttp({
-        "items": [_peer_opinion("OP-2", "chevelle", "AAPL", "long")],
+        "items": [_peer_opinion("OP-2", "hellcat", "AAPL", "long")],
     })
     await r._discussion_tick(http)
-    assert len(http.posts) == 1
-    assert http.posts[0]["body"]["stance"] == "disagree"
+    assert len(submit_recorder) == 1
+    assert submit_recorder[0].body["stance"] == "disagree"
 
 
 @pytest.mark.asyncio
-async def test_dissent_when_peer_veto_and_we_are_long():
+async def test_dissent_when_peer_veto_and_we_are_long(submit_recorder):
     """Veto is a contradicting stance for directional intents."""
-    r = _runner("alpha")
+    r = _runner("camino")
     _seed_my_stance(r, "TSLA", "long")
     http = _FakeHttp({
-        "items": [_peer_opinion("OP-3", "redeye", "TSLA", "veto")],
+        "items": [_peer_opinion("OP-3", "gto", "TSLA", "veto")],
     })
     await r._discussion_tick(http)
-    assert len(http.posts) == 1
-    assert http.posts[0]["body"]["stance"] == "disagree"
+    assert len(submit_recorder) == 1
+    assert submit_recorder[0].body["stance"] == "disagree"
 
 
 # ── silence cases ─────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_concurrence_is_silent():
+async def test_concurrence_is_silent(submit_recorder):
     """Both long on same symbol → no reply."""
-    r = _runner("alpha")
+    r = _runner("camino")
     _seed_my_stance(r, "MSFT", "long")
     http = _FakeHttp({
-        "items": [_peer_opinion("OP-4", "camaro", "MSFT", "long")],
+        "items": [_peer_opinion("OP-4", "barracuda", "MSFT", "long")],
     })
     await r._discussion_tick(http)
-    assert len(http.posts) == 0
+    assert len(submit_recorder) == 0
     assert r._discussion_reply_count == 0
 
 
 @pytest.mark.asyncio
-async def test_no_own_stance_is_silent():
+async def test_no_own_stance_is_silent(submit_recorder):
     """No own stance on the symbol → silent (concurrence-by-default)."""
-    r = _runner("alpha")
+    r = _runner("camino")
     # Note: deliberately NOT seeding _my_last_stance_by_symbol
     http = _FakeHttp({
-        "items": [_peer_opinion("OP-5", "camaro", "AMD", "short")],
+        "items": [_peer_opinion("OP-5", "barracuda", "AMD", "short")],
     })
     await r._discussion_tick(http)
-    assert len(http.posts) == 0
+    assert len(submit_recorder) == 0
 
 
 @pytest.mark.asyncio
-async def test_skips_self_authored():
+async def test_skips_self_authored(submit_recorder):
     """Brain never replies to its own opinion."""
-    r = _runner("alpha")
+    r = _runner("camino")
     _seed_my_stance(r, "AAPL", "long")
     http = _FakeHttp({
-        "items": [_peer_opinion("OP-6", "alpha", "AAPL", "short")],  # self
+        "items": [_peer_opinion("OP-6", "camino", "AAPL", "short")],  # self
     })
     await r._discussion_tick(http)
-    assert len(http.posts) == 0
+    assert len(submit_recorder) == 0
 
 
 @pytest.mark.asyncio
-async def test_skips_already_replied_to():
+async def test_skips_already_replied_to(submit_recorder):
     """Idempotency — a second tick that surfaces the same peer
     opinion must NOT generate a second reply."""
-    r = _runner("alpha")
+    r = _runner("camino")
     _seed_my_stance(r, "NVDA", "long")
-    peer_op = _peer_opinion("OP-7", "camaro", "NVDA", "short")
+    peer_op = _peer_opinion("OP-7", "barracuda", "NVDA", "short")
     http = _FakeHttp({"items": [peer_op]})
 
     await r._discussion_tick(http)
     await r._discussion_tick(http)  # second pass — same payload
 
-    assert len(http.posts) == 1, (
+    assert len(submit_recorder) == 1, (
         "second tick must skip already-replied-to opinion_id"
     )
 
 
 @pytest.mark.asyncio
-async def test_skips_non_symbol_topics():
+async def test_skips_non_symbol_topics(submit_recorder):
     """Non-symbol topics (regime, theory, free) carry no directional
     contradiction model — skip them entirely."""
-    r = _runner("alpha")
+    r = _runner("camino")
     _seed_my_stance(r, "NVDA", "long")
     http = _FakeHttp({"items": [
-        {"opinion_id": "OP-R1", "runtime": "camaro",
+        {"opinion_id": "OP-R1", "runtime": "barracuda",
          "topic": "regime:trend", "stance": "long",
          "confidence": 0.7, "body": "trend regime", "posted_at": ""},
-        {"opinion_id": "OP-T1", "runtime": "redeye",
+        {"opinion_id": "OP-T1", "runtime": "gto",
          "topic": "theory:momentum_decay", "stance": "short",
          "confidence": 0.6, "body": "decay theory", "posted_at": ""},
     ]})
     await r._discussion_tick(http)
-    assert len(http.posts) == 0
+    assert len(submit_recorder) == 0
 
 
 # ── throttle ──────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_throttles_to_max_replies_per_tick():
+async def test_throttles_to_max_replies_per_tick(submit_recorder):
     """A burst of N conflicting peer opinions must cap at
     DISCUSSION_MAX_REPLIES_PER_TICK replies per tick — the
     overflow gets picked up on subsequent ticks (or simply ages
     out of the lookback window)."""
-    r = _runner("alpha")
+    r = _runner("camino")
     # Seed conflicting own stances on 10 distinct symbols.
     symbols = [f"SYM{i}" for i in range(10)]
     for s in symbols:
         _seed_my_stance(r, s, "long")
     items = [
-        _peer_opinion(f"OP-{i}", "camaro", symbols[i], "short")
+        _peer_opinion(f"OP-{i}", "barracuda", symbols[i], "short")
         for i in range(10)
     ]
     http = _FakeHttp({"items": items})
     await r._discussion_tick(http)
     # Exactly the throttle cap.
-    assert len(http.posts) == DISCUSSION_MAX_REPLIES_PER_TICK
+    assert len(submit_recorder) == DISCUSSION_MAX_REPLIES_PER_TICK
     assert r._discussion_reply_count == DISCUSSION_MAX_REPLIES_PER_TICK
 
 
@@ -292,13 +327,13 @@ def test_post_directional_opinion_stance_tracking_is_directional_only():
 async def test_get_request_uses_runtime_token_and_caller():
     """The reader endpoint requires both X-Runtime-Token header and a
     `caller` query param. Verify the loop sends them."""
-    r = _runner("alpha")
+    r = _runner("camino")
     http = _FakeHttp({"items": []})
     await r._discussion_tick(http)
     assert len(http.gets) == 1
     url, params, headers = http.gets[0]
     assert "runtime-discussion/opinions" in url
-    assert params["caller"] == "alpha"
+    assert params["caller"] == "camino"
     assert "since" in params
     assert headers["X-Runtime-Token"] == "tok-test"
 

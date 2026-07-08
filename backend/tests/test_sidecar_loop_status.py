@@ -108,8 +108,9 @@ def test_loop_status_wired_into_checkin_schema():
     assert "loop_status: Optional[LoopStatus]" in src, (
         "CheckinRequest no longer accepts the optional loop_status field"
     )
-    # Persisted on the upsert
-    assert '"loop_status": loop_status_dict' in src, (
+    # Persisted on the upsert (variable renamed from `loop_status_dict`
+    # to `loop_status` 2026-06 when the handler was split out).
+    assert '"loop_status": loop_status' in src, (
         "loop_status block is not being written into the "
         "sidecar_checkins doc — operator will never see brain-side "
         "loop liveness signals"

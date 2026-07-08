@@ -6,7 +6,7 @@ field is `stack_canonical`. The raw `stack` field is retained for
 forensic audit display ONLY. Any new aggregation, in-memory
 grouping, or input-keyed query that uses `stack` instead of
 `stack_canonical` will silently re-introduce the legacy/canonical
-split bug (e.g. dashboards showing "barracuda" + "camaro" as two
+split bug (e.g. dashboards showing "barracuda" + "barracuda" as two
 distinct brains).
 
 This test scans the routes/ and shared/ directories for the
@@ -39,12 +39,11 @@ SCAN_DIRS = (
 ALLOWED_FILES: set[str] = {
     # Display projections — operator wants to see the raw historical
     # `stack` label alongside the canonical resolution.
-    "routes/admin_intents_post_mortem.py",
-    "routes/admin_paradox_v3.py",
-    # `routes/admin_brain_metrics.py` retired 2026-02-28 — endpoint had
-    # no frontend consumer and referenced a deleted namespace constant.
-    "routes/intent_inspect.py",
-    "routes/admin_intents_funnel.py",  # projection only; group uses stack_canonical
+    # NOTE (2026-02-20): the following consumers were retired between
+    # Feb–Jun 2026 (admin_intents_post_mortem, admin_paradox_v3,
+    # intent_inspect, admin_intents_funnel, promotion_artifact_report,
+    # council, auto_submit_policy, execution). They've been removed
+    # from the allow-list here — if any come back, re-add explicitly.
     "routes/scorecard_by_brain.py",    # surfaces stack as historical column
     "routes/intent_origin.py",         # latest_directional payload retains stack
 
@@ -55,23 +54,13 @@ ALLOWED_FILES: set[str] = {
     "shared/redeye_crypto_intent_bridge.py",
     "shared/strategies/canary_runner.py",  # stamps stack_canonical sibling
 
-    # Identity machinery itself — the normalizer, the legend, the
-    # auto-submit policy that prefers stack_canonical with a stack
-    # fallback for external callers.
+    # Identity machinery itself — the normalizer, the legend.
     "shared/brain_legend.py",
-    "shared/auto_submit_policy.py",
-    "shared/execution.py",
-    "shared/council.py",                # _brain_id_variants legend-aware
     "shared/brain_metrics.py",          # prefers stack_canonical with fallback
     "shared/brain_doctrine.py",         # STACK_TO_BRAIN_ID legend source-of-truth
 
     # Routes that don't touch grouping/filtering of intent.stack on
-    # the migrated shared_intents collection — they query OTHER
-    # collections (positions, brackets, doctrine sidecars, execution
-    # receipts, opinions, sovereign audit, …) that have their own
-    # write-time stamping pattern. These collections may eventually
-    # get their own dual-field migration, but they're out of scope
-    # for the 2026-02-23 shared_intents work.
+    # the migrated shared_intents collection — display-only.
     "routes/brain_emission_diagnose.py",  # shared_intents fully migrated
     "routes/brain_runtime.py",            # shared_intents fully migrated
     "routes/sidecar_diagnostics.py",      # shared_intents fully migrated
@@ -81,15 +70,13 @@ ALLOWED_FILES: set[str] = {
 
     # OTHER-COLLECTION read/write sites (positions, brackets, sidecars,
     # execution receipts, opinion store) — out of scope for the
-    # shared_intents-only dual-field migration. Add a per-collection
-    # migration if these become dashboard sources of confusion.
+    # shared_intents-only dual-field migration.
     "routes/admin_brackets.py",
     "routes/outcome_join_admin.py",
     "shared/broker/webull_brackets.py",
     "shared/doctrine/shadow_outcome.py",
     "shared/live_positions.py",
     "shared/vrl.py",
-    "shared/promotion_artifact_report.py",      # EXECUTION_RECEIPTS collection
     "shared/brains/brain_performance_store.py", # DOCTRINE_SIDECARS collection
     "shared/personalities_routes.py",            # personality dict return value
     "shared/doctrine_routes.py",                 # per_brain_decision_log writes

@@ -47,11 +47,11 @@ async def test_roster_brain_caller_cannot_peek_other_brain(monkeypatch):
     pass `caller=other_brain` and see another brain's seats."""
     monkeypatch.setenv("GTO_INGEST_TOKEN", "redeye-sek-rit")
     principal = await br._dual_auth(
-        x_brain_id="redeye",
+        x_brain_id="gto",
         x_runtime_token="redeye-sek-rit",
         operator_user=None,
     )
-    assert principal == "brain:redeye"
+    assert principal == "brain:gto"
     src = inspect.getsource(br.get_brain_roster)
     assert "caller_brain = principal.split" in src, (
         "Roster endpoint must override `caller` to match the "

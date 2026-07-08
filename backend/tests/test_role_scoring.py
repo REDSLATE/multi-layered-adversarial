@@ -80,7 +80,7 @@ class TestOutcomeIngest:
         tok = _login()
         # post a fresh alpha-long, then resolve it
         oid = _post_opinion(
-            "alpha", CAMINO_TOKEN, stance="long",
+            "camino", CAMINO_TOKEN, stance="long",
             body=f"alpha test {time.time()}", topic="symbol:NVDA", confidence=0.66,
         )
         r = requests.post(
@@ -91,13 +91,13 @@ class TestOutcomeIngest:
         assert r.status_code == 200, r.text
         d = r.json()
         assert d["ok"] is True
-        assert d["runtime"] == "alpha"
+        assert d["runtime"] == "camino"
         assert d["actual"] == "win"
 
     def test_chevelle_resolves_via_runtime_token(self):
         tok = _login()
         oid = _post_opinion(
-            "alpha", CAMINO_TOKEN, stance="long",
+            "camino", CAMINO_TOKEN, stance="long",
             body=f"alpha test 2 {time.time()}", topic="symbol:AMD",
         )
         r = requests.post(
@@ -111,7 +111,7 @@ class TestOutcomeIngest:
     def test_chevelle_cannot_resolve_its_own_opinion(self):
         # post a chevelle opinion; chevelle then tries to resolve it → 403
         oid = _post_opinion(
-            "chevelle", HELLCAT_TOKEN, stance="observation",
+            "hellcat", HELLCAT_TOKEN, stance="observation",
             body=f"chevelle observation {time.time()}", topic="free",
         )
         r = requests.post(
@@ -125,7 +125,7 @@ class TestOutcomeIngest:
 
     def test_alpha_cannot_resolve_via_runtime_token(self):
         oid = _post_opinion(
-            "alpha", CAMINO_TOKEN, stance="long",
+            "camino", CAMINO_TOKEN, stance="long",
             body=f"alpha self resolve attempt {time.time()}", topic="symbol:META",
         )
         r = requests.post(
@@ -138,10 +138,10 @@ class TestOutcomeIngest:
 
     def test_camaro_redeye_cannot_resolve_via_runtime_token(self):
         oid = _post_opinion(
-            "alpha", CAMINO_TOKEN, stance="long",
+            "camino", CAMINO_TOKEN, stance="long",
             body=f"third party resolve attempt {time.time()}", topic="symbol:GOOG",
         )
-        for tok_name, tok in (("camaro", BARRACUDA_TOKEN), ("redeye", GTO_TOKEN)):
+        for tok_name, tok in (("barracuda", BARRACUDA_TOKEN), ("gto", GTO_TOKEN)):
             r = requests.post(
                 f"{BASE_URL}/api/ingest/outcome",
                 headers={"X-Runtime-Token": tok, "Content-Type": "application/json"},
@@ -162,7 +162,7 @@ class TestOutcomeIngest:
     def test_append_only_409_on_double_resolve(self):
         tok = _login()
         oid = _post_opinion(
-            "alpha", CAMINO_TOKEN, stance="long",
+            "camino", CAMINO_TOKEN, stance="long",
             body=f"double resolve {time.time()}", topic="symbol:CRM",
         )
         r1 = requests.post(
@@ -181,7 +181,7 @@ class TestOutcomeIngest:
     def test_invalid_actual_422(self):
         tok = _login()
         oid = _post_opinion(
-            "alpha", CAMINO_TOKEN, stance="long",
+            "camino", CAMINO_TOKEN, stance="long",
             body=f"invalid actual {time.time()}", topic="free",
         )
         r = requests.post(
@@ -197,7 +197,7 @@ class TestOutcomeIngest:
 class TestScorecard:
     def test_operator_scorecard_all_brains(self):
         tok = _login()
-        for rt in ("alpha", "camaro", "chevelle", "redeye"):
+        for rt in ("camino", "barracuda", "hellcat", "gto"):
             r = requests.get(
                 f"{BASE_URL}/api/shared/scorecard",
                 params={"runtime": rt}, headers=_hdr(tok), timeout=20,
@@ -211,19 +211,19 @@ class TestScorecard:
     def test_lenses_are_role_specific(self):
         tok = _login()
         d_alpha = requests.get(
-            f"{BASE_URL}/api/shared/scorecard", params={"runtime": "alpha"},
+            f"{BASE_URL}/api/shared/scorecard", params={"runtime": "camino"},
             headers=_hdr(tok), timeout=20,
         ).json()
         d_redeye = requests.get(
-            f"{BASE_URL}/api/shared/scorecard", params={"runtime": "redeye"},
+            f"{BASE_URL}/api/shared/scorecard", params={"runtime": "gto"},
             headers=_hdr(tok), timeout=20,
         ).json()
         d_camaro = requests.get(
-            f"{BASE_URL}/api/shared/scorecard", params={"runtime": "camaro"},
+            f"{BASE_URL}/api/shared/scorecard", params={"runtime": "barracuda"},
             headers=_hdr(tok), timeout=20,
         ).json()
         d_chevelle = requests.get(
-            f"{BASE_URL}/api/shared/scorecard", params={"runtime": "chevelle"},
+            f"{BASE_URL}/api/shared/scorecard", params={"runtime": "hellcat"},
             headers=_hdr(tok), timeout=20,
         ).json()
         assert d_alpha["lens"] == "longs"
@@ -235,18 +235,18 @@ class TestScorecard:
         # alpha pulls its own — OK
         r = requests.get(
             f"{BASE_URL}/api/runtime-discussion/scorecard",
-            params={"caller": "alpha"},
+            params={"caller": "camino"},
             headers={"X-Runtime-Token": CAMINO_TOKEN},
             timeout=20,
         )
         assert r.status_code == 200, r.text
-        assert r.json()["runtime"] == "alpha"
+        assert r.json()["runtime"] == "camino"
 
     def test_runtime_scorecard_token_mismatch_401(self):
         # alpha's token claiming to be camaro → 401
         r = requests.get(
             f"{BASE_URL}/api/runtime-discussion/scorecard",
-            params={"caller": "camaro"},
+            params={"caller": "barracuda"},
             headers={"X-Runtime-Token": CAMINO_TOKEN},
             timeout=20,
         )
@@ -280,7 +280,7 @@ class TestScorecardMath:
         ids = []
         for stance, conf, _ in rows:
             ids.append(_post_opinion(
-                "alpha", CAMINO_TOKEN, stance=stance,
+                "camino", CAMINO_TOKEN, stance=stance,
                 body=f"fixture {sym} c={conf}", topic=f"symbol:{sym}", confidence=conf,
             ))
         for (oid, (_, _, actual)) in zip(ids, rows):
@@ -295,7 +295,7 @@ class TestScorecardMath:
         # filtering to this fixture's symbol via topic_breakdown isn't
         # available for alpha, so verify the global numbers are sane.
         r = requests.get(
-            f"{BASE_URL}/api/shared/scorecard", params={"runtime": "alpha"},
+            f"{BASE_URL}/api/shared/scorecard", params={"runtime": "camino"},
             headers=_hdr(tok), timeout=20,
         )
         assert r.status_code == 200

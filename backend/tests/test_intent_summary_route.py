@@ -65,9 +65,9 @@ def _wipe_test_intents(brain: str):
 
 @pytest.fixture(autouse=True)
 def _clean_test_rows():
-    _wipe_test_intents("camaro_test")
+    _wipe_test_intents("barracuda_test")
     yield
-    _wipe_test_intents("camaro_test")
+    _wipe_test_intents("barracuda_test")
 
 
 def _intent_row(brain, action, symbol, lane="equity", gate_state="passed", n=0):
@@ -75,6 +75,10 @@ def _intent_row(brain, action, symbol, lane="equity", gate_state="passed", n=0):
     return {
         "intent_id": f"test-intent-summary-{n}",
         "stack": brain,
+        # `stack_canonical` is now the authoritative brain identity on
+        # shared_intents (2026-06-24). Route queries by this field, so
+        # the seed rows MUST carry it or the aggregate will return 0.
+        "stack_canonical": brain,
         "action": action,
         "symbol": symbol,
         "lane": lane,
@@ -86,7 +90,7 @@ def _intent_row(brain, action, symbol, lane="equity", gate_state="passed", n=0):
 
 def test_summary_returns_aggregates(_token):
     """Seed 5 intents and verify counts come back correctly."""
-    brain = "camaro_test"
+    brain = "barracuda_test"
     _seed_intents(brain, [
         _intent_row(brain, "BUY", "AAPL", n=1),
         _intent_row(brain, "BUY", "AAPL", n=2),
@@ -131,7 +135,7 @@ def test_summary_empty_brain(_token):
 
 def test_summary_window_filters(_token):
     """Intents older than the window are excluded."""
-    brain = "camaro_test"
+    brain = "barracuda_test"
     now = datetime.now(timezone.utc)
     old_ts = (now - timedelta(hours=3)).isoformat().replace("+00:00", "Z")
     fresh_ts = now.isoformat().replace("+00:00", "Z")
@@ -163,7 +167,7 @@ def test_summary_window_filters(_token):
 
 def test_summary_requires_auth():
     r = requests.get(
-        f"{BASE_URL}/api/admin/runtime/camaro/intent-summary", timeout=10,
+        f"{BASE_URL}/api/admin/runtime/barracuda/intent-summary", timeout=10,
     )
     assert r.status_code in (401, 403), (
         f"unauthenticated request must be rejected; got {r.status_code}"
@@ -171,7 +175,7 @@ def test_summary_requires_auth():
 
 
 def test_summary_limit_caps_recent(_token):
-    brain = "camaro_test"
+    brain = "barracuda_test"
     _seed_intents(brain, [
         _intent_row(brain, "BUY", "AAPL", n=i) for i in range(20, 30)
     ])

@@ -286,7 +286,11 @@ async def _breakdown(dim: str, base_clauses: list[dict]) -> dict:
     glance — everything in between shows up in the main funnel."""
     field_map = {
         "lane":       "$lane",
-        "brain":      "$stack",         # canonical brain name field
+        # `stack_canonical` is the authoritative brain-identity field
+        # (2026-02-23 dual-field migration). Grouping by raw `$stack`
+        # re-introduces the "barracuda vs. camaro" duplicate-brain bug
+        # on the dashboard.
+        "brain":      "$stack_canonical",
         "symbol":     "$symbol",
         "side":       "$action",
         "gate_state": "$gate_state",

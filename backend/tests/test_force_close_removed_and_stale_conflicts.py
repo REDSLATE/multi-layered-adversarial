@@ -131,9 +131,9 @@ def test_stale_conflicts_only_includes_open_past_threshold():
             "detected_at": old_iso,
             "pair_ids": [f"{tag}-a", f"{tag}-b"],
             "participants": [
-                {"opinion_id": f"{tag}-a", "runtime": "alpha", "stance": "long",
+                {"opinion_id": f"{tag}-a", "runtime": "camino", "stance": "long",
                  "confidence": 0.7, "posted_at": old_iso},
-                {"opinion_id": f"{tag}-b", "runtime": "redeye", "stance": "short",
+                {"opinion_id": f"{tag}-b", "runtime": "gto", "stance": "short",
                  "confidence": 0.7, "posted_at": old_iso},
             ],
             "status": "open", "winner": None, "winning_opinion_id": None,
@@ -146,9 +146,9 @@ def test_stale_conflicts_only_includes_open_past_threshold():
             "detected_at": fresh_iso,
             "pair_ids": [f"{tag}-c", f"{tag}-d"],
             "participants": [
-                {"opinion_id": f"{tag}-c", "runtime": "alpha", "stance": "long",
+                {"opinion_id": f"{tag}-c", "runtime": "camino", "stance": "long",
                  "confidence": 0.7, "posted_at": fresh_iso},
-                {"opinion_id": f"{tag}-d", "runtime": "camaro", "stance": "short",
+                {"opinion_id": f"{tag}-d", "runtime": "barracuda", "stance": "short",
                  "confidence": 0.7, "posted_at": fresh_iso},
             ],
             "status": "open", "winner": None, "winning_opinion_id": None,
@@ -161,12 +161,12 @@ def test_stale_conflicts_only_includes_open_past_threshold():
             "detected_at": old_iso,
             "pair_ids": [f"{tag}-e", f"{tag}-f"],
             "participants": [
-                {"opinion_id": f"{tag}-e", "runtime": "alpha", "stance": "long",
+                {"opinion_id": f"{tag}-e", "runtime": "camino", "stance": "long",
                  "confidence": 0.7, "posted_at": old_iso},
-                {"opinion_id": f"{tag}-f", "runtime": "chevelle", "stance": "short",
+                {"opinion_id": f"{tag}-f", "runtime": "hellcat", "stance": "short",
                  "confidence": 0.7, "posted_at": old_iso},
             ],
-            "status": "resolved", "winner": "alpha",
+            "status": "resolved", "winner": "camino",
             "winning_opinion_id": f"{tag}-e",
             "resolved_at": now.isoformat(), "resolved_by": "tripwire",
             "resolution_source": "manual", "notes": "",
@@ -194,7 +194,7 @@ def test_stale_conflicts_only_includes_open_past_threshold():
         # are the participants of the seeded old-open conflict.
         by_rt = body["by_runtime"]
         assert isinstance(by_rt, dict)
-        assert by_rt.get("alpha", 0) == 1
-        assert by_rt.get("redeye", 0) == 1
+        assert by_rt.get("camino", 0) == 1
+        assert by_rt.get("gto", 0) == 1
     finally:
         coll.delete_many({"topic": tag})

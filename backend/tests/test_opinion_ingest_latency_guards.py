@@ -134,7 +134,7 @@ async def test_post_opinion_completes_when_anchor_fetch_hangs(monkeypatch):
     )
 
     body = opinions_mod.OpinionIn(
-        runtime="alpha",
+        runtime="camino",
         topic="symbol:_HANGTEST_",
         stance="long",
         confidence=0.5,
@@ -190,7 +190,7 @@ async def test_post_opinion_completes_when_conflict_detect_hangs(monkeypatch):
     )
 
     body = opinions_mod.OpinionIn(
-        runtime="alpha",
+        runtime="camino",
         topic="symbol:_CONFLICTHANG_",
         stance="observation",
         confidence=0.5,

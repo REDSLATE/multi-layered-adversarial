@@ -108,7 +108,7 @@ class TestRuntimeStance:
         p = _propose(tok)
         pid = p["position_id"]
         results = {}
-        plan = {"alpha": "long", "camaro": "long", "chevelle": "abstain", "redeye": "short"}
+        plan = {"camino": "long", "barracuda": "long", "hellcat": "abstain", "gto": "short"}
         for brain, stance in plan.items():
             r = requests.post(
                 f"{BASE_URL}/api/runtime-discussion/positions/{pid}/stance?runtime={brain}",
@@ -119,7 +119,7 @@ class TestRuntimeStance:
             assert r.status_code == 200, f"{brain}: {r.text}"
             results[brain] = r.json()
         # Final state should be 'discussing', counts should reflect 4 stances
-        final = results["redeye"]
+        final = results["gto"]
         assert final["state"] == "discussing"
         assert final["stance_counts"]["long"] == 2
         assert final["stance_counts"]["short"] == 1
@@ -130,13 +130,13 @@ class TestRuntimeStance:
         # `null` in the roster (operator may rotate any brain in). With
         # no seat held, `posted_as` is None and authority bits flip
         # off. The test pins the new seat-keyed reality.
-        redeye_stance = final["stances_by_brain"]["redeye"]
+        redeye_stance = final["stances_by_brain"]["gto"]
         assert redeye_stance["posted_as"] in (None, "opponent", "auditor")
         if redeye_stance["posted_as"] is None:
             assert redeye_stance["may_execute"] is False
             assert redeye_stance["may_decide"] is False
         # ALPHA's posted_as should be 'executor' (current seat)
-        alpha_stance = final["stances_by_brain"]["alpha"]
+        alpha_stance = final["stances_by_brain"]["camino"]
         assert alpha_stance["posted_as"] == "executor"
         # Alpha in executor seat HAS execute authority on the snapshot
         # (the bit is operationally inert in Phase 1 — no orders fire —
@@ -149,7 +149,7 @@ class TestRuntimeStance:
         tok = _login()
         p = _propose(tok)
         r = requests.post(
-            f"{BASE_URL}/api/runtime-discussion/positions/{p['position_id']}/stance?runtime=alpha",
+            f"{BASE_URL}/api/runtime-discussion/positions/{p['position_id']}/stance?runtime=camino",
             headers={"X-Runtime-Token": "bogus", "Content-Type": "application/json"},
             json={"stance": "long"},
             timeout=10,
@@ -160,8 +160,8 @@ class TestRuntimeStance:
         tok = _login()
         p = _propose(tok)
         r = requests.post(
-            f"{BASE_URL}/api/runtime-discussion/positions/{p['position_id']}/stance?runtime=alpha",
-            headers={"X-Runtime-Token": _runtime_token("alpha"), "Content-Type": "application/json"},
+            f"{BASE_URL}/api/runtime-discussion/positions/{p['position_id']}/stance?runtime=camino",
+            headers={"X-Runtime-Token": _runtime_token("camino"), "Content-Type": "application/json"},
             json={"stance": "buy"},  # not valid
             timeout=10,
         )
@@ -175,14 +175,14 @@ class TestOperatorStance:
         r = requests.post(
             f"{BASE_URL}/api/admin/positions/{p['position_id']}/stance",
             headers=_hdr(tok),
-            json={"brain": "alpha", "stance": "long", "confidence": 0.8, "notes": "operator override"},
+            json={"brain": "camino", "stance": "long", "confidence": 0.8, "notes": "operator override"},
             timeout=10,
         )
         assert r.status_code == 200
         d = r.json()
         assert d["state"] == "discussing"
-        assert d["stances_by_brain"]["alpha"]["stance"] == "long"
-        assert d["stances_by_brain"]["alpha"]["posted_via"] == "operator"
+        assert d["stances_by_brain"]["camino"]["stance"] == "long"
+        assert d["stances_by_brain"]["camino"]["posted_via"] == "operator"
 
 
 class TestExecutorCall:
@@ -199,7 +199,7 @@ class TestExecutorCall:
         d = r.json()
         assert d["state"] == "consensus_long"
         assert d["direction"] == "long"
-        assert d["executor_call_by"] == "alpha"  # default executor seat
+        assert d["executor_call_by"] == "camino"  # default executor seat
 
     def test_call_short_advances_state(self):
         tok = _login()
@@ -258,7 +258,7 @@ class TestTerminalLock:
         r = requests.post(
             f"{BASE_URL}/api/admin/positions/{p['position_id']}/stance",
             headers=_hdr(tok),
-            json={"brain": "alpha", "stance": "long"},
+            json={"brain": "camino", "stance": "long"},
             timeout=10,
         )
         assert r.status_code == 409

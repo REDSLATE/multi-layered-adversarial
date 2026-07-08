@@ -166,7 +166,7 @@ def test_auth_rejects_token_mismatch(monkeypatch):
     from routes.market_data_keys import _authenticate
     monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "the-correct-one")
     with pytest.raises(HTTPException) as exc_info:
-        _authenticate("camaro", "the-wrong-one")
+        _authenticate("barracuda", "the-wrong-one")
     assert exc_info.value.status_code == 401
 
 
@@ -174,8 +174,8 @@ def test_auth_returns_canonical_brain_on_match(monkeypatch):
     """Correct token → returns lowercase canonical brain name."""
     from routes.market_data_keys import _authenticate
     monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "matching-token")
-    out = _authenticate("CAMARO", "matching-token")
-    assert out == "camaro"
+    out = _authenticate("BARRACUDA", "matching-token")
+    assert out == "barracuda"
 
 
 # ──────────────────────── INTEGRATION — full endpoint ────────────────────────
@@ -194,9 +194,9 @@ async def test_endpoint_returns_only_whitelisted_fields(monkeypatch):
     monkeypatch.setenv("KRAKEN_API_KEY", "this-must-never-leak-either")
 
     result = await get_market_data_keys(
-        x_brain_id="camaro", x_runtime_token="test-token",
+        x_brain_id="barracuda", x_runtime_token="test-token",
     )
-    assert result["brain"] == "camaro"
+    assert result["brain"] == "barracuda"
     # Data keys came through
     assert result["keys"].get("FINNHUB_API_KEY") == "test-finnhub-key"
     assert result["keys"].get("POLYGON_API_KEY") == "test-polygon-key"
@@ -220,7 +220,7 @@ async def test_endpoint_response_keys_match_whitelist_exactly(monkeypatch):
     monkeypatch.setenv("ALPACA_API_KEY", "BROKER_KEY_NEVER_RETURN")
 
     result = await get_market_data_keys(
-        x_brain_id="camaro", x_runtime_token="test-token",
+        x_brain_id="barracuda", x_runtime_token="test-token",
     )
     for field in result["keys"]:
         assert field in MARKET_DATA_KEY_FIELDS, (
@@ -243,7 +243,7 @@ async def test_endpoint_does_not_return_unconfigured_fields(monkeypatch):
     monkeypatch.setenv("FINNHUB_API_KEY", "the-only-one")
 
     result = await get_market_data_keys(
-        x_brain_id="camaro", x_runtime_token="test-token",
+        x_brain_id="barracuda", x_runtime_token="test-token",
     )
     assert result["keys"] == {"FINNHUB_API_KEY": "the-only-one"}
     assert len(result["unconfigured_fields"]) == len(MARKET_DATA_KEY_FIELDS) - 1

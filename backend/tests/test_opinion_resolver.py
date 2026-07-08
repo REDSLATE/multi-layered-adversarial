@@ -112,7 +112,7 @@ async def test_observation_stance_never_resolved():
     untouched by `_grade_opinion`."""
     op = {
         "opinion_id": "tw-obs-1",
-        "runtime": "camaro",
+        "runtime": "barracuda",
         "stance": "observation",
         "topic": "symbol:AAPL",
         "posted_at": "2026-05-22T10:00:00+00:00",
@@ -126,7 +126,7 @@ async def test_observation_stance_never_resolved():
 async def test_endorse_stance_never_resolved():
     op = {
         "opinion_id": "tw-end-1",
-        "runtime": "camaro",
+        "runtime": "barracuda",
         "stance": "endorse",
         "topic": "symbol:AAPL",
         "posted_at": "2026-05-22T10:00:00+00:00",
@@ -139,7 +139,7 @@ async def test_endorse_stance_never_resolved():
 async def test_veto_stance_never_resolved():
     op = {
         "opinion_id": "tw-veto-1",
-        "runtime": "chevelle",
+        "runtime": "hellcat",
         "stance": "veto",
         "topic": "symbol:AAPL",
         "posted_at": "2026-05-22T10:00:00+00:00",
@@ -154,7 +154,7 @@ async def test_too_young_skipped():
     from datetime import datetime, timezone
     op = {
         "opinion_id": "tw-young-1",
-        "runtime": "alpha",
+        "runtime": "camino",
         "stance": "long",
         "topic": "symbol:AAPL",
         "posted_at": datetime.now(timezone.utc).isoformat(),  # right now
@@ -174,7 +174,7 @@ async def test_no_anchor_skipped():
     may add anchor at post time)."""
     op = {
         "opinion_id": "tw-no-anchor-1",
-        "runtime": "alpha",
+        "runtime": "camino",
         "stance": "long",
         "topic": "symbol:AAPL",
         "posted_at": "2026-05-20T10:00:00+00:00",  # well past horizon
@@ -188,7 +188,7 @@ async def test_long_win_graded():
     """Long opinion + price rose enough → win."""
     op = {
         "opinion_id": "tw-long-win",
-        "runtime": "alpha",
+        "runtime": "camino",
         "stance": "long",
         "topic": "symbol:AAPL",
         "posted_at": "2026-05-20T10:00:00+00:00",
@@ -205,7 +205,7 @@ async def test_long_win_graded():
     assert result["resolved_by"] == "auto:market-data"
     assert result["pnl_pct"] == pytest.approx(0.05)
     assert result["opinion_id"] == "tw-long-win"
-    assert result["runtime"] == "alpha"
+    assert result["runtime"] == "camino"
     assert result["stance"] == "long"
 
 
@@ -213,7 +213,7 @@ async def test_long_win_graded():
 async def test_long_loss_graded():
     op = {
         "opinion_id": "tw-long-loss",
-        "runtime": "alpha",
+        "runtime": "camino",
         "stance": "long",
         "topic": "symbol:AAPL",
         "posted_at": "2026-05-20T10:00:00+00:00",
@@ -232,7 +232,7 @@ async def test_short_win_graded():
     """Short opinion + price fell = win."""
     op = {
         "opinion_id": "tw-short-win",
-        "runtime": "redeye",
+        "runtime": "gto",
         "stance": "short",
         "topic": "symbol:TSLA",
         "posted_at": "2026-05-20T10:00:00+00:00",
@@ -252,7 +252,7 @@ async def test_short_loss_graded():
     """Short opinion + price rose = loss."""
     op = {
         "opinion_id": "tw-short-loss",
-        "runtime": "redeye",
+        "runtime": "gto",
         "stance": "short",
         "topic": "symbol:TSLA",
         "posted_at": "2026-05-20T10:00:00+00:00",
@@ -271,7 +271,7 @@ async def test_no_event_graded():
     """Tiny move below threshold = no-event."""
     op = {
         "opinion_id": "tw-noevent",
-        "runtime": "alpha",
+        "runtime": "camino",
         "stance": "long",
         "topic": "symbol:AAPL",
         "posted_at": "2026-05-20T10:00:00+00:00",
@@ -290,7 +290,7 @@ async def test_crypto_threshold_is_wider():
     """Crypto symbol with +1.5% move = no-event (below 2% bar);
     equity symbol with +1.5% = win (above 1% bar)."""
     base = {
-        "runtime": "camaro",
+        "runtime": "barracuda",
         "stance": "long",
         "posted_at": "2026-05-20T10:00:00+00:00",
         "anchor_price": 100.0,
@@ -311,7 +311,7 @@ async def test_no_price_returns_none_for_retry():
     grading returns None so the next tick retries."""
     op = {
         "opinion_id": "tw-noprice",
-        "runtime": "alpha",
+        "runtime": "camino",
         "stance": "long",
         "topic": "symbol:AAPL",
         "posted_at": "2026-05-20T10:00:00+00:00",

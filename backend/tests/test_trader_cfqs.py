@@ -209,13 +209,19 @@ async def _seed_fire(
     *,
     cycle_id: str, brain: str, lane: str, confidence: float,
     spread_bps: float, quote_age_ms: float,
-    filled: bool = True, ts: str = "2026-07-03T12:00:00+00:00",
+    filled: bool = True, ts: str | None = None,
 ):
     """Seed one fire receipt + matching execution row.
 
     Note: `confidence_n` in the endpoint equals `fires` today because
     every fire carries a numeric confidence (see test-module docstring).
     """
+    # Default to "1 hour ago" — the endpoint's default `window_hours=24`
+    # filters out anything older, so a hard-coded 2026-07-03 date
+    # would silently starve the seeded rows as calendar drifts.
+    if ts is None:
+        from datetime import datetime, timedelta, timezone
+        ts = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     await audit.write_receipt(
         db=None,
         cycle_id=cycle_id, lane=lane, symbol="TSLA" if lane == "equity" else "BTCUSD",

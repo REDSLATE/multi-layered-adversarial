@@ -61,8 +61,8 @@ def test_unknown_lane_rejected_at_schema():
 def test_resolve_runtime_from_token_matches_env(monkeypatch):
     monkeypatch.setenv("BARRACUDA_INGEST_TOKEN", "tw-cam")
     monkeypatch.setenv("GTO_INGEST_TOKEN", "tw-red")
-    assert _resolve_runtime_from_token("tw-cam") == "camaro"
-    assert _resolve_runtime_from_token("tw-red") == "redeye"
+    assert _resolve_runtime_from_token("tw-cam") == "barracuda"
+    assert _resolve_runtime_from_token("tw-red") == "gto"
     assert _resolve_runtime_from_token("nope") is None
 
 
@@ -162,7 +162,7 @@ async def test_close_long_routes_sell_through_gate_chain(monkeypatch):
     assert result["routed_through_gate_chain"] is True
     # The intent that got submitted carried the SELL + the closing brain
     intent_body = captured_intent["body"]
-    assert intent_body.stack == "camaro"
+    assert intent_body.stack == "barracuda"
     assert intent_body.action == "SELL"
     assert intent_body.symbol == "AAPL"
     assert intent_body.lane == "equity"

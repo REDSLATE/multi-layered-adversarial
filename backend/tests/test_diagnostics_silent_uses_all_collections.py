@@ -112,6 +112,7 @@ async def test_fresh_intent_alone_keeps_brain_out_of_silent(isolated_runtime):
     await db[SHARED_INTENTS].insert_one({
         "intent_id": str(uuid.uuid4()),
         "stack": rt,
+        "stack_canonical": rt,
         "action": "HOLD",
         "symbol": "AAPL",
         "lane": "equity",
@@ -139,7 +140,9 @@ async def test_picks_max_across_collections(isolated_runtime):
     })
     await db[SHARED_INTENTS].insert_one({
         "intent_id": str(uuid.uuid4()),
-        "stack": rt, "ingest_ts": new_ts,
+        "stack": rt,
+        "stack_canonical": rt,
+        "ingest_ts": new_ts,
         "action": "BUY", "symbol": "X", "lane": "equity",
     })
 

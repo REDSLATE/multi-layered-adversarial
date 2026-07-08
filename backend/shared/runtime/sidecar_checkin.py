@@ -461,7 +461,7 @@ async def sidecar_checkin_core(
 async def post_sidecar_checkin(
     request: Request,
     body: CheckinRequest,
-    brain: str = Path(..., description="brain id — alpha|camaro|chevelle|redeye"),
+    brain: str = Path(..., description="brain id — camino|barracuda|hellcat|gto"),
     x_runtime_token: Optional[str] = Header(default=None, alias="X-Runtime-Token"),
 ) -> CheckinResponse:
     """HTTP wrapper around `sidecar_checkin_core`. External callers

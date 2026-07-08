@@ -138,19 +138,22 @@ async def test_v3_brain_enabled_sync_honours_db_cache():
 
 
 async def test_watcher_refire_sync_helpers_honour_db_cache():
-    from shared.pipeline.trigger_watcher import (
-        is_refire_enabled,
-        is_watcher_enabled,
+    """The trigger-watcher/refire flag readers moved from a dedicated
+    `shared.pipeline.trigger_watcher` module (2026-05-30) into
+    `shared.system_flags` (2026-06) — same behavior, one home."""
+    from shared.system_flags import (
+        effective_trigger_watcher_enabled,
+        effective_trigger_refire_enabled,
     )
     await _reset()
     os.environ.pop("PARADOX_V3_TRIGGER_WATCHER", None)
     os.environ.pop("PARADOX_V3_TRIGGER_REFIRE", None)
-    assert is_watcher_enabled() is False
-    assert is_refire_enabled() is False
+    assert effective_trigger_watcher_enabled() is False
+    assert effective_trigger_refire_enabled() is False
     await set_trigger_watcher(True, actor="t")
     await set_trigger_refire(True, actor="t")
-    assert is_watcher_enabled() is True
-    assert is_refire_enabled() is True
+    assert effective_trigger_watcher_enabled() is True
+    assert effective_trigger_refire_enabled() is True
 
 
 async def test_recent_flag_changes_reverse_chronological():

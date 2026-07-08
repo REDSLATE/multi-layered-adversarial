@@ -99,9 +99,9 @@ class TestSharedOverview:
         runtimes = d["runtimes"]
         assert isinstance(runtimes, list) and len(runtimes) >= 3
         names = [x["runtime"] for x in runtimes]
-        assert {"alpha", "camaro", "chevelle"} <= set(names)
+        assert {"camino", "barracuda", "hellcat"} <= set(names)
         for rt in runtimes:
-            if rt["runtime"] not in {"alpha", "camaro", "chevelle"}:
+            if rt["runtime"] not in {"camino", "barracuda", "hellcat"}:
                 continue  # newer runtimes (e.g. redeye) skip seed-data assertions
             assert rt["mode"] in VALID_RUNTIME_MODES
             assert "receipts_count" in rt
@@ -136,14 +136,14 @@ class TestSharedReceipts:
                 f"row missing both legacy `id` and new `receipt_id`: {sorted(it)!r}"
             )
             assert "timestamp" in it
-            assert it["runtime"] in {"alpha", "camaro", "chevelle", "redeye"}
+            assert it["runtime"] in {"camino", "barracuda", "hellcat", "gto"}
 
     def test_filter_alpha(self, auth_client):
-        r = auth_client.get(f"{BASE_URL}/api/shared/receipts?runtime=alpha", timeout=20)
+        r = auth_client.get(f"{BASE_URL}/api/shared/receipts?runtime=camino", timeout=20)
         assert r.status_code == 200
         items = r.json()["items"]
         assert len(items) > 0
-        assert all(i["runtime"] == "alpha" for i in items)
+        assert all(i["runtime"] == "camino" for i in items)
 
     def test_filter_invalid(self, auth_client):
         r = auth_client.get(f"{BASE_URL}/api/shared/receipts?runtime=invalid", timeout=20)
@@ -165,10 +165,10 @@ class TestMemoryLabels:
             assert it["label"] in {"safe", "review", "quarantine"}
 
     def test_runtime_filter(self, auth_client):
-        r = auth_client.get(f"{BASE_URL}/api/shared/memory-labels?runtime=camaro", timeout=20)
+        r = auth_client.get(f"{BASE_URL}/api/shared/memory-labels?runtime=barracuda", timeout=20)
         assert r.status_code == 200
         items = r.json()["items"]
-        assert all(i["runtime"] == "camaro" for i in items)
+        assert all(i["runtime"] == "barracuda" for i in items)
 
     def test_label_filter_safe(self, auth_client):
         r = auth_client.get(f"{BASE_URL}/api/shared/memory-labels?label=safe", timeout=20)
@@ -193,14 +193,14 @@ class TestCalibrators:
         items = r.json()["items"]
         assert len(items) > 0
         runtimes = {i["runtime"] for i in items}
-        assert {"alpha", "camaro", "chevelle"}.issubset(runtimes)
+        assert {"camino", "barracuda", "hellcat"}.issubset(runtimes)
 
     def test_alpha_filter(self, auth_client):
-        r = auth_client.get(f"{BASE_URL}/api/shared/calibrators?runtime=alpha", timeout=20)
+        r = auth_client.get(f"{BASE_URL}/api/shared/calibrators?runtime=camino", timeout=20)
         assert r.status_code == 200
         items = r.json()["items"]
         assert len(items) > 0
-        assert all(i["runtime"] == "alpha" for i in items)
+        assert all(i["runtime"] == "camino" for i in items)
 
 
 # ---------- Feature builders ----------
@@ -230,14 +230,14 @@ class TestArtifacts:
         items = r.json()["items"]
         assert len(items) > 0
         runtimes = {i["runtime"] for i in items}
-        assert {"alpha", "camaro", "chevelle"}.issubset(runtimes)
+        assert {"camino", "barracuda", "hellcat"}.issubset(runtimes)
 
     def test_runtime_filter(self, auth_client):
-        r = auth_client.get(f"{BASE_URL}/api/shared/artifacts?runtime=chevelle", timeout=20)
+        r = auth_client.get(f"{BASE_URL}/api/shared/artifacts?runtime=hellcat", timeout=20)
         assert r.status_code == 200
         items = r.json()["items"]
         assert len(items) > 0
-        assert all(i["runtime"] == "chevelle" for i in items)
+        assert all(i["runtime"] == "hellcat" for i in items)
 
 
 # ---------- Admin flags ----------
@@ -278,13 +278,13 @@ class TestDiagnostics:
         seen = set()
         for rt in d["runtimes"]:
             seen.add(rt["runtime"])
-            if rt["runtime"] not in {"alpha", "camaro", "chevelle"}:
+            if rt["runtime"] not in {"camino", "barracuda", "hellcat"}:
                 continue  # newer runtimes may not have seeded log counts
             assert "last_receipt_ts" in rt
             assert "log_count" in rt
             assert isinstance(rt["log_count"], int)
             assert rt["log_count"] > 0  # seed data ensures non-zero
-        assert {"alpha", "camaro", "chevelle"} <= seen
+        assert {"camino", "barracuda", "hellcat"} <= seen
 
 
 # ---------- Per-runtime: Alpha ----------
@@ -297,7 +297,7 @@ class TestAlphaRuntime:
         r = auth_client.get(f"{BASE_URL}/api/runtime/alpha/status", timeout=20)
         assert r.status_code == 200
         d = r.json()
-        assert d["runtime"] == "alpha"
+        assert d["runtime"] == "camino"
         assert d["mode"] in VALID_RUNTIME_MODES
         # `phase6_enforce_enabled` was retired when authority became
         # seat-governed. The field is presence-optional; just verify
@@ -327,7 +327,7 @@ class TestCamaroRuntime:
         r = auth_client.get(f"{BASE_URL}/api/runtime/camaro/status", timeout=20)
         assert r.status_code == 200
         d = r.json()
-        assert d["runtime"] == "camaro"
+        assert d["runtime"] == "barracuda"
         assert d["mode"] in VALID_RUNTIME_MODES
         # Legacy `executor_enforce_enabled` removed under seat-governed
         # authority. Verify the new shape's presence-light contract only.
@@ -354,7 +354,7 @@ class TestChevelleRuntime:
         r = auth_client.get(f"{BASE_URL}/api/runtime/chevelle/status", timeout=20)
         assert r.status_code == 200
         d = r.json()
-        assert d["runtime"] == "chevelle"
+        assert d["runtime"] == "hellcat"
         assert d["mode"] in VALID_RUNTIME_MODES
         # Legacy `authority_enabled` removed under seat-governed
         # authority. Verify shape contract only.

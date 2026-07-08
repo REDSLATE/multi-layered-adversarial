@@ -242,10 +242,10 @@ def test_post_then_get_reflects_latest_stamp(auth_client, base_url):
 
 
 def test_post_sidecar_checkin_also_bumps_heartbeat(auth_client, base_url):
-    """A successful sidecar check-in must refresh
-    /api/heartbeat-status/{brain} immediately. Read via the public
-    heartbeat-status endpoint (no auth) so the test pins the
-    operator-visible behavior, not the storage detail.
+    """A successful sidecar check-in must refresh the runtime status
+    heartbeat immediately. Read via the admin runtime status endpoint
+    (auth required) — the old public `/api/heartbeat-status/{brain}`
+    route was retired 2026-06 in favor of a unified admin surface.
     """
     tok = _camino_token()
     if not tok:
@@ -260,18 +260,24 @@ def test_post_sidecar_checkin_also_bumps_heartbeat(auth_client, base_url):
     )
     assert r.status_code == 200, r.text
 
-    # Read heartbeat-status. Heartbeat age must be < a few seconds —
-    # i.e., the check-in just bumped it.
-    r = requests.get(
-        f"{base_url}/api/heartbeat-status/camino",
+    # Read heartbeat via the admin runtime status endpoint. Heartbeat
+    # age must be < a few seconds — the check-in just bumped it.
+    r = auth_client.get(
+        f"{base_url}/api/admin/runtime/camino/status",
         timeout=15,
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    hb_age = body.get("heartbeat_age_seconds")
-    assert hb_age is not None, body
-    assert hb_age < 30, (
+    hb = ((body.get("payload") or {}).get("heartbeat") or {})
+    # The runtime payload exposes `last_seen` (ISO8601) rather than a
+    # pre-computed age. Freshness = now - last_seen. Must be seconds,
+    # not minutes.
+    last_seen = hb.get("last_seen")
+    assert last_seen, body
+    from datetime import datetime, timezone
+    age = (datetime.now(timezone.utc) - datetime.fromisoformat(last_seen)).total_seconds()
+    assert age < 30, (
         f"sidecar-checkin did not refresh heartbeat row "
-        f"(heartbeat_age_seconds={hb_age!r}); the LIVE/STALE/DEAD "
+        f"(last_seen age = {age:.1f}s); the LIVE/STALE/DEAD "
         f"badge will stay stuck on a check-in-only brain"
     )

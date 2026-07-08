@@ -139,7 +139,7 @@ class TestProvenance:
         _reset_roster(tok)
         p = _propose(tok)
         r = requests.post(
-            f"{BASE_URL}/api/runtime-discussion/positions/{p['position_id']}/stance?runtime=alpha",
+            f"{BASE_URL}/api/runtime-discussion/positions/{p['position_id']}/stance?runtime=camino",
             headers={"X-Runtime-Token": _token("alpha"), "Content-Type": "application/json"},
             json={"stance": "long", "confidence_origin": {"oops": 2.5}},
             timeout=10,
@@ -152,7 +152,7 @@ class TestProvenance:
         _reset_roster(tok)
         p = _propose(tok)
         r = requests.post(
-            f"{BASE_URL}/api/runtime-discussion/positions/{p['position_id']}/stance?runtime=alpha",
+            f"{BASE_URL}/api/runtime-discussion/positions/{p['position_id']}/stance?runtime=camino",
             headers={"X-Runtime-Token": _token("alpha"), "Content-Type": "application/json"},
             json={"stance": "long", "memory_sources": [f"src_{i}" for i in range(40)]},
             timeout=10,
@@ -165,7 +165,7 @@ class TestProvenance:
         _reset_roster(tok)
         p = _propose(tok)
         r = requests.post(
-            f"{BASE_URL}/api/runtime-discussion/positions/{p['position_id']}/stance?runtime=alpha",
+            f"{BASE_URL}/api/runtime-discussion/positions/{p['position_id']}/stance?runtime=camino",
             headers={"X-Runtime-Token": _token("alpha"), "Content-Type": "application/json"},
             json={"stance": "long",
                   "confidence_origin": {f"c{i}": 0.1 for i in range(20)}},

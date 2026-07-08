@@ -76,9 +76,9 @@ class _FakeCursor:
 async def test_outcome_join_health_returns_totals(monkeypatch):
     closed = [
         {"intent_id": "i1", "position_id": "p1", "lane": "equity", "symbol": "AMZN",
-         "closed_at": "2026-02-19T10:00:00Z", "stack": "alpha"},
+         "closed_at": "2026-02-19T10:00:00Z", "stack": "camino"},
         {"intent_id": "i2", "position_id": "p2", "lane": "equity", "symbol": "NVDA",
-         "closed_at": "2026-02-19T11:00:00Z", "stack": "camaro"},
+         "closed_at": "2026-02-19T11:00:00Z", "stack": "barracuda"},
     ]
     joined = [{"intent_id": "i1"}]
 
@@ -105,7 +105,7 @@ async def test_outcome_join_health_returns_totals(monkeypatch):
 async def test_outcome_join_backfill_dry_run(monkeypatch):
     closed = [
         {"intent_id": "i1", "position_id": "p1", "lane": "equity", "symbol": "AMZN",
-         "closed_at": "2026-02-19T10:00:00Z", "stack": "alpha",
+         "closed_at": "2026-02-19T10:00:00Z", "stack": "camino",
          "fills": [{"outcome_label": "win", "pnl_usd": 12.0}]},
     ]
     sidecars_docs = [{"intent_id": "i1"}]  # exists, not yet joined
@@ -130,7 +130,7 @@ async def test_outcome_join_backfill_dry_run(monkeypatch):
 async def test_outcome_join_backfill_skips_already_joined(monkeypatch):
     closed = [
         {"intent_id": "i1", "position_id": "p1", "lane": "equity", "symbol": "AMZN",
-         "closed_at": "2026-02-19T10:00:00Z", "stack": "alpha",
+         "closed_at": "2026-02-19T10:00:00Z", "stack": "camino",
          "fills": [{"outcome_label": "win", "pnl_usd": 12.0}]},
     ]
     sidecars_docs = [{"intent_id": "i1", "outcome_join": {"joined_at": "earlier"}}]
@@ -152,11 +152,11 @@ async def test_outcome_join_backfill_skips_already_joined(monkeypatch):
 @pytest.mark.asyncio
 async def test_scorecard_by_brain_aggregates(monkeypatch):
     sidecars_docs = [
-        {"lane": "equity", "stack": "alpha", "doctrine_version": "gap_and_go_v1",
+        {"lane": "equity", "stack": "camino", "doctrine_version": "gap_and_go_v1",
          "outcome_join": {"outcome_label": "win", "pnl_usd": 20.0}},
-        {"lane": "equity", "stack": "alpha", "doctrine_version": "gap_and_go_v1",
+        {"lane": "equity", "stack": "camino", "doctrine_version": "gap_and_go_v1",
          "outcome_join": {"outcome_label": "loss", "pnl_usd": -10.0}},
-        {"lane": "equity", "stack": "camaro", "doctrine_version": "micro_pullback_v1",
+        {"lane": "equity", "stack": "barracuda", "doctrine_version": "micro_pullback_v1",
          "outcome_join": {"outcome_label": "win", "pnl_usd": 8.0}},
     ]
     fake_db = {"doctrine_sidecars": _FakeCollection(sidecars_docs)}
@@ -165,7 +165,7 @@ async def test_scorecard_by_brain_aggregates(monkeypatch):
     res = await scorecard_by_brain.scorecard_by_brain(None, None, {"email": "x"})
     slices = res["slices"]
     assert len(slices) == 2
-    alpha = next(s for s in slices if s["stack"] == "alpha")
+    alpha = next(s for s in slices if s["stack"] == "camino")
     assert alpha["brain_display_name"] == "Camino"
     assert alpha["samples"] == 2
     assert alpha["wins"] == 1
@@ -173,7 +173,7 @@ async def test_scorecard_by_brain_aggregates(monkeypatch):
     assert alpha["win_rate"] == 0.5
     assert alpha["total_pnl_usd"] == 10.0
 
-    camaro = next(s for s in slices if s["stack"] == "camaro")
+    camaro = next(s for s in slices if s["stack"] == "barracuda")
     assert camaro["brain_display_name"] == "Barracuda"
     assert camaro["samples"] == 1
 
@@ -181,9 +181,9 @@ async def test_scorecard_by_brain_aggregates(monkeypatch):
 @pytest.mark.asyncio
 async def test_scorecard_by_brain_filters_lane(monkeypatch):
     sidecars_docs = [
-        {"lane": "equity", "stack": "alpha", "doctrine_version": "gap_and_go_v1",
+        {"lane": "equity", "stack": "camino", "doctrine_version": "gap_and_go_v1",
          "outcome_join": {"outcome_label": "win", "pnl_usd": 20.0}},
-        {"lane": "crypto", "stack": "redeye", "doctrine_version": "crypto_v1",
+        {"lane": "crypto", "stack": "gto", "doctrine_version": "crypto_v1",
          "outcome_join": {"outcome_label": "win", "pnl_usd": 5.0}},
     ]
     fake_db = {"doctrine_sidecars": _FakeCollection(sidecars_docs)}

@@ -85,14 +85,14 @@ def _resolve(tok: str, oid: str, actual: str) -> None:
 class TestRegimeSchema:
     def test_opinion_accepts_snake_case_regime(self):
         oid = _post_opinion(
-            "camaro", BARRACUDA_TOKEN, stance="observation",
+            "barracuda", BARRACUDA_TOKEN, stance="observation",
             body=f"regime ok {time.time()}", topic="free", regime="trend",
         )
         # Fetch the opinion back and confirm regime persisted.
         tok = _login()
         r = requests.get(
             f"{BASE_URL}/api/shared/opinions",
-            params={"runtime": "camaro", "limit": 50},
+            params={"runtime": "barracuda", "limit": 50},
             headers=_hdr(tok), timeout=20,
         )
         assert r.status_code == 200
@@ -106,7 +106,7 @@ class TestRegimeSchema:
             f"{BASE_URL}/api/ingest/opinion",
             headers={"X-Runtime-Token": BARRACUDA_TOKEN, "Content-Type": "application/json"},
             json={
-                "runtime": "camaro", "topic": "free", "stance": "observation",
+                "runtime": "barracuda", "topic": "free", "stance": "observation",
                 "body": "bad regime", "regime": "Trend Up!",
             },
             timeout=20,
@@ -115,13 +115,13 @@ class TestRegimeSchema:
 
     def test_opinion_optional_regime_persists_as_null(self):
         oid = _post_opinion(
-            "camaro", BARRACUDA_TOKEN, stance="observation",
+            "barracuda", BARRACUDA_TOKEN, stance="observation",
             body=f"no regime {time.time()}", topic="free",
         )
         tok = _login()
         r = requests.get(
             f"{BASE_URL}/api/shared/opinions",
-            params={"runtime": "camaro", "limit": 50},
+            params={"runtime": "barracuda", "limit": 50},
             headers=_hdr(tok), timeout=20,
         )
         items = r.json()["items"]
@@ -141,7 +141,7 @@ class TestCamaroRegimeBreakdown:
         trend_ids = []
         for i, actual in enumerate(["win", "win", "loss"]):
             oid = _post_opinion(
-                "camaro", BARRACUDA_TOKEN, stance="endorse",
+                "barracuda", BARRACUDA_TOKEN, stance="endorse",
                 body=f"endorse trend {suffix}-{i}",
                 topic=f"symbol:R{suffix}T{i}",
                 confidence=0.7, regime="trend",
@@ -153,7 +153,7 @@ class TestCamaroRegimeBreakdown:
         chop_ids = []
         for i, actual in enumerate(["loss", "loss"]):
             oid = _post_opinion(
-                "camaro", BARRACUDA_TOKEN, stance="endorse",
+                "barracuda", BARRACUDA_TOKEN, stance="endorse",
                 body=f"endorse chop {suffix}-{i}",
                 topic=f"symbol:R{suffix}C{i}",
                 confidence=0.6, regime="chop",
@@ -163,7 +163,7 @@ class TestCamaroRegimeBreakdown:
             _resolve(tok, oid, actual)
 
         r = requests.get(
-            f"{BASE_URL}/api/shared/scorecard", params={"runtime": "camaro"},
+            f"{BASE_URL}/api/shared/scorecard", params={"runtime": "barracuda"},
             headers=_hdr(tok), timeout=20,
         )
         assert r.status_code == 200
@@ -200,7 +200,7 @@ class TestChevelleSourceBreakdown:
         ]
         for i, (evidence, actual) in enumerate(fixtures):
             oid = _post_opinion(
-                "chevelle", HELLCAT_TOKEN, stance="observation",
+                "hellcat", HELLCAT_TOKEN, stance="observation",
                 body=f"src test {suffix}-{i}",
                 topic=f"symbol:SRC{suffix}{i}",
                 evidence=evidence, confidence=0.5,
@@ -209,7 +209,7 @@ class TestChevelleSourceBreakdown:
             _resolve(tok, oid, actual)
 
         r = requests.get(
-            f"{BASE_URL}/api/shared/scorecard", params={"runtime": "chevelle"},
+            f"{BASE_URL}/api/shared/scorecard", params={"runtime": "hellcat"},
             headers=_hdr(tok), timeout=20,
         )
         assert r.status_code == 200
