@@ -1,4 +1,42 @@
-## 2026-02-19 (late-late) — Category C test cleanup
+## 2026-02-19 (post-deploy, session tail) — Sentinel-spread NO_DATA bypass fix
+
+### Bug (operator-reported via live UI screenshot #2, post-deploy)
+After tonight's session deployed, the identical-numbers screenshot symptom PERSISTED with a NEW fingerprint:
+- Pre-deploy: Strategist Δ=-0.12/-0.26, Auditor 3 objs cs=0.74, Governor mult=0.15
+- Post-deploy: Strategist Δ=-0.03, Auditor 1 obj cs=0.50, Governor mult=0.65, Executor -80% (3 checks)
+
+Different numbers, same class of bug: every symbol every brain collapsed to the SAME scored REJECT.
+
+### Root cause
+The first NO_DATA short-circuit (added earlier this session in both `base_labels.py` and `large_cap_doctrine.py`) fires when the enricher explicitly failed OR the snapshot has none of the doctrine-facing fields. That closed the "raw brain ship-through" case — but MISSED a stealthier bypass:
+
+**`shared/market_data/spread_enrichment.py` runs unconditionally on the ingest path.** When it can't obtain real quote data, it stamps `spread_bps = SPREAD_BPS_UNKNOWN` (999) and `spread_source = "sentinel_unknown"` on the snapshot (lines 309-310). That leaves `spread_bps` PRESENT in the snapshot even with zero real market evidence, which bypassed the `_no_doctrine_fields` guard. The doctrine then scored against SENTINEL_SPREAD + silent defaults on every other field → identical scored REJECT with the post-deploy fingerprint.
+
+### Fix
+- **`base_labels.py`** — extended the NO_DATA short-circuit to also short-circuit when `spread_source == "sentinel_unknown"`. Distinct `reasons` string (`"no_data:sentinel_spread_no_market_data"`) so operators can distinguish this case from "brain shipped raw" in the audit trail.
+- **`large_cap_doctrine.py`** — same fix, symmetric shape. Both doctrines now agree on what "populated snapshot" means; neither will manufacture verdicts on sentinel data while the other refuses.
+- **`tests/test_sentinel_spread_no_data_short_circuit.py`** — 5 tripwires including a direct reproduction of the operator's post-deploy screenshot (4 symbols × sentinel-spread → all NO_DATA, all seats neutral).
+
+### Verified live (preview)
+```
+AMZN: quality=NO_DATA score=0.0  strat_delta=0.0 gov_mult=1.0 adv_objs=0
+MSFT: quality=NO_DATA score=0.0  strat_delta=0.0 gov_mult=1.0 adv_objs=0
+NVDA: quality=NO_DATA score=0.0  strat_delta=0.0 gov_mult=1.0 adv_objs=0
+TSLA: quality=NO_DATA score=0.0  strat_delta=0.0 gov_mult=1.0 adv_objs=0
+
+--- control: real (non-sentinel) snapshot ---
+NVDA real: quality=A_QUALITY score=1.000 bias=BUY
+```
+
+Sentinel-spread → NO_DATA short-circuit. Real spread → scores normally. Fix requires a redeploy to land on prod.
+
+**71/71 doctrine tests green, 0 lint errors.**
+
+### Note on the deeper halt
+This fix closes the UI-visible identical-numbers symptom. It does NOT address the underlying 11-hour write halt on Camino observed post-deploy — that halt pre-dates tonight's deploy by ~10.5 hours and appears to be a silent write-failure or prod-environmental issue separate from doctrine. Diagnosis of the halt is captured in PRD.md's P0 section.
+
+
+
 
 ### Sweep result: 47 real backend test failures eliminated this session
 

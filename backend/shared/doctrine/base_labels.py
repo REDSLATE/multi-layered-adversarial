@@ -71,8 +71,27 @@ def build_doctrine_labels(snapshot: Dict[str, Any]) -> DoctrineLabels:
     _doctrine_fields = ("gap_pct", "relative_volume", "spread_bps",
                         "price", "pattern", "market_regime")
     _no_doctrine_fields = not any(k in snapshot for k in _doctrine_fields)
-    if enrichment_status in {"failed", "no_symbol"} or _no_doctrine_fields:
-        why = enrichment_status or "snapshot_missing_all_doctrine_fields"
+    # 2026-02-19 (post-deploy fix): sentinel-spread bypass. The
+    # `enrich_snapshot_spread` step runs unconditionally on the
+    # ingest path and stamps `spread_bps = SPREAD_BPS_UNKNOWN` +
+    # `spread_source = "sentinel_unknown"` when no real quote is
+    # available. That left `spread_bps` in the snapshot even with
+    # zero real market evidence, bypassing this short-circuit and
+    # producing identical scored REJECTs across every symbol.
+    # Treat sentinel spread as "no data" so the packet honestly
+    # reports NO_DATA rather than manufacturing a scored verdict.
+    sentinel_spread = (
+        str(snapshot.get("spread_source", "")).lower() == "sentinel_unknown"
+    )
+    if (
+        enrichment_status in {"failed", "no_symbol"}
+        or _no_doctrine_fields
+        or sentinel_spread
+    ):
+        why = enrichment_status or (
+            "sentinel_spread_no_market_data" if sentinel_spread
+            else "snapshot_missing_all_doctrine_fields"
+        )
         return DoctrineLabels(
             symbol=symbol,
             score=0.0,
