@@ -30,7 +30,7 @@ def test_emission_diagnose_returns_all_four_brains(auth_client, base_url):
     body = r.json()
     assert "rows" in body
     brains = sorted(row["brain"] for row in body["rows"])
-    assert brains == ["alpha", "camaro", "chevelle", "redeye"]
+    assert brains == ["barracuda", "camino", "gto", "hellcat"]
 
 
 @pytest.mark.tripwire
@@ -60,12 +60,12 @@ def test_emission_diagnose_row_shape(auth_client, base_url):
 @pytest.mark.tripwire
 def test_emission_diagnose_single_brain(auth_client, base_url):
     r = auth_client.get(
-        f"{base_url}/api/admin/brain/emission-diagnose/alpha",
+        f"{base_url}/api/admin/brain/emission-diagnose/camino",
         timeout=30,
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["brain"] == "alpha"
+    assert body["brain"] == "camino"
     assert "silent_reasons" in body
 
 

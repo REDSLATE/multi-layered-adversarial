@@ -19,6 +19,7 @@ import AdvisorPerformanceTile from "@/components/AdvisorPerformanceTile";
 import NativeBrainRuntimeTile from "@/components/NativeBrainRuntimeTile";  // 2026-02-23 in-process brain migration
 import BrainInputHealthTile from "@/components/BrainInputHealthTile";  // 2026-02-23 instrument quality
 import HealthcheckTile from "@/components/HealthcheckTile";  // 2026-02-26 post-deploy validation
+import FingerprintDiffPanel from "@/components/FingerprintDiffPanel";  // 2026-02-20 doctrine-change before/after
 // ImposterScanCard removed 2026-02-21: the sidecar HTTP brain plumbing
 // it monitored was deleted (brains run in-process now), and the
 // `/admin/runtime/sidecar-imposter-scan` endpoint went with it — the
@@ -410,6 +411,20 @@ export default function Diagnostics() {
           >
             <PanelErrorBoundary panelName="BracketOutcomeDistributionPanel">
               <BracketOutcomeDistributionPanel />
+            </PanelErrorBoundary>
+          </LazyDetails>
+
+          {/* Fingerprint diff — before/after doctrine-change validation.
+              Reads session_fingerprints; aggregates two ranges into
+              composites and surfaces the deltas (execution_ready_rate,
+              gate_pass_rates, quality_dist, top_fail_reasons). Lazy-
+              mounted because it's operator-triggered (post-deploy). */}
+          <LazyDetails
+            summary="Fingerprint diff · before / after doctrine change (click to load)"
+            testid="lazy-fingerprint-diff"
+          >
+            <PanelErrorBoundary panelName="FingerprintDiffPanel">
+              <FingerprintDiffPanel />
             </PanelErrorBoundary>
           </LazyDetails>
 

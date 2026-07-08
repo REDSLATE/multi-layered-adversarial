@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from auth import get_current_user
 from db import db
 from namespaces import SESSION_FINGERPRINTS
-from shared.session_fingerprint import BRAINS, LANES, run_now
+from shared.session_fingerprint import BRAINS, LANES, diff_fingerprints, run_now
 
 
 router = APIRouter(
@@ -79,3 +79,53 @@ async def trigger_fingerprint_now(
     Useful right after a doctrine change to snapshot immediately
     without waiting for the next scheduled tick."""
     return await run_now()
+
+
+@router.get("/diff")
+async def get_fingerprint_diff(
+    brain: Literal["camino", "barracuda", "hellcat", "gto"] = Query(...),
+    lane: Literal["equity", "crypto"] = Query(...),
+    before_start_ts: str = Query(
+        ..., description="ISO8601 UTC — start of the BEFORE window (inclusive)",
+    ),
+    before_end_ts: str = Query(
+        ..., description="ISO8601 UTC — end of the BEFORE window (inclusive)",
+    ),
+    after_start_ts: str = Query(
+        ..., description="ISO8601 UTC — start of the AFTER window (inclusive)",
+    ),
+    after_end_ts: str = Query(
+        ..., description="ISO8601 UTC — end of the AFTER window (inclusive)",
+    ),
+    top_k: int = Query(5, ge=1, le=20),
+    _user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Diff two ranges of already-computed fingerprints for a
+    (brain, lane) pair.
+
+    Use case: operator changed a doctrine threshold at time T.
+    Diff `[T-2h, T]` against `[T, T+2h]` to see whether the funnel
+    shifted as expected — did execution_ready_rate rise? Did the
+    top_fail_reason for a specific gate drop? Did quality_dist
+    reweight toward A/B?
+
+    Windows are inclusive on both ends. Percentile diffs are
+    approximate (weighted-mean composite); count-based fields
+    (intent_count, dist counts, top-K counts) are exact sums.
+
+    Empty windows: if the fingerprint collection has no coverage
+    for the requested range, `intent_count` will be 0 and deltas
+    will surface that honestly. `windows_used` reports coverage
+    so the operator knows if the diff is meaningful.
+    """
+    try:
+        return await diff_fingerprints(
+            brain=brain, lane=lane,
+            before_start_ts=before_start_ts,
+            before_end_ts=before_end_ts,
+            after_start_ts=after_start_ts,
+            after_end_ts=after_end_ts,
+            top_k=top_k,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc

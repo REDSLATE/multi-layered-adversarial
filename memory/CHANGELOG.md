@@ -1,3 +1,45 @@
+## 2026-02-20 — Fingerprint Diffing Tool + Live Crypto/Equity Telemetry Check-in
+
+### Live telemetry snapshot (at trace time 2026-07-08T13:32Z, pre-market Sun UTC)
+- **Brain liveness (all 4)** — `latest_age_s ≈ 66s`, `last_1h = 8` intents each, `last_24h = 964–1660`. Auto-router `tick_count=9, last_tick 19s ago`. Sentinel healthy.
+- **Fingerprints, equity lane** — 2 intents / 15-min window across all brains; `gate_state_dist = {"blocked": 1.0}`, `quality_dist = {"C_QUALITY": 1.0}`, top_fail_reasons dominated by `gap_below_1_pct` + `relative_volume_below_threshold`. Consistent with market closed (Sunday, no gaps/no rvol) — funnel behaving as designed.
+- **Fingerprints, crypto lane** — `intent_count = 0` across ALL brains for the trailing hour. Crypto seat is assigned (Camino) and 24/7 market is live, yet zero intents are landing in the session_fingerprints crypto bucket. This is EITHER (a) crypto brain not currently emitting due to universe quiet / spread widths / lane-toggle OFF, or (b) a signal-path gap worth tracing. **Deferred: flagged for follow-up.**
+- **Capital ledger** — Both lanes fully unused (`equity: 0/1000, crypto: 0/500`, `reservations: []`). Consistent with 0% execution_ready_rate on equity fingerprints.
+- **Note**: `market_regime_dist` currently shows `{"calm": ...}` — this is from `equity_doctrine.py`'s parabolic-phase enricher stamping the field after `session_features` sets it. Overriding relationship documented; not touched in this session (the new SPY-based `bull/bear/choppy` regime is upstream, gets stamped over downstream). Backlog: unify the two writers.
+
+### Fingerprint Diffing Tool (B — user-requested enhancement)
+
+Purpose: operator changes a doctrine threshold at time T; needs to know within one click whether the funnel shifted as expected — or whether the change accidentally starved a lane. Answers "did execution_ready_rate rise?", "did top_fail_reason for gate X drop off?", "did quality_dist reweight toward A/B?".
+
+**Backend** (`shared/session_fingerprint.py`, appended):
+- `_aggregate_composite()` — sums a list of fingerprint docs into one aggregate. Counts and top-K lists are **exact** sums. Percentiles fall back to **weighted mean** (raw values are no longer available at aggregate time — documented as an approximation in the response `note`).
+- `_diff_percentiles`, `_diff_pct_dict`, `_diff_top_reasons` — pure delta helpers.
+- `diff_fingerprints(brain, lane, before_range, after_range, top_k)` — DB round-trip: loads two ranges of `session_fingerprints` docs and returns `{brain, lane, before, after, deltas, note}`.
+- Doctrine anti-patterns avoided: no smoothing of missing windows (`windows_used` reported honestly), no cross-brain composition (one `(brain, lane)` per call), no recompute from raw intents.
+
+**Endpoint** (`routes/admin_session_fingerprint.py`):
+- `GET /api/admin/fingerprints/diff?brain=&lane=&before_start_ts=&before_end_ts=&after_start_ts=&after_end_ts=&top_k=` — inclusive on both ends, ISO8601 UTC. Returns the composite before/after aggregates + full delta view.
+
+**Frontend** (`components/FingerprintDiffPanel.jsx`, lazy-mounted on `/admin/diagnostics`):
+- Operator picks brain / lane / pivot-ts / ±hours window; UI computes `BEFORE = [pivot−Nh, pivot]`, `AFTER = [pivot, pivot+Nh]` and calls the endpoint.
+- Three-column layout: BEFORE summary · AFTER summary · headline Δ (exec_ready, intent_count, risk_p50). Below that: Δ gate_pass_rates / Δ quality_dist / Δ gate_state_dist, Δ confidence/rvol/gap percentiles, and diffed top-K reason lists with explicit NEW / DROPPED / count-deltas.
+- Color coding: green = improvement (positive delta for exec_ready / gate_pass), red = regression, dim = no-change or null.
+
+**Tests** (`tests/test_session_fingerprint_diff.py`, 14 tests, all green):
+- Composite summation (counts, weighted exec_ready_rate, weighted gate_pass_rates, top-K merges).
+- Pure helper diffs: percentiles (with None-side handling), pct dicts (union-of-keys), top-reason lists (new/dropped/count-deltas).
+- End-to-end DB round-trip: seed BEFORE (all C_QUALITY, 0% exec-ready) vs AFTER (mix of A/B/C, 40% exec-ready) and verify the composite diff surfaces the exact expected shifts.
+- Empty-both-sides, empty-after-only ("did I starve a lane" case), invalid-brain, invalid-lane.
+
+### Legacy assertion drift cleanup (bonus)
+- `tests/test_brain_emission_diagnose.py` — two assertions still checked for the retired brain names `["alpha", "camaro", "chevelle", "redeye"]` and `alpha` on the single-brain path. Updated to the current fleet `["barracuda", "camino", "gto", "hellcat"]` / `camino`. This chips at the P2 "Category C assertion-drift" backlog noted in the last handoff.
+
+### Tests
+- Fingerprint suite: **25/25 green** (11 original + 14 new diff tests).
+- Adjacent suites (capital ledger + wiring, session features, large-cap doctrine, momentum origination): **93/93 green**.
+- Broader repo has pre-existing legacy-name assertion failures (e.g., `test_market_data_keys_proxy` still POSTing to `/keys/camaro`) — those are the P2 backlog and were NOT touched or introduced here.
+
+
 ## 2026-02-20 — Distribution Snapshot Job (session fingerprints) + P1 cadence-drift sentinel
 
 ### P1 finding: no active silent write halt

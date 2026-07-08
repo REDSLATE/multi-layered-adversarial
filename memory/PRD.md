@@ -21,6 +21,10 @@ trading, comprehensive provenance + health tracking.
 
 **✅ 2026-02-20: P2 Distribution Snapshot Job SHIPPED.** `shared/session_fingerprint.py` + 3 admin endpoints under `/api/admin/fingerprints/`. 15-min windows, aligned + idempotent. Captures gate_state / quality / top-labels+reasons+objections / execution_ready_rate / gate_pass_rates / confidence+rvol+gap percentiles / market_regime dist. First live fingerprint showed 6-intent Camino window all C_QUALITY, all blocked on volume — exactly the funnel-choke signal the PRD wanted.
 
+**✅ 2026-02-20: Fingerprint Diffing Tool SHIPPED.** `GET /api/admin/fingerprints/diff` + `FingerprintDiffPanel` lazy-mounted on `/admin/diagnostics`. Aggregates two ranges of fingerprints (BEFORE / AFTER a doctrine change) into composites and surfaces the deltas: exec_ready_rate, gate_pass_rates, quality_dist, top_fail_reasons (with explicit new/dropped/count-deltas), risk_multiplier_p50, confidence+rvol+gap percentiles. Counts are exact sums; percentiles are weighted-mean approximations (documented in response `note`). 14 tests green (25/25 across fingerprint module).
+
+**⚠️ 2026-02-20: OPEN OBSERVATION — Crypto lane silent in fingerprints.** All 4 brains' crypto-lane fingerprints show `intent_count=0` for the trailing hour, despite Camino holding the crypto seat and the market being open 24/7. Not blocking; deferred. First step for future trace: `/api/admin/intents?lane=crypto&limit=50` — if empty, check `_route_one` upstream signal path.
+
 **✅ 2026-02-20: Kraken 1d bar feeder SHIPPED.** `source="kraken_pro"` `tf="1d"` bars now land on boot + hourly poll. Crypto RVOL 20-day baseline gap closed.
 
 **✅ 2026-02-20: Feature Coverage Report tuning SHIPPED.** Stale threshold 120→180min (3× poll interval); `session_features_v2` group updated with `rvol_acceleration`/`trend_score` now-shipped fields.

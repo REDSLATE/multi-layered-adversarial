@@ -415,3 +415,336 @@ async def stop_worker() -> None:
 async def run_now() -> dict:
     """Manual one-shot invocation — used by admin re-trigger."""
     return await _tick()
+
+
+# --------------------------------------------------------------------
+# Fingerprint diffing — before/after doctrine-change validation
+# --------------------------------------------------------------------
+#
+# Aggregates a set of fingerprints (already-computed per-window docs)
+# in a time range into a single composite view, then diffs two of
+# these composites (BEFORE vs AFTER). The diff is meant for the
+# operator question: "I changed threshold X at t=T. Did the funnel
+# shift how I expected, or did I accidentally starve a lane?"
+#
+# This module does NOT recompute from `shared_intents`. It only reads
+# `session_fingerprints`, so `session_fingerprints` must have coverage
+# for the requested windows. If not, the composite's `intent_count`
+# will be zero and the diff surfaces that honestly.
+#
+# Doctrine anti-patterns explicitly avoided:
+#   * No implicit "smoothing" of missing windows — a missing window
+#     stays missing; the composite reports `windows_used` so the
+#     operator sees coverage.
+#   * No cross-brain / cross-lane composition. Diff a single
+#     (brain, lane) pair at a time. Cross-brain rollups are a
+#     different question.
+
+
+def _aggregate_dict_counters(dicts: list[dict]) -> dict:
+    """Sum values across a list of {key: count} dicts."""
+    out: Counter = Counter()
+    for d in dicts:
+        if not isinstance(d, dict):
+            continue
+        for k, v in d.items():
+            if isinstance(v, (int, float)):
+                out[str(k)] += v
+    return dict(out)
+
+
+def _aggregate_top_lists(lists: list[list], top_k: int) -> list[dict]:
+    """Merge a list of `[{key, count}, ...]` fingerprint fields into
+    one top-K list (summed counts)."""
+    merged: Counter = Counter()
+    for lst in lists:
+        if not isinstance(lst, list):
+            continue
+        for item in lst:
+            if not isinstance(item, dict):
+                continue
+            k = item.get("key")
+            c = item.get("count")
+            if k is None or not isinstance(c, (int, float)):
+                continue
+            merged[str(k)] += c
+    return [{"key": k, "count": v} for k, v in merged.most_common(top_k)]
+
+
+def _pct_field(field: dict, total: int) -> dict:
+    """Convert {key: count} into {key: pct} for the given total."""
+    if total <= 0:
+        return {k: 0.0 for k in field}
+    return {k: round(v / total, 4) for k, v in field.items()}
+
+
+def _aggregate_composite(fingerprints: list[dict], top_k: int = 5) -> dict:
+    """Sum a list of fingerprint docs into one composite aggregate.
+
+    Percentiles cannot be exactly recovered from stored fingerprints
+    (raw values are gone), so the composite falls back to a
+    WEIGHTED MEAN of each per-window percentile — a defensible-but-
+    approximate summary. This is documented in the response.
+    """
+    total_intents = sum(int(fp.get("intent_count") or 0) for fp in fingerprints)
+
+    gate_state_dist = _aggregate_dict_counters(
+        [fp.get("gate_state_dist") or {} for fp in fingerprints]
+    )
+    quality_dist = _aggregate_dict_counters(
+        [fp.get("quality_dist") or {} for fp in fingerprints]
+    )
+    market_regime_dist = _aggregate_dict_counters(
+        [fp.get("market_regime_dist") or {} for fp in fingerprints]
+    )
+    top_fail_reasons = _aggregate_top_lists(
+        [fp.get("top_fail_reasons") or [] for fp in fingerprints], top_k
+    )
+    top_objections = _aggregate_top_lists(
+        [fp.get("top_objections") or [] for fp in fingerprints], top_k
+    )
+    top_labels = _aggregate_top_lists(
+        [fp.get("top_labels") or [] for fp in fingerprints], top_k
+    )
+
+    # Execution-ready rate: n-weighted mean across windows.
+    if total_intents > 0:
+        exec_ready_weighted = sum(
+            (fp.get("execution_ready_rate") or 0.0) * (fp.get("intent_count") or 0)
+            for fp in fingerprints
+        )
+        execution_ready_rate = round(exec_ready_weighted / total_intents, 4)
+    else:
+        execution_ready_rate = 0.0
+
+    # Gate pass rates: same n-weighted approach per check name.
+    all_check_names = set()
+    for fp in fingerprints:
+        gpr = fp.get("gate_pass_rates") or {}
+        all_check_names.update(gpr.keys())
+    gate_pass_rates: dict = {}
+    for check in all_check_names:
+        if total_intents == 0:
+            gate_pass_rates[check] = 0.0
+            continue
+        weighted = sum(
+            ((fp.get("gate_pass_rates") or {}).get(check) or 0.0)
+            * (fp.get("intent_count") or 0)
+            for fp in fingerprints
+        )
+        gate_pass_rates[check] = round(weighted / total_intents, 4)
+
+    def _weighted_percentiles(field_name: str) -> dict:
+        keys = ("p10", "p50", "p90")
+        if total_intents == 0:
+            return {k: None for k in keys}
+        out: dict = {}
+        for k in keys:
+            weighted_sum = 0.0
+            weight_total = 0
+            for fp in fingerprints:
+                pct = ((fp.get(field_name) or {}).get(k))
+                n = fp.get("intent_count") or 0
+                if pct is None or n == 0:
+                    continue
+                weighted_sum += pct * n
+                weight_total += n
+            out[k] = round(weighted_sum / weight_total, 4) if weight_total else None
+        return out
+
+    confidence_percentiles = _weighted_percentiles("confidence_percentiles")
+    rvol_percentiles = _weighted_percentiles("rvol_percentiles")
+    gap_pct_percentiles = _weighted_percentiles("gap_pct_percentiles")
+
+    # risk_multiplier: single p50 per window → weighted mean.
+    if total_intents > 0:
+        rm_weighted = 0.0
+        rm_weight = 0
+        for fp in fingerprints:
+            rm = fp.get("risk_multiplier_p50")
+            n = fp.get("intent_count") or 0
+            if rm is None or n == 0:
+                continue
+            rm_weighted += rm * n
+            rm_weight += n
+        risk_multiplier_p50 = (
+            round(rm_weighted / rm_weight, 4) if rm_weight else None
+        )
+    else:
+        risk_multiplier_p50 = None
+
+    return {
+        "windows_used": len(fingerprints),
+        "intent_count": total_intents,
+        "gate_state_dist": gate_state_dist,
+        "gate_state_dist_pct": _pct_field(gate_state_dist, total_intents),
+        "quality_dist": quality_dist,
+        "quality_dist_pct": _pct_field(quality_dist, total_intents),
+        "market_regime_dist": market_regime_dist,
+        "top_labels": top_labels,
+        "top_fail_reasons": top_fail_reasons,
+        "top_objections": top_objections,
+        "execution_ready_rate": execution_ready_rate,
+        "gate_pass_rates": gate_pass_rates,
+        "confidence_percentiles": confidence_percentiles,
+        "rvol_percentiles": rvol_percentiles,
+        "gap_pct_percentiles": gap_pct_percentiles,
+        "risk_multiplier_p50": risk_multiplier_p50,
+    }
+
+
+async def _load_fingerprints_in_range(
+    brain: str, lane: str,
+    start_ts_iso: str, end_ts_iso: str,
+) -> list[dict]:
+    """Load all `session_fingerprints` docs for (brain, lane) whose
+    `window_end_ts` is within [start_ts, end_ts]. Inclusive on both
+    ends — the natural operator intent when picking two timestamps.
+    """
+    cursor = db[SESSION_FINGERPRINTS].find(
+        {
+            "brain": brain,
+            "lane": lane,
+            "window_end_ts": {"$gte": start_ts_iso, "$lte": end_ts_iso},
+        },
+        sort=[("window_end_ts", 1)],
+    )
+    return [r async for r in cursor]
+
+
+def _diff_percentiles(before: dict, after: dict) -> dict:
+    out: dict = {}
+    for k in ("p10", "p50", "p90"):
+        b = before.get(k)
+        a = after.get(k)
+        if b is None or a is None:
+            out[k] = None
+        else:
+            out[k] = round(a - b, 4)
+    return out
+
+
+def _diff_pct_dict(before: dict, after: dict) -> dict:
+    """Delta = after_pct - before_pct for every key present in either."""
+    keys = set(before.keys()) | set(after.keys())
+    return {k: round((after.get(k) or 0.0) - (before.get(k) or 0.0), 4) for k in keys}
+
+
+def _diff_top_reasons(
+    before_top: list[dict], after_top: list[dict],
+) -> dict:
+    """Diff top-K reason lists. Returns:
+        {
+          "new_in_after": [keys only in after],
+          "dropped_from_before": [keys only in before],
+          "count_deltas": {key: delta_count, ...} across the union,
+        }
+    """
+    b_map = {r["key"]: r["count"] for r in before_top if "key" in r}
+    a_map = {r["key"]: r["count"] for r in after_top if "key" in r}
+    new_in_after = sorted(set(a_map) - set(b_map))
+    dropped = sorted(set(b_map) - set(a_map))
+    all_keys = set(b_map) | set(a_map)
+    count_deltas = {k: a_map.get(k, 0) - b_map.get(k, 0) for k in all_keys}
+    return {
+        "new_in_after": new_in_after,
+        "dropped_from_before": dropped,
+        "count_deltas": count_deltas,
+    }
+
+
+async def diff_fingerprints(
+    brain: str, lane: str,
+    before_start_ts: str, before_end_ts: str,
+    after_start_ts: str, after_end_ts: str,
+    top_k: int = 5,
+) -> dict:
+    """Compute a before/after diff of aggregated fingerprints.
+
+    Returns a shape with three keys: `before`, `after`, `deltas`.
+    The composite aggregates are approximations for percentiles
+    (weighted mean) but exact sums for counts / distributions.
+    """
+    if brain not in BRAINS:
+        raise ValueError(f"invalid brain {brain!r}")
+    if lane not in LANES:
+        raise ValueError(f"invalid lane {lane!r}")
+
+    before_docs = await _load_fingerprints_in_range(
+        brain, lane, before_start_ts, before_end_ts,
+    )
+    after_docs = await _load_fingerprints_in_range(
+        brain, lane, after_start_ts, after_end_ts,
+    )
+    before_agg = _aggregate_composite(before_docs, top_k=top_k)
+    after_agg = _aggregate_composite(after_docs, top_k=top_k)
+
+    deltas = {
+        "intent_count": (
+            after_agg["intent_count"] - before_agg["intent_count"]
+        ),
+        "execution_ready_rate": round(
+            after_agg["execution_ready_rate"]
+            - before_agg["execution_ready_rate"], 4,
+        ),
+        "quality_dist_pct": _diff_pct_dict(
+            before_agg["quality_dist_pct"], after_agg["quality_dist_pct"],
+        ),
+        "gate_state_dist_pct": _diff_pct_dict(
+            before_agg["gate_state_dist_pct"], after_agg["gate_state_dist_pct"],
+        ),
+        "gate_pass_rates": _diff_pct_dict(
+            before_agg["gate_pass_rates"], after_agg["gate_pass_rates"],
+        ),
+        "confidence_percentiles": _diff_percentiles(
+            before_agg["confidence_percentiles"],
+            after_agg["confidence_percentiles"],
+        ),
+        "rvol_percentiles": _diff_percentiles(
+            before_agg["rvol_percentiles"],
+            after_agg["rvol_percentiles"],
+        ),
+        "gap_pct_percentiles": _diff_percentiles(
+            before_agg["gap_pct_percentiles"],
+            after_agg["gap_pct_percentiles"],
+        ),
+        "risk_multiplier_p50": (
+            None
+            if before_agg["risk_multiplier_p50"] is None
+            or after_agg["risk_multiplier_p50"] is None
+            else round(
+                after_agg["risk_multiplier_p50"]
+                - before_agg["risk_multiplier_p50"], 4,
+            )
+        ),
+        "top_fail_reasons": _diff_top_reasons(
+            before_agg["top_fail_reasons"], after_agg["top_fail_reasons"],
+        ),
+        "top_labels": _diff_top_reasons(
+            before_agg["top_labels"], after_agg["top_labels"],
+        ),
+        "top_objections": _diff_top_reasons(
+            before_agg["top_objections"], after_agg["top_objections"],
+        ),
+    }
+
+    return {
+        "brain": brain,
+        "lane": lane,
+        "before": {
+            "start_ts": before_start_ts,
+            "end_ts": before_end_ts,
+            **before_agg,
+        },
+        "after": {
+            "start_ts": after_start_ts,
+            "end_ts": after_end_ts,
+            **after_agg,
+        },
+        "deltas": deltas,
+        "note": (
+            "percentile diffs use weighted-mean composites (raw values "
+            "are not retained in session_fingerprints); count-based "
+            "distributions and top-K lists are exact sums."
+        ),
+    }
