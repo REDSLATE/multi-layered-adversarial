@@ -47,6 +47,17 @@ Any additional NO_DATA short-circuit patches, provenance dashboards, or telemetr
    - Add a "last DB-confirmed ingest_ts for this stack" field to `_build_in_process_status` payload
    - Fix the `ingest_ts` cross-type comparison bug in `routes/brain_runtime.py:224-225` (currently uses `.isoformat()` string cutoff — potentially returns inflated counts if `ingest_ts` is Date-typed on prod)
 
+#### Warmup task (P2 — small, do before the P0 build_snapshot extension for a low-cost win)
+**Add per-brain `STRATEGY_SHA` to the identity block.** The current identity panel conflates two different kinds of identity:
+   - **Deploy identity** (correctly shared across brains): `git_sha`, DB, platform, MC URL. `git_sha` is currently stubbed to `"in-process"` — should be the real deploy SHA (separate small fix worth doing while touching this area).
+   - **Brain identity** (must differ per brain): which `strategy.py` is running. NOT surfaced anywhere today, even though the strategy files are physically distinct per brain.
+
+Fix: add `strategy_sha` field to the identity block, computed as `hashlib.sha256(open("shared/brains/<brain>/strategy.py").read_bytes()).hexdigest()[:12]`. Real per-brain differentiation grounded in what's actually different code, not cosmetic name-rendering.
+
+**Drift alert value:** if two brains ever show the same `strategy_sha`, that's a genuine bug (strategy files accidentally converged via bad refactor, symlink, or copy-paste). Consider adding a small assertion at boot: `assert len({strategy_sha(b) for b in KNOWN_BRAINS}) == len(KNOWN_BRAINS), "strategy_sha collision across brains"`.
+
+Precedent: `broker_mode` already differs per brain and does real differentiation work today. Extend that pattern, don't cosmetically rename `git_sha`.
+
 ---
 
 ### ✅ Universe classifier + doctrine router pattern + NO_DATA short-circuits — SHIPPED 2026-02-19
