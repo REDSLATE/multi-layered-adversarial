@@ -30,10 +30,27 @@ from shared.capital.ledger import (
 @pytest.fixture(autouse=True)
 async def _clean_state():
     await db[CAPITAL_LEDGER].delete_many({})
-    await db[SHARED_INTENTS].delete_many({"intent_id": {"$regex": "^ledger-test-"}})
+    # Belt-and-braces cleanup: match both the `ledger-test-` prefix AND
+    # any intent whose broker_order.id is the `"BRO-1"` fixture literal
+    # from `_route_one` monkeypatches below. Some tests build the intent
+    # doc directly (bypassing our `intent_id` naming convention), and
+    # if any such doc reaches gate_state=submitted with broker_order.id
+    # stamped, it leaks into `/api/intents` and shows up on the
+    # operator dashboard as a "trade made today" (2026-07-08 incident).
+    await db[SHARED_INTENTS].delete_many({
+        "$or": [
+            {"intent_id": {"$regex": "^ledger-test-"}},
+            {"broker_order.id": "BRO-1"},
+        ],
+    })
     yield
     await db[CAPITAL_LEDGER].delete_many({})
-    await db[SHARED_INTENTS].delete_many({"intent_id": {"$regex": "^ledger-test-"}})
+    await db[SHARED_INTENTS].delete_many({
+        "$or": [
+            {"intent_id": {"$regex": "^ledger-test-"}},
+            {"broker_order.id": "BRO-1"},
+        ],
+    })
     # Reset cached `shared.<mod>` attributes so downstream test files
     # that patch `sys.modules['shared.<mod>']` (via
     # `test_live_execution_path.py::_apply_patches`) see the patch.

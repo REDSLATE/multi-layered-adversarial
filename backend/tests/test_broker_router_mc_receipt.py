@@ -29,9 +29,27 @@ from shared.broker_router import (
 from shared.broker_symbol_resolver import AssetKey
 from shared.runtime.platform_survival import policy_hash
 
+from db import db as _live_db
+from namespaces import SHARED_INTENTS as _SHARED_INTENTS
+
 
 # Tripwire — this module pins the MC-receipt seal contract.
 pytestmark = pytest.mark.tripwire
+
+
+# The `_FakeAdapter` below returns `broker_order.order_id = "fake-1"`
+# (line 47 in this file) on every simulated fill. If a test writes an
+# intent doc that propagates that broker payload through to
+# `shared_intents`, the row sticks around on the operator dashboard
+# as "SUBMITTED · GLD · barracuda" — see the 2026-07-08 incident. This
+# autouse cleanup deletes any intent still carrying the fixture literal
+# both before and after each test in this module.
+@pytest.fixture(autouse=True)
+async def _purge_fake_broker_orders():
+    q = {"broker_order.order_id": "fake-1"}
+    await _live_db[_SHARED_INTENTS].delete_many(q)
+    yield
+    await _live_db[_SHARED_INTENTS].delete_many(q)
 
 
 class _FakeAdapter:
