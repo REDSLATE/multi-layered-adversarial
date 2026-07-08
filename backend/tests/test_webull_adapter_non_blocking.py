@@ -125,13 +125,20 @@ async def test_submit_market_order_does_not_block_event_loop(monkeypatch):
         f"reached {progress['ticks']} ticks"
     )
     # Submit must have returned a real order envelope. Notional-based
-    # submits go through v2/AMOUNT (the fractional path) → orderId
-    # from the v2 stub. The whole-share path would surface "ORD-1".
+    # submits go through the v2/QTY-decimal fractional path (2026-02-26
+    # doctrine flip from AMOUNT after Webull returned HTTP 417) →
+    # orderId from the v2 stub. The whole-share path would surface
+    # "ORD-1".
     assert order["order_id"] == "ORD-V2-1"
-    # End-to-end should be ~max(0.5s, 0.5s) = ~0.5s, NOT 1.0s
-    # (which would mean it ran serially).
-    assert elapsed < 0.9, (
-        f"submit took {elapsed:.2f}s — likely ran serially (blocking)"
+    # The submit path makes TWO sequential SDK calls (BP fetch via
+    # get_account_balance THEN place_order_v2), each stubbed at 0.5s.
+    # If executor-wrapped correctly they don't block the heartbeat,
+    # but they still run sequentially inside the submit coroutine
+    # → total ~1.0s + overhead. Allow up to 1.5s. What we're proving
+    # is that the loop wasn't STARVED (see heartbeat check above),
+    # not that the two SDK calls somehow ran concurrently.
+    assert elapsed < 1.5, (
+        f"submit took {elapsed:.2f}s — SDK calls likely double-blocked"
     )
 
 

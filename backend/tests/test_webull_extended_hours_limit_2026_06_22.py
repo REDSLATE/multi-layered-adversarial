@@ -35,16 +35,20 @@ def _branch(**kwargs):
 # ── RTH path ──────────────────────────────────────────────────────
 
 
-def test_rth_equity_returns_market_core():
-    """Inside RTH → MARKET / CORE / extended_hours_trading=False.
-    This is the path that was already working before the operator
-    pin."""
-    with patch("shared.market_hours.is_equity_rth", return_value=True):
+def test_rth_equity_returns_limit_core():
+    """Inside RTH → LIMIT / CORE / extended_hours_trading=False.
+    2026-02-26 doctrine flip (operator-pinned): equity always LIMIT
+    because Webull rejects MARKET+AMOUNT/QTY combos with HTTP 417
+    'The time you sent is not supported.' RTH branch uses the tighter
+    50bps default slippage."""
+    with patch("shared.market_hours.is_equity_rth", return_value=True), \
+         patch.dict(os.environ, {"WEBULL_LIMIT_SLIPPAGE_BPS": "50"}):
         order_type, limit_str, session, ext_flag = _branch(
             lane="equity", last_price=150.0, side="BUY",
         )
-    assert order_type == "MARKET"
-    assert limit_str is None
+    assert order_type == "LIMIT"
+    # 150 * (1 + 50/10000) = 150.75
+    assert limit_str == "150.75"
     assert session == "CORE"
     assert ext_flag is False
 
@@ -158,7 +162,8 @@ def test_zero_last_price_falls_back_to_market():
 
 def test_invalid_slippage_env_falls_back_to_default():
     """Garbage in the slippage env var must not raise — fall back
-    to the documented 50-bps default."""
+    to the documented default for the branch. Extended-hours default
+    is 100 bps (wider band because the pre/post book is thinner)."""
     with patch("shared.market_hours.is_equity_rth", return_value=False), \
          patch.dict(os.environ, {
              "WEBULL_EXTENDED_HOURS_SLIPPAGE_BPS": "not-a-number",
@@ -167,20 +172,23 @@ def test_invalid_slippage_env_falls_back_to_default():
         _, limit_str, _, _ = _branch(
             lane="equity", last_price=100.00, side="BUY",
         )
-    # Default 50 bps → 100 * 1.005 = 100.50
-    assert limit_str == "100.50"
+    # Default 100 bps → 100 * 1.01 = 101.00
+    assert limit_str == "101.00"
 
 
-def test_rth_helper_exception_prefers_safe_market_path():
-    """If `is_equity_rth` raises, the branch must NOT promote to LIMIT
-    (we can't classify the window). Falls back to MARKET/CORE so the
-    operator gets a deterministic state."""
+def test_rth_helper_exception_prefers_safe_rth_limit_path():
+    """If `is_equity_rth` raises, the branch assumes RTH (safer:
+    tighter 50bps slippage band). 2026-02-26 doctrine: equity always
+    LIMIT — the previous MARKET/CORE fallback was retired because
+    Webull rejects MARKET+AMOUNT with HTTP 417."""
     with patch("shared.market_hours.is_equity_rth",
-               side_effect=RuntimeError("clock fail")):
+               side_effect=RuntimeError("clock fail")), \
+         patch.dict(os.environ, {"WEBULL_LIMIT_SLIPPAGE_BPS": "50"}):
         order_type, limit_str, session, ext_flag = _branch(
             lane="equity", last_price=100.00, side="BUY",
         )
-    assert order_type == "MARKET"
-    assert limit_str is None
+    assert order_type == "LIMIT"
+    # RTH-assumed fallback → 50bps slippage → 100 * 1.005 = 100.50
+    assert limit_str == "100.50"
     assert session == "CORE"
     assert ext_flag is False

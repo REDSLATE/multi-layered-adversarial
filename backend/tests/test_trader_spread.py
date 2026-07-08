@@ -32,6 +32,12 @@ def fresh_store(tmp_path, monkeypatch):
     monkeypatch.setenv("WEBULL_TOKEN_PATH", str(tmp_path / "webull_token.json"))
     from trader import webull_auth as _wa
     _wa._cache = None
+    # 2026-07-04 added a Mongo mirror fallback in _read_from_disk that
+    # rehydrates the token from Mongo when the disk file is missing.
+    # Neutralize it here so tests using WEBULL_ACCESS_TOKEN env fallback
+    # aren't shadowed by a real production token.
+    monkeypatch.setattr(_wa, "_read_from_mongo", lambda: None)
+    monkeypatch.setattr(_wa, "_write_to_mongo", lambda _p: None)
     # Clear the in-memory cache between tests
     spread._latest.clear()
     yield

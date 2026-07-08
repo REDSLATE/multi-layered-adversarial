@@ -89,8 +89,8 @@ def _unique_topic(prefix: str = "symbol") -> str:
 class TestConflictDetection:
     def test_long_vs_short_creates_conflict(self):
         topic = _unique_topic()
-        a = _post_op("alpha", CAMINO_TOKEN, "long", topic)
-        r = _post_op("redeye", GTO_TOKEN, "short", topic)
+        a = _post_op("camino", CAMINO_TOKEN, "long", topic)
+        r = _post_op("gto", GTO_TOKEN, "short", topic)
         assert len(r["conflicts_detected"]) == 1
         # Validate persisted
         tok = _login()
@@ -98,48 +98,48 @@ class TestConflictDetection:
         c = requests.get(f"{BASE_URL}/api/shared/conflicts/{cid}", headers=_hdr(tok), timeout=20).json()
         assert c["topic"] == topic
         assert c["status"] == "open"
-        assert {p["runtime"] for p in c["participants"]} == {"alpha", "redeye"}
+        assert {p["runtime"] for p in c["participants"]} == {"camino", "gto"}
         assert {p["opinion_id"] for p in c["participants"]} == {a["opinion_id"], r["opinion_id"]}
 
     def test_endorse_vs_veto_creates_conflict(self):
         topic = _unique_topic("regime")
-        _post_op("alpha", CAMINO_TOKEN, "endorse", topic)
-        r = _post_op("camaro", BARRACUDA_TOKEN, "veto", topic)
+        _post_op("camino", CAMINO_TOKEN, "endorse", topic)
+        r = _post_op("barracuda", BARRACUDA_TOKEN, "veto", topic)
         assert len(r["conflicts_detected"]) == 1
 
     def test_agree_vs_disagree_creates_conflict(self):
         topic = _unique_topic("theory")
-        _post_op("alpha", CAMINO_TOKEN, "agree", topic)
-        r = _post_op("redeye", GTO_TOKEN, "disagree", topic)
+        _post_op("camino", CAMINO_TOKEN, "agree", topic)
+        r = _post_op("gto", GTO_TOKEN, "disagree", topic)
         assert len(r["conflicts_detected"]) == 1
 
     def test_neutral_stance_does_not_conflict(self):
         topic = _unique_topic()
-        _post_op("alpha", CAMINO_TOKEN, "long", topic)
+        _post_op("camino", CAMINO_TOKEN, "long", topic)
         # observation is neutral — should NOT trigger a conflict against the long
-        r = _post_op("camaro", BARRACUDA_TOKEN, "observation", topic)
+        r = _post_op("barracuda", BARRACUDA_TOKEN, "observation", topic)
         assert r["conflicts_detected"] == []
 
     def test_same_runtime_does_not_conflict_with_itself(self):
         topic = _unique_topic()
-        _post_op("alpha", CAMINO_TOKEN, "long", topic)
+        _post_op("camino", CAMINO_TOKEN, "long", topic)
         # Alpha posting an opposing stance on its own topic — not a peer conflict
-        r = _post_op("alpha", CAMINO_TOKEN, "short", topic)
+        r = _post_op("camino", CAMINO_TOKEN, "short", topic)
         assert r["conflicts_detected"] == []
 
     def test_different_topic_does_not_conflict(self):
         t1 = _unique_topic()
         t2 = _unique_topic()
-        _post_op("alpha", CAMINO_TOKEN, "long", t1)
-        r = _post_op("redeye", GTO_TOKEN, "short", t2)
+        _post_op("camino", CAMINO_TOKEN, "long", t1)
+        r = _post_op("gto", GTO_TOKEN, "short", t2)
         assert r["conflicts_detected"] == []
 
     def test_idempotent_no_dup_conflict(self):
         # Posting the SAME opposing pair again should not create a duplicate
         # conflict — pair_ids is sorted and used as the dedupe key.
         topic = _unique_topic()
-        a = _post_op("alpha", CAMINO_TOKEN, "long", topic)
-        r1 = _post_op("redeye", GTO_TOKEN, "short", topic)
+        a = _post_op("camino", CAMINO_TOKEN, "long", topic)
+        r1 = _post_op("gto", GTO_TOKEN, "short", topic)
         assert len(r1["conflicts_detected"]) == 1
         # Now alpha tries another opposite — but first opposing pair already
         # exists; another short on same topic from a DIFFERENT alpha opinion
@@ -164,8 +164,8 @@ class TestConflictDetection:
 class TestAutoResolve:
     def test_resolve_one_outcome_does_not_resolve_conflict(self):
         topic = _unique_topic()
-        a = _post_op("alpha", CAMINO_TOKEN, "long", topic)
-        r = _post_op("redeye", GTO_TOKEN, "short", topic)
+        a = _post_op("camino", CAMINO_TOKEN, "long", topic)
+        r = _post_op("gto", GTO_TOKEN, "short", topic)
         cid = r["conflicts_detected"][0]
         out = _resolve(a["opinion_id"], "win")
         assert out["auto_resolved_conflicts"] == []  # waiting on the 2nd
@@ -175,8 +175,8 @@ class TestAutoResolve:
 
     def test_one_win_one_loss_auto_resolves_with_correct_winner(self):
         topic = _unique_topic()
-        a = _post_op("alpha", CAMINO_TOKEN, "long", topic)
-        r = _post_op("redeye", GTO_TOKEN, "short", topic)
+        a = _post_op("camino", CAMINO_TOKEN, "long", topic)
+        r = _post_op("gto", GTO_TOKEN, "short", topic)
         cid = r["conflicts_detected"][0]
         _resolve(a["opinion_id"], "loss")
         out2 = _resolve(r["opinion_id"], "win")
@@ -184,14 +184,14 @@ class TestAutoResolve:
         tok = _login()
         c = requests.get(f"{BASE_URL}/api/shared/conflicts/{cid}", headers=_hdr(tok), timeout=20).json()
         assert c["status"] == "resolved"
-        assert c["winner"] == "redeye"
+        assert c["winner"] == "gto"
         assert c["winning_opinion_id"] == r["opinion_id"]
         assert c["resolution_source"] == "outcomes"
 
     def test_both_losses_auto_stales_no_winner(self):
         topic = _unique_topic()
-        a = _post_op("alpha", CAMINO_TOKEN, "long", topic)
-        r = _post_op("redeye", GTO_TOKEN, "short", topic)
+        a = _post_op("camino", CAMINO_TOKEN, "long", topic)
+        r = _post_op("gto", GTO_TOKEN, "short", topic)
         cid = r["conflicts_detected"][0]
         _resolve(a["opinion_id"], "loss")
         _resolve(r["opinion_id"], "loss")
@@ -206,31 +206,31 @@ class TestAutoResolve:
 class TestManualResolve:
     def test_operator_can_pick_winner(self):
         topic = _unique_topic()
-        a = _post_op("alpha", CAMINO_TOKEN, "long", topic)
-        r = _post_op("redeye", GTO_TOKEN, "short", topic)
+        a = _post_op("camino", CAMINO_TOKEN, "long", topic)
+        r = _post_op("gto", GTO_TOKEN, "short", topic)
         cid = r["conflicts_detected"][0]
         tok = _login()
         m = requests.post(
             f"{BASE_URL}/api/admin/conflicts/{cid}/resolve",
             headers=_hdr(tok),
-            json={"winner": "alpha", "notes": "operator override"},
+            json={"winner": "camino", "notes": "operator override"},
             timeout=20,
         )
         assert m.status_code == 200, m.text
         c = m.json()
         assert c["status"] == "resolved"
-        assert c["winner"] == "alpha"
+        assert c["winner"] == "camino"
         assert c["resolution_source"] == "manual"
 
     def test_resolve_to_non_participant_400(self):
         topic = _unique_topic()
-        _post_op("alpha", CAMINO_TOKEN, "long", topic)
-        r = _post_op("redeye", GTO_TOKEN, "short", topic)
+        _post_op("camino", CAMINO_TOKEN, "long", topic)
+        r = _post_op("gto", GTO_TOKEN, "short", topic)
         cid = r["conflicts_detected"][0]
         tok = _login()
         m = requests.post(
             f"{BASE_URL}/api/admin/conflicts/{cid}/resolve",
-            headers=_hdr(tok), json={"winner": "camaro"}, timeout=20,
+            headers=_hdr(tok), json={"winner": "barracuda"}, timeout=20,
         )
         assert m.status_code == 400
 
@@ -241,19 +241,19 @@ class TestPairScorecard:
     def test_pair_scorecard_returns_decisive_tally(self):
         tok = _login()
         r = requests.get(
-            f"{BASE_URL}/api/shared/conflicts/pair-scorecard?a=alpha&b=redeye",
+            f"{BASE_URL}/api/shared/conflicts/pair-scorecard?a=camino&b=gto",
             headers=_hdr(tok), timeout=20,
         )
         assert r.status_code == 200, r.text
         d = r.json()
-        assert d["pair"] == ["alpha", "redeye"]
+        assert d["pair"] == ["camino", "gto"]
         assert d["decisive"] >= 0
         assert (d["a_wins"] + d["b_wins"]) == d["decisive"]
 
     def test_pair_scorecard_includes_temperature_and_heat(self):
         tok = _login()
         r = requests.get(
-            f"{BASE_URL}/api/shared/conflicts/pair-scorecard?a=alpha&b=redeye",
+            f"{BASE_URL}/api/shared/conflicts/pair-scorecard?a=camino&b=gto",
             headers=_hdr(tok), timeout=20,
         )
         d = r.json()
@@ -270,7 +270,7 @@ class TestPairScorecard:
     def test_pair_scorecard_invalid_runtime(self):
         tok = _login()
         r = requests.get(
-            f"{BASE_URL}/api/shared/conflicts/pair-scorecard?a=alpha&b=ghost",
+            f"{BASE_URL}/api/shared/conflicts/pair-scorecard?a=camino&b=ghost",
             headers=_hdr(tok), timeout=20,
         )
         assert r.status_code == 400
@@ -278,7 +278,7 @@ class TestPairScorecard:
     def test_pair_scorecard_same_runtime(self):
         tok = _login()
         r = requests.get(
-            f"{BASE_URL}/api/shared/conflicts/pair-scorecard?a=alpha&b=alpha",
+            f"{BASE_URL}/api/shared/conflicts/pair-scorecard?a=camino&b=camino",
             headers=_hdr(tok), timeout=20,
         )
         assert r.status_code == 400

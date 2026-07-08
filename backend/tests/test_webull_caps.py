@@ -100,9 +100,11 @@ def test_band_malformed_falls_back_to_default(monkeypatch):
 
 def test_band_uses_buying_power_when_supplied(monkeypatch):
     """2026-02-20: when BP is supplied, the ceiling is BP × pct.
-    Default pct=5%, so BP=$500 → ceiling=$25, NOT the $10 env default."""
+    Pin pct=5% here so this test stays stable across future default
+    changes: BP=$500 × 5% = $25 ceiling."""
     # Raise env cap so it doesn't bind — we want the BP cap to win.
     monkeypatch.setenv("WEBULL_MAX_NOTIONAL_USD", "500")
+    monkeypatch.setenv("WEBULL_PCT_OF_BUYING_POWER", "0.05")
     lo, hi, src = webull_notional_band(buying_power_usd=500.0)
     assert hi == 25.00
     assert src == "buying_power"
@@ -243,10 +245,12 @@ def test_sub_one_dollar_still_blocked(monkeypatch):
 
 def test_dynamic_cap_allows_25_when_bp_500(monkeypatch):
     """Operator's blocked case: $25 intent on AAPL with BP=$500.
-    Default 5% pct × $500 = $25 ceiling → intent at exactly $25 passes."""
+    With pct pinned to 5%, 5% × $500 = $25 ceiling → intent at exactly
+    $25 passes."""
     monkeypatch.setenv("WEBULL_ARMED", "true")
     # Raise env cap so it doesn't bind — we want to verify BP cap wins.
     monkeypatch.setenv("WEBULL_MAX_NOTIONAL_USD", "500")
+    monkeypatch.setenv("WEBULL_PCT_OF_BUYING_POWER", "0.05")
     d = evaluate_webull_order(
         notional_usd=25.00, symbol="AAPL", buying_power_usd=500.0,
     )
@@ -261,6 +265,7 @@ def test_dynamic_cap_blocks_above_bp_pct(monkeypatch):
     fund the account or raise the pct."""
     monkeypatch.setenv("WEBULL_ARMED", "true")
     monkeypatch.setenv("WEBULL_MAX_NOTIONAL_USD", "500")
+    monkeypatch.setenv("WEBULL_PCT_OF_BUYING_POWER", "0.05")
     d = evaluate_webull_order(
         notional_usd=26.00, symbol="AAPL", buying_power_usd=500.0,
     )

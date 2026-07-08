@@ -28,6 +28,13 @@ def fresh_env(tmp_path, monkeypatch):
     monkeypatch.delenv("WEBULL_ACCESS_TOKEN", raising=False)
     monkeypatch.setenv("WEBULL_APP_KEY", "test-key")
     monkeypatch.setenv("WEBULL_APP_SECRET", "test-secret")
+    # 2026-07-04 added a Mongo mirror fallback in _read_from_disk that
+    # rehydrates the token from Mongo when the disk file is missing.
+    # Tests use a tmp_path with no disk file, which would otherwise
+    # restore a real production token from Mongo. Neutralize the
+    # Mongo mirror for the duration of the test.
+    monkeypatch.setattr(webull_auth, "_read_from_mongo", lambda: None)
+    monkeypatch.setattr(webull_auth, "_write_to_mongo", lambda _p: None)
     # Reset the module-level cache between tests
     webull_auth._cache = None
     spread._latest.clear()
