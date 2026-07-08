@@ -1098,3 +1098,218 @@ See `/app/memory/test_credentials.md`.
 - `--diff` mode on `confidence_rebaseline.py` (emits advisory patch
   to `BRAIN_DEFAULTS`; **doctrine-locked as human-applied, never
   auto-applied — see harness sign-off pin above**)
+
+
+---
+
+## P-ITEM: Per-Lane Capital Cap Ledger (Executor Seat Reservation)
+
+### Status: Design scoped, code drafted, NOT YET IMPLEMENTED — iterate before shipping
+
+### Motivation
+Total system capital cap currently has no atomic enforcement across concurrent
+executors. With one executor per lane (equity, crypto) both potentially
+reserving capital concurrently, naive check-then-write allows both to pass
+a "room available" check before either commits — risk of exceeding cap.
+
+### Design decision: split per lane (confirmed)
+Two independent caps, not one shared pool. Equity and crypto never contend
+for the same reservation — zero cross-lane race by construction. Tradeoff
+accepted: an idle lane's headroom cannot absorb overflow demand from the
+other lane.
+
+### Architecture
+- **MC owns the ledger** — `capital_ledger` collection, two docs:
+  `{"_id": "equity_cap", "total": ..., "reserved": ...}` and same for crypto.
+- **Tier 1 (write access)**: one executor per lane. Only the lane's executor
+  calls `reserve_capital(lane, amount, intent_id)` before broker submit.
+  Atomicity comes from Mongo's `find_one_and_update` with a conditional
+  filter (`reserved <= total - amount`) — not from application-level locking.
+- **Tier 2 (read-only)**: Auditor, Governor, Strategist read lane headroom
+  via `get_lane_headroom(lane)` for existing consensus/veto logic. No writes,
+  no race exposure.
+
+### Functions (drafted, in `shared/capital/ledger.py` — not yet created)
+- `init_ledger(db, equity_cap, crypto_cap)` — idempotent upsert on boot
+- `reserve_capital(db, lane, amount, intent_id) -> bool` — atomic reserve,
+  returns False if no room (caller must reject/queue the intent)
+- `release_capital(db, lane, intent_id, amount, reason)` — decrements reserved,
+  logs release reason (`position_closed`, `broker_terminal_reject`, `stale_timeout`)
+- `sweep_stale_reservations(db, lane, max_age_minutes)` — scheduled tick,
+  same pattern as BrainScheduler; releases reservations that were never
+  confirmed or rejected (crashed executor mid-submit)
+- `get_lane_headroom(db, lane) -> dict` — read-only, for Tier 2 roles
+
+### Integration points (not yet wired)
+1. Equity executor: call `reserve_capital(db, "equity", ...)` before
+   existing broker-submit code. On False, reject intent with
+   `REJECTED_CAP_EXCEEDED`, do not reach broker.
+2. Crypto executor: same, `lane="crypto"`.
+3. Broker reject path: hook `release_capital` into the EXISTING P1 broker
+   reconciliation sweep's terminal/transient classification — terminal
+   failures release, transient failures wait for retry before releasing.
+4. Position close: call `release_capital` on realized exit fill confirmation.
+5. Stale sweep: new scheduled task, cadence TBD.
+
+### Scope: LIVE trading only — paper excluded from cap enforcement
+
+- Only intents from lanes/brains at ladder stage `micro_live` or `normal_live`
+  reserve against `capital_ledger`. Ladder stages `observation_only` and
+  `micro_paper` do NOT call `reserve_capital` — no real capital at risk,
+  and paper fills should not consume live headroom.
+- Executor must check the resolved ladder route BEFORE calling
+  `reserve_capital`. The intent's `sizing_provenance` already carries
+  `route ∈ {observe, paper, live_micro, live_normal}` from
+  `sizing_gate.evaluate_sizing_with_ladder()`. Gate:
+  `if route in {"live_micro", "live_normal"}: reserve_capital(...)`.
+  Otherwise the intent proceeds through its existing paper/observe path
+  unchanged.
+- If a (brain, lane) stage promotes from paper → live via the ladder
+  (operator-driven, per existing sign-off governance), it starts
+  participating in the live ledger gate automatically — no separate
+  code path needed, just the existing route check routing it through
+  reserve_capital.
+- Per-lane split still applies WITHIN live: equity_cap and crypto_cap
+  each only reflect the live-stage (brain, lane) tuples currently
+  routed to that lane.
+
+### GROUND TRUTH: BROKER_MODE is per-brain × lane, not lane-wide
+Verified in codebase (2026-02-19):
+- `RISEDUAL_BROKER_MODE` env var (`shared/runtime/platform_survival.py:67`)
+  is a GLOBAL boot-time gate. Must be `"live"` or MC refuses to boot.
+  This is NOT the per-brain mode selector.
+- Per-brain "paper vs live" label seen in identity panel comes from the
+  LADDER STAGE stored per `(brain, lane)` tuple in the `LEARNING_LADDER`
+  collection (`shared/learning_ladder.py:80` — `get_stage(brain, lane)`).
+- Four stages: `observation_only` → `micro_paper` → `micro_live` →
+  `normal_live`. Two brains in the same lane can be at different stages
+  (e.g. Camino equity at `micro_paper` while Barracuda equity at
+  `micro_live`).
+- `sizing_gate._ladder_cap_and_route(stage)` translates stage → route,
+  and the resolved `route` is attached to the intent as
+  `sizing_provenance`. THAT is what the ledger gate reads.
+
+### OPEN QUESTIONS (must resolve before implementation)
+- `max_age_minutes` for stale-reservation sweep — likely differs per lane
+  (equity fills fast, crypto may legitimately sit open longer). Needs a
+  real number, not a guess.
+- Where does `sweep_stale_reservations` run — new BrainScheduler-style task,
+  or folded into an existing scheduled job?
+- Initial `equity_cap` / `crypto_cap` total values — operator-set constants?
+  Where do they live (env var, config doc, admin UI)?
+- Does `REJECTED_CAP_EXCEEDED` need to be distinguished from other REJECT
+  reasons in the doctrine/UI layer, or does it fall into existing REJECT
+  card rendering?
+- Reservation amount source: is `amount = intent.notional` after sizing gate
+  has clamped, or before? Should be AFTER sizing_gate so the ledger reserves
+  the actually-fireable clamped notional, not the brain's requested notional.
+
+### Non-goals (explicit)
+- No shared/unified cap across lanes (rejected — split per lane, confirmed)
+- No per-brain reservation (only one executor per lane reserves; brains
+  within a lane share that lane's single executor seat, but the ROUTE
+  check per intent still filters paper vs live)
+- Not touching existing per-symbol or per-brain risk_check.py limits —
+  this is a NEW total-capital gate, layered on top, not a replacement
+- Not touching existing `sizing_gate` "smallest-wins" logic between
+  `lane_cap`, `micro_live`, and ladder cap — this ledger is ADDITIONAL
+  headroom tracking, not a replacement rail
+
+### Drafted code (reference; not yet placed in `shared/capital/ledger.py`)
+
+```python
+# shared/capital/ledger.py
+
+from datetime import datetime, timezone, timedelta
+from pymongo import ReturnDocument
+
+LEDGER_COLLECTION = "capital_ledger"
+
+def init_ledger(db, equity_cap: float, crypto_cap: float):
+    for lane, cap in [("equity", equity_cap), ("crypto", crypto_cap)]:
+        db[LEDGER_COLLECTION].update_one(
+            {"_id": f"{lane}_cap"},
+            {"$setOnInsert": {
+                "lane": lane,
+                "total": cap,
+                "reserved": 0.0,
+                "updated_at": datetime.now(timezone.utc),
+            }},
+            upsert=True,
+        )
+
+def reserve_capital(db, lane: str, amount: float, intent_id: str) -> bool:
+    doc = db[LEDGER_COLLECTION].find_one({"_id": f"{lane}_cap"})
+    if doc is None:
+        raise ValueError(f"no ledger doc for lane={lane}")
+
+    result = db[LEDGER_COLLECTION].find_one_and_update(
+        {
+            "_id": f"{lane}_cap",
+            "reserved": {"$lte": doc["total"] - amount},
+        },
+        {
+            "$inc": {"reserved": amount},
+            "$set": {"updated_at": datetime.now(timezone.utc)},
+            "$push": {
+                "reservations": {
+                    "intent_id": intent_id,
+                    "amount": amount,
+                    "reserved_at": datetime.now(timezone.utc),
+                    "status": "open",
+                }
+            },
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+    return result is not None
+
+def release_capital(db, lane: str, intent_id: str, amount: float, reason: str):
+    db[LEDGER_COLLECTION].update_one(
+        {"_id": f"{lane}_cap", "reservations.intent_id": intent_id},
+        {
+            "$inc": {"reserved": -amount},
+            "$set": {
+                "updated_at": datetime.now(timezone.utc),
+                "reservations.$.status": "released",
+                "reservations.$.release_reason": reason,
+            },
+        },
+    )
+
+def sweep_stale_reservations(db, lane: str, max_age_minutes: int = 30):
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
+    doc = db[LEDGER_COLLECTION].find_one({"_id": f"{lane}_cap"})
+    for r in doc.get("reservations", []):
+        if r["status"] == "open" and r["reserved_at"] < cutoff:
+            release_capital(db, lane, r["intent_id"], r["amount"], reason="stale_timeout")
+
+def get_lane_headroom(db, lane: str) -> dict:
+    doc = db[LEDGER_COLLECTION].find_one({"_id": f"{lane}_cap"})
+    return {
+        "total": doc["total"],
+        "reserved": doc["reserved"],
+        "available": doc["total"] - doc["reserved"],
+    }
+```
+
+### Executor wiring (reference; not yet placed)
+
+```python
+# in equity executor / crypto executor, before broker submit
+
+route = intent.sizing_provenance.get("route")
+if route in {"live_micro", "live_normal"}:
+    if not reserve_capital(db, lane="equity", amount=intent.notional, intent_id=intent.id):
+        intent.status = "REJECTED_CAP_EXCEEDED"
+        persist(intent)
+        return  # never reaches broker
+
+try:
+    broker_result = submit_to_broker(intent)
+except TerminalBrokerError as e:
+    if route in {"live_micro", "live_normal"}:
+        release_capital(db, "equity", intent.id, intent.notional, reason="broker_terminal_reject")
+    raise
+# transient errors: leave reserved, existing retry-cap logic handles it
+```
