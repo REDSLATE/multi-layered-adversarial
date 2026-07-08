@@ -1360,3 +1360,106 @@ except TerminalBrokerError:
     raise
 # transient errors: leave reserved, existing retry-cap logic handles it
 ```
+
+---
+
+## P-ITEM: Session Features Follow-ups (Part 2) — RVOL coverage fix + three regime/velocity fields
+
+### Status: B shipped 2026-02-19 | A scoped (open questions on velocity/rvol_acc data source pending confirmation)
+
+### Context
+Part 1 shipped `gap_pct`, `relative_volume`, `vwap_distance_pct` into
+`session_features` (in `shared/indicators.py`), wired through both emission
+paths (`_build_intent_body` and `external/brains/runner.py::_build_snapshot`).
+Live-verified: doctrine seats now differentiate per symbol (NVDA/ABNB/ETH
+distinct gap/rvol/vwap values, positive Strategist conviction observed).
+
+---
+
+### Follow-up B — RVOL history window fix — ✅ SHIPPED
+
+**Problem:** `relative_volume` needed a 20-day baseline, but the snapshot
+window was 300 five-minute bars (~25 hours, 3-4 sessions). Only 29/790
+symbols (3.7%) had enough window to compute the ratio; the rest returned
+`None`.
+
+**Fix shipped:**
+1. `session_features(bars, prior_session_volumes=None)` — RVOL prefers
+   injected daily baseline over intraday-derived, backward-compatible
+   fallback preserved.
+2. `_fetch_daily_volume_baseline(symbol, limit=20)` in `shared/technicals.py`
+   — reads `shared_ohlcv_bars@tf=1d`, excludes today's bar, multi-source safe.
+3. `_recompute_snapshot` fetches + threads baseline when `tf != "1d"`,
+   wrapped in try/except (degrades to intraday-derived RVOL on fetch
+   failure, does not crash the snapshot).
+4. `build_snapshot(bars, prior_session_volumes=None)` — param threaded,
+   docstring updated.
+5. Neutral brain wire (5b, chosen over 5a): MC's `/technical` endpoint
+   now attaches `daily_volume_baseline`; neutral brain uses its own fresh
+   intraday `today_vol` as numerator + the daily baseline as denominator.
+   Rejected 5a (passthrough of MC's cached RVOL) because it would be
+   one refresh-cycle stale.
+6. One-time refresh script run against 790 existing snapshots.
+7. 8 new tests: baseline provided + non-zero, baseline with <3 non-zero
+   values (fallback), empty baseline (fallback), mixed-zero filtering.
+
+**Concurrency:** read-only lookup against `shared_ohlcv_bars`, no
+write-back — no race/lock concern, confirmed safe under concurrent
+brain ticks.
+
+**Result:** 83/83 tests green (8 new). Live universe (14 symbols) equity
+RVOL coverage: 0/11 → 11/11 (100%). Full symbol universe: 3.7% → 86%.
+
+**Residual gap (new follow-up, not blocking):** crypto RVOL still uses
+intraday-fallback — `shared_ohlcv_bars` has no crypto `tf=1d` bars yet.
+Kraken can emit them; needs a small feeder addition. Scope this as its
+own small item when picked up.
+
+**Also noted, non-blocking:** 552 Thinkorswim synthetic test rows sitting
+in the collection with no doctrine downstream — safe to sweep whenever,
+no urgency.
+
+---
+
+### Follow-up A — Add market_regime, velocity_5m, rvol_acceleration — SCOPED, NOT STARTED
+
+**market_regime** — bull/bear/choppy classifier, SPY-based, ~20-day trend +
+realized volatility. NOT per-symbol — one shared value across all intents
+ingesting in the same window. Governor uses it to modulate risk
+(RISK_DOWN in choppy tape).
+
+  - OPEN QUESTION: compute fresh per intent (redundant — 4 brains tick
+    independently, value doesn't vary by symbol), or cache with a short
+    TTL (e.g. 5 min) so all brains read the same precomputed value?
+    Recommend TTL cache.
+
+**velocity_5m** — rolling recent-moves derivative from last few 5m bar
+close deltas ("tape accelerating" vs "drifting"). Distinct from `gap_pct`.
+Executor uses it as a "don't chase a spike" gate; Strategist uses it as
+momentum confirmation.
+
+  - OPEN QUESTION: confirm the 5m bars needed are already available in
+    the same bar-cache pipeline `session_features` reads from, or if this
+    needs its own new query pattern (like B's daily-bar side-lookup).
+
+**rvol_acceleration** — second derivative of relative_volume: RVOL-early-
+session vs RVOL-current, detects "peak participation." Auditor uses it to
+flag entries that would catch the top.
+
+  - OPEN QUESTION: confirm whether early-session RVOL snapshot is already
+    retained somewhere accessible, or needs new storage/lookup.
+  - Now unblocked on the relative_volume side — B shipped, so RVOL is
+    reliably populated (86% overall, 100% live universe) for acceleration
+    deltas to be meaningful. Still blocked on the open question above.
+
+**Cost estimate:** ~150 lines + 3 new test classes. PENDING confirmation
+of the two open questions — "same wire-through as Part 1" may undersell
+scope if either field needs a new query/cache pattern.
+
+### Non-goals (explicit)
+- Not stretching the intraday snapshot window to cover 20 days (storage
+  cost rejected in favor of daily-bar side-lookup — approach validated,
+  now shipped)
+- Not backfilling crypto `tf=1d` bars in this pass (separate small
+  follow-up, noted above, not blocking)
+
