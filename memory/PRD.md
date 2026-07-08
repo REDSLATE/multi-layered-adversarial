@@ -58,6 +58,28 @@ Fix: add `strategy_sha` field to the identity block, computed as `hashlib.sha256
 
 Precedent: `broker_mode` already differs per brain and does real differentiation work today. Extend that pattern, don't cosmetically rename `git_sha`.
 
+**✅ SHIPPED this session** (2026-02-19 late-late): `shared/brains/_strategy_identity.py` (uncached, always-correct hash), boot-time collision guard in `server_modules/lifespan.py`, identity block in `routes/brain_runtime.py` now carries `strategy_sha`. All 4 brains show distinct hashes live. 7/7 tripwires green. Rides out with the sentinel-spread fix on next redeploy.
+
+#### Refactor lane (P3 — warmup material for next session, not urgent)
+Ranked by refactor-SAFETY (line count alone lies — some 1000-line files are one coherent concern, some 400-line files bundle 3 unrelated concerns).
+
+**Safe splits — clear seams, low behavior-change risk:**
+- `shared/intents.py` (2102 lines) — extract auto-dry-run hook (lines 72-131, ~60 lines) to `shared/intents/dry_run_hook.py`. Trivially isolated, single entrypoint.
+- `shared/auto_router.py` (1213 lines) — extract broker reconciliation sweep (lines 702-990, ~290 lines) to `shared/auto_router/broker_reconciler.py`. Self-contained, single caller.
+- `shared/roster.py` (917 lines) — extract Pydantic models (lines 352+) to `shared/roster/models.py`. Pure classes, no runtime behavior.
+
+**Do NOT refactor yet:**
+- `shared/doctrine/large_cap_doctrine.py` (774 lines) — just added ~200 lines this session; wait for stability before splitting.
+- `shared/technicals.py` (717 lines) — is the P0 target; refactoring now fights the P0 work. Extend first, split later if needed.
+- `server_modules/lifespan.py` (854 lines) — boot-order dependencies not visible from static scans, splitting risks subtle races.
+- `routes/admin_trader.py` (722 lines) — URL-path stability; only touch if intentionally renaming routes.
+- `shared/mc_shelly.py` (656 lines) — audit log, shape must not drift.
+- `shared/broker/webull.py` (1430 lines) — cohesive SDK wrapper; splitting fragments retry/error taxonomy.
+
+**Cohesive-and-happy** (no split recommended): `positions.py`, `opinions.py`, `broker_router.py`, `crypto/kraken.py`.
+
+Recommended warmup sequence if picking up refactor before the P0s: (1) `dry_run_hook` extract, (2) `broker_reconciler` extract, (3) `roster/models` extract. Combined ~30-45 min, removes ~500 lines from the three biggest active files without changing a single function's behavior. Tests-first, verifiable by import-shape parity.
+
 ---
 
 ### ✅ Universe classifier + doctrine router pattern + NO_DATA short-circuits — SHIPPED 2026-02-19
