@@ -653,6 +653,20 @@ async def _read_technical(
             float_shares_millions=float_shares_millions, as_of=None,
         )
 
+        # Part-B RVOL baseline (2026-02-19): attach 20 prior daily
+        # volumes so callers that recompute session_features locally
+        # (e.g., the neutral brain) can use a proper 20-day baseline
+        # instead of the 3.7%-coverage intraday derivation. Empty
+        # list = symbol has no daily bars → caller falls back to
+        # intraday-derived RVOL (with the existing 3-session floor).
+        try:
+            daily_volume_baseline = (
+                [] if tf == "1d"
+                else await _fetch_daily_volume_baseline(symbol)
+            )
+        except Exception:  # noqa: BLE001
+            daily_volume_baseline = []
+
         return {
             "source": source,
             "symbol": symbol,
@@ -661,6 +675,7 @@ async def _read_technical(
             "snapshot": snap,
             "pattern_signals": pattern_signals,
             "pattern_snapshot_id": pattern_snap_id,
+            "daily_volume_baseline": daily_volume_baseline,
             "replayed": False,
             "doctrine": (
                 "Shared technical evidence. Same bars, four brains, four "

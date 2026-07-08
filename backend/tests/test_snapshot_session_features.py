@@ -131,6 +131,126 @@ class TestRelativeVolume:
         assert abs(s["relative_volume"] - 0.5) < 1e-9
 
 
+# ─── prior_session_volumes injection (Part-B fix) ───────────────
+
+
+class TestPriorSessionVolumesInjection:
+    """Injected daily baseline should override the intraday-derived
+    baseline. Fixes the 3.7% → ~99% coverage jump for RVOL — the
+    intraday 300-bar window can't span a full 20 days, but
+    `shared_ohlcv_bars` at tf=1d covers years."""
+
+    def test_injected_baseline_used_when_intraday_too_narrow(self):
+        # Only ONE prior session in the intraday window → intraday-
+        # derived baseline would return None. Injected baseline
+        # rescues it.
+        bars = [
+            _bar("2026-07-06T14:30:00+00:00", 100, 101, 99, 100, 500),
+            _bar("2026-07-07T14:30:00+00:00", 100, 101, 99, 100, 2000),
+        ]
+        s = session_features(
+            bars,
+            prior_session_volumes=[1000, 1000, 1000, 1000, 1000],
+        )
+        # today_vol = 2000, baseline = 1000 → 2.0
+        assert s["relative_volume"] is not None
+        assert abs(s["relative_volume"] - 2.0) < 1e-9
+
+    def test_injected_baseline_takes_precedence_over_intraday_derived(self):
+        # BOTH sources present: injected wins. Intraday priors would
+        # have given baseline=1000, but injected says baseline=500.
+        bars = [
+            _bar("2026-07-01T14:30:00+00:00", 100, 101, 99, 100, 1000),
+            _bar("2026-07-02T14:30:00+00:00", 100, 101, 99, 100, 1000),
+            _bar("2026-07-03T14:30:00+00:00", 100, 101, 99, 100, 1000),
+            _bar("2026-07-06T14:30:00+00:00", 100, 101, 99, 100, 2000),
+        ]
+        s = session_features(bars, prior_session_volumes=[500, 500, 500])
+        # today_vol = 2000, baseline = 500 → 4.0 (not 2.0)
+        assert s["relative_volume"] is not None
+        assert abs(s["relative_volume"] - 4.0) < 1e-9
+
+    def test_empty_injected_baseline_falls_back_to_intraday(self):
+        bars = [
+            _bar("2026-07-01T14:30:00+00:00", 100, 101, 99, 100, 1000),
+            _bar("2026-07-02T14:30:00+00:00", 100, 101, 99, 100, 1000),
+            _bar("2026-07-03T14:30:00+00:00", 100, 101, 99, 100, 1000),
+            _bar("2026-07-06T14:30:00+00:00", 100, 101, 99, 100, 2000),
+        ]
+        s = session_features(bars, prior_session_volumes=[])
+        # Falls through to intraday: baseline=1000, today=2000 → 2.0
+        assert s["relative_volume"] is not None
+        assert abs(s["relative_volume"] - 2.0) < 1e-9
+
+    def test_none_injected_baseline_falls_back_to_intraday(self):
+        bars = [
+            _bar("2026-07-01T14:30:00+00:00", 100, 101, 99, 100, 1000),
+            _bar("2026-07-02T14:30:00+00:00", 100, 101, 99, 100, 1000),
+            _bar("2026-07-03T14:30:00+00:00", 100, 101, 99, 100, 1000),
+            _bar("2026-07-06T14:30:00+00:00", 100, 101, 99, 100, 2000),
+        ]
+        s = session_features(bars, prior_session_volumes=None)
+        assert s["relative_volume"] is not None
+        assert abs(s["relative_volume"] - 2.0) < 1e-9
+
+    def test_injected_baseline_zeros_filtered_out(self):
+        # Zero-volume holidays snuck into the daily bar collection
+        # must not deflate the baseline.
+        bars = [
+            _bar("2026-07-06T14:30:00+00:00", 100, 101, 99, 100, 500),
+            _bar("2026-07-07T14:30:00+00:00", 100, 101, 99, 100, 1000),
+        ]
+        # Only 3 non-zero → passes floor; baseline = 1000
+        s = session_features(
+            bars,
+            prior_session_volumes=[1000, 0, 1000, 0, 1000],
+        )
+        assert s["relative_volume"] is not None
+        assert abs(s["relative_volume"] - 1.0) < 1e-9
+
+    def test_injected_baseline_below_three_nonzero_returns_none(self):
+        # Only 2 non-zero entries — below the 3-session floor.
+        bars = [
+            _bar("2026-07-06T14:30:00+00:00", 100, 101, 99, 100, 500),
+            _bar("2026-07-07T14:30:00+00:00", 100, 101, 99, 100, 1000),
+        ]
+        s = session_features(
+            bars, prior_session_volumes=[1000, 1000, 0, 0, 0],
+        )
+        # Injected path fails floor; intraday derivation only has 1
+        # prior session → also fails. Result: None.
+        assert s["relative_volume"] is None
+
+    def test_injected_baseline_bad_values_coerced(self):
+        # Strings, None, negatives get filtered by the coercion helper.
+        bars = [
+            _bar("2026-07-06T14:30:00+00:00", 100, 101, 99, 100, 500),
+            _bar("2026-07-07T14:30:00+00:00", 100, 101, 99, 100, 1000),
+        ]
+        s = session_features(
+            bars,
+            prior_session_volumes=[1000, "bad", None, -50, 1000, 1000],
+        )
+        # Non-numerics + negatives dropped; 3 valid non-zero entries left → passes.
+        assert s["relative_volume"] is not None
+        assert abs(s["relative_volume"] - 1.0) < 1e-9
+
+    def test_gap_and_vwap_unaffected_by_baseline_injection(self):
+        # Injected baseline only touches RVOL — gap and VWAP behave
+        # exactly as they do without it.
+        bars = [
+            _bar("2026-07-01T14:30:00+00:00", 100, 101, 99, 100.0, 1000),
+            _bar("2026-07-02T14:30:00+00:00", 102, 103, 101, 102.5, 1000),
+        ]
+        s_plain = session_features(bars)
+        s_inject = session_features(bars, prior_session_volumes=[500, 500, 500])
+        assert s_plain["gap_pct"] == s_inject["gap_pct"]
+        assert s_plain["vwap_distance_pct"] == s_inject["vwap_distance_pct"]
+        # But RVOL should differ (injected passes floor, plain doesn't).
+        assert s_plain["relative_volume"] is None
+        assert s_inject["relative_volume"] is not None
+
+
 # ─── vwap_distance_pct ───────────────────────────────────────────
 
 

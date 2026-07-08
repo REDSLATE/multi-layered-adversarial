@@ -604,7 +604,18 @@ def _build_snapshot(
             # scores. Splice into the snapshot the neutral brain sends,
             # so the doctrine sidecar reads real values instead of the
             # 0.0 fallback.
-            snapshot.update(session_features(bars))
+            #
+            # Part-B fix (2026-02-19): MC now attaches a 20-day daily
+            # volume baseline in `technical.daily_volume_baseline`
+            # (from `shared_ohlcv_bars` at tf=1d). Pass it through so
+            # RVOL uses a proper 20-day denominator instead of the
+            # 3.7%-coverage intraday derivation. Fresh intraday
+            # numerator (today's cumulative volume from our own bars)
+            # + deep daily denominator = ~99% coverage.
+            daily_baseline = technical.get("daily_volume_baseline") or None
+            snapshot.update(
+                session_features(bars, prior_session_volumes=daily_baseline)
+            )
             return snapshot, setup_score
 
     # Cold-start fallback (MC has no bars for this symbol yet).
