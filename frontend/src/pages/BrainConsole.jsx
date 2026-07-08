@@ -75,6 +75,18 @@ function StanceTag({ stance }) {
   return <Badge color={color}>{s.toUpperCase()}</Badge>;
 }
 
+function fmtAgeS(s) {
+  // Human-readable age from seconds — same banding LivePulse uses so
+  // the operator sees "3m ago" instead of "180s ago" when a signal
+  // has been silent for a while.
+  if (s == null) return "—";
+  const n = Math.max(0, Math.round(s));
+  if (n < 90) return `${n}s`;
+  if (n < 3600) return `${Math.round(n / 60)}m`;
+  if (n < 86400) return `${Math.round(n / 3600)}h`;
+  return `${Math.round(n / 86400)}d`;
+}
+
 function PulseStrip({ status, contributionAge }) {
   if (!status) return <LoadingRow />;
   const stateColor =
@@ -91,13 +103,13 @@ function PulseStrip({ status, contributionAge }) {
       />
       <MetricTile
         label="Heartbeat age"
-        value={status.heartbeat_age_seconds != null ? `${Math.round(status.heartbeat_age_seconds)}s` : "—"}
+        value={fmtAgeS(status.heartbeat_age_seconds)}
         hint="cadence ≤ 60s"
         testid="brain-pulse-hb"
       />
       <MetricTile
         label="Sovereign contrib"
-        value={contributionAge != null ? `${Math.round(contributionAge)}s` : "—"}
+        value={fmtAgeS(contributionAge)}
         hint="cadence ≤ 5m"
         color={contributionAge != null && contributionAge < 600 ? "#10B981" : "#F59E0B"}
         testid="brain-pulse-contrib"
@@ -245,7 +257,11 @@ export default function BrainConsole() {
     setErr("");
     try {
       const [s, o, sc, cf, pr, au, rs] = await Promise.all([
-        api.get(`/heartbeat-status/${brain}`),
+        // The old public `/api/heartbeat-status/{brain}` route was
+        // retired in the 2026-06 admin/runtime consolidation. Read
+        // the same signal from the unified admin status endpoint
+        // and map it to the shape the PulseStrip expects.
+        api.get(`/admin/runtime/${brain}/status`),
         api.get("/shared/opinions", { params: { runtime: brain, limit: 10 } }),
         api.get("/shared/scorecard", { params: { runtime: brain } }).catch(() => ({ data: null })),
         api.get("/shared/conflicts", { params: { runtime: brain, limit: 8 } }).catch(() => ({ data: { items: [] } })),
@@ -253,7 +269,40 @@ export default function BrainConsole() {
         api.get("/admin/promotion/state").catch(() => ({ data: { items: [] } })),
         api.get("/admin/roster").catch(() => ({ data: null })),
       ]);
-      setStatus(s.data);
+
+      // Map runtime status → legacy heartbeat-status shape.
+      // The admin endpoint returns { payload: { heartbeat: {...} } }
+      // where heartbeat carries `last_seen` (ISO) and `alive`. Derive
+      // `heartbeat_age_seconds` from `last_seen` (single source of
+      // truth — don't rely on server-side pre-computed age which
+      // isn't in the payload).
+      const hb = (s.data?.payload?.heartbeat) || {};
+      let ageS = null;
+      if (hb.last_seen) {
+        const d = new Date(hb.last_seen);
+        if (!Number.isNaN(d.getTime())) {
+          ageS = Math.max(0, (Date.now() - d.getTime()) / 1000);
+        }
+      }
+      // Connection classifier — matches the semantics the old public
+      // /heartbeat-status/{brain} route used to project.
+      const connected =
+        hb.alive && ageS != null && ageS < 60 ? "connected"
+        : hb.alive && ageS != null && ageS < 300 ? "partial"
+        : "disconnected";
+      setStatus({
+        connected,
+        heartbeat_age_seconds: ageS,
+        last_seen: hb.last_seen || null,
+        // `sovereign_age_s` is seconds since last sovereign contribution
+        // (i.e. how long since this brain last posted a directional
+        // opinion). Surface it under the legacy `contribution_age_seconds`
+        // key the PulseStrip already renders — an amber/green
+        // "≤ 5m" band is more useful to the operator than "—".
+        contribution_age_seconds:
+          typeof hb.sovereign_age_s === "number" ? hb.sovereign_age_s : null,
+      });
+
       setOpinions(o.data?.items || []);
       setScorecard(sc.data);
       setConflicts(cf.data?.items || []);

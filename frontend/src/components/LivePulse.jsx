@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 /**
  * LivePulse — small connection indicator for /runtime/{brain}.
  *
- * Reads `/api/heartbeat-status/{brain}` every 5s and renders:
+ * Reads `/api/admin/runtime/{brain}/status` every 5s and renders:
  *   never  — grey dot, "no heartbeat yet"
  *   fresh  — green pulse, "connected · 21s ago"
  *   stale  — amber, "stale · 4m ago"
@@ -12,7 +12,12 @@ import { api } from "@/lib/api";
  *
  * Designed to sit in the header of the runtime detail page so the
  * operator can see at a glance whether the brain is actually online.
- * No auth — heartbeat-status endpoint is public (banding only, no leak).
+ *
+ * NOTE (2026-06 consolidation): the old public `/api/heartbeat-status/
+ * {brain}` route was retired in favor of the unified admin status
+ * endpoint. That endpoint requires auth — the `api` client adds the
+ * bearer automatically. Response shape is `{payload: {heartbeat: {...}}}`;
+ * we derive age from `heartbeat.last_seen` client-side.
  */
 const STATE_META = {
   never:     { color: "#71717A", label: "no heartbeat yet",   pulse: false },
@@ -42,9 +47,40 @@ export default function LivePulse({ runtime }) {
 
     async function poll() {
       try {
-        const r = await api.get(`/heartbeat-status/${runtime}`);
+        const r = await api.get(`/admin/runtime/${runtime}/status`);
         if (!alive) return;
-        setState(r.data);
+        const hb = (r.data?.payload?.heartbeat) || {};
+        let hbAgeS = null;
+        if (hb.last_seen) {
+          const d = new Date(hb.last_seen);
+          if (!Number.isNaN(d.getTime())) {
+            hbAgeS = Math.max(0, (Date.now() - d.getTime()) / 1000);
+          }
+        }
+        // Bands: <60s connected · <5m partial (heartbeat but stale
+        // opinion cadence) · <15m stale · beyond = dead. `never` when
+        // the heartbeat row simply doesn't exist yet.
+        let connected;
+        if (!hb.last_seen) {
+          connected = "never";
+        } else if (hbAgeS < 60) {
+          connected = "connected";
+        } else if (hbAgeS < 300) {
+          connected = "partial";
+        } else if (hbAgeS < 900) {
+          connected = "stale";
+        } else {
+          connected = "dead";
+        }
+        const svAgeS =
+          typeof hb.sovereign_age_s === "number" ? hb.sovereign_age_s : null;
+        setState({
+          connected,
+          age_seconds: hbAgeS,
+          heartbeat_age_seconds: hbAgeS,
+          contribution_age_seconds: svAgeS,
+          last_seen: hb.last_seen || null,
+        });
       } catch {
         if (alive) setState({ connected: "never", age_seconds: null });
       } finally {
