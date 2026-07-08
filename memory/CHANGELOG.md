@@ -1,3 +1,183 @@
+## 2026-02-19 (session tail) — Witness ladder engine + Polygon flatfiles fix + alpha-based WATCHLIST pathway
+
+### The chain of discoveries
+Operator opened by asking for a Polygon "promotion engine" and pasted a proposed
+tier ladder. Investigation surfaced three nested findings, each requiring a
+different fix:
+
+1. **Layer 1 — Runner missing.** `verifier/witness_resolver.py` existed since
+   2026-07-07 but was TRIGGER-ONLY. `external_source_credibility.polygon`
+   sat at `samples=0` while `external_signals` had 4,846 polygon witness
+   rows accumulated. The engine could work; it just never ran on a
+   schedule.
+
+2. **Layer 2 — Data poisoned.** After building the scheduled runner and
+   letting it tick, the ledger jumped to `samples=2846, wins=1027,
+   losses=1819, orthogonal_win_rate=36%`. Distribution analysis showed
+   ALL 3,980 resolved rows had `resolution_return_bps = 0`. Cause: the
+   `shared_ohlcv_bars` collection stopped landing new bars on 2026-06-10.
+   Every price lookup for a witness dated 2026-06-28+ fell back to the
+   same "last available" bar → p0 == p1 for every row.
+
+3. **Layer 3 — Polygon REST 403.** `feeder_health_audit` showed the
+   polygon equity daily poller had been getting HTTP 403 since 2026-06-11:
+   `"Attempted to request today's data before end of day. Please upgrade
+   your plan."` The operator's plan doesn't authorize "today" grouped-
+   daily; the poller's `_safe_to_pull` logic targeted TODAY after 16:00 ET,
+   which the plan tier rejects.
+
+### What was built + fixed (in order)
+
+#### Verifier scheduled runner + Governor consumer
+- **`verifier/witness_resolver_runner.py`** — background async task
+  (BrainScheduler-pattern) that periodically calls the same
+  `resolve_source(...)` the admin trigger uses. Env-configurable:
+  `WITNESS_RESOLVER_ENABLED`, `WITNESS_RESOLVER_TICK_SEC` (default 900s),
+  `WITNESS_RESOLVER_SOURCES` (default `polygon`), `WITNESS_RESOLVER_HORIZON_HOURS`,
+  `WITNESS_RESOLVER_LIMIT`. Persists last-tick summary to
+  `verifier_runner_state`. Registered in `server_modules/lifespan.py`
+  boot + graceful-shutdown paths.
+- **`verifier/price_fetcher.py`** — extracted the inline price-lookup
+  callable from `routes/admin_external_signals.py::resolve_witnesses`
+  into a shared module. Admin trigger and background runner now share
+  ONE code path — trigger's dry-run diagnostics reflect exactly what
+  the runner will do.
+- **`shared/witness_influence.py`** — new Governor consumer module.
+  Exports `modifier_for_status(tier) -> float` (pure) and async
+  `witness_modifier_for(source) -> float` (DB-backed). Tier ceilings:
+  UNTRUSTED = 0.00, WATCHLIST = 0.05, TRUSTED = 0.15. Env-tunable via
+  `WITNESS_MODIFIER_*`. Default-hostile: unknown tier, missing ledger
+  row, or read error all return 0.0. Also exports
+  `witness_influence_snapshot(sources)` for the admin panel.
+- **`GET /api/admin/verifier/runner-status`** — read-only endpoint
+  that returns runner tick state + tier ceilings per configured source.
+- **Tests:** 32 tests in `tests/test_witness_influence.py` (tier map,
+  env overrides, DB reader default-hostile behavior, snapshot builder)
+  + `tests/test_witness_resolver_runner.py` (env parsing,
+  start/stop idempotency, resolver error swallowing, CancelledError
+  propagation for graceful shutdown).
+
+#### Calibration harness
+- **`verifier/witness_calibration.py`** — read-only "what if?" scanner.
+  `calibrate_thresholds_offline(source, thresholds_bps)` reads stored
+  `resolution_return_bps` and reclassifies at each candidate threshold
+  (milliseconds, no bar refetch). `calibrate_horizons_sampled(...)`
+  refetches p1 at each candidate horizon over a random sample.
+  Never mutates the ledger.
+- **`POST /api/admin/verifier/calibrate/{source}?mode=threshold|horizon&...`**
+  — admin route exposing the sweep.
+- **Env-tunable resolver constants:** `WITNESS_RESOLVER_HORIZON_HOURS`,
+  `WITNESS_DIRECTIONAL_THRESHOLD_BPS`, `WITNESS_HOLD_WINDOW_BPS`.
+  Read once at module load; runner picks them up on boot.
+
+#### Polygon OHLCV pipe fixed via flatfiles
+- **`shared/feeders/polygon_flatfiles.py`** — new feeder that pulls
+  Polygon flatfiles from S3 (`files.massive.com`) instead of the
+  403'd REST grouped-daily endpoint. Path convention:
+  `us_stocks_sip/day_aggs_v1/{YYYY}/{MM}/{YYYY-MM-DD}.csv.gz`.
+  Bucket = `flatfiles`. Auth = SigV4 with dedicated S3 access key
+  + secret (separate from `POLYGON_API_KEY`). Backfill up to
+  `POLYGON_FLATFILES_BACKFILL_DAYS` (default 45) trading days on
+  each tick, targeting only days that don't already have ≥5000 rows
+  in `shared_ohlcv_bars`. Idempotent upserts on (source, symbol, tf, ts) —
+  same key as the REST feeder wrote, so downstream consumers see no
+  change.
+- **`backend/.env` additions:** `POLYGON_FLATFILES_ENABLED=true`,
+  `POLYGON_FLATFILES_ENDPOINT=https://files.massive.com`,
+  `POLYGON_FLATFILES_ACCESS_KEY`, `POLYGON_FLATFILES_SECRET_KEY`,
+  `POLYGON_FLATFILES_BUCKET=flatfiles`,
+  `POLYGON_FLATFILES_POLL_INTERVAL_SEC=3600`,
+  `POLYGON_FLATFILES_BACKFILL_DAYS=45`.
+  (`POLYGON_FEEDER_ENABLED=false` left as-is — REST feeder is disabled,
+  flatfiles takes over as the daily bar source.)
+- Registered in `server_modules/lifespan.py` alongside other data-stack
+  workers, and in the shutdown handler.
+
+#### Ledger reset (poisoned data)
+- Reset `external_source_credibility.polygon` to fresh UNTRUSTED zeros;
+  stamped `reset_at` and `reset_reason` fields for audit trail.
+- `$unset` `resolution_*` fields on all 3,984 previously-resolved
+  polygon witness rows so the resolver reclassifies them against real
+  prices on subsequent ticks.
+
+#### Alpha-based WATCHLIST pathway (2026-02-19 doctrine addition)
+- **`verifier/witness_resolver.py::next_status`** now honors TWO
+  parallel `UNTRUSTED → WATCHLIST` entry pathways:
+    - **WIN-RATE**  `samples ≥ 50   AND  win_rate > 0.50`
+    - **ALPHA**     `samples ≥ 100  AND  verified_alpha ≥ 0.005 (50 bps)`
+  Either promotes. The alpha path exists to catch positive-expectancy
+  asymmetric witnesses (few big wins, many small losses, net positive)
+  that a pure win-rate gate silently rejects.
+- **WATCHLIST demotion** now requires BOTH pathways to fail. A source
+  promoted via alpha at 41% win rate does NOT insta-demote on the next
+  tick just because its win rate is sub-50%.
+- Constants added: `UNTRUSTED_TO_WATCHLIST_ALPHA_MIN_SAMPLES = 100`,
+  `UNTRUSTED_TO_WATCHLIST_ALPHA_MIN = 0.005` (50 bps).
+- Doctrine docstring on `ExternalSourceCredibility` updated to
+  document the dual pathway.
+- 6 new tests in `TestPromotionTransitions` covering the alpha path
+  and dual-path demotion logic. All 16 doctrine tests pass.
+
+### Observable results
+
+**Bar coverage restored.** 17 trading days (2026-06-11 → 2026-07-07),
+~200k bars written on first backfill tick. `feeder=polygon_flatfiles`
+tag identifies source.
+
+**Ledger honest for the first time.** After reset + full re-resolution:
+- `samples = 4092, wins = 1527, losses = 2565`
+- `orthogonal_win_rate = 37.3%`
+- `verified_alpha = +42.25 bps`
+- `status = UNTRUSTED` (holds honestly — 42 bps is under the 50 bps floor)
+
+**Calibration matrix (first real numbers).** Horizon sweep on 400 rows
+old enough for all horizons to have resolved (excludes weekend-artifact
+zeros):
+| Horizon | Win Rate | Avg Alpha |
+|---------|----------|-----------|
+| 24h | 41.1% | +70 bps |
+| 48h | 40.0% | +66 bps |
+| 72h | 39.7% | +53 bps |
+| 96h | 39.2% | +32 bps |
+| 168h | 41.3% | +17 bps |
+
+Polygon is a ~40% win rate + positive-alpha signal at all news-relevant
+horizons. Alpha decays with horizon (news moves are fast, mean-revert).
+24h horizon captures the most alpha per stance.
+
+### Deferred (explicitly documented as follow-ups)
+
+- **(iii) Orthogonality filter** — resolver's MVP shortcut sets
+  `orthogonal_win_rate = raw win_rate`. Full doctrine credits a
+  witness only on calls the brains didn't independently signal.
+  Deferred to a later session.
+- **(iv) Trading-session horizon** — replace raw `+24h` with `+1
+  completed trading session`. Eliminates the ~84% zero-return
+  artifact on the full population (weekends / holidays fall inside
+  the 24h wall-clock window, produce p0 == p1). Deferred.
+- **P0 return — snapshot enrichment** — extend `build_snapshot` to
+  compute `gap_pct`, `relative_volume`, `market_regime`,
+  `vwap_distance_pct`, `velocity_5m`, `rvol_acceleration` and thread
+  them into `_build_intent_body`. This is the actual root cause of
+  the on-screen 0% intents with identical −12/−30/−85/−80 across
+  Hellcat/Camino. Witness promotion does NOT solve this — the
+  doctrine seats read snapshot fields, not witness rows.
+
+### Anti-patterns explicitly rejected this session
+
+- Tuning parameters to make Polygon's number bigger (trust-by-vibes).
+  The 42 bps alpha genuinely fails the 50 bps floor — Polygon holds
+  at UNTRUSTED honestly. Once (iv) removes the weekend zeros, alpha
+  will move toward +70 bps and promote naturally.
+- Migrating the 3-tier ladder to a 4-tier ladder (operator's earlier
+  ADVISORY / SUPPORTING proposal). Kept the existing three tiers
+  (UNTRUSTED / WATCHLIST / TRUSTED) and added the numeric ceilings the
+  boolean `influence_allowed` was missing. Schema unchanged, tests
+  unchanged, doctrine consistent.
+
+---
+
+
 ## 2026-02-19 (post-deploy, session tail) — Sentinel-spread NO_DATA bypass fix
 
 ### Bug (operator-reported via live UI screenshot #2, post-deploy)

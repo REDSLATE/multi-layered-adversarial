@@ -187,19 +187,29 @@ class ExternalSourceCredibility(BaseModel):
     Promotion thresholds (operator-tunable later, documented here
     so the design is accountable to itself):
 
-      Phase 1 → 2  (UNTRUSTED → WATCHLIST):
-        samples ≥ 50 AND orthogonal_win_rate > 0.50
+      Phase 1 → 2  (UNTRUSTED → WATCHLIST) — TWO parallel pathways:
+        WIN-RATE  samples ≥ 50   AND  orthogonal_win_rate > 0.50
+        ALPHA     samples ≥ 100  AND  verified_alpha ≥ 0.005  (50 bps)
+
+        Either path promotes. The alpha path exists to catch
+        positive-expectancy asymmetric witnesses (few big wins, many
+        small losses, net positive) that a pure win-rate gate
+        silently rejects. Added 2026-02-19 after Polygon showed
+        ~41% win rate + 70 bps alpha at 24h — legitimately profitable
+        by expectancy, blocked by win-rate-only doctrine.
 
       Phase 2 → 3  (WATCHLIST → TRUSTED):
-        samples ≥ 200 AND verified_alpha > +0.02
+        samples ≥ 200 AND verified_alpha > +0.02  (200 bps)
 
       Phase 3 → 2  (TRUSTED → WATCHLIST, demotion):
         rolling 30-day verified_alpha < 0  OR
         10 consecutive losing trades
 
       Phase 2 → 1  (WATCHLIST → UNTRUSTED, full demotion):
-        90-day verified_alpha < -0.02  OR
-        manipulation flag raised by RoadGuard
+        BOTH entry pathways would now reject:
+            win_rate ≤ 0.50  AND  verified_alpha < 0.005
+        with samples ≥ 50. Symmetric with the smaller entry bar.
+        Also demoted if RoadGuard raises a manipulation flag.
     """
     source: ExternalSignalSource
     status: VerifierStatus = "UNTRUSTED"

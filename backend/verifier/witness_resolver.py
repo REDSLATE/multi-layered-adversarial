@@ -109,10 +109,27 @@ HOLD_WINDOW_BPS = _env_int("WITNESS_HOLD_WINDOW_BPS", 50)
 
 # Promotion thresholds — pinned by the credibility model docstring.
 # Kept here as constants so tests and the resolver read the same numbers.
+#
+# Two parallel pathways into WATCHLIST (2026-02-19, operator directive):
+#   Win-rate path (fast entry, tolerant of small sample):
+#       samples ≥ 50   AND  orthogonal_win_rate > 0.50
+#   Alpha path (larger sample floor, positive-expectancy asymmetric signals):
+#       samples ≥ 100  AND  verified_alpha ≥ 0.005   (50 bps)
+#
+# Rationale: some legitimate signals produce sub-50% win rates but
+# strongly positive expectancy — few big wins, many small losses,
+# net positive. Polygon news at 24h shows this pattern (~41% win,
+# +70 bps avg alpha). A win-rate-only gate silently rejects them.
+# The alpha path exists specifically to catch positive-expectancy
+# asymmetric witnesses without lowering the win-rate bar for
+# symmetric ones.
 UNTRUSTED_TO_WATCHLIST_MIN_SAMPLES = 50
 UNTRUSTED_TO_WATCHLIST_MIN_WIN_RATE = 0.50
+UNTRUSTED_TO_WATCHLIST_ALPHA_MIN_SAMPLES = 100
+UNTRUSTED_TO_WATCHLIST_ALPHA_MIN = 0.005   # 50 bps
+
 WATCHLIST_TO_TRUSTED_MIN_SAMPLES = 200
-WATCHLIST_TO_TRUSTED_MIN_ALPHA = 0.02
+WATCHLIST_TO_TRUSTED_MIN_ALPHA = 0.02      # 200 bps
 
 
 Side = Literal["BUY", "SELL", "HOLD"]
@@ -211,13 +228,29 @@ def next_status(
 ) -> str:
     """Determine the appropriate status given aggregated metrics.
 
-    Monotonic in the promotion direction; also handles demotion when
-    a previously-trusted source falls out of threshold.
+    Two parallel WATCHLIST entry pathways (2026-02-19, operator directive):
+        WIN-RATE PATH   samples ≥ 50   AND  win_rate > 0.50
+        ALPHA PATH      samples ≥ 100  AND  verified_alpha ≥ 0.005 (50 bps)
+    Either path promotes UNTRUSTED → WATCHLIST. Positive-expectancy
+    asymmetric witnesses (few big wins, many small losses, net positive)
+    enter via the alpha path even when their win rate stays below 50%.
+
+    Demotion respects BOTH paths — a WATCHLIST source only falls back
+    to UNTRUSTED when it fails the win-rate AND alpha entry rules
+    (with enough samples to warrant a judgment). Otherwise a witness
+    promoted via alpha would insta-demote for having sub-50% win rate.
     """
     if current_status == "UNTRUSTED":
+        # WIN-RATE path — small sample bar, symmetric-signal witnesses.
         if (
             samples >= UNTRUSTED_TO_WATCHLIST_MIN_SAMPLES
             and orthogonal_win_rate > UNTRUSTED_TO_WATCHLIST_MIN_WIN_RATE
+        ):
+            return "WATCHLIST"
+        # ALPHA path — larger sample bar, positive-expectancy witnesses.
+        if (
+            samples >= UNTRUSTED_TO_WATCHLIST_ALPHA_MIN_SAMPLES
+            and verified_alpha >= UNTRUSTED_TO_WATCHLIST_ALPHA_MIN
         ):
             return "WATCHLIST"
         return "UNTRUSTED"
@@ -228,13 +261,19 @@ def next_status(
             and verified_alpha > WATCHLIST_TO_TRUSTED_MIN_ALPHA
         ):
             return "TRUSTED"
-        # Demotion: if the WATCHLIST source's win rate has fallen
-        # back below the promotion floor, drop it. This is the same
-        # threshold, deliberately — no hysteresis in MVP. Add a
-        # separate demote threshold if the ledger starts flapping.
+        # Demotion: only if BOTH entry pathways would now reject.
+        # Using the smaller sample threshold (50) as the "enough evidence
+        # to demote" floor — symmetric with the fast win-rate entry.
+        winrate_path_fails = (
+            orthogonal_win_rate <= UNTRUSTED_TO_WATCHLIST_MIN_WIN_RATE
+        )
+        alpha_path_fails = (
+            verified_alpha < UNTRUSTED_TO_WATCHLIST_ALPHA_MIN
+        )
         if (
             samples >= UNTRUSTED_TO_WATCHLIST_MIN_SAMPLES
-            and orthogonal_win_rate <= UNTRUSTED_TO_WATCHLIST_MIN_WIN_RATE
+            and winrate_path_fails
+            and alpha_path_fails
         ):
             return "UNTRUSTED"
         return "WATCHLIST"

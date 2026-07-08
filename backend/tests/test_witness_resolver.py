@@ -106,10 +106,13 @@ class TestPromotionTransitions:
     def test_untrusted_stays_untrusted_below_thresholds(self):
         assert next_status("UNTRUSTED", samples=0, orthogonal_win_rate=0.0,
                            verified_alpha=0.0) == "UNTRUSTED"
+        # Win-rate path fails on sample count; alpha path fails on sample count.
         assert next_status("UNTRUSTED", samples=49, orthogonal_win_rate=0.99,
                            verified_alpha=0.5) == "UNTRUSTED"
-        assert next_status("UNTRUSTED", samples=100, orthogonal_win_rate=0.50,
-                           verified_alpha=0.5) == "UNTRUSTED"
+        # Win-rate path fails on strict-greater bound; alpha path fails on
+        # sample count (needs 100).
+        assert next_status("UNTRUSTED", samples=50, orthogonal_win_rate=0.50,
+                           verified_alpha=0.0) == "UNTRUSTED"
 
     def test_untrusted_promotes_to_watchlist_at_threshold(self):
         # Exactly the pinned doctrine: samples≥50 AND win_rate>0.50
@@ -117,6 +120,36 @@ class TestPromotionTransitions:
                            verified_alpha=0.0) == "WATCHLIST"
         assert next_status("UNTRUSTED", samples=500, orthogonal_win_rate=0.60,
                            verified_alpha=0.0) == "WATCHLIST"
+
+    # ─── Alpha-based WATCHLIST pathway (2026-02-19 doctrine addition) ───
+    def test_untrusted_promotes_via_alpha_path(self):
+        # Sub-50% win rate but strong positive expectancy →
+        # WATCHLIST via the alpha pathway. Polygon at 24h looked
+        # exactly like this: ~41% win rate + 70 bps alpha.
+        assert next_status("UNTRUSTED", samples=100, orthogonal_win_rate=0.41,
+                           verified_alpha=0.007) == "WATCHLIST"
+
+    def test_untrusted_alpha_path_needs_100_samples(self):
+        # 99 samples: below alpha-path floor even with strong alpha.
+        assert next_status("UNTRUSTED", samples=99, orthogonal_win_rate=0.41,
+                           verified_alpha=0.02) == "UNTRUSTED"
+        # 100 exactly: promotes.
+        assert next_status("UNTRUSTED", samples=100, orthogonal_win_rate=0.41,
+                           verified_alpha=0.005) == "WATCHLIST"
+
+    def test_untrusted_alpha_path_needs_50bps(self):
+        # 49 bps: below the 50 bps alpha floor.
+        assert next_status("UNTRUSTED", samples=500, orthogonal_win_rate=0.41,
+                           verified_alpha=0.0049) == "UNTRUSTED"
+        # 50 bps exactly: promotes (≥, not strict-greater).
+        assert next_status("UNTRUSTED", samples=500, orthogonal_win_rate=0.41,
+                           verified_alpha=0.005) == "WATCHLIST"
+
+    def test_untrusted_negative_alpha_never_promotes(self):
+        # Even with lots of samples and mediocre-but-not-terrible
+        # win rate, negative alpha keeps the source UNTRUSTED.
+        assert next_status("UNTRUSTED", samples=1000, orthogonal_win_rate=0.45,
+                           verified_alpha=-0.01) == "UNTRUSTED"
 
     def test_watchlist_promotes_to_trusted_at_threshold(self):
         assert next_status("WATCHLIST", samples=200, orthogonal_win_rate=0.51,
@@ -132,10 +165,30 @@ class TestPromotionTransitions:
         assert next_status("WATCHLIST", samples=500, orthogonal_win_rate=0.51,
                            verified_alpha=-0.01) == "WATCHLIST"
 
-    def test_watchlist_demotes_to_untrusted_on_falling_win_rate(self):
-        # Same threshold, no hysteresis in MVP.
+    def test_watchlist_alpha_promoted_source_does_not_insta_demote(self):
+        # A source promoted via the alpha path (win_rate ≤ 0.50) must
+        # NOT be demoted on the next tick just because its win rate
+        # is sub-50%. The demotion rule requires BOTH paths to fail.
+        assert next_status("WATCHLIST", samples=200, orthogonal_win_rate=0.41,
+                           verified_alpha=0.007) == "WATCHLIST"
+
+    def test_watchlist_demotes_when_both_paths_fail(self):
+        # Sub-50% win rate AND sub-50-bps alpha → demote.
+        assert next_status("WATCHLIST", samples=200, orthogonal_win_rate=0.40,
+                           verified_alpha=0.001) == "UNTRUSTED"
+        # Negative alpha AND sub-50% win rate → demote.
         assert next_status("WATCHLIST", samples=100, orthogonal_win_rate=0.40,
-                           verified_alpha=0.0) == "UNTRUSTED"
+                           verified_alpha=-0.02) == "UNTRUSTED"
+
+    def test_watchlist_stays_when_only_winrate_fails(self):
+        # Legit alpha keeps it on WATCHLIST even at sub-50% win rate.
+        assert next_status("WATCHLIST", samples=500, orthogonal_win_rate=0.30,
+                           verified_alpha=0.008) == "WATCHLIST"
+
+    def test_watchlist_stays_when_only_alpha_fails(self):
+        # Good win rate keeps it on WATCHLIST even with weak alpha.
+        assert next_status("WATCHLIST", samples=500, orthogonal_win_rate=0.55,
+                           verified_alpha=0.001) == "WATCHLIST"
 
     def test_trusted_demotes_to_watchlist_on_negative_alpha(self):
         assert next_status("TRUSTED", samples=300, orthogonal_win_rate=0.60,
