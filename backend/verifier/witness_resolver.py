@@ -51,6 +51,7 @@ Explicitly out of scope for MVP (documented as follow-up):
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional
@@ -63,20 +64,46 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────── Configuration ───────────────────────────
 # All tunables live here so an operator can adjust doctrine without
 # hunting through the resolver body.
+#
+# Env overrides (2026-02-19, calibration harness):
+#   WITNESS_RESOLVER_HORIZON_HOURS      → RESOLUTION_HORIZON_HOURS
+#   WITNESS_DIRECTIONAL_THRESHOLD_BPS   → MIN_MOVE_BPS_FOR_DIRECTIONAL_WIN
+#   WITNESS_HOLD_WINDOW_BPS             → HOLD_WINDOW_BPS
+#
+# Env is read once at import time. Tests that need to sweep the
+# thresholds should pass them explicitly through `classify_outcome`'s
+# kwargs (that's the whole point of the kwarg signature — the module
+# constants are just the defaults for the runner path).
 
-RESOLUTION_HORIZON_HOURS = 24
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "witness_resolver: bad %s=%r, using %s", name, raw, default,
+        )
+        return default
+
+
+RESOLUTION_HORIZON_HOURS = _env_int("WITNESS_RESOLVER_HORIZON_HOURS", 24)
 # A witness stance is scored against the price move from
 # `bar_close_ts` to `bar_close_ts + horizon_hours`. Longer horizons
 # credit slower-burning news; shorter horizons credit reaction speed.
 # 24h is a defensible starting point — the news cycle for most single-
 # name headlines is same-day.
 
-MIN_MOVE_BPS_FOR_DIRECTIONAL_WIN = 50
+MIN_MOVE_BPS_FOR_DIRECTIONAL_WIN = _env_int(
+    "WITNESS_DIRECTIONAL_THRESHOLD_BPS", 50,
+)
 # A BUY stance "wins" if the symbol moved +50 bps (0.5%) or more; a
 # SELL "wins" if it moved -50 bps or more. Below this threshold the
 # move is treated as noise (see HOLD rules).
 
-HOLD_WINDOW_BPS = 50
+HOLD_WINDOW_BPS = _env_int("WITNESS_HOLD_WINDOW_BPS", 50)
 # A HOLD stance "wins" if the symbol moved by less than ±50 bps —
 # i.e., HOLD is correct when the market stays quiet.
 

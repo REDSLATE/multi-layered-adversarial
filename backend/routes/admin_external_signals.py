@@ -356,3 +356,106 @@ async def verifier_runner_status(_user=Depends(get_current_user)):
             "default-hostile doctrine."
         ),
     }
+
+
+
+# ──────────────────────── Verifier calibration harness ────────────────────────
+
+
+@router.post("/admin/verifier/calibrate/{source}")
+async def calibrate_witness(
+    source: str,
+    mode: str = Query(
+        default="threshold",
+        description=(
+            "'threshold' — offline sweep over already-resolved rows "
+            "(fast, milliseconds). "
+            "'horizon' — sampled sweep with bar refetch (slow, seconds)."
+        ),
+    ),
+    thresholds_bps: str = Query(
+        default="25,50,100,200",
+        description="csv of directional thresholds (basis points)",
+    ),
+    horizons_hours: str = Query(
+        default="6,12,24,48,72",
+        description="csv of horizons (hours) — used only when mode=horizon",
+    ),
+    sample_size: int = Query(
+        default=500, ge=50, le=2000,
+        description="sample size for horizon mode",
+    ),
+    seed: Optional[int] = Query(
+        default=None,
+        description="RNG seed for reproducible horizon samples",
+    ),
+    _user=Depends(get_current_user),
+):
+    """Read-only calibration sweep — what would this source's win rate
+    be at different (horizon, threshold) combinations?
+
+    Threshold sweep is instant (reads stored `resolution_return_bps`);
+    horizon sweep costs O(sample × horizons) bar fetches.
+
+    Never mutates `external_source_credibility`. Never rewrites
+    `resolution_outcome` on witness rows. The credibility ledger is
+    the resolver's job, not the calibrator's. Operator reads the
+    returned matrix and decides what env values to lock in.
+
+    Response body includes a `cells` array where each cell is one
+    (horizon, threshold) pair with sample counts, win rate, avg
+    return, and a `would_promote_to_watchlist` flag using the same
+    50-samples / >50%-win-rate rule the resolver enforces.
+    """
+    from verifier.witness_calibration import (
+        calibrate_horizons_sampled,
+        calibrate_thresholds_offline,
+    )
+    from verifier.price_fetcher import price_from_ohlcv_bars
+
+    def _parse_int_csv(raw: str) -> list[int]:
+        out: list[int] = []
+        for token in raw.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            try:
+                out.append(int(token))
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"bad integer in csv: {token!r}",
+                )
+        return out
+
+    if mode == "threshold":
+        thresholds = _parse_int_csv(thresholds_bps)
+        if not thresholds:
+            raise HTTPException(
+                status_code=400,
+                detail="thresholds_bps must be a non-empty csv",
+            )
+        return await calibrate_thresholds_offline(
+            source=source,
+            thresholds_bps=thresholds,
+        )
+
+    if mode == "horizon":
+        horizons = _parse_int_csv(horizons_hours)
+        if not horizons:
+            raise HTTPException(
+                status_code=400,
+                detail="horizons_hours must be a non-empty csv",
+            )
+        return await calibrate_horizons_sampled(
+            source=source,
+            horizons_hours=horizons,
+            price_fetcher=price_from_ohlcv_bars,
+            sample_size=sample_size,
+            seed=seed,
+        )
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"unknown mode {mode!r}; use 'threshold' or 'horizon'",
+    )
