@@ -63,6 +63,49 @@ def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, x))
 
 
+def has_volume_evidence(snapshot: Dict[str, Any]) -> tuple[bool, str]:
+    """Dual-path volume gate (2026-02-20 operator directive).
+
+    Path A (strict / full pass):
+        RVOL >= 1.5  → confirmed institutional participation.
+        Returns (True, "ELEVATED_RELATIVE_VOLUME"). Governor sizing
+        unchanged (full).
+
+    Path B (early momentum toehold):
+        RVOL >= 0.9 AND rvol_acceleration >= 0.25
+        AND trend_score > 0 AND vwap_distance_pct >= 0
+        → early momentum participation with volume expanding INTO
+        the move, price trending up, and price above VWAP. Volume
+        isn't fully confirmed yet, so the trade fires at TOEHOLD
+        size only (0.25× governor multiplier).
+        Returns (True, "RVOL_ACCELERATING_CONFIRMED").
+
+    Neither path met → returns (False, "VOLUME_NOT_CONFIRMED"),
+    executor blocks the trade.
+
+    Missing snapshot fields default to 0.0 (safe / non-passing).
+    """
+    rvol = float(snapshot.get("relative_volume") or 0.0)
+    rvol_accel = float(snapshot.get("rvol_acceleration") or 0.0)
+    trend = float(snapshot.get("trend_score") or 0.0)
+    vwap_dist = float(snapshot.get("vwap_distance_pct") or 0.0)
+
+    # Path A: strict volume
+    if rvol >= 1.5:
+        return True, "ELEVATED_RELATIVE_VOLUME"
+
+    # Path B: early momentum participation
+    if (
+        rvol >= 0.9
+        and rvol_accel >= 0.25
+        and trend > 0
+        and vwap_dist >= 0
+    ):
+        return True, "RVOL_ACCELERATING_CONFIRMED"
+
+    return False, "VOLUME_NOT_CONFIRMED"
+
+
 def _build_large_cap_labels(snapshot: Dict[str, Any]) -> _LargeCapLabels:
     """Quality labeler tuned for large-caps. Differences vs
     `base_labels.py`:
@@ -204,15 +247,25 @@ def _build_large_cap_labels(snapshot: Dict[str, Any]) -> _LargeCapLabels:
     else:
         reasons.append("gap_below_1_pct")
 
-    # ── relative volume (relaxed) ──
-    if rvol >= 1.5:
+    # ── relative volume (dual-path: strict OR early-momentum toehold) ──
+    # See `has_volume_evidence` for the full doctrine. Path A gives
+    # full score credit; Path B gives partial credit and downstream
+    # the governor clamps to toehold size.
+    has_volume, volume_reason = has_volume_evidence(snapshot)
+    if volume_reason == "ELEVATED_RELATIVE_VOLUME":
         score += 0.15
         labels.append("ELEVATED_RELATIVE_VOLUME")
         if rvol >= 3.0:
             score += 0.05
             labels.append("HIGH_RELATIVE_VOLUME")
+    elif volume_reason == "RVOL_ACCELERATING_CONFIRMED":
+        # Partial credit — volume is accelerating but not yet at
+        # full-pass threshold. Governor clamps sizing to toehold.
+        score += 0.10
+        labels.append("RVOL_ACCELERATING_CONFIRMED")
     else:
-        reasons.append("relative_volume_below_1_5x")
+        labels.append("VOLUME_NOT_CONFIRMED")
+        reasons.append("relative_volume_below_threshold")
 
     # ── news catalyst (bonus only) ──
     if has_news:
@@ -332,6 +385,7 @@ def _build_large_cap_labels(snapshot: Dict[str, Any]) -> _LargeCapLabels:
     quality_positive_labels = {
         "GAPPER_LARGE_CAP", "STRONG_GAPPER_LARGE_CAP",
         "ELEVATED_RELATIVE_VOLUME", "HIGH_RELATIVE_VOLUME",
+        "RVOL_ACCELERATING_CONFIRMED",
         "NEWS_CATALYST", "MARKET_GREEN_LIGHT",
         # 2026-02-19 momentum-origination signals
         "VWAP_BULL_TILT", "VWAP_STRONG_BULL_TILT",
@@ -599,7 +653,14 @@ def _build_strategist(base, labels, holder):
 
 def _build_adversary(base, labels, holder):
     objections: List[str] = []
-    if "ELEVATED_RELATIVE_VOLUME" not in labels:
+    # Dual-path volume acceptance (2026-02-20): elevated OR the
+    # accelerating-toehold pass both satisfy the adversary's
+    # directional-volume check.
+    _volume_labels = {
+        "ELEVATED_RELATIVE_VOLUME", "HIGH_RELATIVE_VOLUME",
+        "RVOL_ACCELERATING_CONFIRMED",
+    }
+    if not (set(labels) & _volume_labels):
         objections.append("rvol_too_quiet_for_directional")
     if "SPREAD_TOO_WIDE" in labels:
         objections.append("spread_risk")
@@ -666,6 +727,16 @@ def _build_governor(base, labels, holder, snapshot):
     if "BASELINE_ONLY_TOEHOLD" in labels:
         risk_multiplier = min(risk_multiplier, 0.20)
 
+    # ── RVOL_ACCELERATING_CONFIRMED toehold clamp (2026-02-20) ──
+    # Doctrine pin (operator): "Early volume acceleration is not
+    # confirmed volume. Trade it small." When Path B of
+    # has_volume_evidence fired (RVOL >= 0.9 + accelerating + trend
+    # up + above VWAP), governor clamps to 0.25× — enough to take
+    # the toehold without pretending early volume equals full-pass
+    # institutional participation.
+    if "RVOL_ACCELERATING_CONFIRMED" in labels:
+        risk_multiplier *= 0.25
+
     display_status = (
         "RISK_DOWN" if (block_reasons or risk_multiplier < 1.0) else "ALLOW"
     )
@@ -693,13 +764,21 @@ def _build_governor(base, labels, holder, snapshot):
 
 
 def _build_execution_judge(base, labels, holder):
+    # Dual-path volume acceptance (2026-02-20). Either strict full
+    # pass OR the accelerating-toehold pass count as `has_volume`.
+    # Governor separately clamps sizing to toehold in the toehold
+    # case — see `_build_governor`.
+    has_volume = (
+        "ELEVATED_RELATIVE_VOLUME" in labels
+        or "HIGH_RELATIVE_VOLUME" in labels
+        or "RVOL_ACCELERATING_CONFIRMED" in labels
+    )
     checks = {
         "quality_ok": base.quality in {"A_QUALITY", "B_QUALITY", "C_QUALITY"},
         "spread_ok": ("SPREAD_ACCEPTABLE" in labels
                       or "SPREAD_TIGHT" in labels),
         "market_not_weak": "MARKET_WEAK_REDUCE_RISK" not in labels,
-        "has_volume": ("ELEVATED_RELATIVE_VOLUME" in labels
-                       or "HIGH_RELATIVE_VOLUME" in labels),
+        "has_volume": has_volume,
     }
     return {
         "role": "execution_judge",
@@ -755,15 +834,19 @@ DOCTRINE_CARDS: Dict[str, Dict[str, Any]] = {
             "symbol",
             "gap_pct",
             "relative_volume",
+            "rvol_acceleration",
             "has_news",
             "market_regime",
             "spread_bps",
+            "vwap_distance_pct",
         ],
         "risk_flags_read": [
             "MARKET_WEAK_REDUCE_RISK",
             "SPREAD_TOO_WIDE",
             "ELEVATED_RELATIVE_VOLUME",
             "HIGH_RELATIVE_VOLUME",
+            "RVOL_ACCELERATING_CONFIRMED",
+            "VOLUME_NOT_CONFIRMED",
             "NEWS_CATALYST",
         ],
     },

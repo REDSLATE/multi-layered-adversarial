@@ -172,10 +172,11 @@ def session_features(
     bars: list[dict],
     prior_session_volumes: Optional[list[float]] = None,
 ) -> dict:
-    """Compute the three doctrine-facing enrichment fields.
+    """Compute the doctrine-facing session enrichment fields.
 
     Reads: `o, h, l, c, v, ts` per bar.
     Returns keys: `gap_pct`, `relative_volume`, `vwap_distance_pct`,
+    `rvol_acceleration`, `trend_score`,
     plus one advisory diagnostic: `session_bars_seen` (how many bars
     of today's session were used for VWAP).
 
@@ -223,7 +224,9 @@ def session_features(
     if not bars:
         return {
             "gap_pct": None, "relative_volume": None,
-            "vwap_distance_pct": None, "session_bars_seen": 0,
+            "vwap_distance_pct": None,
+            "rvol_acceleration": None, "trend_score": None,
+            "session_bars_seen": 0,
         }
 
     # Group bars by session date, preserving order.
@@ -241,7 +244,9 @@ def session_features(
     if not ordered_dates:
         return {
             "gap_pct": None, "relative_volume": None,
-            "vwap_distance_pct": None, "session_bars_seen": 0,
+            "vwap_distance_pct": None,
+            "rvol_acceleration": None, "trend_score": None,
+            "session_bars_seen": 0,
         }
 
     today = ordered_dates[-1]
@@ -337,10 +342,52 @@ def session_features(
             except (TypeError, ValueError):
                 vwap_distance_pct = None
 
+    # ─── rvol_acceleration ───
+    # Doctrine pin (2026-02-20): "Volume expanding INTO the move is
+    # the origination fingerprint." Compute as the difference between
+    # RVOL at the most recent bar vs RVOL LOOKBACK bars earlier, both
+    # measured against the SAME baseline. Positive = accelerating,
+    # negative = contracting. Requires a real baseline + at least
+    # LOOKBACK+1 bars in today's session so a delta is meaningful.
+    #
+    # Formula:
+    #   cum_now  = sum of today's bar volumes up to bar[-1]
+    #   cum_prev = sum of today's bar volumes up to bar[-1-LOOKBACK]
+    #   rvol_acceleration = (cum_now - cum_prev) / baseline
+    # This measures the FRESH volume in the last LOOKBACK bars as a
+    # fraction of the daily baseline — the natural "is volume
+    # accelerating right now?" signal without needing a rolling
+    # window state.
+    LOOKBACK = 5
+    rvol_acceleration: Optional[float] = None
+    if len(baseline_vols) >= 3 and len(today_bars) > LOOKBACK:
+        baseline = sum(baseline_vols) / len(baseline_vols)
+        if baseline > 0:
+            cum_now = _session_vol(today_bars)
+            cum_prev = _session_vol(today_bars[:-LOOKBACK])
+            rvol_acceleration = (cum_now - cum_prev) / baseline
+
+    # ─── trend_score ───
+    # Short-term directional slope over the last LOOKBACK bars in
+    # today's session. Positive = up-trend, negative = down-trend.
+    # Value is fractional (e.g. 0.005 = +0.5% over LOOKBACK bars).
+    # Requires ≥ LOOKBACK+1 bars in today's session for a real delta.
+    trend_score: Optional[float] = None
+    if len(today_bars) > LOOKBACK:
+        try:
+            c_now = float(today_bars[-1].get("c"))
+            c_prev = float(today_bars[-1 - LOOKBACK].get("c"))
+            if c_prev > 0:
+                trend_score = (c_now - c_prev) / c_prev
+        except (TypeError, ValueError):
+            trend_score = None
+
     return {
         "gap_pct": gap_pct,
         "relative_volume": relative_volume,
         "vwap_distance_pct": vwap_distance_pct,
+        "rvol_acceleration": rvol_acceleration,
+        "trend_score": trend_score,
         "session_bars_seen": len(today_bars),
     }
 
