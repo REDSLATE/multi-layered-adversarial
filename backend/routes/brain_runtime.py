@@ -238,6 +238,20 @@ async def _build_in_process_status(brain: str) -> Dict[str, Any]:
         by_action[str(row.get("_id") or "UNK").upper()] = int(row.get("count", 0))
     total_intents = await db[SHARED_INTENTS].count_documents({"stack_canonical": brain_c})
 
+    # DB-confirmed latest write. 2026-02-20 (operator directive): the
+    # 24h/1h counts hide silent write halts — a brain can stop
+    # inserting for hours while the aggregate counts still look
+    # healthy from earlier in the window. `latest_intent_ts` +
+    # `latest_intent_age_s` surface the raw last-insert time so the
+    # operator sees "no writes in the last 22 minutes" directly.
+    latest_intent = await db[SHARED_INTENTS].find_one(
+        {"stack_canonical": brain_c},
+        {"_id": 0, "ingest_ts": 1, "symbol": 1, "action": 1},
+        sort=[("ingest_ts", -1)],
+    )
+    latest_intent_ts = (latest_intent or {}).get("ingest_ts")
+    latest_intent_age_s = _age_seconds(latest_intent_ts, now)
+
     # Seats lane-resolved from the live roster snapshot.
     snap = await get_roster()
     assignments: Dict[str, Optional[str]] = (snap or {}).get("assignments") or {}
@@ -298,6 +312,16 @@ async def _build_in_process_status(brain: str) -> Dict[str, Any]:
             "last_1h": count_1h,
             "last_24h": count_24h,
             "by_action": by_action,
+            # 2026-02-20: DB-confirmed last write. Detects silent
+            # write halts that the aggregate counts hide (see
+            # comment near latest_intent lookup above).
+            "latest_ts": latest_intent_ts,
+            "latest_age_s": (
+                round(latest_intent_age_s, 1)
+                if latest_intent_age_s is not None else None
+            ),
+            "latest_symbol": (latest_intent or {}).get("symbol"),
+            "latest_action": (latest_intent or {}).get("action"),
         },
         "in_process_runner": runner_stats,
     }

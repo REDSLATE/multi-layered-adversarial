@@ -11,6 +11,14 @@ trading, comprehensive provenance + health tracking.
 
 **✅ 2026-02-20: Dual-path `has_volume_evidence` + `rvol_acceleration` / `trend_score` in `session_features` SHIPPED.** See CHANGELOG head for details.
 
+**✅ 2026-02-20: P1 brain-runtime `latest_intent_ts` + `latest_intent_age_s` SHIPPED.** See CHANGELOG head — silent-write-halt detection now trivially operator-visible on `/api/admin/runtime/{brain}/status`.
+
+**✅ 2026-02-20: Per-Lane Capital Cap Ledger MODULE SHIPPED** (22 tests green, endpoint live). Executor wiring is the remaining follow-up — reserve before broker submit, release on broker terminal reject / position close, schedule stale sweep.
+
+**✅ 2026-02-20: Kraken 1d bar feeder SHIPPED.** `source="kraken_pro"` `tf="1d"` bars now land on boot + hourly poll. Crypto RVOL 20-day baseline gap closed.
+
+**✅ 2026-02-20: Feature Coverage Report tuning SHIPPED.** Stale threshold 120→180min (3× poll interval); `session_features_v2` group updated with `rvol_acceleration`/`trend_score` now-shipped fields.
+
 **Extend `build_snapshot()` in `shared/technicals.py` to compute doctrine-facing fields, thread them through the runner-emit path.**
 
 #### Root cause (refined 2026-02-19 late — supersedes earlier "wire enrich_equity_doctrine_snapshot" phrasing)

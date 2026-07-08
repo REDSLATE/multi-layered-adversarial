@@ -21,6 +21,7 @@ rename MUST run before seat_state migrations).
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -74,6 +75,10 @@ from shared.feeders.polygon_equity import (
 from shared.feeders.polygon_flatfiles import (
     start_worker_if_enabled as start_polygon_flatfiles_worker,
     stop_worker as stop_polygon_flatfiles_worker,
+)
+from shared.feeders.kraken_ohlc import (
+    start_worker_if_enabled as start_kraken_ohlc_worker,
+    stop_worker as stop_kraken_ohlc_worker,
 )
 from shared.external_signals.polygon_witness import (
     start_worker_if_enabled as start_polygon_news_witness,
@@ -490,8 +495,26 @@ async def lifespan(app: FastAPI):
         start_sec_edgar_worker()
         start_fred_worker()
         start_quiver_worker()
+        # 2026-02-20: crypto RVOL 20-day baseline via Kraken daily
+        # OHLC. Public endpoint, no auth. Idle no-op if disabled.
+        start_kraken_ohlc_worker()
     except Exception as e:  # noqa: BLE001
         logger.warning("data_stack workers start failed: %s", e)
+    # Per-Lane Capital Cap Ledger — atomic reservation store
+    # (2026-02-20). Idempotent init: creates the equity/crypto
+    # ledger docs if absent, refreshes `total` from env caps on
+    # every boot without touching live `reserved` state.
+    try:
+        from shared.capital.ledger import init_ledger as _init_capital_ledger
+        equity_cap = float(
+            os.environ.get("EQUITY_CAPITAL_CAP_USD") or 1000.0,
+        )
+        crypto_cap = float(
+            os.environ.get("CRYPTO_CAPITAL_CAP_USD") or 500.0,
+        )
+        await _init_capital_ledger(equity_cap, crypto_cap)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("capital_ledger init failed: %s", e)
     # Opinion-silent watchdog — autonomous scan that emits an alert
     # row when any occupied seat goes > threshold without an opinion
     # POST. Advisory observability only. Doctrine pin:
@@ -832,6 +855,7 @@ async def lifespan(app: FastAPI):
         await stop_sec_edgar_worker()
         await stop_fred_worker()
         await stop_quiver_worker()
+        await stop_kraken_ohlc_worker()
     except Exception:  # noqa: BLE001
         pass
     try:

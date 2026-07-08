@@ -1,3 +1,62 @@
+## 2026-02-20 — P1 status telemetry, Per-Lane Capital Cap Ledger, Kraken 1d feeder, Coverage Report tuning
+
+### P1: brain-runtime `latest_intent_ts` + `latest_intent_age_s`
+
+`routes/brain_runtime.py` diagnosis in the handoff was actually wrong:
+`ingest_ts` is 100% stored as ISO string across the whole
+`shared_intents` collection (0 datetime docs, verified). ISO-8601
+strings sort lexicographically identical to underlying datetimes,
+so the existing comparison works correctly.
+
+Real operator win landed instead: added `latest_ts` / `latest_age_s`
+/ `latest_symbol` / `latest_action` to the per-brain status
+endpoint's `intents` block. The 24h/1h counts hide silent write
+halts (a brain can stop inserting for hours while aggregate counts
+still look healthy from earlier in the window); the raw last-write
+timestamp makes silent halts trivially visible.
+
+Verified live: `GET /api/admin/runtime/camino/status` now returns
+`latest_ts=2026-07-08T10:15:08 latest_age_s=58.2 latest_symbol=NVDA
+latest_action=BUY`.
+
+### P2: Per-Lane Capital Cap Ledger
+
+Full atomic reservation store shipped per the PRD spec:
+
+* **`shared/capital/ledger.py`** — async API:
+  * `init_ledger(equity_cap, crypto_cap)` — idempotent boot upsert; refreshes `total` from env on every boot, preserves live `reserved` state across restarts.
+  * `reserve_capital(lane, amount, intent_id) → bool` — atomic CAS via `find_one_and_update` with filter `reserved <= total - amount`. Refuses non-positive amounts. Refuses if lane doc doesn't exist. Verified atomic under concurrent gathered tasks in tests.
+  * `release_capital(lane, intent_id, amount, reason) → bool` — idempotent (repeat calls no-op after first release, safe from broker reconcile retries). Uses positional `$` operator to update matching reservation in-place.
+  * `sweep_stale_reservations(lane, max_age_minutes=30)` — releases any `open` reservation older than cutoff with `reason="stale_timeout"`. Skips already-released rows.
+  * `get_lane_headroom(lane) / get_all_headroom() / get_open_reservations(lane, limit)` — read-only, safe for Tier-2 roles and dashboard tiles. Returns `None` for uninitialized lanes (caller decides warn-vs-fail).
+* **`namespaces.CAPITAL_LEDGER = "capital_ledger"`** with full doctrine comment.
+* **Lifespan wire-up** — `init_ledger` called with `EQUITY_CAPITAL_CAP_USD` (default 1000.0) and `CRYPTO_CAPITAL_CAP_USD` (default 500.0) from env. Failures log a warning and don't crash boot.
+* **`routes/admin_capital_ledger.py`** — three read-only endpoints under `/api/admin/capital/`: `GET /headroom`, `GET /headroom/{lane}`, `GET /reservations/{lane}`. Admin-authenticated.
+* **`tests/test_capital_ledger.py`** — 22 tests covering init idempotency, reserve success/rejection/boundary, non-positive refusal, uninit refusal, lane isolation, **concurrent-CAS race (exactly one of two racing reserves wins)**, release-frees-reserved, release-idempotency, release-unknown-noop, release-audit-trail, sweep-releases-stale, sweep-skips-fresh, sweep-skips-already-released, headroom-None-uninit, utilization-pct, reservations-newest-first, reservations-exclude-released, all-headroom, invalid-lane-raises. All 22 green.
+
+**NOT YET WIRED** (deliberate — per PRD, "Integration points not yet wired" is a separate item):
+* Executor `reserve_capital` call before broker submit (equity + crypto executors).
+* Executor `release_capital` on terminal broker reject.
+* Position-close `release_capital` hook.
+* Scheduled `sweep_stale_reservations` tick.
+
+These are the "integration points" step in the PRD spec. The ledger module + endpoint are production-ready; wiring is next.
+
+### P2: Kraken 1d bar feeder (`shared/feeders/kraken_ohlc.py`)
+
+Crypto RVOL 20-day baseline coverage lands. Same shape as
+`polygon_flatfiles` — public `/0/public/OHLC` endpoint, unauthenticated, writes `source="kraken_pro"` + `tf="1d"` rows to `shared_ohlcv_bars`. Universe derived from crypto intents (last 24h) with a hardcoded fallback for cold-start.
+
+Env: `KRAKEN_OHLC_FEEDER_ENABLED` (default true), `KRAKEN_OHLC_POLL_INTERVAL_SEC` (default 3600), `KRAKEN_OHLC_BACKFILL_DAYS` (default 30), `KRAKEN_OHLC_UNIVERSE` (optional CSV override).
+
+Boot verified live: first tick landed `universe=3 bars_written=96` (ADA/BTC/ETH × 32 daily bars each). Consumers pick up crypto daily bars automatically — `_fetch_daily_volume_baseline` is source-agnostic and just filters `tf="1d"`.
+
+### P2: Coverage Report tuning
+
+* Stale threshold raised from 120min → 180min (3× flatfiles poll interval). The previous 120min gave a false-alarm race window (poll in-flight but not yet completed). 180min = one missed poll doesn't flip green→stale.
+* `session_features_v2_pending` group split — `rvol_acceleration` + `trend_score` moved into a new `session_features_v2` group (shipped in this session); only `market_regime` + `velocity_5m` remain in the pending group. Coverage now honestly reflects what's live.
+
+
 ## 2026-02-20 — Dual-path volume gate (`has_volume_evidence`) + `rvol_acceleration` / `trend_score` in `session_features`
 
 ### Operator directive

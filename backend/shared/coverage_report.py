@@ -53,11 +53,20 @@ SNAPSHOT_FIELD_GROUPS: dict[str, list[str]] = {
         "relative_volume",
         "vwap_distance_pct",
     ],
+    "session_features_v2": [
+        # 2026-02-20 shipped: powers the dual-path has_volume_evidence
+        # gate. `trend_score` computed intraday from recent-bar slope.
+        # `rvol_acceleration` computed as delta-vs-baseline over the
+        # last 5 bars. Both require ≥ LOOKBACK+1 bars of today's
+        # session — expect lower coverage in the first ~15 minutes
+        # after market open.
+        "rvol_acceleration",
+        "trend_score",
+    ],
     "session_features_v2_pending": [
         # Follow-up A — expected 0% until shipped.
         "market_regime",
         "velocity_5m",
-        "rvol_acceleration",
     ],
     "microstructure": [
         "spread_bps",
@@ -320,7 +329,13 @@ async def build_coverage_report(scope: str) -> dict:
                 "minutes_since_last_success": h.minutes_since_last_success,
                 "status": (
                     "no_data" if h.last_success_ts is None
-                    else "ok" if (h.minutes_since_last_success or 0) < 120
+                    # 2026-02-20 tuning (operator directive): polygon
+                    # flatfiles poll every 60min; the previous 120min
+                    # stale threshold gave a false-alarm race window
+                    # (poll in-flight but not yet completed). Raised
+                    # to 180min = 3× poll interval so a single missed
+                    # poll doesn't flip green→stale.
+                    else "ok" if (h.minutes_since_last_success or 0) < 180
                     else "stale"
                 ),
             }

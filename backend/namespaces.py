@@ -67,6 +67,15 @@ SYMBOL_METADATA = "symbol_metadata"          # per-symbol float, market cap, sec
 PATTERNS_UNIVERSE = "patterns_universe"      # operator-managed watchlist
 FEEDER_HEALTH_AUDIT = "feeder_health_audit"  # per-feeder 429/error rolling log
 
+# Per-Lane Capital Cap Ledger (2026-02-20). One doc per lane keyed on
+# `<lane>_cap` (`equity_cap`, `crypto_cap`). Tracks `total` cap and
+# atomically-managed `reserved` amount plus per-intent reservation
+# audit trail. Executor calls `reserve_capital` before broker submit
+# for `live_micro` / `live_normal` routes only; `observe` / `paper`
+# routes never touch this collection. Doctrine + full API in
+# `shared/capital/ledger.py`.
+CAPITAL_LEDGER = "capital_ledger"
+
 # 2026-02-XX. Operator-controlled lane on/off toggles. Each row is
 # `{_id: <lane>, enabled: bool, updated_at, updated_by}`. The broker
 # router calls `is_lane_enabled(lane)` before any credential lookup —
