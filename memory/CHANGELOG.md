@@ -1,3 +1,62 @@
+## 2026-02-20 — Dual-path volume gate (`has_volume_evidence`) + `rvol_acceleration` / `trend_score` in `session_features`
+
+### Operator directive
+> "Volume >=1.5 is a confirmed full pass. Below that, if RVOL is
+> accelerating, price trending up, and above VWAP — take a toehold,
+> not a full-size trade. Otherwise no execution."
+
+### What shipped
+
+#### `shared/doctrine/large_cap_doctrine.py::has_volume_evidence(snapshot) -> (bool, reason)`
+Pure helper. Dual path:
+- **Path A (strict)**: `RVOL >= 1.5` → `(True, "ELEVATED_RELATIVE_VOLUME")`
+- **Path B (accelerating toehold)**: `RVOL >= 0.9 AND rvol_acceleration >= 0.25 AND trend_score > 0 AND vwap_distance_pct >= 0` → `(True, "RVOL_ACCELERATING_CONFIRMED")`
+- Neither → `(False, "VOLUME_NOT_CONFIRMED")`
+
+Missing/None snapshot fields default to `0.0` (safe / non-passing).
+
+#### Wire-up inside `_build_large_cap_labels`
+- Volume block now calls `has_volume_evidence(snapshot)` once.
+- On Path A: adds `ELEVATED_RELATIVE_VOLUME` (+0.15 score) plus `HIGH_RELATIVE_VOLUME` when RVOL ≥ 3.0 (+0.05).
+- On Path B: adds `RVOL_ACCELERATING_CONFIRMED` (+0.10 partial credit).
+- On fail: adds `VOLUME_NOT_CONFIRMED` + reason `relative_volume_below_threshold`.
+
+#### `_build_execution_judge`
+`has_volume` check now accepts `ELEVATED_RELATIVE_VOLUME`, `HIGH_RELATIVE_VOLUME`, OR `RVOL_ACCELERATING_CONFIRMED`. Path B trades no longer get blocked at the executor.
+
+#### `_build_governor`
+New clamp: `if "RVOL_ACCELERATING_CONFIRMED" in labels: risk_multiplier *= 0.25`. Toehold-only sizing when volume is early-momentum rather than fully confirmed. Applied on top of the existing quality-band scaling (A/B/C).
+
+#### `_build_adversary` (auditor role)
+Volume objection check widened — `RVOL_ACCELERATING_CONFIRMED` counts as sufficient volume evidence, no `rvol_too_quiet_for_directional` objection.
+
+#### `quality_positive_labels` set updated
+Added `RVOL_ACCELERATING_CONFIRMED` so it satisfies the "no baseline-only toehold" bypass.
+
+#### `shared/indicators.py::session_features` — extended
+Added two new fields (both `Optional[float]`, None-safe):
+- `rvol_acceleration`: `(cum_volume_now - cum_volume_5_bars_ago) / daily_baseline`. Positive = volume expanding INTO the move. Requires ≥ 3 non-zero baseline entries + ≥ LOOKBACK+1 bars in today's session.
+- `trend_score`: `(last_close - close_5_bars_ago) / close_5_bars_ago`. Positive = up-trend. Requires ≥ LOOKBACK+1 bars in today's session.
+
+Both are used by `has_volume_evidence` — Path B is only accessible once real intraday history exists. Missing → default 0.0 → naturally excludes Path B.
+
+### Tests
+- `/app/backend/tests/test_has_volume_evidence.py` — 16 tests: unit tests on the pure helper (Path A, Path B all conditions, Path B fails per-condition, None-safety, strict-wins-when-both) + integration tests on full doctrine packet (toehold clamps governor to 0.25×, strict pass leaves sizing full, VOLUME_NOT_CONFIRMED blocks execution, adversary objections track volume evidence).
+- **All 16 pass, 74 doctrine-adjacent regressions clean.**
+
+### Category-C assertion drift cleaned up while here
+- `test_fractional_sizing_2026_02_20.py::test_large_cap_baseline_only_toehold_clamps_governor` — added minimal doctrine fields to snapshot so it bypasses the 2026-02-19 NO_DATA short-circuit and actually exercises BASELINE_ONLY_TOEHOLD.
+- `test_conflict_memory.py::TestDoctrineStillHolds` — swapped legacy `runtime="alpha"` → `runtime="camino"` (missed in the ALPHA→CAMINO sed sweep).
+- `test_webull_fractional_order.py` — rewrote 4 stale tests that still pinned the 2026-02-19 `entrust_type=AMOUNT` / `total_cash_amount` contract. Webull deprecated AMOUNT on 2026-02-26 (verified live: HTTP 417 / INVALID_PARAMETER). Tests now match the current `entrust_type=QTY` + decimal `quantity` string + LIMIT+slippage-band contract.
+
+### Net regression delta
+- Before: 27 failed / 644 passed across doctrine+large_cap+snapshot+intents+fractional+has_volume+conflict_memory+webull filter.
+- After: 23 failed / 648 passed.
+- Net: **-4 failures, +4 passes; 16 new tests added; no new regressions.**
+
+Remaining 23 unrelated pre-existing failures are in Webull adapter areas (auth token flow, buying-power caps, extended-hours legacy tests, non-blocking submit) — outside the volume-doctrine scope.
+
+
 ## 2026-02-19 (session tail cont.) — P0 snapshot enrichment (Follow-up B): RVOL coverage 3.7% → 100% equity
 
 ### The gap Part 1 left open

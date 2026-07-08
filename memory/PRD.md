@@ -9,6 +9,8 @@ trading, comprehensive provenance + health tracking.
 
 ### 🚨 NEXT WORK ITEM — P0 UNSTARTED (top priority — do NOT skip past this)
 
+**✅ 2026-02-20: Dual-path `has_volume_evidence` + `rvol_acceleration` / `trend_score` in `session_features` SHIPPED.** See CHANGELOG head for details.
+
 **Extend `build_snapshot()` in `shared/technicals.py` to compute doctrine-facing fields, thread them through the runner-emit path.**
 
 #### Root cause (refined 2026-02-19 late — supersedes earlier "wire enrich_equity_doctrine_snapshot" phrasing)
