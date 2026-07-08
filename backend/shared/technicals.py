@@ -258,7 +258,24 @@ async def _recompute_snapshot(source: str, symbol: str, tf: str) -> dict:
             )
             daily_baseline = []
 
-    snap = build_snapshot(bars, prior_session_volumes=daily_baseline or None)
+    # Market regime (2026-02-20 Follow-up A): shared TTL-cached
+    # value from `shared.market_regime`. Same value across all
+    # symbols in the same tick window — fetched here once per
+    # snapshot rebuild so the resolver's cache pays off.
+    regime_label: Optional[str] = None
+    try:
+        from shared.market_regime import get_regime  # noqa: WPS433
+        regime_doc = await get_regime()
+        regime_label = regime_doc.get("regime")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("market_regime fetch failed: %r", e)
+        regime_label = None
+
+    snap = build_snapshot(
+        bars,
+        prior_session_volumes=daily_baseline or None,
+        market_regime=regime_label,
+    )
     doc = {
         "source": source,
         "symbol": symbol,

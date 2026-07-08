@@ -41,6 +41,17 @@ from namespaces import SHARED_GATE_RESULTS, SHARED_INTENTS
 
 logger = logging.getLogger("auto_router")
 
+# ── Capital ledger integration (2026-02-20) ────────────────────────
+# Live-route entry intents reserve against the per-lane capital cap
+# ledger BEFORE broker submit; terminal broker rejects release the
+# reservation. Doctrine + module: `shared/capital/ledger.py`.
+LIVE_ROUTES = {"live_micro", "live_normal"}
+# Action codes that OPEN a new position (reserve on submit). Exit
+# actions (SELL / COVER) release the entry's reservation on position
+# close and do NOT reserve themselves — a SELL is releasing capital,
+# not consuming it. `SHORT` opens a short position and consumes cap.
+ENTRY_ACTIONS = {"BUY", "SHORT"}
+
 # Loop tunables — env-driven so we can poke them without redeploys.
 AUTO_ROUTER_ENABLED = os.environ.get("AUTO_ROUTER_ENABLED", "true").lower() == "true"
 AUTO_ROUTER_INTERVAL_SEC = int(os.environ.get("AUTO_ROUTER_INTERVAL_SEC", "30"))
@@ -415,6 +426,149 @@ async def _route_one(intent: dict) -> dict:
                 "extended_hours_enabled": ext_hours_on,
             }
 
+    # ── 3b. Ladder-aware sizing + capital-ledger reserve ────────────
+    # 2026-02-20 (P1 wire-up of the Per-Lane Capital Cap Ledger).
+    #
+    # Resolve the (brain, lane) ladder stage → route so we know
+    # whether this intent is a LIVE broker submission or an
+    # observation/paper receipt. Only `live_micro` and `live_normal`
+    # reserve against the capital ledger — routes `observe` /
+    # `paper` skip the ledger entirely (no real capital at risk).
+    #
+    # This gate runs AFTER the market-closed preflight so equity
+    # intents outside RTH short-circuit without ever touching the
+    # ledger — no phantom reservations on weekends.
+    #
+    # Race note: `evaluate_sizing_with_ladder` runs INSIDE the same
+    # tick as the broker submit. Any ladder promotion arriving
+    # mid-tick lands on the NEXT intent; this one uses the stage
+    # that was active at the top of _route_one.
+    ledger_reserved = False
+    ledger_reserve_amount = 0.0
+    ledger_lane = (intent.get("lane") or "").lower()
+    try:
+        from shared.sizing_gate import evaluate_sizing_with_ladder  # noqa: WPS433
+        sizing = await evaluate_sizing_with_ladder(
+            requested_usd=final_notional,
+            brain=(intent.get("stack") or intent.get("stack_canonical") or ""),
+            lane=(intent.get("lane") or None),
+        )
+        action = str(intent.get("action") or "").upper()
+        route_is_live = sizing.route in LIVE_ROUTES
+
+        # Ledger integration is NON-authoritative on sizing —
+        # `final_notional` is already the auth notional post
+        # risk.check + apply_floor. We only READ `sizing.route` to
+        # decide whether the intent is a live-broker submission
+        # (reserves) or observe/paper (skips). Stamp the resolved
+        # provenance for audit; do NOT re-clamp notional here.
+        if route_is_live:
+            try:
+                await db[SHARED_INTENTS].update_one(
+                    {"intent_id": intent_id},
+                    {"$set": {
+                        "sizing_provenance": {
+                            "route": sizing.route,
+                            "stage": sizing.stage,
+                            "binding_rail": sizing.binding_rail,
+                            "final_usd": final_notional,
+                            "ladder_cap_usd": sizing.ladder_cap_usd,
+                            "execution_mode": sizing.execution_mode,
+                        },
+                    }},
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Ledger reserve — live routes AND entry actions only.
+        # `observe` / `paper` fall through unchanged (no reserve).
+        # Exit actions (SELL / COVER) also skip the reserve — they
+        # RELEASE the entry's reservation on position close.
+        if (
+            route_is_live
+            and action in ENTRY_ACTIONS
+            and ledger_lane in ("equity", "crypto")
+            and final_notional > 0
+        ):
+            from shared.capital.ledger import (  # noqa: WPS433
+                get_lane_headroom, reserve_capital,
+            )
+            # Skip the ledger gate if this lane has not been
+            # initialised. Fail-safe: uninit ledger MUST NOT block
+            # live intents — the operator sees the boot warning,
+            # the ledger just isn't yet enforcing caps for that
+            # lane. Prevents test-suite pollution and any lifespan-
+            # init failure from cascading into a full trading halt.
+            head = await get_lane_headroom(ledger_lane)
+            if head is None:
+                logger.debug(
+                    "auto_router capital_ledger SKIP — lane=%s "
+                    "not initialised", ledger_lane,
+                )
+            else:
+                ledger_reserve_amount = final_notional
+                ok = await reserve_capital(
+                    lane=ledger_lane,
+                    amount=ledger_reserve_amount,
+                    intent_id=intent_id,
+                )
+                if not ok:
+                    # Cap exceeded — DO NOT reach the broker.
+                    logger.warning(
+                        "auto_router capital_ledger REJECTED "
+                        "intent=%s lane=%s amount=%.2f — cap exceeded",
+                        intent_id, ledger_lane, ledger_reserve_amount,
+                    )
+                    await executions.record(
+                        intent=intent,
+                        seat_verdict=sd.verdict,
+                        seat_holder=sd.executor,
+                        seat_reason=sd.reason,
+                        strategist=sd.strategist,
+                        governor=sd.governor,
+                        executor=sd.executor,
+                        auditor=sd.auditor,
+                        angels=sd.angels,
+                        risk_multiplier=sd.risk_multiplier,
+                        risk_ok=rc.ok,
+                        risk_reason=rc.reason,
+                        notional_usd=final_notional,
+                        broker_status="blocked_by_capital_ledger",
+                        exception_type="CapitalLedgerRejected",
+                        exception_msg=(
+                            f"cap exceeded lane={ledger_lane} "
+                            f"requested={ledger_reserve_amount:.2f}"
+                        ),
+                        ok=False,
+                    )
+                    try:
+                        await db[SHARED_INTENTS].update_one(
+                            {"intent_id": intent_id},
+                            {"$set": {
+                                "gate_state": "blocked",
+                                "last_submit_ts": _now_iso(),
+                                "last_submit_by": AUTO_ROUTER_EMAIL,
+                                "broker_reason": "REJECTED_CAP_EXCEEDED",
+                                "broker_error_bucket": "capital_ledger_cap",
+                            }},
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return {
+                        "verdict": "blocked",
+                        "reason": "REJECTED_CAP_EXCEEDED",
+                        "lane": ledger_lane,
+                        "requested_notional": ledger_reserve_amount,
+                    }
+                ledger_reserved = True
+    except Exception as exc:  # noqa: BLE001
+        # Sizing / ledger integration is defensive — never let a
+        # module-import / db issue block the broker path.
+        logger.debug(
+            "auto_router sizing/ledger gate skipped intent=%s: %r",
+            intent_id, exc,
+        )
+
     # ── 3. Broker ────────────────────────────────────────────────
     from shared.broker_router import (  # noqa: WPS433
         BrokerRouteBlocked, route_order,
@@ -511,6 +665,22 @@ async def _route_one(intent: dict) -> dict:
                 terminal_reason = "broker_retry_exhausted"
 
         if should_terminate:
+            # Release ledger reservation (if held) — broker terminally
+            # rejected the order, capital is no longer at risk.
+            if ledger_reserved:
+                try:
+                    from shared.capital.ledger import release_capital  # noqa: WPS433
+                    await release_capital(
+                        lane=ledger_lane,
+                        intent_id=intent_id,
+                        amount=ledger_reserve_amount,
+                        reason="broker_terminal_reject",
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "auto_router: release_capital failed on "
+                        "broker terminal intent=%s", intent_id,
+                    )
             try:
                 await db[SHARED_INTENTS].update_one(
                     {"intent_id": intent_id},
@@ -886,6 +1056,29 @@ async def _sweep_submitted_broker_orders() -> dict:
             retry_count = int(intent.get("submit_retry_count") or 0)
 
             if err.is_terminal or retry_count >= RECONCILE_MAX_RETRIES:
+                # Release ledger reservation on terminal rejection.
+                # Uses `final_notional_usd` stamped by the SUCCESS
+                # path; falls back to `sizing_provenance.final_usd`.
+                try:
+                    from shared.capital.ledger import release_capital  # noqa: WPS433
+                    lane_str = (intent.get("lane") or "").lower()
+                    amount = float(
+                        intent.get("final_notional_usd")
+                        or (intent.get("sizing_provenance") or {}).get("final_usd")
+                        or 0.0
+                    )
+                    if amount > 0 and lane_str in ("equity", "crypto"):
+                        await release_capital(
+                            lane=lane_str,
+                            intent_id=intent_id,
+                            amount=amount,
+                            reason="broker_terminal_reject",
+                        )
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "reconcile: release_capital failed on terminal "
+                        "reject intent=%s", intent_id,
+                    )
                 try:
                     await db[SHARED_INTENTS].update_one(
                         {"intent_id": intent_id},

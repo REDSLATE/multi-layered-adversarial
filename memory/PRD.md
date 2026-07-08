@@ -13,7 +13,9 @@ trading, comprehensive provenance + health tracking.
 
 **✅ 2026-02-20: P1 brain-runtime `latest_intent_ts` + `latest_intent_age_s` SHIPPED.** See CHANGELOG head — silent-write-halt detection now trivially operator-visible on `/api/admin/runtime/{brain}/status`.
 
-**✅ 2026-02-20: Per-Lane Capital Cap Ledger MODULE SHIPPED** (22 tests green, endpoint live). Executor wiring is the remaining follow-up — reserve before broker submit, release on broker terminal reject / position close, schedule stale sweep.
+**✅ 2026-02-20: Per-Lane Capital Cap Ledger MODULE SHIPPED** (22 tests green, endpoint live). **✅ Executor wire-up ALSO SHIPPED** — reserve-before-broker in `_route_one`, release on broker terminal reject (both immediate exception and reconcile-sweep paths) and position close, scheduled stale sweeper (5min tick, 30min equity / 60min crypto thresholds). 5 wiring integration tests green.
+
+**✅ 2026-02-20: `market_regime` + `velocity_5m` SHIPPED (Follow-up A COMPLETE).** `session_features_v2_pending` group deleted from coverage report. Live coverage: market_regime 72.7%, velocity_5m 54.5%.
 
 **✅ 2026-02-20: Kraken 1d bar feeder SHIPPED.** `source="kraken_pro"` `tf="1d"` bars now land on boot + hourly poll. Crypto RVOL 20-day baseline gap closed.
 

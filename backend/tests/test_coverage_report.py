@@ -149,8 +149,8 @@ class TestSerializeCoverage:
         # gap_pct falls into session_features_v1
         assert "gap_pct" in out["session_features_v1"]
         assert out["session_features_v1"]["gap_pct"]["pct"] == 100.0
-        # market_regime under the pending group (should read as 0%)
-        assert out["session_features_v2_pending"]["market_regime"]["pct"] == 0.0
+        # market_regime shipped 2026-02-20 → now in session_features_v2
+        assert out["session_features_v2"]["market_regime"]["pct"] == 0.0
         # atr14 under legacy_indicators with the missing sample carried
         assert out["legacy_indicators"]["atr14"]["missing_symbols"] == ["MSFT"]
 

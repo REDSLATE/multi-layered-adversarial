@@ -1,3 +1,76 @@
+## 2026-02-20 — Executor Wire-up: Capital Ledger + `market_regime` / `velocity_5m` in Snapshots
+
+### P1: Capital ledger fully wired into the executor path
+
+Building on the standalone ledger module shipped earlier this session, the reserve / release flow is now live end-to-end:
+
+#### `shared/auto_router.py::_route_one` — Reserve gate (right before broker)
+Placed AFTER the market-closed pre-flight so out-of-hours equity intents don't create phantom reservations. Runs `evaluate_sizing_with_ladder` once to resolve `route`; stamps `sizing_provenance` on the intent (audit trail); if `route ∈ {live_micro, live_normal}` AND `action ∈ {BUY, SHORT}` AND lane is equity/crypto, calls `reserve_capital`. On cap-exceeded → intent is stamped `gate_state=blocked broker_reason=REJECTED_CAP_EXCEEDED broker_error_bucket=capital_ledger_cap` and an execution row is recorded with `broker_status=blocked_by_capital_ledger` — **broker is never touched**. Ledger is skipped fail-safe if `get_lane_headroom` returns None (uninitialized).
+
+Non-authoritative on sizing — `final_notional` is fixed post `risk.check + apply_floor`; the ledger only READS route to decide reserve-vs-skip.
+
+#### Release paths (three)
+* **Broker terminal exception** — inside the `except` handler in `_route_one`. When `should_terminate=True` and a reservation was held on this call, `release_capital(reason="broker_terminal_reject")`.
+* **Reconcile-sweep terminal reject** — when a submitted order flips to `broker_rejected` via broker polling (already-shipped path). Amount pulled from `final_notional_usd` (stamped by the SUCCESS path) with fallback to `sizing_provenance.final_usd`.
+* **Position close** — in `shared/live_positions.py::close`. Reads `pos.intent_id + pos.lane + pos.opened_notional_usd` and calls `release_capital(reason="position_closed")`. Idempotent — safe on retries.
+
+Also added `market_closed_preflight` release path in case a live-route reservation somehow lands before the market-closed guard (defense in depth).
+
+#### Scheduled stale sweeper (`shared/capital/sweeper.py`)
+Fresh module. `_worker_loop` calls `sweep_stale_reservations` on both lanes on a fixed cadence. Env: `CAPITAL_LEDGER_SWEEPER_ENABLED` (default true), `CAPITAL_LEDGER_SWEEP_INTERVAL_SEC` (default 300 = 5min), `CAPITAL_LEDGER_STALE_EQUITY_MIN` (default 30), `CAPITAL_LEDGER_STALE_CRYPTO_MIN` (default 60 — crypto trades 24/7 with more variable fill latency). Wired into lifespan startup/shutdown.
+
+Verified live on boot: `capital_ledger_sweeper started: interval=300s equity_stale_min=30 crypto_stale_min=60`.
+
+#### Integration tests (`tests/test_capital_ledger_wiring.py`, 5 tests)
+* `test_live_micro_entry_reserves_capital_before_broker` — LIVE + BUY → reserve is in place BEFORE broker gets called.
+* `test_observe_route_does_not_reserve` — observe route → SKIP reserve entirely.
+* `test_sell_action_does_not_reserve` — SELL is an exit action → no reserve (release comes on position close).
+* `test_cap_exceeded_blocks_before_broker` — reserve fails → intent stamped `REJECTED_CAP_EXCEEDED`, broker NEVER called.
+* `test_position_close_releases_ledger` — closing a position releases the entry's reservation.
+
+Fixture cleans `capital_ledger` and ledger-test SHARED_INTENTS rows on both sides of yield, PLUS explicitly deletes cached `shared.{seat,risk,executions}` attributes so downstream scaffold-based tests that patch `sys.modules[...]` see the patch (Python's `from A import B` bypasses sys.modules patch when the cached attribute exists — non-obvious but critical for test hygiene).
+
+### P2 (Follow-up A): `market_regime` + `velocity_5m` in `session_features`
+
+Last two fields graduated from `session_features_v2_pending` → `session_features_v2`.
+
+#### `shared/market_regime.py` — TTL-cached SPY-based classifier
+* Reads SPY daily bars (`shared_ohlcv_bars`, `tf=1d`), computes 20-day trend + realized-log-vol.
+* Classifier:
+  * `bull` — 20d return ≥ +2% AND realized-vol < choppy_threshold.
+  * `bear` — 20d return ≤ -2% (vol ignored).
+  * `choppy` — everything else (small trend OR uptrend with high vol).
+  * `unknown` (None) — < 20 daily bars available. Consumers MUST NOT default this to bull.
+* Module-level TTL cache (default 300s). Same value across all symbols in the same tick window.
+* Env overrides: `MARKET_REGIME_LOOKBACK_DAYS`, `MARKET_REGIME_TREND_THRESHOLD`, `MARKET_REGIME_VOL_CHOPPY_PCT`, `MARKET_REGIME_CACHE_TTL_SEC`, `MARKET_REGIME_BENCHMARK_SYMBOL`.
+* Reads the same `shared_ohlcv_bars` that the polygon flatfiles feeder writes → coverage rides on that pipeline.
+
+#### `session_features()` extended with `velocity_5m`
+Second-derivative curvature of close price. Formula: `(c[-1] - 2*c[-2] + c[-3]) / c[-2]`. Positive = accelerating up (tape leaning INTO a move), negative = decelerating/rolling over, zero = steady trend. Requires ≥ 3 bars in today's session. Distinct from `trend_score` (longer 5-bar slope).
+
+#### `session_features()` accepts `market_regime` as an injected argument
+Not per-symbol computed — pushed in from upstream so the resolver's TTL cache pays off. Threaded through `build_snapshot` and `_recompute_snapshot` in `technicals.py`. Fail-safe: fetch failures log a warning and default to None.
+
+#### `coverage_report.py::SNAPSHOT_FIELD_GROUPS` updated
+`market_regime` + `velocity_5m` moved from `session_features_v2_pending` → `session_features_v2`. Pending group deleted.
+
+#### Tests (`tests/test_session_features_followup_a.py`, 14 tests)
+Cover velocity math (accelerate/decelerate/flat/tiny-session/uses-last-3), regime injection semantics, build_snapshot backward compatibility, classifier edge cases (bull/bear/choppy-flat/choppy-high-vol-uptrend).
+
+### Live smoke (post-restart)
+* `GET /api/admin/capital/headroom` → both lanes present, $1000/$500 total, $0 reserved.
+* `GET /api/admin/feature-coverage-report?scope=live_universe`:
+  * `session_features_v2.rvol_acceleration: 47.7%`
+  * `session_features_v2.trend_score: 47.7%`
+  * `session_features_v2.velocity_5m: 54.5%`
+  * `session_features_v2.market_regime: 72.7%`
+* Sweeper started with `interval=300s equity_stale_min=30 crypto_stale_min=60`.
+* Kraken 1d feeder ticking (`universe=3 bars_written=96`).
+
+### Regression sweep
+**739 passed, 0 failed** in the target scope (`auto_router / _route_one / session_feat / indicator / snapshot / capital_ledger / has_volume / doctrine / large_cap / market_regime / velocity / live_execution / coverage_report / webull / conflict_memory`). No new regressions.
+
+
 ## 2026-02-20 — P1 status telemetry, Per-Lane Capital Cap Ledger, Kraken 1d feeder, Coverage Report tuning
 
 ### P1: brain-runtime `latest_intent_ts` + `latest_intent_age_s`

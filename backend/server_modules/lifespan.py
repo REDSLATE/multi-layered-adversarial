@@ -515,6 +515,17 @@ async def lifespan(app: FastAPI):
         await _init_capital_ledger(equity_cap, crypto_cap)
     except Exception as e:  # noqa: BLE001
         logger.warning("capital_ledger init failed: %s", e)
+    # Capital ledger stale-reservation sweeper (2026-02-20 P1 wire-up).
+    # Frees any `open` reservations older than the lane-specific
+    # threshold — cleans up crash-artifact reservations that no live
+    # order will ever reconcile.
+    try:
+        from shared.capital.sweeper import (
+            start_worker_if_enabled as _start_capital_ledger_sweeper,
+        )
+        _start_capital_ledger_sweeper()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("capital_ledger_sweeper start failed: %s", e)
     # Opinion-silent watchdog — autonomous scan that emits an alert
     # row when any occupied seat goes > threshold without an opinion
     # POST. Advisory observability only. Doctrine pin:
@@ -856,6 +867,11 @@ async def lifespan(app: FastAPI):
         await stop_fred_worker()
         await stop_quiver_worker()
         await stop_kraken_ohlc_worker()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from shared.capital.sweeper import stop_worker as _stop_cap_sweeper
+        await _stop_cap_sweeper()
     except Exception:  # noqa: BLE001
         pass
     try:

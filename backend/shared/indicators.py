@@ -171,12 +171,14 @@ def _bar_date(bar: dict) -> Optional[str]:
 def session_features(
     bars: list[dict],
     prior_session_volumes: Optional[list[float]] = None,
+    market_regime: Optional[str] = None,
 ) -> dict:
     """Compute the doctrine-facing session enrichment fields.
 
     Reads: `o, h, l, c, v, ts` per bar.
     Returns keys: `gap_pct`, `relative_volume`, `vwap_distance_pct`,
-    `rvol_acceleration`, `trend_score`,
+    `rvol_acceleration`, `trend_score`, `velocity_5m`,
+    `market_regime` (from injected argument, shared value),
     plus one advisory diagnostic: `session_bars_seen` (how many bars
     of today's session were used for VWAP).
 
@@ -226,6 +228,8 @@ def session_features(
             "gap_pct": None, "relative_volume": None,
             "vwap_distance_pct": None,
             "rvol_acceleration": None, "trend_score": None,
+            "velocity_5m": None,
+            "market_regime": market_regime,
             "session_bars_seen": 0,
         }
 
@@ -246,6 +250,8 @@ def session_features(
             "gap_pct": None, "relative_volume": None,
             "vwap_distance_pct": None,
             "rvol_acceleration": None, "trend_score": None,
+            "velocity_5m": None,
+            "market_regime": market_regime,
             "session_bars_seen": 0,
         }
 
@@ -382,12 +388,38 @@ def session_features(
         except (TypeError, ValueError):
             trend_score = None
 
+    # ─── velocity_5m ───
+    # Doctrine pin (2026-02-20, Follow-up A): "the tape leaning INTO
+    # a move vs flattening." Fast-lookback price curvature (second
+    # derivative of close) — distinct from `trend_score`, which is
+    # a longer 5-bar slope. Positive = accelerating up; negative =
+    # decelerating or rolling over. Zero = steady trend.
+    #
+    # Formula (uses last 3 bars):
+    #   v = (c[-1] - 2*c[-2] + c[-3]) / c[-2]
+    # Requires ≥ 3 bars in today's session. Missing → None.
+    velocity_5m: Optional[float] = None
+    if len(today_bars) >= 3:
+        try:
+            c_now = float(today_bars[-1].get("c"))
+            c_mid = float(today_bars[-2].get("c"))
+            c_prev = float(today_bars[-3].get("c"))
+            if c_mid > 0:
+                velocity_5m = (c_now - 2.0 * c_mid + c_prev) / c_mid
+        except (TypeError, ValueError):
+            velocity_5m = None
+
     return {
         "gap_pct": gap_pct,
         "relative_volume": relative_volume,
         "vwap_distance_pct": vwap_distance_pct,
         "rvol_acceleration": rvol_acceleration,
         "trend_score": trend_score,
+        "velocity_5m": velocity_5m,
+        # `market_regime` is injected from the SHARED resolver, not
+        # per-symbol — same value across all symbols in the same
+        # tick window. Doctrine + resolver: `shared/market_regime.py`.
+        "market_regime": market_regime,
         "session_bars_seen": len(today_bars),
     }
 
@@ -397,6 +429,7 @@ def session_features(
 def build_snapshot(
     bars: list[dict],
     prior_session_volumes: Optional[list[float]] = None,
+    market_regime: Optional[str] = None,
 ) -> dict:
     """Compute a complete indicator snapshot from a window of bars.
 
@@ -475,5 +508,9 @@ def build_snapshot(
         # provided, RVOL uses a proper 20-day daily baseline instead
         # of the ≤4-session intraday derivation — bumps coverage
         # from 3.7% → ~99%.
-        **session_features(bars, prior_session_volumes=prior_session_volumes),
+        **session_features(
+            bars,
+            prior_session_volumes=prior_session_volumes,
+            market_regime=market_regime,
+        ),
     }

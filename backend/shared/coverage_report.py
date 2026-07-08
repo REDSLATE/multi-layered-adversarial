@@ -54,19 +54,16 @@ SNAPSHOT_FIELD_GROUPS: dict[str, list[str]] = {
         "vwap_distance_pct",
     ],
     "session_features_v2": [
-        # 2026-02-20 shipped: powers the dual-path has_volume_evidence
-        # gate. `trend_score` computed intraday from recent-bar slope.
-        # `rvol_acceleration` computed as delta-vs-baseline over the
-        # last 5 bars. Both require ≥ LOOKBACK+1 bars of today's
-        # session — expect lower coverage in the first ~15 minutes
-        # after market open.
+        # 2026-02-20 shipped: dual-path volume gate inputs +
+        # follow-up A regime/velocity signals.
+        # `trend_score` computed intraday from recent-bar slope.
+        # `rvol_acceleration` = delta-vs-baseline over last 5 bars.
+        # `velocity_5m` = second-derivative curvature (last 3 bars).
+        # `market_regime` = SPY-based shared classifier (TTL-cached).
         "rvol_acceleration",
         "trend_score",
-    ],
-    "session_features_v2_pending": [
-        # Follow-up A — expected 0% until shipped.
-        "market_regime",
         "velocity_5m",
+        "market_regime",
     ],
     "microstructure": [
         "spread_bps",

@@ -401,6 +401,33 @@ async def close(
     except Exception:  # noqa: BLE001
         pass
 
+    # ── Capital ledger release (2026-02-20) ─────────────────────────
+    # Position closed → release the entry intent's reservation so
+    # the freed capital becomes available for the next intent. Uses
+    # `opened_notional_usd` (the amount the entry actually reserved).
+    # Idempotent — safe on retries; a repeat call after the ledger
+    # already released the reservation is a no-op.
+    try:
+        from shared.capital.ledger import release_capital  # noqa: WPS433
+        entry_intent_id = pos.get("intent_id")
+        lane_str = (pos.get("lane") or "").lower()
+        entry_amount = float(pos.get("opened_notional_usd") or 0.0)
+        if (
+            entry_intent_id
+            and lane_str in ("equity", "crypto")
+            and entry_amount > 0
+        ):
+            await release_capital(
+                lane=lane_str,
+                intent_id=entry_intent_id,
+                amount=entry_amount,
+                reason="position_closed",
+            )
+    except Exception:  # noqa: BLE001
+        # Ledger release is advisory — never let a release failure
+        # block the position close audit trail.
+        pass
+
     return await db[SHARED_LIVE_POSITIONS].find_one({"position_id": position_id}, {"_id": 0})
 
 
