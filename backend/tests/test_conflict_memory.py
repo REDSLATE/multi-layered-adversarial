@@ -291,7 +291,7 @@ class TestDoctrineStillHolds:
         r = requests.post(
             f"{BASE_URL}/api/ingest/opinion",
             headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
-            json={"runtime": "alpha", "topic": "free", "stance": "observation",
+            json={"runtime": "camino", "topic": "free", "stance": "observation",
                   "body": "doctrine probe", "may_execute": True},
             timeout=20,
         )
@@ -303,7 +303,7 @@ class TestDoctrineStillHolds:
             r = requests.post(
                 f"{BASE_URL}/api/ingest/opinion",
                 headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
-                json={"runtime": "alpha", "topic": "free", "stance": stance,
+                json={"runtime": "camino", "topic": "free", "stance": stance,
                       "body": f"loose stance {stance}"},
                 timeout=20,
             )
@@ -315,7 +315,7 @@ class TestDoctrineStillHolds:
             r = requests.post(
                 f"{BASE_URL}/api/ingest/opinion",
                 headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
-                json={"runtime": "alpha", "topic": topic, "stance": "observation",
+                json={"runtime": "camino", "topic": topic, "stance": "observation",
                       "body": "loose topic"},
                 timeout=20,
             )
@@ -325,7 +325,7 @@ class TestDoctrineStillHolds:
         r = requests.post(
             f"{BASE_URL}/api/ingest/opinion",
             headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
-            json={"runtime": "alpha", "topic": "free", "stance": "EXECUTE",
+            json={"runtime": "camino", "topic": "free", "stance": "EXECUTE",
                   "body": "no"},
             timeout=20,
         )
@@ -335,7 +335,7 @@ class TestDoctrineStillHolds:
         r = requests.post(
             f"{BASE_URL}/api/ingest/opinion",
             headers={"X-Runtime-Token": CAMINO_TOKEN, "Content-Type": "application/json"},
-            json={"runtime": "alpha", "topic": "BAD KIND:value", "stance": "observation",
+            json={"runtime": "camino", "topic": "BAD KIND:value", "stance": "observation",
                   "body": "no"},
             timeout=20,
         )

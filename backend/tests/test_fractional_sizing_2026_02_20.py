@@ -93,8 +93,24 @@ def test_large_cap_real_signal_clears_b_quality():
 
 def test_large_cap_baseline_only_toehold_clamps_governor():
     """BASELINE_ONLY_TOEHOLD must clamp the governor risk_multiplier
-    to ≤ 0.20 so 'nothing-burger' days trade at toehold size."""
-    snap = {"symbol": "AAPL", "lane": "equity", "fractional_supported": True}
+    to ≤ 0.20 so 'nothing-burger' days trade at toehold size.
+
+    2026-02-20 update: snapshot must include the doctrine-facing fields
+    so the NO_DATA short-circuit (added 2026-02-19) does not intercept
+    the packet before the labels function runs. Zero/neutral values
+    still yield BASELINE_ONLY_TOEHOLD (no positive signal fires).
+    """
+    snap = {
+        "symbol": "AAPL", "lane": "equity",
+        "fractional_supported": True,
+        # Doctrine fields present with neutral values → passes the
+        # NO_DATA guard but no positive signal fires.
+        "gap_pct": 0.0,
+        "relative_volume": 0.0,
+        "spread_bps": 8.0,
+        "spread_source": "webull_l1",
+        "market_regime": "neutral",
+    }
     pkt = build_large_cap_doctrine_packet(
         snap, seat_holders={"governor": "chevelle"},
     )
