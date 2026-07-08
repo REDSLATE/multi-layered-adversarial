@@ -587,6 +587,15 @@ def _build_snapshot(
                 "volume_change_pct": round(vol_change_pct, 2),
                 "rsi": 50.0,  # MC doesn't surface RSI on this endpoint
                 "spread_bps": round(spread_bps, 2),
+                # 2026-02-19 fix (A): tag the spread as "live" so downstream
+                # doctrine doesn't treat our computed value as stale. We
+                # computed this from fresh bars — it IS live by every
+                # honest reading. Without this tag, equity_doctrine's
+                # freshness gate defaults to "stale" (no Webull tradeTime
+                # in a neutral-brain snapshot), which cascades to
+                # SPREAD_QUALITY_UNKNOWN → spread_ok=False on 100% of
+                # intents.
+                "spread_quality": "live",
                 "volatility": round(min(1.0, max(0.0, volatility * 3)), 3),
                 "trend_score": round(max(-1.0, min(1.0, trend_score * 8)), 3),
                 "liquidity_score": 0.85,

@@ -297,7 +297,12 @@ def _build_governor(base, labels, holder, snapshot):
 
 def _build_execution_judge(base, labels, holder):
     execution_checks = {
-        "quality_ok": base.quality in {"A_QUALITY", "B_QUALITY"},
+        # 2026-02-19 fix (C): C_QUALITY now qualifies as executable, matching
+        # `large_cap_doctrine.py:697`. Prior definition rejected every
+        # C_QUALITY intent (~50% of live emissions) — a win-rate-only tier
+        # gate that silently blocked legitimate positive-expectancy setups.
+        # REJECT tier is still filtered.
+        "quality_ok": base.quality in {"A_QUALITY", "B_QUALITY", "C_QUALITY"},
         "spread_ok": "SPREAD_ACCEPTABLE" in labels,
         "market_not_weak": "MARKET_WEAK_REDUCE_RISK" not in labels,
         "has_attention": "GAPPER" in labels or "HIGH_RELATIVE_VOLUME" in labels,

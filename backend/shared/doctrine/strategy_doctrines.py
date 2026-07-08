@@ -144,7 +144,11 @@ def _build_gap_and_go_v1(snapshot, seat_holders):
         "premarket_setup_present": premarket_high_crossed or premarket_bull_flag,
         "above_emas": above_emas,
         "spread_ok": "SPREAD_ACCEPTABLE" in labels,
-        "quality_ok": base.quality in {"A_QUALITY", "B_QUALITY"},
+        # 2026-02-19 fix (C): include C_QUALITY, matching large_cap_doctrine
+        # and brain_sidecars. Same reasoning — C_QUALITY is acceptable-not-
+        # great, not REJECT; blocking it is a silent win-rate-only tier
+        # gate rejecting legitimate positive-expectancy setups.
+        "quality_ok": base.quality in {"A_QUALITY", "B_QUALITY", "C_QUALITY"},
     }
     _ej_failed = [k for k, v in execution_checks.items() if not v]
 

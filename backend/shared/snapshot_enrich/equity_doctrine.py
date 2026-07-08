@@ -166,7 +166,6 @@ def _detect_pattern(bars: List[Dict[str, Any]]) -> Optional[str]:
     tail = bars[-10:]
     closes = [_to_float(b.get("close") or b.get("c")) for b in tail]
     highs = [_to_float(b.get("high") or b.get("h")) for b in tail]
-    lows = [_to_float(b.get("low") or b.get("l")) for b in tail]
     if not all(closes):
         return None
     # Detect: rising leg then 2-4 consolidation bars at the top
@@ -333,8 +332,18 @@ def _enrich_sync(symbol: str, base: Dict[str, Any]) -> Dict[str, Any]:
             sentinel_threshold_bps = 999.0
             stale_threshold_sec = 15.0
             quote_age_sec = _quote_age_seconds(snap)
+            existing_quality = str(out.get("spread_quality") or "").lower()
             if sp >= sentinel_threshold_bps:
                 quality = "sentinel"
+            elif quote_age_sec is not None and quote_age_sec <= stale_threshold_sec:
+                quality = "live"
+            elif existing_quality in ("live", "stale", "sentinel"):
+                # 2026-02-19 fix (A): honor the upstream caller's tag when
+                # we have no Webull timestamp to judge against. Neutral-
+                # brain snapshots compute spread from fresh bars and set
+                # "live" themselves; overwriting to "stale" produces the
+                # SPREAD_QUALITY_UNKNOWN → spread_ok=False cascade.
+                quality = existing_quality
             elif quote_age_sec is None or quote_age_sec > stale_threshold_sec:
                 quality = "stale"
             else:
