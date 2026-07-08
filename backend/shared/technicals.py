@@ -24,6 +24,7 @@ Doctrine guards:
 """
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Literal, Optional
@@ -42,6 +43,9 @@ from namespaces import (
 from runtime_auth import verify_runtime_token
 from shared.indicators import build_snapshot
 from shared.patterns import detect_pattern
+
+
+logger = logging.getLogger(__name__)
 
 
 # ──────────────────────── config ────────────────────────

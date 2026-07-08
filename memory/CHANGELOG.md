@@ -1,3 +1,119 @@
+## 2026-02-19 (session tail cont.) — P0 snapshot enrichment (Follow-up B): RVOL coverage 3.7% → 100% equity
+
+### The gap Part 1 left open
+Part 1 added `session_features()` and shipped gap_pct / relative_volume /
+vwap_distance_pct through both intent emission paths. Coverage after
+Part 1:
+- `vwap_distance_pct`: 99% (needs only today's session)
+- `gap_pct`: 53% (needs ≥ 1 prior session in bar window)
+- `relative_volume`: **3.7%** (needs ≥ 3 prior sessions for a defensible
+  baseline; 5m 300-bar window only spans 3–4 sessions).
+
+RVOL was structurally broken for 96.3% of symbols. Root cause: 20-day
+baseline can't fit in a 25-hour intraday window. Fix required a data
+source outside the intraday window itself.
+
+### What shipped
+
+#### `session_features(bars, prior_session_volumes=None)` — signature extension
+- New optional param: caller passes pre-computed prior-session volume
+  totals (typically 20 daily volumes from `shared_ohlcv_bars` at `tf=1d`).
+- When provided, RVOL uses this as the baseline denominator directly.
+- Fallback preserved: `None` / empty / <3 non-zero → falls back to the
+  existing intraday-derived path.
+- Coerces bad values (strings, None, negatives) → dropped. Zero-volume
+  holiday entries filtered before floor check.
+- Backward-compatible: all Part-1 callers pass no arg, behave unchanged.
+
+#### `_fetch_daily_volume_baseline(symbol, limit=20)` — new helper in `shared/technicals.py`
+- Queries `shared_ohlcv_bars` at `tf=1d`, excludes today's bar (numerator
+  vs denominator overlap prevention).
+- Returns oldest-first non-zero volumes.
+- Source-agnostic — reads ANY `tf=1d` bar regardless of feeder (polygon /
+  finnhub_equity / etc).
+
+#### `_recompute_snapshot` — wired to use the baseline
+- For `tf != "1d"`, fetches the daily baseline before `build_snapshot()`,
+  threads via `prior_session_volumes=`.
+- Baseline fetch wrapped in try/except — a bad fetch degrades to intraday
+  derivation, never crashes the snapshot.
+
+#### `build_snapshot(bars, prior_session_volumes=None)` — param threaded
+- Passes straight through to `session_features()`.
+
+#### `GET /api/runtime-discussion/technical/{symbol}` — attaches baseline
+- Response now includes `daily_volume_baseline: list[float]` alongside
+  `bars` / `snapshot`.
+- Empty list when `tf=1d` (redundant) or when the symbol has no daily
+  bars (crypto in the current data stack).
+
+#### `external/brains/runner.py::_build_snapshot` — neutral brain wire
+- Reads `technical.get("daily_volume_baseline")`, passes to
+  `session_features(bars, prior_session_volumes=...)`.
+- **Fresh intraday numerator + deep daily denominator**: today's cumulative
+  volume comes from the neutral brain's up-to-the-tick bars; the 20-day
+  baseline comes from the daily flatfile bars. Best of both.
+
+#### Snapshot refresh (one-time)
+- Rebuilt all 790 existing `shared_indicator_snapshots` docs against the
+  new path.
+
+### Observable coverage
+
+Full snapshot collection (~790 rows) coverage rose from 3.7% → 6.6%
+because ~552 synthetic `thinkorswim` test rows (IDM/OPR/RP4/UNI prefix
+patterns) still contribute to the denominator but have no daily bar
+data. **On the actual live-emitted universe** (14 symbols across two
+lanes):
+
+| Metric | Before | After |
+|---|---|---|
+| Equity RVOL populated | 0/11 | **11/11 (100%)** |
+| Crypto RVOL populated | 3/3 (intraday-only) | 3/3 (intraday fallback preserved) |
+| Live universe RVOL total | 3/14 (21%) | **12/14 (86%)** |
+| Live universe gap_pct | 11/14 | 12/14 |
+| Live universe vwap_distance_pct | 12/14 | 13/14 |
+
+Live intent sample (2026-07-08 07:39):
+```
+stack     sym       gap      rvol      vwap
+NVDA      +0.706    0.890    +0.153     (equity, daily baseline)
+ETH/USD   +0.070    0.066    -0.257     (crypto, intraday fallback)
+BTC/USD   +0.030    0.090    -0.276     (crypto, intraday fallback)
+```
+
+Equity RVOL values now reflect a proper 20-day baseline. Doctrine seats
+consume real per-symbol volume-context data for the first time.
+
+### Tests
+- 8 new tests in `test_snapshot_session_features.py::TestPriorSessionVolumesInjection`:
+  - injected baseline used when intraday too narrow
+  - injected takes precedence over intraday-derived
+  - empty / None baseline falls back to intraday
+  - zero-volume entries filtered
+  - below-3-nonzero floor returns None
+  - non-numeric / negative entries coerced out
+  - gap and vwap unaffected by baseline injection
+- All 23 `test_snapshot_session_features` tests pass.
+- Wider 75-test regression (all witness_* + snapshot) still passes.
+
+### Deferred (not addressed here — Follow-up A)
+- `market_regime` (SPY-based bull/bear/choppy classifier)
+- `velocity_5m` (rolling recent-moves derivative)
+- `rvol_acceleration` (2nd derivative of RVOL, needs Part-B first)
+
+### Not addressed
+- Crypto RVOL still uses intraday-fallback (~2-3 sessions in a 50-bar
+  hourly window). Kraken doesn't emit `tf=1d` bars to `shared_ohlcv_bars`.
+  Fix would require a separate daily-crypto feeder or use of an already-
+  present crypto data source. Deferred.
+- ~552 synthetic `thinkorswim` rows in `shared_indicator_snapshots`
+  (IDM/OPR/RP4/UNI prefix patterns, no doctrine downstream). Cleanup
+  offered to operator but declined for now — noted for a later sweep.
+
+---
+
+
 ## 2026-02-19 (session tail cont.) — P0 snapshot enrichment (part 1 of 2)
 
 ### The 0% intent screen: root cause fix (partial)
