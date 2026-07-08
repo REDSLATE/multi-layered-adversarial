@@ -1,3 +1,116 @@
+## 2026-02-19 (session tail cont.) — P0 snapshot enrichment (part 1 of 2)
+
+### The 0% intent screen: root cause fix (partial)
+
+Operator screenshot showed 4 doctrine seats collapsing to identical
+penalties `−12 / −30 / −85 / −80` across every intent, regardless of
+symbol. Diagnosis chain (2026-02-19):
+
+- Doctrine seats read `snapshot.gap_pct`, `snapshot.relative_volume`,
+  `snapshot.vwap_distance_pct` (among others).
+- Those keys DID NOT EXIST on the snapshots being persisted to intents
+  → `snapshot.get("gap_pct", 0.0)` returned 0.0 for every symbol
+  → every seat scored identically to every other seat on the same
+  cadence.
+- `build_snapshot()` in `shared/indicators.py` had never computed
+  these three fields. The doctrine layer's read side was correct;
+  the write side was silent.
+- Two emission paths: the `_build_intent_body` code in
+  `shared/brains/_runner_core.py` (native runtimes, currently
+  disabled via `*_NATIVE_RUNTIME_ENABLED=false`) and the
+  `external/brains/runner.py` neutral-brain emitter (live).
+  Neither shipped the three fields on `doctrine_snapshot`.
+
+### What shipped (this part covers the P0 proof pass — three fields)
+
+#### `shared/indicators.py::session_features(bars)` — new helper
+- Computes `gap_pct`, `relative_volume`, `vwap_distance_pct` from
+  a bar list. Groups bars by session-date so it works uniformly
+  for 5m intraday and 1d daily inputs. Returns `None` (not 0) when
+  the input can't support a field cleanly — default-hostile
+  contract so the doctrine seats never confuse "data absent" with
+  "flat signal."
+- Rules per field:
+    - `gap_pct` = (today_open − prev_close) / prev_close × 100.
+      Needs ≥ 1 prior session in the bar window.
+    - `relative_volume` = today's session volume / avg of up to
+      20 prior sessions' volumes. Needs ≥ 3 non-zero prior
+      sessions (below that, ratio is too noisy → None).
+    - `vwap_distance_pct` = (last_close − session_vwap) / session_vwap × 100.
+      Session VWAP uses (H+L+C)/3 volume-weighted over today's bars.
+- Spliced into `build_snapshot`'s return dict alongside the legacy
+  indicators. Backward-compatible — all existing keys preserved.
+
+#### `_build_intent_body` (native runtime, `shared/brains/_runner_core.py`)
+- Populates `IntentIn.doctrine_snapshot` from `snapshot["indicators"]`
+  when a snapshot is available. Was previously unset → doctrine layer
+  received `body.doctrine_snapshot = None` and defaulted every field.
+- Effective when `*_NATIVE_RUNTIME_ENABLED=true` for any brain. Also
+  benefits the four native runners when they come back online.
+
+#### `external/brains/runner.py::_build_snapshot` (live neutral brains)
+- Adds `snapshot.update(session_features(bars))` in the ≥ 20-bars
+  path. Neutral brains already have bars in hand from
+  `/api/runtime-discussion/technical/{symbol}` — no additional
+  fetch needed.
+- Import: `from shared.indicators import session_features`.
+- Cold-start branch (< 20 bars) unchanged — that path already emits
+  stub-labeled fake data; adding real fields there would confuse
+  provenance.
+
+#### Refresh script
+- One-time refresh of all 790 existing `shared_indicator_snapshots`
+  documents so the new fields appear immediately without waiting
+  for the next per-symbol bar tick. Coverage:
+    - `vwap_distance_pct`: 787/790 (99%)
+    - `gap_pct`: 418/790 (53%)
+    - `relative_volume`: 29/790 (3.7%) — RVOL needs ≥ 3 prior
+      sessions of history in the bar window; the 300-bar 5m
+      window only spans 3–4 sessions.
+
+### Observable result
+
+Same three symbols, four brains, freshly emitted intents (2026-07-08 07:07+):
+
+| Symbol | gap_pct | relative_volume | vwap_distance_pct | Strategist Δ | Governor risk_mult |
+|---|---|---|---|---|---|
+| NVDA | +0.71% | 0.89 | +0.15% | **+0.04** | 0.60 |
+| ABNB | +0.78% | None (RVOL history absent) | −0.014% | **−0.20** | 0.25 |
+| ETH/USD | −0.24% | 0.066 | −0.26% | **−0.03** | 0.65 |
+
+The identical `−12 / −30 / −85 / −80` collapse across every intent is
+STRUCTURALLY BROKEN. Different symbols now produce different seat
+outputs. First positive Strategist conviction (`+0.04` on NVDA) since
+the pattern started. Same symbol across brains still emits identical
+values (correct — brains see the same market).
+
+### Not solved by this pass (documented separately)
+
+- The Executor still shows 4 failed checks per intent (news_data,
+  float_data, spread_quality unavailable for many symbols). That
+  is a data-feed availability issue, not a snapshot enrichment gap.
+  Doctrine now differentiates on seats 1–3; Executor stays constant
+  until the missing news/float/spread feeds come online.
+- The three "harder" enrichment fields (`market_regime`,
+  `velocity_5m`, `rvol_acceleration`) are deferred to a follow-up
+  pass, per operator's staged plan — validate the proof pass first,
+  then add the harder trio.
+- The 5m 300-bar snapshot window is too narrow for a full 20-day
+  RVOL baseline (only 3.7% of symbols currently qualify). Follow-up
+  fix: cross-reference `shared_ohlcv_bars` with `tf=1d` for the
+  RVOL baseline while keeping intraday for gap and VWAP.
+
+### Tests
+
+- `tests/test_snapshot_session_features.py` — 15 tests covering
+  gap / relative_volume / vwap_distance_pct None-vs-zero contracts,
+  intraday vs daily bars, three-prior-session floor, zero-volume
+  holiday filtering, and `build_snapshot` integration.
+- Existing 60 tests (`test_witness_*`) still pass.
+
+---
+
+
 ## 2026-02-19 (session tail) — Witness ladder engine + Polygon flatfiles fix + alpha-based WATCHLIST pathway
 
 ### The chain of discoveries

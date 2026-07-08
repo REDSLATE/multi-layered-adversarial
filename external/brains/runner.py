@@ -62,6 +62,7 @@ from fastapi import HTTPException
 
 from .brain_core import BrainIntent, NeutralAdversarialBrain
 from .personality import apply_personality_confidence, get_personality
+from shared.indicators import session_features
 
 
 logger = logging.getLogger("risedual.neutral_brains")
@@ -594,6 +595,16 @@ def _build_snapshot(
                 "pattern": "base_breakout",
                 "real_market_data": True,
             }
+            # ── Doctrine-facing session enrichment (2026-02-19 P0 wire).
+            # `session_features(bars)` computes gap_pct / relative_volume /
+            # vwap_distance_pct — the three fields the Strategist /
+            # Auditor / Governor / Executor seats consume to differentiate
+            # per-symbol. Without them, every intent's four seats
+            # defaulted their reads to 0.0 and collapsed to identical
+            # scores. Splice into the snapshot the neutral brain sends,
+            # so the doctrine sidecar reads real values instead of the
+            # 0.0 fallback.
+            snapshot.update(session_features(bars))
             return snapshot, setup_score
 
     # Cold-start fallback (MC has no bars for this symbol yet).

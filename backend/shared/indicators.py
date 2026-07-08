@@ -152,6 +152,162 @@ def atr(highs: list[float], lows: list[float], closes: list[float], period: int 
     return out
 
 
+# ──────────────────────── doctrine-facing session features ────────────────────────
+
+
+def _bar_date(bar: dict) -> Optional[str]:
+    """Extract the YYYY-MM-DD portion of a bar's `ts`.
+
+    Groups bars into trading sessions. Robust to `ts` being ISO string
+    with or without timezone suffix. Returns None if `ts` is missing
+    or unparseable — the caller then treats the bar as un-groupable.
+    """
+    ts = bar.get("ts")
+    if not ts:
+        return None
+    return str(ts)[:10]  # slice YYYY-MM-DD out of any ISO variant
+
+
+def session_features(bars: list[dict]) -> dict:
+    """Compute the three doctrine-facing enrichment fields.
+
+    Reads: `o, h, l, c, v, ts` per bar.
+    Returns keys: `gap_pct`, `relative_volume`, `vwap_distance_pct`,
+    plus one advisory diagnostic: `session_bars_seen` (how many bars
+    of today's session were used for VWAP).
+
+    Any field the input cannot support cleanly resolves to `None` —
+    caller MUST NOT treat None as zero. Default-hostile: better to
+    leave the doctrine seat with a missing field than a fake one.
+
+    Behavior contract for each field:
+
+    * `gap_pct` — (today_open - prev_close) / prev_close * 100
+        Needs at least ONE full previous session in the bar window.
+        Works identically for 1d and intraday bars: groups by
+        session-date, takes the last close of the previous session,
+        the first open of the latest session, and returns the pct.
+
+    * `relative_volume` — today's session volume / avg of prior
+        sessions' volumes (up to 20 sessions). Needs ≥ 3 prior
+        sessions to be a defensible ratio; below that, returns None.
+        For daily bars (1d): each bar IS one session, so today = the
+        last bar and prior sessions are the previous N bars. For
+        intraday: sums today's session bars, and prior-sessions'
+        totals are pre-summed per date.
+
+    * `vwap_distance_pct` — (last_close - session_vwap) / session_vwap * 100
+        Session VWAP uses TODAY's session only, with typical price
+        (H+L+C)/3 weighted by volume. Requires ≥ 2 bars in today's
+        session (single-bar days trivially return 0).
+    """
+    if not bars:
+        return {
+            "gap_pct": None, "relative_volume": None,
+            "vwap_distance_pct": None, "session_bars_seen": 0,
+        }
+
+    # Group bars by session date, preserving order.
+    sessions: dict[str, list[dict]] = {}
+    ordered_dates: list[str] = []
+    for b in bars:
+        d = _bar_date(b)
+        if d is None:
+            continue
+        if d not in sessions:
+            sessions[d] = []
+            ordered_dates.append(d)
+        sessions[d].append(b)
+
+    if not ordered_dates:
+        return {
+            "gap_pct": None, "relative_volume": None,
+            "vwap_distance_pct": None, "session_bars_seen": 0,
+        }
+
+    today = ordered_dates[-1]
+    today_bars = sessions[today]
+    prior_dates = ordered_dates[:-1]
+
+    # ─── gap_pct ───
+    gap_pct: Optional[float] = None
+    if prior_dates:
+        prev_close_raw = sessions[prior_dates[-1]][-1].get("c")
+        today_open_raw = today_bars[0].get("o")
+        try:
+            prev_close = float(prev_close_raw)
+            today_open = float(today_open_raw)
+            if prev_close > 0:
+                gap_pct = (today_open - prev_close) / prev_close * 100.0
+        except (TypeError, ValueError):
+            gap_pct = None
+
+    # ─── relative_volume ───
+    # today_vol = sum of today's session bar volumes.
+    # baseline  = average of prior sessions' (up to 20) session totals.
+    # Requires ≥ 3 prior sessions — below that the ratio is too noisy
+    # to be a defensible signal (a single anomalous prior day would
+    # dominate).
+    def _session_vol(bs: list[dict]) -> float:
+        total = 0.0
+        for x in bs:
+            try:
+                total += float(x.get("v") or 0.0)
+            except (TypeError, ValueError):
+                continue
+        return total
+
+    relative_volume: Optional[float] = None
+    if len(prior_dates) >= 3:
+        recent_prior = prior_dates[-20:]  # up to 20 sessions
+        prior_vols = [_session_vol(sessions[d]) for d in recent_prior]
+        # Filter out zero-volume "sessions" (holidays that snuck in
+        # via ts grouping) — they'd deflate the baseline.
+        prior_vols = [v for v in prior_vols if v > 0]
+        if len(prior_vols) >= 3:
+            baseline = sum(prior_vols) / len(prior_vols)
+            today_vol = _session_vol(today_bars)
+            if baseline > 0:
+                relative_volume = today_vol / baseline
+
+    # ─── vwap_distance_pct ───
+    # Session VWAP uses (H+L+C)/3 as the typical price. If today has
+    # only one bar (e.g. daily-tf feed), typical == that bar's c, so
+    # the distance is trivially 0.0 — technically correct but not
+    # informative; still return 0 rather than None so the doctrine
+    # seat sees SOME value.
+    vwap_distance_pct: Optional[float] = None
+    if today_bars:
+        pv_sum = 0.0
+        v_sum = 0.0
+        for b in today_bars:
+            try:
+                h_ = float(b.get("h"))
+                l_ = float(b.get("l"))
+                c_ = float(b.get("c"))
+                v_ = float(b.get("v") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            typical = (h_ + l_ + c_) / 3.0
+            pv_sum += typical * v_
+            v_sum += v_
+        if v_sum > 0:
+            vwap = pv_sum / v_sum
+            try:
+                last_close = float(today_bars[-1].get("c"))
+                if vwap > 0:
+                    vwap_distance_pct = (last_close - vwap) / vwap * 100.0
+            except (TypeError, ValueError):
+                vwap_distance_pct = None
+
+    return {
+        "gap_pct": gap_pct,
+        "relative_volume": relative_volume,
+        "vwap_distance_pct": vwap_distance_pct,
+        "session_bars_seen": len(today_bars),
+    }
+
+
 # ──────────────────────── snapshot builder ────────────────────────
 
 def build_snapshot(bars: list[dict]) -> dict:
@@ -222,4 +378,11 @@ def build_snapshot(bars: list[dict]) -> dict:
             (_last(atr14) / last_close * 100.0)
             if _last(atr14) is not None and last_close else None
         ),
+        # ── Doctrine-facing session enrichment (2026-02-19).
+        # These three are what the Strategist / Auditor / Governor /
+        # Executor seats read to differentiate per-symbol. Missing
+        # them silently collapsed all four seats to identical scores
+        # across every intent. See `session_features()` docstring
+        # for the exact math + None-vs-zero contract per field.
+        **session_features(bars),
     }

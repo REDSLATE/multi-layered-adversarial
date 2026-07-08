@@ -127,6 +127,21 @@ def _build_intent_body(
             "trust": trust,
         }
 
+    # ── doctrine_snapshot — feeds the Strategist / Auditor / Governor /
+    #    Executor seats' per-symbol reads. Without this, the seats
+    #    default every field to 0.0 and collapse to identical scores
+    #    across every intent (2026-02-19 P0 wire-up).
+    #
+    #    We pass the full `indicators` dict (~800 bytes typical, well
+    #    under the 4 KB IntentIn cap). Also propagate the snapshot's
+    #    `symbol` so the doctrine router can build lane guards.
+    doctrine_snapshot_out: dict[str, Any] | None = None
+    if snapshot is not None:
+        indicators = snapshot.get("indicators") or {}
+        if indicators:
+            doctrine_snapshot_out = dict(indicators)
+            doctrine_snapshot_out["symbol"] = symbol
+
     return IntentIn(
         stack=brain_id,            # type: ignore[arg-type]
         action=decision.action,
@@ -137,6 +152,7 @@ def _build_intent_body(
         rationale=decision.rationale,
         target_price=decision.target_price,
         stop_price=decision.stop_price,
+        doctrine_snapshot=doctrine_snapshot_out,
         evidence={
             **(decision.evidence or {}),
             "emit_source": f"{brain_id}_native_runtime",
