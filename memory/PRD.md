@@ -9,87 +9,47 @@ trading, comprehensive provenance + health tracking.
 
 ### 🚨 NEXT WORK ITEM — P0 UNSTARTED (top priority — do NOT skip past this)
 
-**Wire `enrich_equity_doctrine_snapshot` into the live equity ingest path.**
+**Extend `build_snapshot()` in `shared/technicals.py` to compute doctrine-facing fields, thread them through the runner-emit path.**
 
-#### Root cause (confirmed 2026-02-19, not hypothesis)
-Live equity ingest never calls `enrich_equity_doctrine_snapshot`. The
-only caller in the codebase is `routes/webull_admin.py:96` — a Webull
-admin diagnostic endpoint that operators hit manually to inspect one
-symbol at a time. It is NOT wired into the live ingest path in
-`shared/intents.py`.
+#### Root cause (refined 2026-02-19 late — supersedes earlier "wire enrich_equity_doctrine_snapshot" phrasing)
+The brains DO have access to real market data — but they read it from a Mongo cache (`shared_indicator_snapshots`), NOT from direct broker calls. That cache is populated event-driven by external feeders POSTing OHLCV bars to `/api/ingest/ohlcv`, which triggers `shared/technicals.py::_recompute_snapshot` to rebuild the indicators block.
 
-Evidence from prod (2026-07-07):
-- `shared_intents.count_documents({'lane':'equity'})` = **28,286**
-- `shared_intents.count_documents({'snapshot.enrichment_status':{'$exists':true}})` = **1,995**
-- **~93% of all-time equity intents were persisted without any enrichment stamp.**
-- The 1,995 that DO carry a stamp appear to be intents where the brain
-  itself pre-enriched its `doctrine_snapshot` (Camino, based on field
-  patterns like `webull_enriched: true` shipping from the brain side).
-  The other three brains ship minimal snapshots.
+The gap: `build_snapshot(bars)` currently computes a base set of indicators (RSI, EMA, VWAP, etc.) but does NOT compute the doctrine-facing fields the doctrine actually reads (`gap_pct`, `relative_volume`, `market_regime`, `vwap_distance_pct`, `velocity_5m`, `rvol_acceleration`). So brains have RICH cached indicator data available, but when their tick calls `_build_intent_body` to construct the intent's `doctrine_snapshot`, the doctrine-facing fields are absent → intent lands at MC with `spread_bps=999 (sentinel)` and no other doctrine data → NO_DATA / "NO PROVENANCE" on every intent.
 
-The live ingest path only spread-enriches via
-`shared/market_data/spread_enrichment.py::enrich_snapshot_spread`. It
-never runs the full equity doctrine enricher (gap_pct, RVOL, VWAP,
-velocity, EMA stack, market_regime, has_news, float_millions, etc.).
+This is architecture B (in-process shared runners reading from a Mongo cache) working exactly as designed — the cache just doesn't carry the doctrine fields yet.
 
-#### Fix scope (unstarted — must be done before this can close)
-1. **Locate the current live ingest entry point.** The
-   `external/brains/runner.py` docstring reference in the handoff is
-   STALE (that path does not exist in the current tree). The real
-   ingest entry point is `shared/intents.py` in the
-   `_ingest_intent_common` (or equivalent) helper called by the
-   admin/ingest routes — see the three `"snapshot": enriched_snapshot`
-   writes at lines 719, 1183, 1834.
-2. **Wire `enrich_equity_doctrine_snapshot`** to run AFTER
-   `enrich_snapshot_spread` and BEFORE the intent doc is persisted —
-   only on `lane == "equity"`. Crypto has its own separate enricher
-   at `shared/snapshot_enrich/crypto_doctrine.py`.
-3. **Decide fail-open vs fail-loud on enrichment failure.** The
-   enricher already returns the base_snapshot with
-   `enrichment_status="failed"` + `enrichment_error` stamped on it
-   (fail-soft contract). Confirm this matches what we want at the
-   ingest layer — the doctrine will now NO_DATA-short-circuit on
-   `enrichment_status="failed"`, which is honest. Alternative is to
-   reject the intent at ingest with a 4xx if enrichment fails; my
-   recommendation is fail-soft + NO_DATA (matches existing pattern,
-   surfaces the gap visibly, doesn't drop signal).
-4. **Check per-intent Webull HTTP latency is acceptable.** The
-   enricher makes at least one Webull REST call per intent (see
-   `_enrich_sync` in `shared/snapshot_enrich/equity_doctrine.py`).
-   Under load (all 4 brains × 20 equity symbols × ~5s cadence) that's
-   ~16 calls/sec sustained. Confirm the Webull rate budget accepts
-   this; if not, cache per-symbol per-N-seconds inside the enricher.
-5. **Add tests.** At minimum: (a) ingest with `lane="equity"` calls
-   the enricher exactly once, (b) enrichment failure results in
-   `snapshot.enrichment_status="failed"` on the persisted intent doc,
-   (c) enrichment success results in `snapshot.enrichment_status="live"`
-   + the enriched fields (gap_pct, VWAP, velocity_5m, etc.) present.
+#### Fix scope
+1. **Extend `shared/technicals.py::build_snapshot(bars)`** with a companion function (or inline additions) that computes:
+   - `gap_pct` — (current_open - prev_close) / prev_close × 100
+   - `relative_volume` — current_bar_volume / rolling_N_bar_avg_volume
+   - `market_regime` — trend/chop classifier from the same bar window (weak/strong/unknown)
+   - `vwap_distance_pct` — (last_close - vwap) / vwap × 100
+   - `velocity_5m` — pct change over last 5 bars (or however "5m" maps to the tf)
+   - `rvol_acceleration` — delta of RVOL over the last N bars
+
+   Stamp these into the `indicators` block of the doc `_recompute_snapshot` upserts.
+
+2. **Thread the fields through `_build_intent_body`** in `shared/brains/_runner_core.py:225-229` so the intent's `doctrine_snapshot` payload includes them. Read from `snap["indicators"]`, promote to the top level of `doctrine_snapshot`.
+
+3. **`spread_bps` special case:** OHLCV bars don't carry bid/ask, so `spread_bps` cannot be computed from the bar cache. It stays with the existing `enrich_snapshot_spread` path (brain-supplied, MC-derived, kraken-direct, or sentinel). The NO_DATA short-circuit correctly handles sentinel spread — this is not a doctrine blocker.
+
+4. **Add test**: given a synthetic bar sequence, verify `build_snapshot()` produces expected doctrine-field values and that a downstream `_build_intent_body` call propagates them into the intent's `doctrine_snapshot`.
 
 #### Do NOT do before this ships
-**No enrichment funnel / provenance dashboard / classification-funnel
-panel work.** Measuring a gap that is already diagnosed, whose cause
-is known, and whose fix is a single well-scoped code change adds no
-value over just closing it. Telemetry is worthwhile AFTER the fix
-lands to monitor for regressions — not before.
+Any additional NO_DATA short-circuit patches, provenance dashboards, or telemetry endpoints. The two NO_DATA fixes shipped this session (base + sentinel-spread) correctly render the current state as "no data" — that's the honest UI. The right next move is making REAL data flow so the honest state becomes "have data" instead of continuing to make the "no data" state prettier.
 
-#### Critical dependency note
-**The 2026-02-19 large-cap doctrine work (Universe Classifier,
-Doctrine Registry, VWAP/velocity/RVOL/EMA momentum-origination
-scoring, direction.strategy_bias) is inert until this wiring fix
-lands.** All of it reads its scoring signals off the SAME snapshot
-that the enricher populates. Without the enricher in the live path,
-every large-cap intent will correctly (and honestly) NO_DATA-short-
-circuit — but the brains still won't emit directional BUY/SELL
-intents on NVDA/MSFT/AMZN/etc. because there's nothing for the
-doctrine to score.
+#### Critical dependency note (unchanged from earlier PRD version)
+**The 2026-02-19 large-cap doctrine work (Universe Classifier, Doctrine Registry, VWAP/velocity/RVOL/EMA scoring, direction.strategy_bias) is inert until this fix lands.** All of it reads its scoring signals from doctrine-facing snapshot fields that don't yet flow through the runner path.
 
-Whoever picks this up next: DO NOT deploy tonight's session and
-conclude the large-cap doctrine fix has landed. It has landed as
-CODE. It cannot fire until the enricher is wired in the ingest path.
+#### Also open (separate P0 — investigate but rank AFTER the doctrine-field flow-through)
+**Silent-write-failure diagnosis on the runner path.** Post-deploy check showed Camino's runner internal counter (`intent_count: 267 since deploy`) incrementing while direct DB check showed last actual Camino intent 11h ago. The runner's success signal is measured at emission-decision level, not DB-write-confirmed level. Fix scope:
+   - Trace where `_intent_loop`'s counter increments relative to the `submit_intent_in_process` return
+   - Add a "last DB-confirmed ingest_ts for this stack" field to `_build_in_process_status` payload
+   - Fix the `ingest_ts` cross-type comparison bug in `routes/brain_runtime.py:224-225` (currently uses `.isoformat()` string cutoff — potentially returns inflated counts if `ingest_ts` is Date-typed on prod)
 
 ---
 
-### ✅ Universe classifier + doctrine router pattern — SHIPPED 2026-02-19
+### ✅ Universe classifier + doctrine router pattern + NO_DATA short-circuits — SHIPPED 2026-02-19
 
 See CHANGELOG for full details. Summary:
 - `shared/doctrine/universe_classifier.py` — pure symbol → universe-class dispatch (`CRYPTO`/`SMALL_CAP_MOMENTUM`/`LARGE_CAP`/`ETF`/`UNKNOWN`). Operator-vetted: no silent lane fallback — unclassified equities fail loud into `UNKNOWN` → NO_DATA (never a scored default doctrine).
