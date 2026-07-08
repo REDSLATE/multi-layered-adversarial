@@ -1,3 +1,56 @@
+## 2026-02-20 — Distribution Snapshot Job (session fingerprints) + P1 cadence-drift sentinel
+
+### P1 finding: no active silent write halt
+Verified via the new `/status.intents.latest_age_s` telemetry (shipped earlier this session). All 4 brains writing on their ~3.5min tick cadence at trace time (Camino: 226s / Hellcat: 226s / GTO: 226s / Barracuda: 226s), all with same latest symbol (NVDA/BUY) and near-identical timestamps — indicating a shared tick scheduler working correctly. Barracuda scans a broader universe (~495 top-8 vs 358 for the other three), which is a config difference, not a bug.
+
+Rather than trace something that isn't currently reproducing, added a lightweight cadence-drift sentinel that piggybacks on the fingerprint tick (see below). Logs a WARNING when any brain's latest intent age exceeds `max(3× median gap, 600s)` — turning any future silent halt into a visible operator signal at the same surface as the /status telemetry.
+
+### P2: Distribution Snapshot Job
+
+`shared/session_fingerprint.py` — background aggregator + read endpoints. Every 15 minutes it dumps per-(brain, lane, window) behavioral fingerprints to `session_fingerprints`. Windows are aligned to interval boundaries so re-runs are idempotent (same `_id`: `<brain>:<lane>:<window_end_ts>`).
+
+**Metrics captured**:
+- `intent_count`, `gate_state_dist` (blocked/submitted/...), `quality_dist` (A/B/C_QUALITY)
+- `top_labels` / `top_fail_reasons` / `top_objections` — top-K histograms
+- `execution_ready_rate` — fraction of intents that cleared the executor
+- `gate_pass_rates` — per-check (has_volume, spread_ok, market_not_weak, quality_ok)
+- `confidence_percentiles` (p10/p50/p90)
+- `risk_multiplier_p50` — median governor clamp
+- `rvol_percentiles`, `gap_pct_percentiles`
+- `market_regime_dist` — bull/bear/choppy counts
+
+**Doctrine anti-patterns explicitly avoided**:
+- No per-symbol breakdown (that's `/api/admin/intents`, not a fingerprint).
+- No retroactive rewrites — fingerprints are immutable per window. A threshold change at t=12:00 leaves the 11:45–12:00 window showing the OLD threshold's distribution. That's the point.
+
+**Env**: `SESSION_FINGERPRINT_ENABLED` (default true), `SESSION_FINGERPRINT_INTERVAL_SEC` (default 900), `SESSION_FINGERPRINT_WINDOW_MIN` (default 15), `SESSION_FINGERPRINT_TOP_K` (default 5).
+
+**Admin endpoints** (`routes/admin_session_fingerprint.py`):
+- `GET /api/admin/fingerprints/latest?brain=&lane=&limit=` — newest first, optional brain/lane filters
+- `GET /api/admin/fingerprints/window/{brain}/{lane}?window_end_ts=` — pull one specific fingerprint
+- `POST /api/admin/fingerprints/run-now` — manual re-trigger (useful post-doctrine change)
+
+**Tests** (`tests/test_session_fingerprint.py`, 11 tests): percentile edge cases (empty/single/linear/unsorted), window-boundary counting, quality distribution, top-K reasons, execution-ready rate, RVOL percentiles, market regime distribution, empty-window handling.
+
+### Cadence-drift sentinel (P1 companion)
+
+`_cadence_drift_sentinel` fires on every fingerprint tick. Approach: compare `latest_ts` against the p50 inter-intent gap over the last hour. If `age_s > max(3 × median_gap, 600s)` → WARNING log with the offending brain, latest age, median gap, and threshold. The 600s absolute floor prevents false alarms on brains with sub-minute median gaps.
+
+### Live signal (post-restart smoke)
+
+First real fingerprint for camino/equity in the 11:45-12:00 window landed with strikingly clear diagnostic value:
+- **6 intents, ALL blocked, ALL C_QUALITY, execution_ready_rate=0.0**
+- Top fail reasons: `gap_below_1_pct` (6/6), `relative_volume_below_threshold` (6/6)
+- Every intent had the `RVOL_ACCELERATING` label but not enough to clear the strict volume gate
+- Auditor objection universal: `rvol_too_quiet_for_directional`
+
+Exactly the "where is the funnel choking" signal the PRD wanted for before/after doctrine-change validation.
+
+### Regression sweep
+
+**756 passed / 0 failed** (was 745 + 11 new fingerprint tests). Zero new regressions.
+
+
 ## 2026-02-20 — Capital ledger retry-idempotency hardening (operator-flagged)
 
 **Bug caught during ledger wire-up review**: `_route_one`'s transient-broker-error path bumps `broker_retry_count` and returns `verdict=error` **without releasing the reservation** — intent stays eligible for a next-tick retry. When the retry re-enters `_route_one`, `reserve_capital` fired again with the same `intent_id`. Pre-fix `reserve_capital` did an unconditional `$inc + $push` → **the ledger double-charged over successive retries**, silently draining lane headroom without any live position actually consuming it.

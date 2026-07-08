@@ -17,6 +17,10 @@ trading, comprehensive provenance + health tracking.
 
 **✅ 2026-02-20: `market_regime` + `velocity_5m` SHIPPED (Follow-up A COMPLETE).** `session_features_v2_pending` group deleted from coverage report. Live coverage: market_regime 72.7%, velocity_5m 54.5%.
 
+**✅ 2026-02-20: P1 silent-write-halt trace — VERIFIED NO ACTIVE HALT.** All 4 brains writing on their ~3.5min cadence at trace time. Cadence-drift sentinel added (piggybacks on fingerprint tick, logs WARNING at `max(3×median_gap, 600s)` drift).
+
+**✅ 2026-02-20: P2 Distribution Snapshot Job SHIPPED.** `shared/session_fingerprint.py` + 3 admin endpoints under `/api/admin/fingerprints/`. 15-min windows, aligned + idempotent. Captures gate_state / quality / top-labels+reasons+objections / execution_ready_rate / gate_pass_rates / confidence+rvol+gap percentiles / market_regime dist. First live fingerprint showed 6-intent Camino window all C_QUALITY, all blocked on volume — exactly the funnel-choke signal the PRD wanted.
+
 **✅ 2026-02-20: Kraken 1d bar feeder SHIPPED.** `source="kraken_pro"` `tf="1d"` bars now land on boot + hourly poll. Crypto RVOL 20-day baseline gap closed.
 
 **✅ 2026-02-20: Feature Coverage Report tuning SHIPPED.** Stale threshold 120→180min (3× poll interval); `session_features_v2` group updated with `rvol_acceleration`/`trend_score` now-shipped fields.

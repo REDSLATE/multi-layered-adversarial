@@ -526,6 +526,16 @@ async def lifespan(app: FastAPI):
         _start_capital_ledger_sweeper()
     except Exception as e:  # noqa: BLE001
         logger.warning("capital_ledger_sweeper start failed: %s", e)
+    # Distribution Snapshot Job (2026-02-20). Persists per-(brain, lane,
+    # window) behavioral fingerprints every 15 min. Enables before/after
+    # doctrine change validation.
+    try:
+        from shared.session_fingerprint import (
+            start_worker_if_enabled as _start_session_fingerprint,
+        )
+        _start_session_fingerprint()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("session_fingerprint start failed: %s", e)
     # Opinion-silent watchdog — autonomous scan that emits an alert
     # row when any occupied seat goes > threshold without an opinion
     # POST. Advisory observability only. Doctrine pin:
@@ -872,6 +882,11 @@ async def lifespan(app: FastAPI):
     try:
         from shared.capital.sweeper import stop_worker as _stop_cap_sweeper
         await _stop_cap_sweeper()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from shared.session_fingerprint import stop_worker as _stop_fp
+        await _stop_fp()
     except Exception:  # noqa: BLE001
         pass
     try:

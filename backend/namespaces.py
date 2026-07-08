@@ -76,6 +76,14 @@ FEEDER_HEALTH_AUDIT = "feeder_health_audit"  # per-feeder 429/error rolling log
 # `shared/capital/ledger.py`.
 CAPITAL_LEDGER = "capital_ledger"
 
+# Distribution Snapshot Job (2026-02-20). Per-(brain, lane, window)
+# behavioral fingerprints — histogram of gate states, quality dist,
+# top labels/reasons/objections, execution-ready rate, gate pass
+# rates, confidence/rvol/gap percentiles, market regime dist. Written
+# on a fixed 15-min cadence for before/after doctrine change
+# validation. Full spec in `shared/session_fingerprint.py`.
+SESSION_FINGERPRINTS = "session_fingerprints"
+
 # 2026-02-XX. Operator-controlled lane on/off toggles. Each row is
 # `{_id: <lane>, enabled: bool, updated_at, updated_by}`. The broker
 # router calls `is_lane_enabled(lane)` before any credential lookup —
