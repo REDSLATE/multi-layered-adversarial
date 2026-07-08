@@ -1151,43 +1151,77 @@ other lane.
 4. Position close: call `release_capital` on realized exit fill confirmation.
 5. Stale sweep: new scheduled task, cadence TBD.
 
-### Scope: LIVE trading only — paper excluded from cap enforcement
+### Scope: LIVE-route intents reserve; paper/observe skip the ledger
 
-- Only intents from lanes/brains at ladder stage `micro_live` or `normal_live`
-  reserve against `capital_ledger`. Ladder stages `observation_only` and
-  `micro_paper` do NOT call `reserve_capital` — no real capital at risk,
-  and paper fills should not consume live headroom.
-- Executor must check the resolved ladder route BEFORE calling
-  `reserve_capital`. The intent's `sizing_provenance` already carries
-  `route ∈ {observe, paper, live_micro, live_normal}` from
-  `sizing_gate.evaluate_sizing_with_ladder()`. Gate:
+Live exposure is a SPECTRUM, not a binary. Both `micro_live` and
+`normal_live` reserve real capital — they differ in the CLAMPED SIZE
+of the reservation, not in whether they reserve at all. `micro_live`
+positions are legitimately smaller (per `MICRO_LIVE_*_CAP_USD` env
+settings) but still hit real broker fills against real capital, so
+the ledger must count them against lane headroom just like
+`normal_live` — just at the smaller amount the sizing gate produced.
+
+- Only intents whose resolved route is `live_micro` or `live_normal`
+  reserve against `capital_ledger`. Routes `observe` and `paper` do
+  NOT call `reserve_capital` — no real capital at risk, and those
+  fills must not consume live headroom.
+- Executor must check the resolved route BEFORE calling
+  `reserve_capital`. Gate:
   `if route in {"live_micro", "live_normal"}: reserve_capital(...)`.
-  Otherwise the intent proceeds through its existing paper/observe path
-  unchanged.
-- If a (brain, lane) stage promotes from paper → live via the ladder
-  (operator-driven, per existing sign-off governance), it starts
-  participating in the live ledger gate automatically — no separate
-  code path needed, just the existing route check routing it through
-  reserve_capital.
+  Otherwise the intent proceeds through its existing paper/observe
+  path unchanged.
+- If a (brain, lane) ladder stage promotes from paper → live via the
+  ladder (operator-driven, per existing sign-off governance), the NEXT
+  intent it emits will carry a live route and automatically participate
+  in the ledger gate — no separate code path needed.
 - Per-lane split still applies WITHIN live: equity_cap and crypto_cap
-  each only reflect the live-stage (brain, lane) tuples currently
-  routed to that lane.
+  each only reflect the live-route intents currently flowing through
+  that lane's executor.
 
-### GROUND TRUTH: BROKER_MODE is per-brain × lane, not lane-wide
+### Single source of truth: `sizing_provenance.route` on the intent
+
+The executor MUST read the already-stamped `route` from the intent's
+`sizing_provenance` block. It MUST NOT re-derive stage/route via a
+fresh `get_stage(brain, lane)` call at ledger-gate time.
+
+Rationale: `sizing_gate.evaluate_sizing_with_ladder()` resolves the
+stage → route → clamped notional as a single decision earlier in the
+pipeline, and stamps `sizing_provenance` onto the intent. If the
+executor re-derived stage independently, an operator ladder
+promotion/demotion landing between sizing and executor arrival would
+produce a stage-vs-sizing disagreement: the intent's `notional` was
+computed under the old stage, but the ledger would gate under the new
+stage. That's a real inconsistency (wrong-size reserve, wrong route
+decision, no clear audit trail).
+
+Reading the stamped `route` off the intent guarantees the ledger gate
+agrees with whatever sizing was actually used to construct the
+intent. Ladder promotions take effect on the NEXT intent, cleanly,
+not mid-flight on an in-progress one.
+
+Same rule applies to `intent.notional` — the ledger reserves the
+clamped notional that sizing_gate produced (already on the intent),
+not a recomputed value.
+
+### GROUND TRUTH: mode is per (brain, lane) via ladder stage — not lane-wide, not a global `BROKER_MODE`
 Verified in codebase (2026-02-19):
 - `RISEDUAL_BROKER_MODE` env var (`shared/runtime/platform_survival.py:67`)
   is a GLOBAL boot-time gate. Must be `"live"` or MC refuses to boot.
-  This is NOT the per-brain mode selector.
-- Per-brain "paper vs live" label seen in identity panel comes from the
-  LADDER STAGE stored per `(brain, lane)` tuple in the `LEARNING_LADDER`
-  collection (`shared/learning_ladder.py:80` — `get_stage(brain, lane)`).
+  It is NOT the per-brain execution-mode selector, and the ledger gate
+  MUST NOT read it.
+- The actual per-brain execution mode (what the identity panel labels
+  "paper" vs "live") is derived from the LADDER STAGE stored per
+  `(brain, lane)` tuple in the `LEARNING_LADDER` collection
+  (`shared/learning_ladder.py:80` — `get_stage(brain, lane)`).
 - Four stages: `observation_only` → `micro_paper` → `micro_live` →
-  `normal_live`. Two brains in the same lane can be at different stages
-  (e.g. Camino equity at `micro_paper` while Barracuda equity at
-  `micro_live`).
-- `sizing_gate._ladder_cap_and_route(stage)` translates stage → route,
-  and the resolved `route` is attached to the intent as
-  `sizing_provenance`. THAT is what the ledger gate reads.
+  `normal_live`. Two brains in the same lane can be at different
+  stages (e.g. Camino equity at `micro_paper` while Barracuda equity
+  at `micro_live`) — mode is per-tuple, NOT lane-wide.
+- `sizing_gate._ladder_cap_and_route(stage)` translates stage → route
+  ∈ `{observe, paper, live_micro, live_normal}`. The resolved `route`
+  and clamped `notional` are stamped onto the intent as
+  `sizing_provenance`. THAT stamp is what the ledger gate reads —
+  see the single-source-of-truth section above.
 
 ### OPEN QUESTIONS (must resolve before implementation)
 - `max_age_minutes` for stale-reservation sweep — likely differs per lane
@@ -1200,9 +1234,16 @@ Verified in codebase (2026-02-19):
 - Does `REJECTED_CAP_EXCEEDED` need to be distinguished from other REJECT
   reasons in the doctrine/UI layer, or does it fall into existing REJECT
   card rendering?
-- Reservation amount source: is `amount = intent.notional` after sizing gate
-  has clamped, or before? Should be AFTER sizing_gate so the ledger reserves
-  the actually-fireable clamped notional, not the brain's requested notional.
+
+### RESOLVED (previously-open, now decided)
+- Reservation amount source: `intent.notional` AFTER sizing_gate has
+  clamped it. The clamped notional is already on the intent by executor
+  time; ledger reserves exactly that value. Resolved by the "single
+  source of truth" rule above.
+- Route lookup at ledger gate: read `intent.sizing_provenance["route"]`;
+  do NOT call `get_stage(brain, lane)` fresh in the executor. Resolved
+  by the "single source of truth" rule above (prevents ladder-promotion-
+  mid-flight disagreement between sizing and gating).
 
 ### Non-goals (explicit)
 - No shared/unified cap across lanes (rejected — split per lane, confirmed)
@@ -1297,9 +1338,15 @@ def get_lane_headroom(db, lane: str) -> dict:
 
 ```python
 # in equity executor / crypto executor, before broker submit
+# SINGLE SOURCE OF TRUTH: read the route stamped onto the intent by
+# sizing_gate.evaluate_sizing_with_ladder(). Do NOT re-derive stage here.
 
-route = intent.sizing_provenance.get("route")
-if route in {"live_micro", "live_normal"}:
+route = intent.sizing_provenance["route"]  # observe | paper | live_micro | live_normal
+LIVE_ROUTES = {"live_micro", "live_normal"}  # both consume ledger — spectrum, not binary
+
+if route in LIVE_ROUTES:
+    # intent.notional is the already-clamped size sizing_gate produced
+    # under this exact stage — reserve THAT, not a recomputed value.
     if not reserve_capital(db, lane="equity", amount=intent.notional, intent_id=intent.id):
         intent.status = "REJECTED_CAP_EXCEEDED"
         persist(intent)
@@ -1307,8 +1354,8 @@ if route in {"live_micro", "live_normal"}:
 
 try:
     broker_result = submit_to_broker(intent)
-except TerminalBrokerError as e:
-    if route in {"live_micro", "live_normal"}:
+except TerminalBrokerError:
+    if route in LIVE_ROUTES:
         release_capital(db, "equity", intent.id, intent.notional, reason="broker_terminal_reject")
     raise
 # transient errors: leave reserved, existing retry-cap logic handles it
