@@ -270,6 +270,47 @@ async def test_concurrent_reserve_same_intent_id_no_double_charge():
     )
 
 
+@pytest.mark.asyncio
+async def test_idempotency_is_scoped_per_lane():
+    """Idempotency invariant: `intent_id` uniqueness is scoped
+    PER LANE, not global. The CAS filter's `_id: <lane>_cap`
+    restricts the check to a single lane doc.
+
+    In practice, any given intent has exactly one lane so this
+    doesn't fire — but the invariant matters for correctness. A
+    same intent_id in equity + crypto is treated as two independent
+    reservations (each lane's doc holds its own reservation array).
+    """
+    await init_ledger(1000.0, 500.0)
+    same_id = "intent-shared-id"
+    # First reserve on equity — succeeds cleanly.
+    ok_eq = await reserve_capital("equity", 200.0, same_id)
+    assert ok_eq is True
+    # Second reserve on CRYPTO with the same intent_id — must
+    # succeed as a fresh reservation (different lane doc, different
+    # reservations array), NOT trip the idempotent no-op.
+    ok_cr = await reserve_capital("crypto", 100.0, same_id)
+    assert ok_cr is True
+
+    eq = await get_lane_headroom("equity")
+    cr = await get_lane_headroom("crypto")
+    assert eq["reserved"] == 200.0, (
+        f"equity reservation isolated, got reserved={eq['reserved']}"
+    )
+    assert cr["reserved"] == 100.0, (
+        f"crypto reservation isolated, got reserved={cr['reserved']}"
+    )
+    # Now a THIRD reserve on equity with the same intent_id — this
+    # IS the retry case, must be idempotent no-op.
+    ok_eq2 = await reserve_capital("equity", 200.0, same_id)
+    assert ok_eq2 is True
+    eq_after = await get_lane_headroom("equity")
+    assert eq_after["reserved"] == 200.0, (
+        "same-lane same-intent retry MUST NOT double-charge "
+        "even when the intent_id also exists in another lane"
+    )
+
+
 # ─────────────────────── release_capital ───────────────────────
 
 

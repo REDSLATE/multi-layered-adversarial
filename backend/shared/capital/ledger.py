@@ -144,22 +144,30 @@ async def reserve_capital(
 
     Idempotent on `intent_id` (2026-02-20 doctrine pin):
         If an OPEN reservation with the same `intent_id` already
-        exists, this call is a no-op and returns True. This is the
-        REAL scenario the operator flagged: a transient broker
-        error in `_route_one` leaves the intent eligible for a
-        next-tick retry WITHOUT releasing the reservation. When
+        exists IN THIS LANE, this call is a no-op and returns True.
+        This is the REAL scenario the operator flagged: a transient
+        broker error in `_route_one` leaves the intent eligible for
+        a next-tick retry WITHOUT releasing the reservation. When
         the retry re-enters `_route_one`, `reserve_capital` fires
         again with the same `intent_id`. Without idempotency, that
         would double-charge the ledger and eventually starve the
         cap over a few retry cycles.
 
+        Idempotency is scoped PER LANE, not global — the CAS
+        filter's `_id: <lane>_cap` restricts the write to a single
+        lane doc, and the `$elemMatch` on `reservations` only
+        scans that lane's own array. In practice this doesn't
+        matter (any given intent has exactly one lane) but the
+        invariant is that `(lane, intent_id)` is the composite
+        idempotency key, not `intent_id` alone.
+
         The atomic CAS filter here requires BOTH:
           * `reserved <= total - amount` (cap headroom, as before)
-          * NO open reservation with this `intent_id`
+          * NO open reservation with this `intent_id` (in this lane)
         A single Mongo document write evaluates both — a second
-        caller for the same intent finds the filter false because
-        of the intent_id match, and we then distinguish that from
-        "cap exceeded" via a follow-up read.
+        caller for the same (lane, intent_id) finds the filter
+        false because of the intent_id match, and we then
+        distinguish that from "cap exceeded" via a follow-up read.
 
     Rejects zero/negative amounts (defensive — the sizing_gate
     should have clamped these already; ledger enforces the invariant
