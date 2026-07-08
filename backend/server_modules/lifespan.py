@@ -500,6 +500,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("opinion_silence_worker start failed: %s", e)
 
+    # 2026-02-19 — Witness W/L resolver runner (Verifier promotion engine).
+    # Polls the credibility ledger's promotion doctrine against
+    # accumulated `external_signals` rows on a fixed cadence. Same
+    # `resolve_source(...)` the admin trigger uses. Env-gated by
+    # `WITNESS_RESOLVER_ENABLED` (default true). Doctrine pin:
+    # `verifier/witness_resolver_runner.py`.
+    try:
+        from verifier.witness_resolver_runner import (
+            start_worker as _start_witness_resolver_runner,
+        )
+        _start_witness_resolver_runner()
+        logger.info("Witness resolver runner started")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("witness_resolver_runner start failed: %s", e)
+
     # 2026-02-20 — Heartbeat reconciler.
     # Periodically derives `shared_heartbeats.last_seen` from
     # `sidecar_checkin_audit` so the LIVE/STALE/DEAD badge can't
@@ -818,6 +833,13 @@ async def lifespan(app: FastAPI):
             stop_worker as _stop_opinion_silence_worker,
         )
         await _stop_opinion_silence_worker()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from verifier.witness_resolver_runner import (
+            stop_worker as _stop_witness_resolver_runner,
+        )
+        await _stop_witness_resolver_runner()
     except Exception:  # noqa: BLE001
         pass
     # Graceful shutdown of the shadow-close cron — the lifespan

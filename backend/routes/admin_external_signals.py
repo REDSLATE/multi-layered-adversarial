@@ -181,55 +181,8 @@ async def resolve_witnesses(
         is then counted as `skipped_price_missing`, not misclassified.
     """
     from verifier.witness_resolver import resolve_source  # noqa: WPS433
-    from shared.research.bar_source import (
-        DEFAULT_TF_BY_LANE, load_recent_bars,
-    )
+    from verifier.price_fetcher import price_from_ohlcv_bars  # noqa: WPS433
     from datetime import datetime, timedelta, timezone
-
-    async def _price_from_ohlcv_bars(symbol: str, ts_iso: str):
-        """Look up the close price for `symbol` at-or-before `ts_iso`.
-
-        Doctrine:
-            The resolver's job is to compare the price at witness
-            emission time to the price `horizon_hours` later. Both
-            calls arrive here; we return the close of the last bar
-            whose `ts` <= target_ts. Broker-primary bars are always
-            preferred (webull for equity, kraken_pro for crypto);
-            polygon/finnhub are consulted only when the broker has
-            no bars on file.
-        """
-        # Lane inference: crypto pairs carry a `/USD` (or `/USDT`, etc.).
-        # Equity tickers are alphanumeric without a slash.
-        lane = "crypto" if "/" in symbol else "equity"
-        tf = DEFAULT_TF_BY_LANE.get(lane, "1d")
-
-        try:
-            target = datetime.fromisoformat(str(ts_iso).replace("Z", "+00:00"))
-        except (TypeError, ValueError):
-            return None
-
-        # Pull recent bars (broker-priority-picked source under the
-        # hood). Then find the last bar whose ts is <= target.
-        # Limit 120: a 1d timeframe covers ~4 months back, 1h covers
-        # 5 days — enough for any horizon this endpoint accepts
-        # (max 168h = 7 days).
-        bars, src = await load_recent_bars(symbol, tf=tf, limit=200)
-        if not bars:
-            return None
-
-        best_price: Optional[float] = None
-        for bar in bars:  # bars come oldest → newest
-            try:
-                bar_ts = datetime.fromisoformat(
-                    str(bar.get("ts")).replace("Z", "+00:00"),
-                )
-            except (TypeError, ValueError):
-                continue
-            if bar_ts <= target:
-                best_price = float(bar.get("c") or 0.0) or None
-            else:
-                break
-        return best_price
 
     if dry_run:
         now = datetime.now(timezone.utc)
@@ -255,7 +208,7 @@ async def resolve_witnesses(
 
     summary = await resolve_source(
         source,
-        _price_from_ohlcv_bars,
+        price_from_ohlcv_bars,
         horizon_hours=horizon_hours,
     )
     return {
@@ -356,5 +309,50 @@ async def seat_context(
             "influence_allowed=False. Read-only advisory context — "
             "the Seat does not act on these, the Seat is INFORMED by these. "
             "Verifier (future) decides if any source ever earns weight."
+        ),
+    }
+
+
+# ──────────────────────── Verifier runner + influence status ────────────────────────
+
+
+@router.get("/admin/verifier/runner-status")
+async def verifier_runner_status(_user=Depends(get_current_user)):
+    """Runner + influence ceiling status for each configured witness source.
+
+    Two questions this answers in one call:
+
+        1. Is the resolver actually ticking? (`last_run_ts`, `last_run_ok`,
+           and `last_summary` from `verifier_runner_state`.)
+        2. What CEILING influence would the Governor grant this source
+           right now? (`modifier_cap` from `witness_influence`.)
+
+    Sources returned = env-configured resolver targets (default: polygon).
+    Read-only. Never mutates the ledger or the runner state.
+    """
+    import os
+    from verifier.witness_resolver_runner import get_runner_state
+    from shared.witness_influence import witness_influence_snapshot
+
+    raw = os.environ.get("WITNESS_RESOLVER_SOURCES", "polygon")
+    sources = [s.strip() for s in raw.split(",") if s.strip()]
+
+    influence = await witness_influence_snapshot(sources)
+    runner_by_source: dict[str, Optional[dict]] = {}
+    for src in sources:
+        runner_by_source[src] = await get_runner_state(src)
+
+    return {
+        "sources": sources,
+        "influence": influence,
+        "runner": runner_by_source,
+        "doctrine": (
+            "Runner is a background scheduler that calls the same "
+            "resolve_source(...) the admin trigger uses. The ledger "
+            "is Verifier-owned; influence.modifier_cap is the CEILING "
+            "the Governor may grant when a witness stance is judged "
+            "orthogonal — non-orthogonal signals still receive 0.0. "
+            "Any tier the ledger doesn't recognize maps to 0.0 by "
+            "default-hostile doctrine."
         ),
     }
