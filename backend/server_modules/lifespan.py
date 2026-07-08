@@ -71,6 +71,10 @@ from shared.feeders.polygon_equity import (
     start_worker_if_enabled as start_polygon_worker,
     stop_worker as stop_polygon_worker,
 )
+from shared.feeders.polygon_flatfiles import (
+    start_worker_if_enabled as start_polygon_flatfiles_worker,
+    stop_worker as stop_polygon_flatfiles_worker,
+)
 from shared.external_signals.polygon_witness import (
     start_worker_if_enabled as start_polygon_news_witness,
     stop_worker as stop_polygon_news_witness,
@@ -481,6 +485,7 @@ async def lifespan(app: FastAPI):
     try:
         start_finnhub_worker()
         start_polygon_worker()
+        start_polygon_flatfiles_worker()
         start_polygon_news_witness()
         start_sec_edgar_worker()
         start_fred_worker()
@@ -822,6 +827,7 @@ async def lifespan(app: FastAPI):
     try:
         await stop_finnhub_worker()
         await stop_polygon_worker()
+        await stop_polygon_flatfiles_worker()
         await stop_polygon_news_witness()
         await stop_sec_edgar_worker()
         await stop_fred_worker()
