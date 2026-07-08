@@ -522,7 +522,25 @@ async def lifespan(app: FastAPI):
     # operator explicitly turns each one on. Doctrine: brains think
     # separately, MC schedules them together, only canonical pipeline
     # emits, only seat holder can execute.
-    for _brain_name in ("barracuda", "gto", "camino", "hellcat"):
+    _BRAIN_IDS = ("barracuda", "gto", "camino", "hellcat")
+
+    # 2026-02-19 (operator directive): boot-time strategy-collision
+    # guard. Each brain's `strategy.py` MUST hash to a distinct
+    # value; if two ever converge that's a real bug (bad refactor,
+    # accidental symlink) and should fail loud rather than silently
+    # let two "different" brains run identical decision code.
+    try:
+        from shared.brains._strategy_identity import assert_no_strategy_collisions
+        assert_no_strategy_collisions(_BRAIN_IDS)
+    except AssertionError as e:
+        # Log LOUD but do NOT block boot — we want the app up to
+        # investigate; the `strategy_sha` field on the status
+        # payload will make the collision visible operationally.
+        logger.error("STRATEGY_SHA_COLLISION at boot: %s", e)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("strategy_sha boot check skipped: %s", e)
+
+    for _brain_name in _BRAIN_IDS:
         try:
             import importlib
             _mod = importlib.import_module(

@@ -248,10 +248,20 @@ async def _build_in_process_status(brain: str) -> Dict[str, Any]:
     ]
 
     display_name = runner_stats.get("display_name") if runner_stats else brain.title()
+    # 2026-02-19 (operator directive): identity split into two kinds.
+    #   * `git_sha`     — DEPLOY identity (shared across brains, same repo)
+    #   * `strategy_sha` — BRAIN identity (must differ per brain, one hash
+    #                      per `shared/brains/<brain>/strategy.py`).
+    # If two brains ever show the same `strategy_sha` at boot, the
+    # `assert_no_strategy_collisions` guard in lifespan raises before
+    # the app takes traffic. The 12-char sha256 prefix is compact
+    # enough for the UI to render inline in a tile without wrapping.
+    from shared.brains._strategy_identity import strategy_sha  # noqa: WPS433
     identity = {
         "app_name": "risedual-mc",
         "env_name": os.environ.get("ENV_NAME") or os.environ.get("ENVIRONMENT") or "preview",
         "git_sha": os.environ.get("GIT_SHA") or os.environ.get("RAILWAY_GIT_COMMIT_SHA") or "in-process",
+        "strategy_sha": strategy_sha(brain),
         "broker_mode": "kraken+public",
         "sidecar_version": f"in-process/{display_name}",
         # All connectivity flags are TRUE by definition for in-process —
