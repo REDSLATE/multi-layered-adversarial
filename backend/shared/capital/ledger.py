@@ -142,6 +142,25 @@ async def reserve_capital(
     `total`. Failure is not exceptional — the caller decides
     REJECT vs QUEUE.
 
+    Idempotent on `intent_id` (2026-02-20 doctrine pin):
+        If an OPEN reservation with the same `intent_id` already
+        exists, this call is a no-op and returns True. This is the
+        REAL scenario the operator flagged: a transient broker
+        error in `_route_one` leaves the intent eligible for a
+        next-tick retry WITHOUT releasing the reservation. When
+        the retry re-enters `_route_one`, `reserve_capital` fires
+        again with the same `intent_id`. Without idempotency, that
+        would double-charge the ledger and eventually starve the
+        cap over a few retry cycles.
+
+        The atomic CAS filter here requires BOTH:
+          * `reserved <= total - amount` (cap headroom, as before)
+          * NO open reservation with this `intent_id`
+        A single Mongo document write evaluates both — a second
+        caller for the same intent finds the filter false because
+        of the intent_id match, and we then distinguish that from
+        "cap exceeded" via a follow-up read.
+
     Rejects zero/negative amounts (defensive — the sizing_gate
     should have clamped these already; ledger enforces the invariant
     on its own boundary).
@@ -168,15 +187,24 @@ async def reserve_capital(
 
     total = float(ledger_doc.get("total") or 0.0)
 
-    # Atomic CAS: only apply the $inc if `reserved` currently leaves
-    # enough headroom. Mongo evaluates the filter and the update in
-    # a single document write — the classic optimistic-concurrency
-    # pattern. Two racing executors will both hit the same filter;
-    # exactly ONE finds enough headroom and wins.
+    # Atomic CAS with idempotency: apply the $inc only if `reserved`
+    # currently leaves enough headroom AND no open reservation with
+    # this `intent_id` already exists. Two racing executors for the
+    # SAME intent_id (retry-in-flight) will both hit the same filter;
+    # exactly ONE lands the reservation, the other sees the filter
+    # false and drops into the idempotent-return branch below.
     updated = await db[CAPITAL_LEDGER].find_one_and_update(
         {
             "_id": doc_id,
             "reserved": {"$lte": total - amount},
+            "reservations": {
+                "$not": {
+                    "$elemMatch": {
+                        "intent_id": intent_id,
+                        "status": "open",
+                    },
+                },
+            },
         },
         {
             "$inc": {"reserved": amount},
@@ -192,23 +220,52 @@ async def reserve_capital(
         },
         return_document=ReturnDocument.AFTER,
     )
-    if updated is None:
-        # Filter did not match → reservation would have exceeded cap.
+    if updated is not None:
         logger.info(
-            "capital_ledger.reserve_capital: REJECTED lane=%s amount=%s "
-            "intent_id=%s (available=%.2f)",
+            "capital_ledger.reserve_capital: OK lane=%s amount=%s "
+            "intent_id=%s (reserved=%.2f/%.2f)",
             lane, amount, intent_id,
-            total - float(ledger_doc.get("reserved") or 0.0),
+            float(updated.get("reserved") or 0.0), total,
         )
-        return False
+        return True
 
-    logger.info(
-        "capital_ledger.reserve_capital: OK lane=%s amount=%s intent_id=%s "
-        "(reserved=%.2f/%.2f)",
-        lane, amount, intent_id,
-        float(updated.get("reserved") or 0.0), total,
+    # Filter didn't match. Two possible reasons — distinguish them
+    # so the caller can act correctly:
+    #   (a) `intent_id` already has an open reservation → return
+    #       True as a no-op (idempotent retry semantics).
+    #   (b) not enough headroom → return False, caller blocks.
+    existing = await db[CAPITAL_LEDGER].find_one(
+        {
+            "_id": doc_id,
+            "reservations": {
+                "$elemMatch": {
+                    "intent_id": intent_id,
+                    "status": "open",
+                },
+            },
+        },
+        {"_id": 1},
     )
-    return True
+    if existing is not None:
+        # (a) idempotent: reservation already held under this
+        # intent_id. Amount is whatever the FIRST call reserved
+        # — do NOT bump it, do NOT bump `reserved`. This is the
+        # retry-safe branch.
+        logger.info(
+            "capital_ledger.reserve_capital: IDEMPOTENT no-op lane=%s "
+            "intent_id=%s — already has open reservation",
+            lane, intent_id,
+        )
+        return True
+
+    # (b) cap exceeded.
+    logger.info(
+        "capital_ledger.reserve_capital: REJECTED lane=%s amount=%s "
+        "intent_id=%s (available=%.2f)",
+        lane, amount, intent_id,
+        total - float(ledger_doc.get("reserved") or 0.0),
+    )
+    return False
 
 
 # ────────────────────────────── release ──────────────────────────────

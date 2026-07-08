@@ -151,6 +151,125 @@ async def test_concurrent_reserves_at_boundary_only_one_wins():
     assert head["reserved"] == 600.0  # only one $600 reserve landed
 
 
+# ─────────────── retry idempotency (2026-02-20 operator-flagged) ───────────────
+
+
+@pytest.mark.asyncio
+async def test_reserve_is_idempotent_on_same_intent_id():
+    """The retry doctrine: `_route_one` on a transient broker error
+    leaves the intent eligible for a next-tick retry WITHOUT
+    releasing the reservation. When the retry re-enters, calling
+    `reserve_capital` again with the SAME intent_id MUST be a
+    no-op — do NOT double-charge the ledger."""
+    await init_ledger(1000.0, 500.0)
+    intent_id = "intent-retry-1"
+    ok1 = await reserve_capital("equity", 300.0, intent_id)
+    ok2 = await reserve_capital("equity", 300.0, intent_id)
+    assert ok1 is True
+    assert ok2 is True  # idempotent — returns True as no-op
+    head = await get_lane_headroom("equity")
+    # Only ONE $300 reservation actually landed on `reserved`.
+    assert head["reserved"] == 300.0, (
+        f"retry MUST NOT double-charge: reserved={head['reserved']}"
+    )
+    open_res = await get_open_reservations("equity")
+    same_intent = [r for r in open_res if r["intent_id"] == intent_id]
+    assert len(same_intent) == 1, (
+        f"expected exactly one open reservation for {intent_id}, "
+        f"got {len(same_intent)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reserve_idempotent_survives_multiple_retries():
+    """Simulate the full retry loop: 5 successive reserves for the
+    same intent (as would happen if a transient error repeats 4
+    times before a terminal classification). Only the first should
+    land; the other 4 must be idempotent no-ops."""
+    await init_ledger(1000.0, 500.0)
+    intent_id = "intent-retry-loop"
+    results = []
+    for _ in range(5):
+        results.append(await reserve_capital("equity", 100.0, intent_id))
+    assert all(results), (
+        "all 5 retry-reserves must return True (first books, rest "
+        f"idempotent no-op), got {results}"
+    )
+    head = await get_lane_headroom("equity")
+    assert head["reserved"] == 100.0, (
+        f"only one $100 should have landed, got reserved={head['reserved']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reserve_after_release_creates_new_reservation():
+    """After release, the intent_id has NO open reservation → a fresh
+    reserve for the same intent_id must fire cleanly (not treated as
+    idempotent no-op)."""
+    await init_ledger(1000.0, 500.0)
+    intent_id = "intent-cycle"
+    await reserve_capital("equity", 200.0, intent_id)
+    await release_capital("equity", intent_id, 200.0, "position_closed")
+    # A brand-new reserve on the SAME intent_id — this is a fresh
+    # execution cycle from the caller's POV. Ledger must land it.
+    ok = await reserve_capital("equity", 200.0, intent_id)
+    assert ok is True
+    head = await get_lane_headroom("equity")
+    assert head["reserved"] == 200.0
+
+
+@pytest.mark.asyncio
+async def test_reserve_idempotent_wins_before_cap_exceeded_check():
+    """Idempotent no-op must win even when the cap is already
+    exceeded — because the intent's capital IS already accounted
+    for in `reserved`. A retry should never surface as
+    REJECTED_CAP_EXCEEDED when the reservation is already held."""
+    await init_ledger(1000.0, 500.0)
+    # Reserve $900 under intent-a, then fill the rest with intent-b.
+    await reserve_capital("equity", 900.0, "intent-a")
+    await reserve_capital("equity", 100.0, "intent-b")  # cap reached
+    # Now intent-a retries — reservation IS already open, so this
+    # must return True (idempotent), NOT False (cap exceeded).
+    ok = await reserve_capital("equity", 900.0, "intent-a")
+    assert ok is True, (
+        "retry-of-already-held reservation must return True even "
+        "at full-cap — otherwise the retry lands as a spurious "
+        "REJECTED_CAP_EXCEEDED"
+    )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_reserve_same_intent_id_no_double_charge():
+    """Two concurrent reserves for the SAME intent_id (racing retry
+    reads at the exact same tick). CAS filter must ensure exactly
+    one $inc lands, and both callers see success (True) via the
+    idempotent path for the loser."""
+    await init_ledger(1000.0, 500.0)
+    intent_id = "intent-race"
+    task_a = asyncio.create_task(
+        reserve_capital("equity", 400.0, intent_id),
+    )
+    task_b = asyncio.create_task(
+        reserve_capital("equity", 400.0, intent_id),
+    )
+    results = await asyncio.gather(task_a, task_b)
+    # Both return True — one via first-write, one via idempotent no-op.
+    assert results == [True, True], (
+        f"both concurrent retries must return True, got {results}"
+    )
+    head = await get_lane_headroom("equity")
+    # Exactly ONE $400 should have landed.
+    assert head["reserved"] == 400.0, (
+        f"concurrent same-intent MUST NOT double-charge: "
+        f"reserved={head['reserved']}"
+    )
+    open_res = await get_open_reservations("equity")
+    same = [r for r in open_res if r["intent_id"] == intent_id]
+    assert len(same) == 1, (
+        f"exactly one reservation record expected, got {len(same)}"
+    )
+
+
 # ─────────────────────── release_capital ───────────────────────
 
 

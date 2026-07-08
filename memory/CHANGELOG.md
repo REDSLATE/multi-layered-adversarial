@@ -1,3 +1,40 @@
+## 2026-02-20 — Capital ledger retry-idempotency hardening (operator-flagged)
+
+**Bug caught during ledger wire-up review**: `_route_one`'s transient-broker-error path bumps `broker_retry_count` and returns `verdict=error` **without releasing the reservation** — intent stays eligible for a next-tick retry. When the retry re-enters `_route_one`, `reserve_capital` fired again with the same `intent_id`. Pre-fix `reserve_capital` did an unconditional `$inc + $push` → **the ledger double-charged over successive retries**, silently draining lane headroom without any live position actually consuming it.
+
+### Fix: `reserve_capital` now idempotent on `intent_id`
+
+Atomic CAS filter tightened to require BOTH:
+* `reserved <= total - amount` (headroom, as before)
+* NO open reservation with this `intent_id` (`$not` + `$elemMatch`)
+
+On filter miss, a follow-up read distinguishes the two cases:
+* **(a) intent_id already has an open reservation** → idempotent no-op → returns True. Retry-safe: the caller sees "reserve OK" and proceeds to the broker exactly as it did on the first attempt, but the ledger is not touched.
+* **(b) not enough headroom** → returns False. Caller stamps `REJECTED_CAP_EXCEEDED` as before.
+
+Both branches evaluated in ONE document write via `$not.$elemMatch` in the filter — no race between checking and reserving.
+
+### Tests
+
+5 new tests in `tests/test_capital_ledger.py`:
+* `test_reserve_is_idempotent_on_same_intent_id` — 2nd reserve with same id returns True, no double-charge.
+* `test_reserve_idempotent_survives_multiple_retries` — 5-loop retry, all return True, exactly one $100 lands.
+* `test_reserve_after_release_creates_new_reservation` — fresh cycle for same id after release lands cleanly (not treated as idempotent).
+* `test_reserve_idempotent_wins_before_cap_exceeded_check` — retry-of-already-held wins over the cap check even at full-cap → prevents spurious `REJECTED_CAP_EXCEEDED` on retry.
+* `test_concurrent_reserve_same_intent_id_no_double_charge` — two racing gathered tasks for the same intent_id: both return True (one via first-write, one via idempotent no-op), exactly one reservation lands.
+
+### Regression sweep
+
+**744 passed / 0 failed** (was 739 + 5 new). Zero collateral damage across the target scope.
+
+### What live capital should watch
+
+Even with retry-idempotency in place, the ledger becoming load-bearing changes the failure modes. First live session should verify:
+* Retries after transient broker errors show ONE reservation record per intent_id, not N.
+* `REJECTED_CAP_EXCEEDED` counter tracks only genuinely-over-cap decisions, not retry-of-held ones.
+* Release paths keyed to `intent_id` (broker terminal, reconcile reject, position close) actually match the original reservation — no orphans in the audit trail.
+
+
 ## 2026-02-20 — Executor Wire-up: Capital Ledger + `market_regime` / `velocity_5m` in Snapshots
 
 ### P1: Capital ledger fully wired into the executor path
