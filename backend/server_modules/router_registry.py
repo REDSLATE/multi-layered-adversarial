@@ -139,6 +139,7 @@ from routes.admin_execution_lifecycle_funnel import router as admin_execution_li
 from routes.admin_native_runtime_status import router as admin_native_runtime_status_router  # 2026-02-23 in-process brain migration
 from routes.admin_brain_input_health import router as admin_brain_input_health_router  # 2026-02-23 instrument quality
 from routes.admin_external_signals import router as admin_external_signals_router  # 2026-02-23 witness-council read-only panel
+from routes.admin_feature_coverage import router as admin_feature_coverage_router  # 2026-02-19 doctrine-input coverage health
 from routes.webull_caps_admin import router as webull_caps_admin_router
 from routes.exposure_caps_admin import router as exposure_caps_admin_router
 from routes.equity_extended_hours_admin import router as equity_extended_hours_admin_router
@@ -223,6 +224,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(admin_native_runtime_status_router)  # 2026-02-23 native brain runtimes
     api_router.include_router(admin_brain_input_health_router)  # 2026-02-23 instrument quality
     api_router.include_router(admin_external_signals_router)  # 2026-02-23 witness-council read-only panel
+    api_router.include_router(admin_feature_coverage_router)  # 2026-02-19 doctrine-input coverage health
     api_router.include_router(webull_caps_admin_router)
     api_router.include_router(exposure_caps_admin_router)
     api_router.include_router(equity_extended_hours_admin_router)
