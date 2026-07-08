@@ -12,7 +12,6 @@ from __future__ import annotations
 import pytest
 
 from shared.brains._strategy_identity import (
-    _STRATEGY_SHA_CACHE,
     assert_no_strategy_collisions,
     strategy_sha,
 )
@@ -21,25 +20,21 @@ from shared.brains._strategy_identity import (
 _BRAINS = ("camino", "barracuda", "hellcat", "gto")
 
 
-def setup_function(_):
-    """Clear the cache before each test so a stale entry doesn't
-    hide a real change to strategy.py file contents mid-suite."""
-    _STRATEGY_SHA_CACHE.clear()
-
-
 @pytest.mark.tripwire
 def test_strategy_sha_returns_12_char_hex_for_each_brain():
     for b in _BRAINS:
         sha = strategy_sha(b)
         assert sha != "missing", f"{b}/strategy.py not found"
         assert len(sha) == 12, f"{b}: {sha!r}"
-        # Must be hex characters (lowercase sha256 prefix).
-        int(sha, 16)  # raises if non-hex
+        int(sha, 16)  # must be lowercase hex
 
 
 @pytest.mark.tripwire
-def test_strategy_sha_is_stable_within_process():
-    """Repeated calls MUST return the same value (cached)."""
+def test_strategy_sha_is_deterministic_across_calls():
+    """Same file content → same hash. This is a property of sha256
+    over an unchanged file, not of any caching layer — the helper
+    is deliberately uncached so this determinism comes purely from
+    file-content stability, not from memoization."""
     a = strategy_sha("camino")
     b = strategy_sha("camino")
     assert a == b
@@ -79,3 +74,29 @@ def test_assert_no_strategy_collisions_raises_on_duplicate():
     behavior."""
     with pytest.raises(AssertionError, match="collision"):
         assert_no_strategy_collisions(("camino", "camino"))
+
+
+@pytest.mark.tripwire
+def test_strategy_sha_reflects_file_content_change_immediately(tmp_path, monkeypatch):
+    """The whole reason the cache was stripped: an edit to
+    `strategy.py` must be reflected in `strategy_sha` on the very
+    next call, with no restart or cache-flush required. This test
+    pins that invariant so a future perf-minded refactor can't
+    silently reintroduce caching without breaking this contract.
+    """
+    # Point `_strategy_path` at a temp file we control.
+    from shared.brains import _strategy_identity as mod
+
+    fake = tmp_path / "strategy.py"
+    fake.write_text("# initial\n")
+    monkeypatch.setattr(mod, "_strategy_path", lambda _b: fake)
+
+    before = strategy_sha("any_brain")
+    fake.write_text("# mutated\n")
+    after = strategy_sha("any_brain")
+
+    assert before != after, (
+        "strategy_sha did not change after strategy.py edit — a "
+        "cache has been reintroduced somewhere and is now stale-"
+        "returning. See module docstring for why this is banned."
+    )

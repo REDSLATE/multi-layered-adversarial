@@ -8,28 +8,26 @@ Doctrine pin (2026-02-19, operator directive):
     which strategy code each brain is running — was not surfaced.
 
     `strategy_sha` fixes that by hashing the physical
-    `shared/brains/<brain>/strategy.py` file. If two brains ever
-    show the same `strategy_sha`, that's a real bug: their strategy
-    files have converged (bad refactor, accidental symlink, wrong
-    import). The boot-time collision assertion turns that into a
-    loud fail instead of a silent behavior drift.
+    `shared/brains/<brain>/strategy.py` file on every call. If two
+    brains ever show the same `strategy_sha`, that's a real bug:
+    their strategy files have converged (bad refactor, accidental
+    symlink, wrong import). The boot-time collision assertion
+    turns that into a loud fail instead of a silent behavior drift.
 
-    Kept as its own module — one hash function, one location — so
-    other identity paths (audit log, telemetry, brain-input-health)
-    can call the same helper without duplicating the file resolution
-    or coping with a stale cache.
+    Deliberately UNCACHED. The files are a few KB, hashed in
+    microseconds, called at status-poll cadence — the perf win of
+    caching is noise. Caching would introduce a real footgun
+    during dev sessions: a hot-reload edit to `strategy.py` would
+    NOT invalidate this module's cache, so the reported hash would
+    silently go stale during exactly the kind of editing session
+    where the operator most needs it to be trustworthy. Always-
+    correct beats micro-optimized.
 """
 from __future__ import annotations
 
 import hashlib
 import pathlib
-from typing import Dict, Iterable
-
-# Compute once per interpreter — strategy.py contents are immutable
-# during the process lifetime (hot reload rewrites the file, but
-# the module then also gets re-imported which restarts the whole
-# process in this deployment; no need to invalidate).
-_STRATEGY_SHA_CACHE: Dict[str, str] = {}
+from typing import Iterable
 
 
 def _strategy_path(brain_id: str) -> pathlib.Path:
@@ -38,29 +36,23 @@ def _strategy_path(brain_id: str) -> pathlib.Path:
     Uses this file's own location as the anchor so the resolution
     doesn't depend on the CWD.
     """
-    # this file → shared/brains/_strategy_identity.py
-    # target   → shared/brains/<brain_id>/strategy.py
     return pathlib.Path(__file__).parent / brain_id / "strategy.py"
 
 
 def strategy_sha(brain_id: str) -> str:
     """Return a 12-char sha256 prefix of the brain's `strategy.py`.
 
-    Cached per brain_id after the first call. Returns the sentinel
-    string `"missing"` if the file doesn't exist (won't raise — the
-    status endpoint must stay resilient even if a brain's strategy
-    file is somehow absent).
+    Computed fresh on every call — no cache. See module docstring
+    for the rationale (dev-loop staleness footgun outweighs the
+    microsecond perf win at seconds-cadence poll traffic).
+
+    Returns the sentinel string `"missing"` if the file doesn't
+    exist — never raises, so the status endpoint stays resilient.
     """
-    cached = _STRATEGY_SHA_CACHE.get(brain_id)
-    if cached is not None:
-        return cached
     path = _strategy_path(brain_id)
     if not path.exists():
-        _STRATEGY_SHA_CACHE[brain_id] = "missing"
         return "missing"
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
-    _STRATEGY_SHA_CACHE[brain_id] = digest
-    return digest
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
 
 
 def assert_no_strategy_collisions(brain_ids: Iterable[str]) -> None:
@@ -75,7 +67,7 @@ def assert_no_strategy_collisions(brain_ids: Iterable[str]) -> None:
     Passes `"missing"` sentinels through — if all brains' files are
     missing, that's a separate boot-time bug we want to surface too.
     """
-    seen: Dict[str, str] = {}
+    seen: dict[str, str] = {}
     for b in brain_ids:
         sha = strategy_sha(b)
         if sha in seen:
