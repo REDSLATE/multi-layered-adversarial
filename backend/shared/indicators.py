@@ -168,13 +168,31 @@ def _bar_date(bar: dict) -> Optional[str]:
     return str(ts)[:10]  # slice YYYY-MM-DD out of any ISO variant
 
 
-def session_features(bars: list[dict]) -> dict:
+def session_features(
+    bars: list[dict],
+    prior_session_volumes: Optional[list[float]] = None,
+) -> dict:
     """Compute the three doctrine-facing enrichment fields.
 
     Reads: `o, h, l, c, v, ts` per bar.
     Returns keys: `gap_pct`, `relative_volume`, `vwap_distance_pct`,
     plus one advisory diagnostic: `session_bars_seen` (how many bars
     of today's session were used for VWAP).
+
+    `prior_session_volumes` (2026-02-19 addition):
+        Optional pre-computed list of prior sessions' daily volume
+        totals — typically the last 20 daily bars' `v` values. When
+        provided, RVOL uses THIS as the baseline denominator instead
+        of deriving prior-session volumes from the intraday bar
+        window. Fixes the 3.7% coverage problem: a 300-bar 5m window
+        spans only 3–4 sessions, so almost no symbol had enough
+        intraday history for a 20-day baseline. Daily bars from
+        `shared_ohlcv_bars` at `tf=1d` are the natural source.
+
+        Contract: caller passes prior sessions' volumes (NOT today).
+        Zeros are filtered inside — holidays snuck into a daily bar
+        collection shouldn't deflate the baseline. Below 3 non-zero
+        entries the ratio stays None (same floor as the intraday path).
 
     Any field the input cannot support cleanly resolves to `None` —
     caller MUST NOT treat None as zero. Default-hostile: better to
@@ -188,13 +206,14 @@ def session_features(bars: list[dict]) -> dict:
         session-date, takes the last close of the previous session,
         the first open of the latest session, and returns the pct.
 
-    * `relative_volume` — today's session volume / avg of prior
-        sessions' volumes (up to 20 sessions). Needs ≥ 3 prior
-        sessions to be a defensible ratio; below that, returns None.
-        For daily bars (1d): each bar IS one session, so today = the
-        last bar and prior sessions are the previous N bars. For
-        intraday: sums today's session bars, and prior-sessions'
-        totals are pre-summed per date.
+    * `relative_volume` — today's session volume / baseline.
+        Baseline priority:
+          1. `prior_session_volumes` (if provided AND ≥ 3 non-zero) —
+             preferred for intraday windows too narrow for a real
+             20-day view.
+          2. Intraday-derived: prior N session totals from the bar
+             window itself (up to 20).
+        Below 3 non-zero baseline entries, returns None.
 
     * `vwap_distance_pct` — (last_close - session_vwap) / session_vwap * 100
         Session VWAP uses TODAY's session only, with typical price
@@ -244,9 +263,12 @@ def session_features(bars: list[dict]) -> dict:
 
     # ─── relative_volume ───
     # today_vol = sum of today's session bar volumes.
-    # baseline  = average of prior sessions' (up to 20) session totals.
-    # Requires ≥ 3 prior sessions — below that the ratio is too noisy
-    # to be a defensible signal (a single anomalous prior day would
+    # baseline:
+    #   - if caller passed `prior_session_volumes`, use those (preferred).
+    #   - else derive from prior sessions in the intraday bar window
+    #     (up to 20, works only when the window spans enough days).
+    # Requires ≥ 3 non-zero baseline entries either way; below that
+    # the ratio is too noisy (a single anomalous prior day would
     # dominate).
     def _session_vol(bs: list[dict]) -> float:
         total = 0.0
@@ -257,18 +279,33 @@ def session_features(bars: list[dict]) -> dict:
                 continue
         return total
 
+    def _coerce_vol_list(raw) -> list[float]:
+        out: list[float] = []
+        for v in (raw or []):
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                continue
+            if f > 0:
+                out.append(f)
+        return out
+
     relative_volume: Optional[float] = None
-    if len(prior_dates) >= 3:
-        recent_prior = prior_dates[-20:]  # up to 20 sessions
-        prior_vols = [_session_vol(sessions[d]) for d in recent_prior]
-        # Filter out zero-volume "sessions" (holidays that snuck in
-        # via ts grouping) — they'd deflate the baseline.
-        prior_vols = [v for v in prior_vols if v > 0]
-        if len(prior_vols) >= 3:
-            baseline = sum(prior_vols) / len(prior_vols)
-            today_vol = _session_vol(today_bars)
-            if baseline > 0:
-                relative_volume = today_vol / baseline
+    baseline_vols: list[float] = []
+    if prior_session_volumes:
+        # Injected daily baseline — trust the caller's history depth.
+        baseline_vols = _coerce_vol_list(prior_session_volumes)[-20:]
+    if not baseline_vols and len(prior_dates) >= 3:
+        # Fallback: intraday-derived prior sessions (existing behavior).
+        recent_prior = prior_dates[-20:]
+        derived = [_session_vol(sessions[d]) for d in recent_prior]
+        baseline_vols = [v for v in derived if v > 0]
+
+    if len(baseline_vols) >= 3:
+        baseline = sum(baseline_vols) / len(baseline_vols)
+        today_vol = _session_vol(today_bars)
+        if baseline > 0:
+            relative_volume = today_vol / baseline
 
     # ─── vwap_distance_pct ───
     # Session VWAP uses (H+L+C)/3 as the typical price. If today has
@@ -310,7 +347,10 @@ def session_features(bars: list[dict]) -> dict:
 
 # ──────────────────────── snapshot builder ────────────────────────
 
-def build_snapshot(bars: list[dict]) -> dict:
+def build_snapshot(
+    bars: list[dict],
+    prior_session_volumes: Optional[list[float]] = None,
+) -> dict:
     """Compute a complete indicator snapshot from a window of bars.
 
     Caller guarantees `bars` is sorted ascending by timestamp. Returns
@@ -384,5 +424,9 @@ def build_snapshot(bars: list[dict]) -> dict:
         # them silently collapsed all four seats to identical scores
         # across every intent. See `session_features()` docstring
         # for the exact math + None-vs-zero contract per field.
-        **session_features(bars),
+        # `prior_session_volumes` (Part-B fix, 2026-02-19): when
+        # provided, RVOL uses a proper 20-day daily baseline instead
+        # of the ≤4-session intraday derivation — bumps coverage
+        # from 3.7% → ~99%.
+        **session_features(bars, prior_session_volumes=prior_session_volumes),
     }
