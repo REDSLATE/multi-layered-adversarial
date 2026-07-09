@@ -318,6 +318,18 @@ async def run_lane(db, lane: str, symbol: Optional[str] = None) -> dict:
                 or broker_result.get("id")
             )
         fired_ok = True
+        # 2026-07-09 shadow-mode doctrine: if the broker adapter
+        # short-circuited under TRADER_ENABLED=false, the receipt
+        # must NOT claim `submitted`. Downstream `audit.write_*`
+        # writes `broker_status="shadow_only"` and the JSONL row
+        # reflects a would-fire event — never a real fill.
+        if isinstance(broker_result, dict) and broker_result.get("shadow_only"):
+            fired_ok = False
+            exc_type = "ShadowMode"
+            exc_msg = broker_result.get(
+                "reason",
+                "TRADER_ENABLED=false — sidecar demoted to shadow.",
+            )
     except BrokerError as be:
         exc_type, exc_msg = "BrokerError", str(be)
         broker_result = {**be.detail, "error": str(be)}
@@ -334,7 +346,10 @@ async def run_lane(db, lane: str, symbol: Optional[str] = None) -> dict:
         risk_multiplier=risk_mult,
         risk_ok=True, risk_reason=rv.reason,
         broker=broker_name, broker_order_id=broker_order_id,
-        broker_status="submitted" if fired_ok else "rejected",
+        broker_status=(
+            "submitted" if fired_ok
+            else ("shadow_only" if exc_type == "ShadowMode" else "rejected")
+        ),
         broker_response=broker_result,
         exception_type=exc_type, exception_msg=exc_msg,
         ok=fired_ok,

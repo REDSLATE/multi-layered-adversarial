@@ -295,10 +295,25 @@ async def arm_status(_user: dict = Depends(get_current_user)) -> dict:
     lane_states = {lane: _lane_from_doc(ln, lane) for lane in _KNOWN_LANES}
     any_lane_on = any(lane_states.values())
 
+    # 2026-07-09 sidecar-decommission doctrine: `TRADER_ENABLED`
+    # decides whether the `/app/trader` sidecar's broker adapter
+    # will actually submit orders (true) or short-circuit as
+    # shadow (false). Surfaced here so the operator dashboard shows
+    # the one-broker-door truth in the same tile as the arm state.
+    import os as _os_te
+    trader_authoritative = (
+        _os_te.environ.get("TRADER_ENABLED", "false").lower().strip()
+        in {"1", "true", "yes", "on"}
+    )
+
     return {
         "ok": True,
         "env_broker_live": env_bl,
         "env_auto_router": env_ar,
+        "trader_authoritative": trader_authoritative,
+        "broker_door_owner": (
+            "sidecar_and_mc_both" if trader_authoritative else "mc_only"
+        ),
         "mc_switch": {
             "enabled": mc_on,
             "reason": mc.get("reason"),

@@ -86,8 +86,9 @@ async def test_arm_status_reflects_disarmed_defaults():
       mc_switch.enabled = False (seeded fail-closed)
       trader_switch.enabled = False (no doc default)
       all_armed = False
-    The env layer state depends on the pod so we only check the
-    Mongo-side fields."""
+    Also exposes `trader_authoritative` + `broker_door_owner` so the
+    operator dashboard shows the "one broker door" state alongside
+    the arm indicator."""
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test",
     ) as client:
@@ -103,6 +104,12 @@ async def test_arm_status_reflects_disarmed_defaults():
     assert payload["trader_switch"]["enabled"] is False
     assert payload["all_armed"] is False
     assert payload["trader_will_fire"] is False
+    # Sidecar-decommission invariant: broker_door_owner reflects
+    # `TRADER_ENABLED`. In the test environment (no env override),
+    # the default is `mc_only`.
+    assert "trader_authoritative" in payload
+    assert "broker_door_owner" in payload
+    assert payload["broker_door_owner"] in {"mc_only", "sidecar_and_mc_both"}
 
 
 @pytest.mark.asyncio
