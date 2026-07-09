@@ -127,6 +127,9 @@ async def capture_experience(
         "symbol": intent.get("symbol"),
         "lane": (intent.get("lane") or "").lower(),
         "stack": intent.get("stack") or intent.get("stack_canonical"),
+        "stack_canonical": (
+            intent.get("stack_canonical") or intent.get("stack")
+        ),
         "action": action,
         "notional_usd": notional,
         "notional_source": intent.get("notional_source"),

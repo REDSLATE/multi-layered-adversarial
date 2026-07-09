@@ -53,6 +53,7 @@ ALLOWED_FILES: set[str] = {
     "shared/chevelle_crypto_intent_bridge.py",
     "shared/redeye_crypto_intent_bridge.py",
     "shared/strategies/canary_runner.py",  # stamps stack_canonical sibling
+    "shared/learning/live_loop.py",        # capture_experience stamps both
 
     # Identity machinery itself — the normalizer, the legend.
     "shared/brain_legend.py",

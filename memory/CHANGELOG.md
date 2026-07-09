@@ -1,3 +1,57 @@
+## 2026-02-19 — Stage 2 finisher: equity mark-price wire + Phase C canonical fix
+
+### Scope
+Backend-only. Unblocks the Live Learning Loop on the equity lane by
+implementing `_fetch_mark_price(lane="equity", …)` — previously a stub
+returning `None`, which left every equity `learning_experiences` row
+stuck as `skipped_missing_mark` for all three horizons.
+
+### Equity mark-price — two-tier resolution
+- **File**: `shared/learning/outcome_resolver.py`
+- **Primary**: Webull v2 `equity_snapshot` last-trade. Same vendor as
+  execution, natural alignment with fill prices. Reuses the existing
+  `shared/market_data/webull_quotes.py::get_quotes_client()` singleton;
+  sync SDK call is wrapped in `asyncio.to_thread` so the resolver never
+  blocks the async broker sweep. Field precedence: `price` → `last` →
+  `lastPrice` → `deal_price` → `ask`.
+- **Fallback**: `shared_ohlcv_bars` latest-close (any source / any tf).
+  Doubles as the Polygon fallback the operator asked for — the Polygon
+  grouped-daily + flatfiles feeders both land into this collection. A
+  Mongo `find_one({symbol}, sort ts desc)` returns the newest known
+  close without spending a live API call. Filters out `c=0` and
+  negatives so bad bars can't leak into the resolver.
+- **Exception safety**: Webull SDK exception → falls through to the
+  bars fallback (verified by unit test). A total miss returns `None`
+  and the row remains pending for a future sweep (existing behavior
+  preserved).
+
+### Test coverage
+- **New**: `tests/test_learning_equity_mark_price.py` — 11 tests
+  covering empty symbol / unknown lane, Webull `price` field, Webull
+  `ask` fallback, symbol case-normalisation, bars fallback when Webull
+  returns None, most-recent-ts selection across multiple bar rows,
+  total miss, Webull exception fall-through, and zero/negative bar
+  filtering.
+- **Regression**: All 40 pre-existing tests in `test_learning_live_loop`,
+  `test_learning_stage2`, `test_crypto_reconcile_sweep` continue to
+  pass — the resolver's `(lane, symbol)` contract is unchanged.
+
+### Phase C canonical-identity fix (Category C cleanup, partial)
+- **Bug**: `test_phase_c_no_stack_groupings_regression` was failing
+  since Stage 1 landed. `shared/learning/live_loop.py::capture_experience`
+  wrote only the raw `stack` field, not its canonical sibling.
+- **Fix**: Stamp both `stack` AND `stack_canonical` (mirroring
+  `shared/intents.py` write-path doctrine). Add `shared/learning/live_loop.py`
+  to `ALLOWED_FILES` in the regression test with a comment.
+- **Result**: Phase C regression suite green again.
+
+### Doctrine pins
+- No paper. No dry_run. All mark prices are real-market values from
+  the same vendors that execute orders.
+- Learning writes remain best-effort — a mark-price fetch failure
+  never blocks the broker sweep tick.
+
+
 ## 2026-07-09 — Cached brain_runtime_metrics + notional_source failure paths + setup-quality soft-gate (P0 / P1a / P1b)
 
 ### Scope
