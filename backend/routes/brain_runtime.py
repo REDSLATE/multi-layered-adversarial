@@ -253,8 +253,19 @@ async def _build_in_process_status(brain: str) -> Dict[str, Any]:
     # healthy from earlier in the window. `latest_intent_ts` +
     # `latest_intent_age_s` surface the raw last-insert time so the
     # operator sees "no writes in the last 22 minutes" directly.
+    #
+    # 2026-07-09 (P0 hotfix — GTO/Barracuda in-process status timeout):
+    # Bounded by `ingest_ts >= cutoff_48h` so the query planner ALWAYS
+    # uses the existing `ingest_ts_idx` (guaranteed present in every
+    # environment) rather than potentially reverse-scanning the
+    # collection when the newer `(stack_canonical, ingest_ts)`
+    # composite index is still building on Atlas. A brain that hasn't
+    # emitted in 48h has an operator problem, not a display problem —
+    # `latest_intent_ts = None` correctly signals "silent for a long
+    # time" without any Atlas full-scan risk.
+    cutoff_48h = (now - timedelta(hours=48)).isoformat()
     latest_intent = await db[SHARED_INTENTS].find_one(
-        {"stack_canonical": brain_c},
+        {"stack_canonical": brain_c, "ingest_ts": {"$gte": cutoff_48h}},
         {"_id": 0, "ingest_ts": 1, "symbol": 1, "action": 1},
         sort=[("ingest_ts", -1)],
     )
