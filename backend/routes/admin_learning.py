@@ -13,6 +13,7 @@ Endpoints:
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -97,3 +98,106 @@ async def kick_resolver(_user: dict = Depends(get_current_user)) -> dict:
     """Trigger one resolver sweep. Returns the counts dict."""
     counts = await resolve_pending_outcomes(db)
     return {"ok": True, "counts": counts}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# STAGE 2: BUCKETS + LESSONS
+# ═══════════════════════════════════════════════════════════════════
+from shared.learning.bucket_analyzer import (  # noqa: E402
+    LEARNING_BUCKETS, rebuild_buckets,
+)
+from shared.learning.lesson_proposer import (  # noqa: E402
+    LEARNING_LESSONS, propose_lessons,
+)
+
+
+@router.post("/analyze")
+async def kick_analyzer(_user: dict = Depends(get_current_user)) -> dict:
+    """Full Stage 2 sweep: rebuild buckets → propose lessons.
+    Returns both counts dicts so operators see the full pipeline in
+    one call."""
+    b_counts = await rebuild_buckets(db)
+    l_counts = await propose_lessons(db)
+    return {"ok": True, "buckets": b_counts, "lessons": l_counts}
+
+
+@router.get("/buckets")
+async def list_buckets(
+    limit: int = Query(default=50, ge=1, le=500),
+    min_samples: int = Query(default=0, ge=0),
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    """Recent buckets, sorted by sample count desc. Excludes buckets
+    with fewer than `min_samples` observations."""
+    q = {"samples": {"$gte": min_samples}} if min_samples else {}
+    rows = []
+    async for row in (
+        db[LEARNING_BUCKETS].find(q)
+        .sort("samples", -1).limit(limit)
+    ):
+        rows.append(row)
+    return {"ok": True, "count": len(rows), "items": rows}
+
+
+@router.get("/lessons")
+async def list_lessons(
+    state: Optional[str] = Query(
+        default=None, pattern="^(proposed|approved|rejected|applied)$",
+    ),
+    limit: int = Query(default=50, ge=1, le=500),
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    """List learning lessons, optionally filtered by state."""
+    q = {"state": state} if state else {}
+    rows = []
+    async for row in (
+        db[LEARNING_LESSONS].find(q)
+        .sort("proposed_at", -1).limit(limit)
+    ):
+        rows.append(row)
+    return {"ok": True, "count": len(rows), "items": rows}
+
+
+@router.post("/lessons/{lesson_id}/approve")
+async def approve_lesson(
+    lesson_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Kernel review — mark a proposed lesson as `approved`. Nothing
+    self-applies to doctrine; approval is a human signal that this
+    lesson's evidence is trustworthy enough to fold into the next
+    doctrine iteration."""
+    actor = (user or {}).get("email") or "operator"
+    r = await db[LEARNING_LESSONS].update_one(
+        {"_id": lesson_id, "state": "proposed"},
+        {"$set": {
+            "state": "approved",
+            "approved_at": datetime.now(timezone.utc).isoformat(),
+            "approved_by": actor,
+        }},
+    )
+    if r.matched_count == 0:
+        return {"ok": False, "reason": "lesson_not_found_or_not_proposed"}
+    return {"ok": True, "lesson_id": lesson_id, "new_state": "approved"}
+
+
+@router.post("/lessons/{lesson_id}/reject")
+async def reject_lesson(
+    lesson_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Kernel review — reject a lesson. State becomes `rejected`;
+    the lesson will NOT be re-emitted for the same bucket even if
+    the evidence changes (idempotent proposer sees existing doc)."""
+    actor = (user or {}).get("email") or "operator"
+    r = await db[LEARNING_LESSONS].update_one(
+        {"_id": lesson_id, "state": "proposed"},
+        {"$set": {
+            "state": "rejected",
+            "rejected_at": datetime.now(timezone.utc).isoformat(),
+            "rejected_by": actor,
+        }},
+    )
+    if r.matched_count == 0:
+        return {"ok": False, "reason": "lesson_not_found_or_not_proposed"}
+    return {"ok": True, "lesson_id": lesson_id, "new_state": "rejected"}
