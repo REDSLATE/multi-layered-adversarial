@@ -1,3 +1,51 @@
+## 2026-07-09 — Cached brain_runtime_metrics + notional_source failure paths + setup-quality soft-gate (P0 / P1a / P1b)
+
+### Scope
+Three closely-related landings, all backend-only, targeting the operator's
+"observer chokehold" (P0 status endpoint scans) and the audit-trail gap
+(P1a) plus adding a new tactical dial (P1b).
+
+### P0 — Cached `brain_runtime_metrics` micro-doc
+- **New**: `shared/brain_runtime_metrics.py` — `bump_on_emit(brain, action, symbol, ingest_ts)`, `refresh_windows(brain, force=False)`, `get_metrics(brain)`. Doc keyed by `_id=brain`. Schema: `latest_ts / latest_action / latest_symbol / last_1h / last_24h / by_action / lifetime_count / first_seen_at / updated_at / windows_refreshed_at`.
+- **Wired in**: `shared/intents.py::_post_intent_impl` fires `bump_on_emit` right after `shared_intents.insert_one`. Best-effort — a failure never blocks ingest.
+- **Refactored**: `routes/brain_runtime.py::_build_in_process_status` now reads from the cached doc (via `refresh_windows(brain_c)` with 30s TTL, falling back to `get_metrics(brain_c)` on Atlas timeout). Removed all direct `count_documents` / `find_one` / aggregate calls against `shared_intents`. Payload now includes `intents.source: "brain_runtime_metrics"` and `intents.atlas_partial: bool` for observability.
+- **Result**: 20-poll sustained-load probe of `/api/admin/runtime/camino/status` averaged **~100ms** (min 93 / max 137). Prior unbounded scan regularly timed out on the multi-million-row `shared_intents`.
+
+### P1a — `notional_source` on failure-path `$set` blocks
+- **Updated**: `shared/auto_router.py::_route_one` — all 8 failure-terminal `$set` blocks now include `"notional_source": notional_source`:
+  1. Seat did-not-fire (advisory / blocked)
+  2. Market-closed preflight
+  3. Pair-floor reject (crypto)
+  4. Pair-floor-exceeds-cap (crypto)
+  5. Risk-block
+  6. Capital-ledger cap exceeded
+  7. Broker route blocked
+  8. Broker terminal reject
+  9. Broker transient retry
+- **Result**: complete audit trail — every intent, successful or blocked, carries `notional_source ∈ {brain_legacy, brain_v3, micro_live_default, env_default, quality_soft_gate}` in its terminal state.
+
+### P1b — Setup-quality soft-gate
+- **New**: after notional resolution in `_route_one`, inspect `doctrine_packet.seats.execution_judge.failed_checks`. When `set(failed_checks) == {"liquidity_ok", "quality_ok", "score_ok"}`, multiply `notional_raw *= 0.20` and stamp `notional_source = "quality_soft_gate"`.
+- **Result**: marginal setups execute as $1 probes (against the $5 micro-live default) instead of hard-blocking. Any other failed-check shape (subset, superset, empty, missing packet) falls through untouched.
+
+### Tests
+- **New**: `tests/test_brain_runtime_metrics_cache.py` (6 tests) — bump/refresh/cache-TTL/new-brain-zeros.
+- **New**: `tests/test_setup_quality_soft_gate.py` (6 tests) — exact-match / superset / subset / empty / missing-packet / compose-with-micro-live.
+- **Existing**: `tests/test_micro_notional_fallback.py` (6 tests) — still green after all edits.
+- **Testing agent** additionally created `test_brain_runtime_status_load.py` + `test_brain_runtime_metrics_integration.py` (live-URL sustained-load + bump wiring probes).
+- **Total**: 158/158 green.
+
+### Files touched
+- `shared/brain_runtime_metrics.py` (rewritten from placeholder)
+- `shared/intents.py` (~L1235–L1255: bump_on_emit call)
+- `shared/auto_router.py` (~L145–L200 soft-gate; 8 failure-path $set blocks)
+- `routes/brain_runtime.py` (removed SHARED_INTENTS scan; reads cached doc)
+- `tests/test_brain_runtime_metrics_cache.py` (new)
+- `tests/test_setup_quality_soft_gate.py` (new)
+
+---
+
+
 ## 2026-02-20 — P3 Cleanup: Category C assertion drift + ToS synthetic sweep + legacy-name DB migration
 
 ### Scope

@@ -9,6 +9,12 @@ trading, comprehensive provenance + health tracking.
 
 ### 🚨 NEXT WORK ITEM — P0 UNSTARTED (top priority — do NOT skip past this)
 
+**✅ 2026-07-09: P0 Cached brain_runtime_metrics SHIPPED.** `/api/admin/runtime/{brain}/status` now reads from a per-brain micro-doc (`brain_runtime_metrics` collection) instead of scanning `shared_intents`. `bump_on_emit` fires post-`insert_one` in `shared/intents.py` (~L1243) to keep `latest_ts` / `latest_action` / `latest_symbol` / `lifetime_count` fresh. `refresh_windows` recomputes `last_1h` / `last_24h` / `by_action` off the composite `(stack_canonical, ingest_ts)` index with a 30s TTL cache. Live sustained-load probe: 20 sequential status polls average **~100ms** (min 93 / max 137) across all 4 brains — previously multi-second scans / timeouts. Endpoint returns `atlas_partial: false` in normal ops; falls back to runner in-memory stats when Atlas is unreachable. 158/158 tests green (18 new unit + 12 integration + 128 regression).
+
+**✅ 2026-07-09: P1a `notional_source` failure-path stamping SHIPPED.** All 8 failure-path `$set` blocks in `shared/auto_router.py::_route_one` (seat-block, market-closed preflight, pair-floor reject, pair-floor-exceeds-cap, risk-block, capital-ledger-cap, broker-blocked, broker-terminal, broker-transient) now include `notional_source: notional_source` on the intent update. Prior iter-21 audit gap closed — every intent that flows through the router — successful OR blocked — carries the notional provenance in its terminal state.
+
+**✅ 2026-07-09: P1b Setup-quality soft-gate SHIPPED.** `shared/auto_router.py::_route_one` now inspects `doctrine_packet.seats.execution_judge.failed_checks` immediately after notional resolution. When the failed-check set is EXACTLY `{liquidity_ok, quality_ok, score_ok}` (the marginal-setup fingerprint), the notional is multiplied by 0.20 and `notional_source` is overridden to `quality_soft_gate` — marginal setups execute as $1 probes instead of blocking. All other doctrine outcomes fall through untouched. Test-suite coverage: 6 cases (exact-match, superset, subset, empty, missing-packet, compose-with-micro-live).
+
 **✅ 2026-02-20: Dual-path `has_volume_evidence` + `rvol_acceleration` / `trend_score` in `session_features` SHIPPED.** See CHANGELOG head for details.
 
 **✅ 2026-02-20: P1 brain-runtime `latest_intent_ts` + `latest_intent_age_s` SHIPPED.** See CHANGELOG head — silent-write-halt detection now trivially operator-visible on `/api/admin/runtime/{brain}/status`.
