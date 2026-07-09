@@ -30760,3 +30760,10 @@
 {"ts": "2026-07-09T10:34:07.335787+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 62828.2, "ask": 62828.3, "last": 62814.2, "spread_abs": 0.10000000000582077, "spread_bps": 0.0159, "source": "kraken"}
 {"ts": "2026-07-09T10:34:12.403877+00:00", "pair": "TSLA", "lane": "equity", "bid": 395.47, "ask": 395.89, "last": 394.06, "spread_abs": 0.4199999999999591, "spread_bps": 10.6146, "source": "webull"}
 {"ts": "2026-07-09T10:34:22.394375+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 62828.2, "ask": 62828.3, "last": 62814.2, "spread_abs": 0.10000000000582077, "spread_bps": 0.0159, "source": "kraken"}
+{"ts": "2026-07-09T10:34:32.493945+00:00", "pair": "TSLA", "lane": "equity", "bid": 395.53, "ask": 395.89, "last": 394.06, "spread_abs": 0.36000000000001364, "spread_bps": 9.0976, "source": "webull"}
+{"ts": "2026-07-09T10:34:37.469501+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 62828.2, "ask": 62828.3, "last": 62814.2, "spread_abs": 0.10000000000582077, "spread_bps": 0.0159, "source": "kraken"}
+{"ts": "2026-07-09T10:34:52.547472+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 62830.2, "ask": 62830.3, "last": 62830.2, "spread_abs": 0.10000000000582077, "spread_bps": 0.0159, "source": "kraken"}
+{"ts": "2026-07-09T10:34:52.624127+00:00", "pair": "TSLA", "lane": "equity", "bid": 395.55, "ask": 395.89, "last": 394.06, "spread_abs": 0.339999999999975, "spread_bps": 8.5919, "source": "webull"}
+{"ts": "2026-07-09T10:35:07.643290+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 62830.2, "ask": 62830.3, "last": 62830.3, "spread_abs": 0.10000000000582077, "spread_bps": 0.0159, "source": "kraken"}
+{"ts": "2026-07-09T10:35:12.698511+00:00", "pair": "TSLA", "lane": "equity", "bid": 395.55, "ask": 395.89, "last": 394.06, "spread_abs": 0.339999999999975, "spread_bps": 8.5919, "source": "webull"}
+{"ts": "2026-07-09T10:35:22.720903+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 62835.5, "ask": 62835.6, "last": 62830.3, "spread_abs": 0.09999999999854481, "spread_bps": 0.0159, "source": "kraken"}
