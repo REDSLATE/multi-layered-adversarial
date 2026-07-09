@@ -770,6 +770,13 @@ async def _route_one(intent: dict) -> dict:
             "executed_by": AUTO_ROUTER_EMAIL,
             "gate_state": "submitted",
             "final_notional_usd": shipped_notional,
+            # 2026-07-09 audit trail (operator directive): persist which
+            # code path resolved the notional so the post-mortem can
+            # distinguish brain-sized orders from $5 micro-probes.
+            # Values: brain_legacy | brain_v3 | micro_live_default |
+            # env_default.
+            "notional_source": notional_source,
+            "notional_usd": notional_raw,
             "broker_order": {
                 k: order.get(k) for k in (
                     "id", "order_id", "broker", "broker_symbol", "canonical",
