@@ -137,9 +137,37 @@ async def _route_one(intent: dict) -> dict:
     from shared import executions, risk, seat  # noqa: WPS433
 
     intent_id = intent.get("intent_id") or ""
-    notional_raw = float(
-        intent.get("requested_notional_usd") or AUTO_ROUTER_NOTIONAL_USD
-    )
+    # ── Notional resolution ──────────────────────────────────────
+    # Legacy path stamps `requested_notional_usd`; v3 envelope stamps
+    # `execution.notional_usd`. Try both, in that order. If the brain
+    # emitted a directional (BUY/SELL) intent with NO notional on either
+    # slot, apply the micro-live default so the pipeline can send a
+    # $5 probe order. Doctrine (2026-07-09 operator directive):
+    #
+    #   "direction exists now. The next executable choke is
+    #    notional_usd=null … Add a micro-notional fallback."
+    #
+    # The `notional_source` string rides on the intent doc so the
+    # post-mortem can distinguish brain-sized orders from micro-probes.
+    _exec = intent.get("execution") or {}
+    action_upper = str(intent.get("action") or "").upper()
+    v3_notional = _exec.get("notional_usd") if isinstance(_exec, dict) else None
+    legacy_notional = intent.get("requested_notional_usd")
+    notional_source: str
+    if legacy_notional not in (None, 0, 0.0):
+        notional_raw = float(legacy_notional)
+        notional_source = "brain_legacy"
+    elif v3_notional not in (None, 0, 0.0):
+        notional_raw = float(v3_notional)
+        notional_source = "brain_v3"
+    elif action_upper in {"BUY", "SELL"}:
+        notional_raw = float(
+            os.environ.get("MICRO_LIVE_DEFAULT_USD", "5.00")
+        )
+        notional_source = "micro_live_default"
+    else:
+        notional_raw = AUTO_ROUTER_NOTIONAL_USD
+        notional_source = "env_default"
 
     # ── 1. Seat decides ──────────────────────────────────────────
     sd = await seat.decide(intent)
