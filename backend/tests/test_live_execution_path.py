@@ -231,6 +231,24 @@ def _apply_patches(s, *, broker_result=None, broker_raises=None, floor_result=No
         )
 
     stack = ExitStack()
+
+    # ── sys.modules leak note (2026-07-09 iter-22 P2) ───────────────
+    # `patch.dict(sys.modules, {...})` correctly restores its own
+    # entries on unwind, and each `mock.patch(...)` below correctly
+    # restores its target attribute. HOWEVER, subsequent test files
+    # that use `monkeypatch.setattr("shared.market_hours.<attr>", ...)`
+    # via pytest's string-form resolver can end up patching a
+    # DIFFERENT module object than the one `_route_one`'s runtime
+    # `from shared.market_hours import ...` resolves — symptom: the
+    # next file's tests fail with `market_closed_preflight` even
+    # though monkeypatch tracked the setattr entry correctly.
+    #
+    # Fix lives in the CONSUMER file (`test_micro_notional_fallback
+    # ::_wire_common_patches` does a defensive `import shared.<mod>`
+    # of every module it will patch, re-anchoring sys.modules before
+    # setattr). Left this comment here so future refactors of the
+    # patch stack know why the consumer-side pre-import is required.
+
     stack.enter_context(patch.dict(sys.modules, {
         "shared.seat": s["seat_mod"],
         "shared.risk": s["risk_mod"],

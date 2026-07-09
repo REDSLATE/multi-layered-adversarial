@@ -149,6 +149,31 @@ async def _route_one(intent: dict) -> dict:
     #
     # The `notional_source` string rides on the intent doc so the
     # post-mortem can distinguish brain-sized orders from micro-probes.
+    # ── Notional resolution (2026-07-09 revised operator directive) ──
+    # Doctrine:
+    #
+    #   Market data
+    #     → brain chooses BUY/SELL
+    #     → doctrine scores quality
+    #     → executor assigns notional  ← THIS BLOCK
+    #     → capital ledger reserves
+    #     → broker submits
+    #
+    # Rule (assign_micro_notional):
+    #   1. If the brain already sized the intent (legacy or v3), USE IT.
+    #      → notional_source ∈ {"brain_legacy", "brain_v3"}
+    #   2. Directional intent (BUY/SELL) with no size AND doctrine
+    #      flagged any failed checks → $1 quality-weak probe.
+    #      → notional_source = "micro_probe_failed_quality"
+    #   3. Directional intent (BUY/SELL) with no size AND doctrine is
+    #      clean (no failed checks) → $5 default probe.
+    #      → notional_source = "micro_default"
+    #   4. Non-directional (HOLD/...) → env default ($10).
+    #      → notional_source = "env_default"
+    #
+    # The `notional_source` string rides on the intent doc so the
+    # post-mortem can distinguish brain-sized orders from probes and,
+    # for probes, whether doctrine passed or flagged them as weak.
     _exec = intent.get("execution") or {}
     action_upper = str(intent.get("action") or "").upper()
     v3_notional = _exec.get("notional_usd") if isinstance(_exec, dict) else None
@@ -161,42 +186,30 @@ async def _route_one(intent: dict) -> dict:
         notional_raw = float(v3_notional)
         notional_source = "brain_v3"
     elif action_upper in {"BUY", "SELL"}:
-        notional_raw = float(
-            os.environ.get("MICRO_LIVE_DEFAULT_USD", "5.00")
-        )
-        notional_source = "micro_live_default"
+        # Brain made a directional move but didn't size it.
+        # Consult the doctrine packet — if ANY quality checks failed,
+        # ship a $1 probe; otherwise a $5 default probe.
+        try:
+            dp = intent.get("doctrine_packet") or {}
+            seats_dp = (dp.get("seats") or {}) if isinstance(dp, dict) else {}
+            ej = seats_dp.get("execution_judge") or {}
+            _failed = list(ej.get("failed_checks") or [])
+        except Exception:  # noqa: BLE001
+            _failed = []
+
+        if _failed:
+            notional_raw = float(
+                os.environ.get("MICRO_PROBE_FAILED_QUALITY_USD", "1.00")
+            )
+            notional_source = "micro_probe_failed_quality"
+        else:
+            notional_raw = float(
+                os.environ.get("MICRO_LIVE_DEFAULT_USD", "5.00")
+            )
+            notional_source = "micro_default"
     else:
         notional_raw = AUTO_ROUTER_NOTIONAL_USD
         notional_source = "env_default"
-
-    # ── Setup-quality soft-gate (2026-07-09 operator directive, P1b) ──
-    # Doctrine:
-    #   "if failed_checks == ['liquidity_ok', 'quality_ok', 'score_ok']:
-    #    notional_usd *= 0.20 — marginal setups execute as probes
-    #    instead of blocking completely."
-    #
-    # Reads `doctrine_packet.seats.execution_judge.failed_checks` (the
-    # role-keyed shape used by both equity and crypto doctrines since
-    # the 2026-02-17 seat-canonicalization). If the failed set is
-    # exactly the three marginal-setup markers, we shrink the notional
-    # to 20% of whatever the resolution ladder above chose and stamp
-    # `notional_source = "quality_soft_gate"` so the post-mortem knows
-    # this order flew as a probe. All other doctrine outcomes (fewer
-    # failed checks, extra failed checks, no packet) fall through
-    # untouched.
-    try:
-        dp = intent.get("doctrine_packet") or {}
-        seats_dp = (dp.get("seats") or {}) if isinstance(dp, dict) else {}
-        ej = seats_dp.get("execution_judge") or {}
-        _failed = set(ej.get("failed_checks") or [])
-        _MARGINAL_SETUP = {"liquidity_ok", "quality_ok", "score_ok"}
-        if _failed == _MARGINAL_SETUP and notional_raw > 0:
-            notional_raw = notional_raw * 0.20
-            notional_source = "quality_soft_gate"
-    except Exception:  # noqa: BLE001
-        # Soft-gate must never block the pipeline on a malformed
-        # doctrine packet. Fall through with the original notional.
-        pass
 
     # ── 1. Seat decides ──────────────────────────────────────────
     sd = await seat.decide(intent)

@@ -1,17 +1,25 @@
 """Micro-notional fallback tests for `shared.auto_router._route_one`.
 
-Locks in the 2026-07-09 operator directive:
+Locks in the 2026-07-09 REVISED operator directive
+(`assign_micro_notional` rule):
 
     if execution.action in {BUY, SELL} and execution.notional_usd is None:
-        execution.notional_usd = 5.00
-        execution.notional_source = micro_live_default
+        if doctrine.failed_checks:           # ANY failed check
+            execution.notional_usd = 1.00
+            execution.notional_source = "micro_probe_failed_quality"
+        else:                                # doctrine clean
+            execution.notional_usd = 5.00
+            execution.notional_source = "micro_default"
 
 Notional resolution precedence inside `_route_one`:
 
     1. `intent.requested_notional_usd`  → notional_source = "brain_legacy"
     2. `intent.execution.notional_usd`  → notional_source = "brain_v3"
-    3. directional (BUY/SELL) w/ both None → MICRO_LIVE_DEFAULT_USD (default $5.00)
-       → notional_source = "micro_live_default"
+    3. directional (BUY/SELL) w/ both None:
+       a. doctrine has ANY failed_checks → $1 (env MICRO_PROBE_FAILED_QUALITY_USD)
+          → notional_source = "micro_probe_failed_quality"
+       b. doctrine clean → $5 (env MICRO_LIVE_DEFAULT_USD)
+          → notional_source = "micro_default"
     4. anything else (HOLD, etc.)       → AUTO_ROUTER_NOTIONAL_USD ($10)
        → notional_source = "env_default"
 
@@ -19,12 +27,6 @@ These tests reuse the same monkeypatch pattern as
 `test_capital_ledger_wiring.py` — the real `_route_one` control flow
 runs, but seat/risk/broker are stubbed. We inspect the notional the
 mocked broker ends up seeing to determine what got resolved.
-
-FOLLOW-UP GAP (2026-07-09): the current code computes
-`notional_source` locally but NEVER persists it to `shared_intents`.
-The `test_notional_source_persisted_on_intent_*` tests below assert
-persistence and will FAIL until the writer branches also stamp
-`notional_source` (and `notional_usd`) on the intent doc.
 """
 from __future__ import annotations
 
@@ -116,6 +118,21 @@ def _wire_common_patches(monkeypatch, *, sizing_route="observe"):
     path is skipped entirely — keeps these tests focused on notional
     resolution, not ledger arithmetic.
     """
+    # 2026-07-09 sys.modules leak fix: touch these modules FIRST so
+    # pytest's monkeypatch resolver and `_route_one`'s runtime
+    # `from ... import ...` calls both see the same module object.
+    # After `test_live_execution_path.py` runs its patch.dict cycle,
+    # sys.modules can end up in a state where two different module
+    # objects for these names are referenced by different code
+    # paths — importing here re-anchors them.
+    import shared.market_hours  # noqa: F401,WPS433
+    import shared.seat  # noqa: F401,WPS433
+    import shared.risk  # noqa: F401,WPS433
+    import shared.executions  # noqa: F401,WPS433
+    import shared.sizing_gate  # noqa: F401,WPS433
+    import shared.broker_router  # noqa: F401,WPS433
+    import routes.equity_extended_hours_admin  # noqa: F401,WPS433
+
     import shared.seat as seat
     import shared.risk as risk
     import shared.executions as executions
@@ -214,9 +231,9 @@ async def test_v3_envelope_notional_brain_v3(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_micro_default_directional_buy(monkeypatch):
-    """Both notional slots None + action=BUY → broker sees $5.00
-    (MICRO_LIVE_DEFAULT_USD default); `notional_source` ==
-    'micro_live_default'."""
+    """Both notional slots None + action=BUY + doctrine CLEAN
+    (no failed_checks) → broker sees $5.00 (MICRO_LIVE_DEFAULT_USD
+    default); `notional_source` == 'micro_default'."""
     monkeypatch.delenv("MICRO_LIVE_DEFAULT_USD", raising=False)
     await init_ledger(1000.0, 500.0)
     intent_id = f"micro-notional-test-{uuid.uuid4()}"
@@ -228,12 +245,12 @@ async def test_micro_default_directional_buy(monkeypatch):
     result = await auto_router._route_one(intent)
     assert result["verdict"] == "executed"
     assert captured["notional"] == 5.0, (
-        f"BUY with no notional must default to $5.00 micro-live, "
-        f"got ${captured.get('notional')}"
+        f"BUY with no notional + clean doctrine must default to "
+        f"$5.00 micro-default, got ${captured.get('notional')}"
     )
 
     doc = await db[SHARED_INTENTS].find_one({"intent_id": intent_id})
-    assert doc.get("notional_source") == "micro_live_default", (
+    assert doc.get("notional_source") == "micro_default", (
         "notional_source not persisted on intent doc (audit gap) — "
         "operator wants this in the post-mortem trail"
     )
@@ -260,7 +277,7 @@ async def test_micro_default_directional_sell_zero_notional(monkeypatch):
     assert captured["notional"] == 5.0
 
     doc = await db[SHARED_INTENTS].find_one({"intent_id": intent_id})
-    assert doc.get("notional_source") == "micro_live_default"
+    assert doc.get("notional_source") == "micro_default"
 
 
 # ─── Case 5: HOLD → env_default (does NOT get $5 micro fallback) ─
@@ -319,4 +336,131 @@ async def test_env_override_micro_live_default_usd(monkeypatch):
     )
 
     doc = await db[SHARED_INTENTS].find_one({"intent_id": intent_id})
-    assert doc.get("notional_source") == "micro_live_default"
+    assert doc.get("notional_source") == "micro_default"
+
+
+# ─── Case 7: directional BUY + failed_checks → $1 quality probe ───
+
+
+@pytest.mark.asyncio
+async def test_failed_quality_directional_ships_1_dollar_probe(monkeypatch):
+    """Directional (BUY/SELL) intent with no notional AND doctrine
+    reports ANY failed_checks → broker sees $1.00; `notional_source`
+    == 'micro_probe_failed_quality'.
+
+    Locks in the 2026-07-09 revised rule:
+
+        Direction exists, but quality is weak → probe only.
+
+    Any failed check triggers the probe (not just the specific
+    marginal-setup triple). The operator's original rule intentionally
+    prioritized "flow the trade at a token size" over "reject on any
+    quality flag" so a wider set of doctrine outcomes still touch
+    the market."""
+    monkeypatch.delenv("MICRO_LIVE_DEFAULT_USD", raising=False)
+    monkeypatch.delenv("MICRO_PROBE_FAILED_QUALITY_USD", raising=False)
+    await init_ledger(1000.0, 500.0)
+    intent_id = f"micro-notional-test-{uuid.uuid4()}"
+    intent = await _insert_intent(intent_id, "BUY")
+
+    # Stamp the doctrine packet in Mongo so `_route_one` reads it back.
+    packet = {
+        "seats": {
+            "execution_judge": {
+                "execution_ready": False,
+                "failed_checks": ["liquidity_ok", "quality_ok", "score_ok"],
+            },
+        },
+    }
+    await db[SHARED_INTENTS].update_one(
+        {"intent_id": intent_id},
+        {"$set": {"doctrine_packet": packet}},
+    )
+    intent["doctrine_packet"] = packet
+
+    _wire_common_patches(monkeypatch)
+    captured = _capture_broker(monkeypatch)
+
+    result = await auto_router._route_one(intent)
+    assert result["verdict"] == "executed"
+    assert captured["notional"] == 1.0, (
+        f"failed_checks present → $1 probe, got ${captured.get('notional')}"
+    )
+    doc = await db[SHARED_INTENTS].find_one({"intent_id": intent_id})
+    assert doc.get("notional_source") == "micro_probe_failed_quality"
+
+
+# ─── Case 8: single failed check is enough → $1 probe ─────────────
+
+
+@pytest.mark.asyncio
+async def test_single_failed_check_still_probes(monkeypatch):
+    """Even ONE failed check (not the marginal triple) is enough to
+    downshift to a $1 probe — the rule is 'ANY failed_checks', not
+    'specific failed_checks pattern'."""
+    monkeypatch.delenv("MICRO_LIVE_DEFAULT_USD", raising=False)
+    monkeypatch.delenv("MICRO_PROBE_FAILED_QUALITY_USD", raising=False)
+    await init_ledger(1000.0, 500.0)
+    intent_id = f"micro-notional-test-{uuid.uuid4()}"
+    intent = await _insert_intent(intent_id, "SELL")
+
+    packet = {
+        "seats": {
+            "execution_judge": {
+                "failed_checks": ["spread_ok"],
+            },
+        },
+    }
+    await db[SHARED_INTENTS].update_one(
+        {"intent_id": intent_id},
+        {"$set": {"doctrine_packet": packet}},
+    )
+    intent["doctrine_packet"] = packet
+
+    _wire_common_patches(monkeypatch)
+    captured = _capture_broker(monkeypatch)
+
+    result = await auto_router._route_one(intent)
+    assert result["verdict"] == "executed"
+    assert captured["notional"] == 1.0
+    doc = await db[SHARED_INTENTS].find_one({"intent_id": intent_id})
+    assert doc.get("notional_source") == "micro_probe_failed_quality"
+
+
+# ─── Case 9: brain-sized intent is NOT overridden by failed_checks ─
+
+
+@pytest.mark.asyncio
+async def test_brain_sized_intent_survives_failed_checks(monkeypatch):
+    """If the brain already sized the intent (legacy or v3), the
+    `assign_micro_notional` rule leaves it alone — even when doctrine
+    flags failed checks. The probe fallbacks are a NOTIONAL RESOLUTION
+    step (default when brain didn't size), not a doctrine downshift."""
+    await init_ledger(1000.0, 500.0)
+    intent_id = f"micro-notional-test-{uuid.uuid4()}"
+    intent = await _insert_intent(intent_id, "BUY", legacy=42.0)
+
+    packet = {
+        "seats": {
+            "execution_judge": {
+                "failed_checks": ["liquidity_ok", "quality_ok", "score_ok"],
+            },
+        },
+    }
+    await db[SHARED_INTENTS].update_one(
+        {"intent_id": intent_id},
+        {"$set": {"doctrine_packet": packet}},
+    )
+    intent["doctrine_packet"] = packet
+
+    _wire_common_patches(monkeypatch)
+    captured = _capture_broker(monkeypatch)
+
+    result = await auto_router._route_one(intent)
+    assert result["verdict"] == "executed"
+    assert captured["notional"] == 42.0, (
+        "brain-sized intent must survive intact — probes only apply "
+        "when notional_usd is null"
+    )
+    doc = await db[SHARED_INTENTS].find_one({"intent_id": intent_id})
+    assert doc.get("notional_source") == "brain_legacy"
