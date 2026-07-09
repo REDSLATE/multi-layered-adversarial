@@ -169,6 +169,35 @@ async def _route_one(intent: dict) -> dict:
         notional_raw = AUTO_ROUTER_NOTIONAL_USD
         notional_source = "env_default"
 
+    # ── Setup-quality soft-gate (2026-07-09 operator directive, P1b) ──
+    # Doctrine:
+    #   "if failed_checks == ['liquidity_ok', 'quality_ok', 'score_ok']:
+    #    notional_usd *= 0.20 — marginal setups execute as probes
+    #    instead of blocking completely."
+    #
+    # Reads `doctrine_packet.seats.execution_judge.failed_checks` (the
+    # role-keyed shape used by both equity and crypto doctrines since
+    # the 2026-02-17 seat-canonicalization). If the failed set is
+    # exactly the three marginal-setup markers, we shrink the notional
+    # to 20% of whatever the resolution ladder above chose and stamp
+    # `notional_source = "quality_soft_gate"` so the post-mortem knows
+    # this order flew as a probe. All other doctrine outcomes (fewer
+    # failed checks, extra failed checks, no packet) fall through
+    # untouched.
+    try:
+        dp = intent.get("doctrine_packet") or {}
+        seats_dp = (dp.get("seats") or {}) if isinstance(dp, dict) else {}
+        ej = seats_dp.get("execution_judge") or {}
+        _failed = set(ej.get("failed_checks") or [])
+        _MARGINAL_SETUP = {"liquidity_ok", "quality_ok", "score_ok"}
+        if _failed == _MARGINAL_SETUP and notional_raw > 0:
+            notional_raw = notional_raw * 0.20
+            notional_source = "quality_soft_gate"
+    except Exception:  # noqa: BLE001
+        # Soft-gate must never block the pipeline on a malformed
+        # doctrine packet. Fall through with the original notional.
+        pass
+
     # ── 1. Seat decides ──────────────────────────────────────────
     sd = await seat.decide(intent)
     if sd.verdict != "fire":
@@ -199,6 +228,7 @@ async def _route_one(intent: dict) -> dict:
                     "last_submit_ts": _now_iso(),
                     "last_submit_by": AUTO_ROUTER_EMAIL,
                     "seat_reason": sd.reason,
+                    "notional_source": notional_source,
                 }},
             )
         except Exception:  # noqa: BLE001
@@ -268,6 +298,7 @@ async def _route_one(intent: dict) -> dict:
                         "broker_reason": "notional_below_pair_floor",
                         "broker_error_bucket": "min_order_notional",
                         "broker_error_detail": far.reject_reason,
+                        "notional_source": notional_source,
                     }},
                 )
             except Exception:  # noqa: BLE001
@@ -324,6 +355,7 @@ async def _route_one(intent: dict) -> dict:
                             "broker_reason": "pair_floor_exceeds_per_order_cap",
                             "broker_error_bucket": "min_order_notional",
                             "broker_error_detail": detail,
+                            "notional_source": notional_source,
                         }},
                     )
                 except Exception:  # noqa: BLE001
@@ -367,6 +399,7 @@ async def _route_one(intent: dict) -> dict:
                     "last_submit_ts": _now_iso(),
                     "last_submit_by": AUTO_ROUTER_EMAIL,
                     "risk_reason": rc.reason,
+                    "notional_source": notional_source,
                 }},
             )
         except Exception:  # noqa: BLE001
@@ -443,6 +476,7 @@ async def _route_one(intent: dict) -> dict:
                         "broker_reason": "market_closed_preflight",
                         "broker_error_bucket": "market_closed",
                         "broker_error_detail": reason[:500],
+                        "notional_source": notional_source,
                     }},
                 )
             except Exception:  # noqa: BLE001
@@ -578,6 +612,7 @@ async def _route_one(intent: dict) -> dict:
                                 "last_submit_by": AUTO_ROUTER_EMAIL,
                                 "broker_reason": "REJECTED_CAP_EXCEEDED",
                                 "broker_error_bucket": "capital_ledger_cap",
+                                "notional_source": notional_source,
                             }},
                         )
                     except Exception:  # noqa: BLE001
@@ -634,6 +669,7 @@ async def _route_one(intent: dict) -> dict:
                     "last_submit_ts": _now_iso(),
                     "last_submit_by": AUTO_ROUTER_EMAIL,
                     "broker_reason": str(exc)[:500],
+                    "notional_source": notional_source,
                 }},
             )
         except Exception:  # noqa: BLE001
@@ -719,6 +755,7 @@ async def _route_one(intent: dict) -> dict:
                         "broker_reason": terminal_reason,
                         "broker_error_detail": err.detail,
                         "broker_error_bucket": err.bucket,
+                        "notional_source": notional_source,
                     }},
                 )
             except Exception:  # noqa: BLE001
@@ -741,6 +778,7 @@ async def _route_one(intent: dict) -> dict:
                     "last_submit_by": AUTO_ROUTER_EMAIL,
                     "broker_error_bucket": err.bucket,
                     "broker_error_detail": err.detail,
+                    "notional_source": notional_source,
                 },
                  "$inc": {"broker_retry_count": 1}},
             )

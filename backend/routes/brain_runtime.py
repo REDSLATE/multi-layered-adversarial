@@ -35,7 +35,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path
@@ -45,7 +45,6 @@ from db import db
 from namespaces import (
     LIVE_RUNTIMES,
     SHARED_HEARTBEATS,
-    SHARED_INTENTS,
     SOVEREIGN_STATE,
 )
 from shared.roster import CRYPTO_LANE_ROLES, get_roster
@@ -236,76 +235,56 @@ async def _build_in_process_status(brain: str) -> Dict[str, Any]:
     sv_iso = (sv_doc or {}).get("updated_at")
     sv_age = _age_seconds(sv_iso, now)
 
-    # Intent windows + per-action breakdown over 24h. Filter by
-    # `stack_canonical` (2026-02-23 dual-field migration — covers
-    # both legacy and canonical historical docs in one query).
-    from shared.brain_legend import canonicalize_stack as _canon  # noqa: WPS433
-    brain_c = _canon(brain) or brain
-    cutoff_24h = (now - timedelta(hours=24)).isoformat()
-    cutoff_1h = (now - timedelta(hours=1)).isoformat()
-
-    # ── DEFENSIVE ATLAS BOUNDARY (2026-07-09 cascading-timeout hotfix) ──
-    # Symptom: after the earlier P0/P0-Part-2 fixes landed, ALL 4 brains
-    # started returning `{ok:false, error:'in_process_build_failed',
-    # error_detail:'NetworkTimeout: ... The read operation timed out'}`
-    # from prod Atlas within a few hours. Escalation pattern
-    # (barracuda → gto → all 4) strongly suggests either Motor
-    # connection-pool exhaustion or Atlas cluster slowness during the
-    # new composite-index background build. In-process runtime data
-    # (heartbeat cadence, tick count, intent count, last-success age)
-    # is ALREADY held in memory by the runner — the DB reads here were
-    # historically for cross-process visibility, but with the runner
-    # in-process there's no reason to hard-fail the whole tile when
-    # Atlas is slow.
+    # Intent windows + per-action breakdown over 24h.
     #
-    # Doctrine:
-    #   * Every Mongo call is wrapped in `asyncio.wait_for(..., 3.0)`.
-    #   * On timeout → the field becomes None + `atlas_partial` flag
-    #     flips true. Response STILL returns ok:true so the operator
-    #     dashboard tile lights green, and the in-memory runner_stats
-    #     block (`intent_count`, `loop_health.intent_last_success_age_s`)
-    #     carries the operational signal even when Atlas is out.
-    #   * NEVER raise from inside the guard — outer try/except would
-    #     just re-collapse to the old cascading-500 shape.
-    async def _safe(coro, default):
-        try:
-            return await asyncio.wait_for(coro, timeout=3.0)
-        except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
-            logger.warning(
-                "brain_runtime.status: Atlas call timed out/failed for "
-                "brain=%s: %s", brain, type(exc).__name__,
-            )
-            return default
-
-    atlas_partial = False
-    count_24h = await _safe(
-        db[SHARED_INTENTS].count_documents({
-            "stack_canonical": brain_c, "ingest_ts": {"$gte": cutoff_24h},
-        }), None,
+    # 2026-07-09 P0 rewrite (operator directive):
+    #   Reads come from the cached `brain_runtime_metrics` micro-doc
+    #   populated by `shared.brain_runtime_metrics.bump_on_emit` at
+    #   intent-ingest time. `refresh_windows` recomputes the rolling
+    #   last_1h / last_24h / by_action off the composite index
+    #   (stack_canonical, ingest_ts) with a 30-second cached TTL, so
+    #   the status endpoint no longer hammers the multi-million-row
+    #   `shared_intents` tape on every dashboard poll.
+    #
+    #   If the cached doc / refresh both fail (Atlas out or brand-
+    #   new brain that has never emitted), we fall back to the
+    #   runner's in-memory tick count via `runner_stats.intent_count`
+    #   below and flip `atlas_partial=True` so the dashboard tile
+    #   marks the section as degraded rather than blank.
+    from shared.brain_legend import canonicalize_stack as _canon  # noqa: WPS433
+    from shared.brain_runtime_metrics import (  # noqa: WPS433
+        get_metrics, refresh_windows,
     )
-    if count_24h is None:
-        atlas_partial = True
-    count_1h = await _safe(
-        db[SHARED_INTENTS].count_documents({
-            "stack_canonical": brain_c, "ingest_ts": {"$gte": cutoff_1h},
-        }), None,
-    )
-    if count_1h is None:
-        atlas_partial = True
+    brain_c = _canon(brain) or brain
 
-    async def _agg_by_action() -> Dict[str, int]:
-        out: Dict[str, int] = {}
-        cur = db[SHARED_INTENTS].aggregate([
-            {"$match": {"stack_canonical": brain_c, "ingest_ts": {"$gte": cutoff_24h}}},
-            {"$group": {"_id": "$action", "count": {"$sum": 1}}},
-        ])
-        async for row in cur:
-            out[str(row.get("_id") or "UNK").upper()] = int(row.get("count", 0))
-        return out
-    by_action = await _safe(_agg_by_action(), None)
-    if by_action is None:
+    metrics_doc: Optional[Dict[str, Any]] = await _safe(
+        refresh_windows(brain_c), None,
+    )
+    if metrics_doc is None:
+        # Refresh failed (Atlas timeout / cluster slowness). Fall back
+        # to the last known cached doc, which may still be authoritative
+        # for `latest_ts` / `latest_action` even if window counts are stale.
+        metrics_doc = await _safe(get_metrics(brain_c), None)
+
+    if metrics_doc is None:
         atlas_partial = True
-        by_action = {}
+        count_1h = None
+        count_24h = None
+        by_action: Dict[str, int] = {}
+        latest_intent_ts = None
+        latest_intent_symbol = None
+        latest_intent_action = None
+    else:
+        count_1h = metrics_doc.get("last_1h")
+        count_24h = metrics_doc.get("last_24h")
+        by_action = metrics_doc.get("by_action") or {}
+        latest_intent_ts = metrics_doc.get("latest_ts")
+        latest_intent_symbol = metrics_doc.get("latest_symbol")
+        latest_intent_action = metrics_doc.get("latest_action")
+        # If windows never refreshed (bump-only path), mark degraded so
+        # the operator knows the counts aren't yet authoritative.
+        if count_1h is None or count_24h is None:
+            atlas_partial = True
 
     # 2026-07-09 fix (Part 1): unbounded lifetime count removed.
     # `total_intents` is a permanent `None` in the payload —
@@ -313,25 +292,9 @@ async def _build_in_process_status(brain: str) -> Dict[str, Any]:
     # in-memory `intent_count` from runner_stats.
     total_intents = None
 
-    # DB-confirmed latest write. Part 2 bounded by ingest_ts >= 48h so
-    # the query planner always uses the existing `ingest_ts_idx`. Even
-    # so, wrap in the Atlas guard — if Mongo is unresponsive, fall
-    # back to the runner's in-memory last-success timestamp which is
-    # updated the moment an intent is successfully written.
-    cutoff_48h = (now - timedelta(hours=48)).isoformat()
-    latest_intent = await _safe(
-        db[SHARED_INTENTS].find_one(
-            {"stack_canonical": brain_c, "ingest_ts": {"$gte": cutoff_48h}},
-            {"_id": 0, "ingest_ts": 1, "symbol": 1, "action": 1},
-            sort=[("ingest_ts", -1)],
-        ), None,
-    )
-    if latest_intent is None and count_24h is None:
-        # Not "no rows" — Atlas is out. Fall back to runner memory.
-        atlas_partial = True
-    latest_intent_ts = (latest_intent or {}).get("ingest_ts")
     latest_intent_age_s = _age_seconds(latest_intent_ts, now)
-    # In-memory fallback for last-intent age when Atlas is silent.
+    # In-memory fallback for last-intent age when the cached doc is
+    # silent (fresh brain / Atlas outage during first emit).
     if latest_intent_age_s is None and runner_stats:
         lh = runner_stats.get("loop_health") or {}
         latest_intent_age_s = lh.get("intent_last_success_age_s")
@@ -406,8 +369,10 @@ async def _build_in_process_status(brain: str) -> Dict[str, Any]:
                 round(latest_intent_age_s, 1)
                 if latest_intent_age_s is not None else None
             ),
-            "latest_symbol": (latest_intent or {}).get("symbol"),
-            "latest_action": (latest_intent or {}).get("action"),
+            "latest_symbol": latest_intent_symbol,
+            "latest_action": latest_intent_action,
+            "source": "brain_runtime_metrics",
+            "atlas_partial": atlas_partial,
         },
         "in_process_runner": runner_stats,
     }

@@ -1233,6 +1233,26 @@ async def _post_intent_impl(
             intent_id, _sm_err,
         )
     await db[SHARED_INTENTS].insert_one(doc)
+
+    # ── Cached runtime metrics bump (2026-07-09 operator directive) ──
+    # Update the per-brain `brain_runtime_metrics` micro-doc so the
+    # /admin/runtime/{brain}/status endpoint can read one small row
+    # instead of scanning `shared_intents`. Best-effort — a failure
+    # here MUST NEVER block intent ingest.
+    try:
+        from shared.brain_runtime_metrics import bump_on_emit as _mtx_bump  # noqa: WPS433
+        await _mtx_bump(
+            brain=canonicalize_stack(body.stack) or body.stack,
+            action=body.action,
+            symbol=body.symbol,
+            ingest_ts=doc["ingest_ts"],
+        )
+    except Exception as _mtx_err:  # noqa: BLE001
+        logger.warning(
+            "brain_runtime_metrics.bump_on_emit failed for intent_id=%s: %s",
+            intent_id, _mtx_err,
+        )
+
     # so the brain never waits on bookkeeping.
     from shared.mc_shelly import record_async  # noqa: WPS433
     record_async(
