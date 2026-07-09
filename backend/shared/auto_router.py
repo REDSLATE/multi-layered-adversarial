@@ -773,6 +773,35 @@ async def _route_one(intent: dict) -> dict:
                 )
             except Exception:  # noqa: BLE001
                 pass
+
+            # 2026-07-09 live-learning capture (Stage 1): broker
+            # rejects are as valuable as fills for the training set.
+            # Best-effort — never crash the reject path.
+            try:
+                from shared.learning.live_loop import capture_experience  # noqa: WPS433
+                learn_intent = dict(intent)
+                learn_intent.setdefault("execution", {})
+                learn_intent["execution"]["action"] = action_upper
+                learn_intent["execution"]["notional_usd"] = final_notional
+                learn_intent["final_notional_usd"] = final_notional
+                learn_intent["notional_source"] = notional_source
+                await capture_experience(
+                    db,
+                    intent=learn_intent,
+                    broker_receipt={
+                        "status": "rejected",
+                        "broker": err.detail.get("broker") if hasattr(err, "detail") and isinstance(err.detail, dict) else None,
+                        "error_bucket": err.bucket,
+                        "error_detail": err.detail if hasattr(err, "detail") else None,
+                    },
+                    terminal_state="broker_rejected",
+                    reject_reason=terminal_reason,
+                )
+            except Exception as _learn_exc:  # noqa: BLE001
+                logger.warning(
+                    "learning.capture_experience (reject path) failed: %s",
+                    _learn_exc,
+                )
             return {
                 "verdict": "blocked",
                 "reason": terminal_reason,
@@ -857,6 +886,36 @@ async def _route_one(intent: dict) -> dict:
         broker_response=order,
         ok=True,
     )
+
+    # 2026-07-09 live-learning capture (Stage 1, operator directive):
+    # Every intent that reached the broker door — fill OR reject —
+    # is training material. Best-effort; a failure to write the
+    # learning row must NEVER kill an in-progress order.
+    try:
+        from shared.learning.live_loop import capture_experience  # noqa: WPS433
+        learning_intent = dict(intent)
+        learning_intent.setdefault("execution", {})
+        learning_intent["execution"]["action"] = action_upper
+        learning_intent["execution"]["notional_usd"] = shipped_notional
+        learning_intent["final_notional_usd"] = shipped_notional
+        learning_intent["notional_source"] = notional_source
+        learning_intent["broker_order"] = {
+            k: order.get(k) for k in (
+                "id", "order_id", "broker", "status",
+                "filled_qty", "filled_avg_price",
+            ) if order.get(k) is not None
+        }
+        await capture_experience(
+            db,
+            intent=learning_intent,
+            broker_receipt=order,
+            terminal_state="submitted",
+        )
+    except Exception as _learn_exc:  # noqa: BLE001
+        logger.warning(
+            "learning.capture_experience (success path) failed: %s",
+            _learn_exc,
+        )
     logger.info(
         "auto_router OK intent=%s symbol=%s action=%s notional=%.2f "
         "broker=%s order_id=%s",

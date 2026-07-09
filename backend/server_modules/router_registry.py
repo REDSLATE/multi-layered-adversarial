@@ -106,6 +106,7 @@ from routes.rise_ai_admin import router as rise_ai_admin_router
 from routes.brain_doctrine_hint import router as brain_doctrine_hint_router
 from routes.storage_rollup import router as storage_rollup_router
 from routes.trading_controls import router as trading_controls_router
+from routes.admin_learning import router as admin_learning_router
 from routes.alpha_vantage_admin import router as alpha_vantage_admin_router
 from routes.broker_lane_admin import router as broker_lane_admin_router
 from routes.auto_router_admin import router as auto_router_admin_router
@@ -320,6 +321,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(chevelle_router)
     api_router.include_router(storage_rollup_router)
     api_router.include_router(trading_controls_router)
+    api_router.include_router(admin_learning_router)
     api_router.include_router(alpha_vantage_admin_router)
     api_router.include_router(broker_lane_admin_router)
     api_router.include_router(intent_origin_router)
