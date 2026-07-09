@@ -398,6 +398,21 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         [("stack_canonical", 1), ("created_at", -1)],
         name="shared_intents_stack_canonical_created_idx",
     )
+    # 2026-07-09 (P1 prod hotfix — Barracuda in-process status timed out):
+    # `_build_in_process_status` (routes/brain_runtime.py) runs:
+    #   * count_documents({stack_canonical, ingest_ts: {$gte: cutoff}})   × 2
+    #   * aggregate([$match({stack_canonical, ingest_ts: {$gte: cutoff}}), $group])
+    #   * find_one({stack_canonical}, sort=[(ingest_ts, -1)])
+    # The existing `(stack_canonical, created_at)` and `(ingest_ts)` indexes
+    # BOTH miss the composite `(stack_canonical, ingest_ts)` shape. On the
+    # brain with the longest history (Barracuda, post-camaro migration),
+    # Atlas timed out the whole status endpoint. This composite lets the
+    # cursor use a covered range scan on ingest_ts within a fixed
+    # stack_canonical partition — O(logN + k) instead of full scan.
+    await db.shared_intents.create_index(
+        [("stack_canonical", 1), ("ingest_ts", -1)],
+        name="shared_intents_stack_canonical_ingest_ts_idx",
+    )
     # 2026-02-26 (P0 prod hotfix — auto_router_loop stalled):
     # `shared/auto_router.py::_tick()` queries
     #   find({executed:$ne True, action:$in [BUY/SELL/SHORT/COVER],

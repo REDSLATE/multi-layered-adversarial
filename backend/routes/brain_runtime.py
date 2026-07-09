@@ -236,7 +236,16 @@ async def _build_in_process_status(brain: str) -> Dict[str, Any]:
     by_action: Dict[str, int] = {}
     async for row in by_action_cursor:
         by_action[str(row.get("_id") or "UNK").upper()] = int(row.get("count", 0))
-    total_intents = await db[SHARED_INTENTS].count_documents({"stack_canonical": brain_c})
+    # 2026-07-09 fix: the previous unbounded `count_documents({"stack_canonical":...})`
+    # on shared_intents was a full-collection scan under Atlas — it
+    # timed out for the brain with the longest history (Barracuda,
+    # which absorbed the `camaro` lineage in the Feb 2026 dual-field
+    # migration), leaving that brain's status endpoint dark. Operator
+    # visibility on the tile only ever needed 1h/24h + latest_ts, so
+    # dropping the lifetime `total_intents` query — same UX, no P0
+    # timeout risk. If lifetime is ever needed, add it as a nightly
+    # aggregate write to a small metrics collection.
+    total_intents = None
 
     # DB-confirmed latest write. 2026-02-20 (operator directive): the
     # 24h/1h counts hide silent write halts — a brain can stop
