@@ -33,7 +33,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from db import db
 from namespaces import SHARED_GATE_RESULTS, SHARED_INTENTS
@@ -1127,7 +1127,7 @@ async def _sweep_submitted_broker_orders() -> dict:
         logger.warning("reconcile sweep: get_kraken_adapter failed: %s", exc)
 
     if not adapters:
-        return counts
+        return await _finish_sweep(counts)
 
     poll_cutoff = (now_utc - timedelta(seconds=RECONCILE_MIN_AGE_SEC)).isoformat()
 
@@ -1356,6 +1356,18 @@ async def _sweep_submitted_broker_orders() -> dict:
         # again next tick.
         counts["no_change"] += 1
 
+    return await _finish_sweep(counts)
+
+
+async def _finish_sweep(counts: dict) -> dict:
+    """Common tail for `_sweep_submitted_broker_orders`. Handles:
+      * The reconcile-sweep log line.
+      * The learning-loop heartbeat resolver (iter-22 Stage 1.5).
+
+    Extracted into a helper so the "no adapters available" early
+    return still runs the resolver — otherwise a broker outage
+    would silently starve the learning tape of outcome resolutions.
+    """
     if counts["polled"]:
         logger.info(
             "auto_router reconcile sweep: polled=%d (equity=%d crypto=%d) "
@@ -1369,6 +1381,35 @@ async def _sweep_submitted_broker_orders() -> dict:
             counts["no_change"], counts["errors"],
             counts["requeue_near_boundary"],
         )
+
+    # ── Learning-loop heartbeat resolver ─────────────────────────────
+    # Piggybacks the reconcile tick's rate-limit window — no new
+    # scheduler. Fills in `outcome_5m_bps` / `15m_bps` / `1h_bps` on
+    # any ripe `learning_experiences` row. Crypto resolves via the
+    # public Kraken ticker; equity is stubbed until Stage 2 wires
+    # a real mark-price feed. Best-effort: any failure counted into
+    # `learning_resolver_errors` but NEVER re-raised — the reconcile
+    # tick must always return cleanly to the auto-router.
+    try:
+        from shared.learning.outcome_resolver import (  # noqa: WPS433
+            resolve_pending_outcomes,
+        )
+        learn_counts = await asyncio.wait_for(
+            resolve_pending_outcomes(db), timeout=8.0,
+        )
+        counts["learning_scanned"] = learn_counts.get("scanned", 0)
+        counts["learning_resolved_5m"] = learn_counts.get("resolved_5m", 0)
+        counts["learning_resolved_15m"] = learn_counts.get("resolved_15m", 0)
+        counts["learning_resolved_1h"] = learn_counts.get("resolved_1h", 0)
+        counts["learning_skipped_mark"] = learn_counts.get(
+            "skipped_missing_mark", 0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "auto_router reconcile sweep: learning resolver failed: %s", exc,
+        )
+        counts["learning_resolver_errors"] = 1
+
     return counts
 
 

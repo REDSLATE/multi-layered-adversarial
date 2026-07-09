@@ -299,3 +299,93 @@ async def test_sweep_rate_limit_skips_when_recent():
     assert counts1["polled"] >= 1
     assert counts2.get("skipped_rate_limited") == 1
     assert counts2["polled"] == 0
+
+
+# ─── learning resolver piggyback (iter-22 Stage 1.5) ──────────────
+
+@pytest.mark.asyncio
+async def test_sweep_calls_learning_resolver_and_stamps_counts(monkeypatch):
+    """The reconcile sweep must invoke `resolve_pending_outcomes`
+    once per non-rate-limited tick and stamp its counts into the
+    return payload so operators see resolver activity in the same
+    log line as the broker sweep.
+
+    Failure of the resolver MUST NOT propagate — piggybacking is
+    best-effort by contract; the sweep still returns cleanly."""
+    called = {"n": 0}
+
+    async def _fake_resolver(_db):
+        called["n"] += 1
+        return {
+            "scanned": 5, "resolved_5m": 2, "resolved_15m": 1,
+            "resolved_1h": 0, "skipped_missing_entry": 0,
+            "skipped_missing_mark": 3, "errors": 0,
+        }
+
+    monkeypatch.setattr(
+        "shared.learning.outcome_resolver.resolve_pending_outcomes",
+        _fake_resolver,
+    )
+    # No broker adapters → sweep body is a no-op, but the learning
+    # resolver should still be invoked at the tail.
+    with patch(
+        "shared.crypto.broker_adapter.get_kraken_adapter",
+        new=AsyncMock(return_value=None),
+    ), patch(
+        "shared.broker_router.get_webull_adapter",
+        new=AsyncMock(return_value=None),
+    ):
+        counts = await ar._sweep_submitted_broker_orders()
+
+    assert called["n"] == 1
+    assert counts["learning_scanned"] == 5
+    assert counts["learning_resolved_5m"] == 2
+    assert counts["learning_resolved_15m"] == 1
+    assert counts["learning_skipped_mark"] == 3
+
+
+@pytest.mark.asyncio
+async def test_sweep_learning_resolver_failure_does_not_crash(monkeypatch):
+    """If the resolver raises, the sweep must still return; the
+    failure is recorded as `learning_resolver_errors=1`."""
+    async def _boom(_db):
+        raise RuntimeError("resolver kaboom")
+
+    monkeypatch.setattr(
+        "shared.learning.outcome_resolver.resolve_pending_outcomes",
+        _boom,
+    )
+    with patch(
+        "shared.crypto.broker_adapter.get_kraken_adapter",
+        new=AsyncMock(return_value=None),
+    ), patch(
+        "shared.broker_router.get_webull_adapter",
+        new=AsyncMock(return_value=None),
+    ):
+        counts = await ar._sweep_submitted_broker_orders()
+
+    assert counts["learning_resolver_errors"] == 1
+
+
+@pytest.mark.asyncio
+async def test_sweep_learning_resolver_skipped_when_rate_limited(monkeypatch):
+    """The rate-limit gate short-circuits the ENTIRE sweep body,
+    including the learning-resolver piggyback. Otherwise a back-to-
+    back caller could still hammer the resolver every millisecond."""
+    ar._LAST_RECONCILE_SWEEP_TS = datetime.now(timezone.utc)
+    called = {"n": 0}
+
+    async def _fake_resolver(_db):
+        called["n"] += 1
+        return {}
+
+    monkeypatch.setattr(
+        "shared.learning.outcome_resolver.resolve_pending_outcomes",
+        _fake_resolver,
+    )
+    counts = await ar._sweep_submitted_broker_orders()
+    assert counts.get("skipped_rate_limited") == 1
+    assert called["n"] == 0, (
+        "Rate-limit gate must skip learning resolver too — "
+        "piggyback semantics require sharing the same window"
+    )
