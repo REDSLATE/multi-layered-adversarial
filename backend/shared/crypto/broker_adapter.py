@@ -91,6 +91,20 @@ class KrakenLiveAdapter:
             "paper": False,
         }
 
+    # ─── reconcile / order-status lookup ─────────────────────────────
+
+    async def get_order(self, order_id: str) -> dict:
+        """Fetch current state of a Kraken order by txid, normalized to
+        the Webull-shaped `get_order` response so the auto_router
+        reconcile sweep can consume equity + crypto with ONE code
+        path. Wraps the module-level `query_order` helper — the
+        normalizer + status map live in `shared.crypto.kraken` so
+        Kraken's response schema is decoded in exactly one place."""
+        from shared.crypto.kraken import query_order  # noqa: WPS433
+        return await query_order(
+            str(order_id), self.public_key, self.private_key,
+        )
+
     # ─── account / positions ─────────────────────────────────────────
 
     async def get_account(self) -> dict:

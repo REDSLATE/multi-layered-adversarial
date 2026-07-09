@@ -1000,10 +1000,19 @@ _LAST_RECONCILE_SWEEP_TS: Optional[datetime] = None
 
 
 async def _sweep_submitted_broker_orders() -> dict:
-    """Poll Webull for the current status of `gate_state='submitted'`
-    equity intents. Transitions them to `filled`, `broker_rejected`,
-    or (on transient reject under retry cap) back to `pending` for
-    re-routing on the next tick.
+    """Poll each broker for the current status of `gate_state='submitted'`
+    intents. Transitions them to `filled`, `broker_rejected`, or (on
+    transient reject under retry cap) back to `pending` for re-routing
+    on the next tick.
+
+    2026-07-09 iter-22 — crypto sweep landing (P2 backlog):
+        Historically this function only queried Webull (`lane=equity`),
+        leaving Kraken-submitted intents stuck in `submitted` state
+        forever. As of iter-22 both adapters are polled — `KrakenLive
+        Adapter.get_order(txid)` returns the same normalized shape
+        that Webull does (see `shared.crypto.kraken._normalize_kraken
+        _order`), so the FILLED / REJECTED / EXPIRED branches below
+        work uniformly for both lanes.
 
     Returns a counts dict for observability. Never raises — a broker
     outage or DB slowness cannot crash the auto-router tick.
@@ -1017,6 +1026,7 @@ async def _sweep_submitted_broker_orders() -> dict:
         "errors": 0,
         "requeue_near_boundary": 0,
         "skipped_rate_limited": 0,
+        "by_lane": {"equity": 0, "crypto": 0},
     }
     # Rate-limit: skip if a sweep ran within the last
     # RECONCILE_MIN_INTERVAL_SEC seconds. Protects Webull's per-second
@@ -1035,49 +1045,82 @@ async def _sweep_submitted_broker_orders() -> dict:
         # Local imports keep the module-level import graph clean and
         # avoid any circular pull at auto_router boot.
         from shared.broker_router import get_webull_adapter  # noqa: WPS433
+        from shared.crypto.broker_adapter import get_kraken_adapter  # noqa: WPS433
         from shared.broker_error_taxonomy import classify  # noqa: WPS433
     except Exception as exc:  # noqa: BLE001
         logger.warning("reconcile sweep: adapter/classify import failed: %s", exc)
         return counts
 
+    # Resolve each lane's adapter independently — an outage on one
+    # broker must NEVER wedge the sweep for the other.
+    adapters: dict[str, Any] = {}
     try:
-        adapter = await get_webull_adapter()
+        wb = await get_webull_adapter()
+        if wb is not None:
+            adapters["equity"] = wb
     except Exception as exc:  # noqa: BLE001
         logger.warning("reconcile sweep: get_webull_adapter failed: %s", exc)
-        return counts
-    if adapter is None:
+    try:
+        kr = await get_kraken_adapter()
+        if kr is not None:
+            adapters["crypto"] = kr
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("reconcile sweep: get_kraken_adapter failed: %s", exc)
+
+    if not adapters:
         return counts
 
     poll_cutoff = (now_utc - timedelta(seconds=RECONCILE_MIN_AGE_SEC)).isoformat()
 
-    try:
-        cur = (
-            db[SHARED_INTENTS]
-            .find(
-                {
-                    "gate_state": "submitted",
-                    "lane": "equity",
-                    "broker_order.id": {"$exists": True, "$ne": None},
-                    "executed_at": {"$lt": poll_cutoff},
-                },
-                {
-                    "_id": 0, "intent_id": 1, "symbol": 1, "action": 1,
-                    "lane": 1, "stack": 1, "ingest_ts": 1, "executed_at": 1,
-                    "broker_order": 1, "submit_retry_count": 1,
-                },
+    # Query intents PER LANE so the equity-Webull budget and the
+    # crypto-Kraken budget are drained in separate batches.
+    pending_by_lane: dict[str, list[dict]] = {}
+    for lane_name in adapters.keys():
+        try:
+            cur = (
+                db[SHARED_INTENTS]
+                .find(
+                    {
+                        "gate_state": "submitted",
+                        "lane": lane_name,
+                        # Webull stamps `broker_order.id`; Kraken stamps
+                        # `broker_order.order_id`. Accept either — the
+                        # per-intent extraction below reads both.
+                        "$or": [
+                            {"broker_order.id": {"$exists": True, "$ne": None}},
+                            {"broker_order.order_id": {"$exists": True, "$ne": None}},
+                        ],
+                        "executed_at": {"$lt": poll_cutoff},
+                    },
+                    {
+                        "_id": 0, "intent_id": 1, "symbol": 1, "action": 1,
+                        "lane": 1, "stack": 1, "ingest_ts": 1, "executed_at": 1,
+                        "broker_order": 1, "submit_retry_count": 1,
+                        "final_notional_usd": 1, "sizing_provenance": 1,
+                    },
+                )
+                .max_time_ms(3000)
+                .limit(RECONCILE_BATCH_CAP)
             )
-            .max_time_ms(3000)
-            .limit(RECONCILE_BATCH_CAP)
-        )
-        pending_intents: list[dict] = []
-        async for d in cur:
-            pending_intents.append(d)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("reconcile sweep: query failed: %s", exc)
-        return counts
+            rows: list[dict] = []
+            async for d in cur:
+                rows.append(d)
+            pending_by_lane[lane_name] = rows
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "reconcile sweep: %s query failed: %s", lane_name, exc,
+            )
 
-    for intent in pending_intents:
+    # Flatten to a single processing list, tagging lane on each row.
+    pending_intents: list[tuple[str, dict]] = []
+    for lane_name, rows in pending_by_lane.items():
+        for d in rows:
+            pending_intents.append((lane_name, d))
+
+    for lane_name, intent in pending_intents:
         counts["polled"] += 1
+        counts["by_lane"][lane_name] = counts["by_lane"].get(lane_name, 0) + 1
+        adapter = adapters[lane_name]
         intent_id = intent.get("intent_id")
         bo_meta = intent.get("broker_order") or {}
         order_id = bo_meta.get("id") or bo_meta.get("order_id")
@@ -1092,8 +1135,8 @@ async def _sweep_submitted_broker_orders() -> dict:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "reconcile poll failed intent=%s order_id=%s: %s",
-                intent_id, order_id, exc,
+                "reconcile poll failed lane=%s intent=%s order_id=%s: %s",
+                lane_name, intent_id, order_id, exc,
             )
             counts["errors"] += 1
             continue
@@ -1256,10 +1299,13 @@ async def _sweep_submitted_broker_orders() -> dict:
 
     if counts["polled"]:
         logger.info(
-            "auto_router reconcile sweep: polled=%d filled=%d "
-            "rejected_terminal=%d rejected_retry=%d no_change=%d "
+            "auto_router reconcile sweep: polled=%d (equity=%d crypto=%d) "
+            "filled=%d rejected_terminal=%d rejected_retry=%d no_change=%d "
             "errors=%d requeue_near_boundary=%d",
-            counts["polled"], counts["filled"],
+            counts["polled"],
+            counts["by_lane"].get("equity", 0),
+            counts["by_lane"].get("crypto", 0),
+            counts["filled"],
             counts["rejected_terminal"], counts["rejected_retry"],
             counts["no_change"], counts["errors"],
             counts["requeue_near_boundary"],

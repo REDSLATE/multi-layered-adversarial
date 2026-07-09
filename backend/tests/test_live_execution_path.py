@@ -249,6 +249,28 @@ def _apply_patches(s, *, broker_result=None, broker_raises=None, floor_result=No
     # setattr). Left this comment here so future refactors of the
     # patch stack know why the consumer-side pre-import is required.
 
+    # 2026-07-09 iter-22 shared-attr fix:
+    # `patch.dict(sys.modules, {...})` alone is insufficient. After
+    # any earlier test file boots the full FastAPI app (e.g. via
+    # `AsyncClient(transport=ASGITransport(app=app))` in
+    # `test_unified_arm.py`), the `shared` package has attributes
+    # `shared.seat` / `shared.risk` / `shared.executions` bound to
+    # the REAL modules. `_route_one`'s inline `from shared import
+    # executions, risk, seat` reads the parent-package attribute,
+    # NOT sys.modules, so mocks in sys.modules get silently ignored
+    # — tests then see the real modules and expected mocks never
+    # fire. We patch BOTH surfaces so whichever path `_route_one`
+    # uses lands on the mock.
+    import shared as _shared_pkg  # noqa: WPS433
+    stack.enter_context(
+        patch.object(_shared_pkg, "seat", s["seat_mod"], create=True),
+    )
+    stack.enter_context(
+        patch.object(_shared_pkg, "risk", s["risk_mod"], create=True),
+    )
+    stack.enter_context(
+        patch.object(_shared_pkg, "executions", s["executions_mod"], create=True),
+    )
     stack.enter_context(patch.dict(sys.modules, {
         "shared.seat": s["seat_mod"],
         "shared.risk": s["risk_mod"],
@@ -1574,10 +1596,13 @@ async def test_reconcile_near_boundary_warning_increments_counter():
 
 
 @pytest.mark.asyncio
-async def test_reconcile_query_filter_excludes_crypto_lane():
-    """The sweep query pins lane='equity' at Mongo level so crypto
-    intents never appear in the cursor. Kraken adapter has no
-    get_order symmetry; crypto reconciliation is a separate task."""
+async def test_reconcile_query_filter_pins_lane_equity_when_only_webull_adapter():
+    """When only the Webull adapter resolves (Kraken creds missing),
+    the sweep issues a single lane-pinned query with `lane='equity'`.
+    Historically this test asserted crypto was permanently excluded;
+    as of iter-22 crypto reconcile is supported when a Kraken adapter
+    is present, but when it's not, the equity path still runs alone
+    and its query filter must still pin `lane='equity'`."""
     from shared import auto_router as ar
 
     fake = _ReconcileFake(docs=[], get_order_side_effect=[])
@@ -1585,7 +1610,8 @@ async def test_reconcile_query_filter_excludes_crypto_lane():
     with _patch_reconcile(fake):
         await ar._sweep_submitted_broker_orders()
 
-    # Verify the actual query issued to Mongo pins the lane.
+    # Verify the actual query issued to Mongo pins the equity lane.
+    # (Kraken adapter is None in this fake, so no crypto query fires.)
     assert fake.query_capture.get("lane") == "equity"
     assert fake.query_capture.get("gate_state") == "submitted"
 
