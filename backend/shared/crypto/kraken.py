@@ -17,6 +17,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import os
 import time
 import urllib.parse
 from datetime import datetime, timezone
@@ -413,43 +414,79 @@ async def get_active_keys_status() -> dict:
     diagnose endpoint:
 
         {state: "ok"|"no_credentials"|"decrypt_failed"|"missing_field",
+         source: "mongo_singleton"|"env_fallback"|None,
          detail: str,
          public_key_preview: str|None,
          public_key: str|None,    # only when state="ok"
          private_key: str|None}   # only when state="ok"
+
+    2026-07-09 iter-22 — env-var fallback (operator directive):
+        When the encrypted Mongo singleton is missing/malformed/
+        undecryptable, fall back to `KRAKEN_API_KEY` +
+        `KRAKEN_API_SECRET` env vars (the same ones the retired
+        trader sidecar used). Emits a WARNING log on every use so
+        the operator sees the temporary bridge is still in play.
+        Remove this fallback after the operator runs
+        `POST /api/admin/kraken/connect` to seed the Mongo doc
+        properly.
     """
     from db import db
     from namespaces import KRAKEN_CREDENTIALS
     from shared.credentials import decrypt
+
+    def _env_fallback(reason: str) -> dict:
+        """Try `KRAKEN_API_KEY` + `KRAKEN_API_SECRET` — the trader-
+        sidecar-era env pattern. Returns an OK status when both are
+        present, otherwise propagates the original failure reason."""
+        env_pub = (os.environ.get("KRAKEN_API_KEY") or "").strip()
+        env_priv = (os.environ.get("KRAKEN_API_SECRET") or "").strip()
+        if not env_pub or not env_priv:
+            return {
+                "state": "no_credentials",
+                "source": None,
+                "detail": (
+                    f"{reason}; env fallback also empty "
+                    "(neither KRAKEN_API_KEY nor KRAKEN_API_SECRET set)"
+                ),
+                "public_key_preview": env_pub[:6] if env_pub else None,
+            }
+        logger.warning(
+            "kraken get_active_keys: using ENV FALLBACK "
+            "(KRAKEN_API_KEY/SECRET). Reason='%s'. Please run "
+            "POST /api/admin/kraken/connect to migrate the keys "
+            "into the encrypted Mongo singleton — the env-var "
+            "fallback will be removed after that.",
+            reason,
+        )
+        return {
+            "state": "ok",
+            "source": "env_fallback",
+            "detail": "resolved from KRAKEN_API_KEY/SECRET env vars",
+            "public_key": env_pub,
+            "private_key": env_priv,
+            "public_key_preview": env_pub[:6],
+        }
+
     doc = await db[KRAKEN_CREDENTIALS].find_one({"_id": "singleton"}, {"_id": 0})
     if not doc:
-        return {"state": "no_credentials", "detail": "no kraken_credentials singleton doc in DB"}
+        return _env_fallback("no kraken_credentials singleton doc in DB")
     if not doc.get("encrypted_private_key"):
-        return {
-            "state": "missing_field",
-            "detail": "singleton exists but `encrypted_private_key` is empty",
-            "public_key_preview": doc.get("public_key_preview"),
-        }
+        return _env_fallback(
+            "singleton exists but `encrypted_private_key` is empty",
+        )
     if not doc.get("public_key"):
-        return {
-            "state": "missing_field",
-            "detail": "singleton exists but `public_key` is empty",
-        }
+        return _env_fallback("singleton exists but `public_key` is empty")
     try:
         priv = decrypt(doc["encrypted_private_key"])
     except ValueError as e:
-        return {
-            "state": "decrypt_failed",
-            "detail": (
-                f"decrypt() raised {e!s} — most likely the "
-                "CREDENTIALS_ENCRYPTION_KEY env var on this deploy "
-                "does not match the one that encrypted the saved key. "
-                "Re-save credentials via /api/admin/kraken/connect."
-            ),
-            "public_key_preview": doc.get("public_key_preview"),
-        }
+        return _env_fallback(
+            f"decrypt() raised {e!s} — most likely the "
+            "CREDENTIALS_ENCRYPTION_KEY env var on this deploy "
+            "does not match the one that encrypted the saved key",
+        )
     return {
         "state": "ok",
+        "source": "mongo_singleton",
         "detail": "credentials decrypted successfully",
         "public_key": doc["public_key"],
         "private_key": priv,

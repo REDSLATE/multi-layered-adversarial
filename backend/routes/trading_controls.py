@@ -306,6 +306,25 @@ async def arm_status(_user: dict = Depends(get_current_user)) -> dict:
         in {"1", "true", "yes", "on"}
     )
 
+    # 2026-07-09 crypto-creds probe: since MC is the sole broker
+    # door but Kraken keys historically lived in `KRAKEN_API_KEY`
+    # env vars (trader-sidecar pattern) not the encrypted Mongo
+    # singleton, the operator needs to see at a glance whether the
+    # crypto lane actually has creds to submit with. This runs the
+    # same resolver the auto_router uses (Mongo → env fallback), so
+    # the answer here matches what a real order would see.
+    crypto_broker_ready = False
+    crypto_creds_source = None
+    crypto_creds_detail = None
+    try:
+        from shared.crypto.kraken import get_active_keys_status  # noqa: WPS433
+        _kst = await get_active_keys_status()
+        crypto_broker_ready = _kst.get("state") == "ok"
+        crypto_creds_source = _kst.get("source")
+        crypto_creds_detail = _kst.get("detail")
+    except Exception as _exc:  # noqa: BLE001
+        crypto_creds_detail = f"probe failed: {type(_exc).__name__}"
+
     return {
         "ok": True,
         "env_broker_live": env_bl,
@@ -314,6 +333,9 @@ async def arm_status(_user: dict = Depends(get_current_user)) -> dict:
         "broker_door_owner": (
             "sidecar_and_mc_both" if trader_authoritative else "mc_only"
         ),
+        "crypto_broker_ready": crypto_broker_ready,
+        "crypto_creds_source": crypto_creds_source,
+        "crypto_creds_detail": crypto_creds_detail,
         "mc_switch": {
             "enabled": mc_on,
             "reason": mc.get("reason"),
