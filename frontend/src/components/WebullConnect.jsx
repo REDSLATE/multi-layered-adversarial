@@ -365,6 +365,11 @@ function TokenPushCard({ onProbe }) {
   const [busy, setBusy] = useState(false);
   const [pollActive, setPollActive] = useState(false);
   const [pushMsg, setPushMsg] = useState("");
+  // 2026-02-19: live countdown of the 5-min mobile-approval window
+  // and a brief post-activation pulse so operator sees the flip.
+  const [pushDeadline, setPushDeadline] = useState(null);
+  const [countdownStr, setCountdownStr] = useState("");
+  const [justActivated, setJustActivated] = useState(false);
 
   const refreshToken = useCallback(async () => {
     try {
@@ -382,10 +387,28 @@ function TokenPushCard({ onProbe }) {
 
   useEffect(() => { refreshToken(); }, [refreshToken]);
 
-  // Poll aggressively for 3 minutes after a push is triggered so the
+  // Countdown updater — ticks every 1s while the mobile-approval
+  // window is open. Formatted mm:ss so the operator can see
+  // exactly how long they have to open the Webull app.
+  useEffect(() => {
+    if (!pushDeadline) { setCountdownStr(""); return; }
+    const update = () => {
+      const remaining = Math.max(0, pushDeadline - Date.now());
+      const mm = Math.floor(remaining / 60000);
+      const ss = Math.floor((remaining % 60000) / 1000).toString().padStart(2, "0");
+      setCountdownStr(`${mm}:${ss}`);
+      if (remaining <= 0) setPushDeadline(null);
+    };
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, [pushDeadline]);
+
+  // Poll aggressively for 5 minutes after a push is triggered so the
   // status flips from PENDING → NORMAL without the operator needing to
   // click Refresh. Push approval usually lands within 30-60s but we
-  // give ample buffer for slow networks.
+  // give ample buffer for slow networks. 5-min window aligns with
+  // Webull's server-side pre-approval TTL.
   useEffect(() => {
     if (!pollActive) return;
     let cancelled = false;
@@ -396,14 +419,19 @@ function TokenPushCard({ onProbe }) {
       const activated = s?.status === "NORMAL" || (s?.present && !s?.expired);
       if (activated) {
         setPollActive(false);
-        setPushMsg("Token approved and active.");
+        setPushDeadline(null);
+        setPushMsg("Token approved and active. Equity flow resumes on the next auto_router tick.");
+        setJustActivated(true);
         toast.success("Webull token active");
+        // Fade the pulse after 5s so it stays a moment for the operator.
+        setTimeout(() => setJustActivated(false), 5000);
         await onProbe?.();
         return;
       }
-      if (Date.now() - started > 180_000) {
+      if (Date.now() - started > 300_000) {
         setPollActive(false);
-        setPushMsg("Push wait timed out. Check the Webull app or re-trigger.");
+        setPushDeadline(null);
+        setPushMsg("Push wait timed out (5 min). Check the Webull app or re-trigger.");
         return;
       }
       setTimeout(tick, 4000);
@@ -415,12 +443,21 @@ function TokenPushCard({ onProbe }) {
   const triggerPush = async () => {
     setBusy(true);
     setPushMsg("");
+    setJustActivated(false);
     try {
-      const { data } = await api.post("/admin/trader/webull-token-create");
+      // 2026-02-19: switched from /admin/trader/webull-token-create
+      // to the new /admin/webull/reauth hot path. Handles cache
+      // invalidation + optional stale-disk purge server-side, so
+      // the current pod picks up the fresh token without waiting
+      // for the disk-vs-Mongo freshness comparator on next tick.
+      const { data } = await api.post("/admin/webull/reauth", {
+        purge_disk: true,
+      });
       setPushMsg(
         data?.message ||
         "Push sent. Approve the notification in your Webull mobile app.",
       );
+      setPushDeadline(Date.now() + 5 * 60 * 1000); // 5-minute window
       setPollActive(true);
       toast.success("2FA push sent — approve on your phone");
     } catch (e) {
@@ -436,7 +473,10 @@ function TokenPushCard({ onProbe }) {
   const expiresIn = tokenStatus?.expires_in_hours;
 
   return (
-    <Card className="p-3" data-testid="webull-token-push-card">
+    <Card
+      className={`p-3 transition-colors ${justActivated ? "ring-2 ring-emerald-500/60" : ""}`}
+      data-testid="webull-token-push-card"
+    >
       <div className="text-[10px] uppercase tracking-widest text-rd-dim mb-2 flex items-baseline gap-2">
         <DeviceMobile size={11} weight="bold" />
         2FA access token
@@ -448,7 +488,9 @@ function TokenPushCard({ onProbe }) {
         )}
         {activated && (
           <>
-            <Badge color="#22C55E" testid="webull-token-status-active">ACTIVE</Badge>
+            <Badge color="#22C55E" testid="webull-token-status-active">
+              {justActivated ? "✓ ACTIVE" : "ACTIVE"}
+            </Badge>
             {expiresIn != null && (
               <span className="text-rd-dim">expires in {expiresIn}h</span>
             )}
@@ -478,7 +520,7 @@ function TokenPushCard({ onProbe }) {
           size="sm"
           onClick={triggerPush}
           disabled={busy || pollActive}
-          data-testid="webull-trigger-push-btn"
+          data-testid="webull-reauth-btn"
           className={activated ? "" : "bg-rd-text text-rd-bg hover:bg-rd-muted"}
           variant={activated ? "outline" : "default"}
         >
@@ -486,15 +528,18 @@ function TokenPushCard({ onProbe }) {
           {busy
             ? "SENDING…"
             : pollActive
-            ? "AWAITING APPROVAL…"
+            ? `AWAITING APPROVAL · ${countdownStr}`
             : activated
-            ? "Re-issue token"
+            ? "Re-authorize Webull"
             : "Trigger 2FA push"}
         </Button>
 
-        {pollActive && (
-          <span className="text-[10px] font-mono text-rd-warning">
-            polling every 4s · 3-minute window
+        {pollActive && countdownStr && (
+          <span
+            className="text-[10px] font-mono text-rd-warning"
+            data-testid="webull-reauth-countdown"
+          >
+            {countdownStr} left · polling every 4s
           </span>
         )}
       </div>
