@@ -181,6 +181,11 @@ async def distill_intent_to_signal(intent: dict, db) -> bool:
     doc = {
         "signal_id": intent_id,
         "source_intent_id": intent_id,
+        # `experience_type` dimension lets the bucket analyzer key
+        # counterfactuals separately from executed learning
+        # experiences — "did the trade work?" vs "would it have
+        # worked?" must never share a bucket blindly.
+        "experience_type": "counterfactual",
         "brain": intent.get("stack_canonical") or intent.get("stack"),
         "symbol": intent.get("symbol"),
         "lane": (intent.get("lane") or "").lower() or None,
@@ -192,6 +197,15 @@ async def distill_intent_to_signal(intent: dict, db) -> bool:
         "outcomes": {},   # populated by the resolver over time
         "created_at": intent.get("ingest_ts") or _iso(_now()),
         "distilled_at": _iso(_now()),
+        # ── Permanent execution firewall ────────────────────────────
+        # These signals are learning evidence ONLY. They must never
+        # be re-routed to the broker or grow legs of their own.
+        # Belt-and-suspenders — every downstream consumer that reads
+        # this collection MUST also honour these fields, and any
+        # code that queries this collection to build execution
+        # payloads is a doctrine violation.
+        "may_execute": False,
+        "broker_access": False,
     }
     try:
         await db[COUNTERFACTUAL_SIGNALS].update_one(
