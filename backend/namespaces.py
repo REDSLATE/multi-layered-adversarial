@@ -261,6 +261,7 @@ SEAT_NUDGES = "seat_nudges"
 
 # Decision Machine — intent envelopes (brain-emitted), gate audit log
 SHARED_INTENTS = "shared_intents"                          # brain-emitted decision intents
+SHARED_INTENTS_ARCHIVE = "shared_intents_archive"          # stale-intent archive (2026-02-19)
 SHARED_GATE_RESULTS = "shared_gate_results"                # one row per gate check on an intent
 SHARED_GOVERNANCE_DECISIONS = "shared_governance_decisions"  # per-intent governance verdict + dissent log
 SHARED_EXECUTOR_SEAT = "shared_executor_seat"              # single-row registry: who holds the executor seat

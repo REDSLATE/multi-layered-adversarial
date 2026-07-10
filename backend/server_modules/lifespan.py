@@ -57,6 +57,10 @@ from shared.auto_router import (
     start_auto_router_if_enabled,
     stop_auto_router,
 )
+from shared.intent_sweeper import (
+    start_sweeper_if_enabled as start_intent_sweeper,
+    stop_sweeper as stop_intent_sweeper,
+)
 from shared.snapshots.service import (
     ensure_indexes as ensure_daily_snapshot_indexes,
 )
@@ -329,6 +333,15 @@ async def lifespan(app: FastAPI):
             "Auto-router NOT started — runtime_flags.auto_router_enabled is not true. "
             "POST /api/admin/auto-router/start to enable."
         )
+
+    # ── Stale-intent sweeper (2026-02-19 operator directive) ──────
+    # 30-minute cadence, 6-hour age gate, archive-then-delete
+    # (learning-aware bifurcation). Scheduler ON by default.
+    # Flip `INTENT_SWEEPER_ENABLED=false` in backend/.env to pause.
+    try:
+        start_intent_sweeper(db)
+    except Exception as e:  # noqa: BLE001
+        logger.error("intent_sweeper start failed (non-fatal): %s", e)
 
     # ── 2026-02-19 sidecar trader — DECOMMISSIONED ────────────────
     # The standalone sidecar loop was demoted to shadow mode in
@@ -780,6 +793,12 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001
         pass
     await stop_auto_router()
+
+    # Stale-intent sweeper shutdown (2026-02-19).
+    try:
+        await stop_intent_sweeper()
+    except Exception:  # noqa: BLE001
+        pass
 
     # ── 2026-02-19 sidecar trader shutdown — DECOMMISSIONED ───────
     # The `app.state.trader_task` no longer exists (sidecar loop

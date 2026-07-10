@@ -1,3 +1,79 @@
+## 2026-02-19 — Stale-intent sweeper (archive-then-delete)
+
+### Scope
+New `shared/intent_sweeper.py` module + admin route. Prunes cold
+intents from the hot `shared_intents` collection to keep Mongo
+Atlas from bloating with millions of blocked/no_trade rows the
+learning system has already distilled (or is guaranteed to never
+learn from).
+
+### Doctrine — five gates, in order
+1. **Age**: `ingest_ts < now - 6h`
+2. **Never-reached-broker** (query-level): `executed != true`,
+   `broker_order_id` empty, `gate_state != "submitted"`
+3. **Never-purge safety carve-outs** (row-level):
+   - Active `capital_ledger.reservations[].status == "open"` for
+     the intent — reconciler could still release, fail-SAFE to
+     preserve if the lookup errors
+   - `RISE_LEARNING_LOOP_ENABLED=true` AND no `learning_experiences`
+     row for the intent — learning may still catch up
+4. **Learning-aware bifurcation**:
+   - Resolved experience (any `outcome_*_bps` set) → **DELETE
+     outright** (knowledge distilled, raw row is now noise)
+   - Everything else → **ARCHIVE** to `shared_intents_archive`
+     with `{archived_at, archive_reason, original_gate_state,
+     archive_version: "v1"}`, VERIFY the write, then delete
+5. **Batch bounded** at 500 default / 1000 hard cap
+
+### Files
+- **New**: `shared/intent_sweeper.py` — module + `sweep_stale_intents()`
+  + `start_sweeper_if_enabled()` + 30-min background loop.
+- **New**: `routes/intent_sweeper_admin.py`:
+  - `POST /api/admin/intents/purge-stale` — `dry_run=true` default,
+    returns counts + first-5 samples with `would_action` labels.
+  - `GET /api/admin/intents/sweeper/status` — task liveness + config.
+- **New collection namespace**: `SHARED_INTENTS_ARCHIVE` in `namespaces.py`.
+- **`server_modules/router_registry.py`**: routes registered.
+- **`server_modules/lifespan.py`**: `start_intent_sweeper(db)` +
+  `stop_intent_sweeper()` wired to boot/shutdown. Scheduler ON by
+  default; flip `INTENT_SWEEPER_ENABLED=false` to pause.
+
+### Env tunables
+- `INTENT_SWEEPER_ENABLED` (default `true`)
+- `INTENT_SWEEPER_INTERVAL_SEC` (default `1800`, 30 min)
+- `INTENT_SWEEPER_MIN_AGE_HOURS` (default `6.0`)
+- `INTENT_SWEEPER_BATCH_LIMIT` (default `500`, cap `1000`)
+
+### Testing
+- **New**: `tests/test_intent_sweeper.py` — 18 tests covering
+  scheduler default state, age gate, all three preserve-forever
+  filters (executed/broker_order_id/submitted), active reservation
+  preserve, learning-capture-incomplete preserve, learning-disabled
+  bypasses the capture check, dry-run mongo isolation, archive doc
+  stamps, distilled-delete-no-archive, batch limits.
+- Tests use `_test_intent_id_prefix` param to scope the sweep to a
+  test-only prefix — production rows in the shared `test_database`
+  are never touched.
+- **56/56 tests green** across sweeper + master-switch preflight +
+  learning live loop + unified arm.
+
+### Live smoke test (preview pod)
+- Scheduler alive: `task_alive=true`, 30-min interval, config OK.
+- Dry-run 100-batch: 100 candidates matched the never-reached-broker
+  filter, 100 preserved by the `learning_capture_incomplete` rule
+  (production has May-vintage `no_trade` intents that never got
+  captured into the learning tape). Zero archived, zero deleted.
+  Preservation doctrine holds.
+
+### Doctrine pins
+- Purge is the LAST stage in the intent lifecycle. Never touches
+  in-flight orders, reservations, or learning-incomplete rows.
+- Archive doubles as a debug trail — `shared_intents_archive` never
+  gets purged.
+- When a resolved learning experience exists, the raw intent row is
+  redundant. Delete outright — the learning tape IS the memory.
+
+
 ## 2026-02-19 — Master-switch wiring + Webull reauth hot path
 
 ### Scope
