@@ -263,6 +263,7 @@ SEAT_NUDGES = "seat_nudges"
 SHARED_INTENTS = "shared_intents"                          # brain-emitted decision intents
 SHARED_INTENTS_ARCHIVE = "shared_intents_archive"          # stale-intent archive (2026-02-19)
 COUNTERFACTUAL_SIGNALS = "counterfactual_signals"          # blocked-directional learning signals
+COUNTERFACTUAL_TUNING_SIGNALS = "counterfactual_tuning_signals"  # gate-tuning proposals from resolved signals
 SHARED_GATE_RESULTS = "shared_gate_results"                # one row per gate check on an intent
 SHARED_GOVERNANCE_DECISIONS = "shared_governance_decisions"  # per-intent governance verdict + dissent log
 SHARED_EXECUTOR_SEAT = "shared_executor_seat"              # single-row registry: who holds the executor seat

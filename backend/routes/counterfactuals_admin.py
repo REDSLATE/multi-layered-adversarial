@@ -166,3 +166,92 @@ async def counterfactual_resolve_now(
     broker sweep uses)."""
     counts = await resolve_pending_signals(db)
     return {"ok": True, **counts}
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Gate-tuning signals — feedback loop into doctrine overlay
+# ═══════════════════════════════════════════════════════════════════
+from shared.counterfactuals.tuning_signals import (  # noqa: E402
+    COUNTERFACTUAL_TUNING_SIGNALS, propose_tuning_signals,
+)
+
+
+@router.post("/tune")
+async def counterfactual_tune_now(
+    horizon: str = Query(default="15m"),
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    """Run one gate-tuning pass over resolved counterfactual signals.
+
+    Aggregates by `(blocked_reason, lane)`, emits RELAX_GATE /
+    PRESERVE_GATE proposals into `counterfactual_tuning_signals`
+    that flow into the same Kernel Review queue as sizing lessons.
+    """
+    if horizon not in HORIZONS_SEC:
+        raise HTTPException(
+            status_code=400,
+            detail=f"horizon must be one of {sorted(HORIZONS_SEC)}",
+        )
+    counts = await propose_tuning_signals(db, horizon=horizon)
+    return {"ok": True, **counts}
+
+
+@router.get("/tuning-signals")
+async def list_tuning_signals(
+    state: Optional[str] = Query(
+        default=None, pattern="^(proposed|approved|rejected|applied)$",
+    ),
+    limit: int = Query(default=50, ge=1, le=500),
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    """List gate-tuning signals, optionally filtered by state."""
+    q = {"state": state} if state else {}
+    rows = []
+    async for row in (
+        db[COUNTERFACTUAL_TUNING_SIGNALS].find(q)
+        .sort("proposed_at", -1).limit(limit)
+    ):
+        rows.append(row)
+    return {"ok": True, "count": len(rows), "items": rows}
+
+
+@router.post("/tuning-signals/{signal_id}/approve")
+async def approve_tuning_signal(
+    signal_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Kernel review — approve a gate-tuning signal. Approved signals
+    populate the doctrine_overlay gate-threshold cache within CACHE_TTL_SEC."""
+    actor = (user or {}).get("email") or "operator"
+    r = await db[COUNTERFACTUAL_TUNING_SIGNALS].update_one(
+        {"_id": signal_id, "state": "proposed"},
+        {"$set": {
+            "state": "approved",
+            "approved_at": datetime.now(timezone.utc).isoformat(),
+            "approved_by": actor,
+        }},
+    )
+    if r.matched_count == 0:
+        return {"ok": False, "reason": "signal_not_found_or_not_proposed"}
+    return {"ok": True, "signal_id": signal_id, "new_state": "approved"}
+
+
+@router.post("/tuning-signals/{signal_id}/reject")
+async def reject_tuning_signal(
+    signal_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Kernel review — reject a gate-tuning signal. Idempotent: the
+    same (blocked_reason, lane, kind) group won't be re-proposed."""
+    actor = (user or {}).get("email") or "operator"
+    r = await db[COUNTERFACTUAL_TUNING_SIGNALS].update_one(
+        {"_id": signal_id, "state": "proposed"},
+        {"$set": {
+            "state": "rejected",
+            "rejected_at": datetime.now(timezone.utc).isoformat(),
+            "rejected_by": actor,
+        }},
+    )
+    if r.matched_count == 0:
+        return {"ok": False, "reason": "signal_not_found_or_not_proposed"}
+    return {"ok": True, "signal_id": signal_id, "new_state": "rejected"}
