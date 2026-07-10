@@ -8,11 +8,24 @@ Covers:
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from shared import witness_influence
+
+
+def _fresh_iso() -> str:
+    """Return an ISO ts that guarantees the credibility row is FRESH
+    for the staleness check (well inside the 72h default window)."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _stale_iso(hours: int = 200) -> str:
+    """Return an ISO ts >72h in the past — old enough to trip the
+    default staleness clamp."""
+    return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
 
 
 # ─────────────────────────── pure table ───────────────────────────
@@ -86,7 +99,9 @@ class TestWitnessModifierFor:
     async def test_trusted_returns_ceiling(self):
         with patch.object(witness_influence, "db", new={
             "external_source_credibility": type(
-                "C", (), {"find_one": AsyncMock(return_value={"status": "TRUSTED"})},
+                "C", (), {"find_one": AsyncMock(return_value={
+                    "status": "TRUSTED", "updated_at": _fresh_iso(),
+                })},
             )(),
         }):
             assert await witness_influence.witness_modifier_for("polygon") == 0.15
@@ -95,7 +110,9 @@ class TestWitnessModifierFor:
     async def test_watchlist_returns_ceiling(self):
         with patch.object(witness_influence, "db", new={
             "external_source_credibility": type(
-                "C", (), {"find_one": AsyncMock(return_value={"status": "WATCHLIST"})},
+                "C", (), {"find_one": AsyncMock(return_value={
+                    "status": "WATCHLIST", "updated_at": _fresh_iso(),
+                })},
             )(),
         }):
             assert await witness_influence.witness_modifier_for("polygon") == 0.05
@@ -104,7 +121,9 @@ class TestWitnessModifierFor:
     async def test_untrusted_returns_zero(self):
         with patch.object(witness_influence, "db", new={
             "external_source_credibility": type(
-                "C", (), {"find_one": AsyncMock(return_value={"status": "UNTRUSTED"})},
+                "C", (), {"find_one": AsyncMock(return_value={
+                    "status": "UNTRUSTED", "updated_at": _fresh_iso(),
+                })},
             )(),
         }):
             assert await witness_influence.witness_modifier_for("polygon") == 0.0
@@ -121,6 +140,103 @@ class TestWitnessModifierFor:
                 "C", (), {"find_one": _raiser},
             )(),
         }):
+            assert await witness_influence.witness_modifier_for("polygon") == 0.0
+
+    # ── Staleness clamp (2026-02-19) ──────────────────────────────
+    # With the Verifier resolver deleted, a previously TRUSTED row
+    # would otherwise keep its ceiling forever. These tests lock in
+    # the "if row hasn't been refreshed, don't trust it" contract.
+
+    @pytest.mark.asyncio
+    async def test_stale_trusted_row_clamps_to_zero(self):
+        """A TRUSTED row updated 200h ago (well past the 72h default)
+        MUST clamp to 0.0 — the operator would otherwise never
+        notice the frozen historical status leaking through."""
+        with patch.object(witness_influence, "db", new={
+            "external_source_credibility": type(
+                "C", (), {"find_one": AsyncMock(return_value={
+                    "status": "TRUSTED", "updated_at": _stale_iso(200),
+                })},
+            )(),
+        }):
+            assert await witness_influence.witness_modifier_for("polygon") == 0.0
+
+    @pytest.mark.asyncio
+    async def test_stale_watchlist_row_clamps_to_zero(self):
+        with patch.object(witness_influence, "db", new={
+            "external_source_credibility": type(
+                "C", (), {"find_one": AsyncMock(return_value={
+                    "status": "WATCHLIST", "updated_at": _stale_iso(90),
+                })},
+            )(),
+        }):
+            assert await witness_influence.witness_modifier_for("polygon") == 0.0
+
+    @pytest.mark.asyncio
+    async def test_missing_updated_at_treated_as_stale(self):
+        """Row present but missing `updated_at` → default-hostile
+        stale clamp → 0.0. Guards against pre-schema rows that
+        never had the field."""
+        with patch.object(witness_influence, "db", new={
+            "external_source_credibility": type(
+                "C", (), {"find_one": AsyncMock(return_value={
+                    "status": "TRUSTED",  # no updated_at
+                })},
+            )(),
+        }):
+            assert await witness_influence.witness_modifier_for("polygon") == 0.0
+
+    @pytest.mark.asyncio
+    async def test_unparseable_updated_at_treated_as_stale(self):
+        with patch.object(witness_influence, "db", new={
+            "external_source_credibility": type(
+                "C", (), {"find_one": AsyncMock(return_value={
+                    "status": "TRUSTED", "updated_at": "not-a-date",
+                })},
+            )(),
+        }):
+            assert await witness_influence.witness_modifier_for("polygon") == 0.0
+
+    @pytest.mark.asyncio
+    async def test_env_can_shrink_stale_window(self, monkeypatch):
+        """`WITNESS_STALE_MAX_HOURS=1` makes a 2h-old row stale."""
+        monkeypatch.setenv("WITNESS_STALE_MAX_HOURS", "1")
+        with patch.object(witness_influence, "db", new={
+            "external_source_credibility": type(
+                "C", (), {"find_one": AsyncMock(return_value={
+                    "status": "TRUSTED", "updated_at": _stale_iso(2),
+                })},
+            )(),
+        }):
+            assert await witness_influence.witness_modifier_for("polygon") == 0.0
+
+    @pytest.mark.asyncio
+    async def test_env_can_widen_stale_window(self, monkeypatch):
+        """`WITNESS_STALE_MAX_HOURS=500` keeps a 200h-old row FRESH."""
+        monkeypatch.setenv("WITNESS_STALE_MAX_HOURS", "500")
+        with patch.object(witness_influence, "db", new={
+            "external_source_credibility": type(
+                "C", (), {"find_one": AsyncMock(return_value={
+                    "status": "TRUSTED", "updated_at": _stale_iso(200),
+                })},
+            )(),
+        }):
+            assert await witness_influence.witness_modifier_for("polygon") == 0.15
+
+    @pytest.mark.asyncio
+    async def test_negative_env_falls_back_to_default_stale_window(self, monkeypatch):
+        """A negative/zero WITNESS_STALE_MAX_HOURS MUST NOT disable
+        the clamp — the whole point of the guard is to prevent
+        frozen rows from bleeding through. Falls back to default 72h."""
+        monkeypatch.setenv("WITNESS_STALE_MAX_HOURS", "0")
+        with patch.object(witness_influence, "db", new={
+            "external_source_credibility": type(
+                "C", (), {"find_one": AsyncMock(return_value={
+                    "status": "TRUSTED", "updated_at": _stale_iso(200),
+                })},
+            )(),
+        }):
+            # Default 72h → 200h old is stale → 0.0
             assert await witness_influence.witness_modifier_for("polygon") == 0.0
 
 
@@ -150,6 +266,7 @@ class TestWitnessInfluenceSnapshot:
             "losses": 212,
             "verified_alpha": 0.023,
             "orthogonal_win_rate": 0.586,
+            "updated_at": _fresh_iso(),
         }
         with patch.object(witness_influence, "db", new={
             "external_source_credibility": type(
@@ -162,14 +279,43 @@ class TestWitnessInfluenceSnapshot:
         assert snap["polygon"]["samples"] == 512
         assert snap["polygon"]["wins"] == 300
         assert snap["polygon"]["ledger_present"] is True
+        assert snap["polygon"]["stale"] is False
+
+    @pytest.mark.asyncio
+    async def test_stale_source_snapshot_clamps_cap_but_surfaces_status(self):
+        """Snapshot must surface `stale=True` + `modifier_cap=0.0` while
+        still returning the original `status` so the operator can see
+        WHY the modifier is clamped."""
+        ledger_doc = {
+            "status": "TRUSTED",
+            "samples": 512,
+            "wins": 300,
+            "losses": 212,
+            "verified_alpha": 0.023,
+            "orthogonal_win_rate": 0.586,
+            "updated_at": _stale_iso(200),
+        }
+        with patch.object(witness_influence, "db", new={
+            "external_source_credibility": type(
+                "C", (), {"find_one": AsyncMock(return_value=ledger_doc)},
+            )(),
+        }):
+            snap = await witness_influence.witness_influence_snapshot(["polygon"])
+        assert snap["polygon"]["status"] == "TRUSTED"
+        assert snap["polygon"]["modifier_cap"] == 0.0     # clamped
+        assert snap["polygon"]["stale"] is True
+        assert snap["polygon"]["ledger_present"] is True
 
     @pytest.mark.asyncio
     async def test_multiple_sources(self):
         async def _find_one(query, projection=None):
+            fresh = _fresh_iso()
             if query["source"] == "polygon":
-                return {"status": "TRUSTED", "samples": 500}
+                return {"status": "TRUSTED", "samples": 500,
+                        "updated_at": fresh}
             if query["source"] == "pine":
-                return {"status": "WATCHLIST", "samples": 60}
+                return {"status": "WATCHLIST", "samples": 60,
+                        "updated_at": fresh}
             return None
 
         mock_coll = MagicMock()

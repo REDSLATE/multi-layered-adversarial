@@ -1,3 +1,49 @@
+## 2026-02-19 — Witness resolver loose-ends cleanup + staleness clamp
+
+**Follow-up to iter-25 simplification pass.**
+
+### Loose ends removed
+- Deleted 3 dead endpoints from `routes/admin_external_signals.py`
+  that lazy-imported the deleted `verifier/` package:
+  - `POST /admin/verifier/resolve-witnesses/{source}`
+  - `GET  /admin/verifier/runner-status`
+  - `POST /admin/verifier/calibrate/{source}`
+- File shrunk 462 → 238 lines. Remaining endpoints: `external-signals`,
+  `external-signals/credibility`, `external-signals/seat-context`.
+- Deleted `tests/test_witness_resolver_price_fetcher.py` (target
+  module was in the deleted `verifier/`).
+
+### Witness staleness clamp (operator directive)
+With the resolver runner deleted, no code path refreshes credibility
+rows automatically. A previously TRUSTED row could hold its ceiling
+forever, keeping the Seat quietly informed by a frozen historical
+status. Added a staleness guard to `shared/witness_influence.py`:
+
+- **`witness_modifier_for(source)`** now reads `updated_at` in
+  addition to `status`. If the row is missing `updated_at`, has an
+  unparseable timestamp, or is older than `WITNESS_STALE_MAX_HOURS`
+  (default 72h / 3 days), returns 0.0 regardless of tier.
+- **`witness_influence_snapshot(sources)`** exposes `stale: bool` and
+  `updated_at: iso` on every row. When stale, `modifier_cap` is
+  clamped to 0.0 but the original `status` is still surfaced so the
+  operator can see WHY the cap is 0.0 ("TRUSTED but stale").
+- Env override `WITNESS_STALE_MAX_HOURS` — negative or zero values
+  fall back to the 72h default (can never disable the guard).
+- **+8 new tests** on top of the existing 20: stale TRUSTED clamp,
+  stale WATCHLIST clamp, missing/unparseable `updated_at` treated as
+  stale, env can shrink the window, env can widen the window, negative
+  env falls back to default, snapshot surfaces `stale=True`.
+- **28/28 witness_influence tests + 23/23 external_signals_scoring tests green.**
+
+### Notes
+- `shared/witness_influence.py` has no live callers in production
+  code (its only consumer was the deleted `admin_external_signals.py::
+  verifier_runner_status` endpoint). The module is preserved as the
+  read layer for when witness influence is re-wired; the new
+  staleness guard is future-proofing so any consumer that eventually
+  reads it can never inherit a bleed-through from an old ledger.
+
+
 ## 2026-02-19 — Simplification pass (Bruce Lee doctrine)
 
 **"Remove what is not needed."** Operator directive: RISEDUAL had
