@@ -526,48 +526,6 @@ async def lifespan(app: FastAPI):
         _start_session_fingerprint()
     except Exception as e:  # noqa: BLE001
         logger.warning("session_fingerprint start failed: %s", e)
-    # Opinion-silent watchdog — autonomous scan that emits an alert
-    # row when any occupied seat goes > threshold without an opinion
-    # POST. Advisory observability only. Doctrine pin:
-    # `shared/runtime/opinion_silence_worker.py`.
-    try:
-        from shared.runtime.opinion_silence_worker import (
-            start_worker as _start_opinion_silence_worker,
-        )
-        _start_opinion_silence_worker()
-        logger.info("Opinion-silent watchdog started")
-    except Exception as e:  # noqa: BLE001
-        logger.warning("opinion_silence_worker start failed: %s", e)
-
-    # 2026-02-19 — Witness W/L resolver runner (Verifier promotion engine).
-    # Polls the credibility ledger's promotion doctrine against
-    # accumulated `external_signals` rows on a fixed cadence. Same
-    # `resolve_source(...)` the admin trigger uses. Env-gated by
-    # `WITNESS_RESOLVER_ENABLED` (default true). Doctrine pin:
-    # `verifier/witness_resolver_runner.py`.
-    try:
-        from verifier.witness_resolver_runner import (
-            start_worker as _start_witness_resolver_runner,
-        )
-        _start_witness_resolver_runner()
-        logger.info("Witness resolver runner started")
-    except Exception as e:  # noqa: BLE001
-        logger.warning("witness_resolver_runner start failed: %s", e)
-
-    # 2026-02-20 — Heartbeat reconciler.
-    # Periodically derives `shared_heartbeats.last_seen` from
-    # `sidecar_checkin_audit` so the LIVE/STALE/DEAD badge can't
-    # drift out of sync with the imposter scan even when the
-    # per-request side-effect in sidecar_checkin.py silently
-    # fails (e.g., transient Mongo write blip).
-    try:
-        from shared.runtime.heartbeat_reconciler import (
-            start_worker as _start_heartbeat_reconciler,
-        )
-        _start_heartbeat_reconciler()
-        logger.info("Heartbeat reconciler started")
-    except Exception as e:  # noqa: BLE001
-        logger.warning("heartbeat_reconciler start failed: %s", e)
 
     # 2026-02-23 — Native brain runtimes (in-process brains).
     # Consolidates the previously-external sidecars into MC. Each
@@ -615,19 +573,6 @@ async def lifespan(app: FastAPI):
         await _ensure_advisor_indexes(_db)
     except Exception as e:  # noqa: BLE001
         logger.warning("advisor_opinions index ensure failed: %s", e)
-    # Shadow-close cron — auto-fires `run_shadow_close` at 4:05pm ET
-    # every weekday so the LEARNING counter ticks without an operator
-    # click. Idempotent (per-ET-day + the existing `outcome_join`
-    # `$exists: false` guard) so a slow tick or repeated start_worker
-    # call can't double-attach. Disable via SHADOW_CLOSE_CRON_ENABLED=false.
-    try:
-        from shared.runtime.shadow_close_cron import (
-            start_worker as _start_shadow_close_cron,
-        )
-        _start_shadow_close_cron()
-        logger.info("Shadow-close cron started (target 16:05 ET)")
-    except Exception as e:  # noqa: BLE001
-        logger.warning("shadow_close_cron start failed: %s", e)
     # Seed the initial patterns_universe watchlist (idempotent).
     # 2026-02-19: extended with `lane` field so the canonical
     # `symbol_in_universe` gate (shared/execution.py) can refuse
@@ -875,30 +820,6 @@ async def lifespan(app: FastAPI):
     try:
         from shared.session_fingerprint import stop_worker as _stop_fp
         await _stop_fp()
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        from shared.runtime.opinion_silence_worker import (
-            stop_worker as _stop_opinion_silence_worker,
-        )
-        await _stop_opinion_silence_worker()
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        from verifier.witness_resolver_runner import (
-            stop_worker as _stop_witness_resolver_runner,
-        )
-        await _stop_witness_resolver_runner()
-    except Exception:  # noqa: BLE001
-        pass
-    # Graceful shutdown of the shadow-close cron — the lifespan
-    # context exits here; cancelling the task lets the next
-    # supervisor restart spin a fresh one.
-    try:
-        from shared.runtime.shadow_close_cron import (
-            stop_worker as _stop_shadow_close_cron,
-        )
-        await _stop_shadow_close_cron()
     except Exception:  # noqa: BLE001
         pass
     try:

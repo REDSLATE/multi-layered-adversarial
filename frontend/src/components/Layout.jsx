@@ -7,82 +7,53 @@ import {
   ChartBar,
   Receipt,
   Shield,
-  Wrench,
-  Cube,
-  Stack,
   Pulse,
   Flag,
-  TrendUp,
-  Trophy,
-  LightningSlash,
   Lightning,
-  ChatCircleDots,
   Crosshair,
   Sparkle,
   Brain,
-  Eye,
   SignOut,
   List as Hamburger,
   X as CloseIcon,
 } from "@phosphor-icons/react";
 
-// Grouped navigation. Order within each section matters: most-used at top.
+// Grouped navigation. Simplification pass (2026-02-19):
+// ONE broker door, ONE arm truth, ONE risk decision, ONE receipt,
+// ONE learning loop, ONE operator screen. Nav collapsed to what's
+// operationally necessary — no duplicate scorecards, no dashboards
+// for systems that don't gate execution.
 const SECTIONS = [
+  {
+    label: "Live",
+    items: [
+      { to: "/admin/overview",     label: "Overview",  icon: ChartBar,  testid: "nav-overview" },
+      { to: "/admin/positions",    label: "Positions", icon: Crosshair, testid: "nav-positions" },
+      { to: "/admin/intents",      label: "Intents",   icon: Lightning, testid: "nav-intents" },
+      { to: "/admin/receipts",     label: "Receipts",  icon: Receipt,   testid: "nav-receipts" },
+    ],
+  },
+  {
+    label: "Learning",
+    items: [
+      { to: "/admin/kernel-review",     label: "Kernel Review",  icon: Brain,   testid: "nav-kernel-review" },
+      { to: "/admin/doctrine-reference", label: "Doctrine Ref",  icon: Shield,  testid: "nav-doctrine-reference" },
+    ],
+  },
+  {
+    label: "Diagnostics",
+    items: [
+      { to: "/admin/flags",       label: "Runtime Flags", icon: Flag,    testid: "nav-flags" },
+      { to: "/admin/diagnostics", label: "Diagnostics",   icon: Pulse,   testid: "nav-diagnostics" },
+      { to: "/admin/recent",      label: "Live Tail",     icon: Pulse,   testid: "nav-recent" },
+      { to: "/admin/mc-shelly",   label: "MC Memory",     icon: Brain,   testid: "nav-mc-shelly" },
+      { to: "/admin/llm-ledger",  label: "LLM Ledger",    icon: Sparkle, testid: "nav-llm-ledger" },
+    ],
+  },
   {
     label: "RISE_AI",
     items: [
       { to: "/admin/rise-ai", label: "Console", icon: Brain, testid: "nav-rise-ai" },
-    ],
-  },
-  {
-    label: "Trading",
-    items: [
-      { to: "/admin/hypothesis", label: "Hypothesis", icon: Sparkle, testid: "nav-hypothesis" },
-      { to: "/admin/witnesses", label: "Witnesses", icon: Eye, testid: "nav-witnesses" },
-      { to: "/admin/seat-context", label: "Seat Context", icon: Crosshair, testid: "nav-seat-context" },
-      { to: "/admin/intents", label: "Intents", icon: Lightning, testid: "nav-intents" },
-      { to: "/admin/positions", label: "Positions", icon: Crosshair, testid: "nav-positions" },
-    ],
-  },
-  {
-    label: "Governance",
-    items: [
-      { to: "/admin/overview", label: "Overview", icon: ChartBar, testid: "nav-overview" },
-      { to: "/admin/discussion", label: "Discussion", icon: ChatCircleDots, testid: "nav-discussion" },
-      { to: "/admin/scorecards", label: "Scorecards", icon: Trophy, testid: "nav-scorecards" },
-      { to: "/admin/kernel-review", label: "Kernel Review", icon: Brain, testid: "nav-kernel-review" },
-      // 2026-07-01 (batch 8): Doctrine sidebar link removed — page deleted.
-      { to: "/admin/doctrine-reference", label: "Doctrine Ref", icon: Shield, testid: "nav-doctrine-reference" },
-      // 2026-07-01 (batch 5): Safety Gates + Conflicts links removed.
-      // Their pages were deleted — both hit Atlas or 500-crashed.
-      { to: "/admin/setup", label: "Setup", icon: Wrench, testid: "nav-setup" },
-      // "Promotion" (Patent G + J governance) removed 2026-02-19 —
-      // superseded by Paradox V2 seat-policy + 25-eval autonomy ladder.
-      // Operator deferred the readiness-gate doctrine; every gate on
-      // that page showed FAILED because the underlying artifacts were
-      // intentionally never built.
-    ],
-  },
-  {
-    label: "Audit",
-    items: [
-      { to: "/admin/mc-shelly", label: "MC Memory", icon: Brain, testid: "nav-mc-shelly" },
-      { to: "/admin/llm-ledger", label: "LLM Ledger", icon: Sparkle, testid: "nav-llm-ledger" },
-      { to: "/admin/receipts", label: "ADL Receipts", icon: Receipt, testid: "nav-receipts" },
-      { to: "/admin/memory", label: "Memory Firewall", icon: Shield, testid: "nav-memory" },
-      { to: "/admin/recent", label: "Live Tail", icon: Pulse, testid: "nav-recent" },
-      { to: "/admin/diagnostics", label: "Diagnostics", icon: Pulse, testid: "nav-diagnostics" },
-    ],
-  },
-  {
-    label: "System",
-    items: [
-      { to: "/admin/calibration", label: "Calibration", icon: Wrench, testid: "nav-calibration" },
-      { to: "/admin/feature-builders", label: "Feature Builders", icon: Stack, testid: "nav-features" },
-      { to: "/admin/artifacts", label: "Artifacts", icon: Cube, testid: "nav-artifacts" },
-      { to: "/admin/flags", label: "Runtime Flags", icon: Flag, testid: "nav-flags" },
-      { to: "/admin/setup", label: "Setup", icon: Wrench, testid: "nav-setup" },
-      { to: "/admin/public-traffic", label: "Public Traffic", icon: Pulse, testid: "nav-public-traffic" },
     ],
   },
 ];

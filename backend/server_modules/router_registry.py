@@ -30,13 +30,11 @@ from shared.public_api import router as public_api_router
 from shared.public_api.traffic import router as public_traffic_router
 from shared.seat_performance import router as seat_performance_router
 from shared.roster import router as roster_router
-from shared.promotion import router as promotion_router
 from shared.diagnostics import router as diagnostics_router
 from shared.doctrine import (
     router as doctrine_legacy_router,
     scorecard_router as doctrine_scorecard_router,
     auto_retire_router as doctrine_auto_retire_router,
-    promotion_router as doctrine_promotion_router,
 )
 from shared.flags import router as flags_router
 from shared.intents import router as intents_router
@@ -54,7 +52,6 @@ from shared.risk.routes import router as risk_router
 from shared.vrl import router as vrl_router
 from shared.quantum_routes import router as quantum_router
 from shared.personalities_routes import router as personalities_router
-from shared.hypothesis import router as hypothesis_router
 from shared.mc_shelly import router as mc_shelly_router
 from shared.patches import router as patches_router
 from shared.runtime.routes import router as platform_survival_router
@@ -74,30 +71,16 @@ from shared.observation_receipts import router as observation_receipts_router
 from shared.learning_ladder import router as learning_ladder_router
 
 from routes.memory_kernel_routes import router as memory_kernel_router
-from routes.orphan_inspection_routes import router as orphan_inspection_router
-from routes.orphan_replay_routes import router as orphan_replay_router
 from routes.broker_freeze_routes import router as broker_freeze_router
 from routes.broker_reconcile_routes import router as broker_reconcile_router
-from routes.kraken_manual_reconcile import router as kraken_manual_reconcile_router
-from routes.sidecar_diagnostics import router as sidecar_diagnostics_router
 from routes.data_stack_admin import router as data_stack_admin_router
 from routes.market_data_keys import router as market_data_keys_router
-from routes.opinion_silence_watchdog import (
-    router as opinion_silence_watchdog_router,
-)
-from routes.heartbeat_reconciler_admin import (
-    router as heartbeat_reconciler_admin_router,
-)
 from routes.brain_outages import router as brain_outages_router
 from routes.market_data_snapshot import router as market_data_snapshot_router
 from routes.brain_runtime import router as brain_runtime_router
 from routes.daily_snapshots import router as daily_snapshots_router
 from routes.brain_memory_ingest import router as brain_memory_ingest_router
-from routes.paradox_routes import router as paradox_router
-from routes.paradox_agent_routes import router as paradox_agent_router
-from routes.paradox_wake_routes import router as paradox_wake_router
 from routes.llm_ledger_routes import router as llm_ledger_router
-from routes.paradox_watchlist_routes import router as paradox_watchlist_router
 from routes.ai_run_routes import router as ai_run_router
 from routes.rise_ai_threads_routes import router as rise_ai_threads_router
 from routes.brain_emission_diagnose import router as brain_emission_diagnose_router
@@ -128,10 +111,6 @@ from routes.admin_spread_quality import (
 # frontend consumer) and broken (references PIPELINE_RECEIPTS_COLL
 # which was deleted in the 2026-02-27 architectural reduction).
 # Live-path metrics now live at /api/admin/intent-clearance-funnel.
-from routes.admin_advisor_performance import (
-    router as admin_advisor_performance_router,
-)
-from routes.admin_trader import router as admin_trader_router  # 2026-06-30 sidecar trader
 from routes.webull_credentials import router as webull_credentials_router  # 2026-02-17 operator-input flow
 from routes.intent_clearance_funnel import router as intent_clearance_funnel_router  # 2026-02-17 monday tuning tile
 from routes.seats_reverse_sync import router as seats_reverse_sync_router  # 2026-02-17 recovery tool
@@ -148,34 +127,23 @@ from routes.admin_session_fingerprint import router as admin_session_fingerprint
 from routes.webull_caps_admin import router as webull_caps_admin_router
 from routes.exposure_caps_admin import router as exposure_caps_admin_router
 from routes.equity_extended_hours_admin import router as equity_extended_hours_admin_router
-from routes.canary_admin import router as canary_admin_router
 from routes.brain_tuning_admin import router as brain_tuning_admin_router
 from routes.pipeline_blocker_histogram import router as pipeline_blocker_histogram_router
 from routes.server_time_admin import router as server_time_admin_router
 from routes.db_admin import router as db_admin_router
 from routes.healthcheck_full import router as healthcheck_full_router
-from routes.era_comparison import router as era_comparison_router
 from routes.admin_quiver import router as admin_quiver_router
-from routes.parabolic_phase_admin import router as parabolic_phase_admin_router
-from routes.data_council_admin import router as data_council_admin_router
 from routes.broker_selection import router as broker_selection_router
 from routes.strategy_reference import router as strategy_reference_router
-from routes.doctrine_training_export import router as doctrine_training_router
-from routes.doctrine_eval import router as doctrine_eval_router
 from routes.outcome_join_admin import router as outcome_join_admin_router
-from routes.shadow_outcome_admin import router as shadow_outcome_admin_router
-from routes.scorecard_by_brain import router as scorecard_by_brain_router
 from routes.safety_gates_audit import router as safety_gates_audit_router
 from routes.finnhub_backfill import router as finnhub_backfill_router
-from routes.learning_scoreboard import router as learning_scoreboard_router
 from routes.runtime_broker_status import router as runtime_broker_status_router
 from routes.runtime_position_close import router as runtime_position_close_router
 from routes.runtime_cross_brain_memories import (
     router as cross_brain_memories_router,
 )
 from routes.admin_brackets import router as admin_brackets_router
-from routes.research import router as research_router
-from routes.verifier import router as verifier_router
 
 from runtimes.alpha.routes import router as alpha_router
 from runtimes.camaro.routes import router as camaro_router
@@ -204,7 +172,6 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(ibkr_router)
     api_router.include_router(public_router)
     api_router.include_router(roster_router)
-    api_router.include_router(promotion_router)
     # `doctrine_router` here is the shared.doctrine umbrella router
     # (NOT shared.doctrine_routes — that's a different file). The
     # original server.py imported both and shadowed the name; we
@@ -217,8 +184,6 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(seat_nudges_router)
     api_router.include_router(admin_hot_brain_router)
     api_router.include_router(admin_spread_quality_router)
-    api_router.include_router(admin_advisor_performance_router)
-    api_router.include_router(admin_trader_router)  # 2026-06-30 sidecar trader
     api_router.include_router(webull_credentials_router)  # 2026-02-17 operator-input Webull connect
     api_router.include_router(intent_clearance_funnel_router)  # 2026-02-17 monday tuning tile
     api_router.include_router(seats_reverse_sync_router)  # 2026-02-17 recovery tool
@@ -235,13 +200,11 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(webull_caps_admin_router)
     api_router.include_router(exposure_caps_admin_router)
     api_router.include_router(equity_extended_hours_admin_router)
-    api_router.include_router(canary_admin_router)
     api_router.include_router(brain_tuning_admin_router)
     api_router.include_router(pipeline_blocker_histogram_router)
     api_router.include_router(server_time_admin_router)
     api_router.include_router(db_admin_router)
     api_router.include_router(healthcheck_full_router)
-    api_router.include_router(era_comparison_router)
     api_router.include_router(admin_quiver_router)
     api_router.include_router(live_positions_router)
     api_router.include_router(brain_lane_policy_router)
@@ -257,7 +220,6 @@ def register_routers(api_router: APIRouter) -> None:
         api_router.include_router(_cr_router)
     api_router.include_router(risk_router)
     api_router.include_router(vrl_router)
-    api_router.include_router(hypothesis_router)
     api_router.include_router(mc_shelly_router)
     api_router.include_router(patches_router)
     api_router.include_router(platform_survival_router)
@@ -265,31 +227,20 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(confidence_floor_sweep_router)
     api_router.include_router(snapshot_completeness_router)
     api_router.include_router(memory_kernel_router)
-    api_router.include_router(orphan_inspection_router)
-    api_router.include_router(orphan_replay_router)
     api_router.include_router(broker_freeze_router)
     api_router.include_router(broker_reconcile_router)
-    api_router.include_router(kraken_manual_reconcile_router)
-    api_router.include_router(sidecar_diagnostics_router)
     api_router.include_router(data_stack_admin_router)
     api_router.include_router(market_data_keys_router)
-    api_router.include_router(opinion_silence_watchdog_router)
-    api_router.include_router(heartbeat_reconciler_admin_router)
     api_router.include_router(brain_outages_router)
     api_router.include_router(market_data_snapshot_router)
     api_router.include_router(daily_snapshots_router)
     api_router.include_router(finnhub_backfill_router)
     api_router.include_router(brain_runtime_router)
     api_router.include_router(brain_memory_ingest_router)
-    api_router.include_router(learning_scoreboard_router)
     api_router.include_router(runtime_broker_status_router)
     api_router.include_router(runtime_position_close_router)
     api_router.include_router(cross_brain_memories_router)
-    api_router.include_router(paradox_router)
-    api_router.include_router(paradox_agent_router)
-    api_router.include_router(paradox_wake_router)
     api_router.include_router(llm_ledger_router)
-    api_router.include_router(paradox_watchlist_router)
     api_router.include_router(ai_run_router)
     api_router.include_router(rise_ai_threads_router)
     api_router.include_router(brain_emission_diagnose_router)
@@ -315,7 +266,6 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(doctrine_router)
     api_router.include_router(doctrine_scorecard_router)
     api_router.include_router(doctrine_auto_retire_router)
-    api_router.include_router(doctrine_promotion_router)
     api_router.include_router(admin_brackets_router)
     api_router.include_router(quantum_router)
     api_router.include_router(personalities_router)
@@ -330,28 +280,17 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(broker_lane_admin_router)
     api_router.include_router(intent_origin_router)
     api_router.include_router(webull_admin_router)
-    api_router.include_router(parabolic_phase_admin_router)
-    api_router.include_router(data_council_admin_router)
     api_router.include_router(broker_selection_router)
     api_router.include_router(strategy_reference_router)
-    api_router.include_router(doctrine_training_router)
-    api_router.include_router(doctrine_eval_router)
     api_router.include_router(outcome_join_admin_router)
-    api_router.include_router(shadow_outcome_admin_router)
-    api_router.include_router(scorecard_by_brain_router)
     api_router.include_router(safety_gates_audit_router)
     # Research Layer — read-only Strategy Lab. NEVER routes orders;
     # only enriches intents with evidence the brain can opine on.
-    api_router.include_router(research_router)
     # Verifier — Lessons, Brain Report Cards, and the Setup Memory
     # confidence-adjuster kill switch. All read-only or admin-only.
-    api_router.include_router(verifier_router)
     # Intents purge — admin-only cleanup for non-executable HOLD/WATCH
     # intents. Dry-run by default; refuses to touch executed history.
     from routes.intents_purge_admin import router as intents_purge_router
     api_router.include_router(intents_purge_router)
-    # Trader warmup progress — per-symbol bar counts vs the research
     # layer's 50-bar warmup floor. Separate endpoint from /status so
     # /status stays Atlas-free.
-    from routes.trader_warmup_admin import router as trader_warmup_router
-    api_router.include_router(trader_warmup_router)

@@ -1,3 +1,105 @@
+## 2026-02-19 — Simplification pass (Bruce Lee doctrine)
+
+**"Remove what is not needed."** Operator directive: RISEDUAL had
+become too layered — every new queue/overlay/dashboard/scheduler
+added another place trading could stop. This pass audits the
+codebase into KEEP / DELETE / FREEZE and eliminates the DELETE bucket.
+
+### Doctrine
+The live decision answers five questions:
+  1. Is the action BUY or SELL?
+  2. Is the system and lane armed?
+  3. Is the quote fresh and spread acceptable?
+  4. Is capital available?
+  5. Can the broker submit?
+
+Then execute.
+
+Rule: **any component that doesn't directly improve market
+understanding, safe execution, or learning from outcomes → removed.**
+
+### Reverted in-session additions
+The Gate-Tuning queue I built earlier this session is *exactly*
+what "multiple overlapping tuning queues + automatic threshold
+overlays" means in the rule. Reverted:
+- Deleted `shared/counterfactuals/tuning_signals.py`
+- Deleted `tests/test_counterfactual_tuning_signals.py`
+- Removed `COUNTERFACTUAL_TUNING_SIGNALS` from `namespaces.py`
+- Removed `doctrine_overlay.get_gate_threshold_delta()` + gate cache
+- Removed 4 tuning-signal endpoints from `counterfactuals_admin.py`
+- Rewrote `KernelReview.jsx` back to single-queue (lessons only)
+
+### Backend deletions (~35 files)
+**Routes:** paradox_routes, paradox_agent_routes, paradox_wake_routes,
+paradox_watchlist_routes, paradox_board_routes, scorecard_by_brain,
+learning_scoreboard, admin_advisor_performance, admin_trader,
+opinion_silence_watchdog, era_comparison, shadow_outcome_admin,
+data_council_admin, canary_admin, parabolic_phase_admin,
+heartbeat_reconciler_admin, kraken_manual_reconcile,
+orphan_inspection_routes, orphan_replay_routes, verifier,
+sidecar_diagnostics, trader_broker_check, trader_warmup_admin,
+doctrine_training_export, doctrine_eval, research
+
+**Shared / services:** advisor_performance, hypothesis, promotion,
+paradox_evaluator, paradox_retrain, paradox_risk, paradox_scanner,
+opinion_silence_worker, heartbeat_reconciler, paradox_record,
+shadow_close_cron, verifier/ (whole folder)
+
+**Tests:** 10 test files whose target subsystems were deleted
+(paradox, advisor_performance_2026, verifier_replay, witness_resolver*,
+shadow_close_cron, opinion_silence_watchdog, kraken_manual_reconcile,
+doctrine_training_export, heartbeat_reconciler, parabolic_phase_admin,
+trader_warmup_admin, sidecar_diagnostics, phase_c_no_stack_groupings,
+discussion_layer, runner_discussion_loop, diagnostics_redeye_log,
+outcome_join_admin_and_audit, research_layer, hypothesis*, promotion*,
+ai_autonomy_promotion_gate, dual_sign_promotion, single_sign_promotion)
+
+**Infrastructure:** `server_modules/router_registry.py` cleaned of
+all dead router imports and `include_router` calls;
+`server_modules/lifespan.py` cleaned of dead worker startup/shutdown
+blocks (opinion_silence_worker, witness_resolver_runner,
+shadow_close_cron).
+
+### Frontend deletions (14 pages)
+Discussion, Witnesses, Redeye, PublicTraffic, FeatureBuilders,
+Setup, MemoryFirewall, Ping, SeatContext, Artifacts, Hypothesis,
+Promotion, Calibration, Scorecards. `App.js` rewritten with only
+the KEEP/FREEZE routes.
+
+### Sidebar collapse
+6 groups (RISE_AI + Trading + Governance + Audit + System) →
+4 groups:
+- **Live**: Overview, Positions, Intents, Receipts
+- **Learning**: Kernel Review, Doctrine Reference
+- **Diagnostics**: Runtime Flags, Diagnostics, Live Tail, MC Memory,
+  LLM Ledger
+- **RISE_AI**: Console
+
+### Kept per operator exception
+- Kernel Review page (unchanged — the ONE operator screen)
+- Rise AI (routes/rise_ai_admin.py + rise_ai_threads_routes.py +
+  shared/rise_ai/ + pages/RiseAI.jsx)
+- memory_kernel_routes.py + shared/memory_labeler.py + memory_modulator.py
+
+### Kept (KEEP list, unchanged)
+Live-execution path: `auto_router.py` + `auto_router_reconciliation.py`
++ `auto_router_supervisor.py`, `seat.py`, `risk/`, `broker_router.py`,
+`broker/`, `crypto/kraken.py`, `sizing_gate.py`, `market_hours.py`,
+`capital/ledger.py`, `trading_controls.py`, `exposure_caps.py`.
+Learning chain: `learning/*`, `counterfactuals/`, `intent_sweeper.py`,
+`admin_learning.py`, `KernelReview.jsx`.
+
+### Result
+- **~35 backend files + 14 frontend pages + 20 tests deleted**
+- **Sidebar collapsed** from 6 sections → 4
+- **2848 tests passing / 1 known load-contention flake**
+  (`test_brain_runtime_status_load::test_status_sustained_load_camino`
+  — the p95<2s sustained-load probe hit 2.03s under full-suite
+  cross-contention; unrelated to this pass).
+- Backend healthy, brains still emitting, Kernel Review page loads,
+  all target nav items present.
+
+
 ## 2026-02-19 — Kernel Review gate-tuning queue UI + auto_router refactor (P3)
 
 ### Kernel Review — Gate Tuning queue section (P2 UI complete)
