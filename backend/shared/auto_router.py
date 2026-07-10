@@ -117,6 +117,65 @@ _LAST_TICK_EXECUTED: int = 0
 _LAST_TICK_ERROR: Optional[str] = None
 _STARTED_AT: Optional[str] = None
 
+# ── Master-switch preflight cache (2026-02-19) ──────────────────
+# The operator's arm gate (`trading_controls.enabled` in Mongo) is
+# now consulted before every tick AND every manual route. Prior to
+# this the switch was UI-only; the loop respected `AUTO_ROUTER_ENABLED`
+# env at boot and ignored the runtime doc, so `POST /api/admin/trading/toggle`
+# was a placebo. Reading Mongo on every intent would be wasteful, so
+# we cache the answer for a short TTL. The TTL is short enough
+# (2s) that an operator disarm takes effect within one tick.
+import time as _time_module  # noqa: E402
+_ARM_CACHE_VAL: Optional[bool] = None
+_ARM_CACHE_TS: float = 0.0
+_ARM_CACHE_TTL_SEC = 2.0
+_ARM_LAST_LOGGED: Optional[bool] = None
+
+
+async def _is_master_switch_armed() -> bool:
+    """Consult the operator's master-switch Mongo doc, cached ~2s.
+
+    Fail-CLOSED on any error: an unreadable arm state means we do
+    NOT submit new orders. The reconcile sweep still runs (called
+    unconditionally at the top of `_tick`) so in-flight orders keep
+    their acks flowing.
+    """
+    global _ARM_CACHE_VAL, _ARM_CACHE_TS, _ARM_LAST_LOGGED
+    now = _time_module.monotonic()
+    if _ARM_CACHE_VAL is not None and (now - _ARM_CACHE_TS) < _ARM_CACHE_TTL_SEC:
+        return _ARM_CACHE_VAL
+    try:
+        from routes.trading_controls import is_trading_enabled  # noqa: WPS433
+        armed = bool(await is_trading_enabled())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "auto_router: master-switch read FAILED (%s: %s) — "
+            "failing closed (armed=False)",
+            type(exc).__name__, exc,
+        )
+        armed = False
+    _ARM_CACHE_VAL = armed
+    _ARM_CACHE_TS = now
+    # State-change logging so the operator can grep the log for
+    # exactly when the switch flipped.
+    if _ARM_LAST_LOGGED is None or _ARM_LAST_LOGGED != armed:
+        logger.warning(
+            "auto_router: master-switch state = %s "
+            "(gates all new intent submission)",
+            "ARMED" if armed else "DISARMED",
+        )
+        _ARM_LAST_LOGGED = armed
+    return armed
+
+
+def _invalidate_arm_cache() -> None:
+    """Force the next `_is_master_switch_armed` call to hit Mongo.
+    Exposed for the toggle endpoint so operator flips take effect
+    immediately instead of waiting for the TTL to expire."""
+    global _ARM_CACHE_VAL, _ARM_CACHE_TS
+    _ARM_CACHE_VAL = None
+    _ARM_CACHE_TS = 0.0
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -133,10 +192,36 @@ async def _route_one(intent: dict) -> dict:
 
     Returns a verdict dict in the legacy shape so existing callers
     (status endpoint, post-mortem aggregator) keep working unchanged.
+
+    2026-02-19: MASTER SWITCH PREFLIGHT. Manual `/api/execution/submit`
+    calls flow through here too, so we also gate them on the arm
+    state — otherwise the switch could be bypassed via the direct
+    submit endpoint.
     """
     from shared import executions, risk, seat  # noqa: WPS433
 
     intent_id = intent.get("intent_id") or ""
+
+    # ── Master-switch preflight ─────────────────────────────────
+    if not await _is_master_switch_armed():
+        # Stamp the intent as blocked so the funnel is honest, then
+        # short-circuit. No broker call is made.
+        try:
+            await db[SHARED_INTENTS].update_one(
+                {"intent_id": intent_id},
+                {"$set": {
+                    "gate_state": "blocked",
+                    "broker_reason": "master_switch_disarmed",
+                    "routed_at": _now_iso(),
+                }},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return {
+            "verdict": "blocked",
+            "reason": "master_switch_disarmed",
+            "intent_id": intent_id,
+        }
     # ── Notional resolution ──────────────────────────────────────
     # Legacy path stamps `requested_notional_usd`; v3 envelope stamps
     # `execution.notional_usd`. Try both, in that order. If the brain
@@ -1446,6 +1531,18 @@ async def _tick() -> list[dict]:
     each tick to stamp anything past `AUTO_ROUTER_EXPIRE_MIN` (default
     120m) so aged-out intents remain visible in the funnel as
     `expired_unrouted` rather than silently vanishing.
+
+    2026-02-19: MASTER SWITCH PREFLIGHT. The operator's arm gate
+    (`trading_controls.enabled` in Mongo, written by
+    `POST /api/admin/trading/toggle` and `/arm`) now short-circuits
+    the tick. Prior to this, `mc_switch` was UI-only — the loop
+    read `AUTO_ROUTER_ENABLED` env at boot and never consulted the
+    runtime doc, so the master switch was a placebo. That's
+    fixed here.
+
+    When disarmed we STILL run the reconcile sweep — an in-flight
+    submitted order must not be stranded just because the operator
+    flipped the switch mid-flight.
     """
     # Sweep first — cheap update_many, and it keeps the funnel honest
     # even in ticks where the sample query returns nothing.
@@ -1458,6 +1555,11 @@ async def _tick() -> list[dict]:
         logger.warning("reconcile sweep exceeded 15s timeout")
     except Exception as exc:  # noqa: BLE001
         logger.warning("reconcile sweep raised unexpectedly: %s", exc)
+
+    # MASTER-SWITCH PREFLIGHT — read the Mongo arm doc. If disarmed,
+    # we still reconciled (above) but do NOT ingest new intents.
+    if not await _is_master_switch_armed():
+        return []
 
     try:
         lookback_min = int(os.environ.get("AUTO_ROUTER_LOOKBACK_MIN", "60"))

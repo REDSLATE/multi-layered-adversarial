@@ -166,5 +166,156 @@ def test_mongo_unreachable_does_not_break_disk_write(isolated_token_state, monke
     assert json.loads(token_file.read_text())["token"] == "no-mongo"
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Fresher-tier-wins (2026-02-19 operator directive)
+# ═══════════════════════════════════════════════════════════════════
+#
+# Prior contract was disk-FIRST: if the disk file existed, it was
+# used and Mongo was consulted only as a fallback when disk was
+# empty. That created a stale-disk problem on production — a
+# committed repo can carry an old `webull_token.json` and every
+# redeploy resurrects the stale copy over the fresh Mongo mirror.
+#
+# New contract: whichever tier has the newer `created_at` wins.
+# If Mongo wins, disk is rehydrated so future reads are fast.
+
+
+def test_read_prefers_mongo_when_mongo_is_newer(isolated_token_state):
+    """Disk has an OLD copy, Mongo has a NEW copy → Mongo wins."""
+    token_file, wa = isolated_token_state
+
+    # 1. Simulate the committed-repo stale disk state (July 1).
+    stale_disk = {
+        "token": "stale-disk-token",
+        "expires": 1782925758272,
+        "status": "PENDING",
+        "created_at": "2026-07-01T17:03:18+00:00",
+        "base": "https://api.webull.com",
+    }
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    token_file.write_text(json.dumps(stale_disk, indent=2))
+
+    # 2. Simulate a fresher Mongo mirror (July 8, 7 days later).
+    fresh_mongo = {
+        "token": "fresh-mongo-token",
+        "expires": 1784799833339,
+        "status": "PENDING",
+        "created_at": "2026-07-08T09:43:53+00:00",
+        "base": "https://api.webull.com",
+    }
+    coll = wa._mongo_collection()
+    assert coll is not None
+    coll.replace_one(
+        {"_id": wa._MONGO_DOC_ID},
+        {**fresh_mongo, "_id": wa._MONGO_DOC_ID},
+        upsert=True,
+    )
+    wa._cache = None
+
+    result = wa._read_from_disk()
+    assert result is not None
+    assert result["token"] == "fresh-mongo-token", (
+        "Stale-disk beat fresh-Mongo — freshness contract broken"
+    )
+    # Disk must have been rehydrated with the fresh Mongo payload.
+    assert json.loads(token_file.read_text())["token"] == "fresh-mongo-token"
+
+
+def test_read_prefers_disk_when_disk_is_newer(isolated_token_state):
+    """Disk has a NEW copy (just created), Mongo has an OLD copy
+    (mirror hasn't caught up yet) → disk wins. This is the
+    same-pod steady-state case where a token refresh landed on
+    disk before the Mongo write completed."""
+    token_file, wa = isolated_token_state
+
+    old_mongo = {
+        "token": "old-mongo",
+        "expires": 0,
+        "status": "PENDING",
+        "created_at": "2026-06-01T00:00:00+00:00",
+    }
+    coll = wa._mongo_collection()
+    coll.replace_one(
+        {"_id": wa._MONGO_DOC_ID},
+        {**old_mongo, "_id": wa._MONGO_DOC_ID},
+        upsert=True,
+    )
+    fresh_disk = {
+        "token": "fresh-disk",
+        "expires": 0,
+        "status": "PENDING",
+        "created_at": "2026-07-15T00:00:00+00:00",
+    }
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    token_file.write_text(json.dumps(fresh_disk, indent=2))
+    wa._cache = None
+
+    result = wa._read_from_disk()
+    assert result is not None
+    assert result["token"] == "fresh-disk"
+
+
+def test_read_falls_back_to_only_available_tier(isolated_token_state):
+    """Only Mongo has a copy (no disk file) → Mongo wins.
+    Only disk has a copy (no Mongo doc) → disk wins.
+    This is a sanity check that the freshness logic doesn't
+    accidentally reject the sole surviving tier."""
+    token_file, wa = isolated_token_state
+
+    # Case A: only Mongo has a copy.
+    only_mongo = {
+        "token": "only-mongo",
+        "created_at": "2026-07-01T00:00:00+00:00",
+    }
+    coll = wa._mongo_collection()
+    coll.replace_one(
+        {"_id": wa._MONGO_DOC_ID},
+        {**only_mongo, "_id": wa._MONGO_DOC_ID},
+        upsert=True,
+    )
+    if token_file.exists():
+        token_file.unlink()
+    wa._cache = None
+    result = wa._read_from_disk()
+    assert result is not None
+    assert result["token"] == "only-mongo"
+
+    # Case B: only disk has a copy.
+    coll.delete_many({})
+    only_disk = {
+        "token": "only-disk",
+        "created_at": "2026-07-02T00:00:00+00:00",
+    }
+    token_file.write_text(json.dumps(only_disk, indent=2))
+    wa._cache = None
+    result = wa._read_from_disk()
+    assert result is not None
+    assert result["token"] == "only-disk"
+
+
+def test_read_handles_missing_created_at_gracefully(isolated_token_state):
+    """A payload with no `created_at` (legacy schema) MUST NOT crash
+    the reader. Ordering falls back to whichever payload has a
+    non-empty ts; if both lack it, disk wins as a stable default."""
+    token_file, wa = isolated_token_state
+
+    disk_no_ts = {"token": "disk-legacy", "status": "PENDING"}
+    mongo_no_ts = {"token": "mongo-legacy", "status": "PENDING"}
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    token_file.write_text(json.dumps(disk_no_ts, indent=2))
+    coll = wa._mongo_collection()
+    coll.replace_one(
+        {"_id": wa._MONGO_DOC_ID},
+        {**mongo_no_ts, "_id": wa._MONGO_DOC_ID},
+        upsert=True,
+    )
+    wa._cache = None
+
+    result = wa._read_from_disk()
+    assert result is not None
+    # Neither has a ts — disk wins by tie-break (deterministic).
+    assert result["token"] == "disk-legacy"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

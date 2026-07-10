@@ -1,3 +1,88 @@
+## 2026-02-19 — Master-switch wiring + Webull reauth hot path
+
+### Scope
+Two P0 fixes surfaced by the "will it trade?" pipeline audit.
+
+### Fix 1: Master switch is no longer a dead stick
+Prior to today the `mc_switch` Mongo doc (written by `POST /api/admin/trading/toggle`
+and `/arm`) was consumed by NO ONE outside the status endpoint. The
+`auto_router` loop only respected `AUTO_ROUTER_ENABLED` env var at
+boot; every tick after boot ignored the operator's runtime switch.
+UI theater — `will_fire=false` was displayed but never enforced.
+
+**Changes:**
+- **`shared/auto_router.py`** — new `_is_master_switch_armed()` helper
+  with a 2-second TTL cache. Reads `routes.trading_controls.is_trading_enabled()`
+  (the Mongo-backed reader). Fail-CLOSED on read error.
+- **`_tick()` preflight** — after the reconcile sweep, short-circuit if
+  disarmed. Reconcile sweep runs unconditionally so in-flight orders
+  aren't stranded on a mid-flight disarm.
+- **`_route_one()` preflight** — same check for the manual
+  `/api/execution/submit` backdoor. Stamps the intent doc with
+  `broker_reason: master_switch_disarmed` for funnel honesty.
+- **`_invalidate_arm_cache()`** — exported so the toggle/arm endpoints
+  can force a fresh read; the flip takes effect on the NEXT tick
+  instead of waiting for TTL. Wired into both `POST /toggle` and
+  `POST /arm` in `routes/trading_controls.py`.
+- **State-change logging** — the auto_router logs `master-switch state
+  = ARMED/DISARMED` exactly once per transition, so operator can
+  grep the log for when the flip took effect.
+
+**Live-verified**: manual toggle in the running preview pod flipped
+the state in the `arm/status` endpoint AND the auto_router log
+picked up the new state 25s later (within the TTL + tick cadence).
+
+### Fix 2: Webull reauth WITHOUT a redeploy
+Two interlocking problems:
+    (a) The token-read path was disk-FIRST: if `webull_token.json`
+        existed on disk it was used and Mongo was ignored. A stale
+        disk copy (e.g. from a committed repo file) beat the fresh
+        Mongo mirror on every redeploy, which is exactly why the
+        operator saw the expired token even though Mongo had a
+        fresh one.
+    (b) There was no operator-facing "re-authorize" button. The
+        `webull-token-create` endpoint existed but didn't invalidate
+        the in-process cache or offer a way to purge stale disk.
+
+**Changes:**
+- **`trader/webull_auth.py::_read_from_disk`** — rewrote as a
+  freshness-aware reader. Reads BOTH tiers, picks the one with the
+  newer `created_at`. If Mongo wins, disk is rehydrated so future
+  reads stay fast AND the stale-disk drift heals immediately.
+- **New `POST /api/admin/webull/reauth`** in `routes/webull_credentials.py`.
+  Prereq-checks credentials, invalidates the in-process cache,
+  optionally purges the disk file, then triggers Webull's
+  `POST /openapi/auth/token/create` (mobile push flow). New token
+  auto-writes to both disk and Mongo (existing `_write_to_disk` path).
+  Audit row lands in `webull_audit_log`. Response never surfaces
+  the raw token, only a preview.
+
+**Live-verified**: hitting the endpoint in the preview pod fired a
+real 2FA push to the operator's Webull mobile app and the new
+token landed in Mongo with a fresh `created_at`.
+
+### Test coverage
+- **New**: `tests/test_auto_router_master_switch_preflight.py` — 9
+  tests covering fail-closed defaults, cached TTL reader, invalidate
+  forces re-read, `_route_one` backdoor guard, `_tick` empty-when-
+  disarmed, reconcile-still-runs-when-disarmed.
+- **Extended**: `tests/test_webull_token_mongo_mirror.py` — added 4
+  tests for the fresher-tier-wins contract (Mongo wins when newer,
+  disk wins when newer, only-one-tier fallback, missing-ts graceful).
+- **Full targeted regression**: 37/37 green across `test_auto_router_master_switch_preflight`,
+  `test_webull_token_mongo_mirror`, `test_unified_arm`, `test_webull_auth`.
+
+### Doctrine pins
+- The master switch is now the runtime authority for intent
+  submission. Boot-time `AUTO_ROUTER_ENABLED=false` still stops the
+  loop from ever starting; runtime `mc_switch.enabled=false` stops
+  ingestion but preserves the reconcile sweep.
+- Webull token is Mongo-first when Mongo is fresher. Disk is a
+  warm cache, never sole truth.
+- `POST /api/admin/webull/reauth` is the operator's re-auth hot
+  path. No redeploy required to refresh a 15-day-cycle token.
+
+
 ## 2026-02-19 — P1 sidecar excision + P2 universe cleanup
 
 ### P1 — `/app/trader` sidecar surgical excision (option B)

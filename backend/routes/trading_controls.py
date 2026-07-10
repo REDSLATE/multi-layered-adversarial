@@ -146,6 +146,15 @@ async def toggle(
     new_state = await set_trading_enabled(
         body.enabled, body.reason, actor,
     )
+    # 2026-02-19: invalidate the auto_router's arm cache so the flip
+    # takes effect on the NEXT tick instead of waiting up to
+    # _ARM_CACHE_TTL_SEC (2s). Best-effort — auto_router may not
+    # be importable in a test context.
+    try:
+        from shared.auto_router import _invalidate_arm_cache  # noqa: WPS433
+        _invalidate_arm_cache()
+    except Exception:  # noqa: BLE001
+        pass
     logger.warning(
         "trading_controls FLIPPED: enabled=%s by=%s reason=%r",
         body.enabled, actor, body.reason,
@@ -414,6 +423,14 @@ async def arm(
 
     # 1. Flip MC-path switch.
     mc_new = await set_trading_enabled(body.enabled, body.reason, actor)
+
+    # 2026-02-19: invalidate the auto_router's arm cache so the flip
+    # takes effect on the NEXT tick, not on the next TTL expiry.
+    try:
+        from shared.auto_router import _invalidate_arm_cache  # noqa: WPS433
+        _invalidate_arm_cache()
+    except Exception:  # noqa: BLE001
+        pass
 
     # 2. Flip trader-sidecar switch. Same-shape write as the MC path;
     #    the trader's state refresher reads this within 60s.

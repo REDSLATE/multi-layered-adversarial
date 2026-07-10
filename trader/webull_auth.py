@@ -121,31 +121,79 @@ def _write_to_mongo(payload: dict) -> None:
 
 
 def _read_from_disk() -> Optional[dict]:
+    """Load the token payload — freshness-aware.
+
+    2026-02-19: previously this function was disk-FIRST: if the disk
+    file existed it was used, and Mongo was only consulted as a
+    fallback when disk was empty. That created a stale-disk problem
+    on production: the committed repo can carry an old
+    `webull_token.json`, and every redeploy resurrects the stale
+    copy over the fresh Mongo mirror.
+
+    Fixed contract:
+      1. Read both disk AND Mongo.
+      2. Pick the one with the newer `created_at`.
+      3. If Mongo wins, REPLACE disk with the Mongo copy so future
+         reads on this pod are fast.
+      4. If disk wins (or Mongo is empty), keep disk.
+      5. If neither exists, return None.
+
+    Any read/parse error on one tier falls back to the other.
+    """
     p = _token_path()
+
+    disk_payload: Optional[dict] = None
     if p.exists():
         try:
-            return json.loads(p.read_text())
+            disk_payload = json.loads(p.read_text())
         except Exception as e:  # noqa: BLE001
-            logger.warning("webull_token read failed path=%s err=%s", p, e)
-            # fall through to mongo restore
+            logger.warning("webull_token disk read failed path=%s err=%s", p, e)
+            disk_payload = None
 
-    # Disk empty (fresh pod / post-redeploy) — try Mongo mirror.
     mongo_payload = _read_from_mongo()
-    if mongo_payload:
+
+    def _created_at(payload: Optional[dict]) -> str:
+        if not payload:
+            return ""
+        return payload.get("created_at") or ""
+
+    disk_ts = _created_at(disk_payload)
+    mongo_ts = _created_at(mongo_payload)
+
+    # Neither tier has a copy.
+    if not disk_payload and not mongo_payload:
+        return None
+
+    # Only one tier has a copy.
+    if not disk_payload:
+        chosen, source = mongo_payload, "mongo"
+    elif not mongo_payload:
+        chosen, source = disk_payload, "disk"
+    else:
+        # Both present — pick the fresher one. String compare works
+        # because created_at is stored as ISO-8601 UTC.
+        if mongo_ts and mongo_ts > disk_ts:
+            chosen, source = mongo_payload, "mongo"
+        else:
+            chosen, source = disk_payload, "disk"
+
+    # Rehydrate disk from Mongo if Mongo won — keeps future reads
+    # on this pod fast AND heals the stale-disk drift immediately.
+    if source == "mongo":
         logger.info(
-            "webull_token restored from Mongo mirror path=%s "
-            "(disk was empty — likely post-redeploy)", p,
+            "webull_token: Mongo mirror is fresher than disk "
+            "(mongo_created=%s, disk_created=%s) — rehydrating disk",
+            mongo_ts or "(none)", disk_ts or "(none)",
         )
-        # Rehydrate disk for subsequent fast reads.
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(mongo_payload, indent=2))
+            p.write_text(json.dumps(chosen, indent=2))
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "webull_token disk rehydrate failed path=%s err=%s", p, e,
             )
-        return mongo_payload
-    return None
+
+    return chosen
 
 
 def _write_to_disk(payload: dict) -> None:

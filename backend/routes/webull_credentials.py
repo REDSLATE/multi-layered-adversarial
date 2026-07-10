@@ -241,6 +241,154 @@ async def disconnect(user: dict = Depends(get_current_user)):
     return {"ok": True, "deleted": result.deleted_count}
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Re-authorize — one-click hot path (2026-02-19 operator directive)
+# ═══════════════════════════════════════════════════════════════════
+#
+# Doctrine: the Webull x-access-token expires every 15 days
+# server-side. Prior workflow required an operator SSH into the pod
+# and manual `curl` OR a redeploy to reset the token. That's wrong;
+# the operator needs a UI button that re-triggers the 2FA push flow
+# on demand.
+#
+# What this endpoint does:
+#   1. Verify app_key/app_secret are configured (fail early with a
+#      404 pointing at /connect if not).
+#   2. Force-invalidate the in-process token cache so the next read
+#      does NOT return a stale copy.
+#   3. Optionally purge the disk file so `_read_from_disk` cannot
+#      fall back to a stale local copy while the new token is
+#      pending 2FA approval. Toggle via `purge_disk` param
+#      (default True — safer).
+#   4. Trigger `webull_auth.create_token()`, which POSTs to
+#      `/openapi/auth/token/create`. Webull server sends a push
+#      notification to the operator's mobile app. On approval,
+#      status flips PENDING → NORMAL server-side and equity spreads
+#      resume flowing.
+#   5. Write the new token to disk AND Mongo mirror (create_token
+#      already does this via `_write_to_disk`).
+#   6. Return the sanitized payload + a message the UI can display.
+#
+# The new token is IMMEDIATELY usable across redeploys because the
+# Mongo mirror survives and the read path now prefers whichever
+# tier has the newer `created_at`.
+class ReauthIn(BaseModel):
+    purge_disk: bool = Field(
+        default=True,
+        description=(
+            "Delete the local disk token file before triggering the "
+            "new token push. Prevents a stale copy from being served "
+            "while the new push is pending 2FA approval."
+        ),
+    )
+
+
+@router.post("/reauth")
+async def reauth(
+    body: ReauthIn | None = None,
+    user: dict = Depends(get_current_user),
+):
+    """Trigger a fresh Webull token push — no redeploy required.
+
+    Prereq: `POST /api/admin/webull/connect` must have run at least
+    once so app_key + app_secret are on file.
+
+    On success returns HTTP 200 with `status="PENDING"`. Operator
+    approves the mobile push, then Webull server flips server-side
+    status to NORMAL within ~30s. Poll
+    `GET /api/admin/trader/webull-token-status` to confirm.
+    """
+    body = body or ReauthIn()
+    await hydrate_env_from_mongo(db)
+    creds_present = bool(
+        (os.environ.get("WEBULL_APP_KEY") or "").strip()
+        and (os.environ.get("WEBULL_APP_SECRET") or "").strip()
+    )
+    if not creds_present:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No Webull app_key/app_secret configured. "
+                "Use POST /api/admin/webull/connect first."
+            ),
+        )
+
+    # Lazy-import so trader package failure doesn't crash the route
+    # module at import time.
+    import sys
+    if "/app" not in sys.path:
+        sys.path.insert(0, "/app")
+    try:
+        from trader import webull_auth as _wa  # noqa: WPS433
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500,
+            detail=f"webull_auth import failed: {type(e).__name__}: {e}",
+        )
+
+    pre_status = None
+    try:
+        pre_status = _wa.status()
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Force cache invalidation BEFORE the push. If the push succeeds
+    # we replace the cache with the fresh payload; if it fails,
+    # the next read will re-hydrate from disk/Mongo as normal.
+    with _wa._lock:  # noqa: SLF001 - deliberate cache-invalidation touch
+        _wa._cache = None  # noqa: SLF001
+
+    # Optionally purge disk. Keeps Mongo mirror intact — if this pod
+    # crashes before the new token lands, next boot rehydrates from
+    # Mongo (which still has the PREVIOUS good token).
+    disk_purged = False
+    if body.purge_disk:
+        try:
+            p = _wa._token_path()  # noqa: SLF001
+            if p.exists():
+                p.unlink()
+                disk_purged = True
+                logger.info("webull_reauth: purged stale disk token at %s", p)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("webull_reauth: disk purge failed: %s", e)
+
+    # Trigger the actual push.
+    try:
+        payload = await _wa.create_token()
+    except RuntimeError as e:
+        await _audit(
+            "webull_reauth_failed",
+            user.get("email") or "operator",
+            {"error": str(e), "disk_purged": disk_purged},
+        )
+        raise HTTPException(status_code=502, detail=str(e))
+
+    await _audit(
+        "webull_reauth",
+        user.get("email") or "operator",
+        {
+            "disk_purged": disk_purged,
+            "pre_status": (pre_status or {}).get("reported_status"),
+            "post_status": payload.get("status"),
+            "expires": payload.get("expires"),
+        },
+    )
+
+    return {
+        "ok": True,
+        "message": (
+            "Push sent to your Webull mobile app. Approve the "
+            "notification within ~5 minutes. Once server-side "
+            "status flips to NORMAL, equity spreads and orders "
+            "resume automatically — no redeploy required."
+        ),
+        "disk_purged": disk_purged,
+        "mongo_mirror_updated": True,
+        **payload,
+        "checked_at": _now_iso(),
+    }
+
+
 def _public_status(doc: dict) -> dict:
     """Shape the singleton doc for UI consumption. Never leaks the
     encrypted secret or unredacted account_id."""
