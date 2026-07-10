@@ -378,6 +378,49 @@ async def _build_in_process_status(brain: str) -> Dict[str, Any]:
     }
 
 
+@router.get("/stack/status")
+async def get_stack_status(
+    _user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """One-read stack status for all four brains.
+
+    2026-02-19 operator directive: the BrainConsole used to fire
+    four independent `/admin/runtime/{brain}/status` calls, each
+    of which fanned out into ~5 Atlas queries. Under Atlas load,
+    all four consoles would show the SAME NetworkTimeout because
+    they were hammering the same overloaded collection.
+
+    This endpoint reads ONE compact stack document
+    (`brain_runtime_metrics._id = risedual_stack`) with a single
+    O(1) primary-key lookup. Frontend polls this once and slices
+    the appropriate `brains.<name>` section locally.
+
+    Default-hostile: any Atlas failure returns `degraded=True`
+    with an amber warning list — never a red banner.
+    """
+    from shared.brain_runtime_metrics import get_stack_status as _get_stack  # noqa: WPS433
+
+    doc = await _get_stack()
+    if doc is None:
+        return {
+            "ok": True,
+            "degraded": True,
+            "stack_status": "unknown",
+            "brains": {},
+            "warnings": ["stack_status_temporarily_unavailable"],
+            "now": datetime.now(timezone.utc).isoformat(),
+        }
+    return {
+        "ok": True,
+        "degraded": False,
+        "stack_status": doc.get("stack_status") or "healthy",
+        "brains": doc.get("brains") or {},
+        "updated_at": doc.get("updated_at"),
+        "first_seen_at": doc.get("first_seen_at"),
+        "now": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.get("/{brain}/status")
 async def get_brain_status(
     brain: str = Path(...),
@@ -399,26 +442,26 @@ async def get_brain_status(
         logger.warning(
             "in_process_status_build_failed brain=%s err=%s", brain, exc,
         )
-        # Surface as `ok=false` so the dashboard renders a degraded
-        # state instead of going blank. NOT a 500 — this endpoint is
-        # consumed by an auto-polling tile and must stay resilient.
+        # 2026-02-19 fail-soft: return an AMBER `degraded=True`
+        # payload with `ok=true` and warnings — NOT `ok=false` with
+        # a red `error_detail` banner. A slow Atlas read on the
+        # heavy status builder must never make the operator think
+        # the brain itself is down. The frontend renders `degraded`
+        # as an amber notice next to the still-live heartbeat card.
         return {
             "brain": brain,
-            "ok": False,
-            "error": "in_process_build_failed",
-            # 2026-02-19 (operator diagnostic gap fix): surface the
-            # exception class + message on the response body itself
-            # so operators without shell/log access can diagnose
-            # from the UI dev-tools Network tab or any curl. Admin-
-            # authenticated endpoint, so no public exposure risk.
-            # Truncated to 200 chars so a wall-of-stacktrace doesn't
-            # dominate the response body. Prior behavior stripped
-            # `exc` and left only `"in_process_build_failed"` — fine
-            # when the operator had `grep backend.log`, invisible
-            # when they don't.
-            "error_detail": f"{type(exc).__name__}: {str(exc)[:200]}",
+            "ok": True,
+            "degraded": True,
+            "_proxied_from": "in_process",
+            "warnings": ["intent_metrics_temporarily_unavailable"],
+            "warn_detail": f"{type(exc).__name__}: {str(exc)[:200]}",
             "doctrine": "in_process_runtime_status",
             "ts": _now().isoformat(),
+            "payload": {
+                "brain": brain,
+                "heartbeat": {"alive": True, "degraded_read": True},
+                "intents": {"latest": None, "last_1h": None, "last_24h": None},
+            },
         }
 
     return {

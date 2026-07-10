@@ -222,3 +222,106 @@ async def get_metrics(brain: str) -> Optional[Dict[str, Any]]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("brain_runtime_metrics.get_metrics failed: %s", exc)
         return None
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Stack-level cache (2026-02-19 operator directive)
+# ═══════════════════════════════════════════════════════════════════
+#
+# "One stack → one heartbeat/status document → four brain sections
+#  → one UI poll." The BrainConsole used to hit
+#  `/admin/runtime/{brain}/status` 4× (once per brain), each of which
+#  fanned out into ~5 Atlas queries. Under Atlas load this caused all
+#  four brain pages to display the SAME NetworkTimeout — because they
+#  were all hammering the same overloaded collection.
+#
+# The stack document `_id=risedual_stack` is a single compact doc
+# holding one section per brain. `/api/admin/runtime/stack/status`
+# reads it with a single indexed lookup. Any status writer (intent
+# emission, heartbeat) updates the appropriate `brains.<name>.*`
+# subfields via `$set` — no lock contention because writes target
+# disjoint subpaths.
+
+_STACK_ID = "risedual_stack"
+
+
+async def bump_stack_on_emit(
+    brain: str,
+    action: Optional[str],
+    symbol: Optional[str],
+    ingest_ts: str,
+) -> None:
+    """Update the stack-level status doc's brain section on an intent
+    emission. Called from the same site as `bump_on_emit` — same
+    best-effort contract (never blocks emission).
+    """
+    if not brain:
+        return
+    try:
+        await db[COLLECTION].update_one(
+            {"_id": _STACK_ID},
+            {
+                "$set": {
+                    f"brains.{brain}.latest_intent_ts": ingest_ts,
+                    f"brains.{brain}.latest_action": (
+                        (action or "").upper() or None
+                    ),
+                    f"brains.{brain}.latest_symbol": symbol,
+                    f"brains.{brain}.updated_at": _now_iso(),
+                    "updated_at": _now_iso(),
+                    "stack_status": "healthy",
+                },
+                "$inc": {f"brains.{brain}.lifetime_count": 1},
+                "$setOnInsert": {
+                    "_id": _STACK_ID,
+                    "first_seen_at": _now_iso(),
+                },
+            },
+            upsert=True,
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort
+        logger.warning(
+            "brain_runtime_metrics.bump_stack_on_emit failed: %s", exc,
+        )
+
+
+async def bump_stack_heartbeat(brain: str, heartbeat_ts: str) -> None:
+    """Refresh the stack doc's `brains.<brain>.heartbeat_ts` without
+    touching intent fields. Called from the heartbeat writer path
+    so the console can show "alive but silent" states."""
+    if not brain:
+        return
+    try:
+        await db[COLLECTION].update_one(
+            {"_id": _STACK_ID},
+            {
+                "$set": {
+                    f"brains.{brain}.heartbeat_ts": heartbeat_ts,
+                    "updated_at": _now_iso(),
+                },
+                "$setOnInsert": {
+                    "_id": _STACK_ID,
+                    "first_seen_at": _now_iso(),
+                },
+            },
+            upsert=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "brain_runtime_metrics.bump_stack_heartbeat failed: %s", exc,
+        )
+
+
+async def get_stack_status() -> Optional[Dict[str, Any]]:
+    """One-read stack status. Default-hostile: any Atlas failure
+    surfaces as None so the endpoint can return an amber
+    `degraded=true` response instead of a red banner. The single
+    lookup is O(1) against the `_id` primary key — no collection
+    scan, no aggregate, no time-window filter."""
+    try:
+        return await db[COLLECTION].find_one({"_id": _STACK_ID})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "brain_runtime_metrics.get_stack_status failed: %s", exc,
+        )
+        return None

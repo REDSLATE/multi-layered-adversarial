@@ -97,11 +97,20 @@ def test_status_endpoint_returns_in_process_marker():
 
 def test_status_endpoint_never_500s_on_build_failure():
     """On `_build_in_process_status` failure the endpoint must return
-    `{ok: false}` so the dashboard tile renders a degraded state
-    instead of going blank."""
+    the amber fail-soft shape (`ok: True, degraded: True, warnings=
+    [intent_metrics_temporarily_unavailable]`) — NOT the old red
+    banner (`ok: False` + `error_detail`). 2026-02-19 landing.
+    """
     src = inspect.getsource(br.get_brain_status)
     assert "raise HTTPException(status_code=500" not in src
-    assert '"ok": False' in src
+    # New amber contract: ok=True with degraded=True.
+    assert '"ok": True' in src
+    assert '"degraded": True' in src
+    assert "intent_metrics_temporarily_unavailable" in src
+    # And guard: the OLD red banner shape must not sneak back in.
+    assert '"ok": False' not in src, (
+        "red-banner contract regressed — must be fail-soft amber"
+    )
 
 
 def test_status_payload_uses_section_names_the_tile_renders():

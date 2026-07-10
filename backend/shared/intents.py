@@ -1240,9 +1240,22 @@ async def _post_intent_impl(
     # instead of scanning `shared_intents`. Best-effort — a failure
     # here MUST NEVER block intent ingest.
     try:
-        from shared.brain_runtime_metrics import bump_on_emit as _mtx_bump  # noqa: WPS433
+        from shared.brain_runtime_metrics import (  # noqa: WPS433
+            bump_on_emit as _mtx_bump,
+            bump_stack_on_emit as _stack_bump,
+        )
+        canon = canonicalize_stack(body.stack) or body.stack
         await _mtx_bump(
-            brain=canonicalize_stack(body.stack) or body.stack,
+            brain=canon,
+            action=body.action,
+            symbol=body.symbol,
+            ingest_ts=doc["ingest_ts"],
+        )
+        # 2026-02-19: also update the stack-level status doc so
+        # `/admin/runtime/stack/status` returns fresh per-brain
+        # sections in one O(1) read (replaces 4× per-brain endpoints).
+        await _stack_bump(
+            brain=canon,
             action=body.action,
             symbol=body.symbol,
             ingest_ts=doc["ingest_ts"],

@@ -92,6 +92,30 @@ export default function BrainProxiedStatusTile({ brain, proxied }) {
     );
   }
 
+  // Degraded — Atlas read timed out on one of the sub-queries but the
+  // brain itself is alive. Render an amber notice above the normal
+  // sections instead of hiding everything. 2026-02-19 operator rule:
+  // a slow status read must not make the operator think the brain is
+  // down.
+  const degradedNotice = proxied.degraded ? (
+    <div
+      className="border border-amber-600 bg-amber-950/20 px-3 py-2 mb-3 text-[11px] font-mono text-amber-300 flex items-start gap-2"
+      data-testid={`brain-status-${brain}-degraded`}
+    >
+      <Dot color="#F59E0B" />
+      <div>
+        <div className="uppercase tracking-widest text-[10px]">
+          Status read degraded
+        </div>
+        <div className="text-rd-muted mt-1">
+          {(proxied.warnings || []).join(", ") ||
+            "intent_metrics_temporarily_unavailable"}
+          . Brain itself is still live — see the heartbeat card below.
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   // Success path — render whatever sections the brain provided.
   const p = proxied.payload || {};
   const fromInProcess = proxied._proxied_from === "in_process";
@@ -119,6 +143,8 @@ export default function BrainProxiedStatusTile({ brain, proxied }) {
           </div>
         </div>
       </div>
+
+      {degradedNotice}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
         {p.identity && (
