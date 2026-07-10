@@ -1,3 +1,66 @@
+## 2026-02-19 — Brain Console NetworkTimeout fix (production bug)
+
+**Symptom** (reported on production `mission.risedual.ai`, all four
+Brain Console pages simultaneously):
+
+    NetworkTimeout: customer-apps-shard-00-01.kndgvm.mongodb.net:27017
+    The read operation timed out
+
+Big red banner on every brain page while their heartbeat cards
+still showed fresh activity — proving the brains were alive; only
+the status *builder* was failing.
+
+### Root cause
+Brain Console fired **4× `/admin/runtime/{brain}/status`** calls
+(one per brain), each of which fanned out into ~5 Atlas queries.
+Under Atlas load, all four consoles saw the same NetworkTimeout
+because they were hammering the same overloaded collection.
+
+### Fixes applied
+1. **New single-read stack endpoint** `GET /api/admin/runtime/stack/status`
+   — one O(1) primary-key lookup on `brain_runtime_metrics._id="risedual_stack"`,
+   returns `{brains: {camino:{...}, barracuda:{...}, hellcat:{...}, gto:{...}}}`.
+   Replaces 4 heavy per-brain fanouts with 1 cheap read.
+2. **Stack doc auto-updates on every emit**:
+   `bump_stack_on_emit(brain, action, symbol, ingest_ts)` writes
+   `brains.<name>.latest_intent_ts / latest_action / latest_symbol /
+   updated_at` and increments `lifetime_count`. Called from
+   `shared/intents.py` alongside the existing per-brain `bump_on_emit`.
+3. **Default-hostile at every layer**:
+   - Stack endpoint: any Atlas failure → `{ok: true, degraded: true,
+     warnings: ["stack_status_temporarily_unavailable"]}`, never 5xx.
+   - Per-brain endpoint (`/{brain}/status`) fail-soft rewritten: when
+     `_build_in_process_status` raises, response now returns
+     `ok=true, degraded=true, warnings=[intent_metrics_temporarily_unavailable]`
+     with a stubbed `payload.heartbeat.alive=true`. NO more red
+     `ok=false, error_detail` banner.
+4. **Frontend renders `degraded=true` as amber**:
+   `BrainProxiedStatusTile.jsx` shows a small amber "Status read
+   degraded" notice above the identity section instead of hiding
+   everything behind a red banner. Heartbeat card still visible.
+
+### Testing agent verification (iteration 23)
+- 100 % backend: **42/42** (11 new stack tests + 31 regression across
+  brain_runtime, brain_runtime_metrics_cache, brain_runtime_metrics_integration,
+  brain_runtime_status_load).
+- 100 % frontend: Brain Console renders end-to-end for all four
+  brains, no NetworkTimeout banner, fresh 10s heartbeat, populated
+  scorecard + conflicts + discussion feed.
+- 10x sustained /stack/status poll stays <2.5s per hit.
+- Report: `/app/test_reports/iteration_23.json`, zero critical or
+  minor issues.
+
+### Files changed
+- `/app/backend/shared/brain_runtime_metrics.py` (+~85 lines: stack
+  helpers)
+- `/app/backend/routes/brain_runtime.py` (new /stack/status endpoint;
+  fail-soft rewrite of per-brain error path)
+- `/app/backend/shared/intents.py` (bump_stack_on_emit wired into
+  emission)
+- `/app/frontend/src/components/BrainProxiedStatusTile.jsx` (amber
+  degraded notice)
+
+
 ## 2026-02-19 — Witness resolver loose-ends cleanup + staleness clamp
 
 **Follow-up to iter-25 simplification pass.**
