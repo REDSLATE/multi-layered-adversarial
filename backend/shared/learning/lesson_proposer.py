@@ -6,16 +6,30 @@ Doctrine (2026-07-09 iter-22, Stage 2, operator directive):
     Guardrails prevent early noise from becoming doctrine:
       * min_sample_size = 30 resolved experiences per bucket
       * Wilson lower bound ≥ 0.50 for EDGE lessons
+      * SHRUNK EV (Bayesian shrinkage toward zero) ≥ +5 bps for EDGE
       * avg_5m_bps < -10 for BLEED lessons
 
     Edge lesson (bucket has positive edge worth exploiting):
-        samples >= 30 AND avg_5m_bps > 0 AND wilson_lower >= 0.50
+        samples >= 30
+        AND avg_5m_bps > 0
+        AND wilson_lower >= 0.50
+        AND shrunk_ev_bps >= SHRUNK_EV_FLOOR_BPS
 
     Bleed lesson (bucket is losing money — reduce exposure or block):
         samples >= 30 AND avg_5m_bps < -10
 
     Lessons ALWAYS land as state='proposed' — human Kernel review
     approves them; nothing self-applies to doctrine.
+
+Shrinkage math (2026-02-19 operator directive):
+
+    shrunk_ev_bps = avg_5m_bps * samples / (samples + SHRINKAGE_CONSTANT)
+
+    With SHRINKAGE_CONSTANT=100, a bucket with 30 samples averaging
+    +20 bps shrinks to +20 * 30/130 = +4.6 bps (below the floor, no
+    lesson). A bucket with 300 samples averaging +20 bps shrinks to
+    +20 * 300/400 = +15 bps (well above the floor). That's the
+    point — small-sample noise dies, real edge survives.
 """
 from __future__ import annotations
 
@@ -35,6 +49,25 @@ LEARNING_LESSONS = "learning_lessons"
 MIN_SAMPLE_SIZE = 30
 WILSON_EDGE_FLOOR = 0.50
 BLEED_BPS_THRESHOLD = -10.0
+
+# Bayesian shrinkage — pulls small-sample averages toward zero so
+# 30-sample flukes can't unlock edge lessons on their own. Combined
+# with the Wilson floor and the min-sample gate, this is the third
+# and strongest early-noise guard.
+SHRINKAGE_CONSTANT = 100.0
+SHRUNK_EV_FLOOR_BPS = 5.0
+
+
+def _shrunk_ev_bps(avg_bps: float, samples: int) -> float:
+    """Bayesian shrinkage of `avg_bps` toward zero.
+
+        shrunk = avg * n / (n + k)
+
+    where `k = SHRINKAGE_CONSTANT`. Zero samples returns 0.0.
+    """
+    if samples <= 0:
+        return 0.0
+    return float(avg_bps) * samples / (samples + SHRINKAGE_CONSTANT)
 
 
 def _lesson_id(bucket_id: str, kind: str) -> str:
@@ -113,19 +146,25 @@ async def propose_lessons(db) -> dict:
 
         avg_bps = bucket.get("avg_5m_bps") or 0.0
         wilson = bucket.get("wilson_lower") or 0.0
+        shrunk_ev = _shrunk_ev_bps(avg_bps, samples)
 
         proposed_lesson = None
         proposed_kind = None
 
-        # Guardrail 2 + 3: edge lesson needs BOTH avg > 0 AND
-        # Wilson-lower ≥ 0.50. Wilson-lower is the "am I sure this
-        # isn't luck?" test.
-        if avg_bps > 0 and wilson >= WILSON_EDGE_FLOOR:
+        # Guardrails 2 + 3 + 4 (edge): raw average positive AND
+        # Wilson-lower clears 0.50 AND shrunk EV clears the floor.
+        # The shrinkage kill-switch is what stops a 30-sample fluke
+        # (+20 raw bps → +4.6 shrunk bps) from unlocking a lesson.
+        if (
+            avg_bps > 0
+            and wilson >= WILSON_EDGE_FLOOR
+            and shrunk_ev >= SHRUNK_EV_FLOOR_BPS
+        ):
             proposed_lesson = _edge_proposal(bucket)
             proposed_kind = "edge"
             counts["edge_lessons"] += 1
 
-        # Guardrail 4: bleed lesson needs a real negative avg — a
+        # Guardrail 5: bleed lesson needs a real negative avg — a
         # bucket at -3 bps/trade is noise; a bucket at -15 is a leak.
         elif avg_bps < BLEED_BPS_THRESHOLD:
             proposed_lesson = _bleed_proposal(bucket)
@@ -149,6 +188,7 @@ async def propose_lessons(db) -> dict:
                 "hit_rate": bucket.get("hit_rate"),
                 "wilson_lower": wilson,
                 "avg_5m_bps": avg_bps,
+                "shrunk_ev_bps": shrunk_ev,
                 "avg_15m_bps": bucket.get("avg_15m_bps"),
                 "avg_1h_bps": bucket.get("avg_1h_bps"),
             },

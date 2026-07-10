@@ -1,3 +1,86 @@
+## 2026-02-19 — Stage 2b: Fresh mark-price contract + Shrunk-EV floor + Bounded doctrine overlays
+
+### Scope
+Backend-only. Three landings across the learning stack:
+    (1) rewritten equity mark-price contract with an `is_stale` gate,
+    (2) Bayesian shrinkage guard on lesson proposals, and
+    (3) a standalone bounded-overlay engine that translates approved
+        lessons into ±20% sizing/threshold modifiers — NOT wired
+        into `auto_router` yet, per operator directive to review the
+        math before live wiring.
+
+### (1) Fresh mark-price contract — `shared/learning/outcome_resolver.py`
+- **New `MarkQuote` NamedTuple**: `(price, source, ts, is_stale)`. The
+  resolver ONLY writes an outcome bps when `price is not None AND
+  is_stale is False`. Stale quotes become diagnostic breadcrumbs.
+- **Equity fallback chain (fresh-first, stale-last)**:
+    1. Webull v2 `equity_snapshot` last-trade → `source="webull_last_trade"`, fresh
+    2. `shared_ohlcv_bars` latest close → `source="ohlcv_bars_intraday"` if bar age ≤ `BAR_FRESH_WINDOW_SEC` (default 30 min), else `source="ohlcv_bars_stale"`
+    3. Polygon `/v2/aggs/ticker/{t}/prev` → `source="polygon_prev_close"`, **ALWAYS** stale (Starter plan can't give real-time last-trade; kept as diagnostic-only tier)
+    4. None
+- **Resolver stamps** `mark_price / mark_price_source / mark_price_ts`
+  on every resolved horizon and `mark_price_stale_last_seen` on rows
+  where all we could see was a stale quote.
+- **New counter**: `skipped_stale_mark` alongside `skipped_missing_mark`.
+- **Backward compat**: `_fetch_mark_price` shim preserved — returns
+  the price when fresh, `None` when stale/missing. Existing tests
+  that monkeypatch it continue to work; internal callers moved to
+  `_fetch_mark_quote`.
+
+### (2) Shrunk-EV floor — `shared/learning/lesson_proposer.py`
+- **New constants**: `SHRINKAGE_CONSTANT = 100.0`, `SHRUNK_EV_FLOOR_BPS = 5.0`
+- **New helper**: `_shrunk_ev_bps(avg_bps, samples) = avg * n / (n + k)`
+- **Edge eligibility now requires all three**:
+    * `samples >= 30`
+    * `wilson_lower >= 0.50`
+    * `shrunk_ev_bps >= 5.0`   ← new guard
+- **Evidence stamp**: `shrunk_ev_bps` is now written into the
+  `evidence` block of every proposed lesson so Kernel review sees
+  the shrunk (not just raw) EV.
+- **Effect**: a 30-sample bucket averaging +20 bps shrinks to +4.6
+  bps → no lesson (was previously eligible under just Wilson+samples).
+
+### (3) Bounded doctrine-overlay engine — `shared/learning/doctrine_overlay.py` (NEW)
+- **Contract**: approved lessons DO NOT mutate doctrine constants;
+  they layer as bounded overlays.
+- **Two clean outputs**:
+    * `get_notional_multiplier(dims, *, db) -> float in [0.80, 1.20]` — centred on 1.0 so callers write `notional = base * multiplier`.
+    * `get_threshold_delta(dims, *, db) -> float in [-0.20, +0.20]` — signed delta so callers write `threshold = base + delta`.
+- **Hard clamp**: `MODIFIER_MIN=-0.20`, `MODIFIER_MAX=+0.20`.
+  Even a runaway explicit `modifier=0.50` on a lesson doc gets clamped.
+- **Exact bucket-dim match**: same hash used by `bucket_analyzer._bucket_key`;
+  partial or malformed dims fail closed to (1.0, 0.0).
+- **TTL cache**: 30-second in-process cache; approvals take effect
+  on the next auto-router tick without hammering Mongo.
+- **Read-only**: no broker access, no doctrine mutation. NOT wired
+  into `auto_router` — ships as a standalone module for operator
+  review of the math first.
+
+### Test coverage
+- **`tests/test_learning_equity_mark_price.py`**: 13 tests (up from
+  11). Adds staleness gating, Polygon prev-close-is-stale contract,
+  Polygon short-circuits with no API key, crypto Kraken fresh path.
+- **`tests/test_learning_stage2.py`**: 4 new tests for shrunk-EV
+  (zero-samples returns 0.0, small-sample fluke is caught by the
+  new guard, large-sample edge survives, evidence carries
+  `shrunk_ev_bps`).
+- **`tests/test_learning_doctrine_overlay.py` (NEW)**: 17 tests
+  covering constants, no-lesson defaults, proposed/rejected
+  invisibility, edge/bleed defaults, explicit modifier override,
+  ±0.20 clamp on both bounds, exact-dim match required, partial
+  dims fail closed, TTL cache holds across calls.
+- **Full learning suite green**: 81/81 across resolver, live_loop,
+  Stage 2, equity mark price, doctrine overlay, crypto sweep, and
+  Phase C canonical-identity regression.
+
+### Doctrine pins
+- Stale marks NEVER resolve horizons. The resolver refuses to attribute
+  P&L on a Polygon previous-day close during intraday hours.
+- Overlays NEVER exceed ±0.20 of base doctrine. A noisy lesson can
+  nudge sizing/thresholds but cannot rewrite them.
+- Overlay module ships un-wired. Operator reviews math first.
+
+
 ## 2026-02-19 — Stage 2 finisher: equity mark-price wire + Phase C canonical fix
 
 ### Scope

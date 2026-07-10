@@ -276,12 +276,17 @@ async def test_resolver_walks_all_three_horizons(monkeypatch):
         "features": {}, "doctrine": {},
     })
 
-    # Force the mark fetcher to return 61200 → +200 bps for a BUY.
+    # Force the mark fetcher to return a fresh 61200 quote → +200 bps for a BUY.
+    from shared.learning.outcome_resolver import MarkQuote
+
     async def _fake_mark(lane, symbol):
-        return 61200.0
+        return MarkQuote(
+            price=61200.0, source="kraken_ticker",
+            ts=datetime.now(timezone.utc).isoformat(), is_stale=False,
+        )
 
     monkeypatch.setattr(
-        "shared.learning.outcome_resolver._fetch_mark_price",
+        "shared.learning.outcome_resolver._fetch_mark_quote",
         _fake_mark,
     )
     counts = await resolve_pending_outcomes(db)
@@ -294,6 +299,54 @@ async def test_resolver_walks_all_three_horizons(monkeypatch):
     assert doc["outcome_15m_bps"] == pytest.approx(200.0)
     assert doc["outcome_1h_bps"] == pytest.approx(200.0)
     assert doc["win"] is True
+    # Stage 2 finisher: mark-price provenance must be stamped on the row.
+    assert doc["mark_price"] == pytest.approx(61200.0)
+    assert doc["mark_price_source"] == "kraken_ticker"
+    assert doc["mark_price_ts"]
+
+
+@pytest.mark.asyncio
+async def test_resolver_skips_stale_and_stamps_breadcrumb(monkeypatch):
+    """A stale mark (e.g. Polygon prev-close) MUST NOT resolve a
+    horizon — the resolver bumps `skipped_stale_mark` and stamps a
+    diagnostic breadcrumb (`mark_price_stale_last_seen`)."""
+    from shared.learning.outcome_resolver import MarkQuote
+
+    intent_id = f"{_TEST_PREFIX}resolve-stale"
+    old_ts = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    await db[LEARNING_EXPERIENCES].insert_one({
+        "intent_id": intent_id, "symbol": "MSFT", "lane": "equity",
+        "action": "BUY", "notional_usd": 5.0, "entry_price": 180.0,
+        "created_at": old_ts,
+        "outcome_5m_bps": None, "outcome_15m_bps": None,
+        "outcome_1h_bps": None, "win": None,
+        "terminal_state": "submitted",
+        "features": {}, "doctrine": {},
+    })
+
+    async def _stale_mark(lane, symbol):
+        return MarkQuote(
+            price=190.0, source="polygon_prev_close",
+            ts="2026-02-18T21:00:00+00:00", is_stale=True,
+        )
+
+    monkeypatch.setattr(
+        "shared.learning.outcome_resolver._fetch_mark_quote",
+        _stale_mark,
+    )
+    counts = await resolve_pending_outcomes(db)
+    assert counts["skipped_stale_mark"] >= 1
+    assert counts["resolved_5m"] == 0
+
+    doc = await db[LEARNING_EXPERIENCES].find_one({"intent_id": intent_id})
+    # No horizon resolved.
+    assert doc["outcome_5m_bps"] is None
+    assert doc["win"] is None
+    # Breadcrumb stamped for audit.
+    stale = doc.get("mark_price_stale_last_seen")
+    assert stale is not None
+    assert stale["source"] == "polygon_prev_close"
+    assert stale["price"] == pytest.approx(190.0)
 
 
 @pytest.mark.asyncio
@@ -317,7 +370,7 @@ async def test_resolver_skips_when_mark_price_missing(monkeypatch):
         return None  # simulate missing feed
 
     monkeypatch.setattr(
-        "shared.learning.outcome_resolver._fetch_mark_price",
+        "shared.learning.outcome_resolver._fetch_mark_quote",
         _fake_mark,
     )
     counts = await resolve_pending_outcomes(db)

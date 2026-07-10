@@ -277,3 +277,80 @@ async def test_approved_lesson_survives_re_proposal():
         "Re-proposal reset an approved lesson back to 'proposed' — "
         "$setOnInsert protection violated"
     )
+
+
+# ─── Shrunk-EV floor (2026-02-19 operator directive) ───────────
+
+def test_shrunk_ev_zero_samples_returns_zero():
+    from shared.learning.lesson_proposer import _shrunk_ev_bps
+    assert _shrunk_ev_bps(100.0, 0) == 0.0
+
+
+def test_shrunk_ev_pulls_small_samples_toward_zero():
+    """30 samples averaging +20 bps → shrunk = 20 * 30/130 ≈ 4.6.
+    Below the 5.0 floor by design — small-sample flukes must die."""
+    from shared.learning.lesson_proposer import (
+        _shrunk_ev_bps, SHRINKAGE_CONSTANT,
+    )
+    assert SHRINKAGE_CONSTANT == 100.0
+    shrunk = _shrunk_ev_bps(20.0, 30)
+    assert shrunk == pytest.approx(20.0 * 30 / 130.0, rel=1e-6)
+    assert shrunk < 5.0
+
+
+def test_shrunk_ev_large_samples_survive():
+    """300 samples averaging +20 bps → shrunk = 20 * 300/400 = 15
+    bps. Well above the 5.0 floor — real edge is preserved."""
+    from shared.learning.lesson_proposer import _shrunk_ev_bps
+    shrunk = _shrunk_ev_bps(20.0, 300)
+    assert shrunk == pytest.approx(15.0)
+
+
+@pytest.mark.asyncio
+async def test_edge_bucket_with_small_shrunk_ev_yields_no_lesson():
+    """30 samples, all wins, avg +20 bps → Wilson clears (30/30 →
+    ~0.88), sample-size clears (30 >= 30), BUT shrunk EV = 20*30/130
+    = 4.6 < 5.0 floor. NO lesson must be emitted — the shrinkage
+    guard is what kills the small-sample fluke."""
+    for i in range(30):
+        await _seed_experience(
+            f"{_TEST_PREFIX}shrink-{i}", win=True, bps_5m=20.0,
+        )
+    await rebuild_buckets(db)
+    l_counts = await propose_lessons(db)
+
+    # NOT recorded as edge, must be caught by the noise skip.
+    assert l_counts.get("edge_lessons", 0) == 0
+    assert l_counts["skipped_noise"] >= 1
+    lesson = await db[LEARNING_LESSONS].find_one(
+        {"bucket_label": {"$regex": "stage2test"}, "kind": "edge"},
+    )
+    assert lesson is None, (
+        "Shrunk-EV guard failed — small-sample fluke emitted an edge lesson"
+    )
+
+
+@pytest.mark.asyncio
+async def test_edge_lesson_evidence_includes_shrunk_ev_bps():
+    """A lesson that DOES land must stamp `shrunk_ev_bps` in evidence
+    so Kernel review sees the shrunk (not just raw) number."""
+    # 35 samples, avg 250 bps → shrunk = 250*35/135 ≈ 64.8 bps.
+    for i in range(28):
+        await _seed_experience(
+            f"{_TEST_PREFIX}ev-w-{i}", win=True, bps_5m=250.0,
+        )
+    for i in range(7):
+        await _seed_experience(
+            f"{_TEST_PREFIX}ev-l-{i}", win=False, bps_5m=250.0,
+        )
+    await rebuild_buckets(db)
+    await propose_lessons(db)
+    lesson = await db[LEARNING_LESSONS].find_one(
+        {"bucket_label": {"$regex": "stage2test"}, "kind": "edge"},
+    )
+    assert lesson is not None
+    ev = lesson["evidence"]
+    assert "shrunk_ev_bps" in ev
+    assert ev["shrunk_ev_bps"] >= 5.0
+    # Sanity: shrunk should be LESS than raw avg (shrinkage direction).
+    assert ev["shrunk_ev_bps"] < ev["avg_5m_bps"]
