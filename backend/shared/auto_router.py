@@ -103,20 +103,6 @@ AUTO_ROUTER_EXPIRE_MIN = int(
 )
 AUTO_ROUTER_EMAIL = "auto-router@mission-control"
 
-_TASK: Optional[asyncio.Task] = None
-
-# ── Loop heartbeat / introspection (2026-06-09) ──────────────────
-# The auto-router is the single most operationally-critical loop in
-# MC — when it's silent the entire fleet falls back to dry-runs only.
-# These module-level counters let `/api/admin/auto-router/status`
-# surface the task's liveness without restarting the pod.
-_TICK_COUNT: int = 0
-_LAST_TICK_TS: Optional[str] = None
-_LAST_TICK_RESULTS: int = 0
-_LAST_TICK_EXECUTED: int = 0
-_LAST_TICK_ERROR: Optional[str] = None
-_STARTED_AT: Optional[str] = None
-
 # ── Master-switch preflight cache (2026-02-19) ──────────────────
 # The operator's arm gate (`trading_controls.enabled` in Mongo) is
 # now consulted before every tick AND every manual route. Prior to
@@ -1032,225 +1018,26 @@ from shared.auto_router_reconciliation import (  # noqa: E402
 )
 
 
-async def _tick() -> list[dict]:
-    """One scan pass. Picks up at most AUTO_ROUTER_MAX_PER_TICK unexecuted
-    intents and routes them through Seat → Risk → Broker.
-
-    2026-02-27 architectural reduction: the legacy "seat-mismatch
-    sweep" and `seats_with_execute(lane)` indirection are gone.
-    `Seat.decide(intent)` is the single eligibility check; each
-    intent's lane/brain combo is evaluated inline by `_route_one`.
-
-    Stale intents (older than AUTO_ROUTER_LOOKBACK_MIN, default 60m)
-    are NOT picked up by the routing sample — that's the operator-
-    curated history boundary. But we DO run `_sweep_expired_unrouted`
-    each tick to stamp anything past `AUTO_ROUTER_EXPIRE_MIN` (default
-    120m) so aged-out intents remain visible in the funnel as
-    `expired_unrouted` rather than silently vanishing.
-
-    2026-02-19: MASTER SWITCH PREFLIGHT. The operator's arm gate
-    (`trading_controls.enabled` in Mongo, written by
-    `POST /api/admin/trading/toggle` and `/arm`) now short-circuits
-    the tick. Prior to this, `mc_switch` was UI-only — the loop
-    read `AUTO_ROUTER_ENABLED` env at boot and never consulted the
-    runtime doc, so the master switch was a placebo. That's
-    fixed here.
-
-    When disarmed we STILL run the reconcile sweep — an in-flight
-    submitted order must not be stranded just because the operator
-    flipped the switch mid-flight.
-    """
-    # Sweep first — cheap update_many, and it keeps the funnel honest
-    # even in ticks where the sample query returns nothing.
-    await _sweep_expired_unrouted()
-    # Reconcile submitted broker orders (2026-07-06). Independently
-    # timeout-guarded; a broker outage cannot block routing.
-    try:
-        await asyncio.wait_for(_sweep_submitted_broker_orders(), timeout=15.0)
-    except asyncio.TimeoutError:
-        logger.warning("reconcile sweep exceeded 15s timeout")
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("reconcile sweep raised unexpectedly: %s", exc)
-
-    # MASTER-SWITCH PREFLIGHT — read the Mongo arm doc. If disarmed,
-    # we still reconciled (above) but do NOT ingest new intents.
-    if not await _is_master_switch_armed():
-        return []
-
-    try:
-        lookback_min = int(os.environ.get("AUTO_ROUTER_LOOKBACK_MIN", "60"))
-    except (TypeError, ValueError):
-        lookback_min = 60
-    lookback_cutoff = (
-        datetime.now(timezone.utc) - timedelta(minutes=lookback_min)
-    ).isoformat()
-    q = {
-        "ingest_ts": {"$gte": lookback_cutoff},
-        "executed": {"$ne": True},
-        "action": {"$in": ["BUY", "SELL", "SHORT", "COVER"]},
-        "symbol": {"$ne": None},
-        # Honest queue: don't re-process intents already terminally
-        # stamped by an earlier tick (blocked, advisory_only, submitted,
-        # or aged-out via the expiration sweeper).
-        "gate_state": {"$nin": [
-            "blocked", "no_trade", "advisory_only", "submitted",
-            "expired_unrouted",
-        ]},
-    }
-    sample = await asyncio.wait_for(
-        (
-            db[SHARED_INTENTS]
-            .find(q, {"_id": 0})
-            .sort("ingest_ts", -1)
-            .max_time_ms(8000)
-            .to_list(AUTO_ROUTER_MAX_PER_TICK)
-        ),
-        timeout=12.0,
-    )
-    if not sample:
-        return []
-
-    results: list[dict] = []
-    for intent in sample:
-        try:
-            # 2026-06-30: route_one wrapped in its own bounded timeout
-            # so a slow broker call cannot block the entire tick. The
-            # tick exits in ≤30s no matter what.
-            r = await asyncio.wait_for(_route_one(intent), timeout=20.0)
-            results.append(r)
-            if r.get("verdict") == "executed":
-                logger.info(
-                    "auto-routed %s %s %s -> $%s",
-                    intent.get("stack"), intent.get("action"),
-                    intent.get("symbol"),
-                    r.get("final_notional") or r.get("notional_usd") or 0,
-                )
-        except asyncio.TimeoutError:
-            logger.error(
-                "auto-router _route_one timeout intent=%s symbol=%s action=%s",
-                intent.get("intent_id"), intent.get("symbol"), intent.get("action"),
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.exception(
-                "auto-router error on intent %s: %s",
-                intent.get("intent_id"), e,
-            )
-    return results
+# ─── Supervisor loop (extracted 2026-02-19) ───────────────────────
+# Moved `_tick`, `_loop`, `get_status`, `force_one_tick`,
+# `start_auto_router_if_enabled`, `stop_auto_router` and their
+# module state (`_TASK`, `_TICK_COUNT`, `_LAST_TICK_*`,
+# `_STARTED_AT`) to `shared/auto_router_supervisor.py`. The
+# supervisor calls back into THIS module (via attribute lookup on
+# `shared.auto_router`) for `_route_one`, `_is_master_switch_armed`,
+# and the reconciliation sweeps — that preserves the monkeypatch
+# contract for the test suite.
+#
+# Re-import here so external callers (routes, tests) can keep
+# using `from shared.auto_router import get_status, force_one_tick, ...`
+# without any changes.
+from shared.auto_router_supervisor import (  # noqa: E402
+    _loop,
+    _tick,
+    force_one_tick,
+    get_status,
+    start_auto_router_if_enabled,
+    stop_auto_router,
+)
 
 
-async def _loop() -> None:
-    global _STARTED_AT, _TICK_COUNT, _LAST_TICK_TS, _LAST_TICK_RESULTS, _LAST_TICK_EXECUTED, _LAST_TICK_ERROR
-    _STARTED_AT = _now_iso()
-    logger.info(
-        "auto-router started: interval=%ss notional=$%s max_per_tick=%s",
-        AUTO_ROUTER_INTERVAL_SEC, AUTO_ROUTER_NOTIONAL_USD, AUTO_ROUTER_MAX_PER_TICK,
-    )
-    while True:
-        try:
-            # 2026-06-30 prod-hang fix: bound the entire tick so a
-            # hung Mongo call cannot block the loop forever. Without
-            # this the tile reads `tick_count=0 · last_tick_ts=None
-            # · last_tick_error=None` indefinitely because the await
-            # never returns and the try/except never fires.
-            results = await asyncio.wait_for(_tick(), timeout=45.0)
-            _TICK_COUNT += 1
-            _LAST_TICK_TS = _now_iso()
-            _LAST_TICK_RESULTS = len(results) if results else 0
-            _LAST_TICK_EXECUTED = sum(
-                1 for r in (results or []) if r.get("verdict") == "executed"
-            )
-            _LAST_TICK_ERROR = None
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            _LAST_TICK_ERROR = f"{type(e).__name__}: {e}"
-            logger.exception("auto-router tick failed: %s", e)
-        await asyncio.sleep(AUTO_ROUTER_INTERVAL_SEC)
-
-
-def get_status() -> dict:
-    """Read-only snapshot of the auto-router task. Surfaced via
-    `GET /api/admin/auto-router/status` so the operator can answer
-    "is the loop actually running?" without restarting the pod or
-    grepping logs. Doctrine: this MUST be cheap and read-only —
-    never touch broker state from a diagnostic."""
-    task_done = bool(_TASK is None or _TASK.done())
-    task_alive = bool(_TASK is not None and not _TASK.done())
-    return {
-        "enabled_env": AUTO_ROUTER_ENABLED,
-        "task_alive": task_alive,
-        "task_done": task_done,
-        "task_exception": (
-            repr(_TASK.exception()) if (_TASK and _TASK.done() and not _TASK.cancelled())
-            else None
-        ) if _TASK and _TASK.done() else None,
-        "interval_sec": AUTO_ROUTER_INTERVAL_SEC,
-        "default_notional_usd": AUTO_ROUTER_NOTIONAL_USD,
-        "max_per_tick": AUTO_ROUTER_MAX_PER_TICK,
-        "started_at": _STARTED_AT,
-        "tick_count": _TICK_COUNT,
-        "last_tick_ts": _LAST_TICK_TS,
-        "last_tick_results": _LAST_TICK_RESULTS,
-        "last_tick_executed": _LAST_TICK_EXECUTED,
-        "last_tick_error": _LAST_TICK_ERROR,
-        "now": _now_iso(),
-        "pipeline": "unified",
-        "doctrine_note": (
-            "The auto-router is the ONLY loop that turns BUY/SELL "
-            "intents into broker calls. If `task_alive=false`, no "
-            "intent will ever execute autonomously — only manual "
-            "/api/execution/submit calls work. If `task_alive=true` "
-            "but `last_tick_ts` is stale (older than ~2× interval_sec), "
-            "the tick is stuck — pod restart will recover."
-        ),
-    }
-
-
-async def force_one_tick() -> dict:
-    """Run a single _tick() out of band. Useful when the operator
-    just unblocked a gate (lane toggle, ladder, seat rotation) and
-    wants the queue drained NOW instead of waiting up to `interval_sec`.
-    Safe to call concurrently with the scheduled loop — `_tick` is
-    re-entrant against shared state."""
-    global _TICK_COUNT, _LAST_TICK_TS, _LAST_TICK_RESULTS, _LAST_TICK_EXECUTED, _LAST_TICK_ERROR
-    try:
-        results = await _tick()
-        _TICK_COUNT += 1
-        _LAST_TICK_TS = _now_iso()
-        _LAST_TICK_RESULTS = len(results) if results else 0
-        _LAST_TICK_EXECUTED = sum(
-            1 for r in (results or []) if r.get("verdict") == "executed"
-        )
-        _LAST_TICK_ERROR = None
-        return {
-            "ok": True,
-            "ts": _LAST_TICK_TS,
-            "results_count": _LAST_TICK_RESULTS,
-            "executed_count": _LAST_TICK_EXECUTED,
-            "results": results or [],
-        }
-    except Exception as e:  # noqa: BLE001
-        _LAST_TICK_ERROR = f"{type(e).__name__}: {e}"
-        return {"ok": False, "error": _LAST_TICK_ERROR}
-
-
-def start_auto_router_if_enabled() -> None:
-    global _TASK
-    if not AUTO_ROUTER_ENABLED:
-        logger.info("auto-router disabled (AUTO_ROUTER_ENABLED=false)")
-        return
-    if _TASK and not _TASK.done():
-        return
-    loop = asyncio.get_event_loop()
-    _TASK = loop.create_task(_loop())
-
-
-async def stop_auto_router() -> None:
-    global _TASK
-    if _TASK and not _TASK.done():
-        _TASK.cancel()
-        try:
-            await _TASK
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
-            pass
-    _TASK = None
