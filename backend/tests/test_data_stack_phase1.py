@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+import time
 
 from db import db
 from namespaces import (
@@ -120,7 +121,15 @@ async def test_finnhub_candles_to_bars_shape():
 
 
 async def test_finnhub_fetch_candles_429_records_audit(monkeypatch):
-    """Provider 429 → one row in feeder_health_audit, returns None."""
+    """Provider 429 → one row in feeder_health_audit, returns None.
+
+    Rolling-cap resilience: the shared feeder_health_audit collection
+    has a 500-row-per-provider cap. If we counted rate_limit rows
+    globally, an oldest-row trim could delete a peer 429 row at the
+    same moment we insert ours, making the count delta look like 0.
+    Instead, assert that the exact row we just wrote is present via
+    a distinctive timestamp context marker.
+    """
     from shared.feeders import finnhub_equity
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -131,16 +140,26 @@ async def test_finnhub_fetch_candles_429_records_audit(monkeypatch):
         finnhub_equity, "_client",
         httpx.AsyncClient(transport=transport, base_url=finnhub_equity.FINNHUB_BASE_URL),
     )
-    before = await db[FEEDER_HEALTH_AUDIT].count_documents(
-        {"provider": "finnhub_equity", "error_type": "rate_limit"},
-    )
-    out = await finnhub_equity.fetch_candles("AAPL", "5", 0, 100, "fake-key")
-    assert out is None
-    after = await db[FEEDER_HEALTH_AUDIT].count_documents(
-        {"provider": "finnhub_equity", "error_type": "rate_limit"},
-    )
-    assert after == before + 1
-    await finnhub_equity._close_client()
+    # Use a distinctive synthetic symbol so we can locate exactly the
+    # row we just wrote regardless of rolling-cap churn on the
+    # shared audit collection.
+    probe_symbol = f"AUDIT_PROBE_{int(time.time() * 1000)}"
+    try:
+        out = await finnhub_equity.fetch_candles(probe_symbol, "5", 0, 100, "fake-key")
+        assert out is None
+
+        row = await db[FEEDER_HEALTH_AUDIT].find_one({
+            "provider": "finnhub_equity",
+            "error_type": "rate_limit",
+            "context.symbol": probe_symbol,
+        })
+        assert row is not None, (
+            f"expected a rate_limit audit row for probe symbol "
+            f"{probe_symbol}; got None"
+        )
+        assert row["status_code"] == 429
+    finally:
+        await finnhub_equity._close_client()
 
 
 async def test_finnhub_fetch_candles_happy_path(monkeypatch):

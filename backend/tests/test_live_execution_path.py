@@ -277,6 +277,15 @@ def _apply_patches(s, *, broker_result=None, broker_raises=None, floor_result=No
         "shared.executions": s["executions_mod"],
     }))
     stack.enter_context(patch.object(ar, "db", s["fake_db"]))
+    # Master-switch preflight (added 2026-02-19) gates `_route_one`
+    # on the `mc_switch` Mongo doc. In tests the doc doesn't exist,
+    # so the switch fails-closed (DISARMED). Force-arm here — these
+    # tests exercise the routing pipeline, not the switch itself
+    # (which has its own dedicated test file).
+    stack.enter_context(patch.object(
+        ar, "_is_master_switch_armed",
+        new=AsyncMock(return_value=True), create=True,
+    ))
     stack.enter_context(patch(
         "shared.broker_router.route_order", fake_route_order, create=True,
     ))

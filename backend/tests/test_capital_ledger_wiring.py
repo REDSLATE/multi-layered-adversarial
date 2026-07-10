@@ -122,6 +122,13 @@ async def test_live_micro_entry_reserves_capital_before_broker(monkeypatch):
     monkeypatch.setattr(seat, "decide", AsyncMock(return_value=_make_seat_ok()))
     monkeypatch.setattr(risk, "check", AsyncMock(return_value=_make_risk_ok(50.0)))
     monkeypatch.setattr(executions, "record", AsyncMock())
+    # Master-switch preflight (added 2026-02-19) fails-closed when
+    # the `mc_switch` Mongo doc is missing. Tests don't seed it, so
+    # force-arm the switch here so the ledger gate can be reached.
+    monkeypatch.setattr(
+        "shared.auto_router._is_master_switch_armed",
+        AsyncMock(return_value=True),
+    )
 
     # Ladder sizing → live_micro route (BUY is entry).
     monkeypatch.setattr(
@@ -179,6 +186,13 @@ async def test_observe_route_does_not_reserve(monkeypatch):
     monkeypatch.setattr(seat, "decide", AsyncMock(return_value=_make_seat_ok()))
     monkeypatch.setattr(risk, "check", AsyncMock(return_value=_make_risk_ok(50.0)))
     monkeypatch.setattr(executions, "record", AsyncMock())
+    # Master-switch preflight (added 2026-02-19) fails-closed when
+    # the `mc_switch` Mongo doc is missing. Tests don't seed it, so
+    # force-arm the switch here so the ledger gate can be reached.
+    monkeypatch.setattr(
+        "shared.auto_router._is_master_switch_armed",
+        AsyncMock(return_value=True),
+    )
     monkeypatch.setattr(
         "shared.sizing_gate.evaluate_sizing_with_ladder",
         AsyncMock(return_value=SimpleNamespace(
@@ -219,6 +233,13 @@ async def test_sell_action_does_not_reserve(monkeypatch):
     monkeypatch.setattr(seat, "decide", AsyncMock(return_value=_make_seat_ok()))
     monkeypatch.setattr(risk, "check", AsyncMock(return_value=_make_risk_ok(50.0)))
     monkeypatch.setattr(executions, "record", AsyncMock())
+    # Master-switch preflight (added 2026-02-19) fails-closed when
+    # the `mc_switch` Mongo doc is missing. Tests don't seed it, so
+    # force-arm the switch here so the ledger gate can be reached.
+    monkeypatch.setattr(
+        "shared.auto_router._is_master_switch_armed",
+        AsyncMock(return_value=True),
+    )
     monkeypatch.setattr(
         "shared.sizing_gate.evaluate_sizing_with_ladder",
         AsyncMock(return_value=SimpleNamespace(
@@ -266,6 +287,13 @@ async def test_cap_exceeded_blocks_before_broker(monkeypatch):
     monkeypatch.setattr(seat, "decide", AsyncMock(return_value=_make_seat_ok()))
     monkeypatch.setattr(risk, "check", AsyncMock(return_value=_make_risk_ok(50.0)))
     monkeypatch.setattr(executions, "record", AsyncMock())
+    # Master-switch preflight (added 2026-02-19) fails-closed when
+    # the `mc_switch` Mongo doc is missing. Tests don't seed it, so
+    # force-arm the switch here so the ledger gate can be reached.
+    monkeypatch.setattr(
+        "shared.auto_router._is_master_switch_armed",
+        AsyncMock(return_value=True),
+    )
     monkeypatch.setattr(
         "shared.sizing_gate.evaluate_sizing_with_ladder",
         AsyncMock(return_value=SimpleNamespace(

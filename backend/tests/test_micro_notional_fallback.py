@@ -139,6 +139,14 @@ def _wire_common_patches(monkeypatch, *, sizing_route="observe"):
     monkeypatch.setattr(seat, "decide", AsyncMock(return_value=_seat_fire()))
     monkeypatch.setattr(risk, "check", _risk_pass_through())
     monkeypatch.setattr(executions, "record", AsyncMock())
+    # Master-switch preflight (added 2026-02-19) gates `_route_one`
+    # on the `mc_switch` Mongo doc. In tests the doc doesn't exist,
+    # so the switch fails-closed (DISARMED). Force-arm here — these
+    # tests are focused on notional resolution, not the switch.
+    monkeypatch.setattr(
+        "shared.auto_router._is_master_switch_armed",
+        AsyncMock(return_value=True),
+    )
     monkeypatch.setattr(
         "shared.sizing_gate.evaluate_sizing_with_ladder",
         AsyncMock(return_value=SimpleNamespace(

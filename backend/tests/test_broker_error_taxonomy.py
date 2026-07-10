@@ -271,6 +271,8 @@ async def test_terminal_broker_error_stamps_intent_immediately(route_one_setup):
         "shared.executions": s["executions_mod"],
     }), \
          patch.object(ar, "db", s["fake_db"]), \
+         patch.object(ar, "_is_master_switch_armed",
+                      new=AsyncMock(return_value=True), create=True), \
          patch("shared.broker_router.route_order", broker_raises, create=True):
         r = await ar._route_one(_intent())
 
@@ -301,6 +303,8 @@ async def test_transient_broker_error_only_increments_retry_count(route_one_setu
         "shared.executions": s["executions_mod"],
     }), \
          patch.object(ar, "db", s["fake_db"]), \
+         patch.object(ar, "_is_master_switch_armed",
+                      new=AsyncMock(return_value=True), create=True), \
          patch("shared.broker_router.route_order", broker_raises, create=True):
         r = await ar._route_one(_intent(broker_retry_count=0))
 
@@ -334,6 +338,8 @@ async def test_transient_broker_error_terminates_at_retry_cap(route_one_setup):
         "shared.executions": s["executions_mod"],
     }), \
          patch.object(ar, "db", s["fake_db"]), \
+         patch.object(ar, "_is_master_switch_armed",
+                      new=AsyncMock(return_value=True), create=True), \
          patch.object(ar, "AUTO_ROUTER_MAX_BROKER_RETRIES", 5), \
          patch("shared.broker_router.route_order", broker_raises, create=True):
         r = await ar._route_one(_intent(broker_retry_count=4))
@@ -366,6 +372,8 @@ async def test_min_notional_terminates_immediately_not_after_retries(route_one_s
         "shared.executions": s["executions_mod"],
     }), \
          patch.object(ar, "db", s["fake_db"]), \
+         patch.object(ar, "_is_master_switch_armed",
+                      new=AsyncMock(return_value=True), create=True), \
          patch("shared.broker_router.route_order", broker_raises, create=True):
         r = await ar._route_one(_intent(broker_retry_count=0))
 

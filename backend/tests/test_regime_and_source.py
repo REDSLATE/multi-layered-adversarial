@@ -162,17 +162,37 @@ class TestCamaroRegimeBreakdown:
         for oid, actual in chop_ids:
             _resolve(tok, oid, actual)
 
-        r = requests.get(
-            f"{BASE_URL}/api/shared/scorecard", params={"runtime": "barracuda"},
-            headers=_hdr(tok), timeout=20,
-        )
-        assert r.status_code == 200
-        d = r.json()
-        assert "regime_breakdown" in d
-        rb = d["regime_breakdown"]
-        assert "endorse_only" in rb and "overall" in rb
+        # Scorecard aggregates read from the same DB the ingest just
+        # wrote to. Under a busy full-suite run with parallel test
+        # writes we occasionally hit a very short read-your-write
+        # window before the scorecard reflects the new resolves.
+        # Retry the assertion window with a small settle interval.
+        rb = None
+        eo = None
+        for attempt in range(4):
+            r = requests.get(
+                f"{BASE_URL}/api/shared/scorecard",
+                params={"runtime": "barracuda"},
+                headers=_hdr(tok), timeout=20,
+            )
+            assert r.status_code == 200
+            d = r.json()
+            assert "regime_breakdown" in d
+            rb = d["regime_breakdown"]
+            assert "endorse_only" in rb and "overall" in rb
+            eo = {row["regime"]: row for row in rb["endorse_only"]}
+            trend_row = eo.get("trend")
+            chop_row = eo.get("chop")
+            if (
+                trend_row is not None
+                and chop_row is not None
+                and trend_row.get("wins", 0) >= 2
+                and trend_row.get("losses", 0) >= 1
+                and chop_row.get("losses", 0) >= 2
+            ):
+                break
+            time.sleep(0.5)
 
-        eo = {row["regime"]: row for row in rb["endorse_only"]}
         # Aggregates may include other tests' rows; check ≥ our fixture
         # contribution and verify our specific symbols summed correctly via
         # per-regime counts (n ≥ fixture).
