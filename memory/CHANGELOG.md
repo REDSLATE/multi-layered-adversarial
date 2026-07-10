@@ -1,3 +1,72 @@
+## 2026-02-19 — Sweeper refinement: learning-capture classifier
+
+### Motivation
+The initial sweeper preserved ANY intent without a `learning_experiences`
+row. That was categorically wrong — the live-learning predicate only
+captures **real directional exposure** (BUY/SELL/SHORT/COVER that
+actually reached execution). HOLD, WATCH, no_trade, and blocked-
+pre-broker rows were never supposed to enter the learning tape. The
+old rule created permanent retention for exactly the rows the
+sweeper was designed to prune.
+
+### Fix — classifier
+New `learning_capture_required(intent) -> bool` in
+`shared/intent_sweeper.py`:
+
+    directional_actions = {BUY, SELL, SHORT, COVER}
+    reached_execution = (
+        broker_order_id is not None
+        or gate_state in {submitted, executed, broker_rejected}
+    )
+    return action in directional_actions and reached_execution
+
+The preserve-missing-learning rule now applies ONLY to intents where
+this classifier returns True. Everything else flows to archive.
+
+### Typed archive_reason
+The archive doc's `archive_reason` field is now categorized:
+- `legacy_non_learning_no_trade` — HOLD/WATCH/no_trade never reached broker
+- `directional_blocked_pre_broker` — BUY/SELL blocked upstream of broker
+  (kept for counterfactual/missed-trade analysis)
+- `stale_never_reached_broker` — generic fallback
+
+### Split counters
+Dry-run response now returns discriminated counts so operator can
+tell "broken learning pipeline" from "normal non-trade traffic":
+
+    matched                          — query-level candidates
+    learning_required                — classifier True
+    learning_not_applicable          — classifier False
+    preserved_active_reservation
+    preserved_missing_learning       — required AND missing
+    eligible_for_purge
+    archived / deleted_distilled / deleted_after_archive
+    archive_write_failures / delete_failures
+    archive_reason_breakdown         — per-category counts
+
+### Test coverage
+`tests/test_intent_sweeper.py` expanded to 23 tests (up from 18):
+- 6 new classifier tests locking HOLD/no_trade/directional-blocked-
+  pre-broker as `not required`, directional+reached and
+  broker_rejected as `required`, action-under-execution fallback
+- refined preserve tests to use no_trade action instead of blocked
+  BUY (so classifier semantics are exercised end-to-end)
+- new typed-archive-reason test
+- new counts-split test
+
+### Live smoke test (preview pod, same 100-batch as pre-refinement)
+- `matched=100` (unchanged)
+- `learning_required=0` (was implicitly 100 under old rule)
+- `learning_not_applicable=100`
+- `preserved_missing_learning=0` (was 100 under old rule)
+- `eligible_for_purge=100` (was 0 under old rule)
+- `archive_reason_breakdown`: 96 legacy_non_learning_no_trade, 4
+  directional_blocked_pre_broker
+- Zero deletions (dry_run=true respected)
+
+The refinement unfroze exactly the rows the operator flagged.
+
+
 ## 2026-02-19 — Stale-intent sweeper (archive-then-delete)
 
 ### Scope

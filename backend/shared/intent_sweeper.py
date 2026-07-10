@@ -23,15 +23,38 @@ Rule set:
        * `broker_order_id` is missing/null/empty
        * `gate_state != "submitted"`
 
-  3. NEVER PURGE — safety carve-outs enforced per-row after query:
+  3. LEARNING-CAPTURE-REQUIRED CLASSIFIER (operator directive
+     2026-02-19 refinement):
+
+         def learning_capture_required(row):
+             action = (row.execution.action or row.action or "").upper()
+             reached_execution = (
+                 row.broker_order_id is not None
+                 or row.gate_state in {"submitted", "executed",
+                                       "broker_rejected"}
+             )
+             return (
+                 action in {"BUY", "SELL", "SHORT", "COVER"}
+                 and reached_execution
+             )
+
+     The live-learning predicate only captures REAL directional
+     exposure — a HOLD, WATCH, or blocked-before-broker no_trade row
+     was never supposed to enter the learning tape. Requiring a
+     learning record on those was categorically wrong and created
+     permanent retention.
+
+  4. NEVER PURGE — safety carve-outs enforced per-row after query:
        * Anything with an active capital-ledger reservation
          (`capital_ledger.reservations[].status == "open"` for the
          intent_id). The reconciler could still release these.
-       * If learning is enabled AND capture is incomplete
-         (no `learning_experiences` row for the intent_id), the
-         learning loop may still be catching up — preserve.
+       * IF `learning_capture_required(row)` AND no
+         `learning_experiences` row exists yet — the learning loop
+         may still be catching up. Preserve. (Non-directional rows
+         and blocked-pre-broker rows do NOT trigger this preserve;
+         they were never expected to have a learning record.)
 
-  4. LEARNING-AWARE BIFURCATION — for each surviving candidate:
+  5. LEARNING-AWARE BIFURCATION — for each surviving candidate:
        * If a resolved `learning_experience` exists (at least one
          of `outcome_5m_bps`, `outcome_15m_bps`, `outcome_1h_bps`
          is set), the intent's information has been distilled into
@@ -40,15 +63,35 @@ Rule set:
        * Otherwise, ARCHIVE the row to `shared_intents_archive`
          with the doctrine-mandated stamps, verify the write
          actually landed, THEN delete from the hot collection.
-         Reason: `stale_never_reached_broker`.
+         `archive_reason` is typed by category:
+           - `legacy_non_learning_no_trade` — HOLD/WATCH/no_trade
+             row that never reached broker
+           - `directional_blocked_pre_broker` — BUY/SELL that was
+             blocked upstream of the broker (kept in archive for
+             counterfactual/missed-trade analysis)
+           - `stale_never_reached_broker` — generic fallback
+             (should be rare with the classifier in place)
 
-  5. BATCH BOUNDED — default 500, capped 1000. Prevents a single
+  6. BATCH BOUNDED — default 500, capped 1000. Prevents a single
      invocation from hammering Atlas with a massive delete.
 
-  6. DRY RUN — the admin endpoint defaults to `dry_run=true`.
+  7. DRY RUN — the admin endpoint defaults to `dry_run=true`.
      Prints what would be affected without touching Mongo.
 
-  7. SCHEDULER ON BY DEFAULT — 30-minute background loop runs
+     Counts split by category so operator can eyeball semantics:
+         matched                          — query-level candidates
+         learning_required                — classifier == True
+         learning_not_applicable          — classifier == False
+         preserved_missing_learning       — required + no row
+         preserved_active_reservation     — capital ledger open
+         eligible_for_purge               — actually processed
+         (of which:)
+           archived                       — archived+deleted
+           deleted_distilled              — outright delete
+           archive_write_failures
+           delete_failures
+
+  8. SCHEDULER ON BY DEFAULT — 30-minute background loop runs
      from boot. The endpoint remains available for manual
      dry-runs at any time. Flip `INTENT_SWEEPER_ENABLED=false`
      in `backend/.env` to pause the scheduler.
@@ -130,13 +173,74 @@ async def _has_resolved_experience(db, intent_id: str) -> bool:
 
 
 async def _learning_capture_exists(db, intent_id: str) -> bool:
-    """True iff ANY `learning_experiences` row exists for this
-    intent (resolved or not). Used to enforce the 'capture complete'
-    preservation rule when the learning loop is enabled."""
+    """True iff ANY `learning_experiences` row exists for this intent
+    (resolved or not). Used with `learning_capture_required()` to
+    enforce the 'still catching up' preservation rule."""
     doc = await db[LEARNING_EXPERIENCES].find_one(
         {"intent_id": intent_id}, {"_id": 1},
     )
     return doc is not None
+
+
+_DIRECTIONAL_ACTIONS = {"BUY", "SELL", "SHORT", "COVER"}
+_REACHED_EXECUTION_GATE_STATES = {
+    "submitted", "executed", "broker_rejected",
+}
+
+
+def learning_capture_required(intent: dict) -> bool:
+    """The live-learning predicate: only DIRECTIONAL intents that
+    actually REACHED execution are supposed to have a learning row.
+
+    2026-02-19 operator directive — the pre-refinement rule that
+    required a learning record for every stale intent was
+    categorically wrong for HOLD/WATCH/no_trade rows, which the
+    learning loop was never designed to capture.
+
+    Returns True iff:
+        action in {BUY, SELL, SHORT, COVER}
+        AND (broker_order_id set OR gate_state in
+             {submitted, executed, broker_rejected})
+    """
+    exec_block = intent.get("execution") or {}
+    action_raw = (
+        (exec_block.get("action") if isinstance(exec_block, dict) else None)
+        or intent.get("action")
+        or ""
+    )
+    action = str(action_raw).upper()
+    if action not in _DIRECTIONAL_ACTIONS:
+        return False
+    reached = bool(intent.get("broker_order_id")) or (
+        intent.get("gate_state") in _REACHED_EXECUTION_GATE_STATES
+    )
+    return reached
+
+
+def _classify_archive_reason(intent: dict) -> str:
+    """Category label for the archive row's `archive_reason` field.
+
+    * `legacy_non_learning_no_trade` — HOLD/WATCH/no_trade row that
+      never reached broker (dominant category by count).
+    * `directional_blocked_pre_broker` — BUY/SELL/SHORT/COVER that
+      was blocked upstream of the broker. Kept for counterfactual /
+      missed-trade analysis.
+    * `stale_never_reached_broker` — generic fallback.
+    """
+    exec_block = intent.get("execution") or {}
+    action = str(
+        (exec_block.get("action") if isinstance(exec_block, dict) else None)
+        or intent.get("action") or ""
+    ).upper()
+    gate_state = str(intent.get("gate_state") or "").lower()
+
+    if action not in _DIRECTIONAL_ACTIONS or gate_state in {
+        "hold", "watch", "no_trade", "advisory_only",
+    }:
+        return "legacy_non_learning_no_trade"
+    if action in _DIRECTIONAL_ACTIONS:
+        return "directional_blocked_pre_broker"
+    return "stale_never_reached_broker"
 
 
 async def _has_active_capital_reservation(db, intent_id: str) -> bool:
@@ -226,18 +330,35 @@ async def sweep_stale_intents(
         q["intent_id"] = {"$regex": f"^{_test_intent_id_prefix}"}
 
     counts: dict[str, Any] = {
-        "scanned": 0,
+        # Query-level candidates that passed the age gate + never-
+        # reached-broker filter.
+        "matched": 0,
+        "scanned": 0,  # alias for matched (legacy)
+        # Classification breakdown (operator directive 2026-02-19).
+        "learning_required": 0,
+        "learning_not_applicable": 0,
+        # Preserve counters — rows we intentionally did NOT touch.
+        "preserved_active_reservation": 0,
+        "preserved_missing_learning": 0,
+        # Action counters — rows we processed.
+        "eligible_for_purge": 0,
         "archived": 0,
         "deleted_distilled": 0,
         "deleted_after_archive": 0,
+        # Failure counters.
         "archive_write_failures": 0,
         "delete_failures": 0,
-        "preserved_active_reservation": 0,
-        "preserved_learning_capture_incomplete": 0,
+        # Config echo.
         "dry_run": bool(dry_run),
         "min_age_hours": MIN_AGE_HOURS,
         "batch_limit": batch_limit,
         "cutoff_iso": cutoff_iso,
+        # Per-reason archive breakdown (would-archive under dry-run).
+        "archive_reason_breakdown": {
+            "legacy_non_learning_no_trade": 0,
+            "directional_blocked_pre_broker": 0,
+            "stale_never_reached_broker": 0,
+        },
         "samples": [],  # first few intent_ids for operator eyeballing
     }
 
@@ -257,6 +378,7 @@ async def sweep_stale_intents(
         return counts
 
     counts["scanned"] = len(rows)
+    counts["matched"] = len(rows)
 
     for row in rows:
         intent_id = row.get("intent_id") or ""
@@ -273,46 +395,70 @@ async def sweep_stale_intents(
                     "intent_id": intent_id,
                     "symbol": row.get("symbol"),
                     "lane": row.get("lane"),
+                    "action": row.get("action"),
                     "ingest_ts": row.get("ingest_ts"),
                     "gate_state": row.get("gate_state"),
                     "would_action": "preserve_active_reservation",
                 })
             continue
 
+        # Classify: does this row need a learning record?
+        needs_learning = learning_capture_required(row)
+        if needs_learning:
+            counts["learning_required"] += 1
+        else:
+            counts["learning_not_applicable"] += 1
+
         distilled = await _has_resolved_experience(db, intent_id)
 
-        # PRESERVE #2: learning capture incomplete (only when learning
-        # loop is enabled). If no experience row exists AT ALL, the
-        # learning loop may still be catching up. Preserve.
-        # Distilled rows already have an experience by definition, so
-        # this check only matters for the non-distilled path.
+        # PRESERVE #2: learning REQUIRED but not yet captured.
+        # ONLY applies to directional rows that reached execution.
+        # HOLD/WATCH/blocked-pre-broker rows are NEVER expected to
+        # have a learning record and must not be preserved on this
+        # rule. (This is the 2026-02-19 refinement — the earlier
+        # blanket rule created permanent retention for no_trade
+        # rows.)
         if (
             LEARNING_LOOP_ENABLED
+            and needs_learning
             and not distilled
             and not await _learning_capture_exists(db, intent_id)
         ):
-            counts["preserved_learning_capture_incomplete"] += 1
+            counts["preserved_missing_learning"] += 1
             if len(counts["samples"]) < 5:
                 counts["samples"].append({
                     "intent_id": intent_id,
                     "symbol": row.get("symbol"),
                     "lane": row.get("lane"),
+                    "action": row.get("action"),
                     "ingest_ts": row.get("ingest_ts"),
                     "gate_state": row.get("gate_state"),
-                    "would_action": "preserve_learning_capture_incomplete",
+                    "would_action": "preserve_missing_learning",
                 })
             continue
 
-        # Populate sample list for the first 5.
+        # Row is eligible for purge from here on.
+        counts["eligible_for_purge"] += 1
+        archive_reason = (
+            None if distilled  # distilled → no archive
+            else _classify_archive_reason(row)
+        )
+        if archive_reason and archive_reason in counts["archive_reason_breakdown"]:
+            counts["archive_reason_breakdown"][archive_reason] += 1
+
+        # Populate sample list for the first 5 (only for rows we
+        # will actually touch).
         if len(counts["samples"]) < 5:
             counts["samples"].append({
                 "intent_id": intent_id,
                 "symbol": row.get("symbol"),
                 "lane": row.get("lane"),
+                "action": row.get("action"),
                 "ingest_ts": row.get("ingest_ts"),
                 "gate_state": row.get("gate_state"),
                 "would_action": (
-                    "delete_distilled" if distilled else "archive_then_delete"
+                    "delete_distilled" if distilled
+                    else f"archive_then_delete:{archive_reason}"
                 ),
             })
 
@@ -349,7 +495,9 @@ async def sweep_stale_intents(
         archive_doc = {
             **row,
             "archived_at": _iso(_now()),
-            "archive_reason": "stale_never_reached_broker",
+            "archive_reason": (
+                archive_reason or "stale_never_reached_broker"
+            ),
             "original_gate_state": row.get("gate_state"),
             "archive_version": ARCHIVE_VERSION,
         }
@@ -407,17 +555,24 @@ async def sweep_stale_intents(
                 intent_id, exc,
             )
 
-    if counts["scanned"]:
+    if counts["matched"]:
         logger.info(
-            "intent_sweeper: dry_run=%s scanned=%d archived=%d "
-            "deleted_distilled=%d deleted_after_archive=%d "
-            "preserved_reservation=%d preserved_capture_incomplete=%d "
-            "archive_fails=%d delete_fails=%d",
-            counts["dry_run"], counts["scanned"], counts["archived"],
-            counts["deleted_distilled"], counts["deleted_after_archive"],
+            "intent_sweeper: dry_run=%s matched=%d "
+            "learning_req=%d learning_na=%d "
+            "preserved(reservation=%d missing_learning=%d) "
+            "eligible=%d archived=%d deleted_distilled=%d "
+            "deleted_after_archive=%d "
+            "archive_fails=%d delete_fails=%d "
+            "reasons=%s",
+            counts["dry_run"], counts["matched"],
+            counts["learning_required"], counts["learning_not_applicable"],
             counts["preserved_active_reservation"],
-            counts["preserved_learning_capture_incomplete"],
+            counts["preserved_missing_learning"],
+            counts["eligible_for_purge"],
+            counts["archived"], counts["deleted_distilled"],
+            counts["deleted_after_archive"],
             counts["archive_write_failures"], counts["delete_failures"],
+            counts["archive_reason_breakdown"],
         )
     return counts
 
