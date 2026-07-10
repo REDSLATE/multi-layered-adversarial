@@ -970,7 +970,7 @@ async def test_expired_unrouted_sweep_stamps_stale_intents():
     fake_db = MagicMock()
     fake_db.__getitem__ = MagicMock(return_value=FakeColl())
 
-    with patch.object(ar, "db", fake_db):
+    with patch("shared.auto_router_reconciliation.db", new=fake_db):
         stamped = await ar._sweep_expired_unrouted()
 
     assert stamped == 7
@@ -1032,7 +1032,7 @@ async def test_expired_unrouted_sweep_respects_expire_min_env(monkeypatch):
     fake_db.__getitem__ = MagicMock(return_value=FakeColl())
 
     monkeypatch.setenv("AUTO_ROUTER_EXPIRE_MIN", "30")
-    with patch.object(ar, "db", fake_db):
+    with patch("shared.auto_router_reconciliation.db", new=fake_db):
         await ar._sweep_expired_unrouted()
 
     assert update_calls[0]["update"]["$set"]["expire_reason"] == (
@@ -1069,7 +1069,7 @@ async def test_expired_unrouted_sweep_short_circuits_when_no_stale_intents():
     fake_db = MagicMock()
     fake_db.__getitem__ = MagicMock(return_value=FakeColl())
 
-    with patch.object(ar, "db", fake_db):
+    with patch("shared.auto_router_reconciliation.db", new=fake_db):
         stamped = await ar._sweep_expired_unrouted()
 
     assert stamped == 0
@@ -1360,10 +1360,17 @@ class _ReconcileFake:
 
 def _patch_reconcile(fake):
     """Context manager that patches the 4 seams the sweep uses:
-    db, get_webull_adapter, classify (leave real), and executions."""
+    db, get_webull_adapter, classify (leave real), and executions.
+
+    Reconcile logic lives in `shared.auto_router_reconciliation`
+    (extracted 2026-02-19); the `db` binding to patch is that
+    module's, not the main `auto_router`'s."""
     from contextlib import ExitStack
     stack = ExitStack()
-    stack.enter_context(patch("shared.auto_router.db", new=fake.build_db_mock()))
+    stack.enter_context(patch(
+        "shared.auto_router_reconciliation.db",
+        new=fake.build_db_mock(),
+    ))
     stack.enter_context(patch(
         "shared.broker_router.get_webull_adapter",
         new=AsyncMock(return_value=fake.adapter),
@@ -1374,11 +1381,14 @@ def _patch_reconcile(fake):
 @pytest.fixture(autouse=True)
 def _reset_reconcile_rate_limit():
     """Every reconcile test starts with a clean rate-limit gate — a
-    previous test's sweep run must not suppress the next test's sweep."""
-    from shared import auto_router as ar
-    ar._LAST_RECONCILE_SWEEP_TS = None
+    previous test's sweep run must not suppress the next test's sweep.
+
+    The `_LAST_RECONCILE_SWEEP_TS` module state lives in
+    `shared.auto_router_reconciliation` (extracted 2026-02-19)."""
+    from shared import auto_router_reconciliation as ar_recon
+    ar_recon._LAST_RECONCILE_SWEEP_TS = None
     yield
-    ar._LAST_RECONCILE_SWEEP_TS = None
+    ar_recon._LAST_RECONCILE_SWEEP_TS = None
 
 
 @pytest.mark.asyncio

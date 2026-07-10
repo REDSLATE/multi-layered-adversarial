@@ -33,6 +33,11 @@ sys.path.insert(0, "/app/backend")
 from db import db  # noqa: E402
 from namespaces import SHARED_INTENTS  # noqa: E402
 from shared import auto_router as ar  # noqa: E402
+# Reconciliation state + tunables live in the extracted module
+# `shared.auto_router_reconciliation` since 2026-02-19. Tests that
+# poke `RECONCILE_BATCH_CAP` / `_LAST_RECONCILE_SWEEP_TS` must
+# patch the extracted module, not the main auto_router.
+from shared import auto_router_reconciliation as ar_recon  # noqa: E402
 
 
 _TEST_PREFIX = "sweep-crypto-test-"
@@ -47,8 +52,8 @@ async def _cleanup(monkeypatch):
     stuck production intents in the shared `test_database`. Without
     this, the sweep hits the cap on real prod rows first and skips
     the row we just inserted."""
-    monkeypatch.setattr(ar, "RECONCILE_BATCH_CAP", 500)
-    ar._LAST_RECONCILE_SWEEP_TS = None
+    monkeypatch.setattr(ar_recon, "RECONCILE_BATCH_CAP", 500)
+    ar_recon._LAST_RECONCILE_SWEEP_TS = None
     await db[SHARED_INTENTS].delete_many(
         {"intent_id": {"$regex": f"^{_TEST_PREFIX}"}},
     )
@@ -56,7 +61,7 @@ async def _cleanup(monkeypatch):
     await db[SHARED_INTENTS].delete_many(
         {"intent_id": {"$regex": f"^{_TEST_PREFIX}"}},
     )
-    ar._LAST_RECONCILE_SWEEP_TS = None
+    ar_recon._LAST_RECONCILE_SWEEP_TS = None
 
 
 def _stale_ts(minutes: int = 5) -> str:
@@ -372,7 +377,7 @@ async def test_sweep_learning_resolver_skipped_when_rate_limited(monkeypatch):
     """The rate-limit gate short-circuits the ENTIRE sweep body,
     including the learning-resolver piggyback. Otherwise a back-to-
     back caller could still hammer the resolver every millisecond."""
-    ar._LAST_RECONCILE_SWEEP_TS = datetime.now(timezone.utc)
+    ar_recon._LAST_RECONCILE_SWEEP_TS = datetime.now(timezone.utc)
     called = {"n": 0}
 
     async def _fake_resolver(_db):

@@ -1,3 +1,68 @@
+## 2026-02-19 — Kernel Review gate-tuning queue UI + auto_router refactor (P3)
+
+### Kernel Review — Gate Tuning queue section (P2 UI complete)
+`KernelReview.jsx` rewritten as a queue-parameterized page. Top-
+level queue switcher `[Sizing Lessons | Gate Tuning]` shares the
+state tabs, guardrail card, analyze/refresh controls and card
+list. Each queue defines its own endpoint map + kind meta +
+guardrail copy + evidence renderer.
+
+- **New**: queue switcher with `data-testid="queue-tab-lessons"`
+  and `data-testid="queue-tab-tuning"`.
+- **New**: `TuningEvidence` component — samples, missed-win %,
+  wilson lower (missed-win OR correct-block depending on kind),
+  shrunk avg, missed wins / correct blocks / undetermined, avg
+  return.
+- **New**: `relax_gate` and `preserve_gate` kind meta with
+  distinct colors (green/red) and semantics text.
+- **New**: dynamic guardrail card per queue (Wilson ≥ 0.50 for
+  lessons, Wilson ≥ 0.60 for tuning; ±20% doctrine overlay band).
+- **New**: sort order per queue — relax first / edge first, then
+  by |shrunk avg or shrunk EV|.
+- Analyze button label swaps: "Run analyzer" for lessons,
+  "Run tuner" for tuning. Success toast surfaces the appropriate
+  counts (edge/bleed vs relax/preserve).
+- All `data-testid`s scoped by `${queue.key}-` prefix
+  (e.g. `tuning-approve-${id}`, `lessons-samples-${id}`).
+- Smoke-tested in preview: both queue tabs load, guardrail card
+  updates, state tabs re-count for the active queue, empty state
+  renders correctly.
+
+### auto_router.py refactor (P3 first pass)
+`shared/auto_router.py` shrunk 1761 → 1256 lines (**-505 lines, -29%**)
+by extracting reconciliation & expiration sweeps to a sibling
+module.
+
+- **New file**: `shared/auto_router_reconciliation.py` (567 lines)
+  — home for:
+    - `_sweep_expired_unrouted()` — stamp aged-out unrouted intents
+    - `_sweep_submitted_broker_orders()` — Webull broker reconcile
+    - `_finish_sweep(counts)` — piggyback learning + counterfactual
+      resolvers
+    - `_minutes_since_iso(iso, now)` — timestamp helper
+    - `RECONCILE_*` tunables + `_LAST_RECONCILE_SWEEP_TS` state
+- `auto_router.py` re-imports these names at module level for
+  backward compat — external callers and tests that reference
+  `shared.auto_router._sweep_expired_unrouted` etc. keep working
+  without changes.
+- **Test updates** (3 files):
+  - `tests/test_live_execution_path.py` — `_patch_reconcile` +
+    `_reset_reconcile_rate_limit` fixture now patch the extracted
+    module. `test_expired_unrouted_sweep_*` tests updated to patch
+    `shared.auto_router_reconciliation.db`.
+  - `tests/test_crypto_reconcile_sweep.py` — `RECONCILE_BATCH_CAP`
+    and `_LAST_RECONCILE_SWEEP_TS` mutations point at
+    `auto_router_reconciliation`.
+- No production behavior change. Circular imports avoided by
+  keeping the routing hot path (`_route_one`) in the main file
+  and only extracting the sweep functions that don't call back.
+- **Full suite: 3073 passed / 0 failed.**
+
+### Deferred to future P3 iterations
+- Extract `_tick`/`_loop`/`get_status`/`force_one_tick`/`start_auto_router_if_enabled`/`stop_auto_router` (~240 lines) to `auto_router_supervisor.py`. Slightly more delicate — `_tick` reads module state (`_TICK_COUNT`, `_LAST_TICK_TS`, etc.) that would need to move too.
+- Break `_route_one` (~800 lines) into named sub-helpers. Currently 11 inline sections share heavy local state; extraction requires an explicit "route context" object. Bigger risk, later pass.
+
+
 ## 2026-02-19 — Kernel Review Stage 3 UI + counterfactual upgrades + full-suite hardening
 
 ### Learning-loop Stage 3 (Kernel Review queue)
