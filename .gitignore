@@ -329,8 +329,9 @@ frontend/node_modules/.cache/default-development/64.pack
 frontend/node_modules/.cache/default-development/58.pack
 frontend/node_modules/.cache/default-development/28.pack
 frontend/node_modules/.cache/default-development/30.pack
-.env
-.env.*
-*.env
+# .env files intentionally NOT ignored — Emergent deployment requires
+# backend/.env and frontend/.env to be tracked so production values
+# can be auto-populated at deploy time. Secrets in these files are
+# rotated by the platform, not committed by hand.
 frontend/node_modules/.cache/default-development/50.pack
 frontend/node_modules/.cache/default-development/51.pack
