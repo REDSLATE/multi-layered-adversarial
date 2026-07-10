@@ -452,11 +452,45 @@ async def sweep_stale_intents(
         # learning artefact ("would this trade have worked?"). If
         # distillation fails (missing reference price, etc.) we
         # preserve the raw intent instead of losing the signal.
+        #
+        # Two-stage `purge_state="distilling"` protocol (2026-02-19
+        # upgrade): stamp the intent BEFORE calling distill so a
+        # concurrent sweeper can't race the same row through.
+        # Delete only after the distill returns success AND the
+        # stamp is still present — a mid-flight crash or exception
+        # leaves the raw intent intact for the next sweep to retry.
         will_distill = (
             not dry_run
             and archive_reason == "directional_blocked_pre_broker"
         )
         if will_distill:
+            distilled_ok = False
+            distill_stamped = False
+            try:
+                stamp_r = await db[SHARED_INTENTS].update_one(
+                    {"intent_id": intent_id,
+                     "purge_state": {"$in": [None, "eligible"]}},
+                    {"$set": {
+                        "purge_state": "distilling",
+                        "purge_state_ts": _iso(_now()),
+                    }},
+                )
+                distill_stamped = bool(stamp_r.modified_count)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "intent_sweeper: purge_state stamp failed "
+                    "intent_id=%s: %s",
+                    intent_id, exc,
+                )
+            if not distill_stamped:
+                # Either the row already carries a `purge_state`
+                # from a concurrent sweep, or the update raced. Skip
+                # for this pass; the row survives for the next one.
+                counts["preserved_missing_learning"] += 1
+                counts["eligible_for_purge"] -= 1
+                if archive_reason in counts["archive_reason_breakdown"]:
+                    counts["archive_reason_breakdown"][archive_reason] -= 1
+                continue
             try:
                 from shared.counterfactuals import (  # noqa: WPS433
                     distill_intent_to_signal,
@@ -470,6 +504,21 @@ async def sweep_stale_intents(
                 )
                 distilled_ok = False
             if not distilled_ok:
+                # Clear the distilling flag so the next sweep can
+                # retry this row cleanly.
+                try:
+                    await db[SHARED_INTENTS].update_one(
+                        {"intent_id": intent_id,
+                         "purge_state": "distilling"},
+                        {"$unset": {"purge_state": "",
+                                    "purge_state_ts": ""}},
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "intent_sweeper: purge_state clear failed "
+                        "intent_id=%s: %s",
+                        intent_id, exc,
+                    )
                 counts["preserved_missing_learning"] += 1
                 if len(counts["samples"]) < 5:
                     counts["samples"].append({
@@ -528,6 +577,28 @@ async def sweep_stale_intents(
                 counts["delete_failures"] += 1
                 logger.warning(
                     "intent_sweeper: distilled-delete failed intent_id=%s: %s",
+                    intent_id, exc,
+                )
+            continue
+
+        # Counterfactual-distilled path — the raw intent already
+        # carries `purge_state="distilling"` from the two-stage
+        # stamp. Delete only if the stamp is still ours; if a
+        # concurrent process cleared it, leave the row alone.
+        if will_distill:
+            try:
+                del_r = await db[SHARED_INTENTS].delete_one(
+                    {"intent_id": intent_id,
+                     "purge_state": "distilling"},
+                )
+                if del_r.deleted_count:
+                    counts["deleted_distilled"] += 1
+                else:
+                    counts["delete_failures"] += 1
+            except Exception as exc:  # noqa: BLE001
+                counts["delete_failures"] += 1
+                logger.warning(
+                    "intent_sweeper: counterfactual-delete failed intent_id=%s: %s",
                     intent_id, exc,
                 )
             continue

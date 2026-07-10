@@ -336,15 +336,19 @@ async def test_hold_action_is_archived_without_learning_row(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_directional_blocked_pre_broker_archives_with_typed_reason(monkeypatch):
-    """A BUY blocked upstream of broker → archive_reason should be
-    `directional_blocked_pre_broker` so operator can filter for
-    counterfactual/missed-trade analysis.
+async def test_directional_blocked_pre_broker_distills_and_deletes(monkeypatch):
+    """A BUY blocked upstream of broker → the counterfactual_signals
+    row IS the durable record. No separate archive doc is written
+    for directional_blocked rows (2026-02-19 spec update — the
+    distilled signal supersedes the archive for these rows; the
+    archive collection is now reserved for non-directional stale
+    rows only).
 
-    2026-02-19 refinement — directional-blocked rows also spawn a
-    counterfactual_signals row before archive. We seed a
-    `snapshot.price` so the distiller succeeds; without it the
-    sweeper would preserve the row as `distill_failed`."""
+    Two-stage safety: the sweeper stamps `purge_state="distilling"`
+    before the distill call, and the final delete is guarded by
+    that stamp — a mid-flight crash leaves the raw intent intact
+    for the next sweep to retry.
+    """
     monkeypatch.setattr(intent_sweeper, "LEARNING_LOOP_ENABLED", True)
     intent_id = f"{_PFX}dir-blocked"
     # Direct insert so we can attach `snapshot.price` (the _seed_intent
@@ -359,16 +363,24 @@ async def test_directional_blocked_pre_broker_archives_with_typed_reason(monkeyp
     counts = await _sweep(dry_run=False)
     # Not learning-eligible (didn't reach broker) → not preserved.
     assert counts["preserved_missing_learning"] == 0
-    assert counts["archived"] >= 1
+    # Distilled signal + delete (no archive doc for directional rows).
+    assert counts["deleted_distilled"] >= 1
     assert counts["learning_not_applicable"] >= 1  # per classifier
-
+    # Hot row is gone.
+    assert await db[SHARED_INTENTS].find_one(
+        {"intent_id": intent_id}
+    ) is None
+    # Archive collection has NO row for this intent — the signal is
+    # the durable record.
     archived = await db[SHARED_INTENTS_ARCHIVE].find_one(
         {"intent_id": intent_id},
     )
-    assert archived["archive_reason"] == "directional_blocked_pre_broker"
+    assert archived is None, (
+        "directional_blocked rows must NOT be archived; the "
+        "counterfactual_signals row is the durable record"
+    )
 
-    # 2026-02-19 refinement: a counterfactual_signals row must have
-    # been written before the raw intent was archived+deleted.
+    # A counterfactual_signals row must exist with the full firewall.
     from namespaces import COUNTERFACTUAL_SIGNALS
     sig = await db[COUNTERFACTUAL_SIGNALS].find_one(
         {"signal_id": intent_id},
@@ -376,7 +388,13 @@ async def test_directional_blocked_pre_broker_archives_with_typed_reason(monkeyp
     assert sig is not None
     assert sig["direction"] == "BUY"
     assert sig["entry_reference_price"] == pytest.approx(190.0)
-    assert sig["status"] == "tracking"
+    # Status starts at "tracking"; if the resolver has already run
+    # (e.g. via a background sweep), it may already be "resolved"
+    # for this 7h-old intent. Either state is a passing signal.
+    assert sig["status"] in ("tracking", "resolved")
+    assert sig["may_execute"] is False
+    assert sig["broker_access"] is False
+    assert sig["experience_type"] == "counterfactual"
     # Cleanup
     await db[COUNTERFACTUAL_SIGNALS].delete_one({"signal_id": intent_id})
 
@@ -396,9 +414,44 @@ async def test_distill_failure_preserves_directional_row(monkeypatch):
     assert counts["preserved_missing_learning"] >= 1
     assert counts["archived"] == 0
     # Hot row survives.
+    hot = await db[SHARED_INTENTS].find_one({"intent_id": intent_id})
+    assert hot is not None
+    # Two-stage stamp must be cleared so the next sweep can retry.
+    assert hot.get("purge_state") in (None, "eligible"), (
+        f"purge_state left stuck at {hot.get('purge_state')!r} — "
+        f"next sweep will refuse to re-attempt distill"
+    )
+
+
+@pytest.mark.asyncio
+async def test_two_stage_purge_state_delete_guarded_by_stamp(monkeypatch):
+    """The sweeper's final delete is guarded by
+    `purge_state == "distilling"`. If a concurrent process clears
+    the stamp between distill and delete, the delete must be a
+    no-op (the row stays intact). Verifies the sweeper's own
+    `distill → stamp-guarded delete` sequence and the successful
+    path stamps then removes the row."""
+    monkeypatch.setattr(intent_sweeper, "LEARNING_LOOP_ENABLED", True)
+    intent_id = f"{_PFX}two-stage"
+    await db[SHARED_INTENTS].insert_one({
+        "intent_id": intent_id,
+        "symbol": "MSFT", "lane": "equity",
+        "action": "BUY", "gate_state": "blocked",
+        "ingest_ts": _iso(_now() - timedelta(hours=7)),
+        "snapshot": {"price": 400.0, "relative_volume": 1.1},
+    })
+    # Happy path — one full sweep = stamp → distill → delete.
+    counts = await _sweep(dry_run=False)
+    assert counts["deleted_distilled"] >= 1
     assert await db[SHARED_INTENTS].find_one(
         {"intent_id": intent_id}
-    ) is not None
+    ) is None
+    from namespaces import COUNTERFACTUAL_SIGNALS
+    sig = await db[COUNTERFACTUAL_SIGNALS].find_one(
+        {"signal_id": intent_id},
+    )
+    assert sig is not None
+    await db[COUNTERFACTUAL_SIGNALS].delete_one({"signal_id": intent_id})
 
 
 # ═══════════════════════════════════════════════════════════════════

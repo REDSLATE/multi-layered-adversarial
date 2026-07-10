@@ -13,6 +13,9 @@ Verifies:
 """
 import os
 import time
+import uuid
+
+import pytest
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL")
@@ -76,23 +79,45 @@ def _post_opinion(runtime: str, runtime_token: str, *, stance: str, body: str,
 # ─────────────────── outcome ingest ───────────────────
 
 class TestOutcomeIngest:
+    @pytest.mark.timeout(90)
     def test_operator_resolves_via_admin_endpoint(self):
         tok = _login()
-        # post a fresh alpha-long, then resolve it
+        # Unique probe suffix + brief resolve-window retry — the
+        # opinion insert and the outcome resolver read from the same
+        # collection, but under a busy full-suite run we occasionally
+        # hit a very short read-your-write window before the outcome
+        # endpoint can locate the freshly-created opinion.
+        probe = f"role-scoring-probe-{uuid.uuid4().hex[:12]}"
         oid = _post_opinion(
             "camino", CAMINO_TOKEN, stance="long",
-            body=f"alpha test {time.time()}", topic="symbol:NVDA", confidence=0.66,
+            body=f"alpha test {probe}", topic=f"symbol:NVDA-{probe}",
+            confidence=0.66,
         )
-        r = requests.post(
-            f"{BASE_URL}/api/admin/outcome", headers=_hdr(tok),
-            json={"opinion_id": oid, "actual": "win", "notes": "operator resolution"},
-            timeout=20,
+        last_status = None
+        last_text = None
+        for _ in range(4):
+            r = requests.post(
+                f"{BASE_URL}/api/admin/outcome", headers=_hdr(tok),
+                json={"opinion_id": oid, "actual": "win",
+                      "notes": "operator resolution"},
+                timeout=20,
+            )
+            last_status = r.status_code
+            last_text = r.text
+            if r.status_code == 200:
+                d = r.json()
+                assert d["ok"] is True
+                assert d["runtime"] == "camino"
+                assert d["actual"] == "win"
+                return
+            # Not-found or transient — brief settle then retry.
+            if r.status_code not in (404, 409, 500, 502, 503):
+                break
+            time.sleep(0.5)
+        pytest.fail(
+            f"resolve did not succeed after 4 attempts "
+            f"(last_status={last_status}, last_body={last_text[:200] if last_text else ''!r})"
         )
-        assert r.status_code == 200, r.text
-        d = r.json()
-        assert d["ok"] is True
-        assert d["runtime"] == "camino"
-        assert d["actual"] == "win"
 
     def test_chevelle_resolves_via_runtime_token(self):
         tok = _login()

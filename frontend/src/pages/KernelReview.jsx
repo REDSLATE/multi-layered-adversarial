@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
   ArrowsClockwise, Check, X, TrendUp, TrendDown, Scales,
-  ShieldCheck, Prohibit, Sparkle, Pulse, Brain, GitFork, Shield,
+  ShieldCheck, Prohibit, Sparkle, Pulse, Brain,
 } from "@phosphor-icons/react";
 
 // ── Stage 3 UI — Kernel Review Queue ──────────────────────────────
@@ -15,70 +15,13 @@ import {
 // iteration) or REJECTS (idempotent — same bucket won't re-propose).
 //
 // Backend contract:
-//   Sizing lessons queue:
-//     GET  /api/admin/learning/lessons?state=proposed|approved|rejected|applied
-//     POST /api/admin/learning/lessons/{id}/approve
-//     POST /api/admin/learning/lessons/{id}/reject
-//     POST /api/admin/learning/analyze  (rebuild buckets → propose)
-//
-//   Gate-tuning queue:
-//     GET  /api/admin/counterfactuals/tuning-signals?state=...
-//     POST /api/admin/counterfactuals/tuning-signals/{id}/approve
-//     POST /api/admin/counterfactuals/tuning-signals/{id}/reject
-//     POST /api/admin/counterfactuals/tune?horizon=15m
+//   GET  /api/admin/learning/lessons?state=proposed|approved|rejected|applied
+//   POST /api/admin/learning/lessons/{id}/approve
+//   POST /api/admin/learning/lessons/{id}/reject
+//   POST /api/admin/learning/analyze  (rebuild buckets → propose)
 //
 // Doctrine: nothing self-applies. Approval is a human trust signal,
 // not an automated write to doctrine.
-
-const QUEUES = [
-  {
-    key: "lessons",
-    label: "Sizing Lessons",
-    icon: Sparkle,
-    color: "#F59E0B",
-    subtitle: "Approve or reject learning-loop lessons before they feed the next doctrine iteration.",
-    endpoints: {
-      list:    (state) => `/admin/learning/lessons?state=${state}&limit=200`,
-      approve: (id)    => `/admin/learning/lessons/${id}/approve`,
-      reject:  (id)    => `/admin/learning/lessons/${id}/reject`,
-      analyze: ()      => `/admin/learning/analyze`,
-    },
-    guardrail: (
-      <>
-        Lessons ONLY reach this queue when they clear:
-        <span className="text-rd-text"> ≥30 resolved samples</span>,
-        <span className="text-rd-text"> Wilson lower ≥ 0.50</span>, and
-        <span className="text-rd-text"> shrunk EV ≥ +5 bps</span> (edge)
-        or <span className="text-rd-text">avg 5m &lt; −10 bps</span> (bleed).
-        Approved lessons feed the doctrine overlay's notional multiplier band (±20%).
-      </>
-    ),
-  },
-  {
-    key: "tuning",
-    label: "Gate Tuning",
-    icon: GitFork,
-    color: "#3B82F6",
-    subtitle: "Approve or reject gate-tuning signals distilled from blocked-trade counterfactual outcomes.",
-    endpoints: {
-      list:    (state) => `/admin/counterfactuals/tuning-signals?state=${state}&limit=200`,
-      approve: (id)    => `/admin/counterfactuals/tuning-signals/${id}/approve`,
-      reject:  (id)    => `/admin/counterfactuals/tuning-signals/${id}/reject`,
-      analyze: ()      => `/admin/counterfactuals/tune?horizon=15m`,
-    },
-    guardrail: (
-      <>
-        Gate-tuning signals reach this queue when a
-        <span className="text-rd-text"> (blocked_reason, lane) </span>
-        group clears
-        <span className="text-rd-text"> ≥30 resolved signals</span>,
-        <span className="text-rd-text"> Wilson lower ≥ 0.60</span>, and
-        <span className="text-rd-text"> |shrunk avg| ≥ 5 bps</span>.
-        Approved signals feed the doctrine overlay's gate-threshold delta (±20%).
-      </>
-    ),
-  },
-];
 
 const STATES = [
   { key: "proposed",  label: "Proposed",  color: "#F59E0B", icon: Sparkle },
@@ -92,10 +35,6 @@ const KIND_META = {
            subtitle: "Bucket shows exploitable positive edge (raise exposure)" },
   bleed: { label: "BLEED", color: "#DC2626", icon: TrendDown,
            subtitle: "Bucket is bleeding — downshift or block" },
-  relax_gate: { label: "RELAX GATE", color: "#10B981", icon: TrendUp,
-                subtitle: "Blocked directions kept winning — gate is over-blocking real wins" },
-  preserve_gate: { label: "PRESERVE GATE", color: "#DC2626", icon: Shield,
-                   subtitle: "Blocked directions kept losing — gate is dodging real losses" },
 };
 
 function fmtBps(v) {

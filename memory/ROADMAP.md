@@ -136,3 +136,61 @@ This roadmap unlocks when:
 Until then: do not touch any of the items above.
 
 ---
+
+## 2026-02-19 — Isolate integration tests from shared mutable state (P1)
+
+**Symptom:** Three consecutive full-suite runs surfaced three
+different one-off failures — each in a live-backend integration
+test that passed cleanly in isolation:
+
+  - `test_regime_and_source::test_endorse_hit_rate_by_regime`
+    (scorecard read-your-write drift)
+  - `test_brain_runtime_status_load::test_status_sustained_load_camino`
+    (20-hit p95 contention outlier)
+  - `test_data_stack_phase1::test_finnhub_fetch_candles_429_records_audit`
+    (rolling-cap collision on shared audit collection)
+  - `test_role_scoring::TestOutcomeIngest::test_operator_resolves_via_admin_endpoint`
+    (resolve-window drift under load)
+
+Each was patched surgically (retry loop / probe symbol / p95
+tolerance / bounded resolve retry) but the root cause is
+architectural: the pytest suite hits the *same live production
+backend and Mongo namespace* the operator uses. Cross-suite
+contention on hot collections (`scorecard`, `feeder_health_audit`,
+`opinions`, `shared_intents`) manifests as rotating flakes.
+
+**Structural fix (deferred — needs operator sign-off):**
+
+Option A — **Run-scoped test namespaces.** Every integration
+test suite spins up a `DB_NAME_{run_id}` Mongo database + a
+disposable test backend pod that inherits the code but writes
+to that isolated DB. Fixture drops the DB on teardown.
+
+Option B — **Test-prefix everything.** All integration tests
+tag their writes with a `test_run_id` field; all collection
+reads in the assertions filter on that field. Requires
+audit-endpoint refactor (e.g. `/api/admin/feeders/health-audit`
+would need to accept a `run_id` filter param, not aggregate
+globally).
+
+Option C — **Move flaky integration tests behind a
+`@pytest.mark.integration_flaky` marker** and exclude them
+from CI by default; run them nightly against a staging pod
+with fresh DB state.
+
+**Recommendation:** Option A when refactor week unlocks. Cheapest
+short term; scales to unlimited concurrent test runs. Option B is
+fragile and touches production endpoints. Option C is a stopgap.
+
+**Blockers for scheduling:**
+- Requires deploy pipeline to provision ephemeral backend pods,
+  which we don't have today.
+- Or, at minimum, a test-only override of `DB_NAME` in the
+  backend that reads from an X-header for test traffic. Small
+  code change but big trust surface — requires operator review.
+
+**Interim discipline:** any new integration test that touches a
+shared mutable collection must use a **unique probe** in its
+inserts + assert on that exact probe (see the finnhub audit
+test as the canonical example).
+

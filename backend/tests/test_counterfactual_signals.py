@@ -180,6 +180,38 @@ async def test_distill_writes_full_signal_doc():
     assert doc["features"]["relative_volume"] == 1.12
     assert doc["features"]["market_regime"] == "bull"
     assert doc["outcomes"] == {}
+    # 2026-02-19 upgrade — belt-and-suspenders execution firewall.
+    assert doc["may_execute"] is False
+    assert doc["broker_access"] is False
+    # Bucket-analyzer dimension separating counterfactuals from
+    # executed learning experiences.
+    assert doc["experience_type"] == "counterfactual"
+
+
+@pytest.mark.asyncio
+async def test_distill_supports_short_and_cover():
+    """SHORT / COVER intents must qualify + get signed correctly."""
+    for action in ("SHORT", "COVER"):
+        intent_id = f"{_PFX}dir-{action.lower()}"
+        intent = {
+            "intent_id": intent_id,
+            "action": action,
+            "gate_state": "no_trade",
+            "symbol": "TSLA",
+            "lane": "equity",
+            "snapshot": {"price": 240.0},
+            "ingest_ts": _iso(_now()),
+        }
+        assert cf.should_create_counterfactual(intent) is True
+        ok = await cf.distill_intent_to_signal(intent, db)
+        assert ok is True
+        doc = await db[COUNTERFACTUAL_SIGNALS].find_one(
+            {"signal_id": intent_id},
+        )
+        assert doc is not None
+        assert doc["direction"] == action
+        assert doc["may_execute"] is False
+        assert doc["broker_access"] is False
 
 
 @pytest.mark.asyncio
