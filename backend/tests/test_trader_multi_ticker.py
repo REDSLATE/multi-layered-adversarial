@@ -85,19 +85,12 @@ def test_equity_tickers_empty_string_falls_back(monkeypatch):
 
 
 # ─── invariant: run_cycle iterates exactly what config exposes ─
-
-def test_run_cycle_symbol_universe_matches_config_helpers(monkeypatch):
-    """Regression guard: main.run_cycle picks its per-lane universe
-    from `crypto_pairs()`/`equity_tickers()`. If a future refactor
-    reintroduces the singular helpers, this test catches it."""
-    from trader import main
-    src = open(main.__file__).read()
-    assert "config.crypto_pairs()" in src, (
-        "run_cycle must call crypto_pairs() (plural)"
-    )
-    assert "config.equity_tickers()" in src, (
-        "run_cycle must call equity_tickers() (plural)"
-    )
+#
+# 2026-02-19: `trader/main.py` deleted (sidecar orchestration
+# excised). The `run_cycle` regression guard below is no longer
+# meaningful — MC's `shared/auto_router.py` is now the sole
+# authority and pulls its universe from `patterns_universe`, not
+# from `trader.config`. Test removed with the sidecar.
 
 
 if __name__ == "__main__":

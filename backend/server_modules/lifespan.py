@@ -330,23 +330,25 @@ async def lifespan(app: FastAPI):
             "POST /api/admin/auto-router/start to enable."
         )
 
-    # ── 2026-06-30 sidecar trader (Path 2) ────────────────────────
-    # When TRADER_ENABLED=true the trader becomes the authority for
-    # broker calls. MC's auto_router should be OFF when the trader
-    # is ON (otherwise both would race). We start the trader as a
-    # background asyncio task in this same process — same env, same
-    # Mongo, same lifecycle. The task auto-stops on shutdown.
+    # ── 2026-02-19 sidecar trader — DECOMMISSIONED ────────────────
+    # The standalone sidecar loop was demoted to shadow mode in
+    # iter-22 (TRADER_ENABLED=false) and formally deleted in iter-23.
+    # `/app/trader/` now hosts only the MC-support layer
+    # (webull_auth / spread / spread_stream / store / state /
+    # merge_rights / config) — no orchestration remains. MC's
+    # `shared/auto_router.py` is the sole broker authority.
+    #
+    # What we still initialise here is the MC-support surface the
+    # dashboard reads:
+    #   * trader.store  — SQLite truth tape (`/api/admin/trader/*`)
+    #   * trader.state  — hydrated in-memory state (dashboard reads)
+    #   * trader.spread — spread poller (dashboard tile)
+    #   * trader.spread_stream — Webull v2 live-quote stream
     import os as _os
     import sys as _sys
-    # `/app` is the trader package's parent; add it once.
     if "/app" not in _sys.path:
         _sys.path.insert(0, "/app")
 
-    # 2026-07-01 (Path 3, operator directive): initialize the local
-    # trader store UNCONDITIONALLY — even when TRADER_ENABLED=false —
-    # so MC's `/api/admin/trader/*` endpoints can serve the local
-    # SQLite truth tape without depending on Mongo. This is what
-    # keeps the operator's dashboard alive when Atlas is degraded.
     try:
         from trader import config as _trader_config  # noqa: WPS433
         from trader import store as _trader_store    # noqa: WPS433
@@ -357,56 +359,31 @@ async def lifespan(app: FastAPI):
         )
         _trader_state.hydrate_from_sqlite()
         logger.info(
-            "trader.store initialized (unconditional, MC dashboard reads)",
+            "trader.store initialized (MC dashboard support layer)",
         )
     except Exception as e:  # noqa: BLE001
         logger.error("trader.store init failed (non-fatal): %s", e)
 
-    # Kraken + Webull spread poller — non-authoritative telemetry.
-    # Runs unconditionally so the operator's dashboard shows live
-    # spreads even when TRADER_ENABLED=false. The trader's own
-    # main.py also starts a poller, so we guard against double-start
-    # via app.state.
+    # Spread poller — dashboard-only telemetry (no broker calls).
     try:
         import asyncio as _asyncio_sp
-        if _os.environ.get("TRADER_ENABLED", "false").lower() != "true":
-            from trader import spread as _trader_spread  # noqa: WPS433
-            app.state.spread_task = _asyncio_sp.create_task(
-                _trader_spread.poll_loop(),
-                name="mc.trader.spread.poll",
-            )
-            logger.info(
-                "trader.spread poller STARTED (dashboard-only; "
-                "trader loop is disabled)"
-            )
+        from trader import spread as _trader_spread  # noqa: WPS433
+        app.state.spread_task = _asyncio_sp.create_task(
+            _trader_spread.poll_loop(),
+            name="mc.trader.spread.poll",
+        )
+        logger.info("trader.spread poller STARTED (dashboard-only)")
     except Exception as e:  # noqa: BLE001
         logger.warning("trader.spread poll start failed (non-fatal): %s", e)
 
-    # Webull MQTT stream — tick-by-tick L1 quotes. Opt-in via
-    # TRADER_EQUITY_STREAM_ENABLED=true. Coexists with the HTTP
-    # poller; whichever source is fresher wins the cache read.
+    # Webull v2 MQTT quote stream — dashboard tile. Opt-in via
+    # TRADER_EQUITY_STREAM_ENABLED=true.
     try:
         from trader import spread_stream as _trader_stream  # noqa: WPS433
         _trader_stream.start()
     except Exception as e:  # noqa: BLE001
         logger.warning("trader.spread_stream start failed (non-fatal): %s", e)
 
-    if _os.environ.get("TRADER_ENABLED", "false").lower() == "true":
-        try:
-            import asyncio as _asyncio
-            from trader.main import main as _trader_main  # noqa: WPS433
-            app.state.trader_task = _asyncio.create_task(_trader_main())
-            logger.info(
-                "Sidecar trader STARTED (TRADER_ENABLED=true). "
-                "MC is eyes-only; trader has broker authority."
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.error("Sidecar trader start failed: %s", e)
-    else:
-        logger.info(
-            "Sidecar trader NOT started (TRADER_ENABLED is not true). "
-            "Set env var and restart to activate."
-        )
     # Keep Alpaca's pinger conditional — only matters if Alpaca creds
     # exist (zero-cost no-op otherwise).
     # 2026-02-19: Alpaca pinger removed (Alpaca broker fully deprecated).
@@ -804,21 +781,13 @@ async def lifespan(app: FastAPI):
         pass
     await stop_auto_router()
 
-    # ── 2026-06-30 sidecar trader shutdown ────────────────────────
-    try:
-        t = getattr(app.state, "trader_task", None)
-        if t and not t.done():
-            t.cancel()
-            try:
-                import asyncio as _asyncio
-                await _asyncio.wait_for(t, timeout=10)
-            except Exception:  # noqa: BLE001 - timeout or CancelledError
-                pass
-            logger.info("Sidecar trader stopped.")
-    except Exception:  # noqa: BLE001
-        pass
+    # ── 2026-02-19 sidecar trader shutdown — DECOMMISSIONED ───────
+    # The `app.state.trader_task` no longer exists (sidecar loop
+    # deleted). Nothing to stop here. The spread poller + stream
+    # shutdown below still applies — those are the dashboard-only
+    # telemetry loops.
 
-    # ── 2026-07-02 spread poller shutdown (MC-owned when trader is off) ─
+    # ── 2026-07-02 spread poller shutdown (dashboard-only) ────────
     try:
         st = getattr(app.state, "spread_task", None)
         if st and not st.done():

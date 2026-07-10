@@ -1,3 +1,86 @@
+## 2026-02-19 — P1 sidecar excision + P2 universe cleanup
+
+### P1 — `/app/trader` sidecar surgical excision (option B)
+Removed the sidecar-loop orchestration files that raced with MC's
+`auto_router`, preserving the MC-support layer that the dashboard
+and Webull login flow depend on.
+
+**Deleted files** (`/app/trader/`): `main.py`, `broker.py`,
+`brains.py`, `seat.py`, `risk.py`, `feeds.py`, `feed_guard.py`,
+`audit.py`.
+
+**Preserved files** (`/app/trader/`): `webull_auth.py`, `spread.py`,
+`spread_stream.py`, `store.py`, `state.py`, `merge_rights.py`,
+`config.py`, `__init__.py` (rewritten with a decommission notice
+and role description).
+
+**Deleted tests**: `test_trader_shadow_mode.py`,
+`test_trader_risk.py`, `test_trader_feed_guard.py`,
+`test_trader_cfqs.py`, `test_trader_dissent_accuracy.py`,
+`test_trader_receipt_quote.py`.
+
+**Refactored tests**: `test_trader_multi_ticker.py` — removed the
+`main.run_cycle` symbol-universe regression guard (guarded a
+deleted file); the 10 config-helper tests remain.
+`test_trader_spread.py` — removed the end-to-end `risk.check`
+integration test (used the deleted `trader.risk` module); the 15
+poller/gate/cache tests remain.
+
+**`server_modules/lifespan.py`** — removed the sidecar-loop start
+block (`_trader_main` coroutine creation) and the shutdown block
+(`trader_task` cancellation). Preserved unconditional init of
+`trader.store` + `trader.state` (dashboard) and unconditional
+start of the spread poller + `spread_stream` MQTT tile.
+
+**`trader/__init__.py`** — rewritten as an MC-support-library
+docstring making the new role explicit ("no orchestration lives
+here — if you're importing this in a code path that hits a broker,
+STOP").
+
+### P2 — `patterns_universe` truncation
+Exactly 20 active symbols per lane; junk hard-deleted; out-of-list
+real tickers deactivated (history preserved).
+
+**Hard-deleted rows**: `FB`, `MSFY`, `HEL31138C`, `HEL5E7DFF`,
+`NDBC0764B`, `NDBC349F6` (6 total — delisted / typo / synthetic
+test rows).
+
+**Active equity 20**: AAPL, AMD, AMZN, AVGO, BABA, GOOG, META,
+MSFT, NFLX, NVDA, ORCL, PLTR, SHOP, TSLA, TSM, SPCX, GME, HOTH,
+TEVA, PFE.
+
+**Active crypto 20**: ADA/USD, AVAX/USD, BNB/USD, BTC/USD, ETH/USD,
+LINK/USD, SOL/USD, XRP/USD, DOGE/USD, DOT/USD, LTC/USD, ATOM/USD,
+ALGO/USD, XLM/USD, FIL/USD, NEAR/USD, MATIC/USD, UNI/USD, AAVE/USD,
+MKR/USD.
+
+**31 out-of-list equities** flipped to `active=False` (audit history
+preserved). **0 crypto rows** deactivated (all 8 pre-existing
+crypto symbols are inside the new 20).
+
+**New**: `scripts/universe_cleanup.py` — idempotent seeder;
+re-runnable to snap the universe back to canonical state at any
+time.
+
+**New**: `tests/test_patterns_universe_integrity.py` — 4 regression
+tests locking (1) exactly-20-active-equity, (2) exactly-20-active-
+crypto, (3) known-junk-never-active, (4) every-active-row-has-lane.
+
+### Testing
+324/324 green across the affected surface (trader-preserved
+modules, learning stack, universe integrity, unified arm, crypto
+reconcile sweep, Phase C canonical-identity regression). Backend
+supervisor healthy; `/api/health` OK.
+
+### Doctrine pins
+- The `/app/trader` package is now an MC-support library only.
+  Any future code that imports from `trader.*` inside a broker-
+  reaching path is a doctrine violation — refactor into
+  `shared/auto_router.py` or `shared/broker/*` adapters.
+- `patterns_universe` active count = 20 per lane is invariant.
+  Add-a-symbol requires deactivate-a-symbol.
+
+
 ## 2026-02-19 — Stage 2b: Fresh mark-price contract + Shrunk-EV floor + Bounded doctrine overlays
 
 ### Scope

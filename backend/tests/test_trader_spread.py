@@ -416,30 +416,12 @@ def test_check_spread_ok_equity_uses_equity_cap(fresh_store, monkeypatch):
 
 
 # ─── risk.check integration ───────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_risk_check_blocks_crypto_on_wide_spread(fresh_store, monkeypatch):
-    """End-to-end: risk.check must refuse a crypto order when the
-    poller has flagged the spread as too wide and the gate is on."""
-    from trader import risk, state
-    # Enable master switch + lane so we reach the spread gate
-    monkeypatch.setattr(state, "master_switch_armed", lambda: True)
-    monkeypatch.setattr(state, "lane_enabled", lambda _lane: True)
-    monkeypatch.setenv("TRADER_SPREAD_GATE_ENABLED", "true")
-    monkeypatch.setenv("TRADER_SPREAD_MAX_BPS", "5.0")
-    spread._cache_row({
-        "ts": "2026-07-02T00:00:00+00:00", "pair": "XBTUSD",
-        "lane": "crypto", "bid": 50000, "ask": 50100,
-        "last": 50050, "spread_abs": 100, "spread_bps": 20.0,
-        "source": "kraken",
-    })
-    v = await risk.check(
-        None,
-        {"intent_id": "test-1", "lane": "crypto", "symbol": "XBTUSD"},
-        notional_usd=5.0,
-    )
-    assert v.ok is False
-    assert "spread_wide" in v.reason
+#
+# 2026-02-19: `trader/risk.py` deleted (sidecar orchestration excised).
+# The end-to-end risk-check-through-spread-gate test below was
+# testing sidecar-loop behavior that no longer exists. MC's
+# equivalent gate lives in `shared/gates/` and is covered by
+# `test_shared_gates_*.py`. Test removed with the sidecar.
 
 
 if __name__ == "__main__":
