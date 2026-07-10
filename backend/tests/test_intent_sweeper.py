@@ -339,13 +339,23 @@ async def test_hold_action_is_archived_without_learning_row(monkeypatch):
 async def test_directional_blocked_pre_broker_archives_with_typed_reason(monkeypatch):
     """A BUY blocked upstream of broker → archive_reason should be
     `directional_blocked_pre_broker` so operator can filter for
-    counterfactual/missed-trade analysis."""
+    counterfactual/missed-trade analysis.
+
+    2026-02-19 refinement — directional-blocked rows also spawn a
+    counterfactual_signals row before archive. We seed a
+    `snapshot.price` so the distiller succeeds; without it the
+    sweeper would preserve the row as `distill_failed`."""
     monkeypatch.setattr(intent_sweeper, "LEARNING_LOOP_ENABLED", True)
     intent_id = f"{_PFX}dir-blocked"
-    await _seed_intent(
-        intent_id, hours_ago=7,
-        action="BUY", gate_state="blocked",
-    )
+    # Direct insert so we can attach `snapshot.price` (the _seed_intent
+    # helper doesn't expose that field).
+    await db[SHARED_INTENTS].insert_one({
+        "intent_id": intent_id,
+        "symbol": "AAPL", "lane": "equity",
+        "action": "BUY", "gate_state": "blocked",
+        "ingest_ts": _iso(_now() - timedelta(hours=7)),
+        "snapshot": {"price": 190.0, "relative_volume": 1.2},
+    })
     counts = await _sweep(dry_run=False)
     # Not learning-eligible (didn't reach broker) → not preserved.
     assert counts["preserved_missing_learning"] == 0
@@ -356,6 +366,39 @@ async def test_directional_blocked_pre_broker_archives_with_typed_reason(monkeyp
         {"intent_id": intent_id},
     )
     assert archived["archive_reason"] == "directional_blocked_pre_broker"
+
+    # 2026-02-19 refinement: a counterfactual_signals row must have
+    # been written before the raw intent was archived+deleted.
+    from namespaces import COUNTERFACTUAL_SIGNALS
+    sig = await db[COUNTERFACTUAL_SIGNALS].find_one(
+        {"signal_id": intent_id},
+    )
+    assert sig is not None
+    assert sig["direction"] == "BUY"
+    assert sig["entry_reference_price"] == pytest.approx(190.0)
+    assert sig["status"] == "tracking"
+    # Cleanup
+    await db[COUNTERFACTUAL_SIGNALS].delete_one({"signal_id": intent_id})
+
+
+@pytest.mark.asyncio
+async def test_distill_failure_preserves_directional_row(monkeypatch):
+    """A directional-blocked row with no reference price can't be
+    distilled — the sweeper MUST preserve the raw intent instead
+    of losing the signal to the archive."""
+    monkeypatch.setattr(intent_sweeper, "LEARNING_LOOP_ENABLED", True)
+    intent_id = f"{_PFX}distill-fail"
+    # NO snapshot.price → distiller returns False.
+    await _seed_intent(
+        intent_id, hours_ago=7, action="BUY", gate_state="blocked",
+    )
+    counts = await _sweep(dry_run=False)
+    assert counts["preserved_missing_learning"] >= 1
+    assert counts["archived"] == 0
+    # Hot row survives.
+    assert await db[SHARED_INTENTS].find_one(
+        {"intent_id": intent_id}
+    ) is not None
 
 
 # ═══════════════════════════════════════════════════════════════════

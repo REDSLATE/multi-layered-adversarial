@@ -1,3 +1,92 @@
+## 2026-02-19 — Counterfactual signals: turn blocked intents into learning evidence
+
+### Doctrine
+Two learning streams now feed the bucket analyzer:
+    Executed trades       → "Did the trade work?"       (learning_experiences)
+    Blocked trade signals → "Would the trade have worked?" (counterfactual_signals)
+
+Every stale directional intent that never reached the broker is
+distilled into ONE compact `counterfactual_signals` row BEFORE the
+raw intent is deleted. The signal is resolved over time (5m/15m/1h)
+against live mark prices, producing a verdict:
+
+    MISSED_WIN     — direction was right, block cost us edge
+    CORRECT_BLOCK  — direction was wrong, block saved us
+    UNDETERMINED   — |bps| < 20, noise
+
+The signal never goes back to the broker. Learning evidence only.
+
+### Files
+- **New**: `shared/counterfactuals/__init__.py` — module with
+  `should_create_counterfactual()`, `distill_intent_to_signal()`,
+  `signed_return_bps()`, `resolve_pending_signals()`,
+  `_verdict_for()` + thresholds.
+- **New**: `routes/counterfactuals_admin.py`:
+  - `GET /api/admin/counterfactuals/stats` — verdict + bps rollups by
+    lane/action/block_reason/brain, top MISSED_WIN and CORRECT_BLOCK
+    samples.
+  - `POST /api/admin/counterfactuals/resolve` — manual resolver tick.
+- **New**: `COUNTERFACTUAL_SIGNALS` collection in `namespaces.py`.
+- **Sweeper integration**: `shared/intent_sweeper.py::sweep_stale_intents`
+  now calls `distill_intent_to_signal(row, db)` for every
+  `directional_blocked_pre_broker` row BEFORE archiving. If
+  distillation fails (missing reference price), the raw intent is
+  preserved with `would_action=preserve_distill_failed` instead of
+  losing the signal.
+- **Auto-router integration**: `resolve_pending_signals(db)` piggybacks
+  onto the reconcile-sweep tick (same cadence as `outcome_resolver`).
+
+### Signal schema
+    {
+      "signal_id": <intent_id>,
+      "source_intent_id": <intent_id>,
+      "brain": stack_canonical,
+      "symbol", "lane", "direction",
+      "entry_reference_price": <float>,
+      "blocked_reason": <str>,
+      "features": {relative_volume, rvol_acceleration,
+                   vwap_distance_pct, velocity_5m,
+                   market_regime, spread_bps},
+      "status": "tracking" | "resolved",
+      "outcomes": {
+        "5m": {mark_price, return_bps, verdict, mark_source, resolved_at},
+        "15m": {...},
+        "1h": {...}
+      },
+      "final_verdict": (set once 1h horizon lands),
+      "final_return_bps": (set once 1h horizon lands),
+      "created_at", "distilled_at"
+    }
+
+### Test coverage
+- **New**: `tests/test_counterfactual_signals.py` — 23 tests covering
+  predicate (7 cases including reads-execution-action), signed-return
+  math (5 cases across BUY/SELL/SHORT/COVER + zero-entry safety),
+  verdict thresholds (3 cases at boundaries), distiller (writes full
+  doc / idempotent / refuses-when-no-price / refuses-when-predicate-fails),
+  resolver (stamps outcomes+verdict / MISSED_WIN + CORRECT_BLOCK paths /
+  skips stale marks).
+- **Extended**: `tests/test_intent_sweeper.py` — updated directional-
+  blocked test to seed `snapshot.price` and now asserts a signal row
+  was written; new test `test_distill_failure_preserves_directional_row`
+  locks the "no reference price → preserve raw intent" contract.
+- **127/127 tests green** across counterfactuals + sweeper + auto-router
+  master-switch preflight + learning full stack + doctrine overlay.
+
+### Live smoke test (preview pod)
+- `GET /api/admin/counterfactuals/stats` responds (0 signals yet — the
+  first live sweep will start producing them).
+- `POST /api/admin/intents/purge-stale` dry-run on 50-row batch:
+  47 legacy_non_learning_no_trade + 3 directional_blocked_pre_broker
+  eligible. Flipping `dry_run=false` will produce 3 counterfactual
+  signals on the next call.
+
+### Superseded
+`shared/learning/missed_trades.py` + `routes/archive_analytics.py`
++ `tests/test_missed_trades_pnl.py` — the archive-only P&L simulator
+was a stopgap; counterfactual signals are the durable path.
+
+
 ## 2026-02-19 — Sweeper refinement: learning-capture classifier
 
 ### Motivation

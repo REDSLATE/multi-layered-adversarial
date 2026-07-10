@@ -111,6 +111,7 @@ from routes.alpha_vantage_admin import router as alpha_vantage_admin_router
 from routes.broker_lane_admin import router as broker_lane_admin_router
 from routes.auto_router_admin import router as auto_router_admin_router
 from routes.intent_sweeper_admin import router as intent_sweeper_admin_router
+from routes.counterfactuals_admin import router as counterfactuals_admin_router
 from routes.broker_fills_admin import router as broker_fills_admin_router
 from routes.intent_summary import router as intent_summary_router
 from routes.mc_connection_stream import router as mc_connection_stream_router
@@ -300,6 +301,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(learning_ladder_router)
     api_router.include_router(auto_router_admin_router)
     api_router.include_router(intent_sweeper_admin_router)
+    api_router.include_router(counterfactuals_admin_router)
     api_router.include_router(broker_fills_admin_router)
     api_router.include_router(intent_summary_router)
     api_router.include_router(mc_connection_stream_router)

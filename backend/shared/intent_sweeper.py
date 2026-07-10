@@ -446,6 +446,48 @@ async def sweep_stale_intents(
         if archive_reason and archive_reason in counts["archive_reason_breakdown"]:
             counts["archive_reason_breakdown"][archive_reason] += 1
 
+        # 2026-02-19 operator directive — distill directional-blocked
+        # rows into a `counterfactual_signals` record BEFORE we drop
+        # the raw intent. The signal is a compact, resolvable
+        # learning artefact ("would this trade have worked?"). If
+        # distillation fails (missing reference price, etc.) we
+        # preserve the raw intent instead of losing the signal.
+        will_distill = (
+            not dry_run
+            and archive_reason == "directional_blocked_pre_broker"
+        )
+        if will_distill:
+            try:
+                from shared.counterfactuals import (  # noqa: WPS433
+                    distill_intent_to_signal,
+                )
+                distilled_ok = await distill_intent_to_signal(row, db)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "intent_sweeper: counterfactual distill failed "
+                    "intent_id=%s: %s",
+                    intent_id, exc,
+                )
+                distilled_ok = False
+            if not distilled_ok:
+                counts["preserved_missing_learning"] += 1
+                if len(counts["samples"]) < 5:
+                    counts["samples"].append({
+                        "intent_id": intent_id,
+                        "symbol": row.get("symbol"),
+                        "lane": row.get("lane"),
+                        "action": row.get("action"),
+                        "ingest_ts": row.get("ingest_ts"),
+                        "gate_state": row.get("gate_state"),
+                        "would_action": "preserve_distill_failed",
+                    })
+                # roll back the eligibility counter — we're not
+                # actually purging this row.
+                counts["eligible_for_purge"] -= 1
+                if archive_reason in counts["archive_reason_breakdown"]:
+                    counts["archive_reason_breakdown"][archive_reason] -= 1
+                continue
+
         # Populate sample list for the first 5 (only for rows we
         # will actually touch).
         if len(counts["samples"]) < 5:

@@ -1495,6 +1495,27 @@ async def _finish_sweep(counts: dict) -> dict:
         )
         counts["learning_resolver_errors"] = 1
 
+    # ── Counterfactual signal resolver (2026-02-19) ──────────────
+    # Scores blocked-directional signals as market moves — same
+    # cadence as the learning outcome resolver. Best-effort.
+    try:
+        from shared.counterfactuals import (  # noqa: WPS433
+            resolve_pending_signals,
+        )
+        cf_counts = await asyncio.wait_for(
+            resolve_pending_signals(db), timeout=8.0,
+        )
+        counts["counterfactual_scanned"] = cf_counts.get("scanned", 0)
+        counts["counterfactual_resolved_5m"] = cf_counts.get("resolved_5m", 0)
+        counts["counterfactual_resolved_15m"] = cf_counts.get("resolved_15m", 0)
+        counts["counterfactual_resolved_1h"] = cf_counts.get("resolved_1h", 0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "auto_router reconcile sweep: counterfactual resolver failed: %s",
+            exc,
+        )
+        counts["counterfactual_resolver_errors"] = 1
+
     return counts
 
 

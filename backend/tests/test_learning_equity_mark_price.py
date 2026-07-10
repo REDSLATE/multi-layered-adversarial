@@ -353,13 +353,19 @@ async def test_polygon_prev_close_is_always_stale(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", _MockClient)
 
     # No Webull, no bars → resolver walks all the way to Polygon.
-    quote = await outcome_resolver._fetch_mark_quote("equity", "MSFT")
+    # Use a synthetic symbol so the bars-tier fallback (which reads
+    # the shared production DB) can't inject real MSFT data.
+    quote = await outcome_resolver._fetch_mark_quote(
+        "equity", "MC-POLY-TEST",
+    )
     assert quote is not None
     assert quote.price == pytest.approx(195.55)
     assert quote.source == "polygon_prev_close"
     assert quote.is_stale is True
     # Legacy shim refuses stale.
-    assert await outcome_resolver._fetch_mark_price("equity", "MSFT") is None
+    assert await outcome_resolver._fetch_mark_price(
+        "equity", "MC-POLY-TEST",
+    ) is None
 
 
 @pytest.mark.asyncio
