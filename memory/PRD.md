@@ -94,6 +94,92 @@ Operator's stated design correction: **"Use history as a weak prior, then let cu
 **Full design freeze at `/app/memory/MC_SEAT_ARBITER.md`. NEXT AGENT MUST READ THAT DOC BEFORE TOUCHING ARBITER CODE.**
 
 
+**🚧 2026-07-11 (iter-27): MC PULSE — ARCHITECTURE FROZEN, IMPLEMENTATION UNSTARTED.**
+
+**Operator directive (verbatim, do not paraphrase)**: "Are runners necessary? Couldn't the connection of being in one stack be enough for the brains?" Answered: YES, runners are not necessary. Runners were never architectural boundaries — they were duplicated orchestration wrapped around four strategy calls. Collapse them into a single MC pulse. Brains become Python objects with one method: `evaluate(snapshot) -> ModelOpinion | None`.
+
+**Governing doctrine (locked in this session)**: "MC owns time, data, scheduling, arbitration, persistence, and execution routing. Brains own only interpretation." MC must NOT standardize interpretation — that destroys the four brains by turning them into `personality_multiplier[brain_id] * common_strategy(snapshot)`. Each brain keeps its own doctrine class, memory state, thresholds, feature selection, confidence formation, and objection vocabulary (`reason_codes`).
+
+**Five operator corrections to my initial pulse sketch (all accepted)**:
+
+1. **Immutable snapshot**: brains receive a `frozen`/`slots` `MarketSnapshot` with a `Mapping[str, float]` for indicators. Contamination between brains is a silent-bug factory — my initial mutable dict was wrong.
+2. **Contain each brain independently**: `asyncio.wait_for` + per-brain try/except INSIDE `evaluate_brain`. `asyncio.gather(return_exceptions=False)` only raises on orchestration failure, never on brain failure. A broken Hellcat must NEVER silence Camino/Barracuda/GTO.
+3. **Envelope split**: brains return opinions ONLY. MC wraps them in `OpinionEnvelope(pulse_id, brain_id, seat_key, snapshot_id, opinion, evaluated_at)` — brains never see `seat_key`, `pulse_id`, Mongo, or the trader.
+4. **Idempotency via `pulse_id`**: every pulse has a unique id. Unique indexes on `(pulse_id, brain_id, symbol, lane)` for opinions and `(pulse_id, seat_key)` for arbitrations. A restarted pulse fills gaps but CANNOT create a second executable decision. My initial sketch had no retry-safety at all.
+5. **Split pulse health from brain health**: `PulseReceipt` reports orchestration health AND per-brain evaluation status (`brains_expected`, `brains_completed`, `brains_failed[{brain, reason, exc_type}]`, `overrun`). "Pulse healthy" MUST require `brains_failed == []` — a green pulse hiding a dead brain is the exact 3-clock dishonesty we've been eliminating.
+
+**Architectural correction accepted**: grader OFF the critical pulse path. Critical = snapshot → evaluate → persist → arbitrate → route. Non-critical maintenance = grade → rollups → cleanup → performance metrics. Same MC ownership, separate failure paths. My initial sketch called `grade_pending_opinions()` inline in `pulse_tick()` — wrong. Pulse *enqueues* due grades; a separate worker executes them.
+
+**Migration order (8 steps — one brain at a time, comparison-only before switch)**:
+1. Build pulse infra + registry + immutable `MarketSnapshot` + `OpinionEnvelope` + `PulseReceipt` + idempotency contracts (unique indexes).
+2. Adapt ONE brain (simplest first — TBD) to `.evaluate(snapshot)`. Keep its runner running.
+3. Comparison-only mode: pulse calls the adapted brain in parallel with its runner; opinions written to `mc_opinions_compare` (NOT `mc_seats`, NOT arbitrated). NO duplicate submission.
+4. Confirm parity: action rate, confidence distribution, `reason_codes` overlap, timestamp behavior within acceptable drift.
+5. Move remaining brains one at a time, repeating steps 2–4.
+6. Switch arbitration input to pulse-owned `OpinionEnvelope`s (arbiter reads from pulse-populated `mc_seats`, not runner direct-write).
+7. Delete runner scheduling + direct writes (only after every brain on pulse AND arbitration reads pulse envelopes).
+8. Remove sidecar identity + heartbeat plumbing ONLY after grep confirms no reader depends on `sidecar_checkins` / `shared_heartbeats` / `bump_stack_heartbeat` callers.
+
+**Do NOT attempt a big-bang rewrite. Every step must be individually revertable.**
+
+**Personality preservation acceptance tests (MUST be in place before step 6)** — parity of outputs is NECESSARY BUT INSUFFICIENT. Tests must also prove the four brains stay four distinct minds:
+- `test_camino_and_barracuda_have_distinct_reason_codes` — reason_codes must differ
+- `test_action_distribution_stays_diverse` — fraction of ticks where all 4 chose the same action stays below threshold (`distinct_action_rate >= 0.35`)
+- `test_pairwise_confidence_correlation_bounded` — `pairwise_confidence_correlation(a, b) < 0.85` for every pair (two brains that always agree are one brain in two skins)
+- `test_brain_specific_features_are_used` — Camino must actually read its momentum features via the snapshot-access trace, Barracuda must actually read its mean-reversion features, etc.
+
+If these fail during migration, the doctrine-collapse risk is real and the migration must halt.
+
+**Implicit contracts hidden in runner code — MUST be captured explicitly in MC before ANY runner is deleted**:
+- Normalization (symbol casing, tf naming, quote timestamp rounding)
+- Freshness rejection (quotes / bars older than N seconds skipped)
+- Cadence rules (some brains 30s, some 60s, some session-boundary only)
+- Roster attribution (which brain assigned which seat/symbol)
+- Runtime modes (DISARMED vs LIVE — already owned by arbiter)
+- Evidence stamping (what goes into the intent's `evidence` field)
+- Exception behavior (which errors halt the tick, which log-and-continue)
+- Deduplication (same-tick same-symbol re-emission guards)
+
+An audit checklist per runner MUST be produced before that runner is deleted.
+
+**Data locations**:
+- `mc_pulses` (new): `_id=pulse_id`, holds `PulseReceipt`, TTL 7 days.
+- `mc_seats` (existing from arbiter Phase 1): new unique index `(pulse_id, brain_id, symbol, lane)`.
+- `mc_arbitrations` (new): unique `(pulse_id, seat_key)`, stores decision snapshot + intent_id.
+- `mc_brain_state.{brain_id}.{strategy_version}` (new pattern): each brain's namespaced rolling state. NEVER shared across brains.
+- `brain_runtime_metrics.risedual_stack.pulse.*`: mirror of latest `PulseReceipt` for dashboard.
+- `mc_opinions_compare` (temporary, deleted at migration step 7): parity comparison rows.
+
+**Directory layout agreed**:
+```
+/app/backend/mc_pulse/
+    pulse.py · snapshot.py · registry.py · envelope.py · receipt.py
+    containment.py · protocols.py · tests/
+/app/backend/mc_brains/
+    camino.py · barracuda.py · hellcat.py · gto.py
+```
+
+**What survives from `mc_arbiter/` (iter-26)**: everything. Pulse is an additional layer, not a replacement.
+- `models.py` (ModelOpinion, DaweState, Direction, RuntimeMode) — reused
+- `seat_key.py`, `dawe.py` — reused
+- `arbiter.py` — reused; `submit_opinion` becomes an internal call from `pulse.upsert_many`
+- `grader.py` — moves to separate background worker (off critical pulse path)
+- `routes.py` — kept for admin/debug injection + runtime-mode flip; brains no longer POST here
+
+**Full design freeze at `/app/memory/MC_PULSE.md`. NEXT AGENT MUST READ BOTH `MC_SEAT_ARBITER.md` AND `MC_PULSE.md` BEFORE TOUCHING PULSE CODE.**
+
+**Implementation state as of this handoff**:
+- ✅ Design freeze `/app/memory/MC_PULSE.md` (15 sections)
+- ⏳ Operator sign-off pending on §15 checkboxes (8 items). Two questions specifically open:
+  - **Which brain is "simplest" for migration step 2?** (Operator to designate — likely Camino or GTO based on strategy complexity.)
+  - **Brain protocol shape**: stateful class (`class CaminoBrain: async def evaluate(self, snapshot)`) or stateless functional (`(prev_state, snapshot) -> (new_state, opinion)`)? Current lean is class for v0.1, functional for Phase 2 if it matters.
+- ⏳ `mc_pulse/*` — NOT YET WRITTEN. Do NOT start until §15 checkboxes are approved.
+- ⏳ Runner audit checklists (per §8 of MC_PULSE.md) — NOT YET PRODUCED. Must exist before ANY runner deletion.
+
+
+**🚧 2026-07-11 (iter-26): MC SEAT ARBITER + DAWE — IMPLEMENTATION COMPLETE (DISARMED, END-TO-END VERIFIED).**
+
+
 **✅ 2026-07-11 (iter-25b): ATLAS TIMEOUT SYSTEM-WIDE SAFETY NET.** After the 3-clock work landed, prod still showed `NetworkTimeout: customer-apps-shard-XX.kndgvm.mongodb.net:27017` and `ExecutionTimeout: PlanExecutor error during aggregation :: operation exceeded time limit, MaxTimeMS...` red banners across the Overview page (Feeder Slots, Shared Technical Feed) and BrainConsole (Barracuda). Audited: 295 unbounded read sites — patching each individually is a losing game. Two-part fix: (a) explicit `.max_time_ms(2500)` / `maxTimeMS(4500)` bounds + fail-soft try/except returning `{items:[], degraded:true}` on `/shared/opinions` × 2 handlers, `/shared/technical/symbols`, `/shared/technical/feeders`; (b) GLOBAL FastAPI exception handler in `server_modules/middleware_setup.py` catching pymongo `NetworkTimeout`, `ExecutionTimeout`, `ServerSelectionTimeoutError`, `WTimeoutError` — for GET/HEAD returns HTTP 200 with `{ok:false, degraded:true, atlas_timeout:true, items:[], count:0, payload:{}, request_id, warning}` (a 200 is deliberate so every widget's happy path resolves and widgets render empty state instead of a red banner); for writes returns HTTP 503 with same body (writes stay honest — a POST that timed out MUST reach the caller so retry / user feedback fires; this is the anti-silent-swallow doctrine extended to the write path at the middleware layer). Handler registered BEFORE the generic Exception handler so FastAPI resolves the more-specific pymongo classes first. 3 new tests validate the response shape + registration completeness. Also frontend: `TraderSeatViewer.jsx`, `SpreadWatcher.jsx`, `TraderPostMortem.jsx` now hide the whole card on 404 (their backend endpoints were removed in the earlier simplification pass but widgets were still mounted showing "Not Found" red banners). 28/28 tests pass. **Long-term direction for the Atlas problem**: materialize hot dashboard state into single summary docs (the `brain_runtime_metrics.risedual_stack` pattern) — Trader Seats status, Feeders status, Technical universe summary — so the dashboard reads O(1) instead of aggregating live. That makes Atlas tier irrelevant for the operator UI. Only bump to M10 dedicated (~$57/mo) if load remains after materialization.
 
 
