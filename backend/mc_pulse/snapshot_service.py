@@ -31,7 +31,11 @@ from typing import Optional
 
 from db import db
 from mc_pulse.feature_builders.camino import build_camino_features
-from mc_pulse.parity_key import bar_identity_from_source
+from mc_pulse.parity_key import (
+    BarIdentity,
+    daily_bar_identity,
+    intraday_bar_identity,
+)
 from mc_pulse.snapshot import MarketSnapshot, build_snapshot
 
 logger = logging.getLogger("mc_pulse.snapshot_service")
@@ -229,12 +233,36 @@ async def _build_one(
     # `shared_ohlcv_bars` labels its `ts` field as the bar OPEN
     # (verified: polygon_equity._row_to_bar uses trading-day
     # midnight UTC; intraday feeders follow the same convention).
-    bar = bar_identity_from_source(
-        timeframe=used_tf,
-        bar_timestamp=latest_ts,
-        timestamp_semantics="open",
-        source="shared_ohlcv_bars",
-    )
+    # Intraday: use the strict aligned-boundary constructor.
+    # Daily: use the explicit-boundaries constructor with an
+    # end-of-day close derived from the source's next-midnight
+    # convention (both Polygon equity dailies and Kraken UTC
+    # dailies span open → open+24h under this storage schema).
+    try:
+        if used_tf == "1d":
+            bar = daily_bar_identity(
+                open_at=latest_ts,
+                close_at=latest_ts + timedelta(days=1),
+                source="shared_ohlcv_bars",
+            )
+        else:
+            bar = intraday_bar_identity(
+                timeframe=used_tf,
+                bar_timestamp=latest_ts,
+                timestamp_semantics="open",
+                source="shared_ohlcv_bars",
+            )
+    except ValueError as exc:
+        # A non-aligned intraday timestamp indicates an upstream
+        # feeder defect. Log and skip this symbol — the parity
+        # endpoint will show `manifests_missing` and we can then
+        # trace the feeder. NEVER silently normalize away the
+        # defect.
+        logger.warning(
+            "bad bar identity lane=%s symbol=%s tf=%s ts=%s err=%s",
+            lane, symbol, used_tf, latest_ts.isoformat(), exc,
+        )
+        return None
 
     # Canonical Camino feature builder — the SAME code the runner
     # will call once we hook it. No independent field derivation

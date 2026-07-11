@@ -1,11 +1,12 @@
 """Deterministic parity key.
 
-Design freeze update (operator directive, 2026-02): parity is
-meaningless without a canonical join. The runner and the pulse
-must be tied to the *exact same closed bar* — not the wall-clock
-moment the brain happened to emit an intent. A runner and pulse
-that evaluate 12 seconds apart on the same 1m close of NVDA are
-looking at the same market truth and must be scored as such.
+Design freeze update (operator directive, 2026-07, iter-27 pulse
+migration): parity is meaningless without a canonical join. The
+runner and the pulse must be tied to the *exact same closed bar*
+— not the wall-clock moment the brain happened to emit an
+intent. A runner and pulse that evaluate 12 seconds apart on the
+same 1m close of NVDA are looking at the same market truth and
+must be scored as such.
 
 ParityKey is that canonical join:
 
@@ -33,6 +34,23 @@ the source record (`shared_ohlcv_bars`) via `BarIdentity`. The
 `canonical_close_from_evaluation_time` helper exists only for the
 narrow case where a caller has ONLY the evaluation time and needs
 to identify the most-recently-completed bar.
+
+Validation posture (2026-07 hardening):
+    * Timeframes are looked up strictly — an unknown `tf` raises
+      instead of silently degrading to 1m. Parity keys with a
+      wrong tf label would otherwise pair unrelated market
+      events.
+    * Intraday sources must supply boundary-aligned timestamps.
+      A non-aligned `ts` (e.g. 15:00:12) indicates an upstream
+      feeder defect and MUST surface at construction time, not
+      be smoothed over.
+    * Daily identity accepts explicit open_at + close_at only.
+      Equity daily bars are session-calendar based; crypto daily
+      bars are UTC based; the two cannot be conflated with a
+      single 86400s modulo rule.
+    * `parse_parity_key` refuses malformed values so a key read
+      from storage compares textually equal to a freshly built
+      one for the same (brain, symbol, tf, close).
 """
 from __future__ import annotations
 
@@ -46,16 +64,36 @@ from typing import Optional
 # on the manifest as `feature_digest`.
 CAMINO_SNAPSHOT_SCHEMA_VERSION = "camino-feature-v1"
 
-# Bar-timeframe → bucket length in seconds. Used only by the
-# evaluation-time convenience helper; the authoritative bar
-# identity ships as `BarIdentity` from the canonical builder.
-_BUCKET_SECONDS = {
+# Bar-timeframe → bucket length in seconds. Intraday only —
+# daily bars carry session/calendar semantics that cannot be
+# expressed as a fixed modulo. See `daily_bar_identity`.
+_INTRADAY_BUCKET_SECONDS = {
     "1m": 60,
     "5m": 300,
     "15m": 900,
     "1h": 3600,
-    "1d": 86400,
 }
+
+_SUPPORTED_TIMEFRAMES = frozenset({*_INTRADAY_BUCKET_SECONDS, "1d"})
+
+
+def _intraday_bucket_seconds(timeframe: str) -> int:
+    """Strict lookup — raises `ValueError` on unknown tf. Prevents
+    a typo like "1min" from silently minting a 1-minute identity
+    while storing `timeframe="1min"` on the key."""
+    try:
+        return _INTRADAY_BUCKET_SECONDS[timeframe]
+    except KeyError as exc:
+        raise ValueError(
+            f"unsupported intraday timeframe: {timeframe!r} "
+            f"(supported: {sorted(_INTRADAY_BUCKET_SECONDS)})"
+        ) from exc
+
+
+def _ensure_utc(ts: datetime) -> datetime:
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone.utc)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +155,11 @@ class BarIdentity:
     def to_parity_key(self, *, brain_id: str, symbol: str,
                       snapshot_schema_version: str = CAMINO_SNAPSHOT_SCHEMA_VERSION
                       ) -> ParityKey:
+        if self.timeframe not in _SUPPORTED_TIMEFRAMES:
+            raise ValueError(
+                f"unsupported timeframe: {self.timeframe!r} "
+                f"(supported: {sorted(_SUPPORTED_TIMEFRAMES)})"
+            )
         return ParityKey(
             brain_id=(brain_id or "").strip().lower(),
             symbol=(symbol or "").strip().upper(),
@@ -124,12 +167,6 @@ class BarIdentity:
             source_bar_close_at=_ensure_utc(self.close_at).isoformat(),
             snapshot_schema_version=snapshot_schema_version,
         )
-
-
-def _ensure_utc(ts: datetime) -> datetime:
-    if ts.tzinfo is None:
-        return ts.replace(tzinfo=timezone.utc)
-    return ts.astimezone(timezone.utc)
 
 
 def canonical_close_from_evaluation_time(
@@ -145,53 +182,57 @@ def canonical_close_from_evaluation_time(
         exactly 15:00:00; any evaluation between 15:00:00 and
         15:00:59.999 attributes to that same completed close).
 
-    This is NOT the same as "aligning the timestamp to the
-    bucket boundary and calling it close_at". It answers a
-    specific question — "given wall-clock time X, which
-    completed bar just closed?" — and is only appropriate when
-    the caller has no direct handle on the source bar record.
-    Callers that DO have the source record MUST use
-    `BarIdentity.to_parity_key` instead so the semantics come
-    from the source, not from a guess.
+    Intraday only — raises `ValueError` for `tf="1d"`, since
+    daily boundaries are calendar/session-defined and cannot be
+    derived from wall-clock alone. Callers with a daily bar must
+    use `daily_bar_identity(open_at=..., close_at=...)` from the
+    source record.
     """
+    bucket = _intraday_bucket_seconds(timeframe)
     ts = _ensure_utc(evaluation_time)
-    bucket = _BUCKET_SECONDS.get(timeframe, 60)
     epoch = int(ts.timestamp())
     aligned = epoch - (epoch % bucket)
     return datetime.fromtimestamp(aligned, tz=timezone.utc)
 
 
-def bar_identity_from_source(
+def intraday_bar_identity(
     *,
     timeframe: str,
     bar_timestamp: datetime,
     timestamp_semantics: str,           # "open" | "close"
     source: str,
 ) -> BarIdentity:
-    """Materialize a `BarIdentity` when the caller has read a
-    source bar record and knows which end of the bar the record's
-    `ts` labels.
+    """Materialize a `BarIdentity` for a FIXED-LENGTH intraday
+    bar (1m / 5m / 15m / 1h).
 
-    `shared_ohlcv_bars` labels bars by their OPEN timestamp
-    (verified via `_bar_date`'s use of the ts as the session
-    grouping key). Feeders that emit close-labelled bars must
-    pass `timestamp_semantics="close"`.
+    Validates that `bar_timestamp` sits on the natural bucket
+    boundary — a source that emits 15:00:12 for a nominal 1m bar
+    is broken, and the parity key must SURFACE that defect
+    rather than smooth it into a spurious identity. `open_at` and
+    `close_at` are derived from the aligned timestamp per
+    `timestamp_semantics`.
+
+    Daily bars must use `daily_bar_identity`; see that function's
+    docstring for why 86_400s modulo is not sufficient for tf=1d.
     """
+    bucket = _intraday_bucket_seconds(timeframe)
     ts = _ensure_utc(bar_timestamp)
-    bucket = _BUCKET_SECONDS.get(timeframe, 60)
+    epoch = int(ts.timestamp())
+    if epoch % bucket != 0:
+        raise ValueError(
+            f"{source} supplied non-aligned {timestamp_semantics} "
+            f"timestamp {ts.isoformat()} for timeframe {timeframe}"
+        )
     if timestamp_semantics == "open":
         open_at = ts
-        close_at = datetime.fromtimestamp(
-            int(ts.timestamp()) + bucket, tz=timezone.utc,
-        )
+        close_at = datetime.fromtimestamp(epoch + bucket, tz=timezone.utc)
     elif timestamp_semantics == "close":
         close_at = ts
-        open_at = datetime.fromtimestamp(
-            int(ts.timestamp()) - bucket, tz=timezone.utc,
-        )
+        open_at = datetime.fromtimestamp(epoch - bucket, tz=timezone.utc)
     else:
         raise ValueError(
-            f"timestamp_semantics must be 'open' or 'close', got {timestamp_semantics!r}",
+            f"timestamp_semantics must be 'open' or 'close', got "
+            f"{timestamp_semantics!r}"
         )
     return BarIdentity(
         timeframe=timeframe,
@@ -201,18 +242,76 @@ def bar_identity_from_source(
     )
 
 
+def daily_bar_identity(
+    *,
+    open_at: datetime,
+    close_at: datetime,
+    source: str,
+) -> BarIdentity:
+    """Materialize a `BarIdentity` for a DAILY bar.
+
+    Daily bars cannot be described by a fixed 86_400s modulo:
+      * US equity daily bars span the NYSE session
+        (14:30–21:00 UTC on regular days, shorter on holidays);
+      * Crypto daily bars conventionally span UTC 00:00–00:00;
+      * Some providers report the trading-day midnight-UTC as
+        both `open_at` and `close_at`.
+
+    Rather than embed calendar logic here, this constructor
+    accepts explicit open_at + close_at from the source record
+    and validates only that (a) both are UTC and (b) close is
+    strictly after open. The source is responsible for supplying
+    honest boundaries — the parity key just faithfully carries
+    them.
+    """
+    open_utc = _ensure_utc(open_at)
+    close_utc = _ensure_utc(close_at)
+    if not close_utc > open_utc:
+        raise ValueError(
+            f"{source}: daily close_at ({close_utc.isoformat()}) must be "
+            f"strictly after open_at ({open_utc.isoformat()})"
+        )
+    return BarIdentity(
+        timeframe="1d",
+        open_at=open_utc,
+        close_at=close_utc,
+        source=source,
+    )
+
+
 def parse_parity_key(raw: Optional[str]) -> Optional[ParityKey]:
-    """Reverse `ParityKey.as_string()`. Returns None if `raw`
-    isn't a well-formed parity key so callers can filter cleanly."""
+    """Reverse `ParityKey.as_string()`. Returns None on any
+    malformed input so a key read from storage compares equal to
+    a freshly built one for the same (brain, symbol, tf, close).
+
+    Validation:
+        * exactly 5 pipe-delimited parts
+        * brain_id / symbol / snapshot_schema_version non-empty
+        * timeframe ∈ supported set (rejects "1min", "daily", ...)
+        * close_at parseable as ISO-8601 with explicit tzinfo
+        * casing normalized (brain_id lower, symbol upper) and
+          close_at re-emitted in canonical UTC ISO form
+    """
     if not raw or not isinstance(raw, str):
         return None
     parts = raw.split("|")
     if len(parts) != 5:
         return None
+    brain_id, symbol, timeframe, close_at, version = parts
+    if not brain_id or not symbol or not version:
+        return None
+    if timeframe not in _SUPPORTED_TIMEFRAMES:
+        return None
+    try:
+        parsed_close = datetime.fromisoformat(close_at)
+    except ValueError:
+        return None
+    if parsed_close.tzinfo is None:
+        return None
     return ParityKey(
-        brain_id=parts[0],
-        symbol=parts[1],
-        timeframe=parts[2],
-        source_bar_close_at=parts[3],
-        snapshot_schema_version=parts[4],
+        brain_id=brain_id.strip().lower(),
+        symbol=symbol.strip().upper(),
+        timeframe=timeframe,
+        source_bar_close_at=_ensure_utc(parsed_close).isoformat(),
+        snapshot_schema_version=version,
     )
