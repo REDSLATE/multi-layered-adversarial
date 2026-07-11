@@ -193,3 +193,120 @@ def test_should_evaluate_respects_cadence():
     assert brain.should_evaluate(now=t_early, snapshot=snap) is False
     # After cadence → allowed again.
     assert brain.should_evaluate(now=t_late, snapshot=snap) is True
+
+
+# ─────────────────────── directional behavior (↑ ↓ ↔) ────────────
+#
+# End-to-end from a bar sequence through the canonical feature
+# builder into CaminoBrain.evaluate. Verifies that Camino still
+# READS direction correctly after the parity refactor — not just
+# that it doesn't crash and doesn't emit HOLD@1.0.
+#
+# Fixture strategy:
+#   Feed a synthesized ↑ / ↓ / ↔ feature set into the brain (the
+#   canonical builder is separately tested for ↑↓↔ sign in
+#   `test_feature_builder_camino.py`, so here we test the brain's
+#   READING of those features, not the builder itself).
+#
+# Note on "biased toward" phrasing: `NeutralAdversarialBrain` also
+# consults spread, volatility, setup_score, and doctrine gates,
+# so a strong uptrend doesn't unconditionally emit LONG — it
+# emits LONG *tendency*. What must NEVER happen is:
+#   * uptrend → SHORT
+#   * downtrend → LONG
+#   * uptrend/downtrend → HOLD @ conf=1.0 (the pre-fix signature)
+
+
+def _directional_features(*, trend_score: float, price_change_pct: float):
+    """A full Camino feature dict with directional fields overridden.
+    Other fields set to neutral, quality-passing values so the brain
+    is not gated out by spread/volatility/liquidity."""
+    return {
+        "trend_score": trend_score,
+        "price_change_pct": price_change_pct,
+        "volume_change_pct": 5.0,
+        "rsi": 55.0 if trend_score > 0 else (45.0 if trend_score < 0 else 50.0),
+        "spread_bps": 3.0,
+        "volatility": 0.15,
+        "liquidity_score": 0.85,
+        "setup_score": 0.65,
+        "market_regime": "trending" if abs(trend_score) > 0.1 else "calm",
+        "spread_quality": "live",
+        "price": 195.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_uptrend_features_do_not_produce_short():
+    """The strongest guarantee: a positive trend_score MUST NOT
+    result in Direction.SHORT. Flipping this direction is the
+    worst possible failure mode — Camino trading AGAINST its
+    read."""
+    brain = CaminoBrain()
+    snap = _snap(features=_directional_features(
+        trend_score=0.6, price_change_pct=2.5,
+    ))
+    opinion = await brain.evaluate(snap)
+    assert opinion is not None
+    assert opinion.direction != Direction.SHORT, (
+        f"uptrend produced SHORT — direction inversion bug. "
+        f"opinion={opinion}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_downtrend_features_do_not_produce_long():
+    """Symmetric guarantee: a negative trend_score MUST NOT
+    result in Direction.LONG."""
+    brain = CaminoBrain()
+    snap = _snap(features=_directional_features(
+        trend_score=-0.6, price_change_pct=-2.5,
+    ))
+    opinion = await brain.evaluate(snap)
+    assert opinion is not None
+    assert opinion.direction != Direction.LONG, (
+        f"downtrend produced LONG — direction inversion bug. "
+        f"opinion={opinion}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_directional_features_do_not_produce_hold_at_confidence_one():
+    """The signature of the OLD pulse Camino was HOLD @ conf=1.0
+    on 100% of evaluations — a starved-input hallucination. When
+    the brain gets real directional features (either direction),
+    it must NEVER return that pathological signature."""
+    brain = CaminoBrain()
+    for trend in (0.6, -0.6):
+        snap = _snap(features=_directional_features(
+            trend_score=trend, price_change_pct=trend * 4.0,
+        ))
+        opinion = await brain.evaluate(snap)
+        assert opinion is not None
+        # Guard the exact failure mode from the parity report.
+        if opinion.direction == Direction.FLAT:
+            assert opinion.confidence < 0.99, (
+                f"HOLD @ confidence≈1.0 signature returned for "
+                f"trend_score={trend}. This is the exact bug the "
+                f"parity work is supposed to fix."
+            )
+
+
+@pytest.mark.asyncio
+async def test_sideways_features_bias_toward_flat_not_confident_direction():
+    """A ~zero trend_score should NOT produce a high-conviction
+    LONG or SHORT. Either FLAT or a low-confidence directional
+    read is acceptable; a confident directional read on flat
+    inputs would mean the brain is hallucinating movement."""
+    brain = CaminoBrain()
+    snap = _snap(features=_directional_features(
+        trend_score=0.0, price_change_pct=0.0,
+    ))
+    opinion = await brain.evaluate(snap)
+    assert opinion is not None
+    if opinion.direction in (Direction.LONG, Direction.SHORT):
+        assert opinion.confidence < 0.7, (
+            f"sideways inputs produced high-conviction "
+            f"{opinion.direction} @ conf={opinion.confidence}. "
+            f"Brain is hallucinating direction from noise."
+        )

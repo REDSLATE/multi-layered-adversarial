@@ -204,3 +204,89 @@ def test_market_regime_defaults_to_calm_when_absent():
         symbol="NVDA", lane="equity", bars=_bars(30),
     )
     assert snap["market_regime"] == "calm"
+
+
+# ─────────────────────── directional signal (↑ ↓ ↔) ─────────────────
+#
+# The parity work must not accidentally break Camino's ability to
+# READ direction. These tests pin the canonical feature builder's
+# response to the three canonical bar shapes:
+#
+#     ↑  monotonically rising closes  → trend_score > 0
+#     ↓  monotonically falling closes → trend_score < 0
+#     ↔  flat / sideways closes       → trend_score ≈ 0
+#
+# `trend_score` is the primary directional field the legacy
+# `NeutralAdversarialBrain._build_hypotheses` reads to bias BUY
+# vs SELL vs HOLD. If the sign flips or collapses here, the brain
+# stops seeing the market.
+
+
+def test_uptrend_produces_positive_trend_score():
+    """Rising closes over 30 bars → strictly positive trend_score.
+    Same magnitude range on runner and pulse (both use this builder)."""
+    snap, _ = build_camino_features(
+        symbol="NVDA", lane="equity",
+        bars=_bars(30, close_start=100.0, close_step=0.5),
+    )
+    assert snap["trend_score"] > 0.0, (
+        f"uptrend must produce positive trend_score, got {snap['trend_score']}"
+    )
+    assert snap["price_change_pct"] > 0.0
+
+
+def test_downtrend_produces_negative_trend_score():
+    """Falling closes over 30 bars → strictly negative trend_score."""
+    snap, _ = build_camino_features(
+        symbol="NVDA", lane="equity",
+        bars=_bars(30, close_start=200.0, close_step=-0.5),
+    )
+    assert snap["trend_score"] < 0.0, (
+        f"downtrend must produce negative trend_score, got {snap['trend_score']}"
+    )
+    assert snap["price_change_pct"] < 0.0
+
+
+def test_sideways_produces_near_zero_trend_score():
+    """Flat closes → trend_score at (or extremely close to) zero.
+    A drift here would let Camino hallucinate direction from noise."""
+    snap, _ = build_camino_features(
+        symbol="NVDA", lane="equity",
+        bars=_bars(30, close_start=100.0, close_step=0.0),
+    )
+    assert abs(snap["trend_score"]) < 0.05, (
+        f"sideways must produce ~zero trend_score, got {snap['trend_score']}"
+    )
+    assert abs(snap["price_change_pct"]) < 0.05
+
+
+def test_trend_score_sign_is_consistent_with_price_change_pct():
+    """The two directional fields must agree in sign — they're
+    read together by the core's hypothesis scorer. A disagreement
+    would produce ambiguous BUY/SELL votes."""
+    up, _ = build_camino_features(
+        symbol="NVDA", lane="equity",
+        bars=_bars(30, close_start=100.0, close_step=0.3),
+    )
+    down, _ = build_camino_features(
+        symbol="NVDA", lane="equity",
+        bars=_bars(30, close_start=200.0, close_step=-0.3),
+    )
+    assert (up["trend_score"] > 0) == (up["price_change_pct"] > 0)
+    assert (down["trend_score"] < 0) == (down["price_change_pct"] < 0)
+
+
+def test_trend_score_clamped_to_unit_interval():
+    """`trend_score` is clamped to [-1, 1] by the builder. Even
+    extreme parabolic moves must not exceed the interval — the
+    core assumes it as a bounded feature."""
+    parabolic_up, _ = build_camino_features(
+        symbol="NVDA", lane="equity",
+        bars=_bars(30, close_start=100.0, close_step=5.0),
+    )
+    parabolic_down, _ = build_camino_features(
+        symbol="NVDA", lane="equity",
+        bars=_bars(30, close_start=200.0, close_step=-3.0),
+    )
+    assert -1.0 <= parabolic_up["trend_score"] <= 1.0
+    assert -1.0 <= parabolic_down["trend_score"] <= 1.0
