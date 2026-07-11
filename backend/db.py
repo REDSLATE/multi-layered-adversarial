@@ -284,6 +284,34 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     await db.shared_feature_builders.create_index("name", unique=True)
     await db.shared_artifact_inventory.create_index([("runtime", 1), ("artifact", 1)])
 
+    # Shared opinions tape (BrainConsole `/api/shared/opinions` and
+    # conflict aggregation) — 2026-07-11 hotfix. Prod symptom: the
+    # endpoint would timeout on Atlas with "NetworkTimeout: read
+    # operation timed out" because `find({runtime:X}).sort(posted_at:-1)`
+    # was doing a full collection scan on a growing tape. The
+    # compound `(runtime, posted_at desc)` index makes this an O(log
+    # n) index-only lookup and the endpoint returns in <50ms.
+    await _safe_create_index(
+        db.shared_opinions,
+        [("runtime", 1), ("posted_at", -1)],
+        name="shared_opinions_runtime_posted_at",
+    )
+    await _safe_create_index(
+        db.shared_opinions,
+        [("topic", 1), ("posted_at", -1)],
+        name="shared_opinions_topic_posted_at",
+    )
+    await _safe_create_index(
+        db.shared_opinions,
+        [("thread_root", 1), ("posted_at", -1)],
+        name="shared_opinions_thread_posted_at",
+    )
+    await _safe_create_index(
+        db.shared_opinions,
+        [("posted_at", -1)],
+        name="shared_opinions_posted_at",
+    )
+
     # Per-runtime decision/shadow stores (kept ISOLATED, never cross-read)
     await db.alpha_decision_log.create_index([("timestamp", -1)])
     await db.camaro_shadow_rows.create_index([("timestamp", -1)])

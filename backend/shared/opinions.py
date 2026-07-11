@@ -16,6 +16,7 @@ Properties enforced here:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -512,12 +513,31 @@ async def list_opinions(
         q["thread_root"] = thread
     if since:
         q["posted_at"] = {"$gt": since}
-    docs = (
-        await db[SHARED_OPINIONS]
-        .find(q, {"_id": 0})
-        .sort("posted_at", -1)
-        .to_list(limit)
-    )
+    # 2026-07-11 prod hotfix: bound the Atlas read and never let a
+    # slow-tape rebuild take down the Brain Console page. The
+    # compound (runtime, posted_at desc) index in db.ensure_indexes
+    # makes this an index-only lookup — the max_time_ms cap is a
+    # belt-and-braces guard for the transitional window before the
+    # index is fully built, and for any query shape that misses the
+    # index (e.g. topic-only). On timeout / any Motor error we
+    # return an empty degraded list rather than raising a 500 that
+    # renders as "NetworkTimeout: customer-apps-shard-XX..." in
+    # the UI.
+    try:
+        docs = (
+            await db[SHARED_OPINIONS]
+            .find(q, {"_id": 0})
+            .sort("posted_at", -1)
+            .max_time_ms(2500)
+            .to_list(limit)
+        )
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("risedual.opinions").warning(
+            "list_opinions Atlas read failed (%s: %s) — returning empty "
+            "degraded",
+            type(exc).__name__, exc,
+        )
+        return {"items": [], "count": 0, "degraded": True}
     return {"items": docs, "count": len(docs)}
 
 
@@ -655,12 +675,24 @@ async def runtime_list_opinions(
         q["thread_root"] = thread
     if since:
         q["posted_at"] = {"$gt": since}
-    docs = (
-        await db[SHARED_OPINIONS]
-        .find(q, {"_id": 0})
-        .sort("posted_at", -1)
-        .to_list(limit)
-    )
+    # 2026-07-11 prod hotfix: same defensive Atlas boundary as the
+    # operator-authed sibling above. Brains that read peer opinions
+    # must not stall if the tape read is slow.
+    try:
+        docs = (
+            await db[SHARED_OPINIONS]
+            .find(q, {"_id": 0})
+            .sort("posted_at", -1)
+            .max_time_ms(2500)
+            .to_list(limit)
+        )
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("risedual.opinions").warning(
+            "runtime_list_opinions Atlas read failed (%s: %s) — "
+            "returning empty degraded",
+            type(exc).__name__, exc,
+        )
+        return {"items": [], "count": 0, "degraded": True}
     return {"items": docs, "count": len(docs)}
 
 

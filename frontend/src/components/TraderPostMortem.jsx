@@ -41,6 +41,7 @@ export default function TraderPostMortem() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [unavailable, setUnavailable] = useState(false);
   const [traceId, setTraceId] = useState("");
   const [trace, setTrace] = useState(null);
 
@@ -50,8 +51,21 @@ export default function TraderPostMortem() {
       const res = await api.get("/admin/trader/receipts", { params: { limit: 500 } });
       setRows(res.data?.items || []);
       setErr("");
+      setUnavailable(false);
     } catch (e) {
-      setErr(e?.response?.data?.detail || e.message);
+      // 2026-07-11 prod hotfix: the `/api/admin/trader/receipts`
+      // endpoint was removed in the massive simplification pass but
+      // this panel was never taken off `Intents`. A 404 rendered as
+      // a red banner across the operator view. Treat 404 as "panel
+      // temporarily unavailable" and hide the entire card so the
+      // rest of the Intents page stays clean.
+      const status = e?.response?.status;
+      if (status === 404) {
+        setUnavailable(true);
+        setErr("");
+      } else {
+        setErr(e?.response?.data?.detail || e.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -80,6 +94,8 @@ export default function TraderPostMortem() {
   };
 
   return (
+    <>
+      {unavailable ? null : (
     <Card className="mb-6" testid="trader-post-mortem">
       {/* Header */}
       <div className="flex items-start justify-between gap-3 mb-4">
@@ -267,6 +283,8 @@ export default function TraderPostMortem() {
         )}
       </div>
     </Card>
+      )}
+    </>
   );
 }
 
