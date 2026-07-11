@@ -46,6 +46,7 @@ from shared.patterns import detect_pattern
 
 
 logger = logging.getLogger(__name__)
+_tech_logger = logger
 
 
 # ──────────────────────── config ────────────────────────
@@ -365,6 +366,15 @@ async def list_symbols(
     """Returns every (source, symbol, tf) currently covered by the feed,
     plus the latest bar timestamp for each. Used by the Mission Control
     overview panel to render the universe.
+
+    2026-07-11 prod hotfix: this endpoint used to render a red
+    `NetworkTimeout: customer-apps-shard-XX.kndgvm.mongodb.net:27017`
+    banner across the Overview page because the $group aggregation
+    over `shared_ohlcv_bars` had no `maxTimeMS` and hit Atlas's
+    default 30s cap on a growing bar tape. Two-line fix: bound the
+    aggregate with `maxTimeMS(4500)` and fail-soft to an empty
+    degraded response — an empty universe strip is far better UX
+    than a red banner.
     """
     pipeline = [
         {"$group": {
@@ -382,7 +392,19 @@ async def list_symbols(
         }},
         {"$sort": {"last_bar_ts": -1}},
     ]
-    docs = await db[SHARED_OHLCV_BARS].aggregate(pipeline).to_list(2000)
+    try:
+        docs = await (
+            db[SHARED_OHLCV_BARS]
+            .aggregate(pipeline, maxTimeMS=4500)
+            .to_list(2000)
+        )
+    except Exception as exc:  # noqa: BLE001
+        _tech_logger.warning(
+            "list_symbols Atlas aggregate failed (%s: %s) — returning "
+            "empty degraded",
+            type(exc).__name__, exc,
+        )
+        return {"items": [], "count": 0, "degraded": True}
     return {"items": docs, "count": len(docs)}
 
 
@@ -515,6 +537,10 @@ async def list_feeders(
     now = datetime.now(timezone.utc)
 
     # Group bars by source to get last_bar_ts + symbol coverage.
+    # 2026-07-11 prod hotfix: bound the aggregate with maxTimeMS and
+    # fail-soft to an empty degraded response. Same rationale as
+    # `list_symbols` above — the Overview page must never render
+    # a red banner because a background aggregation ran long.
     pipeline = [
         {"$group": {
             "_id": "$source",
@@ -524,7 +550,19 @@ async def list_feeders(
             "tfs": {"$addToSet": "$tf"},
         }},
     ]
-    agg = await db[SHARED_OHLCV_BARS].aggregate(pipeline).to_list(50)
+    try:
+        agg = await (
+            db[SHARED_OHLCV_BARS]
+            .aggregate(pipeline, maxTimeMS=4500)
+            .to_list(50)
+        )
+    except Exception as exc:  # noqa: BLE001
+        _tech_logger.warning(
+            "list_feeders Atlas aggregate failed (%s: %s) — returning "
+            "empty degraded",
+            type(exc).__name__, exc,
+        )
+        return {"items": [], "endpoint": "/api/ingest/ohlcv", "degraded": True}
     by_source = {a["_id"]: a for a in agg}
 
     items: list[dict] = []

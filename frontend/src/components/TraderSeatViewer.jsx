@@ -50,6 +50,7 @@ export default function TraderSeatViewer() {
   const [state, setState] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [unavailable, setUnavailable] = useState(false);
   const [brokerCheck, setBrokerCheck] = useState(null);
   const [brokerBusy, setBrokerBusy] = useState(false);
 
@@ -58,8 +59,20 @@ export default function TraderSeatViewer() {
       const s = await api.get("/admin/trader/status");
       setState(s.data);
       setErr("");
+      setUnavailable(false);
     } catch (e) {
-      setErr(e?.response?.data?.detail || e.message);
+      // 2026-07-11 prod hotfix: /admin/trader/* endpoints were
+      // removed in the simplification pass but this widget was
+      // never taken off Overview. A 404 renders as a red "Not
+      // Found" banner across the operator's landing view. Treat
+      // 404 as "widget temporarily unavailable" and hide the
+      // whole card.
+      if (e?.response?.status === 404) {
+        setUnavailable(true);
+        setErr("");
+      } else {
+        setErr(e?.response?.data?.detail || e.message);
+      }
     }
   }, []);
 
@@ -124,6 +137,8 @@ export default function TraderSeatViewer() {
   const govMult = state?.state?.governor_multiplier || {};
   const lastRefresh = state?.state?.last_refresh_ok_ts;
   const refreshErr = state?.state?.last_refresh_error;
+
+  if (unavailable) return null;
 
   return (
     <Card className="mb-6" testid="trader-seat-viewer">

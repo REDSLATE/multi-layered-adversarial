@@ -45,6 +45,7 @@ export default function SpreadWatcher() {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [unavailable, setUnavailable] = useState(false);
   const [tokenStatus, setTokenStatus] = useState(null);
   const [tokenBusy, setTokenBusy] = useState(false);
   const [tokenMsg, setTokenMsg] = useState("");
@@ -59,8 +60,18 @@ export default function SpreadWatcher() {
       setData(spreadR.data);
       setTokenStatus(tokenR.data);
       setErr("");
+      setUnavailable(false);
     } catch (e) {
-      setErr(e?.response?.data?.detail || e.message);
+      // 2026-07-11 prod hotfix: same as TraderSeatViewer —
+      // /admin/trader/spread was removed in the simplification
+      // pass. Hide the widget entirely on 404 so the Overview page
+      // stops rendering a red "Not Found" banner.
+      if (e?.response?.status === 404) {
+        setUnavailable(true);
+        setErr("");
+      } else {
+        setErr(e?.response?.data?.detail || e.message);
+      }
     } finally {
       setBusy(false);
     }
@@ -95,6 +106,8 @@ export default function SpreadWatcher() {
     [data],
   );
   const cfg = data?.config || {};
+
+  if (unavailable) return null;
 
   return (
     <Card className="mb-6" testid="spread-watcher-tile">
