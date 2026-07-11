@@ -1,3 +1,30 @@
+## 2026-07-11 (later) — iter-27: Doctrine step 3 (canonical builder for all 4 brains)
+
+**Landed:**
+
+- `mc_pulse/feature_builders/coerce.py` — **NEW.** `optional_float(value) → float | None`. Never raises. Rejects None, NaN, ±inf, non-numeric strings. The doctrine's "never bare `float()` on external data" contract, in code
+- `mc_pulse/feature_builders/camino.py` — hot-branch bar cleaning uses `optional_float`; if cleaning leaves < 20 usable bars, falls through to cold branch (no garbage on sparse windows)
+- `external/brains/runner.py` — removed the `self.brain_id == "camino"` gate. All 4 brains (Camino, GTO, Barracuda, Hellcat) now route through `build_camino_features`. Selection contract unchanged
+- `logger.warning` → `logger.exception` for `intent_loop error` — future crashes log the full stack so root cause is immediately visible
+- 24 new tests: `test_optional_float.py` — coercion contract, hostile inputs, `build_camino_features` survival on None-laden bars
+
+**Root cause of the ETH/USD NoneType crash:**
+The runner's legacy `_build_snapshot` (line 606) does `float(row["c"])` on bars from `technical.bars`. When ANY bar in the 20-bar window had `c=None` (which happened intermittently for ETH/USD via Kraken feeder edge conditions), the raw `float(None)` raised, the exception propagated to the intent loop, `intent_loop error brain=X sym=ETH/USD` warning fired, no intent posted. Camino was unaffected because iter-27 already routed it through the canonical builder. Steps 3 extends that protection to all 4 brains.
+
+**Post-fix evidence:**
+Zero `intent_loop error` events since 20:47:16 restart. Prior 6h: dozens per hour on 3 brains × ETH/USD. All 3 brains posting healthy intents.
+
+**Test status: 205/205 passing** (181 previous + 24 optional_float).
+
+**Session note on the identical-intent pattern:** The pre-fix pattern of "472 identical NVDA intents in 6h" (root cause: stale Finnhub 5m data) will genuinely stop when the equity feeder produces varying bars again — which resumes Monday 2026-07-13 09:30 ET. Currently a Saturday, all equity feeders correctly return Friday's last-close bar; the freshness gate marks these as `OUTSIDE_RTH_LAST_SESSION_BAR` = fresh. Crypto lane already varying because Kraken is 24/7.
+
+**Deferred to next session (doctrine steps 4-8, in order):**
+- Step 4: `decision_fingerprint` + unique index — one intent per (brain, symbol, tf, source_bar_close_at, feature_digest, position_digest, doctrine_version). Cooldown becomes secondary
+- Step 5: Consensus dedup — one opinion per (brain, symbol, source_bar_close_at); `consensus_fingerprint`
+- Step 6: Invalidate 683 stuck consensus positions → `invalidated_data_stale`
+- Step 7: Instrument every consensus→broker branch — no silent returns
+- Step 8: Repair consensus → pending_open → submitted state machine
+
 ## 2026-07-11 — iter-27: Parity plumbing + broker-native feeders + freshness gate
 
 **Doctrine (frozen by operator):**

@@ -78,6 +78,7 @@ try:
     if "/app/backend" not in _sys_for_mc_pulse.path:
         _sys_for_mc_pulse.path.insert(0, "/app/backend")
     from mc_pulse.feature_builders.camino import build_camino_features
+    from mc_pulse.feature_builders.coerce import optional_float
     from mc_pulse.parity_key import intraday_bar_identity
     from mc_pulse.input_manifest import (
         build_camino_manifest,
@@ -1226,7 +1227,12 @@ class BrainRunner:
                         await self._evaluate_and_post(http, lane, symbol)
                         self._last_emit_tick[(lane, symbol)] = self._tick_count
                     except Exception as e:  # noqa: BLE001
-                        logger.warning(
+                        # 2026-07-11: was `logger.warning(...)` which
+                        # stripped the traceback and left us guessing.
+                        # `logger.exception` includes the full stack so
+                        # we can pinpoint where the NoneType actually
+                        # slipped through — required by doctrine step 3.
+                        logger.exception(
                             "intent_loop error brain=%s sym=%s: %s",
                             self.brain_id, symbol, e,
                         )
@@ -1391,23 +1397,30 @@ class BrainRunner:
     ) -> None:
         technical = await self._fetch_technical(http, symbol)
 
-        # ── 2026-07 parity work (iter-27) ──
-        # Camino ONLY: swap `_build_snapshot`'s internal derivation for
-        # the canonical Camino feature builder so the runner and the
-        # pulse produce byte-identical feature snapshots from the same
-        # bars. Selection/cooldown/tick cadence are UNCHANGED —
-        # operator directive was explicit that feature and selection
-        # changes must not land together, or parity math cannot
-        # attribute the correction cleanly.
+        # ── 2026-07 iter-27, doctrine step 3 (all 4 brains) ──
+        # ALL brains route through the canonical Camino feature
+        # builder now. The four brains share the same
+        # `NeutralAdversarialBrain` core (differing only in
+        # brain_id / personality / doctrine) — they READ the exact
+        # same feature dict shape. There is no useful per-brain
+        # feature production during migration; the canonical
+        # builder is the single source of truth.
         #
-        # setup_score comes from `technical.signals.setup_score`
-        # (MC-computed pattern composite). The canonical builder
-        # returns 0.0 as a placeholder — we overwrite here to
-        # preserve doctrine's pattern-bias input on the runner side.
-        # A pulse-side setup_score is deliberately absent this pass;
-        # the parity manifest will surface it as `missing_fields`
-        # and Step 7 (widen indicators proven missing) will add it.
-        if self.brain_id == "camino" and _MC_PULSE_PARITY_AVAILABLE:
+        # Camino: was already on this path (iter-27 step 5).
+        # GTO / Barracuda / Hellcat: switching now, which fixes
+        # the ETH/USD `float() … NoneType` crash from the runner's
+        # legacy `_build_snapshot`. The canonical builder's
+        # `optional_float`-based coercion is None-safe.
+        #
+        # Selection / ranking / cooldown are UNCHANGED — the
+        # operator's contract that "feature and selection changes
+        # must not land together" still holds.
+        #
+        # setup_score is preserved on the runner side from
+        # `technical.signals` so doctrine's pattern-bias input
+        # doesn't regress; the canonical builder returns 0.0
+        # as a placeholder we overwrite here.
+        if _MC_PULSE_PARITY_AVAILABLE:
             _bars = (technical or {}).get("bars") or []
             _daily = (technical or {}).get("daily_volume_baseline") or None
             snapshot, _ = build_camino_features(
@@ -1416,10 +1429,8 @@ class BrainRunner:
                 market_regime=getattr(self, "_current_regime", None),
             )
             _sig = (technical or {}).get("signals") or {}
-            try:
-                setup_score = float(_sig.get("setup_score") or 0.0)
-            except (TypeError, ValueError):
-                setup_score = 0.0
+            _ss = optional_float(_sig.get("setup_score"))
+            setup_score = _ss if _ss is not None else 0.0
             snapshot["setup_score"] = round(setup_score, 4)
         else:
             snapshot, setup_score = _build_snapshot(symbol, lane, technical)

@@ -40,6 +40,7 @@ import time
 from typing import Any, Optional
 
 from shared.indicators import session_features
+from mc_pulse.feature_builders.coerce import optional_float
 
 
 def build_camino_features(
@@ -78,13 +79,26 @@ def build_camino_features(
               consumes this; the core substitutes spread_bps=25
               when quality is not "live".
     """
-    # ── Hot branch: >= 20 bars → compute the full snapshot ──
-    if bars and len(bars) >= 20:
-        window = bars[-20:]
-        closes = [float(b.get("c") or 0) for b in window]
-        vols = [float(b.get("v") or 0) for b in window]
+    # ── Hot branch: >= 20 usable bars → compute the full snapshot ──
+    # 2026-07-11 doctrine step 5: never bare `float()` on
+    # feeder-sourced data. `optional_float` returns None for
+    # non-numeric / NaN / inf; we skip such rows silently so a
+    # single bad bar can't crash the whole builder. If cleaning
+    # leaves us with < 20 usable bars, fall through to the cold
+    # branch — computing on a sparse window would be dishonest.
+    closes: list[float] = []
+    vols: list[float] = []
+    if bars:
+        for b in bars[-20:]:
+            c = optional_float(b.get("c"))
+            v = optional_float(b.get("v"))
+            if c is None or v is None:
+                continue
+            closes.append(c)
+            vols.append(v)
 
-        window_high = max(closes) if closes else 0.0
+    if len(closes) >= 20:
+        window_high = max(closes)
         window_low = min(closes) or 1.0
         volatility = (window_high - window_low) / window_low
         # `trend_score` uses first→last window return, then scaled
@@ -100,9 +114,9 @@ def build_camino_features(
 
         # Spread default: lane-specific, matches runner. Override
         # wins when caller supplies a live spread.
+        override = optional_float(spread_bps_override)
         spread_bps = (
-            float(spread_bps_override)
-            if spread_bps_override is not None
+            override if override is not None
             else (8.0 if lane == "crypto" else 3.0)
         )
 
