@@ -102,19 +102,34 @@ async def pulse_tick(
 
     # Fan out: every (brain, snapshot) pair where the brain wants
     # a shot at this snapshot AND trades this lane.
+    #
+    # 2026-07 iter-27 doctrine gate: a snapshot with
+    # `health.status != "fresh"` MUST NOT reach a brain. This is
+    # the explicit contract fix for the 2026-07-11 incident where
+    # a stale feeder produced 472 identical Camino/NVDA intents
+    # from a 20-hour-old bar. A stale-input evaluation is an
+    # OPERATIONAL ABSTENTION (no opinion), never a market
+    # opinion. Stale-skipped events don't touch personality
+    # stats, consensus, parity metrics, or execution. See
+    # `mc_pulse.freshness` for the health contract.
     tasks = []
-    # Parallel array of (brain, snapshot, seat_key). Full objects
-    # (not just ids) so the post-gather step can drain manifest
-    # hints via `take_manifest_hint(symbol)` — persistence lives
-    # in the orchestrator, not in the brain.
     task_meta: list[tuple[Brain, MarketSnapshot, str]] = []
+    stale_skipped = 0
     for snap in snapshots:
+        if snap.health is not None and not snap.health.is_fresh:
+            stale_skipped += 1
+            continue
         for brain in registry.for_lane(snap.lane):
             if not brain.should_evaluate(now=now, snapshot=snap):
                 continue
             seat_key = build_seat_key(snap.lane, snap.symbol, now)
             tasks.append(evaluate_brain(brain, snap, receipt.pulse_id, seat_key=seat_key))
             task_meta.append((brain, snap, seat_key))
+    if stale_skipped:
+        logger.info(
+            "pulse tick pulse_id=%s stale_snapshots_skipped=%d",
+            receipt.pulse_id, stale_skipped,
+        )
 
     if not tasks:
         # Nothing to do this tick — still emit a receipt so the

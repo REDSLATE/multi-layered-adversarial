@@ -17,6 +17,7 @@ from types import MappingProxyType
 from typing import Mapping, Optional
 
 from mc_pulse.parity_key import BarIdentity
+from mc_pulse.freshness import SnapshotHealth
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +89,11 @@ class MarketSnapshot:
     # divergence is itself a parity finding and must not be
     # averaged into aggregate metrics.
     fallback_used: bool = False
+    # Freshness verdict. Attached at snapshot construction; the
+    # pulse orchestrator gates on `health.is_fresh` BEFORE calling
+    # `brain.evaluate` — stale snapshots produce NO opinion. See
+    # `mc_pulse.freshness` for the contract.
+    health: Optional[SnapshotHealth] = None
 
 
 def freeze_indicators(d: Optional[dict]) -> Mapping[str, float]:
@@ -119,6 +125,7 @@ def build_snapshot(
     source_bar_id: str = "",
     feature_snapshot: Optional[dict] = None,
     fallback_used: bool = False,
+    health: Optional[SnapshotHealth] = None,
 ) -> MarketSnapshot:
     """Factory that enforces the small handful of invariants
     (uppercase symbol, aware timestamp, indicators frozen) so
@@ -150,4 +157,5 @@ def build_snapshot(
         source_bar_id=source_bar_id or "",
         feature_snapshot=MappingProxyType(dict(feature_snapshot or {})),
         fallback_used=bool(fallback_used),
+        health=health,
     )

@@ -124,12 +124,36 @@ async def _discover_universe() -> list[str]:
 
     Precedence:
       1. `KRAKEN_OHLC_UNIVERSE` env override (CSV).
-      2. Crypto symbols with intents in the last 24h.
-      3. `FALLBACK_UNIVERSE` (cold start).
+      2. Operator-curated `patterns_universe` collection
+         (lane=crypto, active=true). This is the canonical
+         20-symbol crypto universe the operator maintains via
+         `/api/admin/patterns/universe`.
+      3. Legacy fallback: crypto symbols with intents in the last
+         24h. Kept as a graceful degradation for pre-2026-02
+         installs; `patterns_universe` supersedes it.
+      4. `FALLBACK_UNIVERSE` (cold start, no admin curation).
     """
     override = os.environ.get("KRAKEN_OHLC_UNIVERSE", "").strip()
     if override:
         return [s.strip().upper() for s in override.split(",") if s.strip()]
+
+    # ── Primary: operator-curated `patterns_universe` ──
+    # 2026-07 fix — the previous intents-based discovery bottomed
+    # out at 9 fallback symbols because `shared_intents` was
+    # retired in the June refactor. The canonical operator
+    # watchlist has always been in `patterns_universe`; consume
+    # that directly so the feeder covers all 20 curated symbols.
+    try:
+        cursor = db["patterns_universe"].find(
+            {"lane": "crypto", "active": True},
+            {"symbol": 1, "_id": 0},
+        ).max_time_ms(2000).limit(200)
+        docs = await cursor.to_list(200)
+        syms = sorted({(d.get("symbol") or "").upper() for d in docs if d.get("symbol")})
+        if syms:
+            return syms
+    except Exception as e:  # noqa: BLE001
+        logger.warning("kraken_ohlc: patterns_universe discovery failed: %r", e)
 
     try:
         cutoff = (

@@ -31,6 +31,7 @@ from typing import Optional
 
 from db import db
 from mc_pulse.feature_builders.camino import build_camino_features
+from mc_pulse.freshness import evaluate_snapshot_health
 from mc_pulse.parity_key import (
     BarIdentity,
     daily_bar_identity,
@@ -60,8 +61,14 @@ DAILY_BASELINE_LOOKBACK = 20
 
 
 def _default_universe(lane: str) -> list[str]:
-    """Bootstrap universe from env. Same env keys the runner reads
-    so preview and prod agree on membership."""
+    """Env-driven cold-boot universe. Used only as fallback when the
+    admin-curated `patterns_universe` query fails or is empty.
+
+    Same env keys the runner reads so preview and prod agree on
+    membership. The `patterns_universe` collection is the primary
+    source (see `_discover_universe` below); this stays for cold
+    starts and for tests that don't seed the collection.
+    """
     if lane == "equity":
         raw = os.environ.get("MC_UNIVERSE_EQUITY") or os.environ.get(
             "SYMBOLS_ALPHA", "NVDA,MSFT,AAPL,TSLA",
@@ -71,6 +78,44 @@ def _default_universe(lane: str) -> list[str]:
             "SYMBOLS_ALPHA_CRYPTO", "BTC/USD,ETH/USD",
         )
     return [s.strip().upper() for s in raw.split(",") if s.strip()]
+
+
+async def _discover_universe() -> dict[str, list[str]]:
+    """Return `{lane: [symbols]}` from the operator-curated
+    `patterns_universe` collection (active=true).
+
+    2026-07 fix — pre-fix the pulse used its 4-symbol env-default
+    universe while the runner used the full `patterns_universe`
+    list, guaranteeing the two paths could never agree on which
+    market events they were evaluating. Pulling from the same
+    collection removes that class of parity drift.
+
+    Fail-soft — if the collection query errors, fall back to the
+    env-default universe so a Mongo hiccup doesn't stop the
+    pulse entirely.
+    """
+    result: dict[str, list[str]] = {"equity": [], "crypto": []}
+    try:
+        cursor = db["patterns_universe"].find(
+            {"active": True},
+            {"symbol": 1, "lane": 1, "_id": 0},
+        ).max_time_ms(2000).limit(500)
+        async for d in cursor:
+            lane = (d.get("lane") or "").strip().lower()
+            sym = (d.get("symbol") or "").strip().upper()
+            if lane in result and sym:
+                result[lane].append(sym)
+        for lane in result:
+            result[lane] = sorted(set(result[lane]))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "patterns_universe discovery failed, using env defaults: %s", exc,
+        )
+    if not result["equity"]:
+        result["equity"] = _default_universe("equity")
+    if not result["crypto"]:
+        result["crypto"] = _default_universe("crypto")
+    return result
 
 
 async def build_all(
@@ -84,10 +129,7 @@ async def build_all(
     snapshots than expected simply has less to say this tick.
     """
     now = now or datetime.now(timezone.utc)
-    universe = universe or {
-        "equity": _default_universe("equity"),
-        "crypto": _default_universe("crypto"),
-    }
+    universe = universe or await _discover_universe()
     # Fetch every open position ONCE per pulse.
     positions_by_symbol = await _fetch_open_positions()
 
@@ -312,12 +354,13 @@ async def _build_one(
         source_bar_id=str(latest.get("_id") or latest.get("ts") or ""),
         feature_snapshot=feature_snapshot,
         fallback_used=fallback_used,
+        health=evaluate_snapshot_health(
+            lane=lane, tf=used_tf, latest_bar_at=latest_ts, now=now,
+        ),
     )
 
 
 async def sample_universe_size() -> dict[str, int]:
     """Diagnostic helper — return current universe sizes. Cheap."""
-    return {
-        lane: len(_default_universe(lane))
-        for lane in ("equity", "crypto")
-    }
+    universe = await _discover_universe()
+    return {lane: len(syms) for lane, syms in universe.items()}

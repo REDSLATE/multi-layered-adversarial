@@ -84,6 +84,10 @@ from shared.feeders.kraken_ohlc import (
     start_worker_if_enabled as start_kraken_ohlc_worker,
     stop_worker as stop_kraken_ohlc_worker,
 )
+from shared.feeders.webull_ohlc import (
+    start_worker_if_enabled as start_webull_ohlc_worker,
+    stop_worker as stop_webull_ohlc_worker,
+)
 from shared.external_signals.polygon_witness import (
     start_worker_if_enabled as start_polygon_news_witness,
     stop_worker as stop_polygon_news_witness,
@@ -488,6 +492,11 @@ async def lifespan(app: FastAPI):
         # 2026-02-20: crypto RVOL 20-day baseline via Kraken daily
         # OHLC. Public endpoint, no auth. Idle no-op if disabled.
         start_kraken_ohlc_worker()
+        # 2026-07 iter-27: Webull as PRIMARY equity intraday feeder
+        # (broker-native — what you can trade against). Finnhub &
+        # polygon_flatfiles remain as backup/daily via source
+        # tagging + ORDER BY ts DESC in consumers.
+        start_webull_ohlc_worker()
     except Exception as e:  # noqa: BLE001
         logger.warning("data_stack workers start failed: %s", e)
     # Per-Lane Capital Cap Ledger — atomic reservation store
@@ -850,6 +859,7 @@ async def lifespan(app: FastAPI):
         await stop_fred_worker()
         await stop_quiver_worker()
         await stop_kraken_ohlc_worker()
+        await stop_webull_ohlc_worker()
     except Exception:  # noqa: BLE001
         pass
     try:

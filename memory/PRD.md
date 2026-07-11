@@ -1,5 +1,29 @@
 # RISEDUAL Mission Control — PRD
 
+## Doctrine — Fresh-Data Contract (locked 2026-07-11, operator directive)
+
+**Core commitment:**
+
+> No fresh market event → no brain opinion.
+> No new market event → no new intent.
+> No traceable transition outcome → no state-machine return.
+
+**Rationale:** The 2026-07-11 stale-feeder incident produced 472 identical Camino/NVDA `BUY conf=0.75` intents from a 20-hour-old bar. Stale feeders are the initiating fault, but the system compounding stale inputs into hundreds of identical convictions is a separate doctrinal failure. This contract closes the compound-failure path.
+
+**Three fixes (not two), in order:**
+
+1. **Freshness enforcement at ingestion/evaluation.** `SnapshotHealth` on every `MarketSnapshot`. Session-aware (equity RTH-vs-weekend, crypto 24/7). Stale/missing/invalid → pulse SKIPS the brain evaluation entirely; no opinion is produced. **LANDED 2026-07-11.**
+
+2. **Canonical feature construction for all brains.** Retire the four imperfect per-brain feature paths. Single `CanonicalMarketFeatures` + per-brain projections (`build_gto_features`, etc.) + `optional_float` helper. Camino landed 2026-07 iter-27; GTO/Barracuda/Hellcat pending.
+
+3. **Consensus deduplication and progression repair.** Per-market-event intent idempotency (`decision_fingerprint`). Consensus dedup by (brain, symbol, source_bar_close_at). Instrumented state machine — every consensus→broker branch writes a reason, no silent returns. Reconciler for the 683 stuck consensus positions.
+
+**Broker-native data architecture (locked 2026-07-11):**
+
+- **Primary = broker-native.** Webull `equity_bars()` for equity intraday, Kraken public OHLC for crypto intraday. Broker data is the source of truth for a trading system (what you can actually trade against).
+- **Backup = vendors.** Finnhub for equity intraday, polygon_flatfiles (S3) for equity daily. Kept running in parallel — all feeders write to `shared_ohlcv_bars` with source tag; consumers pick freshest via `ORDER BY ts DESC`. Failover is emergent from the source tagging.
+- **Universe truth = `patterns_universe` collection.** Operator-curated, canonical 20/lane. Both feeders and pulse `SnapshotService` read from here. No parallel universe drift.
+
 ## Original Problem Statement
 Connect separate AI project runtimes (Barracuda, GTO, Camino, Hellcat)
 into one monorepo-style Mission Control backend. Enable real-money

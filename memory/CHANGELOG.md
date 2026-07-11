@@ -1,3 +1,56 @@
+## 2026-07-11 — iter-27: Parity plumbing + broker-native feeders + freshness gate
+
+**Doctrine (frozen by operator):**
+> No fresh market event → no brain opinion.
+> No new market event → no new intent.
+> No traceable transition outcome → no state-machine return.
+
+**Landed this session:**
+
+1. **Parity infrastructure (Steps 1-5 of the operator's 7-step packet):**
+   - `mc_pulse/parity_key.py` — `ParityKey`, `BarIdentity`, strict tf validation, intraday-alignment enforcement, daily explicit open+close, `parse_parity_key` normalization
+   - `mc_pulse/input_manifest.py` — `InputManifest` with `feature_digest` (deterministic sha256, NOT part of ParityKey), `mc_parity_manifests` collection, unique `(parity_key, path)` index, 7d TTL
+   - `mc_pulse/feature_builders/camino.py` — canonical Camino feature builder shared by runner + pulse. Preserves runner behavior for intraday (session_features slope wins), rescues trend_score on daily windows
+   - `mc_brains/camino.py` — pulse adapter guards missing required fields → emits `INSUFFICIENT_DATA` opinion with confidence=0.0, populates `manifest_hint` for orchestrator persistence
+   - `mc_arbiter/models.py` — `OpinionStatus` enum, `status` + `reason_codes` on `ModelOpinion`
+   - `mc_pulse/envelope.py` — `OpinionEnvelope.parity_key_str` for `mc_opinions_compare` joins
+   - `mc_pulse/pulse.py` — `_persist_hints` in orchestrator (persistence lives here, not on brain)
+   - `external/brains/runner.py` — instrumented Camino-only: canonical builder + runner-side manifest write, selection contract UNCHANGED
+   - 68 new focused tests: `test_parity_key.py`, `test_feature_builder_camino.py`, `test_input_manifest.py`, `test_camino_brain.py`, `test_orchestrator_manifest_persistence.py` — determinism, no-mutation, required-field completeness, digest stability, ↑↓↔ directional behavior, INSUFFICIENT_DATA path, hint pop semantics
+
+2. **Broker-native feeder architecture (Step 1 of the 10-step doctrine plan):**
+   - `shared/feeders/kraken_ohlc.py` — extended with 5m intraday loop (separate `_intraday_worker_loop`, 60s cadence, 3h backfill), reads `patterns_universe` collection instead of retired `shared_intents`. Coverage: **18/20 crypto symbols** at ~3m lag (MATIC/POL and MKR are Kraken symbol-mapping issues, flagged for operator)
+   - `shared/feeders/webull_ohlc.py` — **NEW.** Consumes Webull Open API `equity_bars()` for `tf=1m` + `tf=5m` writes. Runs 60s cadence, respects existing circuit breaker. Coverage: **20/20 equity symbols**, 1,140 bars/tick, `source="webull"`
+   - Failover shape: all feeders write to same `shared_ohlcv_bars` tagged with `source`; consumers pick freshest via `ORDER BY ts DESC`. Finnhub keeps running as automatic backup; polygon_flatfiles (S3) keeps writing daily. Polygon REST intraday stays disabled (403'ing on downgraded plan)
+
+3. **Snapshot freshness gate (Step 2 of the doctrine plan):**
+   - `mc_pulse/freshness.py` — **NEW.** `SnapshotHealth(status, latest_bar_at, age_seconds, max_age_seconds, reason_codes)`. `evaluate_snapshot_health()` with market-session awareness (equity RTH via NYSE-open UTC window, weekend/holiday tolerance, crypto 24/7 flat cap)
+   - `mc_pulse/snapshot.py` — `MarketSnapshot.health` attached at construction
+   - `mc_pulse/snapshot_service.py` — `SnapshotService._build_one` populates `health` and pulls universe from `patterns_universe` (parity with runner)
+   - `mc_pulse/pulse.py` — **gate:** snapshots with `health.status != "fresh"` are skipped entirely. NO brain evaluation, NO opinion, NO consensus contribution. Stale-input events don't touch personality stats, parity metrics, or execution metrics. Logged as `stale_snapshots_skipped=N`
+   - 10 new tests: `test_freshness.py` — crypto/equity/RTH/weekend/future-bar behavior pinned
+
+**Root-cause diagnosis (evidence-based):**
+- 472 identical Camino/NVDA `BUY conf=0.75` intents over 6h — 99% of consecutive pairs numerically identical. Root cause: Finnhub 5m equity feeder stopped writing after 2026-07-10 close; runner ticked on frozen bars → identical features → identical intents. Cooldown gated the spacing but not the duplication
+- **Polygon Massive plan status:** Real-time/today-intraday returns 403 NOT_AUTHORIZED. Historical dates on same key return 200 OK. Feeder disabled correctly (`POLYGON_FEEDER_ENABLED=false`). Operator investigating potential misclassification of usage tier — regardless, migrating equity to Webull removes single-vendor dependency
+- **Consensus positions stuck:** 422 `consensus_long`, 261 `consensus_short`, 1,221 `proposed`, 1,146 `discussing`, 325 `rejected`. Nothing in `pending_open`/`submitted`/`held`/`open`. Consensus→broker transition path stalled (separate from stale-data issue). Deferred to next session.
+
+**Regression status:** 181/181 tests passing (100 pre-existing pulse/arbiter + 68 parity/manifest + 10 freshness + 3 wiring).
+
+**Deferred to next session (Steps 3-10 of the doctrine plan):**
+- Step 3: Migrate GTO / Barracuda / Hellcat to canonical builder (`build_gto_features`, etc.) + `CanonicalMarketFeatures` + `optional_float` helper. Retire the 3 remaining imperfect feature paths. Fixes ETH/USD `NoneType` crash on 3 brains (Camino already protected by iter-27 fix)
+- Step 4: Per-market-event intent idempotency via `decision_fingerprint = sha256(brain, symbol, tf, source_bar_close_at, feature_digest, position_digest, doctrine_version)` + unique index. Cooldown becomes secondary
+- Step 5: Consensus dedup — one opinion per (brain, symbol, source_bar_close_at). `consensus_fingerprint` + fresh-input gate
+- Step 6: Invalidate the 683 stuck consensus positions → `invalidated_data_stale` terminal state (preserve audit)
+- Step 7: Instrument every consensus→broker branch — no silent returns, every blocked transition writes a reason
+- Step 8: Repair the actual consensus→pending_open→submitted state machine
+
+**Symbol mapping items flagged for operator (defer):**
+- MATIC → POL on Kraken (Sep 2024 rebrand). Update `patterns_universe` or add name-map in `to_kraken_pair`
+- MKR/USD on Kraken uses alt-name lookup. Same options
+- `POLYGON_MASSIVE` plan tier — operator to clarify usage classification with Polygon support
+
+
 ## 2026-02-19 — Brain Console NetworkTimeout fix (production bug)
 
 **Symptom** (reported on production `mission.risedual.ai`, all four
