@@ -262,9 +262,11 @@ Deletions (Phase 3 of ship): brain-side gates + duplicate sizing. Tracked separa
 
 ## 12. Sign-off checkboxes
 
-- [ ] Design shape approved
-- [ ] Seat key format `{lane}:{symbol}:{5min_bucket_iso}` confirmed
-- [ ] DAWE state at (brain, lane) — not (brain, symbol) — at v0.1 confirmed
-- [ ] SessionContext primitives deferred to Phase 2 confirmed
-- [ ] Runtime modes = { DISARMED, LIVE } only (no shadow/paper) confirmed
-- [ ] Deletion list §8 approved
+- [x] Design shape approved
+- [x] Seat key format `{lane}:{symbol}:{5min_bucket_iso}` confirmed
+- [x] DAWE state at (brain, lane) — not (brain, symbol) — at v0.1 confirmed
+- [x] SessionContext primitives deferred to Phase 2 confirmed
+- [x] Runtime modes = { DISARMED, LIVE } only (no shadow/paper) confirmed
+- [x] Deletion list §8 approved
+
+**Signed off**: 2026-07-11 by operator (in-chat approval).
