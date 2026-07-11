@@ -185,12 +185,43 @@ An audit checklist per runner MUST be produced before that runner is deleted.
 **Full design freeze at `/app/memory/MC_PULSE.md`. NEXT AGENT MUST READ BOTH `MC_SEAT_ARBITER.md` AND `MC_PULSE.md` BEFORE TOUCHING PULSE CODE.**
 
 **Implementation state as of this handoff**:
-- ✅ Design freeze `/app/memory/MC_PULSE.md` (15 sections)
-- ⏳ Operator sign-off pending on §15 checkboxes (8 items). Two questions specifically open:
-  - **Which brain is "simplest" for migration step 2?** (Operator to designate — likely Camino or GTO based on strategy complexity.)
-  - **Brain protocol shape**: stateful class (`class CaminoBrain: async def evaluate(self, snapshot)`) or stateless functional (`(prev_state, snapshot) -> (new_state, opinion)`)? Current lean is class for v0.1, functional for Phase 2 if it matters.
-- ⏳ `mc_pulse/*` — NOT YET WRITTEN. Do NOT start until §15 checkboxes are approved.
-- ⏳ Runner audit checklists (per §8 of MC_PULSE.md) — NOT YET PRODUCED. Must exist before ANY runner deletion.
+
+**MC_PULSE.md sign-off (2026-07-11)**: all 8 §15 checkboxes approved by operator. Pilot brain = **Camino**. Brain protocol = **class**. Step 7 (runner shutdown) target = **close of business Monday 2026-07-14**.
+
+**Step 1 SHIPPED** — pulse infrastructure complete, 30/30 tests pass:
+- ✅ `/app/backend/mc_pulse/__init__.py` — module doctrine + design pointer.
+- ✅ `mc_pulse/protocols.py` — `Brain` typing Protocol (`id`, `lanes`, `cadence_seconds`, `evaluation_timeout_seconds`, `should_evaluate`, `async evaluate`). `@runtime_checkable` so the registry can catch protocol-violation at boot, not at first pulse.
+- ✅ `mc_pulse/snapshot.py` — `MarketSnapshot` frozen dataclass with `slots=True` (no `__dict__`, brains cannot secretly attach fields). `indicators: Mapping[str, float]` wrapped in `MappingProxyType` — read-only from every angle. `build_snapshot` factory enforces uppercase symbol, aware UTC timestamp (naive → UTC, never local), lane validation, Decimal price coercion.
+- ✅ `mc_pulse/envelope.py` — `OpinionEnvelope` frozen dataclass carrying `pulse_id`, `brain_id`, `seat_key`, `snapshot_id`, `opinion`, `evaluated_at`. `to_mongo()` flattens for `mc_seats` upsert. Brains NEVER see these fields — they return raw `ModelOpinion`, MC wraps.
+- ✅ `mc_pulse/receipt.py` — `PulseReceipt` + `BrainFailure` dataclasses. `orchestration_ok` property returns True ONLY when `completed_at is not None` AND `brains_failed == []` AND `not overrun` — a green pulse hiding a dead brain is impossible by construction. `persist_receipt` writes to `mc_pulses` + mirrors onto `brain_runtime_metrics.risedual_stack.pulse.latest`.
+- ✅ `mc_pulse/registry.py` — `BrainRegistry` with `.register()`, `.for_lane()`, `.all()`, `.ids()`. Module-level singleton populated at `lifespan.on_startup` (wired in step 2). `set_registry` for tests only.
+- ✅ `mc_pulse/containment.py` — `evaluate_brain()` wraps each brain call in `asyncio.wait_for` + try/except returning `(envelope, None)` on success, `(None, BrainFailure)` on timeout/exception, `(None, None)` on legitimate opinion=None. Guarantee: NEVER raises. Pulse-level `asyncio.gather(return_exceptions=False)` then only raises on orchestration bugs, never brain bugs.
+- ✅ `mc_pulse/pulse.py` — `begin_pulse` allocates uuid4 `pulse_id` + persists start marker (crashed pulses still visible), `pulse_tick` runs the fanout, `complete_pulse` finalizes + computes `overrun`. `_upsert_envelopes` uses composite `(pulse_id, brain, symbol, lane)` key so retried pulses converge to at-most-one row. `compare_only=True` sends to `mc_opinions_compare` (migration steps 2–5), `False` sends to `mc_seats` (step 6+).
+- ✅ Idempotency indexes added to `db.ensure_indexes`: `mc_seats_pulse_brain_symbol_lane` (unique + sparse — legacy rows without pulse_id still valid), `mc_opinions_compare_pulse_brain_symbol_lane` (unique), `mc_opinions_compare_brain_evaluated_at`, `mc_pulses_started_at`. Verified live via `db.mc_*.list_indexes()`.
+- ✅ Colocated tests (30 total): `test_snapshot_immutability.py` (frozen + slots + MappingProxyType + UTC coercion + no-cross-brain-contamination), `test_containment.py` (good/slow/raising/silent brains + full `asyncio.gather` mixed scenario proves broken Hellcat never silences Camino), `test_idempotency.py` (retry converges to 1 row / different pulses stay separate / different brains same pulse stay separate / first_recorded_at stable across retries), `test_receipt_shape.py` (orchestration_ok honesty — incomplete pulse not OK, failed-brain pulse not OK, overrun pulse not OK).
+
+**Combined arbiter + pulse test suite: 95/95 pass in 0.45s.**
+
+**Migration steps 2–7 UNSTARTED**:
+- ⏳ **Step 2**: Adapt Camino to `class CaminoBrain: async def evaluate(self, snapshot) -> Optional[ModelOpinion]`. Requires:
+  - Audit `/app/external/brains/runner.py` (Camino-specific paths) for implicit contracts (normalization, freshness rejection, cadence, evidence stamping, deduplication) and capture each explicitly in `mc_brains/camino.py` or MC's `SnapshotService`. Produce an "audit checklist" doc (see MC_PULSE.md §8).
+  - Extract Camino's strategy logic + memory state + thresholds into `mc_brains/camino.py`.
+  - Register CaminoBrain at server startup (`lifespan.on_startup` → `get_registry().register(CaminoBrain(...))`).
+  - Build a minimal `SnapshotService.build_all()` producing real snapshots off the existing feeder tape (or start with placeholder snapshots + wire real data in step 3).
+- ⏳ **Step 3**: Wire pulse into `lifespan.py` background loop at ~15s cadence with `compare_only=True`. Camino evaluates on BOTH paths (existing runner + new pulse).
+- ⏳ **Step 4**: Parity comparison — script + dashboard reading `mc_opinions_compare` alongside runner-emitted `shared_intents` for Camino. Metrics: action-rate match, confidence distribution overlap, `reason_codes` overlap, timestamp drift.
+- ⏳ **Steps 2–4 repeated for GTO, Barracuda, Hellcat**, one at a time.
+- ⏳ **Step 6**: Confirm audit checklist closed for every runner. Flip `compare_only=False` — pulse writes to `mc_seats`, arbiter reads pulse envelopes.
+- ⏳ **Step 7**: `supervisorctl stop` on all four runner processes. Observation window ≥1 full trading session per lane. **Target: close of business Monday 2026-07-14.**
+- ⏳ **Step 8**: Delete `runner.py`, sidecar/heartbeat plumbing, `bump_stack_heartbeat` callers, per-brain runtime routes. Grep confirms zero readers.
+
+**Personality separation acceptance tests** (MUST be in place before step 6, per operator directive): NOT YET WRITTEN. Location will be `mc_pulse/tests/test_personality_separation.py`. Contract:
+- `distinct_action_rate >= 0.35` — fraction of ticks where all 4 brains chose the same action stays below 65%.
+- `pairwise_confidence_correlation(a, b) < 0.85` for every pair.
+- `reason_codes` differ between at least two brains on the same snapshot.
+- Each brain's snapshot-access trace shows brain-specific features actually being read (Camino → momentum features, Barracuda → mean-reversion features, etc.).
+
+**Full design freeze at `/app/memory/MC_PULSE.md`. NEXT AGENT MUST READ BOTH `MC_SEAT_ARBITER.md` AND `MC_PULSE.md` BEFORE TOUCHING ANY PULSE OR BRAIN CODE.**
 
 
 **🚧 2026-07-11 (iter-26): MC SEAT ARBITER + DAWE — IMPLEMENTATION COMPLETE (DISARMED, END-TO-END VERIFIED).**

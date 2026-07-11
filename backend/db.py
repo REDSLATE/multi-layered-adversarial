@@ -337,17 +337,41 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         [("ts", 1)],
         name="mc_seats_ts_grader",
     )
-    # TTL — recorded_at must be a real BSON date for Mongo TTL to
-    # honor it, so grader/arbiter writes MUST store `recorded_at`
-    # as an ISO string parsed to datetime at write time. For v0.1
-    # we stamp `recorded_at` as ISO string (see `arbiter.submit_opinion`);
-    # TTL activation is deferred one iteration until we switch to
-    # BSON date writes. Placeholder index registered so the field
-    # is present in the schema.
+    # MC Pulse — 2026-07-11 (iter-27). Pulse-owned envelopes carry
+    # a `pulse_id` that lets retried pulses complete missing work
+    # without ever double-executing. Two unique constraints
+    # enforce that:
+    #   (pulse_id, brain, symbol, lane) on `mc_seats`     — at most
+    #                                                       one row
+    #                                                       per (pulse,
+    #                                                       brain, sym,
+    #                                                       lane).
+    #   (pulse_id, brain, symbol, lane) on `mc_opinions_compare`
+    #     — same shape on the migration comparison tape (steps 2-5).
+    #   `mc_pulses` receipts — primary-key indexed by pulse_id.
     await _safe_create_index(
         db.mc_seats,
-        [("recorded_at", 1)],
-        name="mc_seats_recorded_at",
+        [("pulse_id", 1), ("brain", 1), ("symbol", 1), ("lane", 1)],
+        name="mc_seats_pulse_brain_symbol_lane",
+        unique=True,
+        sparse=True,   # legacy rows written before pulse_id existed
+                       # have no pulse_id — sparse keeps them valid
+    )
+    await _safe_create_index(
+        db.mc_opinions_compare,
+        [("pulse_id", 1), ("brain", 1), ("symbol", 1), ("lane", 1)],
+        name="mc_opinions_compare_pulse_brain_symbol_lane",
+        unique=True,
+    )
+    await _safe_create_index(
+        db.mc_opinions_compare,
+        [("brain", 1), ("evaluated_at", -1)],
+        name="mc_opinions_compare_brain_evaluated_at",
+    )
+    await _safe_create_index(
+        db.mc_pulses,
+        [("started_at", -1)],
+        name="mc_pulses_started_at",
     )
 
     # Per-runtime decision/shadow stores (kept ISOLATED, never cross-read)

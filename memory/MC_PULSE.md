@@ -358,11 +358,18 @@ Everything I built this session stays — pulse is an additional layer, not a re
 
 ## 15. Sign-off checkboxes
 
-- [ ] Doctrine "MC owns orchestration; brains own interpretation" approved
-- [ ] Immutable snapshot with per-brain isolation approved
-- [ ] Idempotency via `pulse_id` + unique `(pulse_id, brain_id, symbol, lane)` approved
-- [ ] Grader moved off the critical pulse path approved
-- [ ] Pulse receipt exposes per-brain health approved
-- [ ] Migration order (8 steps, one brain at a time, comparison-only before switch) approved
-- [ ] Personality separation acceptance tests approved
-- [ ] Directory layout (`mc_pulse/` + `mc_brains/`) approved
+- [x] Doctrine "MC owns orchestration; brains own interpretation" approved
+- [x] Immutable snapshot with per-brain isolation approved
+- [x] Idempotency via `pulse_id` + unique `(pulse_id, brain_id, symbol, lane)` approved
+- [x] Grader moved off the critical pulse path approved
+- [x] Pulse receipt exposes per-brain health approved
+- [x] Migration order (8 steps, one brain at a time, comparison-only before switch) approved
+- [x] Personality separation acceptance tests approved
+- [x] Directory layout (`mc_pulse/` + `mc_brains/`) approved
+
+**Signed off**: 2026-07-11 by operator (in-chat approval).
+
+**Additional decisions locked**:
+- Pilot brain: **Camino** (simplest strategy logic, lowest expected hidden-contract count).
+- Brain protocol shape: **class** (`class CaminoBrain: async def evaluate(self, snapshot)`). State lives on instance. Revisit functional shape only if Phase 2 wants deterministic replay from stored state.
+- Step 7 (runner shutdown) target: **close of business Monday 2026-07-14**.
