@@ -10,6 +10,81 @@ trading, comprehensive provenance + health tracking.
 ### 🚨 NEXT WORK ITEM — P0 UNSTARTED (top priority — do NOT skip past this)
 
 
+**🚧 2026-07-11 (iter-26): MC SEAT ARBITER + DAWE — ARCHITECTURE FROZEN, IMPLEMENTATION UNSTARTED.**
+
+**Operator context (verbatim doctrine — do not paraphrase, do not soften)**:
+
+The system was diagnosed as **too timid**. Operator listed 8 timidity levers to remove:
+
+1. Fixed RVOL floor
+2. Fixed confidence floor
+3. Mandatory multi-brain agreement
+4. Mandatory setup quality grade
+5. Hard doctrine vetoes
+6. Static spread penalties when quotes are stale
+7. Single-expression-only logic
+8. Paper/shadow-only routing
+
+Operator's stated design correction: **"Use history as a weak prior, then let current-day evidence dominate quickly."** History remains present but has much less authority than current conditions. This is codified as the **Day-Adaptive Weight Engine (DAWE)**.
+
+**Operator's second correction (equally important)**: MC must become MORE than a hub. **MC becomes the seat arbiter, and DAWE weights are installed AT THE SEAT with all brains as members of MC** — not per-brain-in-isolation. This is because the seat (a specific symbol × lane × entry window) is where brains actually compete. Weights that live per-brain globally aren't commensurable.
+
+**Operator's third correction**: **No more shadow anything applied to the active pipeline.** Paper trading, "would-have-executed" simulators, and shadow arbiters running alongside live are all waste. **Learning surfaces that grade real predictions against real market movement (Kernel Review, counterfactual_signals, RISE AI, memory_kernel) STAY** — those aren't shadow, they're evaluation of reality. What must be killed on sight: any parallel arm of the active brain → arbiter → trader → broker pipeline.
+
+**Runtime modes reduced to two**: `DISARMED` (opinions collected, arbitration runs, DAWE grades update, NO intent to trader) and `LIVE` (intent IS emitted, kill switch + mechanical validators still gate). **No PAPER. No SHADOW. No "would-have-picked" side channel.**
+
+**Decisions locked in this session**:
+- **Repo**: stay in this repo (`/app/backend/mc_arbiter/`). Not a greenfield rewrite. Reuse Webull/Kraken adapters, Polygon/Finnhub/Kraken feeders, Atlas plumbing, dashboard shell, auth, tests. Rip out brain-side gates + duplicate sizing math instead.
+- **Seat key**: `f"{lane}:{symbol}:{5min_bucket_iso}"` — bounded cardinality (~288 seats/symbol/day), matches 15m grade horizon, gives brains ~5 min to submit before arbitration.
+- **DAWE state scope**: **(brain, lane)** at v0.1. NOT (brain, symbol). Escalate to (brain, symbol) only if per-symbol dispersion proves meaningful.
+- **DAWE weight math**: `effective = clamp(session^0.50 × recent^0.30 × prior^0.20, 0.40, 1.40)`. Session EWMA α=0.30 over last 90 min. Recent EWMA α=0.10 daily. Prior static at 1.0 for cold start; nightly cold-refresh added in Phase 2. Cold-start guard: if `grades_used_session < 5`, return `effective=1.0` (thin data can't move the arm).
+- **Rank vs size split**: rank uses `× effective`, sizing uses `× sqrt(effective)` — softens size damage from a temporary weak period. Final size gate: `clamp(total_size_multiplier, 0.30, 2.00)`.
+- **SessionContext primitives** (trend_strength, breadth, correlation, news_intensity) — **DEFERRED to Phase 2**. v0.1 uses graded-outcome signal only. Rationale: those primitives are non-trivial to compute honestly on a small universe; ship the honest signal first, add primitives if the arm proves under-adaptive.
+- **Regime-change detector with hysteresis** — DEFERRED to Phase 2. Static α good enough at v0.1.
+- **Historical prior warmup** — DEFERRED to Phase 2.
+
+**Data locations (agreed)**:
+- New collection `mc_seats` (compound index `(seat_key, brain)`, TTL 30 days) — holds opinions + winner + receipt per seat.
+- DAWE state extends `brain_runtime_metrics.risedual_stack.brains.<brain>.dawe.<lane> = {session, recent, prior, effective, grades_used_session, grades_used_recent, last_updated}`. **One doc read gives the whole matrix.**
+- Grader progress on each opinion doc; no separate collection.
+
+**What gets DELETED after arbiter is armed (Bruce Lee dividend)**:
+- Brain-side confidence floors (per-brain `MIN_CONFIDENCE`)
+- Brain-side RVOL gates
+- Brain-side sizing math (all duplicates)
+- Brain-side direct calls to `shared_intents.insert_one` (route through MC now)
+- Any "would-have-executed" simulator or parallel shadow arbiter
+
+**What is KEPT**:
+- Kernel Review, RISE AI, memory_kernel, counterfactual_signals (learning surfaces on the REAL tape — NOT shadow)
+- Kill switch, master switch, mechanical validators (physical valve)
+- 3-clock write health, Atlas timeout handler (infra from iter-25)
+
+**Full design freeze is at `/app/memory/MC_SEAT_ARBITER.md`. NEXT AGENT MUST READ THAT DOC BEFORE TOUCHING ARBITER CODE.** The freeze defines: `ModelOpinion` shape, `SeatKey` format, `DaweState` schema, arbitration loop steps 1-7, grader cadence, deletion list, sign-off checkboxes.
+
+**Implementation state as of this handoff**:
+- ✅ `/app/memory/MC_SEAT_ARBITER.md` — 12-section design freeze written
+- ✅ `/app/backend/mc_arbiter/__init__.py` — module scaffold (docstring only)
+- ⏳ **Sign-off pending on the 6 checkboxes in §12 of the design freeze** — do not code the arbiter body until operator confirms.
+- ⏳ `mc_arbiter/models.py` — NOT YET WRITTEN (ModelOpinion, SeatKey, DaweState dataclasses)
+- ⏳ `mc_arbiter/seat_key.py` — NOT YET WRITTEN (5-min bucket helper)
+- ⏳ `mc_arbiter/dawe.py` — NOT YET WRITTEN (EWMA + clamp + cold-start guard)
+- ⏳ `mc_arbiter/arbiter.py` — NOT YET WRITTEN (collect → rank → winner → size → emit)
+- ⏳ `mc_arbiter/grader.py` — NOT YET WRITTEN (background grade loop at 15m + 60m)
+- ⏳ `mc_arbiter/routes.py` — NOT YET WRITTEN (`POST /api/mc/arbiter/opinion`)
+- ⏳ Brain-side deletion pass — NOT STARTED (blocked on arbiter being live)
+
+**Testing strategy for the arbiter** (planned, not yet written):
+- Unit: DAWE math (EWMA convergence, clamp bounds, cold-start guard), seat_key canonicalization, rank vs size split arithmetic.
+- Integration: 4 brains post opinions to the same seat_key, verify winner selection by adjusted_rank, verify one and only one intent lands in `shared_intents` for that seat, verify all 4 opinions get graded at 15m + 60m.
+- Regression: existing intent-write path (iter-25 3-clock work) still functions when brain calls go through arbiter.
+
+**Immediate next step for the agent picking this up**: (a) confirm design freeze §12 sign-offs are done (check the checkboxes in `/app/memory/MC_SEAT_ARBITER.md`), (b) if signed off, start with `models.py` + `seat_key.py` + `dawe.py` in one pass, tests colocated, THEN wire the route + arbitration loop, THEN the grader. Do NOT delete any brain-side gate until the arbiter emits at least one real intent end-to-end.
+
+
+**✅ 2026-07-11 (iter-25b): ATLAS TIMEOUT SYSTEM-WIDE SAFETY NET.** After the 3-clock work landed, prod still showed `NetworkTimeout: customer-apps-shard-XX.kndgvm.mongodb.net:27017` and `ExecutionTimeout: PlanExecutor error during aggregation :: operation exceeded time limit, MaxTimeMS...` red banners across the Overview page (Feeder Slots, Shared Technical Feed) and BrainConsole (Barracuda). Audited: 295 unbounded read sites — patching each individually is a losing game. Two-part fix: (a) explicit `.max_time_ms(2500)` / `maxTimeMS(4500)` bounds + fail-soft try/except returning `{items:[], degraded:true}` on `/shared/opinions` × 2 handlers, `/shared/technical/symbols`, `/shared/technical/feeders`; (b) GLOBAL FastAPI exception handler in `server_modules/middleware_setup.py` catching pymongo `NetworkTimeout`, `ExecutionTimeout`, `ServerSelectionTimeoutError`, `WTimeoutError` — for GET/HEAD returns HTTP 200 with `{ok:false, degraded:true, atlas_timeout:true, items:[], count:0, payload:{}, request_id, warning}` (a 200 is deliberate so every widget's happy path resolves and widgets render empty state instead of a red banner); for writes returns HTTP 503 with same body (writes stay honest — a POST that timed out MUST reach the caller so retry / user feedback fires; this is the anti-silent-swallow doctrine extended to the write path at the middleware layer). Handler registered BEFORE the generic Exception handler so FastAPI resolves the more-specific pymongo classes first. 3 new tests validate the response shape + registration completeness. Also frontend: `TraderSeatViewer.jsx`, `SpreadWatcher.jsx`, `TraderPostMortem.jsx` now hide the whole card on 404 (their backend endpoints were removed in the earlier simplification pass but widgets were still mounted showing "Not Found" red banners). 28/28 tests pass. **Long-term direction for the Atlas problem**: materialize hot dashboard state into single summary docs (the `brain_runtime_metrics.risedual_stack` pattern) — Trader Seats status, Feeders status, Technical universe summary — so the dashboard reads O(1) instead of aggregating live. That makes Atlas tier irrelevant for the operator UI. Only bump to M10 dedicated (~$57/mo) if load remains after materialization.
+
+
 **✅ 2026-07-11 (iter-25): 3-CLOCK INTENT-WRITE HEALTH + PROD MONGO NETWORK-TIMEOUT HOTFIX SHIPPED.** Operator directive: "heartbeat fresh ≠ intent pipeline healthy." Split the brain-side truth from the DB-side truth with FOUR distinct stamps per brain in the shared `brain_runtime_metrics._id="risedual_stack"` doc (everything is on ONE stack): `last_heartbeat_ts` (runner alive), `last_decision_ts` (decision produced this tick, HOLD included), `last_db_confirmed_intent_ts` (Mongo `insert_one` for ANY action confirmed — HOLD still proves the writer is alive), `last_db_confirmed_directional_intent_ts` (BUY/SELL/SHORT/COVER only — separated so the UI can distinguish "writer healthy but no directional opportunity" from "writer dead"). Counters $inc'd monotonically: `decisions_total`, `intent_submit_attempts_total`, `intent_submit_successes_total`, `directional_submit_successes_total`, `intent_submit_failures_total`. Insert-failure receipt (`last_intent_submit_error_ts/_msg/_action/_symbol`). Anti-silent-swallow guarantee: `shared/intents.py` wraps the `shared_intents.insert_one` in try/except that bumps failure metrics (best-effort) then **RE-RAISES** — the runner MUST hear about the failure. Verified with a monkeypatch test that patches `AsyncIOMotorCollection.insert_one` at the class level to raise `RuntimeError("simulated_atlas_outage")`; the counter advances by 1 AND `_post_intent_impl` propagates the exception. Session-aware `write_health` band (HEALTHY / STALE / DEAD / UNKNOWN / BLIND) — during equity closed-market hours, >60m directional-write age relaxes to STALE (HOLD-only writes are legitimate steady state overnight); heartbeat stale → BLIND regardless. Endpoints: `GET /api/admin/runtime/stack/status` attaches `_ages` + `write_health` per brain and `equity_market_open` at top level; `GET /api/admin/runtime/{brain}/status` embeds a full `payload.write_health` block (`{band, ages, counters, last_write_receipt, last_error, equity_market_open}`). Wired `bump_stack_heartbeat` into `sidecar_checkin.py` and `ingest.py` so heartbeats stamp the stack clock (nobody was calling this — every brain was reporting BLIND). Frontend `BrainProxiedStatusTile.jsx` now renders a "Write health · 3 clocks" section with a colored band pill, three clock tiles (heartbeat / last decision / DB write (any)), a counters row (attempts / success / directional_ok / failures / decisions), a last-write-receipt block (intent_id, symbol, action, lane, ingest_ts), and a last-submit-error block. All 11 required `data-testid` hooks resolved. 6/6 new unit + integration tests pass; full regression suite green. **Prod NetworkTimeout hotfix (same iter)**: prod symptom "NetworkTimeout: customer-apps-shard-00-01.kndgvm.mongodb.net:27017: The read operation timed out" blanket-covered BrainConsole and other pages. Root cause: `/api/shared/opinions?runtime=X&limit=10` was doing `find({runtime:X}).sort(posted_at:-1)` against `shared_opinions` with **no compound index** — full collection scan on a growing tape. Fix (2 parts): (a) added `shared_opinions_runtime_posted_at`, `shared_opinions_topic_posted_at`, `shared_opinions_thread_posted_at`, `shared_opinions_posted_at` indexes via `_safe_create_index` in `db.ensure_indexes`; (b) bounded the query with `.max_time_ms(2500)` + try/except that returns `{items:[], count:0, degraded:True}` on any Motor error (never renders a red banner across the operator view). Applied to both `/shared/opinions` and `/runtime-discussion/opinions` variants. Also fixed the "Trader Post-Mortem — Not Found" 404 banner: `/admin/trader/receipts` was removed in the earlier simplification pass but `TraderPostMortem.jsx` was still mounted on the Intents page; it now hides the whole card on 404 instead of showing a red banner. **Login redirect fix**: `Login.jsx` was navigating to `/admin/hypothesis` (a deleted route), which the catch-all bounced to `/` (marketing splash) — operators had to refresh to reach the admin dashboard. Switched to `/admin/overview`.
 
 
