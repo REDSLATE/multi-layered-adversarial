@@ -226,7 +226,18 @@ def test_stack_status_decorates_write_health(auth_headers):
 async def test_insert_failure_propagates_and_bumps_failure_counter(monkeypatch):
     """When `shared_intents.insert_one` raises, the intents path
     must (a) bump `intent_submit_failures_total`, (b) re-raise so
-    the runner sees the failure."""
+    the runner sees the failure.
+
+    Wiring note: motor's `AsyncIOMotorDatabase.__getitem__` returns
+    a FRESH `AsyncIOMotorCollection` wrapper on every access — so
+    patching `insert_one` on a wrapper captured up-front does not
+    affect the wrapper the production code acquires at runtime.
+    We patch the class method itself with a name-guarded shim so
+    only the `shared_intents` collection raises; every other
+    collection continues to work normally (metrics bumps still
+    reach `brain_runtime_metrics`).
+    """
+    from motor.motor_asyncio import AsyncIOMotorCollection
     from shared import intents as intents_mod
     from shared.brain_runtime_metrics import COLLECTION
     from shared.brain_legend import canonicalize_stack
@@ -235,20 +246,19 @@ async def test_insert_failure_propagates_and_bumps_failure_counter(monkeypatch):
 
     brain = "camino"
     canon = canonicalize_stack(brain) or brain
-    # snapshot the failure counter before
     doc0 = await db[COLLECTION].find_one({"_id": "risedual_stack"}) or {}
     before = ((doc0.get("brains") or {}).get(canon) or {}).get(
         "intent_submit_failures_total", 0,
     ) or 0
 
-    # Patch just the `shared_intents` collection's `insert_one`, not
-    # the whole db router — otherwise later tests see a fake db.
-    real_coll = db[SHARED_INTENTS]
+    original_insert_one = AsyncIOMotorCollection.insert_one
 
-    async def _raise_insert(_doc):
-        raise RuntimeError("simulated_atlas_outage")
+    async def _cond_raise(self, doc, *args, **kwargs):
+        if getattr(self, "name", None) == SHARED_INTENTS:
+            raise RuntimeError("simulated_atlas_outage")
+        return await original_insert_one(self, doc, *args, **kwargs)
 
-    monkeypatch.setattr(real_coll, "insert_one", _raise_insert)
+    monkeypatch.setattr(AsyncIOMotorCollection, "insert_one", _cond_raise)
 
     body = intents_mod.IntentIn(
         stack=brain,
@@ -261,7 +271,6 @@ async def test_insert_failure_propagates_and_bumps_failure_counter(monkeypatch):
     with pytest.raises(RuntimeError, match="simulated_atlas_outage"):
         await intents_mod._post_intent_impl(body)
 
-    # counter must have advanced
     doc1 = await db[COLLECTION].find_one({"_id": "risedual_stack"}) or {}
     after = ((doc1.get("brains") or {}).get(canon) or {}).get(
         "intent_submit_failures_total", 0,
