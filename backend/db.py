@@ -374,6 +374,30 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         name="mc_pulses_started_at",
     )
 
+    # MC parity manifests (2026-02, parity step 1/2). Unique
+    # (parity_key, path) — the runner and pulse rows for the SAME
+    # bar close MUST coexist so the parity endpoint can pair them;
+    # a unique-on-parity_key alone would let one path overwrite the
+    # other, destroying exactly the data parity is meant to
+    # produce. TTL 7d — parity is short-window work.
+    await _safe_create_index(
+        db.mc_parity_manifests,
+        [("parity_key", 1), ("path", 1)],
+        name="mc_parity_manifests_key_path",
+        unique=True,
+    )
+    await _safe_create_index(
+        db.mc_parity_manifests,
+        [("brain_id", 1), ("symbol", 1), ("source_bar_close_at", -1)],
+        name="mc_parity_manifests_brain_symbol_ts",
+    )
+    await _safe_create_index(
+        db.mc_parity_manifests,
+        [("recorded_at", 1)],
+        name="mc_parity_manifests_ttl",
+        expireAfterSeconds=7 * 86400,
+    )
+
     # Per-runtime decision/shadow stores (kept ISOLATED, never cross-read)
     await db.alpha_decision_log.create_index([("timestamp", -1)])
     await db.camaro_shadow_rows.create_index([("timestamp", -1)])

@@ -27,6 +27,28 @@ class Direction(str, Enum):
     FLAT = "FLAT"
 
 
+class OpinionStatus(str, Enum):
+    """Why a brain emitted THIS opinion.
+
+    Operator directive (2026-02, parity work): a fail-closed HOLD
+    must be distinguishable from a Camino-confidently-chose-HOLD.
+    Previously both surfaced as `direction=FLAT, confidence=1.0`
+    which made the parity dashboard read "brain 100% agrees on
+    HOLD" when the truth was "brain never got the inputs it
+    needed and defaulted to HOLD."
+
+    OK — normal evaluation, opinion reflects real analysis.
+    INSUFFICIENT_DATA — required feature(s) missing from snapshot;
+        the opinion should be treated as no-signal, NOT as a
+        confident HOLD. confidence MUST be 0.0.
+    BRAIN_ERROR — brain evaluate() raised; containment wrapped it;
+        confidence 0.0.
+    """
+    OK = "OK"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+    BRAIN_ERROR = "BRAIN_ERROR"
+
+
 class RuntimeMode(str, Enum):
     """Only two modes. No PAPER. No SHADOW. See design freeze §9.
 
@@ -62,6 +84,14 @@ class ModelOpinion:
     entry_hint: Optional[float] = None
     stop_hint: Optional[float] = None
     rationale: str = ""
+    # ── Parity work (2026-02, operator directive) ──
+    # A confident HOLD from a brain that got real inputs is very
+    # different from a HOLD emitted because required fields were
+    # absent. `status` + `reason_codes` make that distinction
+    # first-class on the tape so the parity endpoint can strip
+    # `INSUFFICIENT_DATA` rows out of the "action match" score.
+    status: str = "OK"                # OpinionStatus enum value
+    reason_codes: tuple[str, ...] = ()
 
     @property
     def rank_score(self) -> float:

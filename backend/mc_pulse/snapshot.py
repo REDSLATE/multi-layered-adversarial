@@ -16,6 +16,8 @@ from decimal import Decimal
 from types import MappingProxyType
 from typing import Mapping, Optional
 
+from mc_pulse.parity_key import BarIdentity
+
 
 @dataclass(frozen=True, slots=True)
 class MarketSnapshot:
@@ -46,6 +48,13 @@ class MarketSnapshot:
                        (self.id) — they don't peek at peers'
                        positions. Runner audit row #7. Empty
                        mapping is the honest "we hold nothing here."
+        source_tf    — bar timeframe the snapshot was built from
+                       ("1m", "5m", "1d"). Feeds ParityKey bucket
+                       alignment. Empty means "unknown / synthetic".
+        source_bar_count — how many raw bars the indicator layer
+                       had available. Manifest field — a runner
+                       building on 120 bars vs a pulse building
+                       on 3 bars are NOT comparable inputs.
     """
     symbol: str
     lane: str
@@ -57,6 +66,28 @@ class MarketSnapshot:
     position_context: Mapping[str, dict] = field(
         default_factory=lambda: MappingProxyType({}),
     )
+    source_tf: str = ""
+    source_bar_count: int = 0
+    # Authoritative bar identity from the source record — feeds
+    # ParityKey composition on both runner and pulse paths. Never
+    # `None` at construction time; sentinel default lets tests
+    # build minimal snapshots without threading a full BarIdentity.
+    bar_identity: Optional[BarIdentity] = None
+    source_bar_id: str = ""
+    # Full feature dict as produced by the canonical Camino
+    # feature builder. `indicators` (above) keeps the narrow
+    # "known-good numeric features" view for non-Camino brains
+    # still under migration. `feature_snapshot` carries every
+    # field the legacy brain core reads so the pulse Camino
+    # adapter can call the core without an impoverished input.
+    feature_snapshot: Mapping[str, object] = field(
+        default_factory=lambda: MappingProxyType({}),
+    )
+    # True when the canonical builder took its cold-start branch
+    # (bars < 20). Manifest-facing — a runner-hot vs pulse-cold
+    # divergence is itself a parity finding and must not be
+    # averaged into aggregate metrics.
+    fallback_used: bool = False
 
 
 def freeze_indicators(d: Optional[dict]) -> Mapping[str, float]:
@@ -82,6 +113,12 @@ def build_snapshot(
     indicators: Optional[dict] = None,
     market_state: str = "unknown",
     position_context: Optional[dict] = None,
+    source_tf: str = "",
+    source_bar_count: int = 0,
+    bar_identity: Optional[BarIdentity] = None,
+    source_bar_id: str = "",
+    feature_snapshot: Optional[dict] = None,
+    fallback_used: bool = False,
 ) -> MarketSnapshot:
     """Factory that enforces the small handful of invariants
     (uppercase symbol, aware timestamp, indicators frozen) so
@@ -107,4 +144,10 @@ def build_snapshot(
         indicators=freeze_indicators(indicators),
         market_state=market_state,
         position_context=MappingProxyType(dict(position_context or {})),
+        source_tf=source_tf,
+        source_bar_count=int(source_bar_count or 0),
+        bar_identity=bar_identity,
+        source_bar_id=source_bar_id or "",
+        feature_snapshot=MappingProxyType(dict(feature_snapshot or {})),
+        fallback_used=bool(fallback_used),
     )

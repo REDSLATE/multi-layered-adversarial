@@ -25,6 +25,13 @@ class OpinionEnvelope:
     snapshot_id: str
     opinion: ModelOpinion
     evaluated_at: datetime
+    # ── Parity work (2026-02, operator directive) ──
+    # Canonical join key for runner-vs-pulse pairing. Set by the
+    # pulse loop from the source bar timestamp — NOT the wall
+    # clock. Empty string means "not tied to a canonical bar";
+    # the parity endpoint will exclude such rows from the paired
+    # sample count.
+    parity_key_str: str = ""
 
     def to_mongo(self) -> dict:
         """Flatten for `mc_seats` upsert. The idempotency
@@ -53,6 +60,10 @@ class OpinionEnvelope:
             "rationale": op.rationale,
             "ts": op.ts,
             "evaluated_at": self.evaluated_at.isoformat(),
+            # Parity fields — see design note on the dataclass.
+            "parity_key_str": self.parity_key_str,
+            "status": op.status,
+            "reason_codes": list(op.reason_codes),
             # Grader fills these after 15m / 60m:
             "grade_15m": None,
             "grade_60m": None,
