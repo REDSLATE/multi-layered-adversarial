@@ -76,6 +76,26 @@ async def evaluate_brain(
         # failure — just no envelope for this (brain, snapshot).
         return None, None
 
+    # ParityKey composition (2026-07 parity work). The envelope
+    # carries the canonical join key so `mc_opinions_compare` rows
+    # from the pulse and `shared_intents`-derived runner rows can
+    # be paired on the exact same closed bar, not on wall-clock.
+    # If the snapshot lacks a BarIdentity (test fixtures, cold
+    # boot), we ship "" — the parity endpoint will surface such
+    # rows as `parity_key_missing > 0` rather than pair them by
+    # timestamp drift.
+    parity_key_str = ""
+    if snapshot.bar_identity is not None:
+        try:
+            parity_key_str = snapshot.bar_identity.to_parity_key(
+                brain_id=brain.id, symbol=snapshot.symbol,
+            ).as_string()
+        except ValueError as exc:
+            logger.warning(
+                "parity key composition failed brain=%s symbol=%s err=%s",
+                brain.id, snapshot.symbol, exc,
+            )
+
     envelope = OpinionEnvelope(
         pulse_id=pulse_id,
         brain_id=brain.id,
@@ -83,6 +103,7 @@ async def evaluate_brain(
         snapshot_id=snapshot.snapshot_id,
         opinion=opinion,
         evaluated_at=datetime.now(timezone.utc),
+        parity_key_str=parity_key_str,
     )
     return envelope, None
 

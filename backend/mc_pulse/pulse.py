@@ -24,8 +24,13 @@ from typing import Iterable
 from db import db
 from mc_arbiter.arbiter import MC_SEATS
 from mc_arbiter.seat_key import build_seat_key
+from mc_brains.camino import CaminoBrain, CaminoManifestHint
 from mc_pulse.containment import evaluate_brain
 from mc_pulse.envelope import OpinionEnvelope
+from mc_pulse.input_manifest import (
+    build_camino_manifest,
+    persist_manifest,
+)
 from mc_pulse.protocols import Brain
 from mc_pulse.receipt import BrainFailure, PulseReceipt, persist_receipt
 from mc_pulse.registry import get_registry
@@ -98,14 +103,18 @@ async def pulse_tick(
     # Fan out: every (brain, snapshot) pair where the brain wants
     # a shot at this snapshot AND trades this lane.
     tasks = []
-    task_meta = []  # parallel array of (brain_id, symbol, seat_key)
+    # Parallel array of (brain, snapshot, seat_key). Full objects
+    # (not just ids) so the post-gather step can drain manifest
+    # hints via `take_manifest_hint(symbol)` — persistence lives
+    # in the orchestrator, not in the brain.
+    task_meta: list[tuple[Brain, MarketSnapshot, str]] = []
     for snap in snapshots:
         for brain in registry.for_lane(snap.lane):
             if not brain.should_evaluate(now=now, snapshot=snap):
                 continue
             seat_key = build_seat_key(snap.lane, snap.symbol, now)
             tasks.append(evaluate_brain(brain, snap, receipt.pulse_id, seat_key=seat_key))
-            task_meta.append((brain.id, snap.symbol, seat_key))
+            task_meta.append((brain, snap, seat_key))
 
     if not tasks:
         # Nothing to do this tick — still emit a receipt so the
@@ -121,17 +130,24 @@ async def pulse_tick(
 
     envelopes: list[OpinionEnvelope] = []
     brains_completed: set[str] = set()
-    for (brain_id, _sym, _seat), (env, fail) in zip(task_meta, results):
+    for (brain, _snap, _seat), (env, fail) in zip(task_meta, results):
         if env is not None:
             envelopes.append(env)
-            brains_completed.add(brain_id)
+            brains_completed.add(brain.id)
         elif fail is not None:
             receipt.brains_failed.append(fail)
         else:
             # Brain returned None — completed cleanly, just had
             # nothing to say. Counts as completed.
-            brains_completed.add(brain_id)
+            brains_completed.add(brain.id)
     receipt.brains_completed = sorted(brains_completed)
+
+    # ── Manifest persistence (2026-07 parity step 4) ──
+    # After every brain has evaluated, drain hints from any brain
+    # that exposes `take_manifest_hint`. The orchestrator writes
+    # the manifest; the brain never persists. Fail-soft — a
+    # broken manifest write must not take down the pulse.
+    await _persist_hints(task_meta)
 
     # Persist envelopes. During migration `compare_only=True` sends
     # them to a separate collection so we can inspect parity
@@ -185,6 +201,82 @@ async def _upsert_envelopes(
                 "envelope upsert failed pulse=%s brain=%s symbol=%s err=%s",
                 env.pulse_id, env.brain_id, doc.get("symbol"), exc,
             )
+
+
+async def _persist_hints(
+    task_meta: list[tuple[Brain, MarketSnapshot, str]],
+) -> None:
+    """Drain per-brain manifest hints and persist them.
+
+    2026-07 parity step 4. Persistence lives HERE, not on the
+    brain — the brain records diagnostic material inside
+    `evaluate` and the orchestrator writes it after evaluation.
+    This preserves the "brains do interpretation only" boundary
+    while still capturing the same manifest schema on both the
+    pulse and the runner side.
+
+    Currently Camino-specific because Camino is the pilot
+    migration. When other brains land, either (a) each ships its
+    own `build_manifest_from_hint` on the brain type and this
+    function dispatches by type, or (b) we formalize a Brain
+    protocol method `Brain.persist_manifest(orchestrator_ctx)`.
+    Deferring the abstraction until we have two concrete
+    implementations — one is not a pattern.
+
+    Fail-soft: a broken manifest write must NEVER take down the
+    pulse tick. Every write is wrapped by `persist_manifest`.
+    """
+    seen: set[tuple[str, str]] = set()
+    for brain, snap, _seat in task_meta:
+        if not isinstance(brain, CaminoBrain):
+            continue
+        # Drain the hint even if we can't build a manifest — pop
+        # semantics avoids stale hints leaking into a later tick.
+        hint = brain.take_manifest_hint(snap.symbol)
+        if hint is None:
+            continue
+        if snap.bar_identity is None:
+            # No canonical bar → no parity join. Skip silently;
+            # the parity endpoint will report the pair as
+            # `parity_key_missing`.
+            continue
+        try:
+            parity_key = snap.bar_identity.to_parity_key(
+                brain_id=brain.id, symbol=snap.symbol,
+            )
+        except ValueError as exc:
+            logger.warning(
+                "manifest parity key composition failed "
+                "brain=%s symbol=%s err=%s",
+                brain.id, snap.symbol, exc,
+            )
+            continue
+        dedup_key = (parity_key.as_string(), "pulse")
+        if dedup_key in seen:
+            # Same (brain, symbol, bar) reached us twice this
+            # tick — that's an orchestration bug, but we'd rather
+            # log-and-continue than write twice.
+            logger.warning(
+                "duplicate manifest hint dropped brain=%s symbol=%s",
+                brain.id, snap.symbol,
+            )
+            continue
+        seen.add(dedup_key)
+        manifest = build_camino_manifest(
+            parity_key=parity_key,
+            path="pulse",
+            bar=snap.bar_identity,
+            source_bar_id=snap.source_bar_id,
+            snapshot=hint.feature_snapshot,
+            fallback_used=hint.fallback_used,
+            position_context_present=hint.position_context_present,
+            bar_count=hint.bar_count,
+            action=hint.action,
+            confidence=hint.confidence,
+            status=hint.status,
+            reason_codes=hint.reason_codes,
+        )
+        await persist_manifest(manifest)
 
 
 def _now_iso() -> str:
