@@ -111,16 +111,32 @@ Operator's stated design correction: **"Use history as a weak prior, then let cu
 **Architectural correction accepted**: grader OFF the critical pulse path. Critical = snapshot → evaluate → persist → arbitrate → route. Non-critical maintenance = grade → rollups → cleanup → performance metrics. Same MC ownership, separate failure paths. My initial sketch called `grade_pending_opinions()` inline in `pulse_tick()` — wrong. Pulse *enqueues* due grades; a separate worker executes them.
 
 **Migration order (8 steps — one brain at a time, comparison-only before switch)**:
+
+Runners are **temporary comparison scaffolding**. The end-state architecture has NO runners at all. Keeping them permanently would preserve the exact duplication this consolidation exists to remove.
+
+**End-state target**:
+```
+Mission Control
+  └── one pulse loop
+        ├── one market snapshot
+        ├── Camino.evaluate(...) · GTO.evaluate(...) · Barracuda.evaluate(...) · Hellcat.evaluate(...)
+        ├── arbiter / seat routing
+        └── persistence + pulse heartbeat
+```
+
+**NOT** the current shape of "MC + 4 runners." The runners must be gone by the end of migration — code, deployment definitions, env vars, health checks, stale tests, and sidecar/heartbeat plumbing all deleted.
+
+**Steps**:
 1. Build pulse infra + registry + immutable `MarketSnapshot` + `OpinionEnvelope` + `PulseReceipt` + idempotency contracts (unique indexes).
 2. Adapt ONE brain (simplest first — TBD) to `.evaluate(snapshot)`. Keep its runner running.
 3. Comparison-only mode: pulse calls the adapted brain in parallel with its runner; opinions written to `mc_opinions_compare` (NOT `mc_seats`, NOT arbitrated). NO duplicate submission.
 4. Confirm parity: action rate, confidence distribution, `reason_codes` overlap, timestamp behavior within acceptable drift.
-5. Move remaining brains one at a time, repeating steps 2–4.
-6. Switch arbitration input to pulse-owned `OpinionEnvelope`s (arbiter reads from pulse-populated `mc_seats`, not runner direct-write).
-7. Delete runner scheduling + direct writes (only after every brain on pulse AND arbitration reads pulse envelopes).
-8. Remove sidecar identity + heartbeat plumbing ONLY after grep confirms no reader depends on `sidecar_checkins` / `shared_heartbeats` / `bump_stack_heartbeat` callers.
+5. Repeat steps 2–4 for the remaining brains, one at a time.
+6. Confirm the pulse owns every former runner responsibility — the "implicit contracts hidden in runner code" audit checklist (below) is closed out for every runner. Nothing implicit remains.
+7. Disable the runners (supervisor `stop`; do NOT delete code yet). Observe for a rollback window — minimum 1 full trading session per lane.
+8. **Delete runner code + deployment definitions + env vars + health checks + stale tests + sidecar/heartbeat plumbing.** Grep confirms no reader depends on `sidecar_checkins` / `shared_heartbeats` / `bump_stack_heartbeat` / `runner.py` / per-brain runtime routes.
 
-**Do NOT attempt a big-bang rewrite. Every step must be individually revertable.**
+**Do NOT attempt a big-bang rewrite. Every step must be individually revertable. But the DESTINATION is unambiguously runner-free.**
 
 **Personality preservation acceptance tests (MUST be in place before step 6)** — parity of outputs is NECESSARY BUT INSUFFICIENT. Tests must also prove the four brains stay four distinct minds:
 - `test_camino_and_barracuda_have_distinct_reason_codes` — reason_codes must differ

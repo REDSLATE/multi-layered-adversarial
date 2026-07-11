@@ -233,16 +233,44 @@ State stored under distinct namespaces: `mc_brain_state.{brain_id}.{strategy_ver
 
 ## 10. Migration order (8 steps, one brain at a time)
 
+Runners are **temporary comparison scaffolding**. The end-state architecture has no runners at all. Keeping them permanently would preserve the exact duplication this consolidation exists to remove.
+
+**End-state target**:
+
+```
+Mission Control
+  └── one pulse loop
+        ├── one market snapshot
+        ├── Camino.evaluate(...)
+        ├── GTO.evaluate(...)
+        ├── Barracuda.evaluate(...)
+        ├── Hellcat.evaluate(...)
+        ├── arbiter / seat routing
+        └── persistence + pulse heartbeat
+```
+
+**NOT**:
+
+```
+Mission Control
+  ├── Camino runner
+  ├── GTO runner
+  ├── Barracuda runner
+  └── Hellcat runner
+```
+
+**Migration steps**:
+
 1. **Pulse infra** — registry, immutable `MarketSnapshot`, `OpinionEnvelope`, `PulseReceipt`, idempotency contracts (unique indexes), begin_pulse / complete_pulse
 2. **Adapt ONE brain** (simplest first — TBD) to `.evaluate(snapshot)`. Keep its runner running.
 3. **Comparison-only mode** — pulse calls the adapted brain in parallel with runner; opinions written to `mc_opinions_compare` (NOT `mc_seats`, NOT arbitrated). No duplicate submission.
 4. **Confirm parity** — action rate, confidence distribution, reason_codes overlap, timestamp behavior all within acceptable drift.
-5. **Move remaining brains one at a time**, repeating steps 2–4.
-6. **Switch arbitration input** to pulse-owned `OpinionEnvelope`s (arbiter reads from `mc_seats` populated by pulse, not by runner direct-write).
-7. **Delete runner scheduling and direct writes** — only after every brain is on pulse AND arbitration reads pulse envelopes.
-8. **Remove sidecar identity + heartbeat plumbing** ONLY after grep confirms no reader depends on `sidecar_checkins` collection, `shared_heartbeats` fields, or `bump_stack_heartbeat` callers.
+5. **Repeat steps 2–4 for the remaining brains**, one at a time.
+6. **Confirm the pulse owns every former runner responsibility** — the §8 audit checklist for each runner is closed out. Nothing implicit remains.
+7. **Disable the runners** (supervisor `stop`; do NOT delete code yet). Observe for a rollback window (minimum 1 full trading session per lane).
+8. **Delete runner code + deployment definitions + env vars + health checks + stale tests + sidecar/heartbeat plumbing.** Grep confirms no reader depends on `sidecar_checkins` / `shared_heartbeats` / `bump_stack_heartbeat` / `runner.py` / per-brain runtime routes.
 
-Do NOT attempt a big-bang rewrite. Every step must be individually revertable.
+Do NOT attempt a big-bang rewrite. Every step must be individually revertable — but the *destination* is unambiguously runner-free.
 
 ---
 
