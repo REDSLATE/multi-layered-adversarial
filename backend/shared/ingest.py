@@ -259,6 +259,17 @@ async def ingest_heartbeat(
         },
         upsert=True,
     )
+    # ── Stack heartbeat receipt (2026-02-20, "3 clocks" doctrine) ──
+    # Best-effort — never block the ingest response.
+    try:
+        from shared.brain_runtime_metrics import (  # noqa: WPS433
+            bump_stack_heartbeat as _stack_hb,
+        )
+        from shared.brain_legend import canonicalize_stack  # noqa: WPS433
+        canon = canonicalize_stack(body.runtime) or body.runtime
+        await _stack_hb(canon, now)
+    except Exception:  # noqa: BLE001
+        pass
     return {"ok": True, "last_seen": now}
 
 

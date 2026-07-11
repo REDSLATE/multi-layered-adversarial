@@ -270,7 +270,140 @@ export default function BrainProxiedStatusTile({ brain, proxied }) {
             <KV k="HOLD" v={p.intents.by_action?.HOLD} />
           </Section>
         )}
+        {p.write_health && (
+          <WriteHealthSection brain={brain} wh={p.write_health} />
+        )}
       </div>
     </Card>
+  );
+}
+
+// ── Write-health card (2026-02-20 "3 clocks" doctrine) ─────────────
+// Splits heartbeat freshness, decision freshness, and DB-confirmed
+// intent freshness into three distinct rows so the operator can
+// tell WHICH stage of the pipeline stopped when intents look stale.
+//
+// `wh` shape (built in `_build_in_process_status`):
+//   {
+//     band: "HEALTHY" | "STALE" | "DEAD" | "UNKNOWN" | "BLIND",
+//     ages: { heartbeat_age_s, decision_age_s, db_write_age_s,
+//             directional_write_age_s },
+//     counters: { decisions_total, intent_submit_attempts_total,
+//                 intent_submit_successes_total,
+//                 directional_submit_successes_total,
+//                 intent_submit_failures_total },
+//     last_write_receipt: { intent_id, symbol, action, ingest_ts, ... }
+//                       | null,
+//     last_error: { msg, ts, action, symbol } | null,
+//     equity_market_open: boolean,
+//   }
+const HEALTH_COLOR = {
+  HEALTHY: "#10B981",
+  STALE: "#F59E0B",
+  DEAD: "#DC2626",
+  UNKNOWN: "#A1A1AA",
+  BLIND: "#DC2626",
+};
+
+function fmtAgeS(s) {
+  if (s == null) return "—";
+  const n = Math.max(0, Math.round(s));
+  if (n < 90) return `${n}s`;
+  if (n < 3600) return `${Math.round(n / 60)}m`;
+  if (n < 86400) return `${Math.round(n / 3600)}h`;
+  return `${Math.round(n / 86400)}d`;
+}
+
+function WriteHealthSection({ brain, wh }) {
+  const band = wh.band || "UNKNOWN";
+  const color = HEALTH_COLOR[band] || "#A1A1AA";
+  const ages = wh.ages || {};
+  const counters = wh.counters || {};
+  const receipt = wh.last_write_receipt || null;
+  const lastError = wh.last_error || null;
+  return (
+    <div
+      className="bg-rd-bg3 border p-3"
+      style={{ borderColor: color, gridColumn: "1 / -1" }}
+      data-testid={`proxied-${brain}-write-health`}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] uppercase tracking-widest font-mono" style={{ color }}>
+          Write health · 3 clocks
+        </div>
+        <span
+          className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 border"
+          style={{ color, borderColor: color }}
+          data-testid={`proxied-${brain}-write-health-band`}
+        >
+          {band}
+        </span>
+      </div>
+      {!wh.equity_market_open && (
+        <div
+          className="text-[10px] font-mono text-rd-muted mb-2"
+          data-testid={`proxied-${brain}-session-hint`}
+        >
+          equity session CLOSED — closed-session relax threshold in effect
+        </div>
+      )}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+        <div className="border border-rd-border p-2" data-testid={`proxied-${brain}-clock-heartbeat`}>
+          <div className="text-[10px] text-rd-dim uppercase tracking-widest">Heartbeat</div>
+          <div className="font-mono text-sm text-rd-text mt-1">{fmtAgeS(ages.heartbeat_age_s)}</div>
+          <div className="text-[10px] text-rd-muted mt-1 font-mono">runner tick alive</div>
+        </div>
+        <div className="border border-rd-border p-2" data-testid={`proxied-${brain}-clock-decision`}>
+          <div className="text-[10px] text-rd-dim uppercase tracking-widest">Last decision</div>
+          <div className="font-mono text-sm text-rd-text mt-1">{fmtAgeS(ages.decision_age_s)}</div>
+          <div className="text-[10px] text-rd-muted mt-1 font-mono">
+            {counters.decisions_total ?? 0} total · {counters.intent_submit_failures_total ?? 0} fail
+          </div>
+        </div>
+        <div className="border border-rd-border p-2" data-testid={`proxied-${brain}-clock-dbwrite`}>
+          <div className="text-[10px] text-rd-dim uppercase tracking-widest">DB write (any)</div>
+          <div className="font-mono text-sm text-rd-text mt-1">{fmtAgeS(ages.db_write_age_s)}</div>
+          <div className="text-[10px] text-rd-muted mt-1 font-mono">
+            directional · {fmtAgeS(ages.directional_write_age_s)}
+          </div>
+        </div>
+      </div>
+      <div className="mt-2 grid grid-cols-2 md:grid-cols-5 gap-2 text-[10px] font-mono text-rd-dim">
+        <KV k="attempts" v={counters.intent_submit_attempts_total ?? 0} testid={`proxied-${brain}-counter-attempts`} />
+        <KV k="success" v={counters.intent_submit_successes_total ?? 0} testid={`proxied-${brain}-counter-success`} />
+        <KV k="directional_ok" v={counters.directional_submit_successes_total ?? 0} testid={`proxied-${brain}-counter-directional`} />
+        <KV k="failures" v={counters.intent_submit_failures_total ?? 0} testid={`proxied-${brain}-counter-failures`} />
+        <KV k="decisions" v={counters.decisions_total ?? 0} testid={`proxied-${brain}-counter-decisions`} />
+      </div>
+      {receipt && (
+        <div className="mt-2 border-t border-rd-border pt-2" data-testid={`proxied-${brain}-write-receipt`}>
+          <div className="text-[10px] text-rd-dim uppercase tracking-widest mb-1">Last write receipt</div>
+          <div className="text-[11px] font-mono text-rd-text">
+            {receipt.symbol || "—"} · {receipt.action || "—"} · {receipt.lane || "—"} · {receipt.ingest_ts || "—"}
+          </div>
+          {receipt.intent_id && (
+            <div className="text-[10px] font-mono text-rd-muted truncate">
+              intent_id={receipt.intent_id}
+            </div>
+          )}
+        </div>
+      )}
+      {lastError && (
+        <div
+          className="mt-2 border-t border-rd-border pt-2"
+          data-testid={`proxied-${brain}-write-error`}
+        >
+          <div className="text-[10px] uppercase tracking-widest mb-1" style={{ color: "#DC2626" }}>
+            Last submit error
+          </div>
+          <div className="text-[11px] font-mono text-rd-danger">
+            {lastError.msg || "—"}
+          </div>
+          <div className="text-[10px] text-rd-muted font-mono mt-1">
+            {lastError.ts || "—"} · {lastError.action || "—"} · {lastError.symbol || "—"}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

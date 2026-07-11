@@ -40,7 +40,7 @@ export default function Login() {
   }, []);
 
   if (status === "loading") return null;
-  if (user) return <Navigate to="/admin/hypothesis" replace />;
+  if (user) return <Navigate to="/admin/overview" replace />;
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -49,7 +49,7 @@ export default function Login() {
     const res = await login(email.trim(), password);
     setSubmitting(false);
     if (!res.ok) setError(res.error);
-    else nav("/admin/hypothesis", { replace: true });
+    else nav("/admin/overview", { replace: true });
   };
 
   return (

@@ -426,6 +426,21 @@ async def sidecar_checkin_core(
     except Exception:  # noqa: BLE001
         pass
 
+    # ── Stack heartbeat receipt (2026-02-20, "3 clocks" doctrine) ──
+    # Update `brain_runtime_metrics.brains.<brain>.last_heartbeat_ts`
+    # so the Brain Console can distinguish "runner alive" from
+    # "writer alive" from "decisions produced". Best-effort — a
+    # failure here MUST NEVER block the check-in.
+    try:
+        from shared.brain_runtime_metrics import (  # noqa: WPS433
+            bump_stack_heartbeat as _stack_hb,
+        )
+        from shared.brain_legend import canonicalize_stack  # noqa: WPS433
+        canon = canonicalize_stack(brain) or brain
+        await _stack_hb(canon, now_iso)
+    except Exception:  # noqa: BLE001
+        pass
+
     note = {
         "prod": f"{brain} recorded as PROD sidecar; policy hash matches MC.",
         "policy_drift": (

@@ -286,9 +286,21 @@ async def bump_stack_on_emit(
 
 
 async def bump_stack_heartbeat(brain: str, heartbeat_ts: str) -> None:
-    """Refresh the stack doc's `brains.<brain>.heartbeat_ts` without
-    touching intent fields. Called from the heartbeat writer path
-    so the console can show "alive but silent" states."""
+    """Refresh the stack doc's `brains.<brain>.last_heartbeat_ts` without
+    touching decision or intent-write fields.
+
+    Doctrine (2026-02-20, operator directive — "3 clocks"):
+        Heartbeat freshness only proves the runner loop is alive. It
+        says nothing about whether decisions are being made or whether
+        Mongo inserts are landing. `last_heartbeat_ts` is one of three
+        clocks the console tracks; the others are `last_decision_ts`
+        (bumped by `bump_stack_decision`) and
+        `last_db_confirmed_intent_ts` (bumped inside the write path
+        after a confirmed `insert_one`).
+
+    The legacy `heartbeat_ts` key is kept as an alias for one
+    deprecation cycle so any older consumer reading it still works.
+    """
     if not brain:
         return
     try:
@@ -296,7 +308,8 @@ async def bump_stack_heartbeat(brain: str, heartbeat_ts: str) -> None:
             {"_id": _STACK_ID},
             {
                 "$set": {
-                    f"brains.{brain}.heartbeat_ts": heartbeat_ts,
+                    f"brains.{brain}.last_heartbeat_ts": heartbeat_ts,
+                    f"brains.{brain}.heartbeat_ts": heartbeat_ts,  # legacy alias
                     "updated_at": _now_iso(),
                 },
                 "$setOnInsert": {
@@ -309,6 +322,237 @@ async def bump_stack_heartbeat(brain: str, heartbeat_ts: str) -> None:
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "brain_runtime_metrics.bump_stack_heartbeat failed: %s", exc,
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  3-clock intent-write health (2026-02-20 operator directive)
+# ═══════════════════════════════════════════════════════════════════
+#
+# Splitting the brain-side truth from the DB-side truth:
+#
+#   * last_heartbeat_ts             — runner tick is alive
+#   * last_decision_ts              — runner produced a decision this
+#                                     tick (BUY/SELL/HOLD; direction
+#                                     is captured in
+#                                     `last_decision_action`)
+#   * last_db_confirmed_intent_ts   — Mongo `insert_one` succeeded
+#                                     for ANY action (HOLD included).
+#                                     A brain that legitimately emits
+#                                     HOLD for an hour is STILL
+#                                     writing to Mongo — this is the
+#                                     honest signal that the write
+#                                     path is alive.
+#   * last_db_confirmed_directional_intent_ts
+#                                   — same, but only for
+#                                     BUY/SELL/SHORT/COVER. Separated
+#                                     so the console can distinguish
+#                                     "writer healthy but no
+#                                     directional opportunity" from
+#                                     "writer dead".
+#
+# Counters (monotonic $inc, cumulative since first_seen_at):
+#   decisions_total
+#   intent_submit_attempts_total
+#   intent_submit_successes_total
+#   directional_submit_successes_total
+#   intent_submit_failures_total
+#
+# All helpers are best-effort — a failure here MUST NEVER interfere
+# with the actual write path. The caller in `shared/intents.py`
+# handles insert failures by RE-RAISING to the runner (see doctrine
+# note there).
+
+
+DIRECTIONAL_ACTIONS = frozenset({"BUY", "SELL", "SHORT", "COVER"})
+
+
+async def bump_stack_decision(
+    brain: str,
+    action: Optional[str],
+    symbol: Optional[str],
+) -> None:
+    """Runner produced a decision this tick (pre-write).
+
+    Bumps `last_decision_ts` and `decisions_total`. Records the
+    decided action/symbol so the operator can distinguish "brain is
+    running but only ever holds" from "brain hasn't ticked in an
+    hour".
+    """
+    if not brain:
+        return
+    try:
+        await db[COLLECTION].update_one(
+            {"_id": _STACK_ID},
+            {
+                "$set": {
+                    f"brains.{brain}.last_decision_ts": _now_iso(),
+                    f"brains.{brain}.last_decision_action": (
+                        (action or "").upper() or None
+                    ),
+                    f"brains.{brain}.last_decision_symbol": symbol,
+                    "updated_at": _now_iso(),
+                },
+                "$inc": {f"brains.{brain}.decisions_total": 1},
+                "$setOnInsert": {
+                    "_id": _STACK_ID,
+                    "first_seen_at": _now_iso(),
+                },
+            },
+            upsert=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "brain_runtime_metrics.bump_stack_decision failed: %s", exc,
+        )
+
+
+async def bump_stack_intent_attempt(brain: str) -> None:
+    """Increment `intent_submit_attempts_total` for `brain`. Called
+    IMMEDIATELY before the Mongo `insert_one`. Paired with either a
+    success bump or a failure bump — never both, never neither."""
+    if not brain:
+        return
+    try:
+        await db[COLLECTION].update_one(
+            {"_id": _STACK_ID},
+            {
+                "$inc": {f"brains.{brain}.intent_submit_attempts_total": 1},
+                "$set": {
+                    f"brains.{brain}.last_intent_submit_attempt_ts": _now_iso(),
+                    "updated_at": _now_iso(),
+                },
+                "$setOnInsert": {
+                    "_id": _STACK_ID,
+                    "first_seen_at": _now_iso(),
+                },
+            },
+            upsert=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "brain_runtime_metrics.bump_stack_intent_attempt failed: %s", exc,
+        )
+
+
+async def bump_stack_intent_success(
+    brain: str,
+    *,
+    intent_id: Optional[str] = None,
+    mongo_id: Optional[str] = None,
+    action: Optional[str] = None,
+    symbol: Optional[str] = None,
+    lane: Optional[str] = None,
+    ingest_ts: Optional[str] = None,
+) -> None:
+    """Stamp a tiny write receipt after a CONFIRMED Mongo insert.
+
+    Fields set (per operator's 2026-02-20 spec):
+        * `last_db_confirmed_intent_ts`         — always
+        * `last_db_confirmed_directional_intent_ts` — only for
+                                                  BUY/SELL/SHORT/COVER
+
+    Also records a compact receipt (`last_write_receipt`) so the
+    operator can eyeball WHICH intent last landed — invaluable when
+    reconciling with the `shared_intents` tape.
+
+    Counters $inc'd:
+        * `intent_submit_successes_total`         — always
+        * `directional_submit_successes_total`    — directional only
+    """
+    if not brain:
+        return
+    action_u = (action or "").upper() or None
+    is_directional = action_u in DIRECTIONAL_ACTIONS
+    now = _now_iso()
+    write_ts = ingest_ts or now
+    receipt = {
+        "intent_id": intent_id,
+        "mongo_id": mongo_id,
+        "action": action_u,
+        "symbol": symbol,
+        "lane": lane,
+        "ingest_ts": write_ts,
+        "recorded_at": now,
+    }
+    set_fields: Dict[str, Any] = {
+        f"brains.{brain}.last_db_confirmed_intent_ts": write_ts,
+        f"brains.{brain}.last_write_receipt": receipt,
+        "updated_at": now,
+    }
+    inc_fields: Dict[str, Any] = {
+        f"brains.{brain}.intent_submit_successes_total": 1,
+    }
+    if is_directional:
+        set_fields[
+            f"brains.{brain}.last_db_confirmed_directional_intent_ts"
+        ] = write_ts
+        inc_fields[f"brains.{brain}.directional_submit_successes_total"] = 1
+    try:
+        await db[COLLECTION].update_one(
+            {"_id": _STACK_ID},
+            {
+                "$set": set_fields,
+                "$inc": inc_fields,
+                "$setOnInsert": {
+                    "_id": _STACK_ID,
+                    "first_seen_at": now,
+                },
+            },
+            upsert=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "brain_runtime_metrics.bump_stack_intent_success failed: %s", exc,
+        )
+
+
+async def bump_stack_intent_failure(
+    brain: str,
+    *,
+    error: Optional[str] = None,
+    action: Optional[str] = None,
+    symbol: Optional[str] = None,
+) -> None:
+    """Record a FAILED `shared_intents.insert_one`. Increments
+    `intent_submit_failures_total` and stamps `last_intent_submit_error`
+    so the operator can see the failure mode without scanning logs.
+
+    Doctrine: this helper is best-effort. The CALLER is responsible
+    for re-raising the underlying exception so the runner learns the
+    submit did not persist — silencing a write failure here is the
+    dishonesty the 3-clock design was built to eliminate.
+    """
+    if not brain:
+        return
+    err_msg = (str(error) if error is not None else "unknown")[:400]
+    now = _now_iso()
+    try:
+        await db[COLLECTION].update_one(
+            {"_id": _STACK_ID},
+            {
+                "$set": {
+                    f"brains.{brain}.last_intent_submit_error_ts": now,
+                    f"brains.{brain}.last_intent_submit_error_msg": err_msg,
+                    f"brains.{brain}.last_intent_submit_error_action": (
+                        (action or "").upper() or None
+                    ),
+                    f"brains.{brain}.last_intent_submit_error_symbol": symbol,
+                    "updated_at": now,
+                },
+                "$inc": {
+                    f"brains.{brain}.intent_submit_failures_total": 1,
+                },
+                "$setOnInsert": {
+                    "_id": _STACK_ID,
+                    "first_seen_at": now,
+                },
+            },
+            upsert=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "brain_runtime_metrics.bump_stack_intent_failure failed: %s", exc,
         )
 
 

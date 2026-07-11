@@ -99,6 +99,170 @@ def _age_seconds(iso: Optional[str], now: datetime) -> Optional[float]:
         return None
 
 
+# ══════════════════════════════════════════════════════════════════
+#  Stack /status decoration — 3-clock write_health (2026-02-20)
+# ══════════════════════════════════════════════════════════════════
+#
+# `_equity_market_open` is a coarse approximation of US regular
+# equity hours (Mon–Fri, 09:30–16:00 ET, no holiday calendar). The
+# only consumer is `_write_health_band` — a wrong answer here at
+# worst relaxes the DEAD threshold by an hour, it can't hide a real
+# failure. A precise session model belongs in a shared calendar
+# module, not this status decorator.
+
+_HEALTHY_MAX_AGE_S = 15 * 60
+_STALE_MAX_AGE_S = 60 * 60
+_HEARTBEAT_ALIVE_MAX_AGE_S = 5 * 60
+_CLOSED_SESSION_DEAD_AGE_S = 12 * 60 * 60  # override during off-hours
+
+
+def _equity_market_open(now: datetime) -> bool:
+    """True during US equity regular session (M-F, 09:30-16:00 ET)."""
+    try:
+        # datetime.timezone(-5h) is EST; a proper zoneinfo lookup
+        # would also handle DST but is not needed for a coarse
+        # relax-threshold decision.
+        from zoneinfo import ZoneInfo  # py>=3.9
+        et = now.astimezone(ZoneInfo("America/New_York"))
+    except Exception:  # noqa: BLE001
+        et = now  # fall back to UTC; the threshold check still holds
+    if et.weekday() >= 5:
+        return False
+    hh_mm = et.hour * 60 + et.minute
+    return 9 * 60 + 30 <= hh_mm < 16 * 60
+
+
+def _write_health_band(
+    *,
+    heartbeat_age_s: Optional[float],
+    db_write_age_s: Optional[float],
+    equity_open: bool,
+) -> str:
+    """Return one of HEALTHY / STALE / DEAD / UNKNOWN / BLIND.
+
+    Doctrine:
+      * BLIND    — heartbeat itself is stale; MC has no fresh
+                   ground-truth to judge the write path.
+      * UNKNOWN  — brain has never confirmed a Mongo write. Common
+                   for a freshly-booted brain; not yet a failure.
+      * HEALTHY  — any-intent write < 15 min old.
+      * STALE    — 15 min–60 min.
+      * DEAD     — >60 min AND (session is open OR write age crossed
+                   the closed-session relax threshold).
+    """
+    if heartbeat_age_s is None or heartbeat_age_s > _HEARTBEAT_ALIVE_MAX_AGE_S:
+        return "BLIND"
+    if db_write_age_s is None:
+        return "UNKNOWN"
+    if db_write_age_s < _HEALTHY_MAX_AGE_S:
+        return "HEALTHY"
+    if db_write_age_s < _STALE_MAX_AGE_S:
+        return "STALE"
+    if not equity_open and db_write_age_s < _CLOSED_SESSION_DEAD_AGE_S:
+        # Equity market closed → HOLD writes may legitimately taper.
+        # Keep STALE until many hours have elapsed.
+        return "STALE"
+    return "DEAD"
+
+
+def _decorate_brain_section(
+    section: Dict[str, Any], now: datetime, equity_open: bool,
+) -> Dict[str, Any]:
+    """Attach `_ages` and `write_health` computed from the raw
+    3-clock fields the bump helpers stamp. Non-destructive — the
+    caller reads through untouched originals for anything else.
+    """
+    hb_ts = section.get("last_heartbeat_ts") or section.get("heartbeat_ts")
+    dec_ts = section.get("last_decision_ts")
+    db_ts = section.get("last_db_confirmed_intent_ts")
+    dir_ts = section.get("last_db_confirmed_directional_intent_ts")
+    hb_age = _age_seconds(hb_ts, now)
+    dec_age = _age_seconds(dec_ts, now)
+    db_age = _age_seconds(db_ts, now)
+    dir_age = _age_seconds(dir_ts, now)
+    band = _write_health_band(
+        heartbeat_age_s=hb_age,
+        db_write_age_s=db_age,
+        equity_open=equity_open,
+    )
+    out = dict(section)
+    out["_ages"] = {
+        "heartbeat_age_s": round(hb_age, 1) if hb_age is not None else None,
+        "decision_age_s": round(dec_age, 1) if dec_age is not None else None,
+        "db_write_age_s": round(db_age, 1) if db_age is not None else None,
+        "directional_write_age_s": (
+            round(dir_age, 1) if dir_age is not None else None
+        ),
+    }
+    out["write_health"] = band
+    return out
+
+
+async def _build_write_health_for(
+    brain: str, now: datetime,
+) -> Dict[str, Any]:
+    """Compose the `write_health` block the per-brain status endpoint
+    embeds inside `payload`. Reads the same stack doc `/stack/status`
+    reads so the two endpoints tell an identical story.
+
+    Shape (consumed by `BrainProxiedStatusTile.WriteHealthSection`):
+        {
+          band: HEALTHY | STALE | DEAD | UNKNOWN | BLIND,
+          ages: {heartbeat_age_s, decision_age_s, db_write_age_s,
+                 directional_write_age_s},
+          counters: {decisions_total, intent_submit_attempts_total,
+                     intent_submit_successes_total,
+                     directional_submit_successes_total,
+                     intent_submit_failures_total},
+          last_write_receipt: {...} | null,
+          last_error: {msg, ts, action, symbol} | null,
+          equity_market_open: bool,
+        }
+    """
+    from shared.brain_runtime_metrics import get_stack_status as _get_stack  # noqa: WPS433
+    try:
+        doc = await _get_stack()
+    except Exception:  # noqa: BLE001
+        doc = None
+    section = ((doc or {}).get("brains") or {}).get(brain) or {}
+    equity_open = _equity_market_open(now)
+    decorated = _decorate_brain_section(section, now, equity_open)
+    err_ts = section.get("last_intent_submit_error_ts")
+    err_msg = section.get("last_intent_submit_error_msg")
+    last_error = (
+        {
+            "msg": err_msg,
+            "ts": err_ts,
+            "action": section.get("last_intent_submit_error_action"),
+            "symbol": section.get("last_intent_submit_error_symbol"),
+        }
+        if err_ts or err_msg
+        else None
+    )
+    return {
+        "band": decorated.get("write_health", "UNKNOWN"),
+        "ages": decorated.get("_ages") or {},
+        "counters": {
+            "decisions_total": section.get("decisions_total"),
+            "intent_submit_attempts_total": section.get(
+                "intent_submit_attempts_total",
+            ),
+            "intent_submit_successes_total": section.get(
+                "intent_submit_successes_total",
+            ),
+            "directional_submit_successes_total": section.get(
+                "directional_submit_successes_total",
+            ),
+            "intent_submit_failures_total": section.get(
+                "intent_submit_failures_total",
+            ),
+        },
+        "last_write_receipt": section.get("last_write_receipt"),
+        "last_error": last_error,
+        "equity_market_open": equity_open,
+    }
+
+
 # ──────────────────────── Dual auth (operator OR brain token) ────────────────────────
 
 async def _dual_auth(
@@ -374,6 +538,7 @@ async def _build_in_process_status(brain: str) -> Dict[str, Any]:
             "source": "brain_runtime_metrics",
             "atlas_partial": atlas_partial,
         },
+        "write_health": await _build_write_health_for(brain, now),
         "in_process_runner": runner_stats,
     }
 
@@ -395,12 +560,32 @@ async def get_stack_status(
     O(1) primary-key lookup. Frontend polls this once and slices
     the appropriate `brains.<name>` section locally.
 
+    2026-02-20 doctrine ("3 clocks"): each brain section now carries
+    THREE independent timestamps so the UI can diagnose which stage
+    of the pipeline stopped:
+
+        * `last_heartbeat_ts`                       — runner alive
+        * `last_decision_ts`                        — decision produced
+        * `last_db_confirmed_intent_ts`             — Mongo write OK
+                                                     (HOLD included)
+        * `last_db_confirmed_directional_intent_ts` — directional write OK
+
+    plus counters (`decisions_total`, `intent_submit_attempts_total`,
+    `intent_submit_successes_total`,
+    `directional_submit_successes_total`,
+    `intent_submit_failures_total`) and a derived `write_health`
+    band (HEALTHY / STALE / DEAD / UNKNOWN / BLIND). `write_health`
+    is session-aware for equity lanes — during closed-market hours
+    an older directional write age relaxes the DEAD threshold
+    because HOLD is a perfectly valid steady state overnight.
+
     Default-hostile: any Atlas failure returns `degraded=True`
     with an amber warning list — never a red banner.
     """
     from shared.brain_runtime_metrics import get_stack_status as _get_stack  # noqa: WPS433
 
     doc = await _get_stack()
+    now = datetime.now(timezone.utc)
     if doc is None:
         return {
             "ok": True,
@@ -408,16 +593,22 @@ async def get_stack_status(
             "stack_status": "unknown",
             "brains": {},
             "warnings": ["stack_status_temporarily_unavailable"],
-            "now": datetime.now(timezone.utc).isoformat(),
+            "now": now.isoformat(),
         }
+    brains_in: Dict[str, Any] = doc.get("brains") or {}
+    equity_open = _equity_market_open(now)
+    brains_out: Dict[str, Any] = {}
+    for name, section in brains_in.items():
+        brains_out[name] = _decorate_brain_section(section or {}, now, equity_open)
     return {
         "ok": True,
         "degraded": False,
         "stack_status": doc.get("stack_status") or "healthy",
-        "brains": doc.get("brains") or {},
+        "brains": brains_out,
+        "equity_market_open": equity_open,
         "updated_at": doc.get("updated_at"),
         "first_seen_at": doc.get("first_seen_at"),
-        "now": datetime.now(timezone.utc).isoformat(),
+        "now": now.isoformat(),
     }
 
 

@@ -227,7 +227,6 @@ class IntentIn(BaseModel):
                 f"[-0.25, +0.10]"
             )
         # Cap size: the receipt is for audit, not a smuggling channel.
-        import json
         if len(json.dumps(v, default=str)) > 4 * 1024:
             raise ValueError("memory_modulator must be ≤4 KB serialized")
         # Normalize: always carry the canonical `value` key.
@@ -363,7 +362,6 @@ class IntentIn(BaseModel):
     def _doctrine_snapshot_size_cap(cls, v):
         if v is None:
             return None
-        import json
         if not isinstance(v, dict):
             raise ValueError("doctrine_snapshot must be an object")
         if len(json.dumps(v, default=str)) > 4 * 1024:
@@ -374,7 +372,6 @@ class IntentIn(BaseModel):
     @classmethod
     def _evidence_size_cap(cls, v: dict) -> dict:
         # Mirror the opinions evidence cap — 16 KB max serialized.
-        import json
         if len(json.dumps(v, default=str)) > 16 * 1024:
             raise ValueError("evidence must be ≤16 KB serialized")
         # Regime fingerprint shape check (2026-02-16). If the brain
@@ -1232,30 +1229,119 @@ async def _post_intent_impl(
             "_post_intent_impl: setup_memory apply failed intent_id=%s err=%s",
             intent_id, _sm_err,
         )
-    await db[SHARED_INTENTS].insert_one(doc)
+    # ── 3-clock intent-write bookkeeping (2026-02-20 operator directive) ──
+    # Wrap the `shared_intents.insert_one` so the operator can tell
+    # apart the three failure modes on the Brain Console:
+    #   (a) runner never decided → no `last_decision_ts` bump
+    #   (b) runner decided but submit failed → decision fresh,
+    #       `last_db_confirmed_intent_ts` stale, failure counter grows
+    #   (c) runner decided and Mongo confirmed → success stamped
+    #
+    # Doctrine: the metrics bumps are best-effort (never mask the
+    # write) but the `insert_one` exception MUST propagate to the
+    # caller — otherwise the runner believes the intent landed when
+    # Mongo actually rejected/timed out.  That silent-swallow is the
+    # exact dishonesty the 3-clock design exists to eliminate.
+    canon_stack = canonicalize_stack(body.stack) or body.stack
 
-    # ── Cached runtime metrics bump (2026-07-09 operator directive) ──
-    # Update the per-brain `brain_runtime_metrics` micro-doc so the
-    # /admin/runtime/{brain}/status endpoint can read one small row
-    # instead of scanning `shared_intents`. Best-effort — a failure
-    # here MUST NEVER block intent ingest.
+    # 1. Decision receipt — the brain got as far as producing an
+    #    intent envelope.  Fires REGARDLESS of the write outcome.
+    try:
+        from shared.brain_runtime_metrics import (  # noqa: WPS433
+            bump_stack_decision as _stack_decision,
+        )
+        await _stack_decision(
+            brain=canon_stack,
+            action=body.action,
+            symbol=body.symbol,
+        )
+    except Exception as _dec_err:  # noqa: BLE001
+        logger.warning(
+            "bump_stack_decision failed intent_id=%s err=%s",
+            intent_id, _dec_err,
+        )
+
+    # 2. Attempt counter — paired with a success OR failure bump below.
+    try:
+        from shared.brain_runtime_metrics import (  # noqa: WPS433
+            bump_stack_intent_attempt as _stack_attempt,
+        )
+        await _stack_attempt(brain=canon_stack)
+    except Exception as _att_err:  # noqa: BLE001
+        logger.warning(
+            "bump_stack_intent_attempt failed intent_id=%s err=%s",
+            intent_id, _att_err,
+        )
+
+    # 3. The actual write.  Wrapped so a Mongo failure records a
+    #    failure receipt AND re-raises — the runner MUST hear about
+    #    the failure.
+    try:
+        insert_result = await db[SHARED_INTENTS].insert_one(doc)
+    except Exception as insert_exc:  # noqa: BLE001
+        try:
+            from shared.brain_runtime_metrics import (  # noqa: WPS433
+                bump_stack_intent_failure as _stack_fail,
+            )
+            await _stack_fail(
+                brain=canon_stack,
+                error=f"{type(insert_exc).__name__}: {insert_exc}",
+                action=body.action,
+                symbol=body.symbol,
+            )
+        except Exception as _fail_err:  # noqa: BLE001
+            logger.warning(
+                "bump_stack_intent_failure best-effort failed intent_id=%s "
+                "err=%s (original insert error=%s)",
+                intent_id, _fail_err, insert_exc,
+            )
+        logger.error(
+            "shared_intents insert failed brain=%s sym=%s action=%s "
+            "intent_id=%s err=%s",
+            body.stack, body.symbol, body.action, intent_id, insert_exc,
+        )
+        raise
+
+    # 4. Write receipt — success path.
+    try:
+        from shared.brain_runtime_metrics import (  # noqa: WPS433
+            bump_stack_intent_success as _stack_success,
+        )
+        await _stack_success(
+            brain=canon_stack,
+            intent_id=intent_id,
+            mongo_id=str(getattr(insert_result, "inserted_id", "") or ""),
+            action=body.action,
+            symbol=body.symbol,
+            lane=effective_lane,
+            ingest_ts=doc["ingest_ts"],
+        )
+    except Exception as _succ_err:  # noqa: BLE001
+        logger.warning(
+            "bump_stack_intent_success failed intent_id=%s err=%s",
+            intent_id, _succ_err,
+        )
+
+    # ── Legacy per-brain cached micro-doc bump (kept for the older
+    # `/admin/runtime/{brain}/status` path that still reads it).
+    # This bump is best-effort — a failure here MUST NEVER block
+    # intent ingest, and does not need to re-raise because the write
+    # already succeeded.
     try:
         from shared.brain_runtime_metrics import (  # noqa: WPS433
             bump_on_emit as _mtx_bump,
             bump_stack_on_emit as _stack_bump,
         )
-        canon = canonicalize_stack(body.stack) or body.stack
         await _mtx_bump(
-            brain=canon,
+            brain=canon_stack,
             action=body.action,
             symbol=body.symbol,
             ingest_ts=doc["ingest_ts"],
         )
-        # 2026-02-19: also update the stack-level status doc so
-        # `/admin/runtime/stack/status` returns fresh per-brain
-        # sections in one O(1) read (replaces 4× per-brain endpoints).
+        # Legacy stack `latest_intent_ts` / `lifetime_count` fields —
+        # separate from the 3-clock write receipts stamped above.
         await _stack_bump(
-            brain=canon,
+            brain=canon_stack,
             action=body.action,
             symbol=body.symbol,
             ingest_ts=doc["ingest_ts"],
