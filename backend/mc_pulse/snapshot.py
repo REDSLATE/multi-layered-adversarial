@@ -40,6 +40,12 @@ class MarketSnapshot:
                        built off this snapshot. Enables replay and
                        cross-brain provenance ("all four opinions
                        for snapshot_id=X").
+        position_context — per-brain current holdings for THIS
+                       symbol, as `Mapping[brain_id, dict]`. Read-
+                       only. Brains look up ONLY their own row
+                       (self.id) — they don't peek at peers'
+                       positions. Runner audit row #7. Empty
+                       mapping is the honest "we hold nothing here."
     """
     symbol: str
     lane: str
@@ -48,6 +54,9 @@ class MarketSnapshot:
     indicators: Mapping[str, float]
     market_state: str = "unknown"
     snapshot_id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
+    position_context: Mapping[str, dict] = field(
+        default_factory=lambda: MappingProxyType({}),
+    )
 
 
 def freeze_indicators(d: Optional[dict]) -> Mapping[str, float]:
@@ -72,6 +81,7 @@ def build_snapshot(
     price: Decimal,
     indicators: Optional[dict] = None,
     market_state: str = "unknown",
+    position_context: Optional[dict] = None,
 ) -> MarketSnapshot:
     """Factory that enforces the small handful of invariants
     (uppercase symbol, aware timestamp, indicators frozen) so
@@ -96,4 +106,5 @@ def build_snapshot(
         price=price,
         indicators=freeze_indicators(indicators),
         market_state=market_state,
+        position_context=MappingProxyType(dict(position_context or {})),
     )

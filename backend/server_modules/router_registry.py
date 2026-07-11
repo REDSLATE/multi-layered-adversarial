@@ -39,6 +39,7 @@ from shared.doctrine import (
 from shared.flags import router as flags_router
 from shared.intents import router as intents_router
 from mc_arbiter.routes import router as mc_arbiter_router
+from mc_pulse.parity_routes import router as mc_parity_router
 from shared.executor_seat import router as executor_router
 from shared.auditor_seat import router as auditor_router
 from shared.seat_nudges import router as seat_nudges_router
@@ -181,6 +182,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(doctrine_legacy_router)
     api_router.include_router(intents_router)
     api_router.include_router(mc_arbiter_router)
+    api_router.include_router(mc_parity_router)
     api_router.include_router(executor_router)
     api_router.include_router(auditor_router)
     api_router.include_router(seat_nudges_router)

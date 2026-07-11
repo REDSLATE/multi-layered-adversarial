@@ -113,14 +113,16 @@ class CaminoBrain:
             **dict(snapshot.indicators),
         }
 
-        # Position context is MC's responsibility to inject; not
-        # available at v0.1 (audit row #7). Pass None → core
-        # defaults to FLAT, same as runner behavior on cold start.
+        # Position context is MC's responsibility to inject. We
+        # read ONLY our own brain's slot from the snapshot's
+        # per-brain map — no peeking at peers' positions
+        # (peer info would create a channel that couples brains).
+        position_context = snapshot.position_context.get(self.id) or None
         try:
             brain_intent = self._core.evaluate(
                 symbol=snapshot.symbol,
                 snapshot=core_snapshot,
-                position_context=None,
+                position_context=position_context,
                 seat=None,
             )
         except Exception:

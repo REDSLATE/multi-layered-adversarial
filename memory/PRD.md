@@ -224,7 +224,60 @@ An audit checklist per runner MUST be produced before that runner is deleted.
 **Full design freeze at `/app/memory/MC_PULSE.md`. NEXT AGENT MUST READ BOTH `MC_SEAT_ARBITER.md` AND `MC_PULSE.md` BEFORE TOUCHING ANY PULSE OR BRAIN CODE.**
 
 
-**🚧 2026-07-11 (iter-26): MC SEAT ARBITER + DAWE — IMPLEMENTATION COMPLETE (DISARMED, END-TO-END VERIFIED).**
+**🚧 2026-07-11 (iter-28): STEPS 2b + 4 SHIPPED — POSITION CONTEXT INJECTED + PARITY ENDPOINT LIVE, FIRST DIVERGENCE SURFACED.**
+
+**Step 2b — position_context (audit row #7)**:
+- ✅ `MarketSnapshot.position_context: Mapping[str, dict]` — read-only `MappingProxyType` per brain, default empty. Frozen — brains can't inject positions.
+- ✅ `SnapshotService._fetch_open_positions` — ONE bounded scan of `shared_positions` per pulse (`max_time_ms=1500`, `limit=500`), returns `{symbol: {brain_id: position_dict}}`. Attribution priority: `proposed_by` → `brain` → `runtime`. State filter `{open, pending_open, held}`.
+- ✅ `CaminoBrain.evaluate` reads ONLY `snapshot.position_context.get(self.id)` — no peer peeking. Passes to legacy `NeutralAdversarialBrain.evaluate(position_context=…)` — same shape as runner's runtime call.
+- ✅ 3 new tests (`test_position_context.py`): default empty, brain-map preserved, read-only via MappingProxyType. 98/98 total pass.
+
+**Step 4 — Camino parity endpoint**:
+- ✅ New module `mc_pulse/parity_routes.py` mounting `/api/mc/parity/{brain_id}`. Query params: `hours` (1-168, default 24), `sample_size` (0-100, default 20).
+- ✅ Metrics returned:
+  - `pulse_count` / `runner_count`
+  - `action_distribution.{pulse, runner, pulse_pct, runner_pct, match_score}` — pulse LONG/SHORT/FLAT mapped to runner BUY/SELL/HOLD vocabulary for apples-to-apples. `match_score = 1 - ½·L1_distance` of normalized distributions.
+  - `confidence_distribution.{pulse, runner}` — n, mean, std, min, max per path.
+  - `rationale_token_overlap.{jaccard_mean, pairs_matched}` — mean Jaccard across (symbol, ≤5min ts drift) pairs. Stand-in for reason_codes until legacy core exposes them.
+  - `timestamp_drift_s.{median_s, pairs_matched}` — median |Δt| between pulse envelope and nearest runner intent.
+  - `samples` — last N paired observations.
+- ✅ All Mongo reads bounded (`max_time_ms=2500`) + fail-soft (returns empty tape on Atlas error, never red banner).
+
+**FIRST PARITY OBSERVATION (2026-07-11, 72h window)**:
+```
+pulse_count=69   runner_count=801
+action_distribution.match_score = 0.001
+action_distribution.pulse_pct  = {BUY: 0.0, HOLD: 100.0}
+action_distribution.runner_pct = {BUY: 99.88, HOLD: 0.12}
+confidence.pulse   = mean 1.00, std 0.00
+confidence.runner  = mean 0.70, std 0.076
+rationale_overlap  = null (pairs_matched=0)
+timestamp_drift    = null (pairs_matched=0)
+```
+
+**Divergence is HUGE and honestly reported — this is exactly what step 4 was built to expose.** Diagnostic hypotheses for the next agent to investigate:
+
+1. **Pulse operates on a thin/stale snapshot**: preview OHLCV bars are 16+h old, tf=5m or 1d. The pulse's `NeutralAdversarialBrain` invocation on these snapshots produces HOLD with `market_quality_score=1.00` (poor quality → decline). Meanwhile the runner has richer live-data plumbing bypassing `shared_ohlcv_bars` for its own indicator pipeline. **Root cause: indicator layer for pulse snapshots is incomplete.** Pulse snapshots need at least: rvol, atr, ema20, macd_hist populated by the same layer that feeds the runner. Currently `SnapshotService._build_one` cherry-picks these off the bar doc if the feeder writes them there — many feeders don't.
+2. **Confidence saturation at 1.00**: pulse-Camino returns `confidence=1.00 std=0.00` uniformly. Either (a) the personality clamp is saturating on every eval, or (b) the legacy core returns 1.00 baseline when it declines on a thin snapshot. `apply_personality_confidence("alpha", raw_confidence)` should NOT saturate a 1.00 output — this may be an audit-row-#2 issue (personality-mult applied to a raw of 1.0 is already 1.0).
+3. **Timestamp/symbol mismatch**: `pairs_matched=0` on both rationale + drift means NO pulse envelope aligned with a runner intent on (same symbol, ≤5min gap). Almost certainly because pulse universe (`SYMBOLS_ALPHA` env) differs from runner universe, and/or pulse timestamps use snapshot.timestamp (bar close time) vs runner's ingest_ts (event insert time). Widen the pairing gap OR unify the universe definitions.
+
+**None of these block the migration doctrine.** They mean **step 6 (arbiter flip) MUST wait until pulse parity climbs meaningfully.** The concrete parity gate should be:
+- `action_distribution.match_score >= 0.60` (currently 0.001)
+- `confidence_distribution.pulse.std > 0.02` (currently 0.00 — no variance = brain isn't really thinking)
+- `timestamp_drift.pairs_matched >= 20` (currently 0 — the paths must be talking about the same symbols at overlapping times)
+
+**Immediate next step for the next agent**:
+1. Investigate hypothesis #1 by checking what indicator fields runner-Camino's own snapshot builder pulls (`/app/external/brains/runner.py`) that aren't yet in `SnapshotService._build_one`.
+2. Widen `SnapshotService` to compute missing indicators from bar history (a `1m` EMA20 rollup, RVOL vs 20-bar avg volume, etc.) OR read them from wherever the runner reads them.
+3. Re-run `/api/mc/parity/camino` after each fix — the endpoint IS the migration gate.
+4. DO NOT proceed to GTO/Barracuda/Hellcat adaptation until Camino parity crosses the gate — reproducing this divergence across four brains multiplies the diagnostic burden.
+
+**Files touched this iteration**: `mc_pulse/snapshot.py` (position_context field), `mc_pulse/snapshot_service.py` (position fetch + tf fallback), `mc_brains/camino.py` (position lookup), `mc_pulse/parity_routes.py` (NEW), `mc_pulse/tests/test_position_context.py` (NEW), `server_modules/router_registry.py` (parity router mounted).
+
+**Full design freeze at `/app/memory/MC_PULSE.md`. Camino audit checklist at `/app/memory/CAMINO_RUNNER_AUDIT.md`.**
+
+
+**🚧 2026-07-11 (iter-27): MC PULSE — STEP 1 COMPLETE (INFRA + REGISTRY + CONTAINMENT + IDEMPOTENCY LIVE).**
 
 
 **✅ 2026-07-11 (iter-25b): ATLAS TIMEOUT SYSTEM-WIDE SAFETY NET.** After the 3-clock work landed, prod still showed `NetworkTimeout: customer-apps-shard-XX.kndgvm.mongodb.net:27017` and `ExecutionTimeout: PlanExecutor error during aggregation :: operation exceeded time limit, MaxTimeMS...` red banners across the Overview page (Feeder Slots, Shared Technical Feed) and BrainConsole (Barracuda). Audited: 295 unbounded read sites — patching each individually is a losing game. Two-part fix: (a) explicit `.max_time_ms(2500)` / `maxTimeMS(4500)` bounds + fail-soft try/except returning `{items:[], degraded:true}` on `/shared/opinions` × 2 handlers, `/shared/technical/symbols`, `/shared/technical/feeders`; (b) GLOBAL FastAPI exception handler in `server_modules/middleware_setup.py` catching pymongo `NetworkTimeout`, `ExecutionTimeout`, `ServerSelectionTimeoutError`, `WTimeoutError` — for GET/HEAD returns HTTP 200 with `{ok:false, degraded:true, atlas_timeout:true, items:[], count:0, payload:{}, request_id, warning}` (a 200 is deliberate so every widget's happy path resolves and widgets render empty state instead of a red banner); for writes returns HTTP 503 with same body (writes stay honest — a POST that timed out MUST reach the caller so retry / user feedback fires; this is the anti-silent-swallow doctrine extended to the write path at the middleware layer). Handler registered BEFORE the generic Exception handler so FastAPI resolves the more-specific pymongo classes first. 3 new tests validate the response shape + registration completeness. Also frontend: `TraderSeatViewer.jsx`, `SpreadWatcher.jsx`, `TraderPostMortem.jsx` now hide the whole card on 404 (their backend endpoints were removed in the earlier simplification pass but widgets were still mounted showing "Not Found" red banners). 28/28 tests pass. **Long-term direction for the Atlas problem**: materialize hot dashboard state into single summary docs (the `brain_runtime_metrics.risedual_stack` pattern) — Trader Seats status, Feeders status, Technical universe summary — so the dashboard reads O(1) instead of aggregating live. That makes Atlas tier irrelevant for the operator UI. Only bump to M10 dedicated (~$57/mo) if load remains after materialization.

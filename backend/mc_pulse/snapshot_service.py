@@ -62,17 +62,78 @@ async def build_all(
         "equity": _default_universe("equity"),
         "crypto": _default_universe("crypto"),
     }
+    # Fetch every open position ONCE per pulse. Audit row #7:
+    # brains must never call Mongo themselves — MC materializes
+    # the position context and attaches to each snapshot.
+    positions_by_symbol = await _fetch_open_positions()
+
     snapshots: list[MarketSnapshot] = []
     for lane, symbols in universe.items():
         for symbol in symbols:
-            snap = await _build_one(lane, symbol, now)
+            snap = await _build_one(
+                lane, symbol, now,
+                positions_for_symbol=positions_by_symbol.get(symbol, {}),
+            )
             if snap is not None:
                 snapshots.append(snap)
     return snapshots
 
 
+async def _fetch_open_positions() -> dict[str, dict[str, dict]]:
+    """Return `{symbol: {brain_id: position_dict}}` for every open
+    position. One bounded Mongo scan per pulse.
+
+    Position state maps: `state ∈ {open, pending_open, held}` count
+    as "held"; `pending_close, closed` do not. Direction / signed
+    qty extraction stays defensive — the runner audit noted
+    inconsistent field names across historical rows.
+    """
+    result: dict[str, dict[str, dict]] = {}
+    try:
+        cursor = db["shared_positions"].find(
+            {"state": {"$in": ["open", "pending_open", "held"]}},
+            {
+                "_id": 0, "symbol": 1, "direction": 1, "state": 1,
+                "proposed_by": 1, "runtime": 1, "brain": 1,
+                "signed_qty": 1, "qty": 1, "position_id": 1,
+                "created_at": 1,
+            },
+        ).max_time_ms(1500).limit(500)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("open-position fetch failed: %s (returning empty)", exc)
+        return result
+    try:
+        async for doc in cursor:
+            sym = (doc.get("symbol") or "").upper()
+            if not sym:
+                continue
+            # Attribution priority: `proposed_by` (canonical) →
+            # `brain` (short field) → `runtime` (legacy).
+            brain_id = (
+                doc.get("proposed_by")
+                or doc.get("brain")
+                or doc.get("runtime")
+                or ""
+            ).lower()
+            if not brain_id:
+                continue
+            result.setdefault(sym, {})[brain_id] = {
+                "position_id": doc.get("position_id"),
+                "direction": doc.get("direction"),
+                "state": doc.get("state"),
+                "signed_qty": doc.get("signed_qty"),
+                "qty": doc.get("qty"),
+                "created_at": doc.get("created_at"),
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("open-position iteration failed: %s", exc)
+    return result
+
+
 async def _build_one(
     lane: str, symbol: str, now: datetime,
+    *,
+    positions_for_symbol: Optional[dict] = None,
 ) -> Optional[MarketSnapshot]:
     # Try 1m first; fall back to 5m for equity (some feeders don't
     # publish 1m) and 1d for crypto (Kraken daily bars are common
@@ -146,6 +207,7 @@ async def _build_one(
         price=Decimal(str(close)),
         indicators=indicators,
         market_state=str(doc.get("regime") or "unknown"),
+        position_context=positions_for_symbol or {},
     )
 
 
