@@ -196,9 +196,12 @@ Because we're de-risking a large design:
 - **SessionContext primitives** (trend_strength, breadth, correlation, news_intensity). Add later if the graded-outcome signal alone proves noisy.
 - **Regime-change detector with hysteresis**. Static EWMA α is good enough at v0.1.
 - **Per-symbol DAWE state**. Start at (brain, lane).
+- **Regime-scoped DAWE state** — key expansion from `(brain, lane)` → `(brain, lane, regime)`. Deferred rationale: at 4 brains × 2 lanes we have 8 DAWE buckets today; expanding to 4 regimes fragments to 32 buckets, each accumulating grades ~4× slower. **Phase 2 trigger threshold**: expand only once **each (brain, lane) bucket has ≥ 500 graded predictions in `grades_used_recent`**. Below that, per-lane grades give a faster-learning signal than per-(lane, regime) grades would. Crypto lane will hit the threshold first (24/7 market, more graded predictions per calendar day) and can be split ahead of equity.
 - **Historical prior warmup**. `prior_weight` starts at 1.0 for everyone; nightly cold-refresh added later.
 
 These are all Phase 2. Ship v0.1, measure for 5 sessions, THEN decide what to add.
+
+**Crypto-lane first-class note**: nothing in the DAWE math treats equity as the "default" lane. A brain like `hellcat` on crypto is graded on its actual crypto predictions vs actual crypto prices — the `expected_move` fallback in `grader.py` even uses a lane-specific ATR default (0.010 crypto vs 0.005 equity). Crypto reputation and equity reputation move independently. This is a strength, not a bug.
 
 ---
 

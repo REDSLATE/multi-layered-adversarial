@@ -63,23 +63,35 @@ Operator's stated design correction: **"Use history as a weak prior, then let cu
 **Full design freeze is at `/app/memory/MC_SEAT_ARBITER.md`. NEXT AGENT MUST READ THAT DOC BEFORE TOUCHING ARBITER CODE.** The freeze defines: `ModelOpinion` shape, `SeatKey` format, `DaweState` schema, arbitration loop steps 1-7, grader cadence, deletion list, sign-off checkboxes.
 
 **Implementation state as of this handoff**:
-- ✅ `/app/memory/MC_SEAT_ARBITER.md` — 12-section design freeze written
-- ✅ `/app/backend/mc_arbiter/__init__.py` — module scaffold (docstring only)
-- ⏳ **Sign-off pending on the 6 checkboxes in §12 of the design freeze** — do not code the arbiter body until operator confirms.
-- ⏳ `mc_arbiter/models.py` — NOT YET WRITTEN (ModelOpinion, SeatKey, DaweState dataclasses)
-- ⏳ `mc_arbiter/seat_key.py` — NOT YET WRITTEN (5-min bucket helper)
-- ⏳ `mc_arbiter/dawe.py` — NOT YET WRITTEN (EWMA + clamp + cold-start guard)
-- ⏳ `mc_arbiter/arbiter.py` — NOT YET WRITTEN (collect → rank → winner → size → emit)
-- ⏳ `mc_arbiter/grader.py` — NOT YET WRITTEN (background grade loop at 15m + 60m)
-- ⏳ `mc_arbiter/routes.py` — NOT YET WRITTEN (`POST /api/mc/arbiter/opinion`)
-- ⏳ Brain-side deletion pass — NOT STARTED (blocked on arbiter being live)
+- ✅ `/app/memory/MC_SEAT_ARBITER.md` — 12-section design freeze written, all 6 §12 sign-off checkboxes marked done by operator on 2026-07-11.
+- ✅ `/app/backend/mc_arbiter/__init__.py` — module docstring + design pointer.
+- ✅ `mc_arbiter/models.py` — ModelOpinion (frozen), DaweState, SeatDoc, Direction, RuntimeMode. `rank_score = edge × confidence × regime_fit × (0.75 + urgency × 0.25)` matches v3 exactly. RuntimeMode has ONLY DISARMED and LIVE — enum-completeness test guards against a third mode being added silently.
+- ✅ `mc_arbiter/seat_key.py` — `bucket_iso` (5-min UTC floor), `build_seat_key` (`lane:SYMBOL:iso`), `parse_seat_key` (handles `ETH/USD`-style slash symbols), `next_bucket_iso`. Naive datetimes treated as UTC (never local — anti-3-clock-regression).
+- ✅ `mc_arbiter/dawe.py` — `ewma`, `compute_effective_weight` (cold-start guard at 5 grades, geometric mean of session^0.50 × recent^0.30 × prior^0.20, clamped [0.40, 1.40]), `size_multiplier` (sqrt softening), `update_session` (α=0.30), `update_recent` (α=0.10), `quality_from_signed_return`.
+- ✅ `mc_arbiter/arbiter.py` — `load_dawe`/`save_dawe` (persistence to `brain_runtime_metrics.risedual_stack.brains.<brain>.dawe.<lane>`), `submit_opinion` (upsert by (seat_key, brain), idempotent), `arbitrate` (full 7-step loop: collect → DAWE-adjusted rank → argmax among directional → disagreement from opposition → size = kernel × disagreement × √effective clamped [0.30, 2.00] → emit via `shared.intents._post_intent_impl` only if LIVE → record on the winner's row), `get_runtime_mode`/`set_runtime_mode` (default DISARMED with attributable audit trail).
+- ✅ `mc_arbiter/grader.py` — `grade_pending_opinions` (idempotent per-horizon), `_grade_one` (LONG/SHORT/FLAT with FLAT symmetric grading), `_price_at` (bounded read of `shared_ohlcv_bars` 1m tf, "at or before" horizon → NO lookahead bias), `roll_recent_end_of_day` (α=0.10 daily fold + 30%-toward-neutral session reset). Manual endpoint only in v0.1 — background scheduler wiring is Phase 2.
+- ✅ `mc_arbiter/routes.py` — `POST /api/mc/arbiter/opinion`, `POST /api/mc/arbiter/arbitrate/{seat_key}`, `GET /api/mc/arbiter/seat/{seat_key}`, `GET /api/mc/arbiter/state`, `POST /api/mc/arbiter/runtime-mode`, `POST /api/mc/arbiter/grader/run`. All admin-authed. Pydantic validators reject unknown lane/direction/mode at the boundary.
+- ✅ `mc_arbiter/tests/` — 65 tests / 0.17s / 100% pass. Unit: rank_score arithmetic, enum guards, DaweState roundtrip, EWMA convergence, bound clamps, cold-start, quality mapping, seat_key roundtrip incl. slash symbols, timezone honesty. Integration (real Mongo): 4-brain competition, DAWE weight flipping the winner, cold-start neutrality, all-FLAT no-winner, empty-seat safety, disagreement multiplier shrinks size on split field, runtime mode default + flip round-trip.
+- ✅ Router registered — `mc_arbiter_router` mounted after `intents_router` in `server_modules/router_registry.py`. Backend restart shows `/api/mc/arbiter/state` returns `{"runtime_mode":"DISARMED", ...}` on cold boot.
+- ✅ Indexes added to `db.ensure_indexes`: `mc_seats_seat_brain` (unique compound), `mc_seats_brain_lane_ts`, `mc_seats_ts_grader`, `mc_seats_recorded_at`. TTL activation deferred one iteration until we switch `recorded_at` to BSON date at write time (currently ISO string — cheap fix but out of scope this pass).
+- ✅ **End-to-end smoke verified via curl** (2026-07-11): Camino LONG + Barracuda SHORT posted → arbitrate returned Camino as winner (higher rank_score), disagreement_multiplier=0.902 (opposition_strength × 0.40 penalty), size_multiplier=0.902, `runtime_mode=DISARMED` + `intent_id=null` confirmed (no trader emission). Contract holds.
 
-**Testing strategy for the arbiter** (planned, not yet written):
-- Unit: DAWE math (EWMA convergence, clamp bounds, cold-start guard), seat_key canonicalization, rank vs size split arithmetic.
-- Integration: 4 brains post opinions to the same seat_key, verify winner selection by adjusted_rank, verify one and only one intent lands in `shared_intents` for that seat, verify all 4 opinions get graded at 15m + 60m.
-- Regression: existing intent-write path (iter-25 3-clock work) still functions when brain calls go through arbiter.
+**Deletion pass NOT YET STARTED** (blocked on arbiter being armed + running in LIVE against actual brain-emitted opinions):
+- ⏳ Brain-side confidence floors (per-brain `MIN_CONFIDENCE`)
+- ⏳ Brain-side RVOL gates
+- ⏳ Brain-side sizing math (all duplicates)
+- ⏳ Wire the 4 in-process runners (`/app/external/brains/runner.py`) to POST `/api/mc/arbiter/opinion` alongside their current `shared_intents.insert_one` — dual-write for one iteration to confirm parity, then cut the direct write.
+- ⏳ Background scheduler for the grader (60s cadence) inside `server_modules/lifespan.py`.
 
-**Immediate next step for the agent picking this up**: (a) confirm design freeze §12 sign-offs are done (check the checkboxes in `/app/memory/MC_SEAT_ARBITER.md`), (b) if signed off, start with `models.py` + `seat_key.py` + `dawe.py` in one pass, tests colocated, THEN wire the route + arbitration loop, THEN the grader. Do NOT delete any brain-side gate until the arbiter emits at least one real intent end-to-end.
+**Immediate next step for the agent picking this up**:
+1. **DO NOT ARM (do not flip runtime_mode to LIVE)** until step 3 below is proven end-to-end.
+2. Wire brain runners to also POST opinions to `/api/mc/arbiter/opinion` (dual-write pattern — brain still emits its own intent AND submits opinion to MC). Add a `SHARED_INTENTS_BYPASS_ARBITER=1` env flag as a temporary shim so we can toggle whether the brain's direct write survives.
+3. Confirm all 4 brains show up in `mc_seats` for the same 5-min bucket when they're looking at the same symbol. `GET /api/mc/arbiter/seat/{seat_key}` should return 4 opinion rows.
+4. Confirm the grader picks up 15m-aged opinions and stamps `grade_15m` — verify via `db.mc_seats.find({grade_15m: {$exists: true}})`.
+5. Confirm DAWE state moves — read `brain_runtime_metrics.risedual_stack.brains.<brain>.dawe.<lane>` and see `session_weight` drift from 1.0 after ~10 graded predictions per (brain, lane).
+6. THEN and only then: flip a single brain-lane to LIVE via `/api/mc/arbiter/runtime-mode`, watch for one full session, and iterate.
+
+**Full design freeze at `/app/memory/MC_SEAT_ARBITER.md`. NEXT AGENT MUST READ THAT DOC BEFORE TOUCHING ARBITER CODE.**
 
 
 **✅ 2026-07-11 (iter-25b): ATLAS TIMEOUT SYSTEM-WIDE SAFETY NET.** After the 3-clock work landed, prod still showed `NetworkTimeout: customer-apps-shard-XX.kndgvm.mongodb.net:27017` and `ExecutionTimeout: PlanExecutor error during aggregation :: operation exceeded time limit, MaxTimeMS...` red banners across the Overview page (Feeder Slots, Shared Technical Feed) and BrainConsole (Barracuda). Audited: 295 unbounded read sites — patching each individually is a losing game. Two-part fix: (a) explicit `.max_time_ms(2500)` / `maxTimeMS(4500)` bounds + fail-soft try/except returning `{items:[], degraded:true}` on `/shared/opinions` × 2 handlers, `/shared/technical/symbols`, `/shared/technical/feeders`; (b) GLOBAL FastAPI exception handler in `server_modules/middleware_setup.py` catching pymongo `NetworkTimeout`, `ExecutionTimeout`, `ServerSelectionTimeoutError`, `WTimeoutError` — for GET/HEAD returns HTTP 200 with `{ok:false, degraded:true, atlas_timeout:true, items:[], count:0, payload:{}, request_id, warning}` (a 200 is deliberate so every widget's happy path resolves and widgets render empty state instead of a red banner); for writes returns HTTP 503 with same body (writes stay honest — a POST that timed out MUST reach the caller so retry / user feedback fires; this is the anti-silent-swallow doctrine extended to the write path at the middleware layer). Handler registered BEFORE the generic Exception handler so FastAPI resolves the more-specific pymongo classes first. 3 new tests validate the response shape + registration completeness. Also frontend: `TraderSeatViewer.jsx`, `SpreadWatcher.jsx`, `TraderPostMortem.jsx` now hide the whole card on 404 (their backend endpoints were removed in the earlier simplification pass but widgets were still mounted showing "Not Found" red banners). 28/28 tests pass. **Long-term direction for the Atlas problem**: materialize hot dashboard state into single summary docs (the `brain_runtime_metrics.risedual_stack` pattern) — Trader Seats status, Feeders status, Technical universe summary — so the dashboard reads O(1) instead of aggregating live. That makes Atlas tier irrelevant for the operator UI. Only bump to M10 dedicated (~$57/mo) if load remains after materialization.

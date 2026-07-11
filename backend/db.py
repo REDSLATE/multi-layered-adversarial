@@ -312,6 +312,44 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         name="shared_opinions_posted_at",
     )
 
+    # MC Seat Arbiter — 2026-07-11 (iter-26). One row per
+    # (seat_key, brain) so all four brains competing for the same
+    # 5-min bucket surface with a single seat_key lookup. TTL 30
+    # days on `recorded_at` — the mc_seats tape is meant to be
+    # short-term arbitration + grading history, not a permanent
+    # archive (that lives on `shared_intents` for winners and
+    # `counterfactual_signals` for the graded blockeds).
+    await _safe_create_index(
+        db.mc_seats,
+        [("seat_key", 1), ("brain", 1)],
+        name="mc_seats_seat_brain",
+        unique=True,
+    )
+    await _safe_create_index(
+        db.mc_seats,
+        [("brain", 1), ("lane", 1), ("ts", -1)],
+        name="mc_seats_brain_lane_ts",
+    )
+    # Grader read pattern: find opinions old enough to grade at a
+    # given horizon that haven't been graded yet.
+    await _safe_create_index(
+        db.mc_seats,
+        [("ts", 1)],
+        name="mc_seats_ts_grader",
+    )
+    # TTL — recorded_at must be a real BSON date for Mongo TTL to
+    # honor it, so grader/arbiter writes MUST store `recorded_at`
+    # as an ISO string parsed to datetime at write time. For v0.1
+    # we stamp `recorded_at` as ISO string (see `arbiter.submit_opinion`);
+    # TTL activation is deferred one iteration until we switch to
+    # BSON date writes. Placeholder index registered so the field
+    # is present in the schema.
+    await _safe_create_index(
+        db.mc_seats,
+        [("recorded_at", 1)],
+        name="mc_seats_recorded_at",
+    )
+
     # Per-runtime decision/shadow stores (kept ISOLATED, never cross-read)
     await db.alpha_decision_log.create_index([("timestamp", -1)])
     await db.camaro_shadow_rows.create_index([("timestamp", -1)])
