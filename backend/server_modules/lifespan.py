@@ -728,6 +728,39 @@ async def lifespan(app: FastAPI):
         logger.info("bracket_outcome_resolver task started")
     except Exception as e:  # noqa: BLE001
         logger.warning("bracket_outcome_resolver start failed: %s", e)
+
+    # ── MC Pulse (2026-07-11, iter-27) — migration step 3 ──
+    # Registers pilot brain (Camino) + starts a 15s pulse loop in
+    # `compare_only=True` mode. Nothing routes to the arbiter tape
+    # or the trader from this path — envelopes go to
+    # `mc_opinions_compare` so we can measure parity vs the
+    # existing Camino runner without disturbing live behavior.
+    #
+    # Gated on `RISEDUAL_MC_PULSE_ENABLED=1` so the default is OFF
+    # in preview environments until the operator flips it.
+    #
+    # See:
+    #   /app/memory/MC_PULSE.md            (design freeze)
+    #   /app/memory/CAMINO_RUNNER_AUDIT.md (implicit-contract audit)
+    if os.environ.get("RISEDUAL_MC_PULSE_ENABLED", "0") == "1":
+        try:
+            from mc_brains.camino import CaminoBrain
+            from mc_pulse.registry import get_registry
+            from mc_pulse.pulse_worker import start_pulse_worker
+
+            registry = get_registry()
+            if "camino" not in registry.ids():
+                registry.register(CaminoBrain())
+            start_pulse_worker(app)
+            logger.info(
+                "mc_pulse worker started (compare_only=True, cadence=15s, brains=%s)",
+                registry.ids(),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("mc_pulse start failed: %s", e)
+    else:
+        logger.info("mc_pulse disabled (set RISEDUAL_MC_PULSE_ENABLED=1 to arm the migration pulse)")
+
     yield
     await stop_poller()
     await stop_tickler()
@@ -738,6 +771,13 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001
         pass
     await stop_auto_router()
+
+    # MC Pulse shutdown — cancel the background loop cleanly.
+    try:
+        from mc_pulse.pulse_worker import stop_pulse_worker
+        await stop_pulse_worker(app)
+    except Exception:  # noqa: BLE001
+        pass
 
     # Stale-intent sweeper shutdown (2026-02-19).
     try:
