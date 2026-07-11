@@ -126,6 +126,13 @@ def build_camino_features(
             "real_market_data": True,
         }
         # Doctrine session enrichment — same call the runner makes.
+        # `session_features` may return None for fields it can't
+        # compute (e.g. `trend_score` when there aren't enough
+        # same-session bars — the classic tf=1d symptom). Preserve
+        # the hot-branch computation as a fallback so a single
+        # daily bar doesn't erase the 20-bar window's directional
+        # signal.
+        hot_trend_score = snapshot.get("trend_score")
         snapshot.update(
             session_features(bars, prior_session_volumes=prior_daily_volumes),
         )
@@ -134,6 +141,15 @@ def build_camino_features(
         # so downstream doctrine never sees a hole.
         if snapshot.get("market_regime") is None:
             snapshot["market_regime"] = market_regime or "calm"
+        # Same rescue for trend_score. session_features' scoped
+        # slope wins when it has one; hot-branch full-window slope
+        # is used when the session slope is undefined. This
+        # preserves the runner's current intraday behavior exactly
+        # (session_features already returned a real number on
+        # intraday windows) AND correctly reports direction on
+        # daily-only windows where session_features returns None.
+        if snapshot.get("trend_score") is None and hot_trend_score is not None:
+            snapshot["trend_score"] = hot_trend_score
         return snapshot, 0.0
 
     # ── Cold branch: fewer than 20 bars → synthetic default ──

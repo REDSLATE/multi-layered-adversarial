@@ -64,6 +64,29 @@ from .brain_core import BrainIntent, NeutralAdversarialBrain
 from .personality import apply_personality_confidence, get_personality
 from shared.indicators import session_features
 
+# ── 2026-07 parity work (iter-27): canonical Camino feature builder.
+# Only imported and used on the Camino path so the other three brains
+# retain their existing feature production untouched — the operator
+# directive is explicit that selection and feature production must be
+# decoupled during migration so parity math can attribute divergence
+# cleanly. `/app/backend` is added to sys.path in lifespan.py before
+# `start_neutral_brains` runs; guard behind a try/except so a
+# non-backend-hosted execution of this module (e.g. offline replay)
+# still imports.
+try:
+    import sys as _sys_for_mc_pulse
+    if "/app/backend" not in _sys_for_mc_pulse.path:
+        _sys_for_mc_pulse.path.insert(0, "/app/backend")
+    from mc_pulse.feature_builders.camino import build_camino_features
+    from mc_pulse.parity_key import intraday_bar_identity
+    from mc_pulse.input_manifest import (
+        build_camino_manifest,
+        persist_manifest,
+    )
+    _MC_PULSE_PARITY_AVAILABLE = True
+except Exception:  # noqa: BLE001
+    _MC_PULSE_PARITY_AVAILABLE = False
+
 
 logger = logging.getLogger("risedual.neutral_brains")
 
@@ -1367,7 +1390,39 @@ class BrainRunner:
         self, http: httpx.AsyncClient, lane: str, symbol: str,
     ) -> None:
         technical = await self._fetch_technical(http, symbol)
-        snapshot, setup_score = _build_snapshot(symbol, lane, technical)
+
+        # ── 2026-07 parity work (iter-27) ──
+        # Camino ONLY: swap `_build_snapshot`'s internal derivation for
+        # the canonical Camino feature builder so the runner and the
+        # pulse produce byte-identical feature snapshots from the same
+        # bars. Selection/cooldown/tick cadence are UNCHANGED —
+        # operator directive was explicit that feature and selection
+        # changes must not land together, or parity math cannot
+        # attribute the correction cleanly.
+        #
+        # setup_score comes from `technical.signals.setup_score`
+        # (MC-computed pattern composite). The canonical builder
+        # returns 0.0 as a placeholder — we overwrite here to
+        # preserve doctrine's pattern-bias input on the runner side.
+        # A pulse-side setup_score is deliberately absent this pass;
+        # the parity manifest will surface it as `missing_fields`
+        # and Step 7 (widen indicators proven missing) will add it.
+        if self.brain_id == "camino" and _MC_PULSE_PARITY_AVAILABLE:
+            _bars = (technical or {}).get("bars") or []
+            _daily = (technical or {}).get("daily_volume_baseline") or None
+            snapshot, _ = build_camino_features(
+                symbol=symbol, lane=lane, bars=_bars,
+                prior_daily_volumes=_daily,
+                market_regime=getattr(self, "_current_regime", None),
+            )
+            _sig = (technical or {}).get("signals") or {}
+            try:
+                setup_score = float(_sig.get("setup_score") or 0.0)
+            except (TypeError, ValueError):
+                setup_score = 0.0
+            snapshot["setup_score"] = round(setup_score, 4)
+        else:
+            snapshot, setup_score = _build_snapshot(symbol, lane, technical)
         # Doctrine (2026-06-11, operator directive): Webull-side
         # enrichment for the equity lane so the strategy doctrines
         # (gap_and_go_v1, micro_pullback_v1, large_cap_equity_v1) see
@@ -1480,6 +1535,21 @@ class BrainRunner:
             "RISEDUAL_ENV", os.environ.get("ENV", "unknown"),
         )
 
+        # ── 2026-07 parity work (iter-27) ──
+        # Runner-side manifest recording. Camino ONLY, fail-soft.
+        # Records the same shape the pulse orchestrator records
+        # via `_persist_hints`, under the same ParityKey — so the
+        # parity endpoint can join runner and pulse rows on the
+        # exact same closed bar. Placed AFTER intent finalization
+        # (post persona + legacy wrapper) so `action` and
+        # `confidence` on the manifest reflect what the runner
+        # actually emits, not the raw core opinion.
+        if self.brain_id == "camino" and _MC_PULSE_PARITY_AVAILABLE:
+            await self._record_camino_runner_manifest(
+                lane=lane, symbol=symbol, technical=technical,
+                snapshot=snapshot, intent=intent,
+            )
+
         # Broker selection (2026-06-11): operator picks the routing
         # broker per lane from the dashboard. Read the singleton each
         # tick (cheap; cached). Defaults preserved — equity → Public,
@@ -1589,6 +1659,93 @@ class BrainRunner:
             logger.warning(
                 "neutral_brain intent rejected brain=%s lane=%s status=%s body=%s",
                 self.brain_id, lane, r.status_code, r.text[:300],
+            )
+
+    async def _record_camino_runner_manifest(
+        self, *,
+        lane: str, symbol: str, technical: Optional[dict],
+        snapshot: dict, intent: BrainIntent,
+    ) -> None:
+        """Runner-side parity manifest for Camino evaluations.
+
+        2026-07 parity work (iter-27). Records what the runner
+        saw + what it decided, under the same ParityKey the pulse
+        orchestrator uses (`brain=camino, symbol, tf, close`).
+        Enables the parity endpoint to join runner and pulse rows
+        on the exact same closed bar.
+
+        Fail-soft: any error is logged and swallowed — the intent
+        POST above has already succeeded; a manifest write is
+        pure observability and MUST NOT crash the runner tick.
+        """
+        try:
+            bars = (technical or {}).get("bars") or []
+            if not bars:
+                # No canonical bar → no ParityKey → skip. The
+                # parity endpoint will report the runner row as
+                # `parity_key_missing`, which is the honest read.
+                return
+            latest = bars[-1]
+            latest_ts_raw = latest.get("ts")
+            if not latest_ts_raw:
+                return
+            try:
+                latest_ts = datetime.fromisoformat(
+                    str(latest_ts_raw).replace("Z", "+00:00"),
+                )
+                if latest_ts.tzinfo is None:
+                    latest_ts = latest_ts.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                return
+            # MC's `/technical` endpoint currently emits 1m bars
+            # exclusively. Encode that explicitly; if MC starts
+            # emitting mixed tfs, extend to read from `technical`
+            # here and this branch is where the split lives.
+            tf = "1m"
+            try:
+                bar_identity = intraday_bar_identity(
+                    timeframe=tf, bar_timestamp=latest_ts,
+                    timestamp_semantics="open",
+                    source="mc_technical_endpoint",
+                )
+            except ValueError as exc:
+                # Non-aligned upstream timestamp → surface as a
+                # log line so the feeder defect is traceable.
+                # Do NOT silently normalize.
+                logger.warning(
+                    "runner parity bad bar identity brain=%s "
+                    "symbol=%s ts=%s err=%s",
+                    self.brain_id, symbol, latest_ts.isoformat(), exc,
+                )
+                return
+            parity_key = bar_identity.to_parity_key(
+                brain_id="camino", symbol=symbol,
+            )
+            position_present = bool(snapshot.get("position_context"))
+            manifest = build_camino_manifest(
+                parity_key=parity_key,
+                path="runner",
+                bar=bar_identity,
+                source_bar_id=str(latest.get("_id") or latest_ts_raw),
+                snapshot=snapshot,
+                fallback_used=not bool(snapshot.get("real_market_data")),
+                position_context_present=position_present,
+                bar_count=len(bars),
+                action=str(intent.action or "HOLD"),
+                confidence=float(intent.confidence or 0.0),
+                # Runner path always emits real opinions here — the
+                # INSUFFICIENT_DATA branch is a pulse-side gate. If
+                # a runner tick REACHED this code, an intent was
+                # produced and posted. Status "OK" is honest.
+                status="OK",
+                reason_codes=(),
+            )
+            await persist_manifest(manifest)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "runner parity manifest write failed brain=%s "
+                "symbol=%s err=%s",
+                self.brain_id, symbol, exc,
             )
 
     async def _post_directional_opinion(
