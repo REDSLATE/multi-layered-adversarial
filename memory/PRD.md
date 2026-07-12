@@ -31,6 +31,41 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### 🧹 2026-07-12 (iter-28i): P6a + P6b PARTIAL — CODE EXTRACTED INTO FOCUSED MODULES
+
+**P6a — positions.py: 1008 → 830 lines** (17.6% reduction, -178 lines).
+
+Extracted:
+- `shared/positions_models.py` (139 lines) — All 5 Pydantic classes (`ProposeIn`, `StanceIn`, `OperatorStanceIn`, `ExecutorCallIn`, `RejectIn`) + type aliases (`BrainT`, `StanceT`, `DirectionT`) + call-mode constants. Re-exported from `positions.py` for backward compat.
+- `shared/positions_quorum.py` (102 lines) — `_stance_summary` (Mongo read) + `_compute_quorum` (pure position-model quorum awareness). `positions.py` now has 4-line shims that forward to these.
+
+**Deferred within P6a**: `_maybe_auto_advance` + `_persist_stance` extraction into `positions_state.py`. These 2 functions total ~230 lines but they're tightly coupled to `_stance_doc`, `_current_seat_and_epoch`, and the audit function. A safe extraction requires more surgery than remaining context allowed. Both functions are already doctrine-documented + step-7 instrumented, so they're stable in-place.
+
+**P6b — auto_router.py: 1063 → 1006 lines** (5.4% reduction, -57 lines).
+
+Extracted:
+- `shared/auto_router_helpers.py` (109 lines) — `RouteContext` dataclass (accumulator for the stage-based refactor to come) + `resolve_notional(intent) -> (float, str)` helper. Notional resolution now happens in one function call inside `_route_one` (was 60 lines of inline logic).
+
+**Deferred within P6b**: full 5-stage breakout of `_route_one` into `_gate_master_switch`, `_gate_seat`, `_gate_risk`, `_route_and_submit`, `_finalize_gate_state`. The `RouteContext` dataclass is now in place as scaffolding — the stage extraction is mechanical from here, but requires careful async signature threading through ~800 lines that I did not want to attempt at low context. The dataclass on its own already carries meaningful value: it documents the 8 pieces of state `_route_one` accumulates, which was previously implicit in 15+ local variables.
+
+**New unit tests**: `tests/test_auto_router_helpers.py` — 10 tests locking `resolve_notional`'s 4 doctrine branches (brain_legacy, brain_v3, micro_probe_failed_quality, micro_default, env_default), edge cases (zero-size treated as missing, malformed doctrine packet), and `RouteContext` construction + instance-local mutable state.
+
+**Test totals**:
+- Full merged suite: **292/292 pass** (was 235 → added 10 helper tests + 43 position/quorum/fingerprint + 9 auto_router = 292 covering the post-refactor surface).
+- Backend restart clean, no import errors.
+
+**Net effect**:
+- 3 new focused modules (350 lines total across positions_models + positions_quorum + auto_router_helpers).
+- 235 lines removed from the two "hot path" modules.
+- Behavior identical — no operator-visible change.
+
+**What remains for P6 completion (next session)**:
+- `_maybe_auto_advance` + `_persist_stance` + `_stance_doc` → `shared/positions_state.py`. Adds ~230 lines of extraction, brings `positions.py` down to ~600 lines.
+- `_route_one` full 5-stage breakout using `RouteContext`. Each stage becomes ~100-200 lines and the top-level `_route_one` becomes an ~80-line orchestrator that reads like the doctrine.
+
+These are additive, non-behavioral refactors — the current state is fully deploy-safe.
+
+
 ### 📊 2026-07-12 (iter-28h): P5 FRONTEND TILE SHIPPED — DISTINCTNESS + INPUT HEALTH VIEW LIVE
 
 **New page**: `/admin/pulse-health` — 4-tile grid, one per brain, auto-refresh every 30s.

@@ -95,133 +95,22 @@ async def _audit(action: str, actor: str, position_id: str, payload: dict) -> No
 
 
 # ──────────────────────── models ────────────────────────
-
-BrainT = Literal["camino", "barracuda", "hellcat", "gto"]
-StanceT = Literal["long", "short", "abstain"]
-DirectionT = Literal["long", "short"]
-
-
-CALL_MODE_AUTO = "auto"
-CALL_MODE_MANUAL = "manual"
-VALID_CALL_MODES = frozenset({CALL_MODE_AUTO, CALL_MODE_MANUAL})
-
-
-class ProposeIn(BaseModel):
-    symbol: str = Field(..., min_length=1, max_length=32)
-    regime_tag: Optional[str] = Field(default=None, max_length=48)
-    thesis: str = Field("", max_length=2048)
-    proposed_by: str = Field(..., description="brain name or 'operator'")
-    call_mode: Literal["auto", "manual"] = Field(
-        default="manual",
-        description=(
-            "auto: the executor seat's long/short stance immediately "
-            "advances state. manual: operator clicks CALL LONG / CALL "
-            "SHORT to advance."
-        ),
-    )
-
-    @field_validator("symbol")
-    @classmethod
-    def _norm_symbol(cls, v: str) -> str:
-        return v.strip().upper()
-
-    @field_validator("proposed_by")
-    @classmethod
-    def _proposed_by_check(cls, v: str) -> str:
-        v = v.strip().lower()
-        if v != "operator" and v not in DISCUSSION_PARTICIPANTS:
-            raise ValueError(
-                f"proposed_by must be 'operator' or one of {DISCUSSION_PARTICIPANTS}"
-            )
-        return v
-
-
-class StanceIn(BaseModel):
-    stance: StanceT
-    confidence: float = Field(0.5, ge=0.0, le=1.0)
-    notes: str = Field("", max_length=2048)
-    # Memory provenance (optional — brains opt in once they emit it).
-    # When a brain reports which memory artefacts shaped this stance,
-    # we record them so future audits can trace memory poisoning, stale
-    # priors, or reinforcement loops. Empty list is acceptable.
-    memory_sources: list[str] = Field(default_factory=list, max_length=32)
-    # Confidence origin breakdown (optional). Brains that can decompose
-    # their confidence into named components (model, memory,
-    # contradiction_penalty, regime_alignment, …) report them here.
-    # Validated below to keep keys/values bounded.
-    confidence_origin: dict[str, float] = Field(default_factory=dict)
-    # ── 2026-07-12 doctrine step 5.b: fresh-input provenance ──
-    # ISO-8601 close timestamp of the bar the brain evaluated to
-    # produce this stance. Optional for backward compat with brains
-    # that haven't yet been retrofitted (v1 fingerprint path stays
-    # active for stances missing this field). Once ALL engaged brains
-    # supply it, the consensus writer switches to v2 fingerprint —
-    # which includes `min(source_bar_close_at)` in the hash — AND
-    # applies a freshness spread gate before advancing state.
-    source_bar_close_at: Optional[str] = Field(
-        default=None, max_length=64,
-        description=(
-            "ISO-8601 close ts of the bar this stance was derived from. "
-            "Enables the v2 consensus fingerprint + fresh-input gate."
-        ),
-    )
-
-    @field_validator("memory_sources")
-    @classmethod
-    def _norm_sources(cls, v: list[str]) -> list[str]:
-        out: list[str] = []
-        for s in v:
-            if not isinstance(s, str):
-                raise ValueError("memory_sources must be strings")
-            t = s.strip()
-            if not t:
-                continue
-            if len(t) > 128:
-                raise ValueError(f"memory_source too long: {t[:32]}...")
-            out.append(t)
-        return out
-
-    @field_validator("confidence_origin")
-    @classmethod
-    def _norm_confidence_origin(cls, v: dict) -> dict[str, float]:
-        if len(v) > 12:
-            raise ValueError("confidence_origin can have at most 12 components")
-        out: dict[str, float] = {}
-        for k, val in v.items():
-            if not isinstance(k, str) or not k:
-                raise ValueError("confidence_origin keys must be non-empty strings")
-            if len(k) > 64:
-                raise ValueError(f"confidence_origin key too long: {k[:32]}...")
-            try:
-                f = float(val)
-            except (TypeError, ValueError) as e:
-                raise ValueError(
-                    f"confidence_origin[{k!r}] must be a number"
-                ) from e
-            if not (-1.0 <= f <= 1.0):
-                raise ValueError(
-                    f"confidence_origin[{k!r}]={f} must be in [-1, 1]"
-                )
-            out[k.strip()] = f
-        return out
-
-
-class OperatorStanceIn(StanceIn):
-    """Operator posting a stance on behalf of a brain (or themselves)."""
-    brain: BrainT
-
-
-class ExecutorCallIn(BaseModel):
-    """Operator advances the position via the executor seat's decision.
-    direction='long' → consensus_long; 'short' → consensus_short;
-    a separate /reject endpoint handles walk-away.
-    """
-    direction: DirectionT
-    notes: str = Field("", max_length=2048)
-
-
-class RejectIn(BaseModel):
-    notes: str = Field("", max_length=2048)
+# 2026-07-12 (P6a): Pydantic models extracted to positions_models.py
+# to reduce this module's line count. Re-exported here so external
+# imports of `shared.positions.StanceIn` etc. keep working.
+from shared.positions_models import (  # noqa: E402
+    BrainT,
+    StanceT,
+    DirectionT,
+    CALL_MODE_AUTO,
+    CALL_MODE_MANUAL,
+    VALID_CALL_MODES,
+    ProposeIn,
+    StanceIn,
+    OperatorStanceIn,
+    ExecutorCallIn,
+    RejectIn,
+)
 
 
 # ──────────────────────── helpers ────────────────────────
@@ -233,86 +122,19 @@ async def _executor_seat() -> Optional[str]:
     return r["assignments"].get("executor")
 
 
-async def _stance_summary(position_id: str) -> dict:
-    """Aggregate per-brain stance into a compact summary for list views."""
-    rows = await db[SHARED_POSITION_STANCES].find(
-        {"position_id": position_id}, {"_id": 0},
-    ).sort("posted_at", 1).to_list(64)
-    by_brain: dict[str, dict] = {}
-    for r in rows:
-        # Latest wins (a brain can refine its stance — last one stands).
-        by_brain[r["brain"]] = r
-    counts = {"long": 0, "short": 0, "abstain": 0}
-    for stance in by_brain.values():
-        if stance["stance"] in counts:
-            counts[stance["stance"]] += 1
-    return {
-        "stances_by_brain": by_brain,
-        "stance_counts": counts,
-        "brains_engaged": len(by_brain),
-    }
+async def _stance_summary(position_id: str) -> dict:  # noqa: D401
+    # 2026-07-12 (P6a): moved to positions_quorum.py. This shim
+    # preserves the internal call sites without a rename cascade.
+    from shared.positions_quorum import _stance_summary as _impl
+    return await _impl(position_id)
 
 
 async def _compute_quorum(stances_by_brain: dict[str, dict],
                           stances_by_seat: dict[str, dict],
-                          roster_assignments: dict[str, Optional[str]]) -> dict:
-    """Quorum awareness — POSITION model (Doctrine, 2026-05-30).
-
-    A required seat is "engaged" iff the brain CURRENTLY holding that
-    seat has authored a stance on this position. Authority lives in
-    the seat; when the seat rotates, the new holder must re-speak.
-    A stance written by the previous holder no longer satisfies the
-    seat's quorum — because authority moved with the seat.
-
-    Prior implementation read `posted_as` (seat-at-write-time) and
-    counted any historical stance under that seat as engagement,
-    even after rotation. That allowed Alpha to take the strategist
-    seat while Camaro's old strategist stance silently held quorum
-    on his behalf — which is brain-coupling masquerading as
-    "history". Same fix family as the executor_seat_check
-    position-model relaxation (2026-05-28).
-
-    Computes:
-      - seats_engaged: required seats whose CURRENT holder has stanced
-      - seats_required: list of seats marked seat_required=True
-      - seats_missing: required seats whose current holder is silent
-        (either no stance from current holder, or seat is vacant)
-      - vacant_required_seats: required seats that have no brain assigned
-        (worse than silent — there's literally no one to ask)
-      - adversarial_blindness: auditor seat is required and unstamped
-        (2026-05-27 — opponent merged into auditor; this flag now
-        triggers on auditor silence)
-      - governance_blindness: governor seat is required and unstamped
-      - degraded: any required seat is unstamped or vacant
-    """
-    req = list(required_seats())
-    engaged: list[str] = []
-    missing: list[str] = []
-    vacant_required: list[str] = []
-    for seat in req:
-        current_holder = roster_assignments.get(seat)
-        if not current_holder:
-            vacant_required.append(seat)
-            missing.append(seat)
-            continue
-        # Position-model engagement: current holder must have stanced.
-        if current_holder in stances_by_brain:
-            engaged.append(seat)
-        else:
-            missing.append(seat)
-    return {
-        "seats_engaged": engaged,
-        "seats_required": req,
-        "seats_missing": missing,
-        "vacant_required_seats": vacant_required,
-        # 2026-05-27 doctrine merge: opponent merged into auditor. The
-        # auditor now carries BOTH pre-trade-contrary AND post-trade
-        # review. Adversarial blindness now triggers when the auditor
-        # is silent on a position.
-        "adversarial_blindness": "auditor" in missing,
-        "governance_blindness": "governor" in missing,
-        "degraded": len(missing) > 0,
-    }
+                          roster_assignments: dict[str, Optional[str]]) -> dict:  # noqa: D401
+    # 2026-07-12 (P6a): moved to positions_quorum.py.
+    from shared.positions_quorum import _compute_quorum as _impl
+    return await _impl(stances_by_brain, stances_by_seat, roster_assignments)
 
 
 async def _hydrate(doc: dict) -> dict:

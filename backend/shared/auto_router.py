@@ -217,70 +217,13 @@ async def _route_one(intent: dict) -> dict:
     #
     #   "direction exists now. The next executable choke is
     #    notional_usd=null … Add a micro-notional fallback."
-    #
-    # The `notional_source` string rides on the intent doc so the
-    # post-mortem can distinguish brain-sized orders from micro-probes.
-    # ── Notional resolution (2026-07-09 revised operator directive) ──
-    # Doctrine:
-    #
-    #   Market data
-    #     → brain chooses BUY/SELL
-    #     → doctrine scores quality
-    #     → executor assigns notional  ← THIS BLOCK
-    #     → capital ledger reserves
-    #     → broker submits
-    #
-    # Rule (assign_micro_notional):
-    #   1. If the brain already sized the intent (legacy or v3), USE IT.
-    #      → notional_source ∈ {"brain_legacy", "brain_v3"}
-    #   2. Directional intent (BUY/SELL) with no size AND doctrine
-    #      flagged any failed checks → $1 quality-weak probe.
-    #      → notional_source = "micro_probe_failed_quality"
-    #   3. Directional intent (BUY/SELL) with no size AND doctrine is
-    #      clean (no failed checks) → $5 default probe.
-    #      → notional_source = "micro_default"
-    #   4. Non-directional (HOLD/...) → env default ($10).
-    #      → notional_source = "env_default"
-    #
-    # The `notional_source` string rides on the intent doc so the
-    # post-mortem can distinguish brain-sized orders from probes and,
-    # for probes, whether doctrine passed or flagged them as weak.
-    _exec = intent.get("execution") or {}
+    # ── Notional resolution (2026-07-09 operator directive) ──
+    # 2026-07-12 (P6b): rules extracted to `auto_router_helpers.py`.
+    # Full doctrine + all 4 branches documented there. Behavior
+    # identical to the previous inline block.
+    from shared.auto_router_helpers import resolve_notional
     action_upper = str(intent.get("action") or "").upper()
-    v3_notional = _exec.get("notional_usd") if isinstance(_exec, dict) else None
-    legacy_notional = intent.get("requested_notional_usd")
-    notional_source: str
-    if legacy_notional not in (None, 0, 0.0):
-        notional_raw = float(legacy_notional)
-        notional_source = "brain_legacy"
-    elif v3_notional not in (None, 0, 0.0):
-        notional_raw = float(v3_notional)
-        notional_source = "brain_v3"
-    elif action_upper in {"BUY", "SELL"}:
-        # Brain made a directional move but didn't size it.
-        # Consult the doctrine packet — if ANY quality checks failed,
-        # ship a $1 probe; otherwise a $5 default probe.
-        try:
-            dp = intent.get("doctrine_packet") or {}
-            seats_dp = (dp.get("seats") or {}) if isinstance(dp, dict) else {}
-            ej = seats_dp.get("execution_judge") or {}
-            _failed = list(ej.get("failed_checks") or [])
-        except Exception:  # noqa: BLE001
-            _failed = []
-
-        if _failed:
-            notional_raw = float(
-                os.environ.get("MICRO_PROBE_FAILED_QUALITY_USD", "1.00")
-            )
-            notional_source = "micro_probe_failed_quality"
-        else:
-            notional_raw = float(
-                os.environ.get("MICRO_LIVE_DEFAULT_USD", "5.00")
-            )
-            notional_source = "micro_default"
-    else:
-        notional_raw = AUTO_ROUTER_NOTIONAL_USD
-        notional_source = "env_default"
+    notional_raw, notional_source = resolve_notional(intent)
 
     # ── 1. Seat decides ──────────────────────────────────────────
     sd = await seat.decide(intent)
