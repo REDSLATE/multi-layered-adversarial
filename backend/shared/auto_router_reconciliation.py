@@ -112,6 +112,15 @@ async def _sweep_expired_unrouted() -> int:
                     "expire_reason": (
                         f"aged_past_router_window:{expire_min}min"
                     ),
+                    # Doctrine 2026-07-12 (Step 7): mirror into
+                    # `broker_reason` so operator dashboards
+                    # keyed on that field see the reason without
+                    # a client-side field-name pivot.
+                    "broker_reason": "EXPIRED_UNROUTED",
+                    "broker_error_bucket": "queue_timeout",
+                    "broker_error_detail": (
+                        f"aged_past_router_window:{expire_min}min"
+                    ),
                 }},
             ),
             timeout=5.0,

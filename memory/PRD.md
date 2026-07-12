@@ -31,6 +31,44 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### ✅ 2026-07-12 (iter-28): FULL DATA WIPE + STEP 7 (NO-SILENT-RETURNS) + STEP 5.b (v2 FINGERPRINT + FRESH-INPUT GATE) SHIPPED
+
+**Architectural clarification landed this session** — the investigation doc's premise was wrong. `shared_positions` is discussion-only by doctrine (`TERMINAL_STATES = consensus_long/short/rejected/stale/invalidated_data_stale`); it was never designed to advance to `pending_open`. The real trading pipeline is `shared_intents → auto_router → broker`, and the pre-wipe stall was caused by (a) `trading_controls.current.enabled = False` (fail-closed master switch never armed on this preview pod, though production has always been armed), (b) missing Kraken creds on preview (production has them), and (c) silent-return code paths that hid the true blocker from operator dashboards.
+
+**Full data wipe (operator-approved aggressive scope)**: 195,795 rows deleted across 14 collections in one atomic pass — `shared_intents` (58,939) · `shared_intents_archive` (1,097) · `learning_experiences` (296) · `shared_position_stances` (1,978) · `shared_positions` (3,375) · `shared_position_audit` (6,361) · `mc_pulses` (1,730) · `mc_opinions_compare` (6,707) · `shared_brain_opinions` (115,312) + 5 empty related collections. KEPT: `shared_audit`, `shared_ohlcv_bars` (1.76M bars — historical tape), `patterns_universe` (40 canonical symbols), `brain_runtime_metrics`, `trading_controls`, `runtime_flags`, `kraken_credentials`, `webull_token`, users. Audit row landed in `shared_audit` with full before/after counts.
+
+**Step 7 (no silent returns) SHIPPED across two surfaces**:
+
+- **`shared/auto_router.py::_route_one`** — two silent branches instrumented:
+  - Seat-did-not-fire (line ~305): was writing only `seat_reason`, `broker_reason` was None on 18,155 pre-wipe rows. Now stamps `broker_reason="SEAT_DID_NOT_FIRE"` or `"SEAT_ADVISORY_ONLY"` + `broker_error_bucket="seat"` + `broker_error_detail`.
+  - Risk-check-failed (line ~482): was writing only `risk_reason`. Now stamps `broker_reason="RISK_REJECTED"` + `broker_error_bucket="risk"` + `broker_error_detail`.
+- **`shared/auto_router_reconciliation.py::_sweep_expired_unrouted`** — mirrors `expire_reason` into `broker_reason="EXPIRED_UNROUTED"` + `broker_error_bucket="queue_timeout"` so operator dashboards keyed on `broker_reason` see the queue-timeout without a client-side field-name pivot.
+- **`shared/positions.py::_maybe_auto_advance`** — six previously bare `return` sites now write `consensus_transition_skipped` audit rows with stable UPPER_SNAKE_CASE `reason_code`: `CALL_MODE_NOT_AUTO`, `POSITION_NOT_OPEN`, `BRAIN_MAY_NOT_EXECUTE`, `SEAT_LANE_MISMATCH`, `STANCE_NOT_DIRECTIONAL`, `STALE_CONSENSUS_INPUT`.
+
+**Step 5.b (v2 fingerprint + fresh-input gate) SHIPPED in `shared/positions.py`**:
+
+- `StanceIn.source_bar_close_at: Optional[str]` — ISO-8601 close ts of the bar the brain evaluated; plumbed through both `/admin/positions/{id}/stance` (operator path) and `/runtime-discussion/positions/{id}/stance` (brain sidecar path) into `_persist_stance` → `_stance_doc`.
+- `CONSENSUS_FRESH_INPUT_TOLERANCE_SEC=900` (env override: same key) — 15-min tolerance covers a 5-minute-bar universe comfortably. Wider spread across engaged brains means they're looking at different market epochs.
+- `_maybe_auto_advance` upgrade: if all engaged brains carry `source_bar_close_at`, switch to v2 fingerprint `sha256(v2|SYMBOL|stance|brains|min_bar_close)`. If the max-min spread exceeds tolerance → REJECT with `STALE_CONSENSUS_INPUT` audit row instead of advancing state. Backward-compat: any single stance missing `source_bar_close_at` → drop to v1 (freshness gate skipped, unretrofitted sidecar honored).
+- New stance field `consensus_min_bar_close_at` persisted on the consensus position for downstream auditing.
+
+**Test coverage this iteration**:
+- `tests/test_consensus_fingerprint_v2.py` (4 tests, NEW): v2/v1 hash divergence, freshness spread math, v1 backward-compat gate, Step 7 reason-code stability.
+- `tests/test_positions.py`, `test_position_model.py`, `test_quorum_position_model.py` (39 existing): all pass — no regressions.
+- `mc_pulse/tests` + `mc_arbiter/tests`: 205/205 pass with `PYTHONPATH=/app:/app/backend`.
+- `tests/test_auto_router*.py` (9 tests): all pass.
+- `tests/test_patterns_universe_integrity.py`: fixed a drift bug from iter-27 (MKR/MATIC → QNT/POL swap landed in DB but the test's `APPROVED_CRYPTO_20` set wasn't updated).
+- Full suite (excluding pre-existing PYTHONPATH-dependent tests): **1,824 pass** in 190s.
+
+**End-to-end smoke verified**: POST /api/admin/positions with a symbol → POST stance with `source_bar_close_at=2026-07-12T15:00:00+00:00` → state advances proposed → discussing → stance doc persists `source_bar_close_at`. Test row cleaned up.
+
+**What is NOT done this session (deferred, unblocked by wipe)**:
+- Operator arming the master switch (`POST /api/admin/trading/arm`) — this preview pod stays DISARMED until operator flips it. Production is already armed.
+- Kraken creds on preview — operator confirmed production has them; preview intentionally omits.
+- Migration of GTO / Barracuda / Hellcat to MC Pulse adapters (Step 2 of MC_PULSE.md for the remaining 3 brains).
+- `mc_brains/camino.py` still imports from `external.brains.brain_core` — legacy runners scaffolding survives per iter-27 note ("DO NOT DELETE LEGACY RUNNERS until parity is mathematically proven").
+
+
 ### 🚨 NEXT WORK ITEM — P0 UNSTARTED (top priority — do NOT skip past this)
 
 

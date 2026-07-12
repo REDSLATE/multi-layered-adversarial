@@ -40,7 +40,10 @@ APPROVED_CRYPTO_20 = {
     "ADA/USD", "AVAX/USD", "BNB/USD", "BTC/USD", "ETH/USD",
     "LINK/USD", "SOL/USD", "XRP/USD", "DOGE/USD", "DOT/USD",
     "LTC/USD", "ATOM/USD", "ALGO/USD", "XLM/USD", "FIL/USD",
-    "NEAR/USD", "MATIC/USD", "UNI/USD", "AAVE/USD", "MKR/USD",
+    # 2026-07-11 (iter-27) operator directive: MKR retired
+    # (project effectively dead), MATIC deprecated post-Polygon
+    # rebrand → replaced with QNT and POL.
+    "NEAR/USD", "POL/USD", "UNI/USD", "AAVE/USD", "QNT/USD",
 }
 
 

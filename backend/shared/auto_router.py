@@ -301,8 +301,17 @@ async def _route_one(intent: dict) -> dict:
             ok=False,
         )
         # Stamp the intent so the next tick skips it.
+        # Doctrine 2026-07-12 (Step 7): NO SILENT RETURNS. Every
+        # blocked/advisory intent MUST persist a `broker_reason` so
+        # the funnel is honest at a single-field level. Previously
+        # this branch only set `seat_reason`, producing 18,155 rows
+        # with `broker_reason=None` — silent to the operator view.
         terminal_state = (
             "advisory_only" if sd.verdict == "pass" else "blocked"
+        )
+        _seat_reason_code = (
+            "SEAT_ADVISORY_ONLY" if sd.verdict == "pass"
+            else "SEAT_DID_NOT_FIRE"
         )
         try:
             await db[SHARED_INTENTS].update_one(
@@ -312,6 +321,9 @@ async def _route_one(intent: dict) -> dict:
                     "last_submit_ts": _now_iso(),
                     "last_submit_by": AUTO_ROUTER_EMAIL,
                     "seat_reason": sd.reason,
+                    "broker_reason": _seat_reason_code,
+                    "broker_error_bucket": "seat",
+                    "broker_error_detail": str(sd.reason)[:500],
                     "notional_source": notional_source,
                 }},
             )
@@ -483,6 +495,14 @@ async def _route_one(intent: dict) -> dict:
                     "last_submit_ts": _now_iso(),
                     "last_submit_by": AUTO_ROUTER_EMAIL,
                     "risk_reason": rc.reason,
+                    # Doctrine 2026-07-12 (Step 7): persist reason
+                    # code on every blocked branch. Was silent —
+                    # only `risk_reason` was written, `broker_reason`
+                    # was None, which hid the failure from operator
+                    # dashboards keyed on `broker_reason`.
+                    "broker_reason": "RISK_REJECTED",
+                    "broker_error_bucket": "risk",
+                    "broker_error_detail": str(rc.reason)[:500],
                     "notional_source": notional_source,
                 }},
             )
