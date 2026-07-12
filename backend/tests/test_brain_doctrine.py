@@ -22,7 +22,6 @@ from shared.brain_doctrine import (  # noqa: E402
     STACK_TO_BRAIN_ID,
     get_doctrine,
 )
-from brains.brain_core import NeutralAdversarialBrain  # noqa: E402
 
 
 # ── Doctrine bound to brain_id, not seat ──────────────────────────
@@ -90,153 +89,13 @@ def test_unknown_brain_id_raises():
         get_doctrine("nonexistent")
 
 
-# ── Doctrine actually differentiates brain output ─────────────────
 
-
-def _snapshot_overbought_uptrend():
-    """A snapshot that's bullish on momentum/trend but stretched on
-    mean-reversion (RSI=80). Different doctrines should disagree."""
-    return {
-        "symbol": "AAPL", "price": 195.0, "price_change_pct": 4.0,
-        "volume_change_pct": 80.0, "rsi": 80.0, "spread_bps": 2.0,
-        "volatility": 0.15, "trend_score": 0.85, "liquidity_score": 0.95,
-        "market_regime": "calm", "setup_score": 0.7,
-    }
-
-
-def _build_brain(brain_id: str):
-    return NeutralAdversarialBrain(
-        brain_id=brain_id,
-        display_name=get_doctrine(brain_id).display_name,
-        lane="equity", shadow_only=True,
-        max_shadow_size=0.0,
-        doctrine=get_doctrine(brain_id),
-    )
-
-
-def test_camino_and_barracuda_disagree_on_overbought_uptrend():
-    """The AAPL-incident lesson made visible: when a stretched uptrend
-    is in front of them, Camino (trend) should lean BUY, Barracuda
-    (mean_reversion) should lean either SELL or HOLD. They are NOT
-    the same algorithm anymore."""
-    snap = _snapshot_overbought_uptrend()
-    camino = _build_brain("camino").evaluate("AAPL", snap)
-    barracuda = _build_brain("barracuda").evaluate("AAPL", snap)
-    # The hypothesis_buy score for the trend brain should be
-    # higher than for the mean-reversion brain on this snapshot.
-    assert (
-        camino.hypothesis_scores["hypothesis_buy"]
-        > barracuda.hypothesis_scores["hypothesis_buy"]
-    ), (
-        f"Camino BUY={camino.hypothesis_scores['hypothesis_buy']:.3f} "
-        f"should exceed Barracuda BUY="
-        f"{barracuda.hypothesis_scores['hypothesis_buy']:.3f} "
-        "on a stretched uptrend"
-    )
-    # And conversely Barracuda's SELL should outscore Camino's SELL
-    # (mean rev wants to fade an RSI=80 print).
-    assert (
-        barracuda.hypothesis_scores["hypothesis_sell"]
-        > camino.hypothesis_scores["hypothesis_sell"]
-    )
-
-
-def test_hellcat_loves_a_high_setup_score():
-    """Breakout doctrine should weight setup_score most heavily —
-    the same snapshot with high setup_score should produce a higher
-    BUY score for Hellcat than for any other brain."""
-    snap = {
-        "symbol": "NVDA", "price": 800.0, "price_change_pct": 0.5,
-        "volume_change_pct": 40.0, "rsi": 55.0, "spread_bps": 1.5,
-        "volatility": 0.1, "trend_score": 0.2, "liquidity_score": 0.9,
-        "market_regime": "calm", "setup_score": 0.8,
-    }
-    hellcat = _build_brain("hellcat").evaluate("NVDA", snap)
-    camino = _build_brain("camino").evaluate("NVDA", snap)
-    barracuda = _build_brain("barracuda").evaluate("NVDA", snap)
-    gto = _build_brain("gto").evaluate("NVDA", snap)
-    h_buy = hellcat.hypothesis_scores["hypothesis_buy"]
-    # Hellcat's BUY must beat ALL others on a breakout-dominant snapshot.
-    others = {
-        "camino": camino.hypothesis_scores["hypothesis_buy"],
-        "barracuda": barracuda.hypothesis_scores["hypothesis_buy"],
-        "gto": gto.hypothesis_scores["hypothesis_buy"],
-    }
-    assert all(h_buy > v for v in others.values()), (
-        f"Hellcat BUY={h_buy:.3f} should beat others: {others}"
-    )
-
-
-def test_min_confidence_and_min_gap_come_from_doctrine():
-    """Doctrine's thresholds must override the constructor defaults."""
-    cam = NeutralAdversarialBrain(
-        brain_id="camino", display_name="Camino",
-        lane="equity", shadow_only=True,
-        min_commitment=0.99, min_gap=0.99,   # nonsense values
-        doctrine=get_doctrine("camino"),
-    )
-    # 2026-02-21: thresholds compressed to 0.43-0.48 stagger; this test
-    # just verifies the doctrine value overrides the constructor's
-    # nonsense input, not the specific numeric value (which the
-    # operator will keep tuning). Bind to whatever the doctrine says.
-    assert cam.min_commitment == pytest.approx(get_doctrine("camino").min_confidence)
-    assert cam.min_gap == pytest.approx(get_doctrine("camino").min_gap)
-    # And it must NOT be the constructor's nonsense value.
-    assert cam.min_commitment != pytest.approx(0.99)
-    assert cam.min_gap != pytest.approx(0.99)
-
-
-# ── Doctrine stamped on intent ────────────────────────────────────
-
-
-def test_intent_carries_doctrine_name():
-    snap = _snapshot_overbought_uptrend()
-    intent = _build_brain("camino").evaluate("AAPL", snap)
-    assert intent.doctrine == "trend"
-
-
-def test_legacy_brain_without_doctrine_emits_none_doctrine():
-    """Backward-compat: a brain constructed without a doctrine still
-    works, and emits doctrine=None — the legacy weights run."""
-    legacy = NeutralAdversarialBrain(
-        brain_id="alpha", display_name="Camino",
-        lane="equity", shadow_only=True,
-        min_commitment=0.58, min_gap=0.06,
-    )
-    intent = legacy.evaluate("AAPL", _snapshot_overbought_uptrend())
-    assert intent.doctrine is None
-
-
-# ── Seat: orthogonal to brain_id and doctrine ─────────────────────
-
-
-def test_seat_is_stamped_on_intent_when_provided():
-    snap = _snapshot_overbought_uptrend()
-    intent = _build_brain("camino").evaluate("AAPL", snap, seat="executor")
-    assert intent.seat == "executor"
-    # Doctrine MUST be unchanged by seat.
-    assert intent.doctrine == "trend"
-
-
-def test_seat_change_does_not_change_doctrine():
-    """The core architectural rule: rotating seat MUST NOT change how
-    the brain thinks. Same brain, same snapshot, two seats → same
-    doctrine, same hypothesis scores."""
-    brain = _build_brain("camino")
-    snap = _snapshot_overbought_uptrend()
-    as_strategist = brain.evaluate("AAPL", snap, seat="strategist")
-    as_auditor = brain.evaluate("AAPL", snap, seat="auditor")
-    # Different seats stamped...
-    assert as_strategist.seat == "strategist"
-    assert as_auditor.seat == "auditor"
-    # ...but doctrine and scores are identical.
-    assert as_strategist.doctrine == as_auditor.doctrine == "trend"
-    assert (
-        as_strategist.hypothesis_scores["hypothesis_buy"]
-        == as_auditor.hypothesis_scores["hypothesis_buy"]
-    )
-
-
-def test_seat_optional_intent_seat_is_none_when_not_provided():
-    intent = _build_brain("camino").evaluate("AAPL", _snapshot_overbought_uptrend())
-    assert intent.seat is None
+# ── Note (2026-02-11 iter-28j) ────────────────────────────────────
+# The pre-P7 tests below this line exercised `brains.brain_core.
+# NeutralAdversarialBrain.evaluate(...)` — the legacy core deleted
+# in the P7 strategy split. New behaviour lives in
+# `mc_brains/strategies/{trend_following,momentum_confirmation,
+# mean_reversion,execution_safety}.py` and its distinctness is
+# guarded by `mc_pulse/tests/test_p7c_personality_separation.py`
+# and the Pulse Health `mc_pulse_health_snapshots` distinctness
+# metrics. No point re-instrumenting the deleted core here.

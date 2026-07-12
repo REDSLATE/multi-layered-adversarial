@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
+import pytest_asyncio
 
 from db import db
 from mc_arbiter.models import Direction, ModelOpinion
@@ -39,15 +40,22 @@ def _envelope(pulse_id: str, brain: str, symbol: str = "TESTIDEM"):
     )
 
 
-@pytest.fixture
-def compare_collection_cleanup():
-    """Wipe the migration comparison collection between tests."""
+@pytest_asyncio.fixture
+async def compare_collection_cleanup():
+    """Wipe the migration comparison collection between tests.
+
+    2026-02-11: switched to `@pytest_asyncio.fixture` + native `async`
+    teardown. The old `asyncio.get_event_loop().run_until_complete(...)`
+    call fired AFTER pytest-asyncio had closed the test's event loop,
+    which crashed `motor` with "There is no current event loop in
+    thread" — but only when this file ran late in the suite (order-
+    dependent). Native async teardown shares the same loop as the
+    test that owned the fixture, so motor stays happy.
+    """
     yield
-    async def _wipe():
-        await db["mc_opinions_compare"].delete_many(
-            {"symbol": {"$regex": "^TESTIDEM"}},
-        )
-    asyncio.get_event_loop().run_until_complete(_wipe())
+    await db["mc_opinions_compare"].delete_many(
+        {"symbol": {"$regex": "^TESTIDEM"}},
+    )
 
 
 @pytest.mark.asyncio

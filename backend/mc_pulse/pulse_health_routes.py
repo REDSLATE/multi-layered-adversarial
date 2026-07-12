@@ -95,6 +95,7 @@ async def compute_pulse_health(brain_id: str, *, hours: int = 24) -> dict:
         "confidence_std": _confidence_std(opinions),
         "stale_input_rate": _stale_input_rate(opinions),
         "no_data_rate": _no_data_rate(opinions, pulses, brain_lc),
+        "no_data_breakdown": _no_data_breakdown(pulses, brain_lc),
         "exception_rate": _exception_rate(pulses, brain_lc),
         "duplicate_opinion_rate": _duplicate_opinion_rate(opinions),
         "latest_source_bar_at": _latest_source_bar_at(opinions),
@@ -176,12 +177,100 @@ def _no_data_rate(
     for p in pulses:
         failed = p.get("brains_failed") or []
         for bf in failed:
-            if isinstance(bf, dict) and (bf.get("brain") or "").lower() == brain_lc:
+            if isinstance(bf, dict) and (bf.get("brain_id") or bf.get("brain") or "").lower() == brain_lc:
                 failed_pulse_ids.add(p.get("pulse_id"))
     contributed = opinion_pulse_ids | failed_pulse_ids
     total = len(pulses)
     silent = sum(1 for p in pulses if p.get("pulse_id") not in contributed)
     return round(silent / total, 4)
+
+
+def _no_data_breakdown(
+    pulses: list[dict], brain_lc: str,
+) -> dict[str, dict]:
+    """P1 (2026-02-11): break `no_data_rate` into its constituent
+    reasons — the operator's question was never "how often is the
+    brain silent" but "WHY is it silent". Reads `brains_silent`
+    rows off `mc_pulses`; brains that predate the P1 stamp show
+    an `unknown` bucket which decays to zero within one window.
+
+    Returned shape:
+        {
+          "snapshot_stale":   {"count": 812, "percent": 32.4},
+          "cadence_cooldown": {"count": 354, "percent": 14.1},
+          "no_signal_return": {"count":  67, "percent":  2.7},
+          "unknown":          {"count":   0, "percent":  0.0},
+        }
+
+    `percent` is a percentage of TOTAL pulses in the window (not
+    of silent pulses) so the sum matches the headline
+    `no_data_rate` × 100 for the brain. UI can render as either.
+    """
+    if not pulses:
+        return {}
+    total = len(pulses)
+    # Set of pulse_ids where this brain contributed (opinion or
+    # failure) — those pulses are NOT silent for this brain and
+    # shouldn't have their silence rows counted.
+    contributed: set = set()
+    for p in pulses:
+        # NB: opinion contributions are joined by the caller in
+        # `_no_data_rate`; here we deduce from `brains_completed`
+        # which is stamped on the receipt at completion.
+        completed = p.get("brains_completed") or []
+        if brain_lc in [str(x).lower() for x in completed]:
+            contributed.add(p.get("pulse_id"))
+        for bf in (p.get("brains_failed") or []):
+            if isinstance(bf, dict):
+                bid = (bf.get("brain_id") or bf.get("brain") or "").lower()
+                if bid == brain_lc:
+                    contributed.add(p.get("pulse_id"))
+
+    counts: Counter = Counter()
+    for p in pulses:
+        pid = p.get("pulse_id")
+        # Only count silences for pulses where this brain didn't
+        # otherwise contribute (defensive: brains_silent should
+        # never overlap brains_completed, but the check is cheap
+        # and prevents double-counting if it ever does).
+        if pid in contributed:
+            continue
+        # Collect ALL reasons this brain was silent for on this
+        # pulse (one row per snapshot it was skipped on). Then
+        # attribute the WHOLE pulse to the majority reason. This
+        # keeps the percentages summing to `no_data_rate × 100`
+        # regardless of how many symbols were in the pulse.
+        per_pulse_reasons: Counter = Counter()
+        for bs in (p.get("brains_silent") or []):
+            if not isinstance(bs, dict):
+                continue
+            if (bs.get("brain_id") or "").lower() != brain_lc:
+                continue
+            per_pulse_reasons[bs.get("reason") or "unknown"] += 1
+
+        if per_pulse_reasons:
+            # Majority reason wins the pulse. Ties broken by
+            # Counter's insertion order, which reflects the order
+            # brains_silent was appended — snapshot_stale first
+            # (pre-cadence check), so it wins ties naturally.
+            top_reason, _ = per_pulse_reasons.most_common(1)[0]
+            counts[top_reason] += 1
+        elif pid is not None:
+            # Silent pulse with no BrainSilence row = pre-P1 pulse.
+            # Attribute to `unknown` so the totals still add up.
+            # But only if the brain was expected to evaluate at all.
+            # If brains_expected was 0, the pulse had no work for
+            # anyone and shouldn't count against this brain.
+            if int(p.get("brains_expected") or 0) > 0:
+                counts["unknown"] += 1
+
+    return {
+        reason: {
+            "count": count,
+            "percent": round(100.0 * count / total, 2),
+        }
+        for reason, count in counts.most_common()
+    }
 
 
 def _exception_rate(pulses: list[dict], brain_lc: str) -> float:
@@ -193,8 +282,10 @@ def _exception_rate(pulses: list[dict], brain_lc: str) -> float:
     n_exc = 0
     for p in pulses:
         for bf in (p.get("brains_failed") or []):
-            if isinstance(bf, dict) and (bf.get("brain") or "").lower() == brain_lc:
-                n_exc += 1
+            if isinstance(bf, dict):
+                bid = (bf.get("brain_id") or bf.get("brain") or "").lower()
+                if bid == brain_lc:
+                    n_exc += 1
     return round(n_exc / len(pulses), 4)
 
 
@@ -384,6 +475,7 @@ async def take_pulse_health_snapshot(
             "confidence_std": health.get("confidence_std", 0.0),
             "stale_input_rate": health.get("stale_input_rate", 0.0),
             "no_data_rate": health.get("no_data_rate", 0.0),
+            "no_data_breakdown": health.get("no_data_breakdown", {}),
             "exception_rate": health.get("exception_rate", 0.0),
             "duplicate_opinion_rate": health.get("duplicate_opinion_rate", 0.0),
             "latest_source_bar_at": health.get("latest_source_bar_at"),

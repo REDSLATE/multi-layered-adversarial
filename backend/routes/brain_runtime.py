@@ -453,11 +453,29 @@ async def _build_in_process_status(brain: str) -> Dict[str, Any]:
     total_intents = None
 
     latest_intent_age_s = _age_seconds(latest_intent_ts, now)
-    # In-memory fallback for last-intent age when the cached doc is
-    # silent (fresh brain / Atlas outage during first emit).
-    if latest_intent_age_s is None and runner_stats:
-        lh = runner_stats.get("loop_health") or {}
-        latest_intent_age_s = lh.get("intent_last_success_age_s")
+    # 2026-02-11 (test-suite fix): if `latest_ts` came back but its
+    # ISO string failed to parse to an age (e.g. corrupted preview-DB
+    # doc with hex fractional seconds like `.8cd3be`), drop the bogus
+    # string. The contract is: either both `latest_ts` + `latest_age_s`
+    # are populated, or both are None. Falling back to runner_stats
+    # here would compound the lie (age from heartbeat with a fake ts).
+    if latest_intent_ts and latest_intent_age_s is None:
+        latest_intent_ts = None
+        latest_intent_symbol = None
+        latest_intent_action = None
+    else:
+        # In-memory fallback for last-intent age when the cached doc
+        # is silent (fresh brain / Atlas outage during first emit).
+        if latest_intent_age_s is None and runner_stats:
+            lh = runner_stats.get("loop_health") or {}
+            latest_intent_age_s = lh.get("intent_last_success_age_s")
+
+    # Final contract enforcement: `latest_ts` and `latest_age_s` must
+    # be jointly None or jointly populated. If we synthesised an age
+    # from runner_stats but have no `latest_ts` to pair it with, drop
+    # the age — the operator UI relies on either-both-or-neither.
+    if latest_intent_ts is None:
+        latest_intent_age_s = None
 
     # Seats lane-resolved from the live roster snapshot.
     snap = await _safe(get_roster(), None)

@@ -171,9 +171,18 @@ class TestStackAbsentDocDirect:
     def _call_route(self):
         import asyncio
         from routes.brain_runtime import get_stack_status as route_fn
-        return asyncio.get_event_loop().run_until_complete(
-            route_fn(_user={"role": "admin"})
-        )
+        # 2026-02-11: use `asyncio.new_event_loop()` — the older
+        # `asyncio.get_event_loop().run_until_complete(...)` blew up
+        # with "no current event loop in thread" when this test ran
+        # late in the suite after pytest-asyncio closed the shared
+        # loop. Fresh loops per call avoid the ordering dependency;
+        # the route body itself is monkeypatched so no motor client
+        # bound to a stale loop is touched.
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(route_fn(_user={"role": "admin"}))
+        finally:
+            loop.close()
 
     def test_returns_amber_when_doc_missing(self, monkeypatch):
         import shared.brain_runtime_metrics as brm

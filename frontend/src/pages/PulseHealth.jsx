@@ -140,10 +140,12 @@ function BrainTile({ brain, live, history }) {
         <Stat label="conf_std"  value={fmt(live?.confidence_std, 3)} />
         <Stat label="lag_ms"    value={live?.pulse_lag_ms === null ? "—" : Math.round(live?.pulse_lag_ms)} />
         <Stat label="stale_in"   value={pct(live?.stale_input_rate)} />
-        <Stat label="no_data"    value={pct(live?.no_data_rate)} />
+        <Stat label="no_data"    value={pct(live?.no_data_rate)} testid={`pulse-health-no-data-${brain}`} />
         <Stat label="exceptions" value={pct(live?.exception_rate)} />
         <Stat label="duplicates" value={pct(live?.duplicate_opinion_rate)} />
       </div>
+
+      <NoDataBreakdown brain={brain} breakdown={live?.no_data_breakdown} noDataRate={live?.no_data_rate} />
 
       {warnings.length > 0 && (
         <div className="mt-3 space-y-1" data-testid={`pulse-health-warnings-${brain}`}>
@@ -164,6 +166,52 @@ function Stat({ label, value, testid }) {
     <div className="flex items-baseline justify-between">
       <span className="opacity-60">{label}</span>
       <span className="font-mono tabular-nums" data-testid={testid}>{value ?? "—"}</span>
+    </div>
+  );
+}
+
+// P1 (2026-02-11): reason-code breakdown for `no_data_rate`. The
+// aggregate scalar tells the operator that the brain is silent —
+// this breaks it down into WHY. Reason vocabulary matches
+// `mc_pulse.receipt.BrainSilence`:
+//   snapshot_stale   → feed was too old / market closed
+//   cadence_cooldown → brain intentionally skipped (already saw this bar)
+//   no_signal_return → brain evaluated but returned None (rare bug signal)
+//   unknown          → pre-P1 pulse (before we stamped BrainSilence rows)
+const NO_DATA_REASON_LABEL = {
+  snapshot_stale:   "market closed / stale feed",
+  cadence_cooldown: "cadence cooldown",
+  no_signal_return: "brain returned no signal",
+  unknown:          "unclassified (pre-P1 pulse)",
+};
+
+function NoDataBreakdown({ brain, breakdown, noDataRate }) {
+  const entries = Object.entries(breakdown || {})
+    .filter(([, v]) => (v?.count || 0) > 0)
+    .sort(([, a], [, b]) => (b.percent || 0) - (a.percent || 0));
+  if (entries.length === 0) return null;
+  return (
+    <div
+      className="mt-2 pl-2 border-l border-white/10 text-xs space-y-0.5"
+      data-testid={`pulse-health-no-data-breakdown-${brain}`}
+    >
+      <div className="opacity-40 text-[10px] uppercase tracking-wider mb-0.5">
+        why silent
+      </div>
+      {entries.map(([reason, v]) => (
+        <div
+          key={reason}
+          className="flex items-baseline justify-between opacity-70"
+          data-testid={`pulse-health-no-data-reason-${brain}-${reason}`}
+        >
+          <span className="opacity-70">
+            {NO_DATA_REASON_LABEL[reason] || reason}
+          </span>
+          <span className="font-mono tabular-nums">
+            {v.percent?.toFixed(1)}%
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

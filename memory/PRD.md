@@ -31,6 +31,48 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### 📊 2026-07-12 (iter-28l): P1 — no_data reason-code breakdown SHIPPED
+
+Reason: the aggregate `no_data 61%` scalar on the Pulse Health tiles was answering the wrong question. The operator's real question was never "how often is the brain silent" but "WHY is it silent, and can I fix it." This iteration replaces the scalar with a per-reason breakdown.
+
+**Backend**:
+- New `BrainSilence` dataclass in `mc_pulse/receipt.py` — `(brain_id, reason, symbol, lane)` with a stable 3-value reason vocabulary: `snapshot_stale` (freshness gate rejected the bar), `cadence_cooldown` (brain declined via `should_evaluate`), `no_signal_return` (brain evaluated and returned None).
+- `PulseReceipt.brains_silent: list[BrainSilence]` added and serialised through `to_mongo()`. Written to `mc_pulses` on every pulse; TTL respected.
+- Three instrumentation points in `mc_pulse/pulse.py`: the stale-snapshot skip, the cadence-cooldown skip, and the None-return branch each append a `BrainSilence` row.
+- `pulse_health_routes._no_data_breakdown(pulses, brain_lc)` aggregates silences PER PULSE (majority-reason wins ties) so the returned percentages sum exactly to `no_data_rate × 100`. Pre-P1 pulses without a `brains_silent` field get attributed to `unknown` and decay out of the 24h window naturally.
+- Also fixed a latent bug in `_exception_rate` and `_no_data_rate` — they read `bf.get("brain")` but the receipt schema was always `brain_id`. Added a graceful fallback that reads both keys.
+
+**Frontend** (`pages/PulseHealth.jsx`):
+- New `NoDataBreakdown` component renders directly under the `no_data` scalar in each tile. Sorted by percent desc, hidden if empty. Labels are human-readable ("market closed / stale feed" for `snapshot_stale`, "cadence cooldown" for `cadence_cooldown`, etc.).
+- `data-testid` per reason row (`pulse-health-no-data-reason-{brain}-{reason}`) so QA can drive precise flows.
+
+**Verified live**: `GET /api/mc/pulse-health/camino?hours=1` returns `no_data_rate=0.5628` with breakdown `{unknown: 50.27%, cadence_cooldown: 6.01%}` — sum matches to 2dp. Screenshot confirms all 4 tiles render the `WHY SILENT` subsection.
+
+**Testing**: 14 pulse-health tests pass (including 3 new tests: majority-reason aggregation, pre-P1 unknown attribution, and zero-expected-brains no-inflation guard). Full mc_pulse suite: 168/168 green. Live execution + auto-router + positions: 231/231 green.
+
+### 🧹 2026-07-12 (iter-28k): LEGACY-TEST CLEANUP + SUITE STABILIZATION
+
+Session followed the P6b landing with a targeted sweep to bring the test suite back to a clean baseline.
+
+**Removed 8 `NeutralAdversarialBrain`-dependent tests** (legacy core deleted in P7):
+- `tests/test_brain_doctrine.py` — trimmed from 242 → 101 lines. Kept the 7 pure doctrine-mapping tests (`get_doctrine`, `STACK_TO_BRAIN_ID`, `BRAIN_ID_TO_STACK` inverses), dropped 8 behaviour tests that constructed NAB directly. Added a header note pointing at `mc_pulse/tests/test_p7c_personality_separation.py` + Pulse Health distinctness for the replacement guardrails.
+- `tests/test_trade_transition.py` — trimmed from 476 → 311 lines. Removed the 5 broken NAB-integration tests and their two section headers. All 40 pure trade-transition-logic tests preserved.
+
+**Fixed 4 async fixture errors** in `mc_pulse/tests/test_idempotency.py`:
+- Root cause: teardown used `asyncio.get_event_loop().run_until_complete(...)` which fired AFTER pytest-asyncio had closed the shared event loop, crashing `motor` with "There is no current event loop in thread" — only when the test file ran late in the suite.
+- Fix: switched `compare_collection_cleanup` to `@pytest_asyncio.fixture` + native `async def` teardown. Shared loop with the test, no more ordering dependency.
+
+**Fixed 2 ordering-sensitive failures** in `tests/test_stack_status_and_failsoft.py::TestStackAbsentDocDirect`:
+- Root cause: same class of bug — sync tests called `asyncio.get_event_loop().run_until_complete(...)` on a closed loop.
+- Fix: `_call_route` now creates a fresh `asyncio.new_event_loop()` per call. Safe because the route body is monkeypatched (no live motor client bound to a stale loop).
+
+**Fixed 1 payload-shape failure** in `tests/test_brain_runtime_status_live.py::test_status_payload_shape[camino]`:
+- Root cause: the `brain_runtime_metrics` doc for `camino` had a corrupted `latest_ts` — `"2099-01-01T00:00:00.8cd3be+00:00"` (hex characters in the fractional-seconds slot, a test-pollution artefact). `_age_seconds` correctly returned `None` on parse failure but the route still surfaced the bogus ISO string, violating the "either both populated or both None" payload contract.
+- Fix (defensive): in `routes/brain_runtime.py::_build_in_process_status`, if `latest_ts` parses to `None` age, drop `latest_ts`/`latest_symbol`/`latest_action` too. Also added a joint-nullity guard at the end so `runner_stats` heartbeat-fallback can't populate an age with no matching ts.
+- Fix (data): purged the corrupted preview-DB record via one-off async script (`update_one` set the three fields to None).
+
+**Final suite state**: `2953 passed, 1 failed, 38 deselected` — down from `2943 passed, 8 failed, 4 errored`. Net delta: `+10 passing, -11 broken`. The remaining single failure is `test_kraken.py::test_execution_toggle_requires_confirm_phrase`, an order-dependent flake (passes in isolation) unrelated to any of the recent refactoring work.
+
 ### 🧹 2026-07-12 (iter-28j): P6a-finish + P6b-finish COMPLETE — 5-STAGE ORCHESTRATOR LANDED
 
 **P6a-finish — positions.py: 830 → 526 lines** (36.6% additional reduction, -304 lines).

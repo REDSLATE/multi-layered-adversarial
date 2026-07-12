@@ -32,7 +32,7 @@ from mc_pulse.input_manifest import (
     persist_manifest,
 )
 from mc_pulse.protocols import Brain
-from mc_pulse.receipt import BrainFailure, PulseReceipt, persist_receipt
+from mc_pulse.receipt import BrainFailure, BrainSilence, PulseReceipt, persist_receipt
 from mc_pulse.registry import get_registry
 from mc_pulse.snapshot import MarketSnapshot
 
@@ -118,9 +118,28 @@ async def pulse_tick(
     for snap in snapshots:
         if snap.health is not None and not snap.health.is_fresh:
             stale_skipped += 1
+            # P1 (2026-02-11): stamp each brain that WOULD have
+            # evaluated this snapshot with a `snapshot_stale`
+            # silence. Otherwise the health tile can't tell an
+            # operator whether the 61% no-data was "market
+            # closed" or "brain cooldown" or "no bars ever".
+            for brain in registry.for_lane(snap.lane):
+                receipt.brains_silent.append(BrainSilence(
+                    brain_id=brain.id,
+                    reason="snapshot_stale",
+                    symbol=snap.symbol,
+                    lane=snap.lane,
+                ))
             continue
         for brain in registry.for_lane(snap.lane):
             if not brain.should_evaluate(now=now, snapshot=snap):
+                # P1: stamp cadence-cooldown silence.
+                receipt.brains_silent.append(BrainSilence(
+                    brain_id=brain.id,
+                    reason="cadence_cooldown",
+                    symbol=snap.symbol,
+                    lane=snap.lane,
+                ))
                 continue
             seat_key = build_seat_key(snap.lane, snap.symbol, now)
             tasks.append(evaluate_brain(brain, snap, receipt.pulse_id, seat_key=seat_key))
@@ -153,8 +172,16 @@ async def pulse_tick(
             receipt.brains_failed.append(fail)
         else:
             # Brain returned None — completed cleanly, just had
-            # nothing to say. Counts as completed.
+            # nothing to say. Counts as completed AND stamps a
+            # `no_signal_return` silence so the health tile can
+            # show it alongside the other no-data reasons.
             brains_completed.add(brain.id)
+            receipt.brains_silent.append(BrainSilence(
+                brain_id=brain.id,
+                reason="no_signal_return",
+                symbol=_snap.symbol,
+                lane=_snap.lane,
+            ))
     receipt.brains_completed = sorted(brains_completed)
 
     # ── Manifest persistence (2026-07 parity step 4) ──
