@@ -617,6 +617,21 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         unique=True,
         sparse=True,
     )
+    # 2026-07-11 doctrine step 5: consensus dedup at the
+    # position layer. Same shape as step 4 one level up —
+    # sparse unique index on `consensus_fingerprint`. One
+    # {symbol, side, engaged-brain-set} consensus per market
+    # event; duplicate transitions silently no-op via
+    # DuplicateKeyError. Closes the pattern where four brains
+    # agreeing on same NVDA @ same bar_close would create four
+    # separate position_ids all landing in consensus_long.
+    await _safe_create_index(
+        db.shared_positions,
+        [("consensus_fingerprint", 1)],
+        name="shared_positions_consensus_fp_unique",
+        unique=True,
+        sparse=True,
+    )
     await db.shared_brain_outcomes.create_index([("opinion_id", 1), ("resolved_at", -1)])
     # 2026-02-28 — MC Shelly noise cleanup companion. On preview the
     # collection had grown to 1.86M rows / 528 MB (data + indexes)

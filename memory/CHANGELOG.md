@@ -1,3 +1,30 @@
+## 2026-07-11 (final) — iter-27: Doctrine step 5.a + handoff for 5.b/7/8
+
+**Step 5.a — Consensus dedup at the position layer:**
+- `shared/positions.py::_auto_advance_from_executor_stance` — at the consensus_long/short transition, compute `consensus_fingerprint = sha256(v1 | symbol | direction | engaged_brains_sorted)`. Wrap `update_one` with `DuplicateKeyError` silent-skip that writes a `consensus_dedup_skipped` audit trace (not silent — the operator sees the dedup fire)
+- `db.py::ensure_indexes` — sparse unique index `shared_positions_consensus_fp_unique` on `consensus_fingerprint`. Same shape as Step 4's opinion-layer index, one level up
+- Stamps `consensus_fingerprint_version = "v1"` and `consensus_engaged_brains = [sorted]` on the position doc for forensic replay
+- **Post-fix:** if the same {symbol, side, engaged-brain-set} would produce a second consensus row across any position_id, the DB rejects it and the audit log captures the attempt
+
+**Step 5.b (fresh-input gate) — DEFERRED to next session:**
+Requires plumbing `source_bar_close_at` from the intent evidence into the stance doc in `_persist_stance` (line 654-680 of `positions.py`). Once landed, bump `consensus_fingerprint_version` from v1 → v2 and add `min(stance_bar_closes)` to the fingerprint. See handoff doc.
+
+**Steps 7 + 8 — DEFERRED to next session with concrete investigation plan:**
+Written to `/app/memory/CONSENSUS_STATE_MACHINE_INVESTIGATION.md`. Contains:
+- 4 concrete Mongo queries to run first (identifies which of 5 candidate root causes fits)
+- Specific line numbers in `shared/positions.py` to inspect
+- 5 ranked hypotheses (no worker exists; wrong-state filter; seat auth mismatch; broker circuit-breaker; missing next_attempt_at)
+- Working code paths to preserve untouched
+- Success criteria for the next session
+
+**Session-total scope shipped (all of iter-27):**
+- Steps 1+2: broker-native feeders + freshness gate
+- Step 3: canonical builder for all 4 brains + `optional_float`
+- Step 4: per-market-event opinion idempotency
+- Step 5.a: consensus_fingerprint dedup
+- Step 6: 683 stuck consensus positions → `invalidated_data_stale`
+- 205/205 tests passing throughout
+
 ## 2026-07-11 (later still) — iter-27: Doctrine steps 4 + 6
 
 **Step 4 — Per-market-event intent idempotency:**

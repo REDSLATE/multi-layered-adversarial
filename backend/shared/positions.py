@@ -628,19 +628,62 @@ async def _maybe_auto_advance(
         STATE_CONSENSUS_LONG if stance == STANCE_LONG
         else STATE_CONSENSUS_SHORT
     )
-    await db[SHARED_POSITIONS].update_one(
-        {"position_id": position_id},
-        {"$set": {
-            "state": new_state,
-            "direction": stance,
-            "executor_call_by": brain,
-            "executor_call_at": now_iso,
-            "executor_call_notes": f"auto-advanced from executor seat ({brain})",
-            "executor_call_recorded_by": "auto",
-            "executor_call_seat_epoch": seat_epoch,
-            "updated_at": now_iso,
-        }},
+    # ── 2026-07-11 doctrine step 5: consensus dedup ──
+    # `consensus_fingerprint` = sha256(symbol | direction |
+    # engaged_brains). Combined with the sparse unique index on
+    # `consensus_fingerprint`, the same {4 brains, symbol, side}
+    # combination can produce ONE consensus row across all
+    # positions — not four different position_ids all landing
+    # at consensus_long on NVDA within the same tick. Duplicate
+    # write attempts silently no-op via DuplicateKeyError.
+    #
+    # Note: `source_bar_close_at` is NOT yet on the stance doc
+    # (data plumbing for that is Step 5.b, deferred). The
+    # fingerprint below covers Step 5.a — dedup on the {symbol,
+    # side, engaged-brain-set} axis. Once stances carry a
+    # `source_bar_close_at`, extend this hash to include it and
+    # bump `consensus_fingerprint_version` from v1 to v2.
+    import hashlib as _hashlib
+    _summary = await _stance_summary(position_id)
+    _engaged = sorted((_summary or {}).get("stances_by_brain", {}).keys())
+    _fp_input = (
+        f"v1|{doc.get('symbol','')}|{stance}|{','.join(_engaged)}"
     )
+    _consensus_fp = _hashlib.sha256(_fp_input.encode("utf-8")).hexdigest()
+    try:
+        await db[SHARED_POSITIONS].update_one(
+            {"position_id": position_id},
+            {"$set": {
+                "state": new_state,
+                "direction": stance,
+                "executor_call_by": brain,
+                "executor_call_at": now_iso,
+                "executor_call_notes": f"auto-advanced from executor seat ({brain})",
+                "executor_call_recorded_by": "auto",
+                "executor_call_seat_epoch": seat_epoch,
+                "consensus_fingerprint": _consensus_fp,
+                "consensus_fingerprint_version": "v1",
+                "consensus_engaged_brains": _engaged,
+                "updated_at": now_iso,
+            }},
+        )
+    except Exception as exc:  # noqa: BLE001
+        # DuplicateKeyError on `consensus_fingerprint` means an
+        # equivalent consensus already exists for this
+        # {symbol, side, engaged-brain-set}. Emit an explicit
+        # audit trace so the operator sees the dedup fire,
+        # rather than a silent no-op. Never re-raise — dedup is
+        # a normal outcome, not an error.
+        from pymongo.errors import DuplicateKeyError
+        if isinstance(exc, DuplicateKeyError):
+            await _audit("consensus_dedup_skipped", brain, position_id, {
+                "reason": "DUPLICATE_CONSENSUS_FINGERPRINT",
+                "consensus_fingerprint": _consensus_fp,
+                "engaged_brains": _engaged,
+                "would_have_transitioned_to": new_state,
+            })
+            return
+        raise
     await _audit("executor_call_auto", brain, position_id, {
         "executor": brain,
         "direction": stance,
