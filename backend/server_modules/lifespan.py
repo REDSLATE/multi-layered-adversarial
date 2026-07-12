@@ -771,48 +771,52 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("mc_pulse disabled (set RISEDUAL_MC_PULSE_ENABLED=1 to arm the migration pulse)")
 
-    # ── 2026-07-12 doctrine: parity trend snapshotter ────────────────
-    # Rolling snapshot of the pulse-vs-runner parity metrics for the
-    # migration observation gate (MC_PULSE.md §11 arbiter-flip gates:
-    # match_score ≥ 0.60, pulse conf std > 0.02, pairs_matched ≥ 20).
-    # Persists compact rows to `mc_parity_snapshots` so the operator
-    # dashboard can plot the trend without stalking `/api/mc/parity`.
-    # ONLY runs when the pulse itself is armed — no point measuring
-    # parity if only the runner side is producing data.
+    # ── 2026-07-12 (P4) doctrine: pulse-health trend snapshotter ────
+    # Rolling snapshot of the four brains' pulse-health metrics
+    # (evaluation_count, action_distribution, confidence_mean/std,
+    # stale_input_rate, no_data_rate, exception_rate, distinctness,
+    # pulse_lag_ms, duplicate_opinion_rate, latest_source_bar_at).
+    # Persists compact rows to `mc_pulse_health_snapshots` so the
+    # operator dashboard can plot cognitive-health trends without
+    # stalking `/api/mc/pulse-health`. Replaces the earlier
+    # parity snapshotter which measured runner-vs-pulse metrics
+    # that stopped being meaningful when runners were deleted (P3).
+    # ONLY runs when the pulse itself is armed.
     if os.environ.get("RISEDUAL_MC_PULSE_ENABLED", "0") == "1":
         try:
             interval_min = int(
-                os.environ.get("PARITY_SNAPSHOT_INTERVAL_MIN", "15")
+                os.environ.get("PULSE_HEALTH_SNAPSHOT_INTERVAL_MIN", "15")
             )
             window_hours = int(
-                os.environ.get("PARITY_SNAPSHOT_WINDOW_HOURS", "24")
+                os.environ.get("PULSE_HEALTH_SNAPSHOT_WINDOW_HOURS", "24")
             )
 
-            async def _parity_snapshot_loop():
-                from mc_pulse.parity_routes import (  # noqa: WPS433
-                    PARITY_SNAPSHOT_BRAINS,
-                    take_parity_snapshot,
+            async def _pulse_health_snapshot_loop():
+                from mc_pulse.pulse_health_routes import (  # noqa: WPS433
+                    PULSE_HEALTH_SNAPSHOT_BRAINS,
+                    take_pulse_health_snapshot,
                 )
                 # Small startup delay so pulse has time to accumulate
                 # a first batch before the first snapshot fires.
                 await asyncio.sleep(60.0)
                 while True:
-                    for brain in PARITY_SNAPSHOT_BRAINS:
-                        await take_parity_snapshot(
+                    for brain in PULSE_HEALTH_SNAPSHOT_BRAINS:
+                        await take_pulse_health_snapshot(
                             brain, hours=window_hours,
                         )
                     await asyncio.sleep(interval_min * 60.0)
 
-            app.state.parity_snapshot_task = asyncio.create_task(
-                _parity_snapshot_loop(),
+            app.state.pulse_health_snapshot_task = asyncio.create_task(
+                _pulse_health_snapshot_loop(),
             )
             logger.info(
-                "parity_snapshotter started interval_min=%d window_hours=%d brains=%s",
+                "pulse_health_snapshotter started interval_min=%d "
+                "window_hours=%d brains=%s",
                 interval_min, window_hours,
                 ["camino", "gto", "barracuda", "hellcat"],
             )
         except Exception as e:  # noqa: BLE001
-            logger.warning("parity_snapshotter start failed: %s", e)
+            logger.warning("pulse_health_snapshotter start failed: %s", e)
 
     yield
     await stop_poller()
@@ -832,9 +836,9 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001
         pass
 
-    # Parity snapshotter shutdown (2026-07-12).
+    # Pulse-health snapshotter shutdown (2026-07-12 P4).
     try:
-        t = getattr(app.state, "parity_snapshot_task", None)
+        t = getattr(app.state, "pulse_health_snapshot_task", None)
         if t and not t.done():
             t.cancel()
             try:

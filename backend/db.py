@@ -374,12 +374,10 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         name="mc_pulses_started_at",
     )
 
-    # ── 2026-07-12: parity trend snapshots ──
-    # Rolling snapshot rows written by the background parity_snapshotter
-    # (mc_pulse/parity_routes.py::take_parity_snapshot). Compound
-    # (brain, at) index supports the `/api/mc/parity/{brain}/history`
-    # read pattern (newest-first per brain). TTL 30d — trend is
-    # short-window observation, not permanent record.
+    # ── 2026-07-12: parity trend snapshots (DEPRECATED post-P4) ──
+    # Kept only so already-persisted rows fetch cleanly during the
+    # BC-alias window. TTL 30d — will decay out naturally. The
+    # canonical collection going forward is `mc_pulse_health_snapshots`.
     await _safe_create_index(
         db.mc_parity_snapshots,
         [("brain", 1), ("at", -1)],
@@ -389,6 +387,22 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         db.mc_parity_snapshots,
         [("at", 1)],
         name="mc_parity_snapshots_ttl",
+        expireAfterSeconds=30 * 86400,
+    )
+
+    # ── 2026-07-12 P4: pulse-health trend snapshots ──
+    # Rolling per-brain pulse-health metrics (post-runner-deletion
+    # semantics). Compound (brain, at) supports the history read
+    # pattern (newest-first per brain). TTL 30d.
+    await _safe_create_index(
+        db.mc_pulse_health_snapshots,
+        [("brain", 1), ("at", -1)],
+        name="mc_pulse_health_snapshots_brain_at",
+    )
+    await _safe_create_index(
+        db.mc_pulse_health_snapshots,
+        [("at", 1)],
+        name="mc_pulse_health_snapshots_ttl",
         expireAfterSeconds=30 * 86400,
     )
 

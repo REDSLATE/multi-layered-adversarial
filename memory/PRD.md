@@ -31,6 +31,73 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### 🧠 2026-07-12 (iter-28f): P4 SHIPPED — PARITY RETIRED, PULSE HEALTH SCHEMA IS THE DURABLE VIEW
+
+**Operator directive**: "The infrastructure merge is complete, but the cognitive separation is not." Runner-vs-pulse comparison metrics stopped being meaningful the moment runners were deleted. Rename to pulse-health, drop runner-relative metrics, add distinctness + input-health signals. P5 (dashboard) waits until this schema is durable. P7 (strategy split) blocks on distinctness measurement being available.
+
+**Schema retirement (P4a)**:
+- `take_parity_snapshot` → `take_pulse_health_snapshot`.
+- `mc_parity_snapshots` → `mc_pulse_health_snapshots` (new collection + indexes).
+- `GET /api/mc/parity/{brain}` → `GET /api/mc/pulse-health/{brain}` (canonical). Old path kept as thin deprecated alias for one iteration; logs `DEPRECATED` on every hit. Alias returns the SAME pulse-health payload (no runner metrics), so any dashboard reading the old endpoint immediately gets the honest schema.
+- Env vars renamed: `PARITY_SNAPSHOT_INTERVAL_MIN` → `PULSE_HEALTH_SNAPSHOT_INTERVAL_MIN`, same for `_WINDOW_HOURS`.
+- Lifespan log: `pulse_health_snapshotter started interval_min=15 window_hours=24 brains=['camino', 'gto', 'barracuda', 'hellcat']`.
+
+**Metrics dropped (P4b)** — these were runner-relative and lied post-runner-deletion:
+- `match_score` (no runner to match against)
+- `runner_count` (always 0)
+- `pairs_matched` (no runner side)
+- `timestamp_drift_median_s` (no runner side)
+- `rationale_jaccard_mean` (no runner rationale)
+- `arbiter_flip_gates_pass` + `gates` dict (migration already flipped)
+- `pulse_count` (renamed to `evaluation_count`)
+
+**Metrics added (P4c)** — the durable pulse-first schema:
+| Metric | Meaning | Source |
+|---|---|---|
+| `evaluation_count` | Total opinions this brain emitted in the window | `mc_opinions_compare` |
+| `action_distribution` | `{counts, pct}` for LONG/SHORT/FLAT | derived |
+| `confidence_mean` / `confidence_std` | Population mean + stdev | derived |
+| `stale_input_rate` | % opinions with `status=INSUFFICIENT_DATA` | derived |
+| `no_data_rate` | % pulses where this brain was silent AND not exception'd | `mc_pulses` |
+| `exception_rate` | % pulses where this brain raised into `brains_failed` | `mc_pulses` |
+| `duplicate_opinion_rate` | % opinions where `(symbol, bucket_iso, direction)` seen before | derived |
+| `latest_source_bar_at` | MAX(`bucket_iso`) this brain evaluated | derived |
+| `pulse_lag_ms` | Median lag between bucket start and `evaluated_at` | derived |
+| `distinctness` | `{pairwise_agreement_rate, distinctness, peer_matches}` — HEALTH SIGNAL, NOT FLIP GATE. Computed across the 3 peer brains. | derived |
+
+`distinctness = 1 - pairwise_agreement_rate` where agreement is `(symbol, bucket_iso)` action match with peer opinions in the same window.
+
+**First live measurement of the operator's concern (2h window, ~2100 evals per brain)**:
+
+| Brain | evals | conf_mean | conf_std | LONG% | FLAT% | distinctness | dupe | lag_ms |
+|---|---|---|---|---|---|---|---|---|
+| Camino    | 3457 | 0.6094 | 0.202 | 6.74 | 93.26 | **0.105** | 0.878 | 151636 |
+| GTO       | 2108 | 0.5177 | 0.173 | 6.78 | 93.22 | **0.101** | 0.870 | 150158 |
+| Barracuda | 2107 | 0.6712 | 0.180 | 6.79 | 93.21 | **0.101** | 0.870 | 150158 |
+| Hellcat   | 2107 | 0.7306 | 0.152 | 6.79 | 93.21 | **0.101** | 0.870 | 150158 |
+
+**What the schema reveals** (P7 baseline captured):
+- **Distinctness ≈ 0.10** across all 4 brains — the pairwise action agreement is 90%, empirical proof of the operator's "four lenses on one mind" concern.
+- **Action distributions are IDENTICAL** across brains (LONG 6.74–6.79%, FLAT 93.21–93.26%).
+- **Confidence means track personality multipliers exactly**: GTO 0.518 = Camino 0.609 × 0.85; Barracuda 0.671 ≈ Camino × 1.15 (with clamp); Hellcat 0.731 ≈ Camino × 1.20 (clamp saturation).
+- **Duplicate opinion rate 87%** — pulse fires every 15s but 5-min buckets change every 5 min, so ~20 re-emissions per bucket. Cadence cool-down is per-symbol not per-bar.
+- **`no_data_rate` delta** (Camino 54% vs others 72%) — indicates uneven brain participation across pulses; worth investigating in a follow-up.
+
+**Baseline locked**: these numbers become the "before" for P7 (strategy split). After each brain gets its own strategy module, distinctness should drift UP toward 0.30-0.50 (still allowing genuine agreement on overwhelming evidence). If distinctness stays at 0.10 post-P7, the strategies aren't actually different.
+
+**Tests**: `mc_pulse/tests/test_pulse_health.py` — 11 new tests covering schema completeness (locks the P4b field retirement so no future PR silently reintroduces `match_score`), all metric primitives (action distribution binning, confidence stats, stale-input counting, exception counting via `brains_failed`, duplicate detection, distinctness agreement/disagreement edge cases), and fail-soft on compute error. **Full suite: 224/224 pulse+arbiter tests pass**.
+
+**What is NOT done this session (per operator prioritization)**:
+- **P5 (dashboard tile)** — deferred until this schema stabilizes. When built, the tile should show Distinctness + Input Health (not a historical parity chart).
+- **P7a (strategy interfaces)** — extract per-brain strategy modules.
+- **P7b (one-at-a-time migration with replay fixtures)** — needs a replay corpus.
+- **P7c (personality-separation acceptance tests)** — pairwise action agreement ceiling, at least one unique reason-code family per brain, deterministic output.
+- **P7d (delete `mc_brains/_legacy/`)** — only after P7a-c ship.
+- **P6 (refactor `positions.py` + `auto_router.py`)** — DEFERRED. Operator: "Splitting two large execution modules while the cognitive layer is changing would create unnecessary cross-system risk."
+
+**Rollback path** (should not be needed — additive rename): the old `parity_routes.py` remains as a thin re-export shim. To revert entirely, `git checkout HEAD~1 -- mc_pulse/parity_routes.py mc_pulse/pulse_health_routes.py server_modules/lifespan.py db.py` — 2 min total.
+
+
 ### 🏁 2026-07-12 (iter-28e): P3 STEP 3 COMPLETE — `/app/external/brains/` DELETED
 
 **Migration destination reached**: the 4 pulse brains (Camino / GTO / Barracuda / Hellcat) now run without ANY dependency on the legacy runner tree. The end-state architecture described in `MC_PULSE.md` is now the actual code.
