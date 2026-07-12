@@ -31,6 +31,75 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### 🏁 2026-07-12 (iter-28e): P3 STEP 3 COMPLETE — `/app/external/brains/` DELETED
+
+**Migration destination reached**: the 4 pulse brains (Camino / GTO / Barracuda / Hellcat) now run without ANY dependency on the legacy runner tree. The end-state architecture described in `MC_PULSE.md` is now the actual code.
+
+**What was deleted**:
+- `/app/external/brains/runner.py` (2,293 lines) — the 4 in-process asyncio runners that produced the parallel `shared_intents` tape. Gone.
+- `/app/external/brains/__init__.py` — empty package marker.
+- `/app/external/brains/` directory itself — completely removed.
+- 7 test files that exclusively tested the runner:
+  - `tests/test_intent_origin.py`
+  - `tests/test_neutral_brain_identity_stamp.py`
+  - `tests/test_signal_ranked_symbol_selection.py`
+  - `tests/test_runner_wrapper_hardening.py`
+  - `tests/test_native_brain_runtimes_full_stack.py`
+  - `tests/test_barracuda_native_runtime.py`
+  - `tests/test_runner_httpexception_import_2026_06_22.py`
+
+**What was relocated** (needed by pulse brains):
+- `brain_core.py` (719 lines, `NeutralAdversarialBrain` strategy class) → `mc_brains/_legacy/brain_core.py`.
+- `personality.py` (131 lines, personality multipliers) → `mc_brains/_legacy/personality.py`.
+- New `mc_brains/_legacy/__init__.py` documents the graveyard-not-growth-area intent.
+
+**What was cleaned up**:
+- `mc_brains/_pulse_base.py` imports switched to `mc_brains._legacy.*`.
+- `server_modules/lifespan.py` — the RISEDUAL_LEGACY_RUNNERS_ENABLED gate block replaced with a doctrine comment. The `stop_neutral_brains` shutdown call replaced with a doctrine comment. Kill switch env var retired (no runners left to disable).
+- `routes/brain_runtime.py::_local_runner_for` now returns `None` unconditionally (fail-soft preserved for legacy callers).
+- `server_modules/meta_routes.py::/admin/neutral-brains/status` returns the canonical static 4-brain roster with `enabled=False, runners=[], note="legacy runners deleted..."`. Backward-compat for dashboards that read this endpoint.
+- 2 surviving test files updated to import from `mc_brains._legacy.*`.
+- 1 legacy-runner-tested block removed from `test_skills_and_personality.py`.
+
+**Sign-off checklist (from P3_MIGRATION_DELETE_RUNNERS.md)** — all satisfied:
+- [x] All 4 pulse brains conform to `Brain` protocol and register at boot (`brains=['barracuda', 'camino', 'gto', 'hellcat']` in log).
+- [x] `RISEDUAL_LEGACY_RUNNERS_ENABLED=false` flipped and observed for 20+ min.
+- [x] 0 new `shared_intents` writes with brain stacks since kill.
+- [x] `mc_opinions_compare` writes 38 opinions per brain across 45s window post-deletion.
+- [x] `mc_pulses` cadence steady (15s ticks; 30s per-brain cadence with alternating pattern — by design).
+- [x] `brain_core.py` + `personality.py` relocated to `mc_brains/_legacy/` BEFORE deletion.
+- [x] `_pulse_base.py` imports updated.
+- [x] `grep external.brains /app/backend --include="*.py"` returns only comments/docstrings — 0 live imports.
+- [x] 216/216 mc_pulse + mc_arbiter tests green post-deletion.
+- [x] Backend restart post-deletion clean (no import errors in `.err.log`).
+- [x] Parity endpoint responds correctly (pulse_count=2071, pairs_matched=231, conf_std=0.197).
+
+**Line-count victory lap**:
+- `/app/external/brains/` before: 3,143 lines (runner + brain_core + personality).
+- After migration: 350 lines total across `mc_brains/` (pulse base + 4 thin subclasses) + 850 lines relocated to `_legacy/` (brain_core + personality).
+- Net dead-code delete: **2,293 lines** of `runner.py`.
+- Behavioral equivalence proven via `mc_parity_snapshots` gates-pass in the observation window.
+
+**Emergent Kubernetes deployment note**: since this is a Kubernetes pod without a separate container/process orchestration for the runners (they were in-process asyncio tasks inside the backend), no supervisor config changes needed. The runners simply stopped starting at the next backend restart.
+
+**Rollback path (out of scope now — kept for the record)**:
+- `git checkout HEAD~<N> -- external/brains/` (Emergent platform commits each step).
+- Restore `_pulse_base.py` imports to `external.brains.*`.
+- Restart backend.
+- Time to rollback: ~2 min.
+
+**Full pulse migration doctrine as of 2026-07-12**:
+```
+Mission Control
+  └── one pulse loop (15s cadence)
+        ├── one MarketSnapshot (canonical feature builder + freshness gate)
+        ├── Camino.evaluate(...) · GTO.evaluate(...) · Barracuda.evaluate(...) · Hellcat.evaluate(...)
+        ├── mc_opinions_compare (compare-mode) OR mc_seats (post-flip)
+        └── parity_snapshotter (15-min rolling trend, arbiter-flip gates)
+```
+No runners. No sidecars. No parallel arm-to-arbiter-to-trader-to-broker shadow paths. The pulse is the sole brain path.
+
+
 ### 🎯 2026-07-12 (iter-28d): P3 STEP 2 EXECUTED — KILL SWITCH FIRED @ 04:12:10 UTC
 
 **Operator directive executed**: `RISEDUAL_LEGACY_RUNNERS_ENABLED=false` set in `/app/backend/.env`, backend restarted.

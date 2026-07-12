@@ -143,7 +143,7 @@ def test_hypotheses_live_high_spread_still_favors_hold():
     """Regression guard: with LIVE quality and genuinely-wide spread,
     HOLD should still score high — the fix must not neuter the real
     market signal."""
-    from external.brains.brain_core import NeutralAdversarialBrain
+    from mc_brains._legacy.brain_core import NeutralAdversarialBrain
     brain = NeutralAdversarialBrain(brain_id="test", display_name="Test")
     hypotheses = brain._build_hypotheses({
         "spread_bps": 500.0, "spread_quality": "live",
@@ -159,7 +159,7 @@ def test_hypotheses_live_high_spread_still_favors_hold():
 def test_hypotheses_stale_high_spread_does_NOT_pin_hold():
     """THE bug fix — stale quality with spread_bps=2150 must NOT
     force HOLD to 1.0. The substitution to 25 bps is the cure."""
-    from external.brains.brain_core import NeutralAdversarialBrain
+    from mc_brains._legacy.brain_core import NeutralAdversarialBrain
     brain = NeutralAdversarialBrain(brain_id="test", display_name="Test")
     hypotheses = brain._build_hypotheses({
         "spread_bps": 2150.0, "spread_quality": "stale",
@@ -178,7 +178,7 @@ def test_hypotheses_stale_high_spread_does_NOT_pin_hold():
 
 def test_hypotheses_sentinel_quote_neutralized():
     """Same guarantee for `sentinel` quality (the NVDA case)."""
-    from external.brains.brain_core import NeutralAdversarialBrain
+    from mc_brains._legacy.brain_core import NeutralAdversarialBrain
     brain = NeutralAdversarialBrain(brain_id="test", display_name="Test")
     hypotheses = brain._build_hypotheses({
         "spread_bps": 9999.0, "spread_quality": "sentinel",
@@ -194,7 +194,7 @@ def test_hypotheses_sentinel_quote_neutralized():
 def test_hypotheses_live_quality_unchanged_backward_compat():
     """Snapshots without spread_quality (existing behavior) treated
     as `live` — must produce the same result as before the fix."""
-    from external.brains.brain_core import NeutralAdversarialBrain
+    from mc_brains._legacy.brain_core import NeutralAdversarialBrain
     brain = NeutralAdversarialBrain(brain_id="test", display_name="Test")
     hypotheses = brain._build_hypotheses({
         "spread_bps": 20.0,   # tight live spread

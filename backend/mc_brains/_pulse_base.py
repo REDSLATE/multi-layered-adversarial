@@ -55,8 +55,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import ClassVar, Optional
 
-from external.brains.brain_core import NeutralAdversarialBrain
-from external.brains.personality import apply_personality_confidence
+from mc_brains._legacy.brain_core import NeutralAdversarialBrain
+from mc_brains._legacy.personality import apply_personality_confidence
 
 from mc_arbiter.models import Direction, ModelOpinion, OpinionStatus
 from mc_pulse.input_manifest import CAMINO_REQUIRED_FIELDS

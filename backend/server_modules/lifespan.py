@@ -711,36 +711,12 @@ async def lifespan(app: FastAPI):
         logger.info("daily_snapshot worker started")
     except Exception as e:  # noqa: BLE001
         logger.warning("daily_snapshot worker start failed: %s", e)
-    # 2026-06-07 — Neutral brain stand-ins (Camino/Barracuda/Hellcat/GTO).
-    # Stand-ins until the real per-brain wild_adaptive_core_v2 modules
-    # are migrated to this stack. Gated by NEUTRAL_BRAINS_ENABLED
-    # (default off); when on, 4 in-process asyncio tasks post intents
-    # to MC over loopback so the fade class is structurally
-    # impossible. The brains hold NO seat — operator-rotatable
-    # seat policy still owns authority.
-    #
-    # ── 2026-07-12 P3 kill switch ──
-    # `RISEDUAL_LEGACY_RUNNERS_ENABLED=false` short-circuits the
-    # start entirely. Use this to flip pulse-only mode once
-    # `arbiter_flip_gates_pass=True` has held across a full session
-    # for all 4 brains. Default is `true` (backward-compat) because
-    # the pulse is still `compare_only=True` — deleting the runner
-    # while parity is still being observed strands the comparison
-    # denominator. Only flip to `false` after operator has confirmed
-    # sustained gates-pass via `GET /api/mc/parity/{brain}/history`.
-    if os.environ.get("RISEDUAL_LEGACY_RUNNERS_ENABLED", "true").lower() != "false":
-        try:
-            import sys as _sys
-            _sys.path.insert(0, "/app")
-            from external.brains.runner import start_neutral_brains
-            await start_neutral_brains()
-        except Exception as e:  # noqa: BLE001
-            logger.warning("neutral_brains start failed: %s", e)
-    else:
-        logger.info(
-            "legacy runners DISABLED (RISEDUAL_LEGACY_RUNNERS_ENABLED=false) — "
-            "pulse-only mode; comparison denominator will not update"
-        )
+    # 2026-06-07 → 2026-07-12: Neutral brain stand-ins retired.
+    # The 4 pulse brains (`mc_brains/`) now do this work directly
+    # via the pulse loop registered above. `external/brains/runner.py`
+    # was deleted in P3 step 3 after 100% gates-pass on all 4 brains.
+    # The kill switch `RISEDUAL_LEGACY_RUNNERS_ENABLED` was retired
+    # simultaneously — there are no runners to re-enable.
 
     # Bracket outcome resolver — converts the brain's stated
     # `target_price`/`stop_price` thesis on every order into clean
@@ -914,11 +890,11 @@ async def lifespan(app: FastAPI):
     await stop_position_monitor()
     await stop_paradox_coordinator()
     await stop_observation_resolver()
-    try:
-        from external.brains.runner import stop_neutral_brains
-        await stop_neutral_brains()
-    except Exception:  # noqa: BLE001
-        pass
+    # 2026-07-12 (P3 step 3): `stop_neutral_brains` used to live in
+    # `external.brains.runner`; that module was deleted after the
+    # kill switch + observation window confirmed pulse-only stability.
+    # The pulse worker's shutdown handler (below) is the sole
+    # brain-stop path now.
     # Paradox v2 background workers — REMOVED in 2026-07-01 Pass 2 delete.
     # (previously stopped verifier_loop + vote_session_sweeper)
     try:

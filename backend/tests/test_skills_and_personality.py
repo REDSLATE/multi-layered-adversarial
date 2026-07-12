@@ -20,7 +20,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 
-from external.brains.personality import (  # noqa: E402
+from mc_brains._legacy.personality import (  # noqa: E402
     BRAIN_PERSONALITIES,
     apply_personality_confidence,
     clamp_probability,
@@ -209,20 +209,9 @@ def test_selector_tag_weight_3x_description_weight():
 
 
 # ──────────────────────── runner integration ────────────────────────
-
-
-def test_runner_imports_personality_and_skills():
-    """The runner module imports the personality + skills layer at
-    module load. A regression that removes these imports would mean
-    skill enrichment silently stops happening."""
-    from external.brains import runner  # noqa: F401
-    import inspect
-    src = inspect.getsource(runner)
-    assert "apply_personality_confidence" in src
-    assert "_select_skills_for" in src
-    # And it MUST be wired into `_evaluate_and_post`.
-    eval_src = inspect.getsource(runner.BrainRunner._evaluate_and_post)
-    assert "apply_personality_confidence" in eval_src
-    assert "_select_skills_for" in eval_src
-    assert "skills_used" in eval_src
-    assert "confidence_evidence" in eval_src
+# 2026-07-12 (P3 step 3): `test_runner_imports_personality_and_skills`
+# was retired here. It asserted that `external/brains/runner.py`
+# imports the personality + skills layer at module load. Both the
+# runner and that regression concern died with the pulse migration —
+# personality + skills are now wired through `mc_brains/_pulse_base.py`
+# and covered by `mc_pulse/tests/test_p2_brains_identity.py`.

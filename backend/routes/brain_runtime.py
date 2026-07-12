@@ -58,20 +58,16 @@ KNOWN_BRAINS: tuple[str, ...] = tuple(LIVE_RUNTIMES)
 
 
 # ──────────────────────── In-process runner accessor ────────────────────────
-# Lazy imports: `external.brains.runner` lives outside /app/backend.
-# `server.py` adds /app to sys.path during lifespan startup, so a
-# module-level import would fail silently at boot. Importing per-call
-# keeps the request handler robust regardless of process state.
+# 2026-07-12 (P3 step 3): the in-process brain runners in
+# `external/brains/runner.py` were deleted after the pulse
+# migration. This accessor now always returns None — any callers
+# that still hit it get the "runner not present" branch, which
+# was the safe fail-soft behavior before.
+
 
 def _local_runner_for(brain: str):
-    try:
-        import sys as _sys
-        if "/app" not in _sys.path:
-            _sys.path.insert(0, "/app")
-        from external.brains.runner import runner_for  # type: ignore
-        return runner_for(brain)
-    except Exception:  # noqa: BLE001
-        return None
+    _ = brain  # kept to preserve the callable signature
+    return None
 
 
 # ──────────────────────── helpers ────────────────────────

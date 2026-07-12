@@ -21,41 +21,31 @@ router = APIRouter()
 
 @router.get("/admin/neutral-brains/status")
 async def neutral_brains_status():
-    """Health-check the 4 in-process neutral brain runners.
-
-    Returns the BRAIN_ROSTER (so the dashboard knows which slot maps
-    to which car-name) and live stats (tick/intent/checkin counts).
-    Empty `runners` list = NEUTRAL_BRAINS_ENABLED is false.
-
-    Public read-only — no secrets exposed (tokens never returned).
+    """Post-P3-step-3: the 4 in-process neutral brain runners were
+    retired in favor of the MC Pulse loop. This endpoint returns a
+    stable schema (kept for dashboard backward-compat) reporting the
+    canonical 4-brain roster with `enabled=False` and an empty
+    `runners` list. The current dashboard should read pulse activity
+    via `GET /api/mc/parity/{brain}` or `GET /api/mc/arbiter/state`
+    instead.
     """
-    try:
-        import sys as _sys
-        _sys.path.insert(0, "/app")
-        from external.brains.runner import (
-            BRAIN_ROSTER, is_enabled, runtime_stats,
-        )
-        return {
-            "enabled": is_enabled(),
-            "roster": [
-                {
-                    "brain_id": b,
-                    "display_name": d,
-                    "token_env": t,
-                    "legacy_token_env": legacy,
-                }
-                # 2026-02-19 (P2 fix): BRAIN_ROSTER became a 4-tuple on
-                # 2026-02-20 rename (added `legacy_fallback_env` so the
-                # runner can self-heal against prod's pre-rename token
-                # names). This unpack was still 3-tuple and returned
-                # 500 on every hit. Expose the legacy env name too so
-                # the dashboard can render the fallback source.
-                for b, d, t, legacy in BRAIN_ROSTER
-            ],
-            "runners": runtime_stats(),
-        }
-    except Exception as e:  # noqa: BLE001
-        return {"enabled": False, "error": str(e), "runners": []}
+    # Static roster — the brand mapping doesn't change post-migration.
+    static_roster = [
+        {"brain_id": "camino",    "display_name": "Camino",
+         "token_env": "CAMINO_INGEST_TOKEN",    "legacy_token_env": "ALPHA_INGEST_TOKEN"},
+        {"brain_id": "barracuda", "display_name": "Barracuda",
+         "token_env": "BARRACUDA_INGEST_TOKEN", "legacy_token_env": "CAMARO_INGEST_TOKEN"},
+        {"brain_id": "hellcat",   "display_name": "Hellcat",
+         "token_env": "HELLCAT_INGEST_TOKEN",   "legacy_token_env": "CHEVELLE_INGEST_TOKEN"},
+        {"brain_id": "gto",       "display_name": "GTO",
+         "token_env": "GTO_INGEST_TOKEN",       "legacy_token_env": "REDEYE_INGEST_TOKEN"},
+    ]
+    return {
+        "enabled": False,
+        "runners": [],
+        "roster": static_roster,
+        "note": "legacy runners deleted 2026-07-12 (P3 step 3); pulse is the sole brain path",
+    }
 
 
 @router.get("/")
