@@ -35,6 +35,11 @@ async def test_snapshot_row_has_full_pulse_health_schema(monkeypatch):
                 "snapshot_stale": {"count": 2, "percent": 0.7},
             },
             "exception_rate": 0.00,
+            "arbiter_alignment": {
+                "participated": 12,
+                "wins": 3,
+                "alignment_rate": 0.25,
+            },
             "duplicate_opinion_rate": 0.03,
             "latest_source_bar_at": "2026-07-12T15:00:00+00:00",
             "pulse_lag_ms": 220.0,
@@ -66,7 +71,7 @@ async def test_snapshot_row_has_full_pulse_health_schema(monkeypatch):
         "at", "brain", "window_hours", "evaluation_count",
         "action_distribution", "confidence_mean", "confidence_std",
         "stale_input_rate", "no_data_rate", "no_data_breakdown",
-        "exception_rate",
+        "exception_rate", "arbiter_alignment",
         "duplicate_opinion_rate", "latest_source_bar_at", "pulse_lag_ms",
         "distinctness",
     ):
@@ -234,6 +239,76 @@ def test_no_data_breakdown_ignores_pulses_with_no_expected_brains():
     ]
     br = _no_data_breakdown(pulses, "camino")
     assert br == {}
+
+
+# ─────────────── P4: arbiter alignment ───────────────
+
+def test_arbiter_alignment_none_when_brain_never_participated():
+    from mc_pulse.pulse_health_routes import _arbiter_alignment
+    # Two decisions but camino wasn't in either field.
+    decisions = [
+        {"decision": {"winner_brain": "gto", "field": [{"brain": "gto"}, {"brain": "barracuda"}]}},
+        {"decision": {"winner_brain": "hellcat", "field": [{"brain": "hellcat"}]}},
+    ]
+    a = _arbiter_alignment(decisions, "camino")
+    assert a == {"participated": 0, "wins": 0, "alignment_rate": None}
+
+
+def test_arbiter_alignment_counts_participation_and_wins():
+    from mc_pulse.pulse_health_routes import _arbiter_alignment
+    decisions = [
+        # Camino participated + won.
+        {"decision": {"winner_brain": "camino",
+                      "field": [{"brain": "camino"}, {"brain": "gto"}]}},
+        # Camino participated + lost.
+        {"decision": {"winner_brain": "gto",
+                      "field": [{"brain": "camino"}, {"brain": "gto"}]}},
+        # Camino participated + lost.
+        {"decision": {"winner_brain": "barracuda",
+                      "field": [{"brain": "camino"}, {"brain": "barracuda"}]}},
+        # Camino did NOT participate — doesn't count.
+        {"decision": {"winner_brain": "hellcat",
+                      "field": [{"brain": "hellcat"}, {"brain": "gto"}]}},
+    ]
+    a = _arbiter_alignment(decisions, "camino")
+    assert a["participated"] == 3
+    assert a["wins"] == 1
+    assert a["alignment_rate"] == round(1/3, 4)
+
+
+def test_arbiter_alignment_case_insensitive_brain_match():
+    """Both the field entries and the winner_brain are compared
+    case-insensitively so an upstream capitalization drift can't
+    silently zero out the metric."""
+    from mc_pulse.pulse_health_routes import _arbiter_alignment
+    decisions = [
+        {"decision": {"winner_brain": "CAMINO",
+                      "field": [{"brain": "Camino"}, {"brain": "gto"}]}},
+    ]
+    a = _arbiter_alignment(decisions, "camino")
+    assert a == {"participated": 1, "wins": 1, "alignment_rate": 1.0}
+
+
+def test_arbiter_alignment_empty_decisions_list():
+    from mc_pulse.pulse_health_routes import _arbiter_alignment
+    a = _arbiter_alignment([], "camino")
+    assert a == {"participated": 0, "wins": 0, "alignment_rate": None}
+
+
+def test_arbiter_alignment_tolerates_missing_field():
+    """Malformed decision rows (missing `field` or wrong shape) must
+    not crash the metric — fail-soft, count as no participation."""
+    from mc_pulse.pulse_health_routes import _arbiter_alignment
+    decisions = [
+        {"decision": {"winner_brain": "camino"}},           # no field
+        {"decision": {"winner_brain": "camino", "field": None}},
+        {"decision": {"winner_brain": "camino", "field": [None, "not-a-dict", {"brain": "camino"}]}},
+    ]
+    a = _arbiter_alignment(decisions, "camino")
+    # Only the third row counted (field has a valid dict entry).
+    assert a["participated"] == 1
+    assert a["wins"] == 1
+    assert a["alignment_rate"] == 1.0
 
 
 def test_exception_rate_counts_containment_failures():

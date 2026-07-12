@@ -430,6 +430,34 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         expireAfterSeconds=7 * 86400,
     )
 
+    # ── P1 (2026-02-11): mc_brain_silences diagnostic sidecar ──
+    # One row per (pulse, brain, snapshot) silence. NOT used for the
+    # aggregate no_data_breakdown (that reads from `mc_pulses`); this
+    # collection is for ad-hoc operator queries like "why was camino
+    # silent on NVDA between 14:00 and 14:15?". 7-day TTL matches the
+    # operator's investigation-window memory.
+    await _safe_create_index(
+        db.mc_brain_silences,
+        [("brain_id", 1), ("at", -1)],
+        name="mc_brain_silences_brain_at",
+    )
+    await _safe_create_index(
+        db.mc_brain_silences,
+        [("symbol", 1), ("at", -1)],
+        name="mc_brain_silences_symbol_at",
+    )
+    await _safe_create_index(
+        db.mc_brain_silences,
+        [("reason", 1), ("at", -1)],
+        name="mc_brain_silences_reason_at",
+    )
+    await _safe_create_index(
+        db.mc_brain_silences,
+        [("at", 1)],
+        name="mc_brain_silences_ttl",
+        expireAfterSeconds=7 * 86400,
+    )
+
     # Per-runtime decision/shadow stores (kept ISOLATED, never cross-read)
     await db.alpha_decision_log.create_index([("timestamp", -1)])
     await db.camaro_shadow_rows.create_index([("timestamp", -1)])

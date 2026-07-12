@@ -31,6 +31,28 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### 🎯 2026-07-12 (iter-28m): P4 (Arbiter Alignment) + 2B (Silence Sidecar) SHIPPED
+
+Follow-up to iter-28l's `no_data` breakdown; picks up the "Brain Influence" thread — distinctness measured *difference*, alignment measures *impact*.
+
+**P4 — Arbiter Alignment metric ("Brain Influence")**
+- New `_arbiter_alignment(decisions, brain_lc)` in `pulse_health_routes.py` returning `{participated, wins, alignment_rate}`.
+- Semantics: `alignment_rate = wins / participated`, where participated = # decisions whose `field[].brain` contained this brain, and wins = subset where `winner_brain == this brain`. Answers: "when this brain speaks, how often does the arbiter listen?"
+- Case-insensitive brain matching + fail-soft on malformed `field` rows (handles both `None` and non-dict entries — 5 dedicated tests).
+- Returns `alignment_rate: None` when `participated == 0` so the frontend can render "—" instead of a misleading 0%.
+- Persisted to `mc_pulse_health_snapshots` alongside the existing metrics.
+- Reads decisions via `MC_SEATS` collection with `decision.field.brain` indexed query — cheap even when the tape grows.
+- Frontend: new `ArbiterAlignment` sub-component in `PulseHealth.jsx` renders below the `WHY SILENT` breakdown. **Auto-hides when `participated == 0`** so the tile stays clean until decisions accrue. Shows `arbiter alignment (wins/participated) → 27.3%`.
+
+**2B — `mc_brain_silences` diagnostic sidecar**
+- Every `BrainSilence` row from a pulse is now also written to a flat per-row collection (in addition to the inline array on `mc_pulses`).
+- Doc shape: `{brain_id, reason, symbol, lane, pulse_id, at}` — one row per (pulse, brain, snapshot) silence.
+- 4 indexes provisioned in `db.ensure_indexes`: `(brain_id, at)`, `(symbol, at)`, `(reason, at)`, and a 7-day TTL on `at`. The aggregate `no_data_breakdown` on the dashboard does NOT read from this collection — it's diagnostic only.
+- Unlocks ad-hoc queries like: `db.mc_brain_silences.find({brain_id: "camino", reason: "snapshot_stale", at: {$gte: since}})` — "show me every pulse where camino was silent on stale data in the last week."
+- Live: 1,064 silence rows already indexed within 5 minutes of restart.
+
+**Testing**: 19 pulse-health unit tests (5 new for alignment). Full mc_pulse + mc_arbiter + regression sweep: **349/349 green**. Lint clean on backend + frontend. Screenshot smoke-test confirms tile renders correctly with alignment hidden pre-data.
+
 ### 📊 2026-07-12 (iter-28l): P1 — no_data reason-code breakdown SHIPPED
 
 Reason: the aggregate `no_data 61%` scalar on the Pulse Health tiles was answering the wrong question. The operator's real question was never "how often is the brain silent" but "WHY is it silent, and can I fix it." This iteration replaces the scalar with a per-reason breakdown.

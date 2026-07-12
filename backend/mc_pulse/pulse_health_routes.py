@@ -51,6 +51,7 @@ router = APIRouter(prefix="/mc/pulse-health", tags=["mc-pulse-health"])
 
 MC_OPINIONS_COMPARE = "mc_opinions_compare"
 MC_PULSES = "mc_pulses"
+MC_SEATS = "mc_seats"
 MC_PULSE_HEALTH_SNAPSHOTS = "mc_pulse_health_snapshots"
 
 # Persistence list — all 4 brains currently registered in the pulse.
@@ -84,6 +85,23 @@ async def compute_pulse_health(brain_id: str, *, hours: int = 24) -> dict:
         MC_PULSES,
         {"started_at": {"$gte": since}},
     )
+    # P4 (2026-02-11): arbiter alignment reads decisions off the seat
+    # tape. Each decision has `winner_brain` + `field[].brain`, so we
+    # can compute participation + wins in one pass. Empty result is
+    # fine — brand-new deployments have no decisions yet.
+    arbiter_decisions = await _safe_find(
+        MC_SEATS,
+        {
+            "decision.arbitrated_at": {"$gte": since},
+            "decision.field.brain": brain_lc,
+        },
+        projection={
+            "_id": 0,
+            "decision.winner_brain": 1,
+            "decision.field.brain": 1,
+            "decision.arbitrated_at": 1,
+        },
+    )
 
     return {
         "brain": brain_lc,
@@ -101,6 +119,7 @@ async def compute_pulse_health(brain_id: str, *, hours: int = 24) -> dict:
         "latest_source_bar_at": _latest_source_bar_at(opinions),
         "pulse_lag_ms": _pulse_lag_ms(opinions),
         "distinctness": _distinctness(opinions, peer_opinions),
+        "arbiter_alignment": _arbiter_alignment(arbiter_decisions, brain_lc),
     }
 
 
@@ -273,6 +292,68 @@ def _no_data_breakdown(
     }
 
 
+def _arbiter_alignment(decisions: list[dict], brain_lc: str) -> dict:
+    """P4 (2026-02-11): Brain Influence — arbiter alignment.
+
+    Answers: "when this brain contributed an opinion to the council,
+    how often did the arbiter pick it as the winner?"
+
+        alignment_rate = wins / participated
+
+    Where:
+      * `participated` = # decisions in window whose `field[].brain`
+        contains this brain (this brain was in the vote).
+      * `wins` = subset of those where `winner_brain == this brain`.
+
+    A brain with high alignment_rate is *materially influencing* the
+    council — the arbiter is regularly siding with its read. A brain
+    with high `no_data_rate` but non-zero alignment is punching above
+    its weight (rare speaker but persuasive when it speaks). A brain
+    with high participation but near-zero alignment is contributing
+    diverse readings that the arbiter systematically discounts —
+    which may be either "the brain is wrong" or "the brain is the
+    consistent minority voice on the council" and the operator gets
+    to interpret.
+
+    Returned shape:
+        {
+          "participated": 148,   # count of decisions this brain was in
+          "wins": 27,            # count where this brain won
+          "alignment_rate": 0.1824,
+        }
+
+    Edge cases:
+      * `participated == 0` → alignment_rate = None (not 0.0), so the
+        tile can render "—" instead of a misleading 0%.
+      * `decisions` empty → same as above (system had no arbitrations
+        in the window; not a signal about this brain).
+    """
+    participated = 0
+    wins = 0
+    for doc in decisions:
+        d = (doc or {}).get("decision") or {}
+        # Was this brain in the field?
+        field = d.get("field") or []
+        in_field = any(
+            isinstance(f, dict) and (f.get("brain") or "").lower() == brain_lc
+            for f in field
+        )
+        if not in_field:
+            continue
+        participated += 1
+        winner = (d.get("winner_brain") or "").lower()
+        if winner == brain_lc:
+            wins += 1
+    if participated == 0:
+        return {"participated": 0, "wins": 0, "alignment_rate": None}
+    return {
+        "participated": participated,
+        "wins": wins,
+        "alignment_rate": round(wins / participated, 4),
+    }
+
+
+
 def _exception_rate(pulses: list[dict], brain_lc: str) -> float:
     """Fraction of pulses where THIS brain raised (caught by
     containment). Non-zero = there's a bug the pulse loop is
@@ -431,10 +512,14 @@ def _distinctness(
 
 # ─────────────── db helpers ───────────────
 
-async def _safe_find(collection: str, query: dict) -> list[dict]:
+async def _safe_find(
+    collection: str, query: dict,
+    projection: Optional[dict] = None,
+) -> list[dict]:
     """Bounded read + fail-soft. Returns empty list on timeout."""
     try:
-        return await db[collection].find(query).max_time_ms(2500).to_list(20000)
+        cur = db[collection].find(query, projection) if projection else db[collection].find(query)
+        return await cur.max_time_ms(2500).to_list(20000)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "pulse_health safe_find %s failed: %s", collection, exc,
@@ -477,6 +562,7 @@ async def take_pulse_health_snapshot(
             "no_data_rate": health.get("no_data_rate", 0.0),
             "no_data_breakdown": health.get("no_data_breakdown", {}),
             "exception_rate": health.get("exception_rate", 0.0),
+            "arbiter_alignment": health.get("arbiter_alignment", {}),
             "duplicate_opinion_rate": health.get("duplicate_opinion_rate", 0.0),
             "latest_source_bar_at": health.get("latest_source_bar_at"),
             "pulse_lag_ms": health.get("pulse_lag_ms"),

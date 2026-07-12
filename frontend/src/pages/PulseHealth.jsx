@@ -147,6 +147,8 @@ function BrainTile({ brain, live, history }) {
 
       <NoDataBreakdown brain={brain} breakdown={live?.no_data_breakdown} noDataRate={live?.no_data_rate} />
 
+      <ArbiterAlignment brain={brain} alignment={live?.arbiter_alignment} />
+
       {warnings.length > 0 && (
         <div className="mt-3 space-y-1" data-testid={`pulse-health-warnings-${brain}`}>
           {warnings.map((w, i) => (
@@ -212,6 +214,41 @@ function NoDataBreakdown({ brain, breakdown, noDataRate }) {
           </span>
         </div>
       ))}
+    </div>
+  );
+}
+
+// P4 (2026-02-11): Brain Influence — how often the arbiter picked
+// this brain's opinion when the brain participated in the decision.
+// A brain with high alignment is *materially influencing* the
+// council. A brain with high participation but ~zero alignment is
+// contributing diverse readings that the arbiter systematically
+// discounts. Read the docstring on `_arbiter_alignment` for the
+// full interpretation guide.
+function ArbiterAlignment({ brain, alignment }) {
+  const rate = alignment?.alignment_rate;
+  const participated = alignment?.participated ?? 0;
+  const wins = alignment?.wins ?? 0;
+  // Hide entirely if the brain hasn't participated in any decision
+  // in the window — no signal to report.
+  if (participated === 0) return null;
+  return (
+    <div
+      className="mt-2 pt-2 border-t border-white/5 flex items-baseline justify-between text-xs"
+      data-testid={`pulse-health-arbiter-alignment-${brain}`}
+    >
+      <div>
+        <span className="opacity-60">arbiter alignment</span>
+        <span className="opacity-40 ml-2 text-[10px]">
+          ({wins}/{participated})
+        </span>
+      </div>
+      <span
+        className="font-mono tabular-nums"
+        data-testid={`pulse-health-arbiter-alignment-rate-${brain}`}
+      >
+        {rate === null || rate === undefined ? "—" : `${(rate * 100).toFixed(1)}%`}
+      </span>
     </div>
   );
 }

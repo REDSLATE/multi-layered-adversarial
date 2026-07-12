@@ -19,6 +19,20 @@ from typing import Optional
 from db import db
 
 MC_PULSES = "mc_pulses"
+# P1 (2026-02-11): per-silence-row diagnostic log. `mc_pulses` stores
+# the array of `BrainSilence` rows inline on each pulse doc, which is
+# fine for the aggregate breakdown on the health tile — but useless
+# for ad-hoc questions like "show me every pulse where camino was
+# silent on NVDA with reason=snapshot_stale in the last week". This
+# collection holds one flat row per (pulse, brain, snapshot) silence,
+# indexed for point-lookup, with a TTL sweep so it doesn't grow
+# unbounded. Aggregate metrics DO NOT read from here — this is a
+# diagnostic sidecar.
+MC_BRAIN_SILENCES = "mc_brain_silences"
+# Days before a silence row is auto-purged. Matches the operator's
+# working memory: the tile shows a 24h window, week gives room to
+# investigate incidents surfaced during the workweek.
+MC_BRAIN_SILENCES_TTL_DAYS = 7
 BRM = "brain_runtime_metrics"
 STACK_ID = "risedual_stack"
 
@@ -171,6 +185,26 @@ async def persist_receipt(receipt: PulseReceipt) -> None:
             "persist_receipt mirror failed pulse_id=%s: %s",
             receipt.pulse_id, exc,
         )
+
+    # P1 (2026-02-11): sidecar log of individual silence rows for
+    # ad-hoc diagnostics. Best-effort — a Motor error MUST NOT bubble
+    # into the pulse loop. If the collection is missing indexes /
+    # TTL, we still write; the migration script wires those up.
+    if receipt.brains_silent:
+        try:
+            silence_docs = []
+            for bs in receipt.brains_silent:
+                bs_dict = asdict(bs) if hasattr(bs, "__dataclass_fields__") else dict(bs)
+                bs_dict["pulse_id"] = receipt.pulse_id
+                bs_dict["at"] = receipt.completed_at or _now_iso()
+                silence_docs.append(bs_dict)
+            await db[MC_BRAIN_SILENCES].insert_many(silence_docs, ordered=False)
+        except Exception as exc:  # noqa: BLE001
+            import logging
+            logging.getLogger("mc_pulse.receipt").warning(
+                "persist_receipt silence log write failed pulse_id=%s: %s",
+                receipt.pulse_id, exc,
+            )
 
 
 def _now_iso() -> str:
