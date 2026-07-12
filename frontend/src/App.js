@@ -19,6 +19,7 @@ import Positions from "@/pages/Positions";
 import LlmLedger from "@/pages/LlmLedger";
 import RiseAI from "@/pages/RiseAI";
 import KernelReview from "@/pages/KernelReview";
+import PulseHealth from "@/pages/PulseHealth";
 import RisedualLayout from "@/risedual/Layout";
 import RdLanding from "@/risedual/pages/Landing";
 import RdSignals from "@/risedual/pages/Signals";
@@ -94,6 +95,7 @@ function App() {
             <Route path="intents" element={<Intents />} />
             <Route path="receipts" element={<Receipts />} />
             <Route path="kernel-review" element={<KernelReview />} />
+            <Route path="pulse-health" element={<PulseHealth />} />
             <Route path="brain/:brain" element={<BrainConsole />} />
             <Route path="brain-op/:brain" element={<BrainOperatorPage />} />
             <Route path="runtime/:runtime" element={<RuntimeDetail />} />

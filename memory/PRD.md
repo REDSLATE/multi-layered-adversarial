@@ -31,6 +31,37 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### 📊 2026-07-12 (iter-28h): P5 FRONTEND TILE SHIPPED — DISTINCTNESS + INPUT HEALTH VIEW LIVE
+
+**New page**: `/admin/pulse-health` — 4-tile grid, one per brain, auto-refresh every 30s.
+
+**Per-tile content**:
+- Brain identity + strategy label + reason-code family prefix
+- Distinctness score (large, tone-coded: red < 0.10, yellow 0.10-0.20, green ≥ 0.20)
+- 24-point sparkline of distinctness trend from `mc_pulse_health_snapshots`
+- Action distribution (LONG/SHORT/FLAT percentages)
+- Stats grid: evals, conf_mean, conf_std, lag_ms, stale_in, no_data, exceptions, duplicates
+- Per-tile warnings for: distinctness < 0.10, conf_std ≤ 0.02 (saturated), no_data > 80%, exception_rate > 5%, duplicate_opinion_rate > 90%, stale_input_rate > 20%
+
+**Cross-brain "action distribution collapse" alert**: fires when 2+ brains produce identical LONG/SHORT/FLAT percentages in the current window. Caught the observed collapse on live data (Camino/GTO/Barracuda all at 2.13/0/97.87 while Hellcat at 9.42/46.76/43.82).
+
+**Screenshot verification**:
+- Distinctness values live: Camino/GTO/Barracuda **0.237** each; **Hellcat 0.567** (2.4x the others — the execution-safety brain is the only distinct voice in the current market).
+- Sparklines rendering.
+- Nav item wired into Layout.jsx "Learning" section as `PULSE HEALTH`.
+
+**Files**:
+- `frontend/src/pages/PulseHealth.jsx` (~290 lines, NEW)
+- `frontend/src/App.js` — route wired
+- `frontend/src/components/Layout.jsx` — nav item added
+
+**data-testid coverage** (per doctrine): `pulse-health-page`, `pulse-health-grid`, `pulse-health-collapse-alert`, per-brain `pulse-health-tile-{brain}`, `pulse-health-distinctness-{brain}`, `pulse-health-long/short/flat-{brain}`, `pulse-health-evals-{brain}`, `pulse-health-warnings-{brain}`.
+
+**Auto-refresh**: `setInterval(30000)` client-side. Snapshots persist every 15 min server-side. History endpoint bounded (max 672 rows = 7d).
+
+**P6 status (refactor `positions.py` + `auto_router.py`)** — **INTENTIONALLY DEFERRED THIS SESSION**. Combined ~1,800 lines across two hot paths; safer to defer than risk destabilizing the deploy after 6 iterations of atomic work. Doctrine has been checked in: `_maybe_auto_advance` is documented and audited, no silent returns, doctrine step 7 landed. The refactor is cosmetic/scalable-code, not correctness. Recommend it as first task of next session with ≥ 150k token headroom.
+
+
 ### 🧠🧠🧠🧠 2026-07-12 (iter-28g): P7a+b+c+d SHIPPED — FOUR BRAINS BECOME FOUR MINDS
 
 **Operator directive**: "The major result is real: the four runners are gone, but the four brains are not. Mission Control now owns the body; the next phase is giving each brain a genuinely different mind."
