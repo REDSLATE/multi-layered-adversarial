@@ -31,6 +31,55 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### 🎯 2026-07-12 (iter-28d): P3 STEP 2 EXECUTED — KILL SWITCH FIRED @ 04:12:10 UTC
+
+**Operator directive executed**: `RISEDUAL_LEGACY_RUNNERS_ENABLED=false` set in `/app/backend/.env`, backend restarted.
+
+**Startup log confirms**:
+```
+2026-07-12 04:12:10 - risedual - INFO - legacy runners DISABLED (RISEDUAL_LEGACY_RUNNERS_ENABLED=false) — pulse-only mode; comparison denominator will not update
+2026-07-12 04:12:10 - risedual - INFO - mc_pulse worker started (compare_only=True, cadence=15s, brains=['barracuda', 'camino', 'gto', 'hellcat'])
+2026-07-12 04:12:10 - risedual - INFO - parity_snapshotter started interval_min=15 window_hours=24 brains=['camino', 'gto', 'barracuda', 'hellcat']
+```
+
+**T+90s verification (all contracts satisfied)**:
+- **Runner side: 0 new `shared_intents` writes** since kill switch fired (grouped by `stack` field — no `camino/gto/barracuda/hellcat` rows).
+- **Pulse side: 76 opinions per brain × 4 brains = 304 rows** in `mc_opinions_compare`. All 4 brains writing at ~15s cadence.
+- **Pulse loop: 8 ticks** in 90s (expected ~6+). Latest tick: `brains_completed=['barracuda', 'camino', 'gto', 'hellcat']`, `brains_failed=[]`.
+- **Parity snapshotter fired first row for all 4 brains** within first 60s (as designed).
+
+**T+3min pulse-only baseline snapshot (1h window)**:
+```
+[camino   ] pulse=2071 runner= 94 match=0.577 conf_std=0.198 pairs=369  gates_pass=False
+[gto      ] pulse= 836 runner= 92 match=0.604 conf_std=0.164 pairs=150  gates_pass=True
+[barracuda] pulse= 836 runner=106 match=0.533 conf_std=0.168 pairs=152  gates_pass=False
+[hellcat  ] pulse= 836 runner= 97 match=0.556 conf_std=0.142 pairs=151  gates_pass=False
+```
+
+**Interpretation**:
+- `pairs_matched ≥ 150` for all 4 brains (well past ≥20 gate) — the paths ARE talking about the same symbols.
+- `pulse_confidence_std ≥ 0.14` — every brain shows real variance (0.02 gate).
+- `match_score` is jittering 0.53–0.60 as the runner denominator decays.
+- **This is honest reporting.** The runner count IS the metric decaying — those 92-106 runner rows all pre-date 04:12:10; they're still in the 1h window but will exit at 05:12:10 UTC. Once runner_count hits 0, `match_score` and `timestamp_drift` become meaningless (as noted in the kill-switch log).
+
+**Observation window opens NOW**. Operator to monitor:
+- Equity: 1 full RTH (next open: 2026-07-13 Monday 09:30 ET → 16:00 ET).
+- Crypto: 24h continuous → close at 2026-07-13 04:12 UTC.
+
+**Success criteria for P3 step 3 (deletion)**:
+1. `shared_intents` has 0 new writes with `stack ∈ {camino, gto, barracuda, hellcat}` across the full observation window.
+2. `mc_opinions_compare` accumulates continuously for all 4 brains across the window (no gaps > 60s).
+3. `mc_pulses` shows continuous 15s ticks with `brains_completed=4, brains_failed=0`.
+4. Backend logs show no `neutral_brains` heartbeat entries.
+5. No operator-visible regressions on dashboards / order flow.
+
+**Quick observability endpoints**:
+- `GET /api/mc/parity/{brain}/history?limit=96` — 24h of 15-min snapshot rows per brain.
+- Direct Mongo: `db.shared_intents.count_documents({"ingest_ts": {"$gte": "2026-07-12T04:12:10"}, "stack": {"$in": ["camino","gto","barracuda","hellcat"]}})` — should stay `0`.
+
+**Rollback (if anything regresses)**: `sed -i '/RISEDUAL_LEGACY_RUNNERS_ENABLED=false/d' /app/backend/.env && sudo supervisorctl restart backend`. Runners rejoin within 10s.
+
+
 ### 🎉 2026-07-12 (iter-28c): P2 MIGRATION COMPLETE — ALL 4 PULSE BRAINS LIVE + P3 KILL SWITCH ARMED
 
 **P2 shipped**: GTO, Barracuda, and Hellcat migrated from runner-only to the MC Pulse `class *Brain: async def evaluate(snapshot) -> ModelOpinion | None` architecture. All 4 pulse brains now write to `mc_opinions_compare` in parallel with their legacy runners (comparison mode). Each brain is individually revertable.
