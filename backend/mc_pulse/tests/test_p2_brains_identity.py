@@ -101,9 +101,9 @@ def test_instances_have_independent_cooldown_state():
 
 def test_missing_identity_constants_raises_on_construct():
     """Base class MUST refuse instantiation without identity."""
-    from mc_brains._pulse_base import NeutralAdversarialPulseBrain
+    from mc_brains._pulse_base import PulseBrain
 
-    class Broken(NeutralAdversarialPulseBrain):
+    class Broken(PulseBrain):
         pass  # missing PULSE_ID / CORE_BRAIN_ID / DISPLAY_NAME
 
     with pytest.raises(TypeError, match="PULSE_ID"):

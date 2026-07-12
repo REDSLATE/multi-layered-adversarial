@@ -14,17 +14,17 @@ execution is clean. This means Hellcat's ×1.30 multiplier now
 amplifies EXECUTION CERTAINTY, not directional aggression, which
 is the operator-intended cognitive role.
 
-Wraps `NeutralAdversarialPulseBrain` — identical orchestration
+Wraps `PulseBrain` — identical orchestration
 to Camino/GTO/Barracuda, differs only in `STRATEGY_CLS` +
 `CORE_BRAIN_ID` (still `chevelle` for personality lookup).
 """
 from __future__ import annotations
 
-from mc_brains._pulse_base import NeutralAdversarialPulseBrain
+from mc_brains._pulse_base import PulseBrain
 from mc_brains.strategies.execution_safety import ExecutionSafetyStrategy
 
 
-class HellcatBrain(NeutralAdversarialPulseBrain):
+class HellcatBrain(PulseBrain):
     """Execution-safety brain — vetoes trades under hostile venue conditions."""
 
     PULSE_ID = "hellcat"

@@ -5,7 +5,7 @@ requires more evidence than the balanced/opportunistic brains
 before its confidence trips the learning ladder's promotion
 threshold. Runs both lanes; no lane-lean.
 
-Wraps the shared `NeutralAdversarialPulseBrain` base — identical
+Wraps the shared `PulseBrain` base — identical
 orchestration to Camino, differs ONLY in the personality
 multiplier (via CORE_BRAIN_ID="redeye").
 
@@ -17,13 +17,13 @@ comparison mode; the pulse writes envelopes to
 """
 from __future__ import annotations
 
-from mc_brains._pulse_base import NeutralAdversarialPulseBrain
+from mc_brains._pulse_base import PulseBrain
 from mc_brains.strategies.momentum_confirmation import (
     MomentumConfirmationStrategy,
 )
 
 
-class GtoBrain(NeutralAdversarialPulseBrain):
+class GtoBrain(PulseBrain):
     """Disciplined brain — requires more evidence than balanced."""
 
     PULSE_ID = "gto"

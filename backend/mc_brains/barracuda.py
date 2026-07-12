@@ -4,7 +4,7 @@ Doctrine: **opportunistic**. Personality multiplier ×1.15 —
 trips the ladder faster on a strong read than the balanced
 brain. Runs both lanes.
 
-Wraps the shared `NeutralAdversarialPulseBrain` base — identical
+Wraps the shared `PulseBrain` base — identical
 orchestration to Camino, differs ONLY in the personality
 multiplier (via CORE_BRAIN_ID="camaro").
 
@@ -13,11 +13,11 @@ this pulse-first path.
 """
 from __future__ import annotations
 
-from mc_brains._pulse_base import NeutralAdversarialPulseBrain
+from mc_brains._pulse_base import PulseBrain
 from mc_brains.strategies.mean_reversion import MeanReversionStrategy
 
 
-class BarracudaBrain(NeutralAdversarialPulseBrain):
+class BarracudaBrain(PulseBrain):
     """Opportunistic brain — mean-reversion fader."""
 
     PULSE_ID = "barracuda"

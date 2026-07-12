@@ -19,7 +19,7 @@ strategy. Strategies are:
 
 The confidence returned is the RAW confidence (pre-personality
 clamp). The personality multiplier is applied by
-`NeutralAdversarialPulseBrain` AFTER the strategy runs — that
+`PulseBrain` AFTER the strategy runs — that
 way personality remains a confidence modulator only, never a
 strategy input.
 """

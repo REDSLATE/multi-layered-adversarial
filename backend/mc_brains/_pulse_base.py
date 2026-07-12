@@ -1,23 +1,30 @@
 """Shared base for the four MC Pulse brains.
 
-2026-07-12 doctrine (P7a): every brain now supplies its own
-`Strategy` implementation. The `Strategy.evaluate(snapshot)`
-returns a raw `StrategyResult`; the base class:
+2026-07-12 doctrine (P7a + rename): every brain now supplies its
+own `Strategy` implementation. `PulseBrain` is the shared
+orchestration base; the internal adversarial hypothesis mechanism
+(the pre-P7 `NeutralAdversarialBrain` core) is gone. Adversarial
+structure now lives at the COUNCIL level — 4 brains with 4
+strategies arguing through the arbiter — not inside each brain.
 
-  1. Runs the strategy (sub-millisecond, deterministic).
-  2. Applies the personality confidence multiplier.
-  3. Wraps into a `ModelOpinion` with the standard rank inputs.
-  4. Persists a manifest hint for parity/audit.
+The base:
+  1. Runs the brain's `STRATEGY_CLS().evaluate(snapshot)`
+     (sub-millisecond, deterministic).
+  2. Applies the personality confidence multiplier
+     (`mc_brains.personality.apply_personality_confidence`).
+  3. Wraps into a `ModelOpinion` with standard rank inputs.
+  4. Persists a manifest hint for audit + distinctness math.
 
-The old `NeutralAdversarialBrain` wrapper in `_legacy/` is now
-UNUSED by production code — kept only until P7d deletes it.
+Subclasses set 5 class-level identity constants and one
+`STRATEGY_CLS`. That's it. Everything else — should_evaluate
+cool-down, personality clamp, manifest hint bookkeeping — is
+inherited so a Barracuda-vs-Hellcat divergence can only come
+from the strategy or personality, never from orchestration
+drift.
 
-Subclasses set 6 class-level identity constants and one class-
-level `STRATEGY_CLS`. That's it. Everything else — the
-should_evaluate cool-down, the required-field gate, the manifest
-hint bookkeeping, the personality clamp, the rank input
-mapping — is inherited so a Barracuda-vs-Hellcat divergence can
-NEVER accidentally arise from orchestration drift.
+Renamed from `NeutralAdversarialPulseBrain` when the internal
+hypothesis competition was retired. The name reflected wrapping
+the old `NeutralAdversarialBrain` core; that core is deleted.
 """
 from __future__ import annotations
 
@@ -51,13 +58,13 @@ class PulseManifestHint:
     position_context_present: bool = False
 
 
-class NeutralAdversarialPulseBrain:
+class PulseBrain:
     """Base class for a pulse brain that dispatches to a strategy.
 
-    Subclasses set 7 class-level constants. Everything else is
-    inherited unchanged so Barracuda ≠ Hellcat divergence can
-    only come from the strategy or personality, never from the
-    orchestration layer.
+    Subclasses set 5 class-level constants + `STRATEGY_CLS`.
+    Everything else is inherited unchanged so Barracuda ≠ Hellcat
+    divergence can only come from the strategy or personality,
+    never from the orchestration layer.
     """
 
     # ── subclass MUST override ──

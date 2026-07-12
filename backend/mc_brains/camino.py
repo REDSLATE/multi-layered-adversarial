@@ -2,13 +2,13 @@
 
 Doctrine: balanced personality (×1.00 confidence multiplier).
 Runs both lanes but leans equity. Wraps `NeutralAdversarialBrain`
-via the shared `NeutralAdversarialPulseBrain` base.
+via the shared `PulseBrain` base.
 
 2026-07-12: refactored to inherit from `_pulse_base` when P2
 migration added GTO / Barracuda / Hellcat as pulse brains. All 4
 brains share identical orchestration; only the identity constants
 + personality multiplier differ. Camino's original per-file
-implementation lives in `_pulse_base.NeutralAdversarialPulseBrain`
+implementation lives in `_pulse_base.PulseBrain`
 unchanged — the base was extracted from this file verbatim.
 
 Audit checklist: `/app/memory/CAMINO_RUNNER_AUDIT.md`.
@@ -16,7 +16,7 @@ Audit checklist: `/app/memory/CAMINO_RUNNER_AUDIT.md`.
 from __future__ import annotations
 
 from mc_brains._pulse_base import (
-    NeutralAdversarialPulseBrain,
+    PulseBrain,
     PulseManifestHint,
 )
 from mc_brains.strategies.trend_following import TrendFollowingStrategy
@@ -28,7 +28,7 @@ from mc_brains.strategies.trend_following import TrendFollowingStrategy
 CaminoManifestHint = PulseManifestHint
 
 
-class CaminoBrain(NeutralAdversarialPulseBrain):
+class CaminoBrain(PulseBrain):
     """Trend-follower pilot brain."""
 
     PULSE_ID = "camino"
