@@ -31,6 +31,36 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### 🧹 2026-07-12 (iter-28j): P6a-finish + P6b-finish COMPLETE — 5-STAGE ORCHESTRATOR LANDED
+
+**P6a-finish — positions.py: 830 → 526 lines** (36.6% additional reduction, -304 lines).
+
+Extracted:
+- `shared/positions_state.py` (346 lines) — state-machine helpers:
+  - `_stance_doc` (pure BSON assembler)
+  - `_current_seat_and_epoch` (roster lookup w/ graceful fallback)
+  - `_maybe_auto_advance` (auto-consensus gate; retains the full 2026-07-12 no-silent-returns doctrine, v2 fingerprint, fresh-input tolerance, dedup)
+  - `_persist_stance` (shared insert-stance flow used by both operator + runtime endpoints)
+- Lazy imports inside `_persist_stance` (`_advance_state_if_needed`, `_hydrate`) break the positions ↔ positions_state cycle cleanly.
+- Re-exports from `positions.py` preserve `from shared.positions import _persist_stance` for every caller.
+- All 98 position/stance/consensus/quorum tests pass.
+
+**P6b-finish — auto_router.py: 1007 → 249 lines** (75.3% reduction, -758 lines).
+
+The ~800-line `_route_one` has been split into 5 stage functions (`shared/auto_router_stages.py`, 780 lines) each consuming/mutating a shared `RouteContext` (extended in `auto_router_helpers.py`):
+
+1. `_gate_master_switch(ctx)` — Operator arm-state preflight; disarm short-circuits with `master_switch_disarmed` intent stamp.
+2. `_gate_seat(ctx)` — Notional resolution (`resolve_notional`) + `seat.decide`; non-fire short-circuits with `SEAT_DID_NOT_FIRE`/`SEAT_ADVISORY_ONLY`.
+3. `_gate_risk(ctx)` — Governor multiplier → Kraken pair-floor + cap-authority guard → `risk.check` → equity market-hours preflight → sizing-gate + capital-ledger reserve. Emits `RISK_REJECTED`, `notional_below_pair_floor`, `pair_floor_exceeds_per_order_cap`, `market_closed_preflight`, or `REJECTED_CAP_EXCEEDED` on any block.
+4. `_route_and_submit(ctx)` — Broker call + `BrokerRouteBlocked` handling + broker-error-taxonomy (deterministic terminal vs. transient retry up to `AUTO_ROUTER_MAX_BROKER_RETRIES`); handles capital-ledger release on terminal reject + live-learning capture.
+5. `_finalize_gate_state(ctx)` — Success stamp (`gate_state=submitted`) + `executions.record(ok=True)` + live-learning capture.
+
+`_route_one` is now a 20-line orchestrator that constructs the `RouteContext`, iterates the four blocking stages (short-circuit on first non-None), then delegates to `_finalize_gate_state`. Reads like plain English doctrine.
+
+**Test contract preserved.** The `test_live_execution_path.py` scaffold mocks `shared.auto_router.db`. Stage functions look up `db` via `_db()` (late-bound module attribute read on `shared.auto_router`) so the mock propagates. All 38 live-execution tests + 10 RouteContext tests pass. Also verified: master-switch preflight, positions, position-model quorum, position-context TTL — 101 tests total green.
+
+**Behavior guarantee.** Every `db.update_one`, `executions.record`, and `learning.capture_experience` call-site preserved bit-for-bit — only the enclosing control-flow flattened. Every `broker_reason` code and audit reason unchanged. No new imports leak into the module top-level; capital-ledger, market-hours, sizing-gate all stay inside the stage where they run.
+
 ### 🧹 2026-07-12 (iter-28i): P6a + P6b PARTIAL — CODE EXTRACTED INTO FOCUSED MODULES
 
 **P6a — positions.py: 1008 → 830 lines** (17.6% reduction, -178 lines).

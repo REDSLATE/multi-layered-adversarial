@@ -99,12 +99,18 @@ class TestRouteContext:
         assert ctx.action_upper == "BUY"
         assert ctx.notional_raw == 0.0
         assert ctx.notional_source == ""
-        assert ctx.notional_usd is None
+        assert ctx.final_notional == 0.0
         assert ctx.sd is None
         assert ctx.rc is None
-        assert ctx.broker_response == {}
+        assert ctx.order == {}
         assert ctx.terminal_state is None
         assert ctx.reason_trail == []
+        # P6b-finish: new ledger + finalize fields.
+        assert ctx.ledger_reserved is False
+        assert ctx.ledger_reserve_amount == 0.0
+        assert ctx.ledger_lane == ""
+        assert ctx.intent_id == ""
+        assert ctx.lane == ""
 
     def test_route_context_reason_trail_is_instance_local(self):
         """Regression guard: default_factory=list must give each

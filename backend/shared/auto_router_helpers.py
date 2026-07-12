@@ -21,36 +21,53 @@ AUTO_ROUTER_NOTIONAL_USD = float(os.environ.get("AUTO_ROUTER_NOTIONAL_USD", "10"
 
 @dataclass
 class RouteContext:
-    """The state `_route_one` accumulates across its stages.
+    """The state `_route_one` accumulates across its 5 stages.
 
     Instead of 15+ local variables threaded through nested try/except
     blocks, each stage receives + mutates a single `RouteContext`.
 
     Populated incrementally:
-        - Constructor: intent, action_upper (from the raw intent dict).
-        - _resolve_notional: notional_raw, notional_source.
-        - _gate_master_switch: (no mutation; may raise/return).
-        - _gate_seat: sd (SeatDecision), sd.reason, sd.verdict.
-        - _gate_risk: rc (RiskDecision), notional_usd (post-risk).
-        - _route_and_submit: broker_response, terminal_state.
-        - _finalize_gate_state: (writes gate_state on the intent).
+        - Constructor: intent (raw). `.finalize()` derives intent_id,
+          action_upper, lane.
+        - resolve_notional: notional_raw, notional_source.
+        - _gate_master_switch: (read-only; may short-circuit).
+        - _gate_seat: sd (SeatDecision).
+        - _gate_risk: rc (RiskDecision), final_notional (post-risk +
+          post-pair-floor), ledger_reserved, ledger_reserve_amount,
+          ledger_lane.
+        - _route_and_submit: order (broker response) OR sets
+          terminal_state on failure.
+        - _finalize_gate_state: writes final gate_state to the intent.
 
     Kept as a plain dataclass (not frozen) so stage functions can
     mutate specific fields — the semantic is "accumulator" not
     "immutable value object".
     """
     intent: dict
+    intent_id: str = ""
     action_upper: str = ""
+    lane: str = ""
     notional_raw: float = 0.0
     notional_source: str = ""
-    notional_usd: Optional[float] = None  # post-risk sizing
-    sd: Any = None                        # SeatDecision (avoid circular import)
-    rc: Any = None                        # RiskDecision
-    broker_response: dict = field(default_factory=dict)
+    final_notional: float = 0.0             # post-risk, post-pair-floor
+    sd: Any = None                          # SeatDecision (avoid circular import)
+    rc: Any = None                          # RiskDecision
+    # Capital-ledger reservation state (only meaningful for live routes).
+    ledger_reserved: bool = False
+    ledger_reserve_amount: float = 0.0
+    ledger_lane: str = ""
+    # Broker outcome.
+    order: dict = field(default_factory=dict)
     terminal_state: Optional[str] = None
-    # Diagnostic accumulator — stage-specific reason codes get appended
-    # here for eventual persistence on the intent doc.
     reason_trail: list[str] = field(default_factory=list)
+
+    def finalize_inputs(self) -> None:
+        """Cheap derivations from `self.intent`. Called once by
+        `_route_one` immediately after construction."""
+        self.intent_id = self.intent.get("intent_id") or ""
+        self.action_upper = str(self.intent.get("action") or "").upper()
+        self.lane = (self.intent.get("lane") or "").lower()
+        self.ledger_lane = self.lane
 
 
 def resolve_notional(intent: dict) -> tuple[float, str]:
