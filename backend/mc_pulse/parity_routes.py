@@ -84,6 +84,15 @@ async def parity_report(
     A `hours=24` window is the working default (one trading
     session). Widen to 72–168 during weekends when volume is low.
     """
+    return await compute_parity(brain_id, hours=hours, sample_size=sample_size)
+
+
+async def compute_parity(
+    brain_id: str, *, hours: int = 24, sample_size: int = 20,
+) -> dict:
+    """Auth-free parity computation used by both the HTTP endpoint
+    and the background snapshotter. Kept pure — no side effects,
+    no writes. Bounded reads via `_safe_find`."""
     since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     brain_lc = brain_id.strip().lower()
 
@@ -109,6 +118,106 @@ async def parity_report(
         "rationale_token_overlap": _rationale_overlap(pulse_rows, intent_rows),
         "timestamp_drift_s": _timestamp_drift(pulse_rows, intent_rows),
         "samples": _sample_pairs(pulse_rows, intent_rows, sample_size),
+    }
+
+
+# ── 2026-07-12 doctrine: parity trend snapshotter ──────────────────
+# Every N minutes (default 15), snapshot the parity metrics for
+# each configured brain and persist a compact row to
+# `mc_parity_snapshots`. Enables trend observation over 24-72h+
+# without ANY manual polling. The gate criteria for the arbiter
+# flip (match_score ≥ 0.60, pulse.confidence.std > 0.02,
+# timestamp_drift.pairs_matched ≥ 20) can be read off the trend
+# directly. Sample_size intentionally 0 in snapshots — we only
+# care about the aggregate metrics, not paired examples.
+MC_PARITY_SNAPSHOTS = "mc_parity_snapshots"
+
+# Which brains to snapshot. Camino is live in comparison mode
+# today; add GTO/Barracuda/Hellcat as their pulse adapters ship.
+PARITY_SNAPSHOT_BRAINS = ["camino"]
+
+
+async def take_parity_snapshot(brain_id: str, *, hours: int = 24) -> dict:
+    """Compute parity for `brain_id` and write ONE compact snapshot
+    row to `mc_parity_snapshots`. Returns the persisted doc.
+    Fail-soft: any exception is logged; None returned so caller can
+    keep looping.
+    """
+    try:
+        parity = await compute_parity(brain_id, hours=hours, sample_size=0)
+        conf_pulse = parity.get("confidence_distribution", {}).get("pulse", {})
+        drift = parity.get("timestamp_drift_s", {}) or {}
+        action_dist = parity.get("action_distribution", {}) or {}
+        # Gate criteria from MC_PULSE.md §11 — arbiter can only flip
+        # to compare_only=False once ALL THREE hold simultaneously.
+        match_score = float(action_dist.get("match_score") or 0.0)
+        conf_std = float(conf_pulse.get("std") or 0.0)
+        pairs_matched = int(drift.get("pairs_matched") or 0)
+        gates_ok = (
+            match_score >= 0.60
+            and conf_std > 0.02
+            and pairs_matched >= 20
+        )
+        doc = {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "brain": brain_id.strip().lower(),
+            "window_hours": hours,
+            "pulse_count": parity.get("pulse_count", 0),
+            "runner_count": parity.get("runner_count", 0),
+            "match_score": match_score,
+            "pulse_confidence_mean": float(conf_pulse.get("mean") or 0.0),
+            "pulse_confidence_std": conf_std,
+            "runner_confidence_mean": float(
+                parity.get("confidence_distribution", {})
+                .get("runner", {}).get("mean") or 0.0
+            ),
+            "timestamp_drift_median_s": float(drift.get("median_s") or 0.0),
+            "pairs_matched": pairs_matched,
+            "rationale_jaccard_mean": float(
+                (parity.get("rationale_token_overlap") or {})
+                .get("jaccard_mean") or 0.0
+            ),
+            "arbiter_flip_gates_pass": gates_ok,
+            "gates": {
+                "match_score_ok": match_score >= 0.60,
+                "conf_std_ok": conf_std > 0.02,
+                "pairs_matched_ok": pairs_matched >= 20,
+            },
+        }
+        await db[MC_PARITY_SNAPSHOTS].insert_one(dict(doc))
+        return doc
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "take_parity_snapshot failed brain=%s: %s", brain_id, exc,
+        )
+        return {}
+
+
+@router.get("/{brain_id}/history")
+async def parity_history(
+    brain_id: str,
+    limit: int = Query(96, ge=1, le=672),  # 96 x 15min = 24h; 672 = 7d
+    user: dict = Depends(get_current_user),
+):
+    """Rolling parity trend for the given brain. Read-only.
+    Newest first. Used by the operator dashboard to plot
+    match_score/conf_std/pairs_matched over time and see when the
+    arbiter-flip gates first hold.
+    """
+    brain_lc = brain_id.strip().lower()
+    rows = await _safe_find(
+        MC_PARITY_SNAPSHOTS, {"brain": brain_lc},
+    )
+    # _safe_find has no sort; sort in-memory (bounded).
+    rows.sort(key=lambda r: r.get("at", ""), reverse=True)
+    rows = rows[:limit]
+    # Strip Mongo _id for cleanliness.
+    for r in rows:
+        r.pop("_id", None)
+    return {
+        "brain": brain_lc,
+        "count": len(rows),
+        "snapshots": rows,
     }
 
 

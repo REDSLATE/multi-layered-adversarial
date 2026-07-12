@@ -374,6 +374,24 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         name="mc_pulses_started_at",
     )
 
+    # ── 2026-07-12: parity trend snapshots ──
+    # Rolling snapshot rows written by the background parity_snapshotter
+    # (mc_pulse/parity_routes.py::take_parity_snapshot). Compound
+    # (brain, at) index supports the `/api/mc/parity/{brain}/history`
+    # read pattern (newest-first per brain). TTL 30d — trend is
+    # short-window observation, not permanent record.
+    await _safe_create_index(
+        db.mc_parity_snapshots,
+        [("brain", 1), ("at", -1)],
+        name="mc_parity_snapshots_brain_at",
+    )
+    await _safe_create_index(
+        db.mc_parity_snapshots,
+        [("at", 1)],
+        name="mc_parity_snapshots_ttl",
+        expireAfterSeconds=30 * 86400,
+    )
+
     # MC parity manifests (2026-02, parity step 1/2). Unique
     # (parity_key, path) — the runner and pulse rows for the SAME
     # bar close MUST coexist so the parity endpoint can pair them;

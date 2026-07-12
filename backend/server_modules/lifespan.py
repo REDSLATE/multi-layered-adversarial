@@ -770,6 +770,49 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("mc_pulse disabled (set RISEDUAL_MC_PULSE_ENABLED=1 to arm the migration pulse)")
 
+    # ── 2026-07-12 doctrine: parity trend snapshotter ────────────────
+    # Rolling snapshot of the pulse-vs-runner parity metrics for the
+    # migration observation gate (MC_PULSE.md §11 arbiter-flip gates:
+    # match_score ≥ 0.60, pulse conf std > 0.02, pairs_matched ≥ 20).
+    # Persists compact rows to `mc_parity_snapshots` so the operator
+    # dashboard can plot the trend without stalking `/api/mc/parity`.
+    # ONLY runs when the pulse itself is armed — no point measuring
+    # parity if only the runner side is producing data.
+    if os.environ.get("RISEDUAL_MC_PULSE_ENABLED", "0") == "1":
+        try:
+            interval_min = int(
+                os.environ.get("PARITY_SNAPSHOT_INTERVAL_MIN", "15")
+            )
+            window_hours = int(
+                os.environ.get("PARITY_SNAPSHOT_WINDOW_HOURS", "24")
+            )
+
+            async def _parity_snapshot_loop():
+                from mc_pulse.parity_routes import (  # noqa: WPS433
+                    PARITY_SNAPSHOT_BRAINS,
+                    take_parity_snapshot,
+                )
+                # Small startup delay so pulse has time to accumulate
+                # a first batch before the first snapshot fires.
+                await asyncio.sleep(60.0)
+                while True:
+                    for brain in PARITY_SNAPSHOT_BRAINS:
+                        await take_parity_snapshot(
+                            brain, hours=window_hours,
+                        )
+                    await asyncio.sleep(interval_min * 60.0)
+
+            app.state.parity_snapshot_task = asyncio.create_task(
+                _parity_snapshot_loop(),
+            )
+            logger.info(
+                "parity_snapshotter started interval_min=%d window_hours=%d brains=%s",
+                interval_min, window_hours,
+                ["camino"],  # keep the log line stable across brain adds
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("parity_snapshotter start failed: %s", e)
+
     yield
     await stop_poller()
     await stop_tickler()
@@ -785,6 +828,18 @@ async def lifespan(app: FastAPI):
     try:
         from mc_pulse.pulse_worker import stop_pulse_worker
         await stop_pulse_worker(app)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Parity snapshotter shutdown (2026-07-12).
+    try:
+        t = getattr(app.state, "parity_snapshot_task", None)
+        if t and not t.done():
+            t.cancel()
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
     except Exception:  # noqa: BLE001
         pass
 

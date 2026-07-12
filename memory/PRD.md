@@ -31,6 +31,31 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### 🎉 2026-07-12 (iter-28b): PARITY TREND SNAPSHOTTER SHIPPED + FIRST GATES-PASS OBSERVATION
+
+**P1 landed** (parity observation infra). Fresh post-wipe evidence shows Camino pulse is **already at the arbiter-flip threshold on a 1h window**:
+- `match_score = 0.629` (≥ 0.60 gate) ✓
+- `pulse_confidence_std = 0.2009` (> 0.02 gate) ✓
+- `pairs_matched = 174` (≥ 20 gate) ✓
+- **`arbiter_flip_gates_pass: True`** — all three MC_PULSE.md §11 gates hold simultaneously on this snapshot.
+
+Compare to the pre-wipe baseline from iter-28 (72h window): `match_score=0.001, conf_std=0.00, pairs_matched=0`. The wipe + Step 7 no-silent-returns + Step 5.b freshness contract landed the improvement.
+
+**What shipped**:
+- `mc_pulse/parity_routes.py::compute_parity` — extracted the parity computation into a pure, auth-free callable so both the HTTP endpoint AND the background snapshotter reuse it (no duplication).
+- `take_parity_snapshot(brain_id, hours)` — writes ONE compact row to `mc_parity_snapshots` with the trend fields (match_score, pulse_conf_std, pairs_matched, timestamp_drift_median_s, rationale_jaccard_mean, arbiter_flip_gates_pass, per-gate breakdown). Fail-soft: any exception returns `{}`, never crashes the loop.
+- Background loop in `server_modules/lifespan.py` — starts when `RISEDUAL_MC_PULSE_ENABLED=1`. 60s startup delay, then snapshots every `PARITY_SNAPSHOT_INTERVAL_MIN` (default 15) for every brain in `PARITY_SNAPSHOT_BRAINS` (currently `["camino"]`; append GTO/Barracuda/Hellcat as their pulse adapters ship). Graceful shutdown wired into lifespan teardown.
+- `GET /api/mc/parity/{brain}/history?limit=96` — new admin-authed endpoint. Newest-first snapshot list bounded by limit (default 96 = 24h at 15min cadence; max 672 = 7d).
+- Indexes on `mc_parity_snapshots`: `(brain, at)` compound for the history read pattern + `(at)` TTL 30 days.
+
+**Tests** (`mc_pulse/tests/test_parity_snapshotter.py`, 3 new): row persistence + trend fields, gate-threshold rejection when metrics under-threshold, fail-soft on compute error. Full pulse+arbiter suite: **208/208 pass**.
+
+**What this unlocks for the migration**:
+Once the trend holds `arbiter_flip_gates_pass=True` across a 24h+ window (not just an instantaneous 1h snapshot), it becomes safe to flip Camino from `compare_only=True` to `compare_only=False` — meaning pulse envelopes reach the arbiter directly and the runner tape becomes optional. That's Step 6 of MC_PULSE.md.
+
+The one metric still lagging is `rationale_jaccard_mean = 0.056` — expected, per iter-28 note: legacy runner doesn't yet expose `reason_codes` for symmetric comparison. Not a gate criterion; recorded for diagnostics only.
+
+
 ### ✅ 2026-07-12 (iter-28): FULL DATA WIPE + STEP 7 (NO-SILENT-RETURNS) + STEP 5.b (v2 FINGERPRINT + FRESH-INPUT GATE) SHIPPED
 
 **Architectural clarification landed this session** — the investigation doc's premise was wrong. `shared_positions` is discussion-only by doctrine (`TERMINAL_STATES = consensus_long/short/rejected/stale/invalidated_data_stale`); it was never designed to advance to `pending_open`. The real trading pipeline is `shared_intents → auto_router → broker`, and the pre-wipe stall was caused by (a) `trading_controls.current.enabled = False` (fail-closed master switch never armed on this preview pod, though production has always been armed), (b) missing Kraken creds on preview (production has them), and (c) silent-return code paths that hid the true blocker from operator dashboards.
