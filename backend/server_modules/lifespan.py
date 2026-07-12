@@ -718,13 +718,29 @@ async def lifespan(app: FastAPI):
     # to MC over loopback so the fade class is structurally
     # impossible. The brains hold NO seat — operator-rotatable
     # seat policy still owns authority.
-    try:
-        import sys as _sys
-        _sys.path.insert(0, "/app")
-        from external.brains.runner import start_neutral_brains
-        await start_neutral_brains()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("neutral_brains start failed: %s", e)
+    #
+    # ── 2026-07-12 P3 kill switch ──
+    # `RISEDUAL_LEGACY_RUNNERS_ENABLED=false` short-circuits the
+    # start entirely. Use this to flip pulse-only mode once
+    # `arbiter_flip_gates_pass=True` has held across a full session
+    # for all 4 brains. Default is `true` (backward-compat) because
+    # the pulse is still `compare_only=True` — deleting the runner
+    # while parity is still being observed strands the comparison
+    # denominator. Only flip to `false` after operator has confirmed
+    # sustained gates-pass via `GET /api/mc/parity/{brain}/history`.
+    if os.environ.get("RISEDUAL_LEGACY_RUNNERS_ENABLED", "true").lower() != "false":
+        try:
+            import sys as _sys
+            _sys.path.insert(0, "/app")
+            from external.brains.runner import start_neutral_brains
+            await start_neutral_brains()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("neutral_brains start failed: %s", e)
+    else:
+        logger.info(
+            "legacy runners DISABLED (RISEDUAL_LEGACY_RUNNERS_ENABLED=false) — "
+            "pulse-only mode; comparison denominator will not update"
+        )
 
     # Bracket outcome resolver — converts the brain's stated
     # `target_price`/`stop_price` thesis on every order into clean
@@ -754,12 +770,21 @@ async def lifespan(app: FastAPI):
     if os.environ.get("RISEDUAL_MC_PULSE_ENABLED", "0") == "1":
         try:
             from mc_brains.camino import CaminoBrain
+            from mc_brains.gto import GtoBrain
+            from mc_brains.barracuda import BarracudaBrain
+            from mc_brains.hellcat import HellcatBrain
             from mc_pulse.registry import get_registry
             from mc_pulse.pulse_worker import start_pulse_worker
 
             registry = get_registry()
-            if "camino" not in registry.ids():
-                registry.register(CaminoBrain())
+            # 2026-07-12 P2 step 2: register all 4 pulse brains.
+            # Each is an independent Brain instance; a broken brain
+            # is contained by `mc_pulse.containment.evaluate_brain`
+            # and does NOT silence the other 3.
+            for brain_cls in (CaminoBrain, GtoBrain, BarracudaBrain, HellcatBrain):
+                inst = brain_cls()
+                if inst.id not in registry.ids():
+                    registry.register(inst)
             start_pulse_worker(app)
             logger.info(
                 "mc_pulse worker started (compare_only=True, cadence=15s, brains=%s)",
@@ -808,7 +833,7 @@ async def lifespan(app: FastAPI):
             logger.info(
                 "parity_snapshotter started interval_min=%d window_hours=%d brains=%s",
                 interval_min, window_hours,
-                ["camino"],  # keep the log line stable across brain adds
+                ["camino", "gto", "barracuda", "hellcat"],
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("parity_snapshotter start failed: %s", e)

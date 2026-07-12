@@ -132,9 +132,9 @@ async def compute_parity(
 # care about the aggregate metrics, not paired examples.
 MC_PARITY_SNAPSHOTS = "mc_parity_snapshots"
 
-# Which brains to snapshot. Camino is live in comparison mode
-# today; add GTO/Barracuda/Hellcat as their pulse adapters ship.
-PARITY_SNAPSHOT_BRAINS = ["camino"]
+# Which brains to snapshot. All 4 pulse brains live post-P2 step 2.
+# Add newcomers here as their pulse adapters ship.
+PARITY_SNAPSHOT_BRAINS = ["camino", "gto", "barracuda", "hellcat"]
 
 
 async def take_parity_snapshot(brain_id: str, *, hours: int = 24) -> dict:
