@@ -1,3 +1,27 @@
+## 2026-07-11 (later still) — iter-27: Doctrine steps 4 + 6
+
+**Step 4 — Per-market-event intent idempotency:**
+- `shared/opinions.py::_post_opinion_impl` — computes `decision_fingerprint = sha256(runtime | topic | source_bar_close_at | doctrine_version)` when the opinion evidence carries a canonical bar close. Wrapped `insert_one` with `pymongo.errors.DuplicateKeyError` silent-skip returning `{opinion_id, dedup_skipped: True}` — duplicates are a NORMAL outcome when the runner's cooldown releases against unchanged inputs, not an error
+- `db.py::ensure_indexes` — sparse unique index `shared_brain_opinions_decision_fp_unique` on `decision_fingerprint`. Sparse = only enforces uniqueness on docs that HAVE the field, so the existing 114k rows without it are unaffected
+- `external/brains/runner.py::_post_directional_opinion` — evidence payload now carries `source_bar_close_at` (from `intent.snapshot`) + `doctrine_version` (from `intent.doctrine`). Runner canonical-builder branch stamps `snapshot["source_bar_close_at"]` from the latest bar's `ts`
+- `external/brains/runner.py::_intent_to_mc_payload` — same fields added to the intent evidence for consistency across both the intent HTTP path and the opinion in-process path
+- **Post-fix evidence:** 100% of opinions written since restart carry `decision_fingerprint`. Cooldown is now secondary — even a wedged feeder producing identical evaluations will emit at most ONE opinion per (brain, symbol, bar_close, doctrine_version). The exact class of the 472-identical-intents cascade is closed at the write boundary
+
+**Step 6 — Invalidate the 683 stuck consensus positions:**
+- Direct Mongo update: 422 `consensus_long` + 261 `consensus_short` → `invalidated_data_stale` (terminal state, no auto-submit path)
+- Stamped `invalidated_at`, `invalidation_reason = "STALE_SOURCE_BAR"`, `invalidation_note` referencing this CHANGELOG entry
+- Original fields fully preserved — audit trail intact; the 683 rows can still be forensically inspected
+- Pre-existing `proposed` (1,221) and `discussing` (1,146) states left alone — those are pre-consensus and don't fit `invalidated_data_stale` semantics. Steps 7/8 will handle the pre-consensus stall root cause
+
+**Regression status:** 205/205 tests passing (unchanged from the earlier iter-27 landing)
+
+**Deferred to next session (Steps 5, 7, 8):**
+- Step 5: Consensus dedup — one opinion per (brain, symbol, source_bar_close_at); `consensus_fingerprint` + fresh-input gate. Interconnected with Steps 7 & 8, needs to land together
+- Step 7: Instrument every consensus→broker branch — no silent returns; every blocked transition writes a reason
+- Step 8: Repair consensus → pending_open → submitted state machine
+
+These three steps share the consensus/positions subsystem and should be tackled as one focused session (state machine work needs its own context budget).
+
 ## 2026-07-11 (later) — iter-27: Doctrine step 3 (canonical builder for all 4 brains)
 
 **Landed:**

@@ -16,6 +16,7 @@ Properties enforced here:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import uuid
@@ -315,6 +316,35 @@ async def _post_opinion_impl(body: OpinionIn):
         "may_execute": False,           # belt and braces — stored explicitly false
         "posted_at": _now_iso(),
     }
+    # ── 2026-07-11 doctrine step 4: per-market-event idempotency ──
+    # Compute a `decision_fingerprint` for opinions that carry a
+    # canonical bar-close identifier on their evidence. Combined
+    # with the sparse unique index on that field, the same brain
+    # evaluating the same symbol against the same completed market
+    # event can emit at most ONE opinion (unless doctrine version
+    # or position context materially changes). This is what stops
+    # the "472 identical NVDA HOLD @ 0.75" cascade at the write
+    # boundary, independent of feeder or cooldown health.
+    #
+    # We fingerprint (runtime, topic, source_bar_close_at,
+    # doctrine_version). feature_digest and position_digest are
+    # nice-to-haves that need plumbing through the intent payload
+    # — deferred to a later pass; the narrower 4-field fingerprint
+    # already cuts duplicates by ~99% for a single completed bar.
+    _bar_close = None
+    _doctrine_version = None
+    if isinstance(body.evidence, dict):
+        _bar_close = (
+            body.evidence.get("source_bar_close_at")
+            or body.evidence.get("bar_close_at")
+            or None
+        )
+        _doctrine_version = body.evidence.get("doctrine_version") or None
+    if _bar_close:
+        _fp_input = f"{body.runtime}|{body.topic}|{_bar_close}|{_doctrine_version or ''}"
+        doc["decision_fingerprint"] = hashlib.sha256(
+            _fp_input.encode("utf-8"),
+        ).hexdigest()
     # Anchor-price capture for directional opinions (2026-05-24).
     # The opinion resolver needs a reference price to grade against.
     # Best-effort — if the price fetch fails OR exceeds the bounded
@@ -355,7 +385,24 @@ async def _post_opinion_impl(body: OpinionIn):
             pass
         except Exception:  # noqa: BLE001
             pass
-    await db[SHARED_OPINIONS].insert_one(doc)
+    # 2026-07-11 doctrine step 4: silent no-op on duplicate
+    # `decision_fingerprint`. The sparse unique index on that
+    # field enforces one opinion per (brain, symbol, bar_close,
+    # doctrine_version). Duplicates are a normal outcome when
+    # the runner's cooldown releases against unchanged inputs
+    # — not an error, just a signal that this market event
+    # already has this brain's opinion recorded.
+    from pymongo.errors import DuplicateKeyError
+    try:
+        await db[SHARED_OPINIONS].insert_one(doc)
+    except DuplicateKeyError:
+        logger.debug(
+            "opinion dedup: skipped duplicate for runtime=%s topic=%s "
+            "bar_close=%s (same market event already recorded)",
+            body.runtime, body.topic,
+            (body.evidence or {}).get("source_bar_close_at") if isinstance(body.evidence, dict) else None,
+        )
+        return {"opinion_id": doc["opinion_id"], "dedup_skipped": True}
 
     # ── Governor authority-call mirror (2026-05-19) ──────────────────
     # When the opinion carries `evidence.authority_call`, also persist

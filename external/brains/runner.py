@@ -937,6 +937,15 @@ def _intent_to_mc_payload(intent: BrainIntent) -> dict:
             "doctrine": intent.doctrine,
             "seat": intent.seat,
             "legacy_wrapper": (intent.snapshot or {}).get("legacy_wrapper_meta"),
+            # ── 2026-07-11 doctrine step 4: idempotency plumbing ──
+            # `source_bar_close_at` carries the canonical completed
+            # bar timestamp through to the opinion write, where
+            # `decision_fingerprint` is computed and the sparse
+            # unique index dedups. Without this field on evidence,
+            # the fingerprint isn't computed and duplicates land —
+            # exactly the pattern we're trying to stop.
+            "source_bar_close_at": (intent.snapshot or {}).get("source_bar_close_at"),
+            "doctrine_version": intent.doctrine,
         },
     }
 
@@ -1432,6 +1441,15 @@ class BrainRunner:
             _ss = optional_float(_sig.get("setup_score"))
             setup_score = _ss if _ss is not None else 0.0
             snapshot["setup_score"] = round(setup_score, 4)
+            # 2026-07-11 doctrine step 4: stamp the canonical bar
+            # close so `_intent_to_mc_payload` can propagate it into
+            # `evidence.source_bar_close_at`, enabling the sparse
+            # unique index on `decision_fingerprint` at write time.
+            _bars_for_ts = _bars or []
+            if _bars_for_ts:
+                _latest_ts = _bars_for_ts[-1].get("ts")
+                if _latest_ts:
+                    snapshot["source_bar_close_at"] = _latest_ts
         else:
             snapshot, setup_score = _build_snapshot(symbol, lane, technical)
         # Doctrine (2026-06-11, operator directive): Webull-side
@@ -1803,6 +1821,13 @@ class BrainRunner:
                 "personality_risk_mode": (
                     get_personality(self.brain_id).get("risk_mode")
                 ),
+                # 2026-07-11 doctrine step 4: idempotency plumbing.
+                # `source_bar_close_at` reaches the opinion write
+                # via `body.evidence`, where the sparse unique
+                # index on `decision_fingerprint` deduplicates
+                # against the same completed market event.
+                "source_bar_close_at": (intent.snapshot or {}).get("source_bar_close_at"),
+                "doctrine_version": intent.doctrine,
             },
             "may_execute": False,
         }

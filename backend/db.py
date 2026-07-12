@@ -602,6 +602,21 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         name="shared_intents_symbol_ingest_idx",
     )
     await db.shared_brain_opinions.create_index([("runtime", 1), ("topic", 1), ("posted_at", -1)])
+    # 2026-07-11 doctrine step 4: per-market-event idempotency.
+    # Sparse so existing 114k docs without the field don't
+    # conflict; sparse+unique means "enforce uniqueness only on
+    # docs where `decision_fingerprint` exists". The same brain
+    # evaluating the same symbol against the same completed bar
+    # can produce at most ONE opinion. Cooldown becomes secondary
+    # — this is the doctrine-level guard against 472-identical-
+    # intent cascades regardless of upstream feeder health.
+    await _safe_create_index(
+        db.shared_brain_opinions,
+        [("decision_fingerprint", 1)],
+        name="shared_brain_opinions_decision_fp_unique",
+        unique=True,
+        sparse=True,
+    )
     await db.shared_brain_outcomes.create_index([("opinion_id", 1), ("resolved_at", -1)])
     # 2026-02-28 — MC Shelly noise cleanup companion. On preview the
     # collection had grown to 1.86M rows / 528 MB (data + indexes)
