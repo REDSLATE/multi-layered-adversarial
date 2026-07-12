@@ -103,7 +103,10 @@ function BrainTile({ brain, live, history }) {
       <div className="flex items-baseline justify-between">
         <div>
           <div className="text-lg font-semibold">{meta.display}</div>
-          <div className="text-xs opacity-60">{meta.strategy} · reason family: <span className="font-mono">{meta.family}_*</span></div>
+          <div className="text-xs opacity-60">
+            {meta.strategy} · reason family: <span className="font-mono">{meta.family}_*</span>
+            <RegimePill regime={live?.market_regime} />
+          </div>
         </div>
         <div className={`text-3xl font-mono tabular-nums ${
           tone === "red"    ? "text-red-500" :
@@ -148,6 +151,8 @@ function BrainTile({ brain, live, history }) {
       <NoDataBreakdown brain={brain} breakdown={live?.no_data_breakdown} noDataRate={live?.no_data_rate} />
 
       <ArbiterAlignment brain={brain} alignment={live?.arbiter_alignment} />
+
+      <DissentCorrectness brain={brain} dissent={live?.dissent_correctness} />
 
       {warnings.length > 0 && (
         <div className="mt-3 space-y-1" data-testid={`pulse-health-warnings-${brain}`}>
@@ -248,6 +253,71 @@ function ArbiterAlignment({ brain, alignment }) {
         data-testid={`pulse-health-arbiter-alignment-rate-${brain}`}
       >
         {rate === null || rate === undefined ? "—" : `${(rate * 100).toFixed(1)}%`}
+      </span>
+    </div>
+  );
+}
+
+// P2 (2026-02-11): tiny inline pill in the tile header showing the
+// current market regime the health snapshot was taken in. Colour-
+// tinted so the operator picks up regime context at a glance and
+// can interpret distinctness/alignment appropriately (a brain that
+// looks "boring" in a strong bull may light up in choppy).
+const REGIME_TONE = {
+  bull:    "text-emerald-400 border-emerald-400/30 bg-emerald-400/10",
+  bear:    "text-red-400     border-red-400/30     bg-red-400/10",
+  choppy:  "text-amber-400   border-amber-400/30   bg-amber-400/10",
+  unknown: "text-white/40    border-white/10       bg-white/5",
+};
+
+function RegimePill({ regime }) {
+  const key = regime || "unknown";
+  const tone = REGIME_TONE[key] || REGIME_TONE.unknown;
+  return (
+    <span
+      className={`ml-2 inline-block px-1.5 py-0.5 text-[10px] rounded border font-mono ${tone}`}
+      data-testid="pulse-health-regime-pill"
+    >
+      {key}
+    </span>
+  );
+}
+
+// P3 (2026-02-11): dissent correctness — when this brain disagrees
+// with peer consensus and the outcome is later resolved, how often
+// was the brain right? Sample-gated: renders "gathering samples
+// (N / 50)" until enough resolved dissents exist. Once N ≥ 50 the
+// rate takes over. Never hides — the placeholder itself is
+// operator-actionable (tells you the metric is being farmed).
+function DissentCorrectness({ brain, dissent }) {
+  if (!dissent) return null;
+  const resolved = dissent.resolved ?? 0;
+  const correct = dissent.correct ?? 0;
+  const rate = dissent.correctness_rate;
+  const gathering = dissent.gathering_samples;
+  const minSamples = dissent.min_samples ?? 50;
+  return (
+    <div
+      className="mt-2 pt-2 border-t border-white/5 flex items-baseline justify-between text-xs"
+      data-testid={`pulse-health-dissent-correctness-${brain}`}
+    >
+      <div>
+        <span className="opacity-60">dissent correctness</span>
+        {resolved > 0 && (
+          <span className="opacity-40 ml-2 text-[10px]">
+            ({correct}/{resolved})
+          </span>
+        )}
+      </div>
+      <span
+        className="font-mono tabular-nums"
+        data-testid={`pulse-health-dissent-rate-${brain}`}
+      >
+        {gathering
+          ? <span className="opacity-40 text-[11px]">gathering ({resolved}/{minSamples})</span>
+          : rate === null || rate === undefined
+            ? "—"
+            : `${(rate * 100).toFixed(1)}%`}
       </span>
     </div>
   );

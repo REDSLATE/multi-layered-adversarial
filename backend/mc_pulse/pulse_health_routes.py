@@ -47,15 +47,60 @@ from db import db
 
 logger = logging.getLogger("mc_pulse.pulse_health")
 
+# ── Migration Release 2 (2026-02-11): brain → brain_id ──
+# The `BrainFailure` receipt schema was standardised on `brain_id`,
+# but the legacy `bf.get("brain")` field slipped through in a few
+# health-metric reads. Release 1 (iter-28l) added the fallback.
+# Release 2 (this) logs a warning EVERY TIME the legacy field is
+# hit — one warning per callsite per process boot (spam-safe via
+# a module-level set). Release 3 will delete the fallback branch
+# entirely once the warning stops firing for a full TTL window.
+_LEGACY_BRAIN_FIELD_WARNED: set = set()
+
+
+def _read_brain_id_from_failure(bf: dict, *, callsite: str) -> str:
+    """Read `bf.brain_id`, falling back to legacy `bf.brain`. Emits
+    a one-shot warning per callsite whenever the fallback fires,
+    so operator logs harvest any remaining legacy writers before
+    Release 3 removes the fallback."""
+    bid = bf.get("brain_id")
+    if bid:
+        return str(bid).lower()
+    legacy = bf.get("brain")
+    if legacy:
+        if callsite not in _LEGACY_BRAIN_FIELD_WARNED:
+            _LEGACY_BRAIN_FIELD_WARNED.add(callsite)
+            logger.warning(
+                "brain→brain_id migration: legacy `brain` field "
+                "encountered at %s. Release 3 will remove the "
+                "fallback; check receipt writers.", callsite,
+            )
+        return str(legacy).lower()
+    return ""
+
 router = APIRouter(prefix="/mc/pulse-health", tags=["mc-pulse-health"])
 
 MC_OPINIONS_COMPARE = "mc_opinions_compare"
 MC_PULSES = "mc_pulses"
 MC_SEATS = "mc_seats"
 MC_PULSE_HEALTH_SNAPSHOTS = "mc_pulse_health_snapshots"
+# P3 (2026-02-11): dissent correctness reads from these two.
+SHARED_BRAIN_OPINIONS = "shared_brain_opinions"
+SHARED_BRAIN_OUTCOMES = "shared_brain_outcomes"
 
 # Persistence list — all 4 brains currently registered in the pulse.
 PULSE_HEALTH_SNAPSHOT_BRAINS = ["camino", "gto", "barracuda", "hellcat"]
+
+# P3 (2026-02-11): minimum resolved dissents needed before we
+# render a rate on the tile. Smaller samples get a "gathering
+# samples (N / 50)" placeholder — statistical noise dominates at
+# low N and would mislead the operator.
+DISSENT_MIN_SAMPLES = 50
+# Concurrency window for peer-opinion detection. Two opinions on
+# the same topic posted within this window are "concurrent" and
+# eligible for majority-vote comparison. 15min matches typical
+# bar cadence for equities and is generous for crypto.
+DISSENT_CONCURRENCY_WINDOW_SEC = 900
 
 
 # ─────────────── computation ───────────────
@@ -103,6 +148,30 @@ async def compute_pulse_health(brain_id: str, *, hours: int = 24) -> dict:
         },
     )
 
+    # P2 (2026-02-11): stamp the market regime AT SNAPSHOT TIME so
+    # downstream slicing (distinctness-by-regime, alignment-by-regime)
+    # is possible without reprocessing. `get_regime` is TTL-cached
+    # (default 15min) so each snapshot is a cheap read. Regime is a
+    # SYSTEM property, not a per-brain property — every brain shares
+    # the same regime for the same wall-clock — but we stamp it on
+    # each brain's row so operators can query "camino during choppy".
+    try:
+        from shared.market_regime import get_regime  # noqa: WPS433
+        regime_dict = await get_regime()
+        market_regime = regime_dict.get("regime")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("market_regime lookup failed: %s", exc)
+        market_regime = None
+
+    # P3 (2026-02-11): informative-divergence / dissent-correctness.
+    # We only compute it when the SAMPLE is big enough (N ≥ 50);
+    # smaller samples return `{resolved: N, gathering_samples: True}`
+    # so the tile shows a "gathering samples" placeholder. The join
+    # reads `shared_brain_opinions` (all brains, this window) +
+    # `shared_brain_outcomes` (via opinion_id) and detects dissents
+    # against concurrent peer opinions (±15 min on same topic).
+    dissent = await _dissent_correctness(brain_lc, since)
+
     return {
         "brain": brain_lc,
         "window_hours": hours,
@@ -120,6 +189,8 @@ async def compute_pulse_health(brain_id: str, *, hours: int = 24) -> dict:
         "pulse_lag_ms": _pulse_lag_ms(opinions),
         "distinctness": _distinctness(opinions, peer_opinions),
         "arbiter_alignment": _arbiter_alignment(arbiter_decisions, brain_lc),
+        "market_regime": market_regime,
+        "dissent_correctness": dissent,
     }
 
 
@@ -196,7 +267,9 @@ def _no_data_rate(
     for p in pulses:
         failed = p.get("brains_failed") or []
         for bf in failed:
-            if isinstance(bf, dict) and (bf.get("brain_id") or bf.get("brain") or "").lower() == brain_lc:
+            if isinstance(bf, dict) and _read_brain_id_from_failure(
+                bf, callsite="_no_data_rate",
+            ) == brain_lc:
                 failed_pulse_ids.add(p.get("pulse_id"))
     contributed = opinion_pulse_ids | failed_pulse_ids
     total = len(pulses)
@@ -241,7 +314,9 @@ def _no_data_breakdown(
             contributed.add(p.get("pulse_id"))
         for bf in (p.get("brains_failed") or []):
             if isinstance(bf, dict):
-                bid = (bf.get("brain_id") or bf.get("brain") or "").lower()
+                bid = _read_brain_id_from_failure(
+                    bf, callsite="_no_data_breakdown",
+                )
                 if bid == brain_lc:
                     contributed.add(p.get("pulse_id"))
 
@@ -354,6 +429,186 @@ def _arbiter_alignment(decisions: list[dict], brain_lc: str) -> dict:
 
 
 
+async def _dissent_correctness(brain_lc: str, since: str) -> dict:
+    """P3 (2026-02-11): informative-divergence / dissent correctness.
+
+    Answers: "when this brain disagrees with its peers, is it usually
+    right?" — the metric that supersedes raw distinctness in the
+    long-run tile hierarchy. A brain that dissents and is validated
+    by outcomes is a genuinely-differentiated council seat; a brain
+    that dissents and is systematically wrong may be over-tuned.
+
+    Method:
+      1. Read this brain's directional opinions in the window.
+      2. Read peer opinions in the window.
+      3. For each self opinion, find concurrent peer opinions on the
+         SAME topic within DISSENT_CONCURRENCY_WINDOW_SEC.
+      4. Compute peer majority direction. If self direction differs
+         AND peer count ≥ 2 → this is a "dissent".
+      5. Join the self opinion to its outcome via `opinion_id`.
+      6. Correct = `outcome.actual == "win"`.
+
+    Returned shape:
+        {
+          "resolved": 63,     # # resolved dissents
+          "correct":  41,     # # of those where brain was validated
+          "correctness_rate": 0.6508,
+          "gathering_samples": False,  # True if resolved < 50
+          "min_samples": 50,
+        }
+
+    Fail-soft: any DB timeout returns
+    `{"resolved": 0, ..., "gathering_samples": True}`.
+    """
+    try:
+        # 1. Self opinions in window — DIRECTIONAL only (long/short).
+        #    That's all `opinion_resolver` grades, so the join is
+        #    only meaningful on directional stances anyway.
+        self_ops = await _safe_find(
+            SHARED_BRAIN_OPINIONS,
+            {
+                "runtime": brain_lc,
+                "stance": {"$in": ["long", "short"]},
+                "posted_at": {"$gte": since},
+            },
+        )
+        if not self_ops:
+            return {
+                "resolved": 0, "correct": 0,
+                "correctness_rate": None,
+                "gathering_samples": True,
+                "min_samples": DISSENT_MIN_SAMPLES,
+            }
+        # 2. Peer opinions in the same window (all brains, all
+        #    directional stances — we'll filter to non-self during
+        #    the concurrency scan).
+        peer_ops = await _safe_find(
+            SHARED_BRAIN_OPINIONS,
+            {
+                "runtime": {"$ne": brain_lc},
+                "stance": {"$in": ["long", "short"]},
+                "posted_at": {"$gte": since},
+            },
+        )
+        # Index peers by topic for the concurrency lookup.
+        peers_by_topic: dict[str, list[dict]] = {}
+        for op in peer_ops:
+            t = op.get("topic")
+            if t:
+                peers_by_topic.setdefault(t, []).append(op)
+        for t in peers_by_topic:
+            peers_by_topic[t].sort(key=lambda x: x.get("posted_at") or "")
+
+        # 3. For each self opinion, detect dissent + collect
+        #    opinion_ids that qualify.
+        dissenting_opinion_ids: list[str] = []
+        for so in self_ops:
+            topic = so.get("topic")
+            self_stance = (so.get("stance") or "").lower()
+            self_ts = _parse_ts(so.get("posted_at"))
+            if not (topic and self_ts and self_stance in ("long", "short")):
+                continue
+            concurrent = _concurrent_peers(
+                peers_by_topic.get(topic, []), self_ts,
+                DISSENT_CONCURRENCY_WINDOW_SEC,
+            )
+            if len(concurrent) < 2:
+                continue  # not enough peer signal to establish majority
+            peer_stances = [
+                (p.get("stance") or "").lower() for p in concurrent
+            ]
+            majority = _majority_direction(peer_stances)
+            if majority is None:
+                continue  # peers themselves split — no dissent to grade
+            if self_stance != majority:
+                op_id = so.get("opinion_id")
+                if op_id:
+                    dissenting_opinion_ids.append(op_id)
+
+        if not dissenting_opinion_ids:
+            return {
+                "resolved": 0, "correct": 0,
+                "correctness_rate": None,
+                "gathering_samples": True,
+                "min_samples": DISSENT_MIN_SAMPLES,
+            }
+
+        # 4. Join to outcomes.
+        outcomes = await _safe_find(
+            SHARED_BRAIN_OUTCOMES,
+            {"opinion_id": {"$in": dissenting_opinion_ids}},
+        )
+        resolved = 0
+        correct = 0
+        for out in outcomes:
+            actual = (out.get("actual") or "").lower()
+            if actual not in ("win", "loss", "no-event"):
+                continue
+            resolved += 1
+            if actual == "win":
+                correct += 1
+
+        if resolved == 0:
+            return {
+                "resolved": 0, "correct": 0,
+                "correctness_rate": None,
+                "gathering_samples": True,
+                "min_samples": DISSENT_MIN_SAMPLES,
+            }
+
+        return {
+            "resolved": resolved,
+            "correct": correct,
+            "correctness_rate": round(correct / resolved, 4)
+                if resolved >= DISSENT_MIN_SAMPLES else None,
+            "gathering_samples": resolved < DISSENT_MIN_SAMPLES,
+            "min_samples": DISSENT_MIN_SAMPLES,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_dissent_correctness failed brain=%s: %s", brain_lc, exc)
+        return {
+            "resolved": 0, "correct": 0,
+            "correctness_rate": None,
+            "gathering_samples": True,
+            "min_samples": DISSENT_MIN_SAMPLES,
+            "error": str(exc)[:200],
+        }
+
+
+def _concurrent_peers(
+    sorted_peers: list[dict],
+    self_ts: datetime,
+    window_sec: int,
+) -> list[dict]:
+    """Return peer opinions posted within ±`window_sec` of `self_ts`.
+    Sorted-input assumption lets us do a linear scan; the peer list
+    per topic is bounded by 3 (three peer brains) × pulse count."""
+    concurrent = []
+    for p in sorted_peers:
+        p_ts = _parse_ts(p.get("posted_at"))
+        if p_ts is None:
+            continue
+        delta = abs((p_ts - self_ts).total_seconds())
+        if delta <= window_sec:
+            concurrent.append(p)
+    return concurrent
+
+
+def _majority_direction(stances: list[str]) -> Optional[str]:
+    """Simple plurality: if long > short, return long; if short > long,
+    return short. Ties (equal counts) return None — no majority to
+    dissent against."""
+    n_long = sum(1 for s in stances if s == "long")
+    n_short = sum(1 for s in stances if s == "short")
+    if n_long > n_short:
+        return "long"
+    if n_short > n_long:
+        return "short"
+    return None
+
+
+
+
 def _exception_rate(pulses: list[dict], brain_lc: str) -> float:
     """Fraction of pulses where THIS brain raised (caught by
     containment). Non-zero = there's a bug the pulse loop is
@@ -364,7 +619,7 @@ def _exception_rate(pulses: list[dict], brain_lc: str) -> float:
     for p in pulses:
         for bf in (p.get("brains_failed") or []):
             if isinstance(bf, dict):
-                bid = (bf.get("brain_id") or bf.get("brain") or "").lower()
+                bid = _read_brain_id_from_failure(bf, callsite="_exception_rate")
                 if bid == brain_lc:
                     n_exc += 1
     return round(n_exc / len(pulses), 4)
@@ -567,6 +822,14 @@ async def take_pulse_health_snapshot(
             "latest_source_bar_at": health.get("latest_source_bar_at"),
             "pulse_lag_ms": health.get("pulse_lag_ms"),
             "distinctness": health.get("distinctness", {}),
+            # P2 (2026-02-11): regime stamped AT SNAPSHOT TIME so
+            # historical slicing "distinctness during choppy vs bull"
+            # is possible without reprocessing.
+            "market_regime": health.get("market_regime"),
+            # P3 (2026-02-11): dissent correctness — sample-gated;
+            # when `gathering_samples=True` the tile renders a
+            # placeholder instead of a misleading rate.
+            "dissent_correctness": health.get("dissent_correctness", {}),
         }
         await db[MC_PULSE_HEALTH_SNAPSHOTS].insert_one(dict(doc))
         return doc
@@ -605,3 +868,94 @@ async def pulse_health_history(
     for r in rows:
         r.pop("_id", None)
     return {"brain": brain_lc, "count": len(rows), "snapshots": rows}
+
+
+
+@router.get("/{brain_id}/by-regime")
+async def pulse_health_by_regime(
+    brain_id: str,
+    days: int = Query(7, ge=1, le=30),
+    user: dict = Depends(get_current_user),
+):
+    """P2 (2026-02-11): regime-sliced distinctness + alignment.
+
+    Reads `mc_pulse_health_snapshots` for this brain over the last
+    N days, groups by `market_regime`, and returns the mean
+    `distinctness.mean_symbol_disagreement` + mean
+    `arbiter_alignment.alignment_rate` PER REGIME.
+
+    This answers the operator's question: "is Barracuda actually
+    contributing more in ranging markets, like its doctrine says
+    it should?" Requires N ≥ 3 snapshots per regime before we
+    report a mean — otherwise the sample is too small to trust.
+
+    Response:
+        {
+          "brain": "camino",
+          "days": 7,
+          "by_regime": {
+            "bull":    {"n": 128, "distinctness": 0.18, "alignment_rate": 0.32},
+            "bear":    {"n": 12,  "distinctness": 0.24, "alignment_rate": 0.18},
+            "choppy":  {"n": 44,  "distinctness": 0.35, "alignment_rate": 0.29},
+            "unknown": {"n":  6,  "distinctness": null, "alignment_rate": null},
+          }
+        }
+    """
+    brain_lc = brain_id.strip().lower()
+    since = (
+        datetime.now(timezone.utc) - timedelta(days=days)
+    ).isoformat()
+    rows = await _safe_find(
+        MC_PULSE_HEALTH_SNAPSHOTS,
+        {"brain": brain_lc, "at": {"$gte": since}},
+    )
+
+    # Group by regime bucket.
+    buckets: dict[str, list[dict]] = {}
+    for r in rows:
+        regime = r.get("market_regime") or "unknown"
+        buckets.setdefault(regime, []).append(r)
+
+    def _mean(values: list[float]) -> Optional[float]:
+        vals = [v for v in values if v is not None]
+        if not vals:
+            return None
+        return round(sum(vals) / len(vals), 4)
+
+    MIN_SAMPLES = 3
+    by_regime = {}
+    for regime, snaps in buckets.items():
+        # `distinctness` is a dict; the headline metric is
+        # `distinctness` inside the dict (the recall vs peers). Fall
+        # back to the top-level scalar for older snapshots that
+        # didn't nest it.
+        dist_vals = []
+        align_vals = []
+        for s in snaps:
+            d = s.get("distinctness") or {}
+            if isinstance(d, dict):
+                dv = d.get("distinctness")
+                if dv is None:
+                    # Legacy field name from earlier iterations.
+                    dv = d.get("mean_symbol_disagreement")
+                if dv is not None:
+                    dist_vals.append(dv)
+            elif isinstance(d, (int, float)):
+                dist_vals.append(float(d))
+            a = s.get("arbiter_alignment") or {}
+            if isinstance(a, dict):
+                av = a.get("alignment_rate")
+                if av is not None:
+                    align_vals.append(av)
+        by_regime[regime] = {
+            "n": len(snaps),
+            "distinctness": _mean(dist_vals) if len(snaps) >= MIN_SAMPLES else None,
+            "alignment_rate": _mean(align_vals) if len(snaps) >= MIN_SAMPLES else None,
+            "insufficient_samples": len(snaps) < MIN_SAMPLES,
+        }
+    return {
+        "brain": brain_lc,
+        "days": days,
+        "min_samples_per_regime": MIN_SAMPLES,
+        "by_regime": by_regime,
+    }

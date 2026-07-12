@@ -40,6 +40,13 @@ async def test_snapshot_row_has_full_pulse_health_schema(monkeypatch):
                 "wins": 3,
                 "alignment_rate": 0.25,
             },
+            "market_regime": "choppy",
+            "dissent_correctness": {
+                "resolved": 12, "correct": 7,
+                "correctness_rate": None,
+                "gathering_samples": True,
+                "min_samples": 50,
+            },
             "duplicate_opinion_rate": 0.03,
             "latest_source_bar_at": "2026-07-12T15:00:00+00:00",
             "pulse_lag_ms": 220.0,
@@ -71,7 +78,8 @@ async def test_snapshot_row_has_full_pulse_health_schema(monkeypatch):
         "at", "brain", "window_hours", "evaluation_count",
         "action_distribution", "confidence_mean", "confidence_std",
         "stale_input_rate", "no_data_rate", "no_data_breakdown",
-        "exception_rate", "arbiter_alignment",
+        "exception_rate", "arbiter_alignment", "market_regime",
+        "dissent_correctness",
         "duplicate_opinion_rate", "latest_source_bar_at", "pulse_lag_ms",
         "distinctness",
     ):
@@ -309,6 +317,34 @@ def test_arbiter_alignment_tolerates_missing_field():
     assert a["participated"] == 1
     assert a["wins"] == 1
     assert a["alignment_rate"] == 1.0
+
+
+# ─────────────── P3: dissent correctness helpers ───────────────
+
+def test_majority_direction_simple_plurality():
+    from mc_pulse.pulse_health_routes import _majority_direction
+    assert _majority_direction(["long", "long", "short"]) == "long"
+    assert _majority_direction(["short", "short", "long"]) == "short"
+    assert _majority_direction(["long", "short"]) is None
+    assert _majority_direction([]) is None
+    # Case sensitivity: peer stances are already lowercased upstream.
+    assert _majority_direction(["long"]) == "long"
+
+
+def test_concurrent_peers_within_window():
+    from datetime import datetime, timezone
+    from mc_pulse.pulse_health_routes import _concurrent_peers
+    def _op(ts):
+        return {"posted_at": ts}
+    self_ts = datetime(2026, 7, 12, 12, 0, 0, tzinfo=timezone.utc)
+    peers = [
+        _op("2026-07-12T11:55:00+00:00"),  # 5min before → in
+        _op("2026-07-12T12:05:00+00:00"),  # 5min after  → in
+        _op("2026-07-12T12:20:00+00:00"),  # 20min after → out (window 900s)
+        _op("2026-07-12T11:30:00+00:00"),  # 30min before → out
+    ]
+    concurrent = _concurrent_peers(peers, self_ts, 900)
+    assert len(concurrent) == 2
 
 
 def test_exception_rate_counts_containment_failures():

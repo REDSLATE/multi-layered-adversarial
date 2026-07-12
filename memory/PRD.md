@@ -31,6 +31,34 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### 🌊 2026-07-12 (iter-28n): P2 (Regime) + P3 (Dissent Correctness) + brain→brain_id migration Rel.2 SHIPPED
+
+**Brain → brain_id migration (Release 2)**
+- Consolidated all three `brains_failed[].brain` legacy-fallback callsites (`_no_data_rate`, `_no_data_breakdown`, `_exception_rate`) through a shared `_read_brain_id_from_failure(bf, callsite=…)` helper.
+- Helper emits ONE `logger.warning` per callsite per process boot when the legacy `brain` field is hit (spam-safe via module-level `_LEGACY_BRAIN_FIELD_WARNED` set).
+- Release 3 (delete the fallback) can safely run once the warnings stop firing for a full TTL window of pulses.
+
+**P2 — Regime-Sliced Health**
+- `compute_pulse_health` now calls `shared.market_regime.get_regime()` (already TTL-cached) and stamps `market_regime` ∈ {`bull`, `bear`, `choppy`, None} on both the live payload AND every `mc_pulse_health_snapshots` row.
+- New endpoint `GET /api/mc/pulse-health/{brain_id}/by-regime?days=7` reads snapshot history, groups by regime, returns `{n, distinctness, alignment_rate, insufficient_samples}` per regime.
+- `insufficient_samples = True` when N < 3 for that regime bucket; suppresses rate rendering.
+- Frontend: new `RegimePill` component in each tile header — colour-tinted (`bull`=emerald, `bear`=red, `choppy`=amber, `unknown`=gray) so operators can interpret distinctness/alignment in regime context at a glance.
+- Live: `bull` pill now rendering on all 4 tiles; historical bucketing shows 47 pre-P2 snapshots in `unknown` + 2 post-P2 in `bull`.
+
+**P3 — Dissent Correctness (long-runway metric)**
+- New `_dissent_correctness(brain_lc, since)` function joins `shared_brain_opinions` + `shared_brain_outcomes` at read time:
+  1. Load this brain's directional opinions in the window.
+  2. Load peer opinions in the window; index by topic.
+  3. For each self opinion, find concurrent peers (±15 min on same topic).
+  4. If peer count ≥ 2 AND self direction differs from peer majority → dissent.
+  5. Join to outcomes via `opinion_id`; `actual == "win"` → correct dissent.
+- Sample-gated: `min_samples=50` before rendering a rate. Below that: `gathering_samples=True`, tile shows "gathering (N/50)".
+- Fully fail-soft: DB timeout or malformed rows return `{resolved: 0, gathering_samples: True}`. Never crashes the payload.
+- Frontend: new `DissentCorrectness` component renders below `ArbiterAlignment`. Shows `"gathering (0/50)"` placeholder until N reaches threshold, then `"63.5%"` with `(correct/resolved)` badge.
+- Live: currently `gathering (0/50)` on all 4 brains — no concurrent-peer dissents yet in the outcome tape (opinion_resolver needs anchor_price which most legacy opinions don't have). Metric will start populating as new opinions carry anchor_price forward.
+
+**Testing**: 21 pulse-health unit tests (5 new: majority direction, concurrency window, plus the schema expansion). Full regression sweep: **351/351 green**. Lint clean on both backend and frontend.
+
 ### 🎯 2026-07-12 (iter-28m): P4 (Arbiter Alignment) + 2B (Silence Sidecar) SHIPPED
 
 Follow-up to iter-28l's `no_data` breakdown; picks up the "Brain Influence" thread — distinctness measured *difference*, alignment measures *impact*.
