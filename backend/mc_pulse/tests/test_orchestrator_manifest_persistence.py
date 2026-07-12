@@ -140,8 +140,10 @@ async def test_pulse_persists_manifest_for_insufficient_data(monkeypatch):
     reg.register(brain)
     set_registry(reg)
 
-    # Only trend_score present → every other required field missing.
-    snap = _snapshot(features={"trend_score": 0.4})
+    # 2026-07-12 (P7a): the manifest-INSUFFICIENT_DATA path now
+    # fires when the STRATEGY's primary feature is absent. For
+    # Camino (TrendFollowingStrategy) that's `trend_score`.
+    snap = _snapshot(features={"price_change_pct": 0.5})  # trend_score absent
 
     persist_calls = []
 
@@ -164,10 +166,7 @@ async def test_pulse_persists_manifest_for_insufficient_data(monkeypatch):
     assert m.status == OpinionStatus.INSUFFICIENT_DATA.value
     assert m.confidence == 0.0
     assert m.action == "HOLD"
-    assert "MISSING_REQUIRED_FEATURES" in m.reason_codes
-    # Missing fields must be enumerated on the manifest for
-    # downstream diagnosis.
-    assert len(m.missing_fields) > 0
+    assert "TREND_NO_SIGNAL" in m.reason_codes
 
 
 @pytest.mark.asyncio

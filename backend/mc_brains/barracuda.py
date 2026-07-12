@@ -14,12 +14,14 @@ this pulse-first path.
 from __future__ import annotations
 
 from mc_brains._pulse_base import NeutralAdversarialPulseBrain
+from mc_brains.strategies.mean_reversion import MeanReversionStrategy
 
 
 class BarracudaBrain(NeutralAdversarialPulseBrain):
-    """Opportunistic brain — leans into strong reads."""
+    """Opportunistic brain — mean-reversion fader."""
 
     PULSE_ID = "barracuda"
     CORE_BRAIN_ID = "camaro"
     DISPLAY_NAME = "Barracuda"
-    RATIONALE_TAG = "opportunistic"
+    RATIONALE_TAG = "mean_reversion"
+    STRATEGY_CLS = MeanReversionStrategy

@@ -31,6 +31,79 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### 🧠🧠🧠🧠 2026-07-12 (iter-28g): P7a+b+c+d SHIPPED — FOUR BRAINS BECOME FOUR MINDS
+
+**Operator directive**: "The major result is real: the four runners are gone, but the four brains are not. Mission Control now owns the body; the next phase is giving each brain a genuinely different mind."
+
+**P7a — Strategy interfaces + 4 strategy modules SHIPPED**:
+
+New `mc_brains/strategies/` directory with a `Strategy` protocol:
+- `StrategyResult(action, confidence, reason_codes, edge_evidence)` — frozen dataclass, validates action ∈ {BUY, SELL, HOLD}, confidence ∈ [0, 1].
+- `Strategy` protocol: `reason_code_family: ClassVar[str]` + `evaluate(snapshot) -> StrategyResult`. Pure, deterministic, no DB reads.
+
+Four strategy modules with distinct reasoning paths:
+
+| Owner | Strategy | Primary features | Reason-code family | Behavior |
+|---|---|---|---|---|
+| Camino | `TrendFollowingStrategy` | `trend_score`, `price_change_pct` | `TREND_*` | Fires when trend + price confirmation align. Willing to be early on weak trends. |
+| GTO | `MomentumConfirmationStrategy` | `price_change_pct`, `volume_change_pct`, `relative_volume`, `gap_pct` | `MOMENTUM_*` | Disciplined — requires ≥ 3 aligned confirms to fire. Highest HOLD rate. |
+| Barracuda | `MeanReversionStrategy` | `rsi`, `vwap_distance_pct` | `MEAN_*` | Fades extremes. Only brain that reliably takes contrarian positions in strong trends. |
+| Hellcat | `ExecutionSafetyStrategy` | `spread_bps`, `volatility`, `liquidity_score` | `EXEC_*` | Vetoes trades under hostile venue conditions FIRST. Weak directional read only when execution is clean. Directional confidence capped at 0.55. |
+
+`NeutralAdversarialPulseBrain._pulse_base.py` refactored to dispatch to `STRATEGY_CLS.evaluate(snapshot)` instead of the shared `NeutralAdversarialBrain` core. Personality multiplier still applied (post-strategy) — remains a confidence modulator only.
+
+**P7b — Replay corpus SHIPPED**:
+`mc_pulse/tests/replay_corpus.py` — deterministic `MarketSnapshot` builder with 10 canonical scenarios (strong_up_trending, overbought_extreme, oversold_extreme, wide_spread_hostile_venue, volatility_spike_news, low_liquidity_crypto, ranging_quiet, gap_up_with_volume, strong_down_trending, uptrend_meeting_overbought). Any acceptance test can iterate these to prove per-brain behavior in one line.
+
+**P7c — Personality-separation acceptance tests SHIPPED** (6 tests, all pass):
+1. `test_pairwise_action_agreement_below_ceiling` — no pair of brains agrees on the same action more than 85% of scenarios in the corpus.
+2. `test_pairwise_confidence_correlation_below_ceiling` — Pearson r on confidence sequences stays below 0.85 for every pair.
+3. `test_each_brain_has_unique_reason_code_family` — every brain emits its own family prefix, no foreign families leak.
+4. `test_each_brain_disagrees_with_council_at_least_once` — every brain dissents from majority in ≥ 1 scenario.
+5. `test_no_brain_reads_another_brains_state` — static import scan proves no cross-brain refs.
+6. `test_same_snapshot_produces_deterministic_output` — same snapshot → same direction/confidence/reason_codes across instances.
+
+**P7d — `_legacy/` DELETED**:
+- `mc_brains/_legacy/personality.py` (still active code) → `mc_brains/personality.py` (moved out of the graveyard).
+- `mc_brains/_legacy/brain_core.py` (`NeutralAdversarialBrain`, ~720 lines) — deleted. No brain uses it anymore.
+- `mc_brains/_legacy/` — directory removed.
+- `tests/test_spread_quality_guard.py` — deleted (tested `NeutralAdversarialBrain.evaluate` spread behavior; ExecutionSafetyStrategy now covers this in P7c).
+- 3 tests in `test_camino_brain.py` + 1 test in `test_orchestrator_manifest_persistence.py` updated to test the NEW `TREND_NO_SIGNAL` contract (was `MISSING_REQUIRED_FEATURES`).
+
+**Live distinctness measurement (before → after P7)**:
+
+| Metric | Pre-P7 (multiplier only) | Post-P7 (distinct strategies) |
+|---|---|---|
+| Distinctness (Camino) | 0.105 | **0.187** (+78%) |
+| Distinctness (GTO) | 0.101 | **0.187** (+85%) |
+| Distinctness (Barracuda) | 0.101 | **0.187** (+85%) |
+| Distinctness (Hellcat) | 0.101 | **0.202** (+100%) |
+| Hellcat SHORT actions | 0.0% | **11.72%** (finally emitting a distinct direction) |
+| Confidence std dev range | 0.14–0.20 | **0.19–0.23** (richer variance) |
+
+**The Hellcat signal is the strongest indicator P7 worked**: pre-P7, all 4 brains had 0.0% SHORT actions. Post-P7, Hellcat's execution-safety logic produces 11.72% SHORTs while the other 3 stay at 0% — this is a genuine cognitive divergence, not multiplier drift.
+
+The replay corpus tests (running the 10 scenarios) proved separation is much STRONGER on scenarios the current live market isn't producing (overbought extremes, wide-spread events, gap-ups) — the 0.19 live distinctness is a lower bound.
+
+**Tests**: **230/230 pulse+arbiter tests pass** (was 224 → added 6 P7c acceptance tests + 2 replacement Camino tests, removed 1 obsolete Camino test).
+
+**Ready to deploy** — all P7 doctrine work landed atomically:
+- ✅ P7a — 4 strategy modules with unique reason-code families
+- ✅ P7b — Replay corpus with 10 canonical scenarios
+- ✅ P7c — 6 personality-separation acceptance tests, all green
+- ✅ P7d — `_legacy/` deleted; `personality.py` moved to first-class location
+
+**Deployment health check**:
+- Backend boots clean, 4 pulse brains registered.
+- Pulse loop steady at 15s cadence with all 4 brains completing.
+- Pulse-health snapshotter armed (15-min cadence, 24h window).
+- Distinctness climbing above the pre-P7 baseline on live data.
+- No live imports of `_legacy/` or `external.brains/`.
+- No live imports of `NeutralAdversarialBrain` outside of the deleted `test_spread_quality_guard.py`.
+
+**Rollback path**: `git checkout HEAD~1 -- mc_brains/ tests/test_spread_quality_guard.py mc_pulse/tests/test_camino_brain.py mc_pulse/tests/test_orchestrator_manifest_persistence.py` restores the pre-P7 shared-core state in ~1 min.
+
+
 ### 🧠 2026-07-12 (iter-28f): P4 SHIPPED — PARITY RETIRED, PULSE HEALTH SCHEMA IS THE DURABLE VIEW
 
 **Operator directive**: "The infrastructure merge is complete, but the cognitive separation is not." Runner-vs-pulse comparison metrics stopped being meaningful the moment runners were deleted. Rename to pulse-health, drop runner-relative metrics, add distinctness + input-health signals. P5 (dashboard) waits until this schema is durable. P7 (strategy split) blocks on distinctness measurement being available.

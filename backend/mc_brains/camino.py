@@ -19,6 +19,7 @@ from mc_brains._pulse_base import (
     NeutralAdversarialPulseBrain,
     PulseManifestHint,
 )
+from mc_brains.strategies.trend_following import TrendFollowingStrategy
 
 
 # Backward-compat alias — some tests + the pulse loop import this
@@ -34,3 +35,4 @@ class CaminoBrain(NeutralAdversarialPulseBrain):
     CORE_BRAIN_ID = "alpha"
     DISPLAY_NAME = "Camino"
     RATIONALE_TAG = "trend"
+    STRATEGY_CLS = TrendFollowingStrategy

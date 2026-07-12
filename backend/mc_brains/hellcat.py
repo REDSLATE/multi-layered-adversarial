@@ -1,26 +1,34 @@
-"""HellcatBrain — aggressive pulse brain.
+"""HellcatBrain — execution-safety pulse brain (P7a).
 
-Doctrine: **aggressive**. Personality multiplier ×1.30 — trips
-the ladder fastest of the 4 brains. This is a raw-conviction
-brain; MC's exposure caps + kill switch are the guardrails, not
-brain-side gates.
+Doctrine (operator, 2026-07-12): "Hellcat should not simply be
+another directional strategy. Its strongest identity is as the
+brain that asks whether the setup is tradable under spread,
+liquidity, volatility, and news conditions."
 
-Wraps the shared `NeutralAdversarialPulseBrain` base — identical
-orchestration to Camino, differs ONLY in the personality
-multiplier (via CORE_BRAIN_ID="chevelle").
+Historically Hellcat was the "aggressive" personality (×1.30
+confidence multiplier). Post-P7a, its personality still amplifies
+its raw output, but its RAW output now comes from
+`ExecutionSafetyStrategy` — which produces high-conviction HOLDs
+when the venue is hostile, and only weak directional reads when
+execution is clean. This means Hellcat's ×1.30 multiplier now
+amplifies EXECUTION CERTAINTY, not directional aggression, which
+is the operator-intended cognitive role.
 
-2026-07-12 (iter-28c, P2 step 2): migrated from `runner.py` to
-this pulse-first path.
+Wraps `NeutralAdversarialPulseBrain` — identical orchestration
+to Camino/GTO/Barracuda, differs only in `STRATEGY_CLS` +
+`CORE_BRAIN_ID` (still `chevelle` for personality lookup).
 """
 from __future__ import annotations
 
 from mc_brains._pulse_base import NeutralAdversarialPulseBrain
+from mc_brains.strategies.execution_safety import ExecutionSafetyStrategy
 
 
 class HellcatBrain(NeutralAdversarialPulseBrain):
-    """Aggressive brain — highest personality multiplier."""
+    """Execution-safety brain — vetoes trades under hostile venue conditions."""
 
     PULSE_ID = "hellcat"
     CORE_BRAIN_ID = "chevelle"
     DISPLAY_NAME = "Hellcat"
-    RATIONALE_TAG = "aggressive"
+    RATIONALE_TAG = "execution"
+    STRATEGY_CLS = ExecutionSafetyStrategy

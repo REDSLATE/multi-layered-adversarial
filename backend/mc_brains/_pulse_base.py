@@ -1,74 +1,37 @@
 """Shared base for the four MC Pulse brains.
 
-All 4 brains (Camino / Barracuda / Hellcat / GTO) wrap the same
-legacy `NeutralAdversarialBrain` core — personality is a
-CONFIDENCE MULTIPLIER, not a distinct strategy. Extracted from
-the original one-brain-per-file pattern on 2026-07-12 during the
-P2 migration (three new pulse brains ship at once, all sharing
-this base).
+2026-07-12 doctrine (P7a): every brain now supplies its own
+`Strategy` implementation. The `Strategy.evaluate(snapshot)`
+returns a raw `StrategyResult`; the base class:
 
-Subclasses override class-level identity constants:
+  1. Runs the strategy (sub-millisecond, deterministic).
+  2. Applies the personality confidence multiplier.
+  3. Wraps into a `ModelOpinion` with the standard rank inputs.
+  4. Persists a manifest hint for parity/audit.
 
-    PULSE_ID          — string id in the pulse registry ("camino",
-                        "gto", "barracuda", "hellcat"). Used as
-                        `ModelOpinion.brain` and as the operator-
-                        facing brand name across every UI + audit
-                        row. Matches `personality.get_personality`
-                        lookup by inverse mapping (display_name).
-    CORE_BRAIN_ID     — internal DB / API slot code ("alpha",
-                        "redeye", "camaro", "chevelle"). This is
-                        what `apply_personality_confidence` keys
-                        on — the personality multiplier is a
-                        property of the SLOT, not the brand.
-    DISPLAY_NAME      — human-readable brand (matches
-                        `personality.BRAIN_PERSONALITIES`).
-    RATIONALE_TAG     — leaf token that identifies the brain's
-                        voice in rationale strings ("trend",
-                        "opportunistic", "aggressive",
-                        "disciplined"). No behavioral impact —
-                        pure log signal.
-    LANES             — frozenset of lanes the brain evaluates.
-                        v0.1 all 4 brains cover {"equity", "crypto"}.
-    CADENCE_SECONDS   — cool-down between evaluations of the same
-                        (lane, symbol). Prevents burning identical
-                        opinions on identical pulses. 30s = every
-                        other 15s pulse tick.
-    EVAL_TIMEOUT_SECS — per-evaluation timeout enforced by
-                        `mc_pulse.containment.evaluate_brain`.
-                        A brain that stalls past this is caught by
-                        containment and does NOT block peers.
+The old `NeutralAdversarialBrain` wrapper in `_legacy/` is now
+UNUSED by production code — kept only until P7d deletes it.
 
-The `evaluate()` shape is IDENTICAL across all 4 subclasses:
-consume the canonical feature snapshot, gate on required fields,
-call the core, wrap the output as a `ModelOpinion`, stamp a
-manifest hint. Only the identity constants differ.
-
-Doctrine — this file MUST NOT accidentally reintroduce brain-
-side gates. Every restriction lives in MC (broker toggles,
-sizing gate, exposure caps, learning ladder). Personality here
-is a confidence multiplier ONLY.
+Subclasses set 6 class-level identity constants and one class-
+level `STRATEGY_CLS`. That's it. Everything else — the
+should_evaluate cool-down, the required-field gate, the manifest
+hint bookkeeping, the personality clamp, the rank input
+mapping — is inherited so a Barracuda-vs-Hellcat divergence can
+NEVER accidentally arise from orchestration drift.
 """
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import ClassVar, Optional
+from typing import ClassVar, Optional, Type
 
-from mc_brains._legacy.brain_core import NeutralAdversarialBrain
-from mc_brains._legacy.personality import apply_personality_confidence
-
+from mc_brains.personality import apply_personality_confidence
+from mc_brains.strategies import Strategy, StrategyResult
 from mc_arbiter.models import Direction, ModelOpinion, OpinionStatus
-from mc_pulse.input_manifest import CAMINO_REQUIRED_FIELDS
 from mc_pulse.snapshot import MarketSnapshot
 
 logger = logging.getLogger("mc_brains._pulse_base")
-
-# All 4 pulse brains share the same input contract — they all use
-# `NeutralAdversarialBrain._build_hypotheses` which reads the same
-# feature set. The `CAMINO_` prefix predates the multi-brain roll-
-# out; kept as-is for BC and re-aliased here for clarity.
-NEUTRAL_ADVERSARIAL_REQUIRED_FIELDS = CAMINO_REQUIRED_FIELDS
 
 
 @dataclass
@@ -77,10 +40,6 @@ class PulseManifestHint:
     input manifest. Populated inside `evaluate()` at the moment the
     opinion is finalized so the manifest's action/confidence/status
     match exactly what got emitted.
-
-    Renamed from `CaminoManifestHint` on 2026-07-12 during the
-    multi-brain migration. `CaminoManifestHint` remains an alias
-    in `mc_brains.camino` for backward compat with the pulse loop.
     """
     feature_snapshot: dict = field(default_factory=dict)
     action: str = "HOLD"
@@ -93,15 +52,12 @@ class PulseManifestHint:
 
 
 class NeutralAdversarialPulseBrain:
-    """Base class for a pulse brain that wraps `NeutralAdversarialBrain`.
+    """Base class for a pulse brain that dispatches to a strategy.
 
-    Subclasses set 6 class-level constants. Everything else — the
-    should_evaluate cool-down, the required-field gate, the manifest
-    hint bookkeeping, the personality clamp, the rank input mapping —
-    is inherited unchanged so a Barracuda vs. Hellcat divergence
-    can NEVER accidentally arise from an inconsistency in the
-    orchestration layer. All differences flow through personality
-    (a confidence multiplier) and lane/cadence config.
+    Subclasses set 7 class-level constants. Everything else is
+    inherited unchanged so Barracuda ≠ Hellcat divergence can
+    only come from the strategy or personality, never from the
+    orchestration layer.
     """
 
     # ── subclass MUST override ──
@@ -109,6 +65,7 @@ class NeutralAdversarialPulseBrain:
     CORE_BRAIN_ID: ClassVar[str] = ""
     DISPLAY_NAME: ClassVar[str] = ""
     RATIONALE_TAG: ClassVar[str] = ""
+    STRATEGY_CLS: ClassVar[Type[Strategy] | None] = None
 
     # ── subclass MAY override ──
     LANES: ClassVar[frozenset[str]] = frozenset({"equity", "crypto"})
@@ -121,17 +78,17 @@ class NeutralAdversarialPulseBrain:
                 f"{type(self).__name__} MUST set PULSE_ID + CORE_BRAIN_ID + "
                 "DISPLAY_NAME as class-level constants"
             )
-        self._core = NeutralAdversarialBrain(
-            brain_id=self.CORE_BRAIN_ID,
-            display_name=self.DISPLAY_NAME,
-            lane="equity",              # per-call override in evaluate()
-            shadow_only=True,
-            doctrine=None,
-        )
+        if self.STRATEGY_CLS is None:
+            raise TypeError(
+                f"{type(self).__name__} MUST set STRATEGY_CLS (2026-07-12 "
+                "P7a doctrine — the shared NeutralAdversarialBrain core "
+                "is retired; every brain owns its own strategy)"
+            )
+        self._strategy: Strategy = self.STRATEGY_CLS()  # type: ignore[assignment]
         self._last_eval_at: dict[str, datetime] = {}
         self._last_hint: dict[str, PulseManifestHint] = {}
 
-    # ── Brain protocol properties (populated from ClassVars) ──
+    # ── Brain protocol properties ──
     @property
     def id(self) -> str:
         return self.PULSE_ID
@@ -159,21 +116,18 @@ class NeutralAdversarialPulseBrain:
         return True
 
     def take_manifest_hint(self, symbol: str) -> Optional[PulseManifestHint]:
-        """Pop the last manifest hint for this symbol. Pulse loop
-        calls this AFTER `evaluate` to persist a manifest row."""
         return self._last_hint.pop(symbol.upper(), None)
 
     async def evaluate(
         self, snapshot: MarketSnapshot,
     ) -> Optional[ModelOpinion]:
-        """Adapt pulse snapshot → NeutralAdversarialBrain input, run
-        the strategy, wrap the output as a ModelOpinion.
+        """Adapt pulse snapshot → Strategy.evaluate → ModelOpinion.
 
-        Returning `INSUFFICIENT_DATA` w/ confidence=0.0 is different
-        from returning None. None = brain skipped (cool-down).
-        INSUFFICIENT_DATA = brain wanted to evaluate but required
-        inputs were absent — pulse loop STILL persists this envelope
-        so parity math sees every gated event.
+        Emits `INSUFFICIENT_DATA` (with confidence 0.0) when the
+        strategy returns HOLD with confidence 0.0 (the family's
+        NO_SIGNAL branch). All other outputs — including HOLD with
+        non-zero confidence — are emitted as OK opinions so parity
+        + distinctness math sees every genuine call the brain made.
         """
         canonical = dict(snapshot.feature_snapshot) or {}
         if not canonical:
@@ -190,67 +144,67 @@ class NeutralAdversarialPulseBrain:
         position_context = snapshot.position_context.get(self.PULSE_ID) or None
         position_present = position_context is not None
 
-        missing = sorted(
-            f for f in NEUTRAL_ADVERSARIAL_REQUIRED_FIELDS
-            if f not in canonical or canonical.get(f) is None
-        )
-        if missing:
+        try:
+            raw: StrategyResult = self._strategy.evaluate(snapshot)
+        except Exception:
+            logger.exception(
+                "%s: strategy raised for %s (%s)",
+                type(self).__name__, snapshot.symbol, snapshot.lane,
+            )
+            raise
+
+        # NO_SIGNAL branches emit INSUFFICIENT_DATA.
+        if raw.confidence == 0.0 and any(
+            "NO_SIGNAL" in c for c in raw.reason_codes
+        ):
             self._last_hint[snapshot.symbol.upper()] = PulseManifestHint(
                 feature_snapshot=canonical,
-                action="HOLD",
-                confidence=0.0,
+                action=raw.action, confidence=0.0,
                 status=OpinionStatus.INSUFFICIENT_DATA.value,
-                reason_codes=("MISSING_REQUIRED_FEATURES", *missing[:6]),
+                reason_codes=raw.reason_codes,
                 fallback_used=bool(snapshot.fallback_used),
                 bar_count=int(snapshot.source_bar_count or 0),
                 position_context_present=position_present,
             )
             return ModelOpinion(
-                brain=self.PULSE_ID,
-                seat_key="",
+                brain=self.PULSE_ID, seat_key="",
                 direction=Direction.FLAT,
-                edge=0.0,
-                confidence=0.0,
-                regime_fit=0.4,
-                urgency=0.0,
+                edge=0.0, confidence=0.0,
+                regime_fit=0.4, urgency=0.0,
                 price_at_signal=float(snapshot.price),
                 ts=snapshot.timestamp.isoformat(),
                 rationale=(
                     f"{self.PULSE_ID}/insufficient_data · "
-                    f"missing={','.join(missing[:8])}"
+                    f"{','.join(raw.reason_codes[:4])}"
                 ),
                 status=OpinionStatus.INSUFFICIENT_DATA.value,
-                reason_codes=("MISSING_REQUIRED_FEATURES", *missing[:6]),
+                reason_codes=raw.reason_codes,
             )
 
-        try:
-            brain_intent = self._core.evaluate(
-                symbol=snapshot.symbol,
-                snapshot=canonical,
-                position_context=position_context,
-                seat=None,
-            )
-        except Exception:
-            logger.exception(
-                "%s: core evaluate raised for %s (%s)",
-                type(self).__name__, snapshot.symbol, snapshot.lane,
-            )
-            raise
-
+        # Apply personality clamp — RAW → FINAL confidence.
         final_confidence, persona_evidence = apply_personality_confidence(
             brain=self.CORE_BRAIN_ID,
-            raw_confidence=brain_intent.confidence,
+            raw_confidence=raw.confidence,
         )
 
-        direction = _map_action_to_direction(brain_intent.action)
+        direction = _map_action_to_direction(raw.action)
         if direction is None:
             return None
 
-        rank_inputs = _rank_inputs_from_brain(brain_intent, snapshot)
+        rank_inputs = _rank_inputs_from_strategy(raw)
+
+        # Rationale carries the STRATEGY reasoning path — this is
+        # what makes distinctness observable in the audit tape.
+        top_codes = ",".join(raw.reason_codes[:3]) or "none"
+        rationale = (
+            f"{self.PULSE_ID}/{self.RATIONALE_TAG} · "
+            f"{raw.action} · raw_conf={raw.confidence:.2f} · "
+            f"persona_x={persona_evidence['personality_multiplier']:.2f} · "
+            f"reasons=[{top_codes}]"
+        )
 
         opinion = ModelOpinion(
-            brain=self.PULSE_ID,
-            seat_key="",
+            brain=self.PULSE_ID, seat_key="",
             direction=direction,
             edge=rank_inputs["edge"],
             confidence=final_confidence,
@@ -258,21 +212,15 @@ class NeutralAdversarialPulseBrain:
             urgency=rank_inputs["urgency"],
             price_at_signal=float(snapshot.price),
             ts=snapshot.timestamp.isoformat(),
-            rationale=(
-                f"{self.PULSE_ID}/{self.RATIONALE_TAG} · "
-                f"quality={brain_intent.market_quality_score:.2f} · "
-                f"{brain_intent.action} · "
-                f"persona_x={persona_evidence['personality_multiplier']:.2f} · "
-                f"saturated={persona_evidence['saturated_by_clamp']}"
-            ),
+            rationale=rationale,
             status=OpinionStatus.OK.value,
+            reason_codes=raw.reason_codes,
         )
         self._last_hint[snapshot.symbol.upper()] = PulseManifestHint(
             feature_snapshot=canonical,
-            action=brain_intent.action,
-            confidence=final_confidence,
+            action=raw.action, confidence=final_confidence,
             status=OpinionStatus.OK.value,
-            reason_codes=(),
+            reason_codes=raw.reason_codes,
             fallback_used=bool(snapshot.fallback_used),
             bar_count=int(snapshot.source_bar_count or 0),
             position_context_present=position_present,
@@ -281,10 +229,6 @@ class NeutralAdversarialPulseBrain:
 
 
 def _map_action_to_direction(action: str) -> Optional[Direction]:
-    """BUY / SELL / HOLD → LONG / SHORT / FLAT.
-    Anything else (OBSERVE — a quality modifier surfaced as
-    `market_quality_score`) returns None → pulse skips the write.
-    """
     a = (action or "").upper()
     if a == "BUY":
         return Direction.LONG
@@ -295,17 +239,12 @@ def _map_action_to_direction(action: str) -> Optional[Direction]:
     return None
 
 
-def _rank_inputs_from_brain(brain_intent, snapshot: MarketSnapshot) -> dict:
-    """Map legacy BrainIntent → DAWE rank inputs. v0.1: edge = top
-    hypothesis score, regime_fit inversely proportional to
-    market_quality_score, urgency default 0.50. Identical to what
-    Camino did — the DAWE input math is a property of the core, not
-    the personality.
-    """
-    scores = brain_intent.hypothesis_scores or {}
-    top = max(scores.values(), default=float(brain_intent.confidence))
-    edge = max(0.0, min(1.0, float(top)))
-    quality = float(brain_intent.market_quality_score or 0.0)
-    regime_fit = max(0.40, 1.00 - 0.60 * quality)
+def _rank_inputs_from_strategy(raw: StrategyResult) -> dict:
+    """Map StrategyResult → DAWE rank inputs. Edge tracks the raw
+    strategy conviction. `regime_fit` and `urgency` stay in the
+    conservative middle band until a downstream module explicitly
+    consumes them."""
+    edge = max(0.0, min(1.0, raw.confidence))
+    regime_fit = 0.60
     urgency = 0.50
     return {"edge": edge, "regime_fit": regime_fit, "urgency": urgency}

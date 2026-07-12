@@ -20,7 +20,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 
-from mc_brains._legacy.personality import (  # noqa: E402
+from mc_brains.personality import (  # noqa: E402
     BRAIN_PERSONALITIES,
     apply_personality_confidence,
     clamp_probability,

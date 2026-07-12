@@ -18,6 +18,9 @@ comparison mode; the pulse writes envelopes to
 from __future__ import annotations
 
 from mc_brains._pulse_base import NeutralAdversarialPulseBrain
+from mc_brains.strategies.momentum_confirmation import (
+    MomentumConfirmationStrategy,
+)
 
 
 class GtoBrain(NeutralAdversarialPulseBrain):
@@ -26,4 +29,5 @@ class GtoBrain(NeutralAdversarialPulseBrain):
     PULSE_ID = "gto"
     CORE_BRAIN_ID = "redeye"
     DISPLAY_NAME = "GTO"
-    RATIONALE_TAG = "disciplined"
+    RATIONALE_TAG = "momentum"
+    STRATEGY_CLS = MomentumConfirmationStrategy

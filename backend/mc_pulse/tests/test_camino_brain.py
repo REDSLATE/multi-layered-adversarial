@@ -65,45 +65,57 @@ def _snap(*, features: dict, symbol: str = "NVDA", lane: str = "equity",
 
 @pytest.mark.asyncio
 async def test_missing_required_field_emits_insufficient_data():
-    """The primary fix — no more HOLD @ 1.0 masquerade."""
+    """The primary fix — no more HOLD @ 1.0 masquerade.
+
+    2026-07-12 (P7a): Camino's strategy now gates on `trend_score`
+    specifically (its primary directional feature). Missing
+    `trend_score` → INSUFFICIENT_DATA with `TREND_NO_SIGNAL`.
+    """
     brain = CaminoBrain()
-    snap = _snap(features={"trend_score": 0.4})  # everything else missing
+    # Explicitly omit trend_score — everything else present.
+    snap = _snap(features={
+        "price_change_pct": 1.23, "volume_change_pct": 8.1,
+        "rsi": 55.0, "spread_bps": 3.0, "volatility": 0.15,
+        "liquidity_score": 0.85, "setup_score": 0.71,
+    })
     opinion = await brain.evaluate(snap)
     assert opinion is not None
     assert opinion.status == OpinionStatus.INSUFFICIENT_DATA.value
     assert opinion.confidence == 0.0
     assert opinion.direction == Direction.FLAT
-    assert "MISSING_REQUIRED_FEATURES" in opinion.reason_codes
+    assert "TREND_NO_SIGNAL" in opinion.reason_codes
 
 
 @pytest.mark.asyncio
-async def test_insufficient_data_names_specific_missing_fields():
-    """Diagnosis requires knowing WHICH fields were absent."""
+async def test_reason_codes_carry_strategy_family_prefix():
+    """P7a: every reason code MUST carry a family prefix that
+    identifies the emitting strategy. For Camino, that's TREND_*."""
     brain = CaminoBrain()
-    snap = _snap(features={"trend_score": 0.4, "spread_bps": 3.0})
+    snap = _snap(features={
+        "trend_score": 0.05,  # below entry
+        "price_change_pct": 0.02, "market_regime": "ranging",
+    })
     opinion = await brain.evaluate(snap)
     assert opinion is not None
-    # Reason codes carry the specific missing field names (up to 6)
-    missing_in_codes = [c for c in opinion.reason_codes
-                        if c != "MISSING_REQUIRED_FEATURES"]
-    assert "volume_change_pct" in missing_in_codes
-    assert "volatility" in missing_in_codes
+    assert all(c.startswith("TREND_") for c in opinion.reason_codes), (
+        f"non-TREND_ code leaked into Camino opinion: {opinion.reason_codes}"
+    )
 
 
 @pytest.mark.asyncio
 async def test_insufficient_data_records_manifest_hint():
-    """Even when the core is skipped, the pulse must be able to
-    persist a manifest — otherwise starved-input rows never
-    surface in the parity endpoint."""
+    """Even when the strategy short-circuits, the pulse must be
+    able to persist a manifest — otherwise starved-input rows
+    never surface in the parity endpoint."""
     brain = CaminoBrain()
-    snap = _snap(features={"trend_score": 0.4})
+    snap = _snap(features={"price_change_pct": 0.5})  # trend_score absent
     await brain.evaluate(snap)
     hint = brain.take_manifest_hint("NVDA")
     assert hint is not None
     assert hint.status == OpinionStatus.INSUFFICIENT_DATA.value
     assert hint.confidence == 0.0
     assert hint.action == "HOLD"
-    assert "MISSING_REQUIRED_FEATURES" in hint.reason_codes
+    assert "TREND_NO_SIGNAL" in hint.reason_codes
 
 
 # ─────────────────────── OK path ─────────────────────

@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from mc_brains._legacy.personality import BRAIN_PERSONALITIES
+from mc_brains.personality import BRAIN_PERSONALITIES
 from mc_brains.barracuda import BarracudaBrain
 from mc_brains.camino import CaminoBrain
 from mc_brains.gto import GtoBrain
