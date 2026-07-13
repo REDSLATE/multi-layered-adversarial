@@ -156,13 +156,13 @@ async def test_lane_toggles_decoupled_from_broker_credentials():
     to be silently created/altered. The two surfaces are independent."""
     from shared.lane_execution import set_lane_toggle, is_lane_execution_enabled
     from db import db
-    from namespaces import ALPACA_CREDENTIALS, KRAKEN_CREDENTIALS
+    from namespaces import WEBULL_CREDENTIALS, KRAKEN_CREDENTIALS
     await set_lane_toggle("equity", True, "test@test.com")
     await set_lane_toggle("crypto", True, "test@test.com")
     assert await is_lane_execution_enabled("equity") is True
     assert await is_lane_execution_enabled("crypto") is True
     # Broker docs MUST NOT have been touched as a side effect.
-    alpaca_doc = await db[ALPACA_CREDENTIALS].find_one({"_id": "singleton"})
+    webull_doc = await db[WEBULL_CREDENTIALS].find_one({"_id": "singleton"})
     kraken_doc = await db[KRAKEN_CREDENTIALS].find_one({"_id": "singleton"})
     # Either both exist (pre-existing) or both don't — neither was
     # CREATED by flipping the toggle. We only assert no spurious
@@ -170,8 +170,10 @@ async def test_lane_toggles_decoupled_from_broker_credentials():
     # (Hermetic test: if they existed before via other test setup,
     # that's fine — we're not asserting their absence.)
     # The negative we DO assert: flipping toggles doesn't drop fields.
-    if alpaca_doc:
-        assert "api_key_enc" in alpaca_doc or "execution_enabled" in alpaca_doc
+    if webull_doc:
+        assert any(k in webull_doc for k in (
+            "api_key_enc", "device_id_enc", "execution_enabled",
+        ))
     if kraken_doc:
         assert any(k in kraken_doc for k in (
             "public_key_enc", "private_key_enc", "execution_enabled",

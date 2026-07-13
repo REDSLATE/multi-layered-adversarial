@@ -85,6 +85,31 @@ async def test_bump_on_emit_fires_from_production_intent_path():
     )
     assert after.get("latest_symbol") == "TEST-INTEGRATION-PROBE"
 
+    # ── Cleanup: restore pre-test scalar fields so we don't leave a
+    # 2099-dated `latest_ts` in the shared camino doc. Other tests
+    # (e.g. test_brain_runtime_status_load) read this same doc and
+    # will fail because the /status endpoint drops un-parseable
+    # future timestamps as a corruption safety net.
+    restore_set = {
+        "latest_ts": before_latest_ts,
+        "latest_symbol": before.get("latest_symbol"),
+        "latest_action": before.get("latest_action"),
+        "lifetime_count": before_count,
+    }
+    # `$set` with None-valued fields would write nulls; strip Nones.
+    restore_set = {k: v for k, v in restore_set.items() if v is not None}
+    unset = {}
+    if before_latest_ts is None:
+        unset["latest_ts"] = ""
+    if before.get("latest_symbol") is None:
+        unset["latest_symbol"] = ""
+    if before.get("latest_action") is None:
+        unset["latest_action"] = ""
+    op = {"$set": restore_set}
+    if unset:
+        op["$unset"] = unset
+    await db[METRICS_COLL].update_one({"_id": canon}, op)
+
 
 @pytest.mark.asyncio
 async def test_intents_py_imports_bump_on_emit():

@@ -71,6 +71,7 @@ async def pulse_tick(
     cadence_seconds: int = 15,
     runtime_mode: str = "DISARMED",
     compare_only: bool = True,
+    auto_arbitrate: bool = False,
 ) -> PulseReceipt:
     """One critical-path pulse.
 
@@ -87,6 +88,15 @@ async def pulse_tick(
                       of `mc_seats`. Nothing gets arbitrated,
                       nothing reaches the trader. FALSE only
                       after all four brains have passed parity.
+        auto_arbitrate: When True AND `compare_only=False`, arbitrate
+                        every seat_key touched this tick immediately
+                        after upserting envelopes to `mc_seats`. The
+                        arbiter receives `runtime_mode` and — when
+                        LIVE — emits an intent per winning seat via
+                        `shared.intents._post_intent_impl`. This is
+                        the closing link that connects the pulse
+                        pipeline to the trader. Fail-soft per seat:
+                        one bad arbitration never nukes the pulse.
 
     Returns:
         A completed `PulseReceipt` with per-brain outcomes.
@@ -199,12 +209,39 @@ async def pulse_tick(
     )
     await _upsert_envelopes(envelopes, persistence_target)
 
-    # Arbitration is DEFERRED until compare_only is False AND
-    # migration step 6 has flipped the arbiter to read from
-    # pulse-populated envelopes. Until then the arbiter continues
-    # reading from runner-written rows in mc_seats. Design freeze
-    # §14: everything from `mc_arbiter/` survives; pulse is
-    # additive during the migration window.
+    # ── Auto-arbitration (2026-07-13 P0 fix) ───────────────────
+    # Historically the arbiter was only ever invoked via the HTTP
+    # `/api/mc/arbiter/arbitrate/{seat_key}` endpoint or from the
+    # E2E trace tool — so pulse-emitted opinions accumulated on
+    # `mc_seats` but no winner was ever picked and no intent
+    # reached the trader. The trader silence was the consequence.
+    #
+    # When `auto_arbitrate=True` AND `compare_only=False`, we
+    # arbitrate every unique seat_key touched by THIS pulse. If
+    # `runtime_mode == "LIVE"` the arbiter emits a real intent
+    # into `shared_intents`; if DISARMED the decision is still
+    # recorded (DAWE grading path stays intact) but no intent is
+    # emitted. Fail-soft per seat — one bad arbitration never
+    # nukes the pulse tick.
+    if auto_arbitrate and not compare_only and envelopes:
+        from mc_arbiter.arbiter import arbitrate  # noqa: WPS433
+        from mc_arbiter.models import RuntimeMode  # noqa: WPS433
+        try:
+            mode = RuntimeMode(runtime_mode)
+        except ValueError:
+            mode = RuntimeMode.DISARMED
+        seat_keys = sorted({e.seat_key for e in envelopes if e.seat_key})
+        for seat_key in seat_keys:
+            try:
+                decision = await arbitrate(seat_key, runtime_mode=mode)
+                receipt.arbitrations_completed += 1
+                if decision.get("intent_id"):
+                    receipt.intents_emitted += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "auto_arbitrate failed pulse_id=%s seat=%s err=%s",
+                    receipt.pulse_id, seat_key, exc,
+                )
 
     return await complete_pulse(receipt)
 

@@ -5,9 +5,25 @@ path (snapshot → evaluate → persist). Non-critical maintenance
 (grader, rollups) runs on separate workers with separate failure
 envelopes. This worker must not block on Atlas or the grader.
 
-`compare_only=True` at v0.1 — envelopes go to `mc_opinions_compare`,
-NOT `mc_seats`. Nothing reaches the arbiter or the trader from
-this path during migration steps 2–5.
+Runtime toggles (env):
+    MC_PULSE_CADENCE_S       (default 15)    — tick interval
+    MC_PULSE_COMPARE_ONLY    (default false) — write envelopes to
+        `mc_opinions_compare` for parity work. When false (default),
+        envelopes go to `mc_seats` where the arbiter can read them.
+        Set true only to restore the pre-2026-07-13 parity mode.
+    MC_PULSE_AUTO_ARBITRATE  (default true)  — after every tick,
+        arbitrate every seat_key touched. Only meaningful when
+        `MC_PULSE_COMPARE_ONLY=false`. In LIVE runtime mode this
+        closes the pulse→arbiter→trader loop. Whether an intent
+        actually reaches the broker is still gated by:
+          1. arbiter runtime_mode (DISARMED → decision only, no intent)
+          2. trading_controls.enabled (master switch preflight)
+          3. seat/risk/broker chain in auto_router
+
+The arbiter's actual runtime mode (DISARMED/LIVE) is read from the
+persisted state each tick — a single cheap doc read — so an
+operator flip via `POST /api/mc/arbiter/runtime-mode` takes effect
+on the next pulse without a restart.
 """
 from __future__ import annotations
 
@@ -29,34 +45,62 @@ logger = logging.getLogger("mc_pulse.worker")
 PULSE_CADENCE_SECONDS = int(os.environ.get("MC_PULSE_CADENCE_S", "15"))
 
 
+def _env_bool(key: str, default: bool = False) -> bool:
+    return os.environ.get(key, str(default)).strip().lower() in {
+        "true", "1", "yes", "on",
+    }
+
+
+async def _read_runtime_mode_safe() -> str:
+    """Cheap single-doc read of the persisted arbiter runtime mode.
+    Falls back to `DISARMED` on any error — that's the safe default
+    (arbitration still runs, no intent is emitted)."""
+    try:
+        from mc_arbiter.arbiter import get_runtime_mode  # noqa: WPS433
+        mode = await get_runtime_mode()
+        return mode.value
+    except Exception:  # noqa: BLE001
+        return "DISARMED"
+
+
 async def _pulse_loop() -> None:
     """The critical-path loop. Runs one pulse_tick per cadence
     interval. NEVER holds a lock across ticks — a slow pulse
     that overruns the cadence is flagged on the receipt
     (`overrun=True`), but the next pulse still fires as scheduled.
     """
+    compare_only = _env_bool("MC_PULSE_COMPARE_ONLY", False)
+    auto_arbitrate = _env_bool("MC_PULSE_AUTO_ARBITRATE", True)
     logger.info(
-        "mc_pulse loop starting cadence=%ss compare_only=True",
-        PULSE_CADENCE_SECONDS,
+        "mc_pulse loop starting cadence=%ss compare_only=%s auto_arbitrate=%s",
+        PULSE_CADENCE_SECONDS, compare_only, auto_arbitrate,
     )
     while True:
         loop_started = asyncio.get_event_loop().time()
         try:
             snapshots = await build_all()
+            # Read arbiter runtime mode fresh each tick so an
+            # operator flip takes effect on the next pulse.
+            runtime_mode = await _read_runtime_mode_safe()
             receipt = await pulse_tick(
                 snapshots,
                 cadence_seconds=PULSE_CADENCE_SECONDS,
-                runtime_mode="DISARMED",     # arbiter still owns real routing
-                compare_only=True,           # writes to mc_opinions_compare
+                runtime_mode=runtime_mode,
+                compare_only=compare_only,
+                auto_arbitrate=auto_arbitrate,
             )
             logger.info(
                 "pulse tick pulse_id=%s snapshots=%d "
                 "brains_completed=%d brains_failed=%d "
-                "orchestration_ok=%s overrun=%s",
+                "arbitrations=%d intents=%d "
+                "runtime_mode=%s orchestration_ok=%s overrun=%s",
                 receipt.pulse_id,
                 receipt.snapshot_count,
                 len(receipt.brains_completed),
                 len(receipt.brains_failed),
+                receipt.arbitrations_completed,
+                receipt.intents_emitted,
+                runtime_mode,
                 receipt.orchestration_ok,
                 receipt.overrun,
             )
