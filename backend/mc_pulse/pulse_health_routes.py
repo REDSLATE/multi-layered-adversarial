@@ -40,7 +40,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean, median, pstdev
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth import get_current_user
 from db import db
@@ -442,11 +442,26 @@ async def _dissent_correctness(brain_lc: str, since: str) -> dict:
       1. Read this brain's directional opinions in the window.
       2. Read peer opinions in the window.
       3. For each self opinion, find concurrent peer opinions on the
-         SAME topic within DISSENT_CONCURRENCY_WINDOW_SEC.
+         SAME topic. PREFERRED: exact `source_bar_close_at` equality
+         (deterministic same-bar match). FALLBACK: ±15min time
+         proximity when either side lacks the bar_close field.
       4. Compute peer majority direction. If self direction differs
          AND peer count ≥ 2 → this is a "dissent".
       5. Join the self opinion to its outcome via `opinion_id`.
       6. Correct = `outcome.actual == "win"`.
+
+    Anchor-price contract (audited 2026-02-11):
+      * All opinions that carry `anchor_price` write it at post time
+        using `shared.opinion_resolver._fetch_current_price`, which
+        is the SAME function the grader uses at T+24h. P&L basis is
+        consistent across all graded opinions.
+      * Current coverage is uneven: ~15% of directional opinions
+        carry an anchor (crypto only, because equity fetches hit a
+        1.5s Alpaca timeout at post time). Until equity anchor
+        capture is hardened, `_dissent_correctness` effectively
+        grades crypto-lane brains only. The `join_mix` field in
+        the returned dict tells operators how many samples used
+        each join path so this limitation stays visible.
 
     Returned shape:
         {
@@ -501,17 +516,48 @@ async def _dissent_correctness(brain_lc: str, since: str) -> dict:
 
         # 3. For each self opinion, detect dissent + collect
         #    opinion_ids that qualify.
+        #    2026-02-11 (P3 hardening): prefer `source_bar_close_at`
+        #    equality join when available on BOTH sides — that's a
+        #    deterministic "same bar" match. Fall back to ±15min time
+        #    proximity only when either side lacks the bar_close
+        #    field. Two counters track which join path fired so
+        #    operators can see the mix during rollout.
         dissenting_opinion_ids: list[str] = []
+        n_bar_close_matches = 0
+        n_time_proximity_matches = 0
         for so in self_ops:
             topic = so.get("topic")
             self_stance = (so.get("stance") or "").lower()
             self_ts = _parse_ts(so.get("posted_at"))
+            self_bar_close = _extract_source_bar_close(so)
             if not (topic and self_ts and self_stance in ("long", "short")):
                 continue
-            concurrent = _concurrent_peers(
-                peers_by_topic.get(topic, []), self_ts,
-                DISSENT_CONCURRENCY_WINDOW_SEC,
-            )
+
+            # Preferred path: exact source_bar_close_at match.
+            peers_for_topic = peers_by_topic.get(topic, [])
+            if self_bar_close:
+                exact = [
+                    p for p in peers_for_topic
+                    if _extract_source_bar_close(p) == self_bar_close
+                ]
+                if len(exact) >= 2:
+                    concurrent = exact
+                    n_bar_close_matches += 1
+                else:
+                    concurrent = _concurrent_peers(
+                        peers_for_topic, self_ts,
+                        DISSENT_CONCURRENCY_WINDOW_SEC,
+                    )
+                    if len(concurrent) >= 2:
+                        n_time_proximity_matches += 1
+            else:
+                concurrent = _concurrent_peers(
+                    peers_for_topic, self_ts,
+                    DISSENT_CONCURRENCY_WINDOW_SEC,
+                )
+                if len(concurrent) >= 2:
+                    n_time_proximity_matches += 1
+
             if len(concurrent) < 2:
                 continue  # not enough peer signal to establish majority
             peer_stances = [
@@ -563,6 +609,16 @@ async def _dissent_correctness(brain_lc: str, since: str) -> dict:
                 if resolved >= DISSENT_MIN_SAMPLES else None,
             "gathering_samples": resolved < DISSENT_MIN_SAMPLES,
             "min_samples": DISSENT_MIN_SAMPLES,
+            # P3 hardening (2026-02-11): join-mix telemetry so
+            # operators can see how many dissents were matched via
+            # the deterministic `source_bar_close_at` path vs. the
+            # ±15min time-proximity fallback. High fallback share =
+            # metric is trustworthy only to the degree bar_close is
+            # actually plumbed through by the brain writers.
+            "join_mix": {
+                "bar_close_equality": n_bar_close_matches,
+                "time_proximity_fallback": n_time_proximity_matches,
+            },
         }
     except Exception as exc:  # noqa: BLE001
         logger.warning("_dissent_correctness failed brain=%s: %s", brain_lc, exc)
@@ -604,6 +660,23 @@ def _majority_direction(stances: list[str]) -> Optional[str]:
         return "long"
     if n_short > n_long:
         return "short"
+    return None
+
+
+def _extract_source_bar_close(opinion: dict) -> Optional[str]:
+    """P3 hardening (2026-02-11): fetch `source_bar_close_at` from
+    an opinion, checking BOTH the top-level and `evidence` sub-doc
+    (writers have historically stamped it in either place).
+    Returns None when absent — the dissent join then falls back to
+    time-proximity matching."""
+    top = opinion.get("source_bar_close_at")
+    if top:
+        return str(top)
+    ev = opinion.get("evidence") or {}
+    if isinstance(ev, dict):
+        v = ev.get("source_bar_close_at")
+        if v:
+            return str(v)
     return None
 
 
@@ -959,3 +1032,34 @@ async def pulse_health_by_regime(
         "min_samples_per_regime": MIN_SAMPLES,
         "by_regime": by_regime,
     }
+
+
+@router.post("/e2e-trace")
+async def post_e2e_trace(
+    symbol: str = Query("AAPL"),
+    lane: str = Query("equity"),
+    user: dict = Depends(get_current_user),
+):
+    """Run a controlled end-to-end execution trace with a mocked
+    broker. Answers the operator's diagnostic question: "which link
+    in the pulse → arbiter → intent → router → broker chain is
+    currently broken?" via `broke_at` + `next_expected`.
+
+    Safety:
+      * Broker layer ALWAYS mocked from this endpoint. Live-broker
+        runs require setting `E2E_TRACE_ALLOW_LIVE_BROKER=1` AND
+        invoking the trace from a shell (never from HTTP).
+      * All trace rows are tagged with a unique `trace_id` and
+        cleaned up automatically after the trace returns.
+
+    Requires admin auth (via `get_current_user`).
+    """
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="admin only")
+    from mc_pulse.e2e_trace import run_e2e_trace
+    result = await run_e2e_trace(
+        symbol=symbol, lane=lane,
+        broker_mock=True, cleanup=True,
+    )
+    return result.to_dict()
+

@@ -296,29 +296,45 @@ function DissentCorrectness({ brain, dissent }) {
   const rate = dissent.correctness_rate;
   const gathering = dissent.gathering_samples;
   const minSamples = dissent.min_samples ?? 50;
+  const joinMix = dissent.join_mix || {};
+  const barClose = joinMix.bar_close_equality ?? 0;
+  const timeProx = joinMix.time_proximity_fallback ?? 0;
+  const showJoinMix = (barClose + timeProx) > 0;
   return (
     <div
-      className="mt-2 pt-2 border-t border-white/5 flex items-baseline justify-between text-xs"
+      className="mt-2 pt-2 border-t border-white/5 text-xs"
       data-testid={`pulse-health-dissent-correctness-${brain}`}
     >
-      <div>
-        <span className="opacity-60">dissent correctness</span>
-        {resolved > 0 && (
-          <span className="opacity-40 ml-2 text-[10px]">
-            ({correct}/{resolved})
-          </span>
-        )}
+      <div className="flex items-baseline justify-between">
+        <div>
+          <span className="opacity-60">dissent correctness</span>
+          {resolved > 0 && (
+            <span className="opacity-40 ml-2 text-[10px]">
+              ({correct}/{resolved})
+            </span>
+          )}
+        </div>
+        <span
+          className="font-mono tabular-nums"
+          data-testid={`pulse-health-dissent-rate-${brain}`}
+        >
+          {gathering
+            ? <span className="opacity-40 text-[11px]">gathering ({resolved}/{minSamples})</span>
+            : rate === null || rate === undefined
+              ? "—"
+              : `${(rate * 100).toFixed(1)}%`}
+        </span>
       </div>
-      <span
-        className="font-mono tabular-nums"
-        data-testid={`pulse-health-dissent-rate-${brain}`}
-      >
-        {gathering
-          ? <span className="opacity-40 text-[11px]">gathering ({resolved}/{minSamples})</span>
-          : rate === null || rate === undefined
-            ? "—"
-            : `${(rate * 100).toFixed(1)}%`}
-      </span>
+      {showJoinMix && (
+        <div
+          className="opacity-30 text-[10px] mt-0.5 font-mono flex justify-end gap-2"
+          data-testid={`pulse-health-dissent-joinmix-${brain}`}
+          title="samples matched via source_bar_close_at (deterministic) vs. ±15min time proximity (fallback)"
+        >
+          <span>bar={barClose}</span>
+          <span>time={timeProx}</span>
+        </div>
+      )}
     </div>
   );
 }

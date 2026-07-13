@@ -347,6 +347,30 @@ def test_concurrent_peers_within_window():
     assert len(concurrent) == 2
 
 
+def test_extract_source_bar_close_from_top_level_or_evidence():
+    """P3 hardening: bar_close_at is stamped in EITHER `evidence`
+    (opinion writers) OR at the top level (newer schema). The
+    dissent join must find it in both locations."""
+    from mc_pulse.pulse_health_routes import _extract_source_bar_close
+    # Top-level only
+    assert _extract_source_bar_close({
+        "source_bar_close_at": "2026-07-12T12:00:00+00:00",
+    }) == "2026-07-12T12:00:00+00:00"
+    # Evidence-only
+    assert _extract_source_bar_close({
+        "evidence": {"source_bar_close_at": "2026-07-12T12:00:00+00:00"},
+    }) == "2026-07-12T12:00:00+00:00"
+    # Neither
+    assert _extract_source_bar_close({}) is None
+    assert _extract_source_bar_close({"evidence": {}}) is None
+    assert _extract_source_bar_close({"evidence": None}) is None
+    # Both present: top level wins (newer schema authority).
+    assert _extract_source_bar_close({
+        "source_bar_close_at": "2026-07-12T12:00:00+00:00",
+        "evidence": {"source_bar_close_at": "2020-01-01T00:00:00+00:00"},
+    }) == "2026-07-12T12:00:00+00:00"
+
+
 def test_exception_rate_counts_containment_failures():
     from mc_pulse.pulse_health_routes import _exception_rate
     pulses = [

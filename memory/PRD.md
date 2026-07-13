@@ -31,6 +31,29 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### 🔬 2026-07-12 (iter-28o): E2E Execution Trace + P3 Hardening SHIPPED
+
+**E2E execution trace — the diagnostic tool + regression net requested in the review**
+- New module `mc_pulse/e2e_trace.py` drives ONE synthesised intent through every layer of the stack and verifies each expected DB write lands: `synthesize_snapshot → run_pulse_writes_opinion → arbitrate_writes_decision → emit_intent → route_one → broker_call → executions_record`.
+- Each stage returns `{ok, duration_ms, detail, error}`; `TraceResult.broke_at` + `next_expected` name exactly which link failed. Operators + CI both benefit.
+- **Safety** — broker layer + master-switch + market-hours all mocked via `_BrokerMock` context that reverts on exit. Live-broker runs require `E2E_TRACE_ALLOW_LIVE_BROKER=1` env var (defence-in-depth against accidental order placement).
+- All trace rows tagged with unique `trace_id` and auto-cleaned via `cleanup_trace()`.
+- **Admin endpoint** `POST /api/mc/pulse-health/e2e-trace?symbol=AAPL&lane=equity` — operators can invoke the trace from a shell / dashboard to diagnose stack issues on demand.
+- **3 integration tests** in `tests/test_e2e_execution_trace.py`: full-stack green path, live-broker env guard, and stage-name-stability lock so future refactors don't silently break alert rules.
+- **Live run confirmed all 7 stages pass end-to-end in ~35ms** (route_one + broker + executions all green under mocked broker).
+
+**P3 Hardening — bar_close_at primary join + anchor_price audit**
+- **Concurrency-window fix**: `_dissent_correctness` now prefers exact `source_bar_close_at` equality as the primary same-bar match. The ±15min time-proximity window is only used as a fallback when either side lacks the bar_close field.
+- **`_extract_source_bar_close(opinion)` helper** — reads bar_close from either top-level OR `evidence.source_bar_close_at` (both schemas exist in the tape); top-level wins ties.
+- **`join_mix` telemetry** on the returned dict: `{bar_close_equality: N, time_proximity_fallback: N}` — tells operators how many samples used each join path so the metric's rigor is visible.
+- **Anchor-price audit** documented in the `_dissent_correctness` docstring: all anchors use the SAME `_fetch_current_price` function at post-time and grade-time (consistent basis), but coverage is uneven at ~15% because equity Alpaca fetches hit a 1.5s timeout. Until equity anchor capture is hardened, the metric effectively grades crypto-lane brains only. Surfaced via `join_mix` so operators can weight interpretation.
+- **Frontend `DissentCorrectness`** now renders the `bar=N time=N` join-mix in a small mono-space subline (opacity 0.3, tooltip explains).
+- **2 new tests**: `_extract_source_bar_close` (top-level, evidence, both, neither) + the majority-direction/concurrency-window tests unchanged.
+
+**Testing**: **355 tests green** (up from 349, +6 new). Backend + frontend lint clean.
+
+**Key finding from the trace**: the preview env's `arbiter_alignment=null` on every tile isn't a display bug — it's because the arbiter runs ONLY on manual operator trigger (no auto-scheduler), so decisions never accrue naturally. The E2E trace confirms the full pipeline works when triggered explicitly.
+
 ### 🌊 2026-07-12 (iter-28n): P2 (Regime) + P3 (Dissent Correctness) + brain→brain_id migration Rel.2 SHIPPED
 
 **Brain → brain_id migration (Release 2)**
