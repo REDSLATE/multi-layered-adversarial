@@ -31,6 +31,45 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### 🔴 2026-07-13 (iter-29a): P0 — PULSE→ARBITER→INTENT LOOP CLOSED (live trading unstalled)
+
+**Reported symptom (operator):** *"It's not trading equity in weeks. Crypto has traded but not since yesterday."*
+
+**Root cause identified — architectural gap, not a data bug:**
+- `mc_pulse/pulse.py::pulse_tick` was hard-wired with `compare_only=True` on every worker tick, so every envelope produced by the four brains landed in `mc_opinions_compare` (the parity tape) instead of `mc_seats` (the arbiter's tape).
+- The arbiter reads from `mc_seats`. With zero rows arriving, nothing to arbitrate → no intents emitted → the trader was starved by design.
+- Crypto had continued limping via the legacy `redeye`/`chevelle` intent bridges — those were switched off yesterday (`RISEDUAL_LEGACY_RUNNERS_ENABLED=false`), which explains the crypto stall aligning with the deploy window. Equity had never had a legacy fallback → weeks of silence.
+
+**Fix (`mc_pulse/pulse.py`):**
+- `pulse_tick` now accepts `auto_arbitrate: bool = False`.
+- When `auto_arbitrate=True` AND `compare_only=False`, after upserting envelopes to `mc_seats` we build the unique `seat_key` set from those envelopes and call `arbitrate(seat_key, runtime_mode=mode)` per seat.
+- Fail-soft per seat: one bad arbitration logs a warning and the pulse continues.
+- The receipt's pre-existing `arbitrations_completed` / `intents_emitted` counters are populated so operators see the closed-loop metric on every tick.
+
+**Fix (`mc_pulse/pulse_worker.py`):**
+- Reads `MC_PULSE_COMPARE_ONLY` (default **False** — post-migration state) and `MC_PULSE_AUTO_ARBITRATE` (default **True**) from env.
+- Reads the arbiter's `runtime_mode` fresh each tick via `mc_arbiter.arbiter.get_runtime_mode()` — a single cheap doc read — so an operator flip via `POST /api/mc/arbiter/runtime-mode {mode: LIVE}` takes effect on the next pulse without a restart.
+- Log line now emits `pulse tick pulse_id=... snapshots=N brains_completed=M arbitrations=A intents=I runtime_mode=... overrun=...` — full observability of the closed loop.
+
+**Verified end-to-end in preview (testing agent iter_26):**
+- `mc_pulse loop starting cadence=15s compare_only=False auto_arbitrate=True` confirmed in supervisor logs.
+- Every full tick emits `brains_completed=4 arbitrations=38`.
+- After flipping arbiter to LIVE via `POST /api/mc/arbiter/runtime-mode`, one tick emitted **29 real intents in a single pulse** (`arbitrations=38 intents=29 runtime_mode=LIVE`) — all stamped `evidence.arbitrated_by='mc_arbiter'`.
+- 24/24 new P0 smoke tests pass + 4/4 new unit tests in `mc_pulse/tests/test_auto_arbitrate.py` + 13/13 regression tests in `test_brain_runtime_status_load.py` + `test_lane_execution_toggles.py` (Alpaca->Webull import cleanup) + `test_brain_runtime_metrics_integration.py` (restore corrupt latest_ts on teardown).
+- Preview reset to safe posture: arbiter=DISARMED, trading_controls.enabled=False after the smoke.
+
+**Operator action required in production:**
+1. Deploy this change.
+2. Confirm `POST /api/mc/arbiter/runtime-mode {mode: "LIVE", changed_by, reason}` reports LIVE.
+3. Confirm master switch is armed (`POST /api/admin/trading/toggle {enabled: true, reason}`).
+4. Within one pulse cadence (15s) new `evidence.arbitrated_by='mc_arbiter'` docs will appear in `shared_intents`. Trader will then route per the auto_router chain.
+
+**Related cleanup shipped in this iter:**
+- `tests/test_lane_execution_toggles.py` — dead `ALPACA_CREDENTIALS` import replaced with `WEBULL_CREDENTIALS` (Alpaca purge completion).
+- `tests/test_brain_runtime_metrics_integration.py` — the smoke test that poisoned camino's `latest_ts` with a `2099-01-01T…hex` value now restores the pre-test state, unblocking `test_brain_runtime_status_load.py`.
+- One-shot data heal of the corrupt camino `latest_ts` in preview `brain_runtime_metrics`.
+
+
 ### 🔬 2026-07-12 (iter-28o): E2E Execution Trace + P3 Hardening SHIPPED
 
 **E2E execution trace — the diagnostic tool + regression net requested in the review**
