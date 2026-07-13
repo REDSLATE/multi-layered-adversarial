@@ -1,24 +1,21 @@
 """Learning Ladder — Phase 3 of ladder doctrine.
 
-Doctrine pin (2026-02-18):
+Doctrine pin (2026-02-19, operator-locked):
 
-State per (brain, lane) tracking promotion progress along the ladder:
+State per (brain, lane) tracking promotion progress along the ladder.
+Paper trading is REMOVED from the doctrine — no `micro_paper` rung.
+The ladder is now:
 
-    observation_only  →  micro_paper  →  micro_live  →  normal_live
+    observation_only  →  micro_live  →  normal_live
 
 Default state for any (brain, lane): `observation_only`.
 
 Transitions (operator may also manually promote / demote at any time;
 all changes audit-logged):
 
-    observation_only → micro_paper:
+    observation_only → micro_live:
         ≥ 100 RESOLVED observation receipts
         AND win_rate > 0.55 (excluding "anchor_missing" / neutrals)
-
-    micro_paper → micro_live:
-        ≥ 50 micro-paper FILLS (real Alpaca paper receipts tagged
-        execution_mode="ladder_paper")
-        AND expectancy_R > 0.30
 
     micro_live → normal_live:
         operator decision only (live-money progression must be
@@ -27,9 +24,14 @@ all changes audit-logged):
 This module is a COUNTER + STATE TRACKER + Phase 4 AUTHORITY.
 Phase 4 ENGAGED (2026-02-17): the sizing gate
 (`shared/sizing_gate.evaluate_sizing_with_ladder`) reads this state
-and clamps notional + routes (observe → paper → live_micro →
-live_normal). The auto-router consults the sizing gate BEFORE the
-advisory_only classifier so the ladder owns capital deployment.
+and clamps notional + routes (observe → live_micro → live_normal).
+The auto-router consults the sizing gate BEFORE the advisory_only
+classifier so the ladder owns capital deployment.
+
+2026-06-10 (operator directive) — LADDER GATE ELIMINATED. The stage
+is no longer authoritative for routing (see `sizing_gate` docstring);
+the endpoints + audit log below remain functional for forensic /
+historical reference only.
 """
 from __future__ import annotations
 
@@ -57,13 +59,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/learning-ladder", tags=["learning-ladder"])
 
 
-STAGES = ("observation_only", "micro_paper", "micro_live", "normal_live")
+STAGES = ("observation_only", "micro_live", "normal_live")
 
 # Unlock thresholds — operator-locked doctrine values.
 OBS_UNLOCK_COUNT = 100
 OBS_UNLOCK_WIN_RATE = 0.55
-PAPER_UNLOCK_COUNT = 50
-PAPER_UNLOCK_EXPECTANCY_R = 0.30
 
 
 def _now_iso() -> str:
@@ -168,57 +168,12 @@ async def _obs_progress(brain: str, lane: str) -> dict:
     }
 
 
-async def _paper_progress(brain: str, lane: str) -> dict:
-    """Micro-paper fills + R-expectancy for this (brain, lane).
-    Reads `execution_receipts` filtered to ladder-paper mode.
-
-    Phase 4 will tag receipts `execution_mode="ladder_paper"`.
-
-    2026-02-17: Phase 4 IS NOW ENGAGED. Receipts written by the
-    auto-router at stage=micro_paper carry
-    `execution_mode="ladder_paper"` (via sizing_gate). This counter
-    now ticks as soon as the operator promotes a (brain, lane) to
-    micro_paper and the first signal fires."""
-    q = {
-        "brain": brain, "lane": lane,
-        "execution_mode": "ladder_paper",
-        "resolved": True,
-    }
-    fills = await db[EXECUTION_RECEIPTS].count_documents(q)
-    # Expectancy_R: avg of (pnl_R) across fills.
-    pipeline = [
-        {"$match": q},
-        {"$group": {"_id": None, "avg_R": {"$avg": "$pnl_R"}}},
-    ]
-    rows = await db[EXECUTION_RECEIPTS].aggregate(pipeline).to_list(1)
-    avg_R = (rows[0]["avg_R"] if rows else None)
-    threshold_met = (
-        fills >= PAPER_UNLOCK_COUNT
-        and avg_R is not None
-        and avg_R > PAPER_UNLOCK_EXPECTANCY_R
-    )
-    return {
-        "fills": fills,
-        "expectancy_R": round(avg_R, 4) if avg_R is not None else None,
-        "unlock_count": PAPER_UNLOCK_COUNT,
-        "unlock_expectancy_R": PAPER_UNLOCK_EXPECTANCY_R,
-        "threshold_met": threshold_met,
-        "progress_pct": min(100.0, round(fills / PAPER_UNLOCK_COUNT * 100, 1)),
-    }
-
-
 async def _next_stage_eligibility(brain: str, lane: str, stage: str) -> dict:
     """Return whether (brain, lane) at `stage` is eligible to auto-
-    promote to the next rung."""
+    promote to the next rung. 2026-02-19: paper rung removed — the
+    ladder is now observation_only → micro_live → normal_live."""
     if stage == "observation_only":
         prog = await _obs_progress(brain, lane)
-        return {
-            "next": "micro_paper",
-            "progress": prog,
-            "auto_promotable": prog["threshold_met"],
-        }
-    if stage == "micro_paper":
-        prog = await _paper_progress(brain, lane)
         return {
             "next": "micro_live",
             "progress": prog,
@@ -255,18 +210,14 @@ async def list_ladder(_user: dict = Depends(get_current_user)):  # noqa: B008
             "stages": list(STAGES),
             "observation_unlock_count": OBS_UNLOCK_COUNT,
             "observation_unlock_win_rate": OBS_UNLOCK_WIN_RATE,
-            "paper_unlock_count": PAPER_UNLOCK_COUNT,
-            "paper_unlock_expectancy_R": PAPER_UNLOCK_EXPECTANCY_R,
             "note": (
-                "Phase 4 ENGAGED (2026-02-17). The ladder stage now "
-                "drives sizing + routing via "
-                "shared.sizing_gate.evaluate_sizing_with_ladder. "
-                "Stage observation_only → observation receipt only "
-                "(no broker fill, even if the brain sized > 0); "
-                "micro_paper → paper fire @ LADDER_MICRO_PAPER_USD; "
-                "micro_live → live fire @ LADDER_MICRO_LIVE_USD; "
-                "normal_live → full sizing. Promotions are deliberate; "
-                "all transitions audit-logged."
+                "2026-02-19 operator directive: paper trading REMOVED "
+                "from the ladder. Stages are observation_only → "
+                "micro_live → normal_live. observation_only writes an "
+                "observation receipt only (no broker fill); micro_live "
+                "fires live @ LADDER_MICRO_LIVE_USD; normal_live uses "
+                "full lane-cap sizing. Promotions are deliberate; all "
+                "transitions audit-logged."
             ),
         },
     }
@@ -331,7 +282,7 @@ class StageSetIn(BaseModel):
     """
     brain: str = Field(...)
     lane: Literal["equity", "crypto"]
-    stage: Literal["observation_only", "micro_paper", "micro_live", "normal_live"]
+    stage: Literal["observation_only", "micro_live", "normal_live"]
     reason: str = Field("operator_action", max_length=500)
 
 

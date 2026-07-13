@@ -6,16 +6,17 @@ Operator decision (2026-05-28):
   Finnhub, and Alpha Vantage. When the operator revoked broker keys
   from brain sidecars on 2026-05-23 to close the orphan-execution
   attack surface, the brains also lost their direct broker-API data
-  pipe (they were using Alpaca/Kraken keys to READ market data, not
+  pipe (they had been using broker keys to READ market data, not
   just to trade). Without market data, brains can't compute
   features → score=0 → REJECT/HOLD on every snapshot.
 
 Doctrine pin (D-DATA-KEYS-2026-05-28):
   MC may distribute DATA-SOURCE API keys (Polygon, Finnhub, Alpha
   Vantage, FRED, news APIs) to authenticated brain sidecars. MC must
-  NEVER distribute BROKER API keys (Alpaca, Kraken, IBKR) under any
-  circumstances. Broker keys remain solely in MC's process memory
-  per the 2026-05-23 audit closure.
+  NEVER distribute BROKER API keys (Webull, Kraken, IBKR — or any
+  historical broker like Alpaca) under any circumstances. Broker
+  keys remain solely in MC's process memory per the 2026-05-23
+  audit closure.
 
   The distinction is whether the key grants AUTHORITY TO TRADE:
     - DATA keys: read-only access to a data provider — fair game
@@ -25,7 +26,7 @@ Doctrine pin (D-DATA-KEYS-2026-05-28):
   appear in `MARKET_DATA_KEY_FIELDS` to be served. The whitelist is
   tripwire-pinned in `tests/test_market_data_keys_proxy.py` to
   reject any future addition that contains broker-key field-name
-  fragments (ALPACA, KRAKEN, IBKR, BROKER, EXECUTE).
+  fragments (WEBULL, KRAKEN, IBKR, ALPACA, BROKER, EXECUTE).
 
   Auth: same `<BRAIN>_INGEST_TOKEN` pattern as `sidecar_checkin.py`.
   Brain sidecars send `X-Runtime-Token: <their token>` + `X-Brain-Id:
@@ -90,7 +91,7 @@ FORBIDDEN_FRAGMENTS: tuple[str, ...] = (
     "COINBASE", # broker (crypto)
     "BINANCE",  # broker (crypto)
     "BROKER",
-    "SECRET_KEY",        # Alpaca uses this naming
+    "SECRET_KEY",        # generic broker naming; block regardless
     "EXECUTE",
     "TRADING_TOKEN",
     "BROKER_TOKEN",

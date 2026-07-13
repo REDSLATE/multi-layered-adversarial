@@ -59,7 +59,7 @@ def resolve_runtime_from_token(token: str) -> Optional[str]:
 def inverse_side(broker_side: str) -> Literal["SELL", "COVER"]:
     """Map broker position side → the action that closes it.
 
-    Alpaca returns side as 'long' / 'short' (lowercase). Webull and
+    Webull returns side as 'long' / 'short' (lowercase). Kraken and
     Kraken normalize to the same shape via the adapter layer.
     """
     s = (broker_side or "").lower()

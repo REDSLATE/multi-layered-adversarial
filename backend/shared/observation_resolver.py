@@ -8,7 +8,7 @@ with anchor prices but no outcome. This worker fills in the grading.
 Loop:
     Every RESOLVER_TICK_SECONDS (default 300s = 5min):
       for each unresolved observation receipt:
-        * Fetch current market price (Alpaca for equity, Kraken for crypto)
+        * Fetch current market price (Webull for equity, Kraken for crypto)
         * Update running MFE / MAE on the receipt (max favorable /
           adverse excursion since anchor, signed by side)
         * For each horizon (+1h, +4h, +1d, +5d):
@@ -101,7 +101,7 @@ def _classify_outcome(pnl_pct: float, lane: str) -> str:
 
 async def _fetch_price(symbol: str, lane: str) -> Optional[float]:
     """Get current market price for one symbol. Lane-aware: routes
-    to Alpaca for equity, Kraken public ticker for crypto. Returns
+    to Webull for equity, Kraken public ticker for crypto. Returns
     None on any failure."""
     if lane == "crypto":
         try:

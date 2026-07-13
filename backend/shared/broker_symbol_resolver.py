@@ -156,22 +156,6 @@ def compose(symbol: str, lane: Optional[str]) -> AssetKey:
 # trusts the answer.
 
 BROKER_SYMBOL_MAP: dict[str, dict[str, Any]] = {
-    "alpaca_paper": {
-        # Day-1 equities universe Camaro is actively trading.
-        "EQ:AAPL":  "AAPL",
-        "EQ:MSFT":  "MSFT",
-        "EQ:GOOGL": "GOOGL",
-        "EQ:NVDA":  "NVDA",
-        "EQ:AMZN":  "AMZN",
-        "EQ:TSLA":  "TSLA",
-        "EQ:META":  "META",
-        "EQ:NFLX":  "NFLX",
-        "EQ:AMD":   "AMD",
-        # NOTE: deliberately NO crypto entries on Alpaca. A BTC equity-
-        # ticker collision with Bitcoin must NEVER resolve here. If you
-        # add crypto support to Alpaca later, the BASE letters alone are
-        # not enough — the canonical key carries the discriminator.
-    },
     "kraken": {
         # Day-1 + 2026-02-20 (operator directive): top-30 USD pairs
         # by trading volume on Kraken, mapped to Kraken's altnames.
@@ -359,19 +343,9 @@ _RULE_BASED_SYMBOL_BROKERS: frozenset[str] = frozenset({"webull"})
 
 # ───────────────────────── lane → broker registry ─────────────────────
 #
-# 2026-02-XX: Operator decision — Alpaca paper is REMOVED from the
-# equity path. Public.com is the sole equity broker. The registry
-# entry below stays as `alpaca_paper` (legacy slot name; many tests
-# and call sites reference it) but the actual loader resolves to
-# Public via `broker_router._get_equity_adapter`. No Alpaca fallback.
-
-# 2026-02-19 (operator directive): Webull is the SOLE equity broker.
-# Alpaca and Public.com are removed from the live routing path. The
-# legacy slot name `alpaca_paper` is retained as a back-compat alias
-# elsewhere, but the equity lane resolves to Webull from this deploy
-# onward. `broker_router._get_equity_adapter` still exists for any
-# legacy caller but now returns the Webull adapter so routing is
-# consistent end-to-end.
+# 2026-02-19 (operator directive): Webull is the SOLE equity broker,
+# Kraken the sole crypto broker. Alpaca and Public.com were fully
+# removed from the live routing path — no fallbacks, no aliases.
 LANE_BROKER_REGISTRY: dict[LaneT, str] = {
     "equity": "webull",
     "crypto": "kraken",

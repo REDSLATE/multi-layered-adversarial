@@ -13,7 +13,7 @@ happened to the order at the broker?" Five canonical outcomes:
 Different brokers use slightly different status strings:
   * Webull   : "FILLED", "PARTIALLY_FILLED", "WORKING", "CANCELED",
                "REJECTED", "PENDING", "SUBMITTED", "OPEN"
-  * Alpaca   : "filled", "partially_filled", "canceled", "rejected",
+  * Webull   : "Filled", "PartiallyFilled", "Cancelled", "Rejected",
                "new", "accepted", "pending_new"
   * Kraken   : "closed" (filled), "open" (working), "canceled",
                "expired"
@@ -65,10 +65,10 @@ _STATUS_MAP: dict[str, str] = {
     # ── Working (accepted but not yet filled) ──
     "WORKING":          BUCKET_WORKING,
     "OPEN":             BUCKET_WORKING,        # Kraken active
-    "NEW":              BUCKET_WORKING,        # Alpaca / FIX
+    "NEW":              BUCKET_WORKING,        # FIX
     "ACCEPTED":         BUCKET_WORKING,
     "PENDING":          BUCKET_WORKING,
-    "PENDING_NEW":      BUCKET_WORKING,        # Alpaca pre-accept
+    "PENDING_NEW":      BUCKET_WORKING,        # pre-accept
     "SUBMITTED":        BUCKET_WORKING,        # Webull submit-ack
     "ACTIVE":           BUCKET_WORKING,
     "QUEUED":           BUCKET_WORKING,

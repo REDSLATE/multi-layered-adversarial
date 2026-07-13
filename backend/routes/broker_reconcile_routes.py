@@ -64,7 +64,7 @@ def _parse_iso(s: Optional[str]) -> Optional[datetime]:
     if not s:
         return None
     try:
-        # Alpaca timestamps look like "2026-05-15T13:23:02.058599Z"
+        # Broker timestamps look like "2026-05-15T13:23:02.058599Z"
         if s.endswith("Z"):
             s = s[:-1] + "+00:00"
         return datetime.fromisoformat(s)

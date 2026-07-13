@@ -112,11 +112,9 @@ async def _get_public_adapter():
       * execution_enabled=False on the stored credential singleton
         (operator-level kill switch — distinct from MC's gate chain)
 
-    All None-returns route equity orders to the Alpaca fallback —
-    crypto is unaffected because it routes to Kraken via a different
-    loader. Doctrine pin (operator, 2026-06-07): NEVER let Public's
-    misconfiguration close equity trading; Alpaca remains the
-    fallback path until Public is verified live for a week.
+    Public.com was fully deprecated on 2026-02-19. All None-returns
+    now NO_TRADE at the router; there is no equity fallback path.
+    Crypto is unaffected — it routes to Kraken via a different loader.
     """
     try:
         from shared.public import get_active, _stored_doc  # noqa: WPS433
@@ -129,7 +127,7 @@ async def _get_public_adapter():
         if not doc:
             return None
         if not doc.get("execution_enabled"):
-            # Operator-side kill switch is OFF — fall through to Alpaca.
+            # Operator-side kill switch is OFF — router NO_TRADEs.
             return None
         active = await get_active()
         if not active or not active.get("account_id"):
@@ -153,8 +151,7 @@ async def _get_equity_adapter():
 
     2026-02-19 (operator directive): Public.com and Alpaca are
     deprecated. Webull is the SOLE equity broker. This resolver
-    delegates to the Webull adapter so any legacy caller still
-    landing on the `alpaca_paper` slot name routes correctly.
+    delegates to the Webull adapter.
 
     Fail-closed: if Webull credentials aren't configured the
     adapter loader returns None and the router raises
@@ -169,18 +166,13 @@ ADAPTER_LOADERS = {
     "public": _get_public_adapter,
     "ibkr": _get_ibkr_adapter,
     "webull": get_webull_adapter,
-    # Legacy slot alias kept so any DB row still pinned to
-    # `alpaca_paper` (pre-2026-02-19 broker_selection rows) routes
-    # to the current equity adapter (Webull) instead of NO_TRADE.
-    # The constant is decorative — it does NOT load an Alpaca client.
-    "alpaca_paper": _get_equity_adapter,
 }
 
 
 # Brokers that act as a per-intent operator override across BOTH lanes.
 # Setting `intent.broker_override = "webull"` routes that single intent
 # through Webull instead of the lane's default broker. Public / Kraken
-# / Alpaca cannot be selected as overrides — they ARE the defaults for
+# cannot be selected as overrides — they ARE the defaults for
 # their lanes; the override exists precisely to opt INTO an alternative
 # without erasing the lane-default keys.
 ROUTE_OVERRIDE_BROKERS: set[str] = {"webull"}
@@ -401,7 +393,7 @@ async def route_order(
     #    override (e.g. `broker_override="webull"`). The override is
     #    only honored for brokers in `ROUTE_OVERRIDE_BROKERS`; anything
     #    else falls back to the lane default so a stale or hostile
-    #    intent can't redirect to Public/Kraken/Alpaca arbitrarily.
+    #    intent can't redirect to arbitrary brokers.
     #
     # 2026-02-19 (operator: "the switch isn't lighting up anything"):
     #    When no per-intent override is set, consult the broker

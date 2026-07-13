@@ -6,7 +6,7 @@ Polled endpoint matching risedual.ai's
     {
       "event_id":  "uuid4",
       "timestamp": "2026-02-13T10:11:12+00:00",  # ISO 8601 UTC
-      "type":      "paper_trade_open",            # see ALLOWED_TYPES
+      "type":      "trade_opened",                # see ALLOWED_TYPES
       "severity":  "info",                        # info|success|warn|error
       "title":     "Opened INTC SHORT · $1,000",
       "detail":    "Confidence 72%, regime risk_off",
@@ -88,7 +88,7 @@ def _event_from_audit(row: dict) -> Optional[dict]:
         return {
             "event_id": f"audit-{pid}-{ts}",
             "timestamp": ts,
-            "type": "paper_trade_open",
+            "type": "trade_opened",
             "severity": sev,
             "title": f"Opened {direction.upper()} on signal {pid[:8]}",
             "detail": (
@@ -102,7 +102,7 @@ def _event_from_audit(row: dict) -> Optional[dict]:
         return {
             "event_id": f"audit-{pid}-{ts}",
             "timestamp": ts,
-            "type": "paper_trade_skip",
+            "type": "trade_skipped",
             "severity": "info",
             "title": f"Skipped signal {pid[:8]}",
             "detail": (payload.get("notes") or "")[:200],

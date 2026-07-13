@@ -8,13 +8,13 @@ Doctrine:
     * Order shape: market order, USD notional via Kraken's `ordertype:
       market` + `volume` (base units). We compute volume from notional
       using a fresh tick from the public ticker — same approach as
-      Alpaca's notional orders, except Kraken doesn't accept notional
+      A dollar-notional order, except Kraken doesn't accept notional
       directly so we size locally.
     * Day-1 caps live OUTSIDE this adapter (in exposure_caps_crypto.py).
       The adapter trusts the caller.
 
 This adapter sits behind the same `submit_market_order` interface as the
-Alpaca adapter so the broker router can call them uniformly.
+Webull adapter so the broker router can call them uniformly.
 """
 from __future__ import annotations
 
@@ -168,7 +168,7 @@ class KrakenLiveAdapter:
         identity-level resolution.
 
         Doctrine pin (2026-05-23): refuses to submit without an MC
-        execution receipt (same bypass-blocking invariant as Alpaca).
+        execution receipt (same bypass-blocking invariant as Webull).
 
         Paradox v3 (Step 5.b, 2026-02-22): when `leverage` is set,
         Kraken opens a margin position (long if side=buy, short if
@@ -333,7 +333,7 @@ class KrakenLiveAdapter:
 async def get_kraken_adapter() -> Optional[KrakenLiveAdapter]:
     """Return a configured KrakenLiveAdapter, or None if not connected.
 
-    Mirrors `get_alpaca_adapter`. The broker router calls this when
+    Mirrors `get_webull_adapter`. The broker router calls this when
     `lane=crypto`.
     """
     keys = await get_active_keys()

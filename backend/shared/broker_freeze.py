@@ -1,7 +1,7 @@
 """Broker Freeze — emergency kill switch above the lane toggles.
 
 Doctrine pin (2026-05-23):
-    On 2026-05-23 the operator surfaced ~500 orphan Alpaca paper fills
+    On 2026-05-23 the operator surfaced ~500 orphan equity paper fills (historical, pre-Alpaca-deprecation)
     from 2026-05-15 / 2026-05-18 that bypassed MC entirely (Camaro
     sidecar held its own API key and POSTed direct). MC was never
     "trading" — Camaro was, unilaterally.

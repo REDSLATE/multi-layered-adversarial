@@ -87,12 +87,11 @@ async def _executor_health() -> Dict[str, Any]:
 
     # 2. Zero orphan fills in the last 24h attributable to this runtime.
     # Orphans live in the memory_kernel_ledger as UV execution memories.
-    # We count by source_stack — historically `alpaca_orphan` /
-    # `alpaca_orphan_watchdog` (now retired with the broker) plus any
-    # future runtime-tagged orphan source. If/when other runtimes get
-    # their own watchdog tags, add them here.
+    # We count by source_stack — the current tag is `{runtime}` +
+    # `{runtime}_orphan`. Add other tags here if new runtimes ship
+    # their own orphan watchdog surfaces.
     orphan_cutoff = datetime.now(timezone.utc) - timedelta(hours=EXECUTOR_ORPHAN_WINDOW_H)
-    runtime_orphan_tags = {runtime, f"{runtime}_orphan", "alpaca_orphan", "alpaca_orphan_watchdog"}
+    runtime_orphan_tags = {runtime, f"{runtime}_orphan"}
     recent_orphans = await db.memory_kernel_ledger.count_documents({
         "memory_type": "execution",
         "provenance": "UV",
@@ -100,12 +99,11 @@ async def _executor_health() -> Dict[str, Any]:
         "created_at": {"$gte": orphan_cutoff},
     })
 
-    # 3. Orphan watchdog — REMOVED 2026-02-19 with Alpaca deprecation.
-    # The watchdog was an Alpaca-only fill reconciler; there is no
-    # equivalent surface on Webull because MC owns the order-issuance
-    # path end-to-end (no third-party stack can issue fills behind
-    # MC's back). The condition is reported true for back-compat with
-    # any executor-health dashboard still keying off it.
+    # 3. Orphan watchdog — never wired for Webull. MC owns the
+    # order-issuance path end-to-end so no third-party stack can
+    # issue fills behind MC's back. The condition is reported true
+    # for back-compat with any executor-health dashboard still keying
+    # off it.
     watchdog_enabled = True
 
     conditions = {

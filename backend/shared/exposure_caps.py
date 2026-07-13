@@ -1,14 +1,14 @@
 """Hard exposure caps — code-level rails enforced on every order route.
 
-Doctrine (Week 1 paper):
+Doctrine (2026-02-19, operator-locked LIVE-ONLY):
   * $10  per order  — notional cap on a single intent's order
   * $50  per day    — sum of executed order notional in the rolling 24h window
   * $100 open notional — total live market value across open positions
 
 These caps are SOFTWARE — there is no operator UI to relax them. To
 loosen them you change the constants here and redeploy. That's
-deliberate: caps are battle-tested in paper so they're proven by the
-time live trading lands.
+deliberate: caps are the last-line safety rail before real money
+leaves the account. All fires are live per the 2026-02-19 directive.
 
 Caps are evaluated by the gate chain BEFORE the broker is touched.
 Failure raises `CapExceeded`, which the chain turns into a blocking gate.
@@ -40,12 +40,8 @@ def _env_float(key: str, default: float) -> float:
         return default
 
 
-# Paper-trading rails. Change here = redeploy — OR set the env override
+# Live-trade rails. Change here = redeploy — OR set the env override
 # below for live-pilot tightening without a redeploy.
-#
-# 2026-05-14: Caps lifted for paper-trading rollout. Operator confirmed
-# the brains should trade freely on paper. The cap STRUCTURE stays in
-# place so it can be tightened the day we move toward live trading.
 #
 # 2026-06-07 (live $500 pilot): env overrides added so the operator
 # can ratchet caps DOWN live without touching code:

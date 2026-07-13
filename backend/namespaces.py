@@ -197,14 +197,15 @@ LANE_EXECUTION_TOGGLES = "lane_execution_toggles"
 # Resolved against market price by a later worker.
 OBSERVATION_RECEIPTS = "observation_receipts"
 
-# Learning Ladder (2026-02-18, Phase 3) — per-(brain, lane) promotion
-# stage tracker. Stages: observation_only → micro_paper → micro_live
-# → normal_live. Defaults observation_only. Operator-promotable.
+# Learning Ladder (2026-02-18, Phase 3; 2026-02-19: paper rung removed)
+# — per-(brain, lane) promotion stage tracker. Stages:
+# observation_only → micro_live → normal_live. Defaults
+# observation_only. Operator-promotable.
 LEARNING_LADDER = "learning_ladder"
 LEARNING_LADDER_AUDIT = "learning_ladder_audit"
 
 # Execution receipts namespace alias for the ladder counter (reads
-# fills tagged execution_mode="ladder_paper" / "ladder_live").
+# fills tagged execution_mode="ladder_live_micro" / "live").
 EXECUTION_RECEIPTS = "execution_receipts"
 
 LANE_EXECUTION_AUDIT_LOG = "lane_execution_audit_log"
@@ -284,13 +285,6 @@ SHARED_AUDITOR_ROTATIONS = "shared_auditor_rotations"
 # for a ticker. Audit-logged so we can review what the brains said about
 # a symbol over time. Not exposed to the public API.
 HYPOTHESIS_ANALYSES = "hypothesis_analyses"
-
-# Alpaca paper broker — Fernet-encrypted key pair + audit log.
-# Singleton credential doc keyed "singleton". Doctrine: paper only;
-# `execution_enabled` defaults True (paper is safe), live broker is a
-# separate adapter behind a dual-sign promotion gate.
-ALPACA_CREDENTIALS = "alpaca_credentials"
-ALPACA_AUDIT_LOG = "alpaca_audit_log"
 
 # Execution receipts — one row per intent that passed the gate chain and
 # was routed to a broker. Read by the exposure-caps daily-spend tally,

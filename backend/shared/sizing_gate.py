@@ -14,23 +14,23 @@ Doctrine pin (2026-05-26, operator-locked):
           wins. Doctrine: fail-closed to the tighter cap.
 
     Per-lane configuration so the operator can run, e.g., $5 crypto
-    while equity stays at $100 paper. All env-driven.
+    while equity stays at $100 live. All env-driven.
 
 Doctrine pin (2026-02-17, Phase 4 ENGAGED):
     The ladder stage (per brain × lane) is now AUTHORITATIVE for
     sizing/routing. `evaluate_sizing_with_ladder()` reads the stage
     and:
         observation_only  → route="observe"     (no broker; write obs receipt)
-        micro_paper       → route="paper"       (paper fire @ MICRO_PAPER_USD)
         micro_live        → route="live_micro"  (live fire @ MICRO_LIVE cap)
         normal_live       → route="live_normal" (full lane-cap sizing)
 
+    2026-02-19 operator directive: paper trading is REMOVED from the
+    doctrine. Every fire is live from micro_live upward; there is no
+    "paper" route or stage anywhere in the pipeline. Observation-only
+    remains for silent evaluation.
+
     The ladder cap participates in the "smallest-wins" comparison
-    alongside `lane_cap` and `micro_live`. This means promoting a
-    brain to `micro_paper` no longer requires the brain to also stop
-    self-zeroing — MC's gate clamps to $10/order regardless of what
-    the brain claimed it wanted to risk. The brain becomes a SIGNAL
-    SOURCE; MC owns capital deployment.
+    alongside `lane_cap` and `micro_live`.
 
 Provenance: every clamped order carries `sizing_provenance` on its
 receipt so the operator can trace exactly which rail bound the size.
@@ -64,7 +64,7 @@ def _env_float(key: str, default: float) -> float:
 
 # Master toggle. When True, every order is clamped to the micro_live
 # cap. When False, only the engineering lane cap applies. Operator
-# flips this via env when promoting from paper → first live trades.
+# flips this via env at the start of any live-money trading window.
 MICRO_LIVE_ENABLED: bool = _env_bool("MICRO_LIVE_ENABLED", False)
 
 # Default cap when no lane-specific override.
@@ -82,19 +82,18 @@ MICRO_LIVE_EQUITY_CAP_USD: float = _env_float(
 
 # ─── Phase 4 ladder caps ───
 # Per-rung notional defaults. Operator can tighten via env at any time.
-LADDER_MICRO_PAPER_USD: float = _env_float("LADDER_MICRO_PAPER_USD", 10.0)
+# 2026-02-19: paper stage removed from the doctrine; only micro_live
+# survives as an active ladder cap.
 LADDER_MICRO_LIVE_USD: float = _env_float("LADDER_MICRO_LIVE_USD", 5.0)
 
 
 # Routing tags carried on the receipt so the learning ladder can count
-# fills per-stage (see `learning_ladder._paper_progress`).
+# fills per-stage.
 ROUTE_OBSERVE = "observe"
-ROUTE_PAPER = "paper"
 ROUTE_LIVE_MICRO = "live_micro"
 ROUTE_LIVE_NORMAL = "live_normal"
 
 EXECUTION_MODE_FOR_ROUTE = {
-    ROUTE_PAPER: "ladder_paper",
     ROUTE_LIVE_MICRO: "ladder_live_micro",
     ROUTE_LIVE_NORMAL: "live",
 }
@@ -288,9 +287,9 @@ async def evaluate_sizing_with_ladder(
     if ladder_cap is not None:
         candidates.append(("ladder", ladder_cap))
 
-    # Smallest-wins. Note: at micro_paper / micro_live the ladder cap
-    # is typically the smallest, so it dominates — exactly the
-    # operator's "ladder is authoritative" pin.
+    # Smallest-wins. Note: at micro_live the ladder cap is typically
+    # the smallest, so it dominates — exactly the operator's "ladder
+    # is authoritative" pin.
     binding_rail = "none"
     final = req
     for name, cap in candidates:
@@ -320,7 +319,7 @@ def reload_env() -> None:
     so tightening micro_live mid-session doesn't require a redeploy."""
     global MICRO_LIVE_ENABLED, MICRO_LIVE_DEFAULT_CAP_USD
     global MICRO_LIVE_CRYPTO_CAP_USD, MICRO_LIVE_EQUITY_CAP_USD
-    global LADDER_MICRO_PAPER_USD, LADDER_MICRO_LIVE_USD
+    global LADDER_MICRO_LIVE_USD
     MICRO_LIVE_ENABLED = _env_bool("MICRO_LIVE_ENABLED", False)
     MICRO_LIVE_DEFAULT_CAP_USD = _env_float("MICRO_LIVE_DEFAULT_CAP_USD", 5.0)
     MICRO_LIVE_CRYPTO_CAP_USD = _env_float(
@@ -329,5 +328,4 @@ def reload_env() -> None:
     MICRO_LIVE_EQUITY_CAP_USD = _env_float(
         "MICRO_LIVE_EQUITY_CAP_USD", MICRO_LIVE_DEFAULT_CAP_USD,
     )
-    LADDER_MICRO_PAPER_USD = _env_float("LADDER_MICRO_PAPER_USD", 10.0)
     LADDER_MICRO_LIVE_USD = _env_float("LADDER_MICRO_LIVE_USD", 5.0)

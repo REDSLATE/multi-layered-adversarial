@@ -780,7 +780,7 @@ async def runtime_roles_manifest(
         "items": items,
         "count": len(items),
         "doctrine": (
-            "Brains share opinions, not internal model state. None can "
-            "execute trades, paper or live."
+            "Brains share opinions, not internal model state. None "
+            "can execute trades — only MC touches the broker."
         ),
     }

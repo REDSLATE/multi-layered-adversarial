@@ -6,6 +6,13 @@ for Webull's three-value credential tuple (app_key, app_secret,
 account_id) plus its two axes of environment (region_id ∈ {us,hk,jp}
 and environment ∈ {pro,paper}).
 
+Note: Webull's own API has a `paper` environment option distinct from
+`pro`. Per the 2026-02-19 operator directive (LIVE ONLY), MC always
+selects `pro` at connect-time; `paper` is retained in the enum here
+purely because Webull's API rejects requests that omit it. The stored
+credential singleton MUST have `environment="pro"` for any order to
+route.
+
 Two callers exist:
     1. Async FastAPI routes → `get_active_webull_creds()` (motor).
     2. Sync trader threads (`trader/spread.py`, `trader/broker.py`,

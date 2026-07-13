@@ -21,7 +21,7 @@ Doctrine:
 Cache:
     Server-side 10-second cache per-lane. A brain polling on a 30s
     heartbeat hits cache 2-3 times per real broker probe. Lifts the
-    floor on Kraken / Alpaca rate-limit pressure.
+    floor on Kraken / Webull rate-limit pressure.
 
 Auth:
     `X-Runtime-Token` for any of the 4 brains. The endpoint is

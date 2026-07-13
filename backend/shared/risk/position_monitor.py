@@ -22,7 +22,7 @@ Doctrine (2026-02-17):
     wrappers, crypto positions to `shared.crypto.*`. The monitor itself
     never imports lane-specific math — only the dispatcher.
 
-    Pricing: equity positions use the Alpaca paper account's
+    Pricing: equity positions use the Webull account's
     list_positions() current_price. Crypto positions use Kraken's
     unauthenticated public `/0/public/Ticker` endpoint via
     `_crypto_prices()` — no API keys required for the price oracle,
@@ -341,7 +341,7 @@ async def run_once(actor: str = "position_monitor") -> dict:
         {"state": {"$in": ["open", "managing"]}}, {"_id": 0},
     ).to_list(500)
 
-    # Build the equity-price snapshot once per tick (one Alpaca call).
+    # Build the equity-price snapshot once per tick (one Webull call).
     equity_prices = await _equity_prices()
     # Build the crypto-price snapshot once per tick (one Kraken Ticker
     # call for every crypto symbol currently open). Far gentler on

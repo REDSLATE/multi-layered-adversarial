@@ -14,8 +14,9 @@ Endpoints:
     GET  /api/intents              operator/brain read (filterable)
     POST /api/execution/dry_run    operator → MC, runs gate chain against
                                    an intent_id and returns verdict only
-                                   (no broker call). Day 1 of the
-                                   paper-trading sprint uses this.
+                                   (no broker call). Operator diagnostic
+                                   tool for verifying gate-chain behaviour
+                                   without placing an order.
 
 Doctrine:
   * `may_execute` is schema-pinned to False. The brain CANNOT request
@@ -2059,7 +2060,7 @@ async def admin_post_intent_equity(
 
 # NOTE: `/execution/dry_run` and `/execution/submit` live in
 # `shared/execution.py` — they consume the full gate chain including
-# real exposure caps and the live Alpaca paper adapter.
+# real exposure caps and the live Webull adapter.
 
 
 # ───── doctrine sidecar audit log read (2026-02-17) ─────

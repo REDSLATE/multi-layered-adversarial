@@ -13,7 +13,7 @@ Doctrine pin (2026-02-18, supersedes prior "no observation samples" stance):
 
         INTENT
           → OBSERVATION RECEIPT     (gates pass, size collapsed)
-          → PAPER FILL              (size>0, Alpaca paper)
+          → LIVE FILL               (size>0, Webull)
           → MICRO LIVE FILL         (size>0, capped $5 real)
           → NORMAL LIVE FILL        (size>0, full)
 

@@ -456,10 +456,9 @@ async def _dissent_correctness(brain_lc: str, since: str) -> dict:
         the SAME function the grader uses at T+24h. P&L basis is
         consistent across all graded opinions.
       * Broker layer: routing is Webull (equity) + Kraken (crypto).
-        The legacy `alpaca_paper` string in `ADAPTER_LOADERS` is a
-        decorative alias that maps to Webull; there is NO live
-        Alpaca client. Stale `ALPACA_INGEST_*` env vars are unused
-        by Python code and slated for removal.
+        No Alpaca client, no paper adapter, no fallback. Both `alpaca_paper`
+        aliases and stale `ALPACA_INGEST_*` env vars were purged
+        2026-02-19 per operator directive (LIVE ONLY).
       * Equity anchor coverage is limited by ARCHITECTURE, not a
         timeout: `observation_resolver._fetch_price` for equity
         calls `adapter.get_latest_trade()` (missing on Webull →

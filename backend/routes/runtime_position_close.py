@@ -170,7 +170,7 @@ async def close_position(
 async def _lookup_open_position(symbol: str, lane: str) -> Optional[dict]:
     """Read the broker's current position for `symbol` in `lane`.
 
-    Equity → Alpaca adapter's `list_positions()`
+    Equity → Webull adapter's `list_positions()`
     Crypto → Kraken balance preview (balance ≠ position; we infer)
 
     Returns a normalized dict `{symbol, side, qty, avg_entry_price}` or

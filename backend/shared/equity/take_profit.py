@@ -7,7 +7,7 @@ RoadGuard enforces.
 
 Reads:    `shared_live_positions` (lane='equity' rows only)
 Closes:   via `shared.live_positions.close()` — broadcasts to outcomes.
-          Actual Alpaca close-order routing remains a separate piece
+          Actual close-order routing remains a separate piece
           to be wired alongside the Position Monitor loop.
 """
 from __future__ import annotations

@@ -30,7 +30,7 @@ Doctrine pin (operator directive, post-AAPL incident, 2026-06-XX):
 
 This module:
     * Reads live broker positions per lane (equity → Public.com or
-      Alpaca; crypto → Kraken).
+      Webull; crypto → Kraken).
     * Normalizes every position dict via `normalize_position`.
     * Caches the per-lane snapshot for ~10s so the brain runner can
       hit the context lookup on every tick without hammering the

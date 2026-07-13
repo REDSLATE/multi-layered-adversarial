@@ -66,8 +66,11 @@ router = APIRouter(prefix="/admin/webull", tags=["webull-credentials"])
 
 
 # Region / environment enums — kept in sync with what the trader honors.
-# `pro` = live money, `paper` = paper account. Region governs the API host
-# routing; the SDK derives host from these values.
+# `pro` = live money (MC always selects this per the 2026-02-19
+# operator directive), `paper` = Webull's paper account. Region
+# governs the API host routing; the SDK derives host from these
+# values. `paper` remains in the enum ONLY because Webull's API
+# rejects requests that omit an environment; MC never writes it.
 _ALLOWED_REGIONS = {"us", "hk", "jp"}
 _ALLOWED_ENVIRONMENTS = {"pro", "paper"}
 
@@ -110,6 +113,15 @@ class ConnectIn(BaseModel):
         v2 = (v or "").strip().lower()
         if v2 not in _ALLOWED_ENVIRONMENTS:
             raise ValueError(f"environment must be one of {sorted(_ALLOWED_ENVIRONMENTS)}")
+        # 2026-02-19 operator directive (LIVE ONLY): reject any
+        # attempt to persist a paper-account credential. Webull's
+        # `paper` env is retained in the enum for API-schema
+        # compatibility, but MC never persists it.
+        if v2 == "paper":
+            raise ValueError(
+                "environment='paper' is not permitted by operator "
+                "directive (2026-02-19). Use 'pro' for live money.",
+            )
         return v2
 
 

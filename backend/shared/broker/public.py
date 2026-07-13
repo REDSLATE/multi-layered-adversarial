@@ -2,7 +2,7 @@
 
 Conforms to `shared.broker.base.BrokerAdapter` so the execution
 router + gate chain can talk to Public.com via the same interface
-as Alpaca / Kraken.
+as Webull / Kraken.
 
 Doctrine:
   * Adapter is a thin shim over `shared.public` — that module owns
@@ -148,7 +148,7 @@ class PublicAdapter(BrokerAdapter):
         # equity market orders for the BROKERAGE account type.
         #
         # `mc_receipt` is accepted from the router for parity with
-        # AlpacaAdapter; Public's API doesn't carry it, but we log
+        # WebullAdapter; Public's API doesn't carry it, but we log
         # the signature so the audit trail is complete.
         if mc_receipt:
             sig = (mc_receipt.get("signature") or "")[:12]

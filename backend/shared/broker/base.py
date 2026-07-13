@@ -1,6 +1,6 @@
 """Broker adapter contract.
 
-Every broker MC speaks to (Alpaca paper, Public.com, Kraken later) MUST
+Every broker MC speaks to (Webull, Kraken) MUST
 expose this interface. The execution router and gate chain consume this
 shape; they never reach into a broker SDK directly.
 
@@ -11,7 +11,7 @@ Doctrine:
     No SDK objects leak past the adapter boundary — that keeps the rest
     of the codebase decoupled from any one broker's models.
   * All adapters MUST normalise side as "BUY" / "SELL" uppercase.
-  * Adapters report dollars as float USD. Quantities are float (Alpaca
+  * Adapters report dollars as float USD. Quantities are float (
     supports fractional shares for market orders).
 """
 from __future__ import annotations
@@ -62,10 +62,17 @@ class BrokerPosition(TypedDict, total=False):
 
 
 class BrokerAdapter(ABC):
-    """Abstract base. Concrete adapters: AlpacaPaperAdapter, ..."""
+    """Abstract base. Concrete adapters: WebullAdapter, KrakenAdapter.
+
+    2026-02-19 operator directive: LIVE ONLY. No paper adapter is
+    permitted in this package. `is_paper` MUST be False on every
+    concrete adapter; the field is retained for legacy receipt
+    consumers that still key off it. New consumers should treat
+    the presence of an adapter as an implicit guarantee of live.
+    """
 
     name: str = "abstract"
-    is_paper: bool = True
+    is_paper: bool = False
 
     @abstractmethod
     async def ping(self) -> dict:
@@ -87,7 +94,7 @@ class BrokerAdapter(ABC):
     ) -> BrokerOrder:
         """Submit a market day order. Exactly one of `qty` or `notional`
         must be supplied. `notional` requires the broker to support
-        dollar-amount orders (Alpaca does)."""
+        dollar-amount orders."""
 
     @abstractmethod
     async def submit_limit_order(

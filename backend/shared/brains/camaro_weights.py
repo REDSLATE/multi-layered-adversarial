@@ -1,5 +1,18 @@
 """camaro_weights.py — Barracuda wrapper / Camaro decision engine.
 
+⚠️ LEGACY MODULE (2026-02-19 note):
+    This file is not imported by any live-runtime code path — the
+    current Barracuda brain lives at `mc_brains/strategies/
+    mean_reversion.py`. This module is preserved as a fixture for
+    the `test_camaro_weights_2026_02_21.py` regression tests, which
+    exercise old decision-engine behaviour for historical reference.
+
+    The `MICRO_PAPER` SizingBand and its coefficient are retained
+    ONLY to keep those tests compiling; per the 2026-02-19 operator
+    directive ("no paper anything, live trades only"), no live code
+    ever routes through this band. When the legacy tests are
+    retired, the band + this whole module can be deleted.
+
 Improved from original. Changes documented inline with `# IMPROVED`
 comments. 350–420 lines. No DB, no memory surfaces, no telemetry,
 no Intent envelope.
