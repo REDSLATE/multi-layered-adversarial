@@ -450,18 +450,27 @@ async def _dissent_correctness(brain_lc: str, since: str) -> dict:
       5. Join the self opinion to its outcome via `opinion_id`.
       6. Correct = `outcome.actual == "win"`.
 
-    Anchor-price contract (audited 2026-02-11):
+    Anchor-price contract (audited 2026-02-11, corrected 2026-02-11):
       * All opinions that carry `anchor_price` write it at post time
-        using `shared.opinion_resolver._fetch_current_price`, which
-        is the SAME function the grader uses at T+24h. P&L basis is
+        via `shared.opinion_resolver._fetch_current_price`, which is
+        the SAME function the grader uses at T+24h. P&L basis is
         consistent across all graded opinions.
-      * Current coverage is uneven: ~15% of directional opinions
-        carry an anchor (crypto only, because equity fetches hit a
-        1.5s Alpaca timeout at post time). Until equity anchor
-        capture is hardened, `_dissent_correctness` effectively
-        grades crypto-lane brains only. The `join_mix` field in
-        the returned dict tells operators how many samples used
-        each join path so this limitation stays visible.
+      * Broker layer: routing is Webull (equity) + Kraken (crypto).
+        The legacy `alpaca_paper` string in `ADAPTER_LOADERS` is a
+        decorative alias that maps to Webull; there is NO live
+        Alpaca client. Stale `ALPACA_INGEST_*` env vars are unused
+        by Python code and slated for removal.
+      * Equity anchor coverage is limited by ARCHITECTURE, not a
+        timeout: `observation_resolver._fetch_price` for equity
+        calls `adapter.get_latest_trade()` (missing on Webull →
+        AttributeError → fall through) then `adapter.list_positions()`
+        and returns `current_price` from the position row. Symbols
+        we DON'T already hold return None. So equity anchors only
+        appear for symbols already in the Webull portfolio. Crypto
+        anchors work everywhere via `_crypto_price_for` (Kraken
+        public ticker, no position gate).
+      * The `join_mix` field surfaces both join-path counts so
+        operators can weight interpretation.
 
     Returned shape:
         {
