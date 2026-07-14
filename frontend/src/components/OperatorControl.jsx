@@ -167,6 +167,39 @@ export default function OperatorControl() {
   const willFire = !!tradingCtl?.trading_will_fire;
   const loopClosed = arbiterOn && masterOn;
 
+  // Per-brain presence signal for the seating strip.
+  // Doctrine: honest data or nothing. We compute presence from the
+  // MOST RECENT pulse tick that actually had brain completions
+  // (any tick with brains_completed_count > 0). Ignoring blank
+  // ticks avoids false-red when Camino skips its off-cadence tick.
+  //   green   → brain was in brains_completed on that tick
+  //   red     → brain was in brains_failed on that tick
+  //   yellow  → tick ran but this brain neither completed nor failed
+  //   grey    → no populated tick yet (dot suppressed)
+  const brainPresence = React.useMemo(() => {
+    const latestPopulated = ticks.find(
+      (t) => (t.brains_completed_count || 0) + (t.brains_failed_count || 0) > 0
+    );
+    if (!latestPopulated) return { source: null, byBrain: {} };
+    const completed = new Set((latestPopulated.brains_completed || []).map((b) => String(b).toLowerCase()));
+    const failed = new Set((latestPopulated.brains_failed || []).map((b) => String(b).toLowerCase()));
+    return {
+      source: latestPopulated,
+      byBrain: {
+        camino:    completed.has("camino")    ? "ok" : failed.has("camino")    ? "fail" : "absent",
+        barracuda: completed.has("barracuda") ? "ok" : failed.has("barracuda") ? "fail" : "absent",
+        hellcat:   completed.has("hellcat")   ? "ok" : failed.has("hellcat")   ? "fail" : "absent",
+        gto:       completed.has("gto")       ? "ok" : failed.has("gto")       ? "fail" : "absent",
+      },
+    };
+  }, [ticks]);
+
+  const presenceMeta = {
+    ok:     { color: "#10B981", label: "present in latest populated tick" },
+    fail:   { color: "#EF4444", label: "failed on latest populated tick" },
+    absent: { color: "#F59E0B", label: "did NOT opt in on latest populated tick" },
+  };
+
   // Aggregate a 15-tick summary for the header pill.
   const recent = ticks.slice(0, 15);
   const totalArbs = recent.reduce((s, t) => s + (t.arbitrations_completed || 0), 0);
@@ -292,24 +325,42 @@ export default function OperatorControl() {
                   {laneBlock.lane}
                 </div>
                 <div className="grid grid-cols-4 gap-1.5">
-                  {laneBlock.roles.map(([role, label, brain]) => (
-                    <div
-                      key={role}
-                      className="border border-rd-border/60 px-1.5 py-1"
-                      data-testid={`seating-${role}`}
-                      title={brain ? `${label}: ${brain}` : `${label}: vacant`}
-                    >
-                      <div className="text-[9px] uppercase tracking-widest text-rd-dim font-mono">
-                        {label}
-                      </div>
+                  {laneBlock.roles.map(([role, label, brain]) => {
+                    const state = brain ? brainPresence.byBrain[String(brain).toLowerCase()] : null;
+                    const meta = state ? presenceMeta[state] : null;
+                    return (
                       <div
-                        className="text-xs font-mono font-bold uppercase truncate"
-                        style={{ color: brain ? "#E4E4E7" : "#71717A" }}
+                        key={role}
+                        className="border border-rd-border/60 px-1.5 py-1"
+                        data-testid={`seating-${role}`}
+                        title={
+                          brain
+                            ? `${label}: ${brain}${meta ? ` · ${meta.label}` : ""}`
+                            : `${label}: vacant`
+                        }
                       >
-                        {brain || "vacant"}
+                        <div className="text-[9px] uppercase tracking-widest text-rd-dim font-mono">
+                          {label}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {meta && (
+                            <span
+                              className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0"
+                              style={{ backgroundColor: meta.color }}
+                              data-testid={`seating-${role}-dot`}
+                              data-presence={state}
+                            />
+                          )}
+                          <div
+                            className="text-xs font-mono font-bold uppercase truncate"
+                            style={{ color: brain ? "#E4E4E7" : "#71717A" }}
+                          >
+                            {brain || "vacant"}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ))}
