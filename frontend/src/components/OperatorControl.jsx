@@ -1,0 +1,334 @@
+import React, { useCallback, useEffect, useState } from "react";
+import { api } from "@/lib/api";
+import { Card, Badge } from "@/components/ui-bits";
+import { ArrowsClockwise, Warning, CheckCircle, Lightning, ShieldSlash } from "@phosphor-icons/react";
+
+/**
+ * Operator Control — one-glance status + one-click toggles for the
+ * two switches that gate live trading:
+ *
+ *   1. Arbiter runtime_mode  (DISARMED ↔ LIVE)
+ *       → controls whether pulse-emitted arbitrations turn into intents
+ *   2. Master switch         (trading_controls.enabled)
+ *       → controls whether auto_router routes intents to brokers
+ *
+ * PLUS: the last N pulse ticks with `arbitrations / intents_emitted /
+ * runtime_mode` inline — the single readout that makes it obvious at
+ * a glance whether the pulse → arbiter → intent loop is closed.
+ * Non-zero `intents` for a stretch of ticks = loop is firing.
+ * Zero `intents` while `brains_completed=4/4` = arbiter is DISARMED
+ * OR every seat resolved "all_flat" (no consensus).
+ */
+function relTime(iso) {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return "—";
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 60) return `${Math.floor(s)}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+}
+
+function Toggle({ label, checked, busy, onToggle, colorOn = "#10B981", colorOff = "#71717A", testid }) {
+  const trackColor = checked ? colorOn : colorOff;
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={busy}
+      onClick={onToggle}
+      data-testid={testid}
+      className="flex items-center gap-3 py-1.5 group disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      <span className="text-[10px] uppercase tracking-widest text-rd-dim font-mono">
+        {label}
+      </span>
+      <span
+        className="relative inline-block w-10 h-5 rounded-full transition-colors"
+        style={{ backgroundColor: trackColor }}
+      >
+        <span
+          className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+          style={{ transform: checked ? "translateX(20px)" : "translateX(0)" }}
+        />
+      </span>
+      <span
+        className="text-xs font-mono font-bold uppercase tracking-widest"
+        style={{ color: trackColor }}
+      >
+        {busy ? "…" : (checked ? "ON" : "OFF")}
+      </span>
+    </button>
+  );
+}
+
+export default function OperatorControl() {
+  const [arbiter, setArbiter] = useState(null);      // { runtime_mode: "LIVE" | "DISARMED" }
+  const [tradingCtl, setTradingCtl] = useState(null); // /admin/trading/status
+  const [ticks, setTicks] = useState([]);
+  const [busyArbiter, setBusyArbiter] = useState(false);
+  const [busyMaster, setBusyMaster] = useState(false);
+  const [busyRefresh, setBusyRefresh] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(async () => {
+    setBusyRefresh(true);
+    try {
+      const [a, t, k] = await Promise.all([
+        api.get("/mc/arbiter/state").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
+        api.get("/admin/trading/status").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
+        api.get("/mc/pulse-health/ticks?limit=15").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
+      ]);
+      setArbiter(a.data);
+      setTradingCtl(t.data);
+      setTicks(k.data?.ticks || []);
+      setErr("");
+    } catch (e) {
+      setErr(e?.response?.data?.detail || e.message);
+    } finally {
+      setBusyRefresh(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    // Auto-refresh every 15s so the ticks column matches the pulse cadence.
+    const id = setInterval(load, 15_000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const flipArbiter = async () => {
+    const current = arbiter?.runtime_mode;
+    const next = current === "LIVE" ? "DISARMED" : "LIVE";
+    const confirmed = window.confirm(
+      `Flip arbiter runtime mode: ${current} → ${next}?\n\n` +
+      (next === "LIVE"
+        ? "This ENABLES intent emission from every pulse arbitration. Combined with the master switch armed, this puts real orders on the wire."
+        : "This stops intent emission. In-flight orders continue; new arbitrations produce decisions only, no intents.")
+    );
+    if (!confirmed) return;
+    setBusyArbiter(true);
+    try {
+      const r = await api.post("/mc/arbiter/runtime-mode", { mode: next });
+      setArbiter((prev) => ({ ...(prev || {}), runtime_mode: r.data?.runtime_mode || next }));
+      setErr("");
+    } catch (e) {
+      setErr(e?.response?.data?.detail || e.message);
+    } finally {
+      setBusyArbiter(false);
+      // Immediate reload so the display reflects the flip within one paint.
+      load();
+    }
+  };
+
+  const flipMaster = async () => {
+    const current = !!tradingCtl?.trading_enabled_runtime;
+    const next = !current;
+    let reason = "";
+    if (next) {
+      reason = window.prompt(
+        "Enable master switch — reason (required, audit trail):",
+        "operator arm from dashboard"
+      );
+      if (!reason || !reason.trim()) return;
+    } else {
+      reason = window.prompt(
+        "Disable master switch — reason (audit trail):",
+        "operator disarm from dashboard"
+      );
+      if (reason === null) return;
+    }
+    setBusyMaster(true);
+    try {
+      const r = await api.post("/admin/trading/toggle", {
+        enabled: next,
+        reason: reason.trim(),
+      });
+      setTradingCtl((prev) => ({
+        ...(prev || {}),
+        trading_enabled_runtime: !!r.data?.enabled,
+      }));
+      setErr("");
+    } catch (e) {
+      setErr(e?.response?.data?.detail || e.message);
+    } finally {
+      setBusyMaster(false);
+      load();
+    }
+  };
+
+  const arbiterOn = arbiter?.runtime_mode === "LIVE";
+  const masterOn = !!tradingCtl?.trading_enabled_runtime;
+  const willFire = !!tradingCtl?.trading_will_fire;
+  const loopClosed = arbiterOn && masterOn;
+
+  // Aggregate a 15-tick summary for the header pill.
+  const recent = ticks.slice(0, 15);
+  const totalArbs = recent.reduce((s, t) => s + (t.arbitrations_completed || 0), 0);
+  const totalIntents = recent.reduce((s, t) => s + (t.intents_emitted || 0), 0);
+  const anyBrains = recent.some((t) => (t.brains_completed_count || 0) > 0);
+
+  return (
+    <Card className="mb-6" testid="operator-control-tile" accentColor={loopClosed ? "#10B981" : "#EF4444"}>
+      <div className="flex items-start justify-between gap-3 mb-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <Lightning size={16} weight="fill" color={loopClosed ? "#10B981" : "#71717A"} />
+            <h3 className="font-display text-lg font-bold tracking-tight">
+              Operator Control
+            </h3>
+            <Badge color={loopClosed ? "#10B981" : "#EF4444"} testid="operator-control-status">
+              {loopClosed ? "LOOP CLOSED" : "LOOP OPEN"}
+            </Badge>
+          </div>
+          <p className="text-xs text-rd-muted mt-1 font-mono">
+            Two switches control live trading. Both must be ON for the
+            pulse → arbiter → intent → broker chain to fire.
+          </p>
+        </div>
+        <button
+          onClick={load}
+          disabled={busyRefresh}
+          className="p-2 border border-rd-border hover:border-rd-text disabled:opacity-50"
+          data-testid="operator-control-refresh"
+          title="Refresh"
+        >
+          <ArrowsClockwise size={14} className={busyRefresh ? "animate-spin" : ""} />
+        </button>
+      </div>
+
+      {err && (
+        <div className="mb-3 p-2 border border-red-500 text-red-400 text-xs font-mono" data-testid="operator-control-error">
+          <Warning size={12} className="inline mr-1" /> {err}
+        </div>
+      )}
+
+      {/* Toggles */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+        <div className="border border-rd-border p-3" data-testid="toggle-arbiter-block">
+          <div className="text-[10px] uppercase tracking-widest text-rd-dim mb-1 font-mono">
+            1. Arbiter Runtime Mode
+          </div>
+          <Toggle
+            label="ARBITER"
+            checked={arbiterOn}
+            busy={busyArbiter}
+            onToggle={flipArbiter}
+            testid="toggle-arbiter"
+          />
+          <div className="text-[10px] text-rd-muted mt-2 font-mono leading-relaxed">
+            LIVE → pulse arbitrations emit intents into shared_intents.
+            DISARMED → decisions recorded only, no intents.
+          </div>
+        </div>
+
+        <div className="border border-rd-border p-3" data-testid="toggle-master-block">
+          <div className="text-[10px] uppercase tracking-widest text-rd-dim mb-1 font-mono">
+            2. Master Switch
+          </div>
+          <Toggle
+            label="TRADING"
+            checked={masterOn}
+            busy={busyMaster}
+            onToggle={flipMaster}
+            testid="toggle-master"
+          />
+          <div className="text-[10px] text-rd-muted mt-2 font-mono leading-relaxed">
+            ON → auto_router routes pending intents to brokers.
+            OFF → intents stay pending (fail-closed).
+          </div>
+          {masterOn && !willFire && (
+            <div className="text-[10px] text-yellow-500 mt-2 font-mono">
+              <Warning size={10} className="inline mr-1" />
+              env AUTO_ROUTER_ENABLED is false — env veto in effect
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Last N pulse ticks */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-[10px] uppercase tracking-widest text-rd-dim font-mono">
+            Last {recent.length} Pulse Ticks · Σ arbitrations {totalArbs} · Σ intents {totalIntents}
+          </div>
+          {loopClosed && anyBrains && totalIntents === 0 && (
+            <div className="text-[10px] text-yellow-500 font-mono">
+              <ShieldSlash size={10} className="inline mr-1" />
+              Loop closed but zero intents — brains all_flat OR consensus miss
+            </div>
+          )}
+          {!anyBrains && recent.length > 0 && (
+            <div className="text-[10px] text-yellow-500 font-mono">
+              <Warning size={10} className="inline mr-1" />
+              No brain completions — freshness gate rejecting snapshots
+            </div>
+          )}
+        </div>
+
+        {recent.length === 0 ? (
+          <div className="text-xs text-rd-dim font-mono italic p-3 border border-dashed border-rd-border">
+            No recent pulse ticks. The pulse worker may not be running.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs font-mono" data-testid="operator-control-ticks-table">
+              <thead>
+                <tr className="text-[10px] uppercase tracking-widest text-rd-dim border-b border-rd-border">
+                  <th className="text-left py-1.5 pr-3">Age</th>
+                  <th className="text-right pr-3">Snaps</th>
+                  <th className="text-right pr-3">Brains</th>
+                  <th className="text-right pr-3">Arbs</th>
+                  <th className="text-right pr-3">Intents</th>
+                  <th className="text-left pr-3">Mode</th>
+                  <th className="text-center pr-1">OK</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recent.map((t) => {
+                  const ok = t.orchestration_ok !== false;
+                  const brains = `${t.brains_completed_count || 0}/${(t.brains_completed_count || 0) + (t.brains_failed_count || 0)}`;
+                  const modeColor = t.runtime_mode === "LIVE" ? "#10B981" : "#71717A";
+                  const intentsColor = (t.intents_emitted || 0) > 0 ? "#10B981" : "#71717A";
+                  return (
+                    <tr key={t.pulse_id} className="border-b border-rd-border/40 hover:bg-rd-bg1/30">
+                      <td className="py-1.5 pr-3 text-rd-text">{relTime(t.started_at)}</td>
+                      <td className="text-right pr-3 text-rd-text">{t.snapshot_count ?? "—"}</td>
+                      <td
+                        className="text-right pr-3"
+                        title={(t.brains_completed || []).join(", ") || "none"}
+                        style={{ color: (t.brains_completed_count || 0) === 4 ? "#10B981" : (t.brains_completed_count || 0) === 0 ? "#71717A" : "#F59E0B" }}
+                      >
+                        {brains}
+                      </td>
+                      <td className="text-right pr-3 text-rd-text">{t.arbitrations_completed ?? 0}</td>
+                      <td className="text-right pr-3 font-bold" style={{ color: intentsColor }}>
+                        {t.intents_emitted ?? 0}
+                      </td>
+                      <td className="pr-3" style={{ color: modeColor }}>
+                        {t.runtime_mode || "—"}
+                      </td>
+                      <td className="text-center pr-1">
+                        {ok
+                          ? <CheckCircle size={12} color="#10B981" weight="fill" />
+                          : <Warning size={12} color="#EF4444" weight="fill" />}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="text-[10px] text-rd-muted mt-3 font-mono leading-relaxed">
+          Non-zero <span style={{ color: "#10B981" }}>Intents</span> = pulse→arbiter→intent
+          loop is firing. If Intents stays 0 while Brains shows 4/4 and Mode is LIVE,
+          every seat is resolving all_flat — check confidence thresholds / regime gates.
+        </div>
+      </div>
+    </Card>
+  );
+}

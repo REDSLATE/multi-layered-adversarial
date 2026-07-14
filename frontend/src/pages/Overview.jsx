@@ -23,6 +23,7 @@ import TradeTape from "@/components/TradeTape";
 import TraderSeatViewer from "@/components/TraderSeatViewer";
 import SpreadWatcher from "@/components/SpreadWatcher";
 import BrainPersonalities from "@/components/BrainPersonalities";
+import OperatorControl from "@/components/OperatorControl";
 
 export default function Overview() {
   const [overview, setOverview] = useState(null);
@@ -207,6 +208,17 @@ export default function Overview() {
               an Atlas outage. TradeTape is the primary "what did
               the trader do this minute?" surface; TraderSeatViewer
               shows the 4×2 seat matrix + Mongo→cache freshness. */}
+
+          {/* 2026-07-13 — Operator Control tile. Two toggles for the
+              switches that gate live trading (arbiter runtime_mode +
+              trading master switch) plus a rolling readout of the
+              last 15 pulse ticks. The exact metric that would have
+              caught the P0 pulse→arbiter→intent silence within one
+              cadence instead of weeks. */}
+          <PanelErrorBoundary panelName="Operator Control" testid="panel-error-operator-control">
+            <OperatorControl />
+          </PanelErrorBoundary>
+
           <div
             className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 mb-6"
             data-testid="overview-trader-strip"

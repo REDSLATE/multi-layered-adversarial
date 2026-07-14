@@ -31,6 +31,26 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+### 🎛️ 2026-07-13 (iter-29b): Operator Control tile — one-glance loop health + toggles
+
+**Shipped**
+- **New backend endpoint** `GET /api/mc/pulse-health/ticks?limit=N` — returns the last N `mc_pulses` receipts with `arbitrations_completed / intents_emitted / runtime_mode / brains_completed_count / brains_failed_count / orchestration_ok / overrun`. Route registered BEFORE `/{brain_id}` so FastAPI doesn't shadow it.
+- **New frontend tile** `components/OperatorControl.jsx` on the Overview page (top, above the trader strip):
+  - **Two toggles** — Arbiter runtime_mode (DISARMED ↔ LIVE) and Master switch (trading_controls.enabled). Each requires audit-trail reason via `window.prompt`. Flipping arbiter to LIVE shows a warning that combined with master switch armed, this puts real orders on the wire.
+  - **LOOP CLOSED / LOOP OPEN badge** — green when both toggles are ON, red otherwise; visible at a glance.
+  - **Rolling 15-tick table** with columns: Age · Snaps · Brains (N/M) · Arbs · Intents · Mode · OK. Auto-refresh every 15s (matches pulse cadence).
+  - **Aggregated pill**: `Σ arbitrations · Σ intents_emitted` across the visible window.
+  - **Diagnostic hints** — if the loop is closed but intents=0 while brains=4/4, shows "brains all_flat OR consensus miss"; if no brain completions, shows "freshness gate rejecting snapshots".
+- **4 new integration tests** in `tests/test_pulse_ticks_endpoint.py` — shape, route-not-shadowed guard, limit bounds, auth requirement. All green.
+
+**Why this matters:** the P0 pulse silence went undetected for weeks because there was no operator surface that made it obvious. This tile is the exact readout — non-zero `Intents` column = loop is closed and firing; extended zero while brains complete = the arbiter is DISARMED or the master switch is off, both visible in the same view.
+
+**Operator playbook (one-click from production, once redeployed):**
+1. Open `/admin/overview`
+2. Toggle "ARBITER" ON → confirm the DISARMED→LIVE dialog
+3. Toggle "TRADING" ON → provide audit reason
+4. Within one pulse cadence (15s) the `Intents` column shows non-zero and the badge flips to green LOOP CLOSED
+
 ### 🔴 2026-07-13 (iter-29a): P0 — PULSE→ARBITER→INTENT LOOP CLOSED (live trading unstalled)
 
 **Reported symptom (operator):** *"It's not trading equity in weeks. Crypto has traded but not since yesterday."*

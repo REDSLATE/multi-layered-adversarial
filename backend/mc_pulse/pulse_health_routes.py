@@ -923,6 +923,67 @@ async def take_pulse_health_snapshot(
 
 # ─────────────── routes ───────────────
 
+@router.get("/ticks")
+async def get_recent_ticks(
+    limit: int = Query(20, ge=1, le=100),
+    _user: dict = Depends(get_current_user),
+) -> dict:
+    """Recent pulse ticks — the single most operator-useful readout
+    for verifying the pulse → arbiter → intent loop is closed.
+
+    Returns the last `limit` pulses (most recent first) with the
+    exact fields the operator needs to diagnose silence at a glance:
+    started_at, snapshot_count, brains_completed count,
+    arbitrations_completed, intents_emitted, runtime_mode,
+    orchestration_ok, overrun.
+
+    Non-zero `intents_emitted` on a tick means the loop is closed
+    end-to-end (envelope → seat → arbiter → intent → shared_intents).
+    Zero for extended stretches while brains are completing means
+    the arbiter is DISARMED or brains are all_flat — check the
+    runtime_mode column.
+
+    NOTE: registered BEFORE `/{brain_id}` so FastAPI doesn't treat
+    "ticks" as a brain identifier.
+    """
+    try:
+        rows = await db[MC_PULSES].find(
+            {},
+            projection={
+                "_id": 0,
+                "pulse_id": 1,
+                "started_at": 1,
+                "completed_at": 1,
+                "runtime_mode": 1,
+                "snapshot_count": 1,
+                "brains_completed": 1,
+                "brains_failed": 1,
+                "arbitrations_completed": 1,
+                "intents_emitted": 1,
+                "orchestration_ok": 1,
+                "overrun": 1,
+            },
+            sort=[("started_at", -1)],
+        ).to_list(limit)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_recent_ticks read failed: %s", exc)
+        rows = []
+
+    for r in rows:
+        bc = r.get("brains_completed") or []
+        bf = r.get("brains_failed") or []
+        r["brains_completed_count"] = len(bc) if isinstance(bc, list) else 0
+        r["brains_failed_count"] = len(bf) if isinstance(bf, list) else 0
+        r["brains_completed"] = bc if isinstance(bc, list) else []
+        r["brains_failed"] = bf if isinstance(bf, list) else []
+
+    return {
+        "ok": True,
+        "count": len(rows),
+        "ticks": rows,
+    }
+
+
 @router.get("/{brain_id}")
 async def pulse_health(
     brain_id: str,
@@ -1070,4 +1131,5 @@ async def post_e2e_trace(
         broker_mock=True, cleanup=True,
     )
     return result.to_dict()
+
 
