@@ -68,6 +68,7 @@ export default function OperatorControl() {
   const [arbiter, setArbiter] = useState(null);      // { runtime_mode: "LIVE" | "DISARMED" }
   const [tradingCtl, setTradingCtl] = useState(null); // /admin/trading/status
   const [ticks, setTicks] = useState([]);
+  const [roster, setRoster] = useState(null);        // /admin/roster
   const [busyArbiter, setBusyArbiter] = useState(false);
   const [busyMaster, setBusyMaster] = useState(false);
   const [busyRefresh, setBusyRefresh] = useState(false);
@@ -76,14 +77,16 @@ export default function OperatorControl() {
   const load = useCallback(async () => {
     setBusyRefresh(true);
     try {
-      const [a, t, k] = await Promise.all([
+      const [a, t, k, r] = await Promise.all([
         api.get("/mc/arbiter/state").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
         api.get("/admin/trading/status").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
         api.get("/mc/pulse-health/ticks?limit=15").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
+        api.get("/admin/roster").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
       ]);
       setArbiter(a.data);
       setTradingCtl(t.data);
       setTicks(k.data?.ticks || []);
+      setRoster(r.data);
       setErr("");
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
@@ -247,6 +250,72 @@ export default function OperatorControl() {
           )}
         </div>
       </div>
+
+      {/* Current seating — single-source-of-truth from Mongo roster.
+          Operators can verify who holds each seat without navigating
+          to Intents → Quick Seat Switches. Read-only here; assignment
+          still happens on the dedicated Intents surface. */}
+      {roster?.assignments && (
+        <div className="border border-rd-border p-3 mb-5" data-testid="operator-control-seating">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[10px] uppercase tracking-widest text-rd-dim font-mono">
+              Current Seating
+            </div>
+            <a
+              href="/admin/intents"
+              className="text-[10px] text-rd-dim hover:text-rd-text font-mono underline decoration-dotted"
+              data-testid="operator-control-seating-link"
+            >
+              assign / vacate ↗
+            </a>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {[
+              { lane: "EQUITY", color: "#F59E0B", roles: [
+                ["executor",   "Executor",   roster.assignments.executor],
+                ["strategist", "Strategist", roster.assignments.strategist],
+                ["governor",   "Governor",   roster.assignments.governor],
+                ["auditor",    "Auditor",    roster.assignments.auditor],
+              ]},
+              { lane: "CRYPTO", color: "#7B5CFF", roles: [
+                ["crypto",            "Executor",   roster.assignments.crypto],
+                ["crypto_strategist", "Strategist", roster.assignments.crypto_strategist],
+                ["crypto_governor",   "Governor",   roster.assignments.crypto_governor],
+                ["crypto_auditor",    "Auditor",    roster.assignments.crypto_auditor],
+              ]},
+            ].map((laneBlock) => (
+              <div key={laneBlock.lane} data-testid={`seating-lane-${laneBlock.lane.toLowerCase()}`}>
+                <div
+                  className="text-[10px] uppercase tracking-widest font-mono mb-1.5"
+                  style={{ color: laneBlock.color }}
+                >
+                  {laneBlock.lane}
+                </div>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {laneBlock.roles.map(([role, label, brain]) => (
+                    <div
+                      key={role}
+                      className="border border-rd-border/60 px-1.5 py-1"
+                      data-testid={`seating-${role}`}
+                      title={brain ? `${label}: ${brain}` : `${label}: vacant`}
+                    >
+                      <div className="text-[9px] uppercase tracking-widest text-rd-dim font-mono">
+                        {label}
+                      </div>
+                      <div
+                        className="text-xs font-mono font-bold uppercase truncate"
+                        style={{ color: brain ? "#E4E4E7" : "#71717A" }}
+                      >
+                        {brain || "vacant"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Last N pulse ticks */}
       <div>
