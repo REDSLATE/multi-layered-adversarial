@@ -28,6 +28,37 @@ if os.path.exists(_be_env):
 os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
 os.environ.setdefault("DB_NAME", "test_database")
 
+# ───────── SAFETY GUARDRAIL: refuse to run against prod DB ─────────
+# 2026-07-14 (iter-29d) — root-caused Kraken/Webull credentials
+# "vanishing on every deploy" to test suites executing against the
+# production DB during the deploy pipeline. Six test files call
+# `db["kraken_credentials"].delete_one({"_id": "singleton"})` (and
+# similar for ibkr_credentials, public_credentials). If DB_NAME
+# points at prod, every test run silently wipes live broker creds.
+#
+# The correct fix is a hard boot-time refusal: unless DB_NAME
+# unambiguously identifies a test database, the entire suite fails
+# to collect. No individual test file needs guarding; the perimeter
+# is the safe place to enforce this.
+_db_name = os.environ.get("DB_NAME", "")
+_looks_like_test_db = (
+    "test" in _db_name.lower()
+    or _db_name.endswith("_test")
+    or _db_name.startswith("test_")
+)
+if not _looks_like_test_db:
+    raise RuntimeError(
+        f"REFUSING TO RUN TESTS against DB_NAME={_db_name!r}. "
+        "Six test modules call `delete_one({_id: 'singleton'})` on "
+        "kraken_credentials / ibkr_credentials / public_credentials / "
+        "webull collections — if this ran against production, live "
+        "broker credentials would be silently wiped. "
+        "Set DB_NAME to something containing 'test' (e.g. "
+        "'test_database', 'risedual_test', 'ci_test') before "
+        "invoking pytest, or run tests only in preview where the "
+        "backend/.env already points at a test DB."
+    )
+
 # ───────── session-scoped event loop ─────────────────────────────────
 # Motor's AsyncIOMotorClient binds to the first event loop that uses
 # it. The plugin defaults to a fresh loop per test, which makes Motor
