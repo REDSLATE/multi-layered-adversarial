@@ -39,7 +39,7 @@ import random
 import time
 from typing import Any, Optional
 
-from shared.indicators import session_features
+from shared.indicators import rsi as _rsi_series, session_features
 from mc_pulse.feature_builders.coerce import optional_float
 
 
@@ -102,8 +102,8 @@ def build_camino_features(
         window_low = min(closes) or 1.0
         volatility = (window_high - window_low) / window_low
         # `trend_score` uses first→last window return, then scaled
-        # ×8 and clamped to [-1, 1]. Matches runner exactly so a
-        # canonical bar set produces a canonical trend_score.
+        # ×8 and clamped to [-1, 1]. Represents the 20-bar
+        # directional bias — the "is this trending?" question.
         trend_return = (closes[-1] - closes[0]) / (closes[0] or 1.0)
         avg_vol = sum(vols) / max(len(vols), 1)
         recent_vol = sum(vols[-3:]) / 3
@@ -111,6 +111,36 @@ def build_camino_features(
             ((recent_vol - avg_vol) / avg_vol * 100.0) if avg_vol else 0.0
         )
         last_close = closes[-1]
+        # 2026-07-14 fix (iter-29c): `price_change_pct` used to
+        # inherit the window-return above — same value as trend_score
+        # before the ×8 scaling. That made it a slow rolling bias
+        # rather than the "just moved" signal GTO/Camino/Hellcat
+        # were calibrated for (GTO's `PRICE_MAG=0.10` means "recent
+        # bar moved 0.10%", NOT "window drifted 0.10%"). Fix: use
+        # bar-over-bar percent change. Falls back to the window
+        # return if only two bars are available so we still emit
+        # a value.
+        prev_close = closes[-2] if len(closes) >= 2 else closes[0]
+        price_change_pct = (
+            ((last_close - prev_close) / prev_close * 100.0)
+            if prev_close else 0.0
+        )
+        # 2026-07-14 fix (iter-29c): RSI was hardcoded to 50.0 for
+        # parity with the (now decommissioned) runner. Barracuda's
+        # thresholds are 35/65 → constant 50.0 made Barracuda
+        # mathematically incapable of firing on RSI. Compute the
+        # real Wilder RSI from the same `closes` window. Requires
+        # >14 bars for a real value; the 20-bar hot branch
+        # guarantees that.
+        rsi_series = _rsi_series(closes, period=14)
+        latest_rsi = None
+        for v in reversed(rsi_series):
+            if v is not None:
+                latest_rsi = round(v, 2)
+                break
+        # Should always be non-None here (20 closes → 6 real RSI
+        # values) but keep the fallback for the edge case.
+        rsi_val = latest_rsi if latest_rsi is not None else 50.0
 
         # Spread default: lane-specific, matches runner. Override
         # wins when caller supplies a live spread.
@@ -123,12 +153,9 @@ def build_camino_features(
         snapshot: dict[str, Any] = {
             "symbol": symbol,
             "price": last_close,
-            "price_change_pct": round(trend_return * 100, 3),
+            "price_change_pct": round(price_change_pct, 3),
             "volume_change_pct": round(vol_change_pct, 2),
-            # RSI is not surfaced on this bar cache; runner also
-            # hardcodes 50.0 here. Kept identical so runner/pulse
-            # rank hypotheses the same way pre-doctrine.
-            "rsi": 50.0,
+            "rsi": rsi_val,
             "spread_bps": round(spread_bps, 2),
             "spread_quality": spread_quality,
             "volatility": round(min(1.0, max(0.0, volatility * 3)), 3),
