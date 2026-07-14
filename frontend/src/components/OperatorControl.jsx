@@ -69,6 +69,7 @@ export default function OperatorControl() {
   const [tradingCtl, setTradingCtl] = useState(null); // /admin/trading/status
   const [ticks, setTicks] = useState([]);
   const [roster, setRoster] = useState(null);        // /admin/roster
+  const [router, setRouter] = useState(null);        // /admin/auto-router/status
   const [busyArbiter, setBusyArbiter] = useState(false);
   const [busyMaster, setBusyMaster] = useState(false);
   const [busyRefresh, setBusyRefresh] = useState(false);
@@ -77,16 +78,18 @@ export default function OperatorControl() {
   const load = useCallback(async () => {
     setBusyRefresh(true);
     try {
-      const [a, t, k, r] = await Promise.all([
+      const [a, t, k, r, ro] = await Promise.all([
         api.get("/mc/arbiter/state").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
         api.get("/admin/trading/status").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
         api.get("/mc/pulse-health/ticks?limit=15").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
         api.get("/admin/roster").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
+        api.get("/admin/auto-router/status").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
       ]);
       setArbiter(a.data);
       setTradingCtl(t.data);
       setTicks(k.data?.ticks || []);
       setRoster(r.data);
+      setRouter(ro.data);
       setErr("");
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
@@ -365,6 +368,82 @@ export default function OperatorControl() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Auto-router health — the loop that turns emitted intents
+          into broker calls. If `tick_count` is growing but
+          `last_tick_executed` stays 0, every intent is being picked
+          up but silently failing/timing out. If `task_alive=false`,
+          no BUY/SELL will ever reach a broker. */}
+      {router && (
+        <div className="border border-rd-border p-3 mb-5" data-testid="operator-control-router">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[10px] uppercase tracking-widest text-rd-dim font-mono">
+              Auto-Router (intent → broker)
+            </div>
+            <span
+              className="text-[10px] font-mono font-bold uppercase tracking-widest"
+              style={{ color: router.task_alive ? "#10B981" : "#EF4444" }}
+              data-testid="router-task-state"
+            >
+              {router.task_alive ? "TASK ALIVE" : "TASK DEAD"}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
+            <div>
+              <div className="text-[9px] uppercase tracking-widest text-rd-dim">Enabled env</div>
+              <div
+                className="font-bold uppercase"
+                style={{ color: router.enabled_env ? "#10B981" : "#EF4444" }}
+                data-testid="router-enabled-env"
+              >
+                {router.enabled_env ? "true" : "false"}
+              </div>
+            </div>
+            <div>
+              <div className="text-[9px] uppercase tracking-widest text-rd-dim">Tick count</div>
+              <div className="font-bold" data-testid="router-tick-count">
+                {router.tick_count ?? 0}
+              </div>
+            </div>
+            <div>
+              <div className="text-[9px] uppercase tracking-widest text-rd-dim">Last tick age</div>
+              <div className="font-bold" data-testid="router-last-tick-age">
+                {relTime(router.last_tick_ts)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[9px] uppercase tracking-widest text-rd-dim">Last tick</div>
+              <div className="font-bold" data-testid="router-last-tick-executed">
+                <span style={{ color: (router.last_tick_results || 0) > 0 ? "#E4E4E7" : "#71717A" }}>
+                  {router.last_tick_results ?? 0} picked
+                </span>
+                {" · "}
+                <span style={{ color: (router.last_tick_executed || 0) > 0 ? "#10B981" : "#EF4444" }}>
+                  {router.last_tick_executed ?? 0} exec
+                </span>
+              </div>
+            </div>
+          </div>
+          {router.last_tick_error && (
+            <div className="mt-2 border border-rd-danger px-2 py-1 text-[10px] font-mono text-rd-danger" data-testid="router-last-tick-error">
+              <Warning size={10} className="inline mr-1" />
+              last error: {router.last_tick_error}
+            </div>
+          )}
+          {router.task_exception && (
+            <div className="mt-2 border border-rd-danger px-2 py-1 text-[10px] font-mono text-rd-danger" data-testid="router-task-exception">
+              <Warning size={10} className="inline mr-1" />
+              task exception: {router.task_exception}
+            </div>
+          )}
+          {router.task_alive && (router.last_tick_results || 0) > 0 && (router.last_tick_executed || 0) === 0 && !router.last_tick_error && (
+            <div className="mt-2 text-[10px] font-mono text-yellow-500 leading-relaxed">
+              <Warning size={10} className="inline mr-1" />
+              Router picked {router.last_tick_results} intents last tick but executed 0 with no error. Every intent is being blocked or timing out silently — check seat / risk / broker stages in server logs.
+            </div>
+          )}
         </div>
       )}
 
