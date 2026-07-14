@@ -73,6 +73,7 @@ export default function OperatorControl() {
   const [busyArbiter, setBusyArbiter] = useState(false);
   const [busyMaster, setBusyMaster] = useState(false);
   const [busyRefresh, setBusyRefresh] = useState(false);
+  const [busyForceTick, setBusyForceTick] = useState(false);
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
@@ -125,6 +126,28 @@ export default function OperatorControl() {
     } finally {
       setBusyArbiter(false);
       // Immediate reload so the display reflects the flip within one paint.
+      load();
+    }
+  };
+
+  const forceTick = async () => {
+    setBusyForceTick(true);
+    try {
+      const r = await api.post("/admin/auto-router/force-tick");
+      const picked = r.data?.results_count ?? 0;
+      const exec = r.data?.executed_count ?? 0;
+      const errMsg = r.data?.error;
+      if (errMsg) {
+        setErr(`Force tick error: ${typeof errMsg === "string" ? errMsg : JSON.stringify(errMsg)}`);
+      } else {
+        setErr("");
+        alert(`Force tick complete: ${picked} picked · ${exec} exec`);
+      }
+    } catch (e) {
+      const raw = e?.response?.data?.detail ?? e.message;
+      setErr(typeof raw === "string" ? raw : JSON.stringify(raw));
+    } finally {
+      setBusyForceTick(false);
       load();
     }
   };
@@ -382,13 +405,24 @@ export default function OperatorControl() {
             <div className="text-[10px] uppercase tracking-widest text-rd-dim font-mono">
               Auto-Router (intent → broker)
             </div>
-            <span
-              className="text-[10px] font-mono font-bold uppercase tracking-widest"
-              style={{ color: router.task_alive ? "#10B981" : "#EF4444" }}
-              data-testid="router-task-state"
-            >
-              {router.task_alive ? "TASK ALIVE" : "TASK DEAD"}
-            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={forceTick}
+                disabled={busyForceTick}
+                data-testid="router-force-tick"
+                className="text-[10px] font-mono uppercase tracking-widest border border-rd-border hover:border-rd-text px-2 py-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Run one auto-router tick immediately instead of waiting for the 30s interval"
+              >
+                {busyForceTick ? "ticking…" : "force tick"}
+              </button>
+              <span
+                className="text-[10px] font-mono font-bold uppercase tracking-widest"
+                style={{ color: router.task_alive ? "#10B981" : "#EF4444" }}
+                data-testid="router-task-state"
+              >
+                {router.task_alive ? "TASK ALIVE" : "TASK DEAD"}
+              </span>
+            </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
             <div>
