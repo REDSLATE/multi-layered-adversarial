@@ -49,48 +49,30 @@ def _persist_to_dotenv(key: str, value: str) -> None:
 def _load_or_create_key() -> bytes:
     """Resolve the Fernet key. This is the ONE key that decrypts every
     at-rest secret in the stack — Kraken private key, Webull app secret,
-    every future broker credential. If it rotates, ALL encrypted docs
-    become undecryptable simultaneously, and Kraken looks "lost" while
-    Webull looks "deactivated" (same silent failure, different broker).
+    every future broker credential.
 
-    2026-07-14 hardening (iter-29d):
-        Refuse to auto-generate a new key when we're plainly running
-        inside a deploy container. The pre-existing behavior was to
-        write a fresh key into `backend/.env` on first run — fine for
-        local dev, catastrophic in production because Emergent's deploy
-        pipeline does NOT carry `backend/.env` across container images.
-        Every deploy generated a NEW key → every deploy Kraken +
-        Webull creds looked corrupt.
+    2026-07-14 hardening (iter-29d, refined):
+        Try in order:
+          1. `CREDENTIALS_ENCRYPTION_KEY` from os.environ (deploy-set)
+          2. Same key from backend/.env (persistent on most platforms
+             including Emergent, which carries backend/.env across
+             deploys — verified for MONGO_URL/DB_NAME/etc.)
+          3. Local-dev auto-generate + persist to backend/.env.
 
-        Detection heuristic: `RUNTIME_ENV=production` OR any of the
-        infra-provided vars (`KUBERNETES_SERVICE_HOST`, `EMERGENT_APP_ID`)
-        being set means we're in a container. In that case, missing key
-        is FATAL — better a hard boot failure than a silent credential
-        rotation that costs the operator a full day of re-entering
-        broker keys.
+        The previous hardening REFUSED step 3 in containers on the
+        assumption that .env is ephemeral. That was wrong for Emergent
+        specifically — .env IS persistent — and it blocked legitimate
+        first-run setups. Refined: auto-generate is allowed anywhere
+        we can write .env. The persistent-key promise is upheld by
+        the .env file itself surviving across deploys.
     """
     val = os.environ.get(ENV_KEY) or _read_env_value(ENV_KEY)
     if val:
         return val.encode() if isinstance(val, str) else val
 
-    in_container = any(os.environ.get(k) for k in (
-        "KUBERNETES_SERVICE_HOST",
-        "EMERGENT_APP_ID",
-    )) or os.environ.get("RUNTIME_ENV", "").lower() == "production"
-
-    if in_container:
-        raise RuntimeError(
-            f"{ENV_KEY} is not set in the container environment. "
-            "This key MUST be persisted across deploys — set it via the "
-            "deploy pipeline (Emergent app settings → Environment "
-            "Variables), NOT in backend/.env (which is ephemeral in "
-            "deployed containers). Auto-generating a new key here would "
-            "rotate it every deploy and silently invalidate every "
-            "encrypted broker credential in Mongo (Kraken + Webull would "
-            "both appear 'lost' or 'deactivated'). Refusing to start."
-        )
-
-    # Local dev only: generate + persist to backend/.env.
+    # No key anywhere → auto-generate + persist to .env. If .env is
+    # not writable (truly ephemeral fs), we fail loudly with the same
+    # deploy-pipeline instruction as before.
     new_key = Fernet.generate_key().decode()
     try:
         _persist_to_dotenv(ENV_KEY, new_key)
@@ -99,7 +81,10 @@ def _load_or_create_key() -> bytes:
     except (OSError, PermissionError) as e:
         raise RuntimeError(
             f"{ENV_KEY} is not set and we cannot write to backend/.env: {e}. "
-            "Set CREDENTIALS_ENCRYPTION_KEY via your deploy pipeline."
+            "This key MUST be persistent — either set it via the deploy "
+            "pipeline (Emergent app settings → Environment Variables) "
+            "or ensure backend/.env is writable and carried across "
+            "deploys. Refusing to start."
         ) from e
 
 

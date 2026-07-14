@@ -57,11 +57,18 @@ export default function FeedersStrip() {
 
   const refresh = useCallback(async () => {
     try {
+      // 2026-07-14 hardening: each sub-fetch owns its own catch so a
+      // single broken endpoint doesn't nuke the whole strip. Before
+      // this change, if `/shared/technical/feeders` errored (e.g.
+      // encryption-key hardening throwing on token decrypt), the
+      // outer Promise.all rejected → items stayed empty → ALL feeder
+      // slots vanished. Now the strip degrades gracefully: any slot
+      // whose fetch fails simply doesn't render; the rest do.
       const [feeders, webullSt] = await Promise.all([
-        api.get("/shared/technical/feeders"),
+        api.get("/shared/technical/feeders").catch((e) => ({ data: { items: [], _error: e?.response?.data?.detail || e.message } })),
         api.get("/admin/trader/webull-token-status").catch(() => ({ data: null })),
       ]);
-      const baseItems = feeders.data.items || [];
+      const baseItems = feeders.data?.items || [];
       // Webull — broker + equity market-data slot.
       const wb = webullSt?.data;
       const webullConfigured = Boolean(wb?.has_token || wb?.token_present);
@@ -80,10 +87,13 @@ export default function FeedersStrip() {
         is_broker: true,
       };
       setItems([...baseItems, webullItem]);
-      setEndpoint(feeders.data.endpoint);
-      setErr("");
+      setEndpoint(feeders.data?.endpoint || "/api/ingest/ohlcv");
+      // Non-fatal: surface the feeders endpoint error inline, but
+      // don't blank the whole strip.
+      setErr(feeders.data?._error || "");
     } catch (e) {
-      setErr(e?.response?.data?.detail || e.message);
+      const raw = e?.response?.data?.detail ?? e.message;
+      setErr(typeof raw === "string" ? raw : JSON.stringify(raw));
     }
   }, []);
 
