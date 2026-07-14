@@ -147,6 +147,7 @@ from routes.runtime_cross_brain_memories import (
     router as cross_brain_memories_router,
 )
 from routes.admin_brackets import router as admin_brackets_router
+from routes.trader_stats import router as trader_stats_router  # 2026-07-13 per-brain fires + dissent
 
 from runtimes.alpha.routes import router as alpha_router
 from runtimes.camaro.routes import router as camaro_router
@@ -273,6 +274,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(doctrine_scorecard_router)
     api_router.include_router(doctrine_auto_retire_router)
     api_router.include_router(admin_brackets_router)
+    api_router.include_router(trader_stats_router)  # 2026-07-13 per-brain fires + dissent (Brain Personalities + Operator Control)
     api_router.include_router(quantum_router)
     api_router.include_router(personalities_router)
     api_router.include_router(flags_router)

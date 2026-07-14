@@ -22,7 +22,6 @@ import { toast } from "sonner";
  *   PUT  /api/admin/broker-selection  {equity, crypto}
  */
 const BROKER_META = {
-  public: { label: "Public.com", color: "sky" },
   webull: { label: "Webull",      color: "amber" },
   kraken: { label: "Kraken Pro",  color: "violet" },
 };
@@ -175,10 +174,8 @@ export default function BrokerSelectionMenu() {
 
       <div className="text-[10px] opacity-50 mt-3 leading-relaxed">
         Brain reads this selection on every tick and stamps it as a
-        broker_override on emitted intents. Selecting Webull does NOT
-        disconnect Public.com or Kraken above — those broker connectors
-        stay live for connectivity health. The selection here decides
-        which broker the brain routes new intents through. Lane headers
+        broker_override on emitted intents. Webull is the sole equity
+        broker; Kraken Pro is the sole crypto broker. Lane headers
         above show the current ACTIVE routing in real-time.
       </div>
     </Card>

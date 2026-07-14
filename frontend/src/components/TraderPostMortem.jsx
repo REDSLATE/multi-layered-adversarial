@@ -64,7 +64,13 @@ export default function TraderPostMortem() {
         setUnavailable(true);
         setErr("");
       } else {
-        setErr(e?.response?.data?.detail || e.message);
+        // Defensive stringify: FastAPI 422 returns a Pydantic error
+        // array; rendering that raw in JSX triggers React error #31
+        // ("Objects are not valid as a React child"). Coerce to
+        // string so the panel degrades gracefully.
+        const raw = e?.response?.data?.detail ?? e.message;
+        const msg = typeof raw === "string" ? raw : JSON.stringify(raw);
+        setErr(msg);
       }
     } finally {
       setLoading(false);
@@ -108,7 +114,7 @@ export default function TraderPostMortem() {
               Trader Post-Mortem
             </div>
             <div className="text-[11px] text-rd-muted mt-1 font-mono leading-relaxed">
-              Why isn&apos;t the trader firing? Aggregates the last N hours of receipts from local SQLite.
+              Why isn&apos;t the trader firing? Aggregates the last N hours of pulse-emitted intents by outcome (fired / hold / risk-blocked / errored).
             </div>
           </div>
         </div>
@@ -156,7 +162,7 @@ export default function TraderPostMortem() {
 
       {inWindow.length === 0 ? (
         <EmptyState
-          message="No receipts in this window. Either the trader isn't running or you just deployed. Shift TRADER_ENABLED=true and wait one interval."
+          message="No receipts in this window. Live-trading loop state is on the Operator Control tile — arm ARBITER + TRADING to start emitting."
           testid="post-mortem-empty"
         />
       ) : (

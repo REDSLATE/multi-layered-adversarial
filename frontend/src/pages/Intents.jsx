@@ -510,13 +510,12 @@ export default function Intents() {
 
       {/* ─── Auto-Submit Policy panel removed 2026-07-01 — its backend
           endpoint /admin/auto-submit/policy was deleted in Pass 2/3.
-          Auto-execution is now the Sidecar Trader's responsibility;
-          it fires when TRADER_ENABLED=true, no manual policy toggle. */}
+          Live-trading firing is now controlled from the Operator
+          Control tile on Overview (ARBITER + TRADING toggles). */}
 
       {/* ─── Tunables what-if strip removed 2026-07-01 —
           /admin/auto-submit/tunables-simulator was deleted with the
-          rest of the auto-submit policy machinery. Sidecar Trader
-          fires when TRADER_ENABLED=true; no tunables to simulate. */}
+          rest of the auto-submit policy machinery. */}
 
       {/* ─── Seat Roster strip removed 2026-07-01 — its backend query
           hits Atlas directly and times out on the shared-tier
@@ -551,7 +550,7 @@ export default function Intents() {
       <SectionDivider
         title="Equity Lane"
         icon={Buildings}
-        sub="Webull-routed equity execution. Public.com and Alpaca are deprecated. Seat assignment lives in Quick Seat Switches above."
+        sub="Webull-routed equity execution. Seat assignment lives in Quick Seat Switches above."
         testid="intents-section-equity"
         rightSlot={<LaneRoutingPill lane="equity" />}
       />

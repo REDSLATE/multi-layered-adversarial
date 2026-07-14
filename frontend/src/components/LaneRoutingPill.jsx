@@ -15,9 +15,8 @@ import { api } from "@/lib/api";
  * from a different tab / device).
  */
 const META = {
-  public: { label: "Public.com", tone: "default" },
   kraken: { label: "Kraken Pro", tone: "default" },
-  webull: { label: "Webull",     tone: "override" },
+  webull: { label: "Webull",     tone: "default" },
 };
 
 export default function LaneRoutingPill({ lane }) {

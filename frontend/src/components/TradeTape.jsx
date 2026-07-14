@@ -88,7 +88,12 @@ export default function TradeTape() {
     return () => clearInterval(t);
   }, [load]);
 
-  const enabled = status?.env?.TRADER_ENABLED;
+  // Post iter-23 (sidecar decommissioned): `enabled` now reflects the
+  // stub status endpoint. Real "loop closed" state lives on the
+  // Operator Control tile. Kept here so the strip renders without
+  // undefined chains — do not gate live trading off this flag.
+  const enabled = status?.trader_enabled ?? status?.env?.TRADER_ENABLED;
+  const decommissioned = status?.loop_state === "decommissioned";
   const alive = status?.loop?.alive_inference;
 
   return (
@@ -104,7 +109,7 @@ export default function TradeTape() {
               Trade Tape
             </div>
             <div className="text-[11px] text-rd-muted mt-1 font-mono leading-relaxed">
-              Per-cycle log from the Sidecar Trader. Signals → seat → risk → broker, one line per lane per minute.
+              Recent intents from the pulse → arbiter → intent chain, one line per emission. Live-trading loop status is on the Operator Control tile above.
             </div>
           </div>
         </div>
@@ -199,9 +204,11 @@ export default function TradeTape() {
       {receipts.length === 0 ? (
         <EmptyState
           message={
-            enabled
-              ? "No cycles recorded yet. Trader is enabled — first receipt appears within one interval."
-              : "Trader is disabled. Set TRADER_ENABLED=true to activate the loop."
+            decommissioned
+              ? "No pulse-emitted intents in the window yet. Arm the ARBITER + TRADING toggles on the Operator Control tile above; new intents appear within one 15s cadence."
+              : enabled
+                ? "No cycles recorded yet. Trader is enabled — first receipt appears within one interval."
+                : "No cycles recorded. See Operator Control tile above for live loop status."
           }
           testid="trade-tape-empty"
         />

@@ -20,11 +20,11 @@ const FEEDER_META = {
     market: "Equities / Futures",
     docsUrl: "/runtime_patch_kit/technicals/README.md",
   },
-  public: {
-    label: "PUBLIC.COM",
-    short: "PUB",
-    color: "#00C896",
-    market: "Stocks / Options · NO PDT",
+  webull: {
+    label: "WEBULL",
+    short: "WBL",
+    color: "#00D084",
+    market: "Equity · Broker + Data",
     docsUrl: null,
   },
   manual: {
@@ -45,11 +45,9 @@ const STATUS_META = {
   unknown:      { label: "UNKNOWN",      color: "#A1A1AA", icon: WarningCircle },
 };
 
-// IBKR + Alpaca slots removed 2026-07-01: their backend routes
-// (/admin/ibkr/*, /admin/alpaca/*) were deleted in Pass 2/3. The
-// sidecar trader only knows Webull (equity) + Kraken (crypto).
-// Public.com remains — its slot is broker-connection metadata,
-// not execution.
+// 2026-07-13 doctrine sweep: Public.com, Alpaca, and IBKR slots all
+// removed. The system routes equity exclusively via Webull and crypto
+// via Kraken Pro. Any residual references were dead weight — deleted.
 
 export default function FeedersStrip() {
   const [items, setItems] = useState([]);
@@ -59,28 +57,29 @@ export default function FeedersStrip() {
 
   const refresh = useCallback(async () => {
     try {
-      const [feeders, publicSt] = await Promise.all([
+      const [feeders, webullSt] = await Promise.all([
         api.get("/shared/technical/feeders"),
-        api.get("/admin/public/status").catch(() => ({ data: null })),
+        api.get("/admin/trader/webull-token-status").catch(() => ({ data: null })),
       ]);
       const baseItems = feeders.data.items || [];
-      // Public.com — broker slot (no PDT restrictions).
-      const publicData = publicSt?.data;
-      const publicItem = {
-        key: "public",
+      // Webull — broker + equity market-data slot.
+      const wb = webullSt?.data;
+      const webullConfigured = Boolean(wb?.has_token || wb?.token_present);
+      const webullItem = {
+        key: "webull",
         env_key: "—",
-        configured: Boolean(publicData?.connected),
-        status: publicData?.connected
-          ? (publicData.refresher_running ? "live" : "stale")
+        configured: webullConfigured,
+        status: webullConfigured
+          ? (wb?.token_valid === false ? "stale" : "live")
           : "unconfigured",
-        last_bar_ts: publicData?.last_refresh?.ts || null,
-        symbols: (publicData?.accounts || []).map(a => a.id).filter(Boolean),
-        symbols_count: (publicData?.accounts || []).length,
+        last_bar_ts: wb?.last_used_at || wb?.acquired_at || null,
+        symbols: [],
+        symbols_count: 0,
         bars_count: 0,
         tfs: [],
         is_broker: true,
       };
-      setItems([...baseItems, publicItem]);
+      setItems([...baseItems, webullItem]);
       setEndpoint(feeders.data.endpoint);
       setErr("");
     } catch (e) {
@@ -94,8 +93,8 @@ export default function FeedersStrip() {
     return () => clearInterval(id);
   }, [refresh]);
 
-  // Sort: kraken_pro, thinkorswim, public, manual.
-  const order = { kraken_pro: 0, thinkorswim: 1, public: 2, manual: 3 };
+  // Sort: kraken_pro, webull, thinkorswim, manual.
+  const order = { kraken_pro: 0, webull: 1, thinkorswim: 2, manual: 3 };
   const sorted = [...items].sort((a, b) =>
     (order[a.key] ?? 99) - (order[b.key] ?? 99),
   );
@@ -200,9 +199,9 @@ function FeederSlot({ feeder, isOpen, onToggle, endpoint }) {
               <KrakenConnect />
             </div>
           )}
-          {/* Public.com connect slot removed 2026-07-01 (batch 8) —
-              Public.com is deprecated per the Equity Lane heading;
-              sidecar trader routes equity via Webull only. */}
+          {/* Public.com broker slot removed 2026-07-13 (Alpaca/paper
+              purge follow-up). Webull is the sole equity broker;
+              connect via the Trader → Webull Token flow. */}
           {!feeder.is_broker && (
             <>
               <SetupLine label="Endpoint" value={`POST ${endpoint}`} />

@@ -20,7 +20,6 @@ import MarketRegimeTape from "@/components/MarketRegimeTape";
 import PositionMisreadsCard from "@/components/PositionMisreadsCard";
 import DivergenceChopGauge from "@/components/DivergenceChopGauge";
 import TradeTape from "@/components/TradeTape";
-import TraderSeatViewer from "@/components/TraderSeatViewer";
 import SpreadWatcher from "@/components/SpreadWatcher";
 import BrainPersonalities from "@/components/BrainPersonalities";
 import OperatorControl from "@/components/OperatorControl";
@@ -220,17 +219,19 @@ export default function Overview() {
           </PanelErrorBoundary>
 
           <div
-            className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 mb-6"
+            className="grid grid-cols-1 gap-4 md:gap-6 mb-6"
             data-testid="overview-trader-strip"
           >
             <PanelErrorBoundary panelName="Trade Tape" testid="panel-error-trade-tape">
-              <div className="lg:col-span-2">
-                <TradeTape />
-              </div>
+              <TradeTape />
             </PanelErrorBoundary>
-            <PanelErrorBoundary panelName="Trader Seats" testid="panel-error-trader-seats">
-              <TraderSeatViewer />
-            </PanelErrorBoundary>
+            {/* 2026-07-13 — TraderSeatViewer removed. It read the
+                decommissioned sidecar's SQLite cache and always
+                showed every seat as "vacant" post-iter-23. Real
+                seat assignment authority lives in Quick Seat
+                Switches on the Intents page (Mongo `stack_seat_state`).
+                Broker/Reseed buttons on that tile were 404-ing —
+                their endpoints belonged to the deleted sidecar. */}
           </div>
 
           {/* 2026-07-02 — Spread Watcher. Live bid/ask spread for
