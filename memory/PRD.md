@@ -31,6 +31,44 @@ trading pilot with Webull (equity) and Kraken Pro (crypto). 5-stage
 pipeline execution, doctrine-aligned vocabulary, strict cash-account
 trading, comprehensive provenance + health tracking.
 
+
+### 🧠 2026-07-14 (iter-29c): Brain feature fix — RSI + bar-over-bar price change (Barracuda unblock)
+
+**Reported symptom:** "No intents at all from Barracuda for 2+ weeks. Other brains fire once after deploy then go silent for 17-24h."
+
+**Root cause (found via preview data, 24h window):**
+- Barracuda evaluated 1959 times: 1958 FLAT, 1 LONG (0.05% non-flat)
+- Camino: 12 LONG only, 1957 FLAT (0.60% non-flat) — and Camino's LONG fires were on `E2ETRC4` (E2E trace synthetic test symbols), NOT real market data
+- GTO: **0** non-FLAT out of 1959 evaluations
+- Hellcat: 77.88% non-FLAT (the only brain actually forming directional opinions)
+- The reason codes told the story: Barracuda logged `MEAN_NORMAL_RANGE` every time; GTO logged `MOMENTUM_PRICE_MISSING / VOLUME_MISSING / RVOL_MISSING` (misleading name — actually meant "below threshold, not literally None"); Camino logged `TREND_WEAK`.
+
+**Two feature-layer bugs in `mc_pulse/feature_builders/camino.py`:**
+
+1. **RSI hardcoded to 50.0** — the comment admitted it: *"RSI is not surfaced on this bar cache; runner also hardcodes 50.0 here. Kept identical so runner/pulse rank hypotheses the same way pre-doctrine."* The runner was decommissioned in iter-23 — the parity constraint was dead but the placeholder wasn't revisited. Barracuda's fire thresholds are RSI ≤ 35 or ≥ 65; constant 50.0 made it mathematically incapable of firing on RSI. This was a "copied forward during migration, never revisited" leftover — the exact pattern flagged by the operator: *"When the runner disappeared, some placeholder assumptions remained."*
+
+2. **`price_change_pct` was window-return** — computed as `(closes[-1] - closes[0]) / closes[0]` on a 20-bar 5m window (100 minutes). GTO/Camino/Hellcat thresholds (`0.10%`, `0.05%`, `0.15%`) were calibrated for a "recent bar move", NOT a "window drifted this much" reading. Real symbols rarely move 0.10%+ over 100 minutes → GTO's price vote never fired.
+
+**Fix (minimal, two changes in one file):**
+- Replaced the `"rsi": 50.0` constant with `_rsi_series(closes, period=14)[-1]` using the existing `shared.indicators.rsi()` Wilder implementation.
+- Changed `price_change_pct` from window-return to bar-over-bar: `(last_close - prev_close) / prev_close * 100`.
+- `trend_score` is unchanged — still window-return × 8 clamped to [-1, 1], because that's what it doctrinally means.
+
+**Verified against real market bars:**
+```
+AAPL      rsi=60.61  bar_change=+0.115%  → NORMAL_RANGE
+NVDA      rsi=40.10  bar_change=+0.022%  → NORMAL_RANGE
+TSLA      rsi=35.53  bar_change=+0.018%  → NORMAL_RANGE (borderline oversold)
+BTC/USD   rsi=42.19  bar_change=-0.080%  → NORMAL_RANGE
+ETH/USD   rsi=34.44  bar_change=-0.170%  → OVERSOLD → Barracuda BUY  ✓
+```
+
+180/180 mc_pulse + mc_brains tests green. 25/25 wider regression tests green.
+
+**Deferred to iter-29d (operator-approved, hold on this deploy):** Refactor `price_change_pct` into three explicit semantic fields — `bar_change_pct`, `session_change_pct`, `window_change_pct` — and rewire each brain's strategy to read the field its doctrine actually calls for (Barracuda mean-reversion → window; GTO momentum → bar; Camino trend confirm → session; Hellcat weak read → bar). The current single-field fix is the minimal change to unblock Barracuda. The 3-field expansion is the correct architectural end-state but touches all 4 strategy files and requires session-boundary logic — sequencing it after the two-line fix lands lets us observe direction distribution shifts in isolation.
+
+**Operator playbook:** redeploy. Watch the Brain Personalities tile — within 24-48 hours you should see Barracuda's fire count climb from 0 to non-zero on RSI-extreme symbols, and GTO's fire count climb when bars have real 0.10%+ intraday moves. The Operator Control seating strip's presence dots will still show all four brains `ok` — they were completing evaluations all along, they just weren't producing directional opinions.
+
 ### 🎛️ 2026-07-13 (iter-29b): Operator Control tile — one-glance loop health + toggles
 
 **Shipped**
