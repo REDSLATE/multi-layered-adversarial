@@ -81,36 +81,68 @@ def _default_universe(lane: str) -> list[str]:
 
 
 async def _discover_universe() -> dict[str, list[str]]:
-    """Return `{lane: [symbols]}` from the operator-curated
-    `patterns_universe` collection (active=true).
+    """Return `{lane: [symbols]}` from the LIVE universe (built by
+    `shared/universe/refresher.py`), with the legacy `patterns_universe`
+    collection as a fallback + env defaults as a final safety net.
 
-    2026-07 fix — pre-fix the pulse used its 4-symbol env-default
-    universe while the runner used the full `patterns_universe`
-    list, guaranteeing the two paths could never agree on which
-    market events they were evaluating. Pulling from the same
-    collection removes that class of parity drift.
+    Doctrine (2026-07-15, iter-30 P4):
+        The live_universe collection is now the primary source of
+        truth — it's rebuilt every 15min from broker screeners
+        (Webull gainers/losers/most-active for equity; Kraken 24h
+        movers for crypto) with operator pins merged in. See
+        `shared/universe/refresher.py`.
 
-    Fail-soft — if the collection query errors, fall back to the
-    env-default universe so a Mongo hiccup doesn't stop the
-    pulse entirely.
+    Fallback chain (each stage is fail-soft):
+        1. `live_universe` (per lane) — primary
+        2. `patterns_universe active=true` — legacy safety net so
+           an all-broker outage still yields a usable universe
+        3. Env-default universe (`MC_UNIVERSE_EQUITY` /
+           `MC_UNIVERSE_CRYPTO`) — cold-boot / test-fixture path
     """
     result: dict[str, list[str]] = {"equity": [], "crypto": []}
+
+    # ── Stage 1: live_universe ────────────────────────────────
+    try:
+        from shared.universe.live_universe import read_all_universes  # noqa: WPS433
+        docs = await read_all_universes()
+        for lane, doc in docs.items():
+            syms: list[str] = []
+            for s in (doc.get("symbols") or []):
+                canonical = (s.get("canonical_symbol") or "").upper().strip()
+                if canonical and s.get("tradable", True):
+                    syms.append(canonical)
+            if lane in result:
+                result[lane] = sorted(set(syms))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "live_universe discovery failed, will try patterns_universe: %s",
+            exc,
+        )
+
+    if result["equity"] and result["crypto"]:
+        return result
+
+    # ── Stage 2: legacy patterns_universe ─────────────────────
     try:
         cursor = db["patterns_universe"].find(
             {"active": True},
             {"symbol": 1, "lane": 1, "_id": 0},
         ).max_time_ms(2000).limit(500)
+        legacy: dict[str, list[str]] = {"equity": [], "crypto": []}
         async for d in cursor:
             lane = (d.get("lane") or "").strip().lower()
             sym = (d.get("symbol") or "").strip().upper()
-            if lane in result and sym:
-                result[lane].append(sym)
+            if lane in legacy and sym:
+                legacy[lane].append(sym)
         for lane in result:
-            result[lane] = sorted(set(result[lane]))
+            if not result[lane]:
+                result[lane] = sorted(set(legacy[lane]))
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "patterns_universe discovery failed, using env defaults: %s", exc,
+            "patterns_universe fallback failed, using env defaults: %s", exc,
         )
+
+    # ── Stage 3: env defaults ─────────────────────────────────
     if not result["equity"]:
         result["equity"] = _default_universe("equity")
     if not result["crypto"]:

@@ -932,4 +932,17 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         deadline_s=heavy_deadline_s, name="symbol_registry_updated_at",
     )
 
+    # Universe refresh reports (2026-07-15, iter-30 P4) — read
+    # pattern: newest-first per lane. TTL 30d so we don't grow
+    # unbounded; ~4 refreshes/hour × 2 lanes × 30d ~= 5800 rows.
+    await _safe_create_index(
+        db.universe_refresh_reports, [("lane", 1), ("refreshed_at", -1)],
+        deadline_s=heavy_deadline_s, name="universe_refresh_reports_lane_at",
+    )
+    await _safe_create_index(
+        db.universe_refresh_reports, [("refreshed_at", 1)],
+        deadline_s=heavy_deadline_s, name="universe_refresh_reports_ttl",
+        expireAfterSeconds=30 * 86400,
+    )
+
     pass

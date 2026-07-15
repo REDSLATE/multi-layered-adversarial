@@ -818,6 +818,20 @@ async def lifespan(app: FastAPI):
         except Exception as e:  # noqa: BLE001
             logger.warning("pulse_health_snapshotter start failed: %s", e)
 
+    # ── Universe refresher (2026-07-15, iter-30 P4) ──────────────
+    # Rebuilds `live_universe` per lane every 15min from broker
+    # screeners (Webull for equity, Kraken for crypto). Fail-soft:
+    # a broken start MUST NOT keep the pulse from running — the
+    # snapshot_service falls back through `patterns_universe` →
+    # env defaults automatically.
+    try:
+        from shared.universe.refresher import universe_refresher_loop
+        app.state.universe_refresher_task = asyncio.create_task(
+            universe_refresher_loop(),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("universe_refresher start failed: %s", e)
+
     yield
     await stop_poller()
     await stop_tickler()

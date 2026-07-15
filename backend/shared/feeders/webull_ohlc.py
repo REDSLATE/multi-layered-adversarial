@@ -74,15 +74,38 @@ def _env_int(key: str, default: int) -> int:
 
 
 async def _discover_universe() -> list[str]:
-    """Read the equity universe from operator-curated
-    `patterns_universe` (lane=equity, active=true).
+    """Read the equity universe.
 
-    Same source SnapshotService and the runner read from — no
-    parallel universe drift between the feeder and the consumers.
+    Doctrine (2026-07-15, iter-30 P4):
+        Primary source is `live_universe` (built every 15min by
+        `shared/universe/refresher.py` from Webull screener). Falls
+        back to `patterns_universe` and then a hard-coded starter
+        list so a broker outage or cold-boot never leaves the
+        feeder with an empty universe.
+
+        `WEBULL_OHLC_UNIVERSE` env still overrides everything —
+        useful for smoke tests.
     """
     override = os.environ.get("WEBULL_OHLC_UNIVERSE", "").strip()
     if override:
         return sorted({s.strip().upper() for s in override.split(",") if s.strip()})
+
+    # ── Primary: live_universe (broker-driven, refreshed every 15min) ──
+    try:
+        from shared.universe.live_universe import read_universe  # noqa: WPS433
+        doc = await read_universe("equity")
+        if doc:
+            syms = sorted({
+                (s.get("canonical_symbol") or "").upper()
+                for s in (doc.get("symbols") or [])
+                if s.get("canonical_symbol") and s.get("tradable", True)
+            })
+            if syms:
+                return syms
+    except Exception as e:  # noqa: BLE001
+        logger.warning("webull_ohlc: live_universe discovery failed: %r", e)
+
+    # ── Fallback: legacy patterns_universe ──
     try:
         cursor = db["patterns_universe"].find(
             {"lane": "equity", "active": True},

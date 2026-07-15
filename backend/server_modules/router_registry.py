@@ -96,6 +96,7 @@ from routes.admin_learning import router as admin_learning_router
 from routes.alpha_vantage_admin import router as alpha_vantage_admin_router
 from routes.broker_lane_admin import router as broker_lane_admin_router
 from routes.symbol_registry_admin import router as symbol_registry_admin_router
+from routes.live_universe_admin import router as live_universe_admin_router
 from routes.auto_router_admin import router as auto_router_admin_router
 from routes.intent_sweeper_admin import router as intent_sweeper_admin_router
 from routes.counterfactuals_admin import router as counterfactuals_admin_router
@@ -288,6 +289,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(alpha_vantage_admin_router)
     api_router.include_router(broker_lane_admin_router)
     api_router.include_router(symbol_registry_admin_router)
+    api_router.include_router(live_universe_admin_router)
     api_router.include_router(intent_origin_router)
     api_router.include_router(webull_admin_router)
     api_router.include_router(broker_selection_router)

@@ -137,12 +137,26 @@ async def _discover_universe() -> list[str]:
     if override:
         return [s.strip().upper() for s in override.split(",") if s.strip()]
 
-    # ── Primary: operator-curated `patterns_universe` ──
-    # 2026-07 fix — the previous intents-based discovery bottomed
-    # out at 9 fallback symbols because `shared_intents` was
-    # retired in the June refactor. The canonical operator
-    # watchlist has always been in `patterns_universe`; consume
-    # that directly so the feeder covers all 20 curated symbols.
+    # ── Primary: live_universe (broker-driven, 15min refresh) ──
+    # 2026-07-15 (iter-30 P4): the discovery hierarchy now has
+    # `live_universe` at the top — it's rebuilt every 15min from
+    # Kraken's 24h movers + high-liquidity pairs. `patterns_universe`
+    # remains as a fallback and operator-pin merge layer.
+    try:
+        from shared.universe.live_universe import read_universe  # noqa: WPS433
+        doc = await read_universe("crypto")
+        if doc:
+            syms = sorted({
+                (s.get("canonical_symbol") or "").upper()
+                for s in (doc.get("symbols") or [])
+                if s.get("canonical_symbol") and s.get("tradable", True)
+            })
+            if syms:
+                return syms
+    except Exception as e:  # noqa: BLE001
+        logger.warning("kraken_ohlc: live_universe discovery failed: %r", e)
+
+    # ── Fallback: operator-curated `patterns_universe` ──
     try:
         cursor = db["patterns_universe"].find(
             {"lane": "crypto", "active": True},

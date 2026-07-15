@@ -148,6 +148,19 @@ WEBULL_AUDIT_LOG = "webull_audit_log"
 # fires 4x/minute against Webull's INVALID_SYMBOL wall" pattern.
 SYMBOL_REGISTRY = "symbol_registry"
 
+# Live Universe (2026-07-15, iter-30 doctrine shift) — per-lane
+# ephemeral universe rebuilt every 15 min from broker screeners.
+# See `shared/universe/refresher.py`.
+#
+# `live_universe`         : one doc per lane, replaced atomically
+#                           each refresh. Carries generation_id +
+#                           symbols[] with per-symbol source_reasons.
+# `universe_refresh_reports`: append-only ledger of every refresh
+#                           (added / retained / removed / quarantined
+#                           / failed_resolution counts).
+LIVE_UNIVERSE = "live_universe"
+UNIVERSE_REFRESH_REPORTS = "universe_refresh_reports"
+
 
 # Brain Roster — dynamic role assignment across the four brains.
 # Doctrine: the roster is descriptive metadata. Assigning Camaro to
