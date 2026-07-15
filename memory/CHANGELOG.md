@@ -1,3 +1,57 @@
+## 2026-07-15 — iter-30 P4b: silent-partial-truth fixes (Kraken + Webull symmetric)
+
+Fixed a class of bug that was hiding inside the P4 universe refresher's
+resilience mask: any single upstream source failing was silently
+truncating the published ranking, then reporting the result as if it
+were a full-picture refresh.
+
+**Kraken `_fetch_all_tickers` (`shared/universe/kraken_movers.py`):**
+- Batch 40 → 25 (reduces 429 risk on shared-limit situations)
+- Retry-then-raise with up to 2 retries per chunk
+- Honor `Retry-After` header on 429 (clamped [0, 60]s), fall back to
+  jittered `3.0 + Uniform[0, 2.0]s` otherwise (desyncs pod retries)
+- Explicitly inspect `data["error"]` — a Kraken partial-success shape
+  (HTTP 200 with `error[]` non-empty + truncated `result{}`) now
+  raises `KrakenBatchError` on the chunk
+- Silent-truncation detector: even without `error[]`, a chunk returning
+  fewer rows than requested raises
+- Never return partial `out{}` — any chunk exhausted → raise
+
+**Webull `_fetch_screener` (`shared/universe/webull_movers.py`):**
+- Symmetric fix — same class of bug, smaller blast radius. Previously
+  any single-source failure (gainers OR losers OR most_active) returned
+  `[]` for that source and the refresher happily ranked from 2/3 of
+  the real data.
+- `_fetch_screener` now raises `WebullScreenerError` on:
+    * `_guarded_call` returning None (SDK error or breaker open)
+    * unparseable response body
+    * no recognizable rows[] container
+- `fetch_top_gainers` / `fetch_top_losers` / `fetch_most_active` all
+  raise `WebullScreenerError` if the quotes client isn't configured
+- Empty rows[] (200 OK with `data: []`) remains a legitimate no-error
+  case and returns `[]` normally
+
+**Refresher `_publish_and_report`:**
+- New `provider_error: Optional[str]` parameter. When set, forces
+  `used_last_good=True` and stamps the exception summary into
+  `report.provider_error` + `report.publish_error`. This is what
+  distinguishes "provider failed, kept last-good" from "empty result
+  over empty previous" from "publish crashed" in the audit ledger.
+- Operator can now `db.universe_refresh_reports.find({provider_error:
+  {$ne: null}})` to find every genuine outage — signal never gets
+  lost to a catch-and-return-[].
+
+**Verified 2026-07-15 11:55 UTC:**
+- Healthy path unchanged — `provider_error=- published=True`
+- Simulated in-process `KrakenBatchError` propagation:
+    * `published=False, used_last_good=True`
+    * `provider_error='KrakenBatchError: simulated: HTTP 429 …'`
+    * `publish_error='provider_error: KrakenBatchError: …'`
+    * `generation_id=None` (nothing was published)
+    * live_universe crypto doc still has all 50 symbols → last-good
+      retained as designed
+
+
 ## 2026-07-15 — iter-30 P4: broker-driven live universe
 
 Replaced the operator-curated static universe (`patterns_universe`) with an

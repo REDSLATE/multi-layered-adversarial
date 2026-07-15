@@ -89,29 +89,55 @@ def _row_to_mover(row: dict, reason: str) -> Optional[dict]:
     }
 
 
+class WebullScreenerError(RuntimeError):
+    """Raised when a Webull screener endpoint couldn't be resolved
+    cleanly. Callers (the universe refresher) MUST treat this as
+    "one of my three discovery sources is missing" and refuse to
+    publish a partial universe.
+
+    2026-07-15 iter-30 P4b — the previous code silently returned
+    `[]` on failure, letting the refresher publish a top-N ranking
+    built from 2/3 of the real data. Same silent-partial-truth
+    trap as Kraken. Symmetric fix: fail hard, retain last-good."""
+
+
 def _fetch_screener(
     client: Any, method_name: str, reason: str, cap: int, **kwargs,
 ) -> list[dict]:
     """Common shape: pull one screener endpoint, coerce to list of
-    mover dicts. Guarded + fail-soft.
+    mover dicts.
 
-    `cap` is the max number of parsed rows to return (renamed from
-    `page_size` to avoid a keyword collision with the SDK's own
-    `page_size` argument, which the caller passes via `**kwargs`)."""
+    Raises `WebullScreenerError` on any failure that could produce
+    a partial/incorrect ranking:
+      * `_guarded_call` returns None (SDK error, breaker open, etc.)
+      * response body shape unrecognized
+
+    An EMPTY successful response (200 OK with `data: []`) is not
+    an error — the endpoint really has no rows to report. Returns
+    `[]` in that case."""
     fn = getattr(client._data.screener, method_name, None)
     if fn is None:
-        logger.warning("webull screener missing method %s", method_name)
-        return []
+        raise WebullScreenerError(f"webull screener missing method {method_name}")
     r = _guarded_call(
         f"screener.{method_name}",
         lambda: fn(**kwargs),
     )
     if r is None:
-        return []
-    body = _coerce_body(r) or {}
+        # `_guarded_call` returns None for BOTH "breaker-open skip"
+        # and "SDK raised" — either way we don't have complete data.
+        # Reject the whole cycle rather than pretend it's empty.
+        raise WebullScreenerError(
+            f"screener.{method_name} returned no response "
+            "(breaker open or SDK error)",
+        )
+    body = _coerce_body(r)
+    if body is None:
+        raise WebullScreenerError(
+            f"screener.{method_name} returned unparseable body",
+        )
     # Webull screener responses can arrive either as a list directly
     # or wrapped in `{"data": [...]}` — accept both.
-    rows: list = []
+    rows: Optional[list] = None
     if isinstance(body, list):
         rows = body
     elif isinstance(body, dict):
@@ -120,6 +146,14 @@ def _fetch_screener(
             if isinstance(candidate, list):
                 rows = candidate
                 break
+    if rows is None:
+        raise WebullScreenerError(
+            f"screener.{method_name} response had no recognizable "
+            f"rows[] container (top-level keys: "
+            f"{list(body.keys()) if isinstance(body, dict) else 'not-a-dict'})",
+        )
+    # Empty rows[] is a legitimate "market closed / no gainers" —
+    # not an error. Just return [].
     out: list[dict] = []
     for row in rows[:cap]:
         mover = _row_to_mover(row, reason)
@@ -129,10 +163,15 @@ def _fetch_screener(
 
 
 def fetch_top_gainers(page_size: int = 20) -> list[dict]:
-    """DAY_1 gainers on US_STOCK, sorted by CHANGE_RATIO DESC."""
+    """DAY_1 gainers on US_STOCK, sorted by CHANGE_RATIO DESC.
+
+    Raises `WebullScreenerError` on failure — the refresher MUST
+    treat any single-source failure as "reject whole cycle,
+    retain last-good", never as an empty list to silently rank
+    against."""
     client = get_quotes_client()
     if client is None:
-        return []
+        raise WebullScreenerError("webull quotes client not available")
     return _fetch_screener(
         client, "get_gainers_losers", "top_gainer", page_size,
         rank_type="DAY_1", category="US_STOCK",
@@ -145,7 +184,7 @@ def fetch_top_losers(page_size: int = 20) -> list[dict]:
     """DAY_1 losers on US_STOCK, sorted by CHANGE_RATIO ASC."""
     client = get_quotes_client()
     if client is None:
-        return []
+        raise WebullScreenerError("webull quotes client not available")
     return _fetch_screener(
         client, "get_gainers_losers", "top_loser", page_size,
         rank_type="DAY_1", category="US_STOCK",
@@ -158,7 +197,7 @@ def fetch_most_active(page_size: int = 20) -> list[dict]:
     """VOLUME-sorted most-active on US_STOCK."""
     client = get_quotes_client()
     if client is None:
-        return []
+        raise WebullScreenerError("webull quotes client not available")
     return _fetch_screener(
         client, "get_most_active", "most_active", page_size,
         category="US_STOCK",

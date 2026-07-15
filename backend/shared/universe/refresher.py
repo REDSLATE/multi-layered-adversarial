@@ -278,13 +278,24 @@ async def refresh_equity_universe() -> dict:
     }
 
     # Fetch from broker off the event loop.
+    # 2026-07-15 iter-30 P4b: symmetric with Kraken — any single
+    # source failing raises → wipe all three to [] → refresher's
+    # empty-refuse safeguard trips → last-good universe retained.
+    # A "most_active" outage for one 15-min cycle costs less than
+    # publishing a top-N ranking built from 2/3 of the real data.
+    screener_error: Optional[str] = None
     try:
         gainers = await asyncio.to_thread(fetch_top_gainers, 20)
         losers = await asyncio.to_thread(fetch_top_losers, 20)
         active = await asyncio.to_thread(fetch_most_active, 20)
     except Exception as exc:  # noqa: BLE001
         gainers, losers, active = [], [], []
-        logger.warning("equity screener fetch raised: %s", exc)
+        screener_error = f"{type(exc).__name__}: {exc}"
+        logger.warning(
+            "equity screener fetch failed (any source failure = "
+            "reject whole cycle, retain last-good): %s",
+            screener_error,
+        )
 
     pins = await _load_operator_pins(lane)
 
@@ -317,6 +328,7 @@ async def refresh_equity_universe() -> dict:
         },
         previous=previous,
         at=at,
+        provider_error=screener_error,
     )
 
 
@@ -335,8 +347,20 @@ async def _publish_and_report(
     raw_sources: dict,
     previous: dict,
     at: datetime,
+    provider_error: Optional[str] = None,
 ) -> dict:
-    """Common tail — publish (if valid), then persist the report."""
+    """Common tail — publish (if valid), then persist the report.
+
+    `provider_error` (2026-07-15 iter-30 P4b): when a screener /
+    ticker fetch upstream raised, the caller passes the exception
+    summary through here. It becomes the `publish_error` field in
+    the report AND forces `used_last_good=True` regardless of the
+    empty-refuse safeguard path. This is what distinguishes
+    "provider failed, we kept last-good" from "we published an
+    empty universe over an empty previous" in the audit ledger —
+    the operator can grep for `provider_error != null` to find
+    every genuine outage.
+    """
     prev_members: set[str] = {
         s.get("canonical_symbol") for s in (previous.get("symbols") or [])
         if s.get("canonical_symbol")
@@ -350,9 +374,23 @@ async def _publish_and_report(
     publish_error: Optional[str] = None
     used_last_good = False
 
-    # SAFEGUARD: refuse to publish an empty universe over a non-empty
-    # previous. A screener outage MUST NOT clear the pulse universe.
-    if not rows and prev_members:
+    if provider_error is not None:
+        # Upstream provider failed. Never publish under this state
+        # — the `rows` we were handed reflect an empty result set
+        # from the catch-block, NOT a real broker response. Retain
+        # last-good and stamp the actual exception into the report.
+        publish_error = f"provider_error: {provider_error}"
+        used_last_good = True
+        logger.warning(
+            "universe refresh %s: provider failure — retaining "
+            "previous generation %s: %s",
+            lane, previous.get("generation_id"), provider_error,
+        )
+    elif not rows and prev_members:
+        # SAFEGUARD: refuse to publish an empty universe over a non-
+        # empty previous. Distinct from provider_error — this path
+        # fires when the provider returned cleanly but with zero
+        # candidates (unusual but possible on a slow-tape day).
         publish_error = "empty_universe_refused_over_non_empty_previous"
         used_last_good = True
         logger.warning(
@@ -382,11 +420,6 @@ async def _publish_and_report(
     added = sorted(new_members - prev_members) if published else []
     removed = sorted(prev_members - new_members) if published else []
     retained = sorted(new_members & prev_members) if published else []
-    # `failed_resolution` (Ervin spec 2026-07-15): symbols that showed
-    # up in the raw candidate pool but couldn't be turned into a
-    # publishable row — i.e. quality-dropped rows without a
-    # broker_instrument_id (a "we know the ticker but can't resolve
-    # it to an executable instrument" case).
     failed_resolution = sorted({
         d.get("canonical_symbol")
         for d in dropped
@@ -401,6 +434,7 @@ async def _publish_and_report(
         "published": published,
         "used_last_good": used_last_good,
         "publish_error": publish_error,
+        "provider_error": provider_error,
         "source": source,
         "raw_source_counts": raw_sources,
         "sizes": {
@@ -420,10 +454,12 @@ async def _publish_and_report(
     }
     await append_refresh_report(report)
     _log(
-        "universe refresh %s: published=%s used_last_good=%s final=%d "
-        "added=%d removed=%d quarantined=%d quality_dropped=%d "
-        "failed_resolution=%d",
-        lane, published, used_last_good, len(rows), len(added), len(removed),
+        "universe refresh %s: published=%s used_last_good=%s "
+        "provider_error=%s final=%d added=%d removed=%d "
+        "quarantined=%d quality_dropped=%d failed_resolution=%d",
+        lane, published, used_last_good,
+        (provider_error[:60] if provider_error else "-"),
+        len(rows), len(added), len(removed),
         len(quarantined), len(dropped), len(failed_resolution),
     )
     return report
@@ -446,9 +482,14 @@ async def refresh_crypto_universe() -> dict:
         movers = await fetch_crypto_movers(
             top_gainers=20, top_losers=20, high_liquidity=20,
         )
+        source_error: Optional[str] = None
     except Exception as exc:  # noqa: BLE001
         movers = []
-        logger.warning("crypto movers fetch raised: %s", exc)
+        source_error = f"{type(exc).__name__}: {exc}"
+        logger.warning(
+            "crypto movers fetch failed (whole cycle rejected, "
+            "retain last-good): %s", source_error,
+        )
 
     pins = await _load_operator_pins(lane)
 
@@ -477,6 +518,7 @@ async def refresh_crypto_universe() -> dict:
         },
         previous=previous,
         at=at,
+        provider_error=source_error,
     )
 
 

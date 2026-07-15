@@ -13,23 +13,23 @@ Doctrine (2026-07-15, iter-30 P4):
     liquidity supplement filled from `v` (24h volume).
 
     All fetches unauthenticated — no keys touched. If Kraken is
-    unreachable the fetcher returns [] and the refresher retains
-    the previous universe.
+    unreachable the fetcher RAISES so the refresher's outer
+    try/except catches it and retains the last-good universe.
 
-Returns normalized shape (matches `webull_movers._row_to_mover`):
-
-    [{
-      "canonical_symbol": "BTC/USD",
-      "broker_instrument_id": "XXBTZUSD",   # Kraken's canonical
-      "change_pct": 3.42,
-      "volume": 1234567.0,                  # 24h volume
-      "price": 68123.4,
-      "source_reason": "top_gainer" | "top_loser" | "high_liquidity",
-    }, ...]
+    2026-07-15 iter-30 P4b: never silently truncate. A 429 or
+    partial-success (Kraken returns HTTP 200 but with `error[]`
+    non-empty and a truncated `result{}`) MUST fail the whole
+    ticker fetch, not return a partial dict pretending to be
+    complete. The refresh-safeguard depends on "empty or full,
+    never partial" — a truncated ranking is worse than no
+    refresh at all because the operator wouldn't know their
+    "top gainers" was built from 60% of the real universe.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
 from typing import Optional
 
 import httpx
@@ -38,6 +38,26 @@ logger = logging.getLogger("risedual.universe.kraken_movers")
 
 _KRAKEN_BASE = "https://api.kraken.com"
 _USER_AGENT = "risedual-mission-control/1.0"
+
+# Kraken public rate limit is documented as 15 calls / 10s per IP.
+# BATCH controls how many pairs we pack into one Ticker call —
+# smaller = fewer 429s + smaller blast-radius per failure. 25 keeps
+# us well under URL-length limits with room for very long pair
+# names (some Kraken listings run to 12+ chars per pair).
+BATCH = 25
+
+# Retry budget: at most 2 retries per chunk. On 429, honor
+# `Retry-After` if present, else fall back to a jittered backoff.
+MAX_RETRIES = 2
+DEFAULT_BACKOFF_BASE_SEC = 3.0
+DEFAULT_BACKOFF_JITTER_SEC = 2.0
+
+
+class KrakenBatchError(RuntimeError):
+    """Raised when a Ticker batch could not be resolved cleanly
+    (429 exhausted, network error, or Kraken partial-success shape
+    with a non-empty `error[]`). Whoever catches this MUST retain
+    the last-good universe rather than publish partial data."""
 
 
 def _altname_to_canonical(altname: str, wsname: Optional[str]) -> Optional[str]:
@@ -85,32 +105,150 @@ async def _fetch_asset_pairs() -> dict:
     return (data.get("result") or {})
 
 
+def _parse_retry_after(header_value: Optional[str]) -> Optional[float]:
+    """Parse a `Retry-After` header. Kraken usually sends seconds
+    (delta-seconds) but HTTP allows an HTTP-date form too — we
+    only support the seconds form. Returns None on unparseable."""
+    if not header_value:
+        return None
+    try:
+        v = float(header_value.strip())
+    except (TypeError, ValueError):
+        return None
+    if v < 0 or v > 60:
+        # Sanity clamp — a 5-min Retry-After would starve the
+        # refresh cycle entirely; treat implausible values as
+        # missing and fall back to our own backoff schedule.
+        return None
+    return v
+
+
+async def _fetch_ticker_chunk(
+    client: httpx.AsyncClient, chunk: list[str], attempt: int,
+) -> dict:
+    """One `/Ticker` call. Returns Kraken's `result` dict on clean
+    success. Raises `KrakenBatchError` on any of:
+      * HTTP 4xx/5xx after `raise_for_status`
+      * `data['error']` non-empty
+      * JSON decode error
+
+    Callers loop with backoff around this and eventually raise
+    upward if the retry budget is exhausted."""
+    r = await client.get(
+        f"{_KRAKEN_BASE}/0/public/Ticker",
+        params={"pair": ",".join(chunk)},
+        headers={"User-Agent": _USER_AGENT},
+    )
+    if r.status_code == 429:
+        retry_after = _parse_retry_after(r.headers.get("Retry-After"))
+        raise KrakenBatchError(
+            f"HTTP 429 rate-limited (attempt {attempt}, "
+            f"retry_after={retry_after})",
+        ).with_traceback(None)
+    r.raise_for_status()
+    try:
+        data = r.json()
+    except ValueError as exc:
+        raise KrakenBatchError(f"JSON decode failed: {exc}") from exc
+    errors = data.get("error") or []
+    if errors:
+        # Kraken's partial-success shape — HTTP 200 but SOME pairs
+        # in the batch failed. Reject the whole chunk; a truncated
+        # ranking is worse than no refresh at all.
+        raise KrakenBatchError(
+            f"Kraken returned non-empty error[]: {errors!r} "
+            f"(result rows={len(data.get('result') or {})} "
+            f"vs requested={len(chunk)})",
+        )
+    result = data.get("result")
+    if not isinstance(result, dict):
+        raise KrakenBatchError(f"unexpected result shape: {type(result).__name__}")
+    # Additional safety net: if Kraken silently drops pairs
+    # WITHOUT populating error[], count-compare + reject.
+    if len(result) < len(chunk):
+        raise KrakenBatchError(
+            f"silent truncation: requested {len(chunk)} pairs, "
+            f"got {len(result)} — refusing to publish partial batch",
+        )
+    return result
+
+
 async def _fetch_all_tickers(altnames: list[str]) -> dict:
-    """Bulk /Ticker call. Kraken accepts up to ~50-60 pairs per call
-    based on their gateway; we batch conservatively."""
+    """Bulk /Ticker in BATCH-sized chunks. RAISES on any chunk
+    that can't be resolved after MAX_RETRIES — never returns a
+    truncated dict.
+
+    Retry policy:
+        * On 429, honor `Retry-After` header if present (clamped
+          to [0, 60] sec). Otherwise use
+          `DEFAULT_BACKOFF_BASE_SEC + jitter[0, JITTER_SEC]`.
+        * On other errors (network / JSON), backoff without
+          Retry-After — jitter is applied regardless so multiple
+          pods don't synchronise their retries.
+    """
     if not altnames:
         return {}
     out: dict = {}
-    BATCH = 40
     async with httpx.AsyncClient(timeout=8.0) as client:
         for i in range(0, len(altnames), BATCH):
             chunk = altnames[i:i + BATCH]
-            try:
-                r = await client.get(
-                    f"{_KRAKEN_BASE}/0/public/Ticker",
-                    params={"pair": ",".join(chunk)},
-                    headers={"User-Agent": _USER_AGENT},
-                )
-                r.raise_for_status()
-                data = r.json()
-            except (httpx.HTTPError, ValueError) as exc:
-                logger.warning(
-                    "kraken Ticker fetch failed for chunk starting %s: %s",
-                    chunk[0], exc,
-                )
-                continue
-            for kkey, row in (data.get("result") or {}).items():
-                out[kkey] = row
+            last_exc: Optional[BaseException] = None
+            for attempt in range(MAX_RETRIES + 1):
+                try:
+                    result = await _fetch_ticker_chunk(client, chunk, attempt)
+                    out.update(result)
+                    last_exc = None
+                    break
+                except KrakenBatchError as exc:
+                    last_exc = exc
+                    if attempt >= MAX_RETRIES:
+                        break
+                    # Extract Retry-After if this was a 429.
+                    retry_after: Optional[float] = None
+                    msg = str(exc)
+                    if "retry_after=" in msg:
+                        # Best-effort parse from the exception message.
+                        try:
+                            frag = msg.split("retry_after=", 1)[1].split(")", 1)[0]
+                            retry_after = float(frag) if frag != "None" else None
+                        except (ValueError, IndexError):
+                            retry_after = None
+                    if retry_after is None:
+                        # Jittered backoff — different pods desync.
+                        retry_after = (
+                            DEFAULT_BACKOFF_BASE_SEC
+                            + random.uniform(0.0, DEFAULT_BACKOFF_JITTER_SEC)
+                        )
+                    logger.warning(
+                        "kraken Ticker chunk starting %s failed "
+                        "(attempt %d/%d): %s — backing off %.2fs",
+                        chunk[0], attempt + 1, MAX_RETRIES + 1, exc, retry_after,
+                    )
+                    await asyncio.sleep(retry_after)
+                except httpx.HTTPError as exc:
+                    # Network-level failure. Same retry loop.
+                    last_exc = exc
+                    if attempt >= MAX_RETRIES:
+                        break
+                    backoff = (
+                        DEFAULT_BACKOFF_BASE_SEC
+                        + random.uniform(0.0, DEFAULT_BACKOFF_JITTER_SEC)
+                    )
+                    logger.warning(
+                        "kraken Ticker chunk starting %s network error "
+                        "(attempt %d/%d): %s — backing off %.2fs",
+                        chunk[0], attempt + 1, MAX_RETRIES + 1, exc, backoff,
+                    )
+                    await asyncio.sleep(backoff)
+            if last_exc is not None:
+                # Exhausted retries for this chunk. Do NOT return
+                # partial `out` — raise so the refresher's outer
+                # try/except catches and last-good is retained.
+                raise KrakenBatchError(
+                    f"kraken ticker batch failed after {MAX_RETRIES + 1} "
+                    f"attempts (chunk starting {chunk[0]}, "
+                    f"size={len(chunk)}): {last_exc}",
+                ) from last_exc
     return out
 
 
