@@ -1,3 +1,44 @@
+## 2026-07-15 — iter-30 P4c: Atlas-slow defense (pulse deadline + upsert timeout)
+
+Root cause of the 12:24 UTC production incident (9m 30s pulse overrun,
+0 exec despite 35 intents): Atlas Mongo cluster was returning
+`NetworkTimeout: The read operation timed out` on
+`customer-apps-shard-00-01.kndgvm.mongodb.net`. Cluster health issue —
+not a code bug — but the code had no defense against a slow-DB
+cascade.
+
+**Safeguards added (both dormant on healthy Atlas):**
+
+- `mc_pulse/pulse.py::_upsert_envelopes` — every `update_one` on
+  `mc_seats` now wrapped in `asyncio.wait_for(..., timeout=2.0)`.
+  With 50 seats × 4 brains = 200 sequential upserts per pulse,
+  a slow Atlas would previously stall the pulse for the sum of
+  all write times (unbounded). Now each slow write raises
+  `TimeoutError`, gets logged as `"envelope upsert TIMED OUT"`,
+  and the pulse continues — missing one seat's opinion is much
+  cheaper than a 9-min hang.
+
+- `mc_pulse/pulse_worker.py::_pulse_loop` — the whole tick
+  (`build_all()` + `pulse_tick()`) now wrapped in
+  `asyncio.wait_for(..., timeout=max(30.0, cadence * 3))`. On
+  timeout: LOG loudly ("pulse tick deadline exceeded — this
+  usually means Atlas is slow"), skip the tick, next tick fires
+  on schedule. Previous behavior: silent 9-min hang, receipt
+  eventually completes with `overrun=True` but the operator has
+  no signal to point at.
+
+**Verified in preview 13:06 UTC** — healthy ticks continue firing
+cleanly (`snapshots=49, brains=4/4, arbitrations=49,
+orchestration_ok=True, overrun=False`). Zero safeguard trips on
+local Mongo (as expected).
+
+**Does NOT fix Atlas itself.** The prod cluster still needs
+Emergent Support to check tier / connection count / slow query log.
+These safeguards prevent Atlas degradation events from cascading
+into pulse hangs, but a genuinely sick cluster still needs
+platform-side attention.
+
+
 ## 2026-07-15 — iter-30 P4b: silent-partial-truth fixes (Kraken + Webull symmetric)
 
 Fixed a class of bug that was hiding inside the P4 universe refresher's

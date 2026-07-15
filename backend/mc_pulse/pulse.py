@@ -314,19 +314,37 @@ async def _upsert_envelopes(
     """
     if not envelopes:
         return
+    # 2026-07-15 iter-30 P4c: bound each individual upsert with an
+    # asyncio timeout so a slow Atlas can't hang the pulse worker
+    # for 9+ minutes doing sequential writes. Without this, 50
+    # symbols × 4 brains = 200 sequential upserts with no ceiling —
+    # any degraded-Atlas moment cascades into pulse overrun. With
+    # the 2s cap, a slow write raises `TimeoutError`, gets logged
+    # as a per-upsert warning, and the pulse continues (missing
+    # one seat's opinion for that tick is much better than the
+    # whole pulse being 9× overrun).
     for env in envelopes:
         doc = env.to_mongo()
         try:
-            await db[collection_name].update_one(
-                {
-                    "seat_key": env.seat_key,
-                    "brain": env.brain_id,
-                },
-                {
-                    "$set": doc,
-                    "$setOnInsert": {"first_recorded_at": _now_iso()},
-                },
-                upsert=True,
+            await asyncio.wait_for(
+                db[collection_name].update_one(
+                    {
+                        "seat_key": env.seat_key,
+                        "brain": env.brain_id,
+                    },
+                    {
+                        "$set": doc,
+                        "$setOnInsert": {"first_recorded_at": _now_iso()},
+                    },
+                    upsert=True,
+                ),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "envelope upsert TIMED OUT pulse=%s brain=%s symbol=%s "
+                "(atlas slow? skipping this seat for this tick)",
+                env.pulse_id, env.brain_id, doc.get("symbol"),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(

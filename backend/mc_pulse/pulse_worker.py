@@ -78,16 +78,32 @@ async def _pulse_loop() -> None:
     while True:
         loop_started = asyncio.get_event_loop().time()
         try:
-            snapshots = await build_all()
+            # 2026-07-15 iter-30 P4c: outer bound on the whole
+            # tick so a slow-Atlas moment can't stall the pulse
+            # loop indefinitely. Cap = 3× cadence — long enough
+            # for legitimate slow-tape ticks (crypto refresh does
+            # a batch of Kraken calls), short enough that a
+            # genuine hang gets caught before the next tick
+            # would fire. On TimeoutError the pulse skips this
+            # cycle and the next one starts on schedule; we
+            # write NOTHING because a half-written tick would
+            # corrupt seat state.
+            pulse_deadline = max(30.0, PULSE_CADENCE_SECONDS * 3.0)
+            snapshots = await asyncio.wait_for(
+                build_all(), timeout=pulse_deadline,
+            )
             # Read arbiter runtime mode fresh each tick so an
             # operator flip takes effect on the next pulse.
             runtime_mode = await _read_runtime_mode_safe()
-            receipt = await pulse_tick(
-                snapshots,
-                cadence_seconds=PULSE_CADENCE_SECONDS,
-                runtime_mode=runtime_mode,
-                compare_only=compare_only,
-                auto_arbitrate=auto_arbitrate,
+            receipt = await asyncio.wait_for(
+                pulse_tick(
+                    snapshots,
+                    cadence_seconds=PULSE_CADENCE_SECONDS,
+                    runtime_mode=runtime_mode,
+                    compare_only=compare_only,
+                    auto_arbitrate=auto_arbitrate,
+                ),
+                timeout=pulse_deadline,
             )
             logger.info(
                 "pulse tick pulse_id=%s snapshots=%d "
@@ -109,6 +125,21 @@ async def _pulse_loop() -> None:
         except asyncio.CancelledError:
             logger.info("mc_pulse loop cancelled")
             raise
+        except asyncio.TimeoutError:
+            # 2026-07-15 iter-30 P4c: pulse hit the outer deadline
+            # (3× cadence). This is exactly the 9-min-hang scenario
+            # we saw on production 2026-07-15 12:24 when Atlas was
+            # degraded. Skip this tick, LOG loudly (the operator
+            # needs to see this signal, unlike the silent hang),
+            # and let the next tick fire fresh on cadence.
+            logger.warning(
+                "mc_pulse tick deadline exceeded (%.1fs cap) — "
+                "skipping this tick, next one fires on schedule. "
+                "This usually means Atlas is slow; check "
+                "`degraded=true` in the intent-clearance-funnel "
+                "endpoint.",
+                pulse_deadline,
+            )
         except Exception:  # noqa: BLE001
             # A raise here is orchestration-level — brain-level
             # failures were already caught inside pulse_tick via
