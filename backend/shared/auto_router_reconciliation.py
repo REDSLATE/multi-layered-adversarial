@@ -256,6 +256,17 @@ async def _sweep_submitted_broker_orders() -> dict:
 
     # Query intents PER LANE so the equity-Webull budget and the
     # crypto-Kraken budget are drained in separate batches.
+    #
+    # 2026-07-14 (iter-30): exclude intents whose broker_order id
+    # starts with `mock-`. Those IDs are minted by `mc_pulse/
+    # e2e_trace.py` for tracing (never a real broker order), but
+    # if such a trace ever gets persisted as a `submitted` intent
+    # the reconcile sweep keeps polling Webull `get_order(mock-*)`
+    # forever — each call 429s, four in a row trips the Webull
+    # circuit breaker, and the log floods. Filter here so mock
+    # IDs are ignored at the source; the aging sweeper
+    # (`_sweep_expired_unrouted`) will terminal them via the
+    # standard 120min TTL path.
     pending_by_lane: dict[str, list[dict]] = {}
     for lane_name in adapters.keys():
         try:
@@ -272,6 +283,9 @@ async def _sweep_submitted_broker_orders() -> dict:
                             {"broker_order.id": {"$exists": True, "$ne": None}},
                             {"broker_order.order_id": {"$exists": True, "$ne": None}},
                         ],
+                        # Reject synthetic mock IDs (see block comment).
+                        "broker_order.id": {"$not": {"$regex": "^mock-"}},
+                        "broker_order.order_id": {"$not": {"$regex": "^mock-"}},
                         "executed_at": {"$lt": poll_cutoff},
                     },
                     {

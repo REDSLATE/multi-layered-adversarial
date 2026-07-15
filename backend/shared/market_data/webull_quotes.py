@@ -50,6 +50,29 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("risedual.market_data.webull")
 
+
+# 2026-07-14 (iter-30): synthetic / test-fixture symbols that must
+# NEVER hit Webull's `get_snapshot`. These get seeded by e2e-trace
+# runs (`TRIPWIRE_SPREAD_A/B`, `TRIPWIRE-<hex>`, `TRIPWIRE_GATE_CHAIN`,
+# `MOCK_<x>`, `TEST_<x>`) and by unit-test fixtures. If they reach
+# the SDK, Webull returns HTTP 417 INVALID_SYMBOL → 4 consecutive
+# failures trip the circuit breaker → the quotes oracle goes cold
+# for 60s across the whole app. Filter at the client edge so one
+# stray symbol can't blackhole real trading.
+_SYNTHETIC_SYMBOL_PREFIXES = ("TRIPWIRE", "MOCK_", "TEST_", "SYNTH_")
+
+
+def _is_synthetic_marker(sym: str) -> bool:
+    """True for symbols that are known to be synthetic system
+    markers (never real US tickers or Kraken pairs)."""
+    if not sym:
+        return False
+    u = sym.upper()
+    for pref in _SYNTHETIC_SYMBOL_PREFIXES:
+        if u.startswith(pref):
+            return True
+    return False
+
 # ── Cache TTLs (seconds). Tuned for the 60/min snapshot rate ceiling
 #    with the 45s tick interval — at 1 call per 12 tickers the bound
 #    is ~4 calls/min if we batch 12-wide.
@@ -339,6 +362,18 @@ class WebullQuotesClient:
         sym = (symbol or "").upper()
         if not sym:
             return None
+        # 2026-07-14 (iter-30): reject synthetic system markers before
+        # burning the Webull `get_snapshot` budget on them. Symbols
+        # like `TRIPWIRE_SPREAD_A` / `TRIPWIRE-07B11BF0` / `MOCK_*` /
+        # `TEST_*` are seeded by e2e-trace and test fixtures — they
+        # are NOT real US tickers and Webull returns HTTP 417
+        # INVALID_SYMBOL every time, tripping the circuit breaker
+        # for the whole quotes client. Filter them here so one bad
+        # intent doesn't blackhole the equity mark oracle for
+        # everyone. Mirrors the same filter already applied at
+        # `shared/doctrine/shadow_outcome.py:_is_valid_ticker`.
+        if _is_synthetic_marker(sym):
+            return None
         cached = _CACHE.get(("eq_snap", sym), SNAPSHOT_TTL_SEC)
         if cached is not None:
             return cached
@@ -359,6 +394,8 @@ class WebullQuotesClient:
         """`symbol` here is the Webull concat form (e.g. "BTCUSD")."""
         sym = (symbol or "").upper().replace("-", "").replace("/", "")
         if not sym:
+            return None
+        if _is_synthetic_marker(sym):
             return None
         cached = _CACHE.get(("cr_snap", sym), SNAPSHOT_TTL_SEC)
         if cached is not None:

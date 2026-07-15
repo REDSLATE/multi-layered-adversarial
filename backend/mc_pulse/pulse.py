@@ -249,13 +249,21 @@ async def pulse_tick(
 async def _upsert_envelopes(
     envelopes: list[OpinionEnvelope], collection_name: str,
 ) -> None:
-    """Upsert by the composite idempotency key
-    `(pulse_id, brain, symbol, lane)` — enforced at the schema
-    level by the unique index in `db.ensure_indexes`.
+    """Upsert by the enforced-unique key `(seat_key, brain)` — the
+    same index the `mc_seats_seat_brain` unique constraint pins
+    (see `db.ensure_indexes`).
 
-    A retried pulse reuses `pulse_id`, so these upserts converge
-    to at-most-one row per (pulse, brain, symbol, lane) even
-    across crashes and retries.
+    2026-07-14 (iter-30): switched the filter from `(pulse_id,
+    brain, symbol, lane)` to `(seat_key, brain)`. The seat_key
+    already encodes `{lane}:{symbol}:{5-min-bucket}`, and the
+    doctrine (see index doc string) is "one row per (seat_key,
+    brain) so all N brains competing for the same 5-min bucket
+    surface with a single seat_key lookup." Multiple pulse ticks
+    that fire inside the same 5-min bucket all resolve to the
+    same seat_key + brain → the second tick should UPDATE the
+    row, not INSERT a new one. The old `pulse_id`-scoped filter
+    inserted a fresh doc per pulse, which then collided with the
+    (seat_key, brain) unique index — the log's E11000 flood.
     """
     if not envelopes:
         return
@@ -264,10 +272,8 @@ async def _upsert_envelopes(
         try:
             await db[collection_name].update_one(
                 {
-                    "pulse_id": env.pulse_id,
+                    "seat_key": env.seat_key,
                     "brain": env.brain_id,
-                    "symbol": doc["symbol"],
-                    "lane": doc["lane"],
                 },
                 {
                     "$set": doc,

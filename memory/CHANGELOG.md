@@ -1,3 +1,51 @@
+## 2026-07-15 — iter-30: three-in-one log-flood cleanup (A/B/C)
+
+Fixed three unrelated warning floods that had been co-tenanting the backend
+logs and interfering with real diagnostics:
+
+- **A — synthetic-symbol leak into Webull quotes**
+  `TRIPWIRE_SPREAD_A` / `TRIPWIRE-<hex>` / `MOCK_*` / `TEST_*` symbols
+  were being sent to `webull_quotes.equity_snapshot` and returning
+  HTTP 417 `INVALID_SYMBOL`, tripping the quote-client circuit breaker
+  for the whole app.
+  Fix: added `_is_synthetic_marker(sym)` at the top of `shared/market_data/
+  webull_quotes.py` and rejected matching symbols at both `equity_snapshot`
+  and `crypto_snapshot` before the SDK call.
+
+- **B — mock order IDs re-polled forever by the reconcile sweep**
+  E2E-trace mock orders (`broker_order.id="mock-<hex>"`, minted by
+  `mc_pulse/e2e_trace.py`) that got persisted as `gate_state="submitted"`
+  intents were being polled every 25s against Webull's `get_order`,
+  each call 429ing, quadruple-429 tripping the circuit breaker.
+  Fix: added a Mongo-level `$not: /^mock-/` guard to the reconcile
+  query in `shared/auto_router_reconciliation.py::_sweep_submitted_
+  broker_orders`. Mock IDs are ignored at source; the 120min TTL
+  sweep will terminal them naturally.
+
+- **C — E11000 on every envelope upsert**
+  `mc_pulse.pulse._upsert_envelopes` was filtering by
+  `(pulse_id, brain, symbol, lane)` while the enforced unique index
+  on `mc_seats` is on `(seat_key, brain)`. Two pulses landing in
+  the same 5-min bucket → different pulse_ids → no filter match →
+  fresh INSERT → collision on the seat_key index → ~50 warnings
+  per tick.
+  Fix: switched the upsert filter to `(seat_key, brain)`, matching
+  the doctrine ("one row per seat_key/brain") and the enforced
+  index.
+
+**Verification:** post-restart smoke test at 03:24-03:25 UTC showed
+zero TRIPWIRE / zero mock-* / zero E11000 in a 60-second observation
+window while pulse ticks continued to fire (19 snapshots, 4 brains
+completed, 19 arbitrations per tick, `orchestration_ok=True`).
+
+**Files touched:**
+- `backend/mc_pulse/pulse.py::_upsert_envelopes` (filter + docstring)
+- `backend/shared/market_data/webull_quotes.py` (synthetic marker
+  helper + guards in equity_snapshot/crypto_snapshot)
+- `backend/shared/auto_router_reconciliation.py` (mock- filter
+  in reconcile query)
+
+
 ## 2026-07-11 (final) — iter-27: Doctrine step 5.a + handoff for 5.b/7/8
 
 **Step 5.a — Consensus dedup at the position layer:**
