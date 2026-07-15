@@ -257,7 +257,7 @@ def _coerce_body(resp: Any) -> Any:
     return resp
 
 
-def _guarded_call(label: str, fn):
+def _guarded_call(label: str, fn, *, symbol: Optional[str] = None):
     """Run an SDK call through the circuit breaker.
 
     `fn` is a zero-arg callable that performs the actual SDK request.
@@ -273,6 +273,15 @@ def _guarded_call(label: str, fn):
     on /api/auth/login) starves — operator sees "site won't let me
     log in." The breaker keeps Webull-bound work bounded so the
     rest of the app stays responsive.
+
+    2026-07-15 (iter-30 P3): when `symbol` is provided AND the SDK
+    raises with `INVALID_SYMBOL` in the error text, stamp the
+    symbol into the module-level negative cache. Subsequent calls
+    for the same symbol short-circuit at the callsite (see
+    `is_symbol_unsupported`) without ever building an SDK request.
+    Kills the HOTH-style per-minute-forever pattern where the
+    universe feeder keeps asking for bars on a symbol Webull will
+    never resolve.
     """
     if not _BREAKER.allow():
         logger.debug("webull %s: breaker open — skipping call", label)
@@ -280,11 +289,66 @@ def _guarded_call(label: str, fn):
     try:
         rv = fn()
     except Exception as e:  # noqa: BLE001
-        _BREAKER.record_failure(str(e)[:80])
+        err_str = str(e)
+        _BREAKER.record_failure(err_str[:80])
         logger.debug("webull %s failed: %s", label, e)
+        # Stamp `INVALID_SYMBOL` failures into the negative cache so
+        # future calls skip this symbol at the callsite.
+        if symbol and "INVALID_SYMBOL" in err_str:
+            mark_symbol_unsupported(symbol, reason="invalid_symbol")
         return None
     _BREAKER.record_success()
     return rv
+
+
+# 2026-07-15 (iter-30 P3) — module-level negative cache for symbols
+# Webull rejected with INVALID_SYMBOL. Sync-friendly (callable from
+# `equity_bars` etc. which are sync). Also mirrored asynchronously
+# into `shared.broker.symbol_registry` so other pods see the same
+# verdict — but the L1 dict here is the hot-path guard.
+_UNSUPPORTED_SYMBOLS: dict[str, float] = {}
+_UNSUPPORTED_TTL_SEC = 6 * 3600  # 6h daily-ish revalidation
+
+
+def is_symbol_unsupported(symbol: str) -> bool:
+    """True iff we've recently learned Webull can't quote this
+    symbol. Callable from sync code paths (`equity_bars`,
+    `equity_snapshot`, `crypto_snapshot`, `instrument`)."""
+    sym = (symbol or "").upper().strip()
+    if not sym:
+        return False
+    expires = _UNSUPPORTED_SYMBOLS.get(sym)
+    if expires is None:
+        return False
+    if time.monotonic() >= expires:
+        _UNSUPPORTED_SYMBOLS.pop(sym, None)
+        return False
+    return True
+
+
+def mark_symbol_unsupported(symbol: str, *, reason: str = "invalid_symbol") -> None:
+    """Stamp a symbol into the sync-friendly negative cache. Also
+    fires an async task to mirror the verdict into the Mongo-backed
+    `symbol_registry` so cross-pod state stays consistent."""
+    sym = (symbol or "").upper().strip()
+    if not sym:
+        return
+    _UNSUPPORTED_SYMBOLS[sym] = time.monotonic() + _UNSUPPORTED_TTL_SEC
+    logger.info(
+        "webull_quotes: %s marked unsupported (reason=%s, ttl=%ds)",
+        sym, reason, _UNSUPPORTED_TTL_SEC,
+    )
+    # Best-effort Mongo mirror. Fire-and-forget — we're in a sync
+    # path here so we don't await; failures on the DB side don't
+    # affect the in-memory L1 guard.
+    try:
+        import asyncio as _asyncio
+        from shared.broker import symbol_registry as _reg  # noqa: WPS433
+        loop = _asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(_reg.mark_unsupported("webull", sym, reason))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 class WebullQuotesClient:
@@ -374,12 +438,20 @@ class WebullQuotesClient:
         # `shared/doctrine/shadow_outcome.py:_is_valid_ticker`.
         if _is_synthetic_marker(sym):
             return None
+        # 2026-07-15 (iter-30 P3): sync-friendly negative cache
+        # short-circuit. Symbols previously rejected by Webull (e.g.
+        # HOTH after its 2026-05-26 rename to RKTO) get stamped by
+        # `_guarded_call`; skip them here so we stop burning the
+        # snapshot budget on tickers Webull will never resolve.
+        if is_symbol_unsupported(sym):
+            return None
         cached = _CACHE.get(("eq_snap", sym), SNAPSHOT_TTL_SEC)
         if cached is not None:
             return cached
         r = _guarded_call(
             f"equity_snapshot({sym})",
             lambda: self._data.market_data.get_snapshot([sym], "US_STOCK"),
+            symbol=sym,
         )
         if r is None:
             return None
@@ -397,12 +469,15 @@ class WebullQuotesClient:
             return None
         if _is_synthetic_marker(sym):
             return None
+        if is_symbol_unsupported(sym):
+            return None
         cached = _CACHE.get(("cr_snap", sym), SNAPSHOT_TTL_SEC)
         if cached is not None:
             return cached
         r = _guarded_call(
             f"crypto_snapshot({sym})",
             lambda: self._data.crypto_market_data.get_crypto_snapshot([sym]),
+            symbol=sym,
         )
         if r is None:
             return None

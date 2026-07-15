@@ -922,4 +922,14 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         deadline_s=heavy_deadline_s, name="executions_ok_ts_idx",
     )
 
+    # Symbol Registry (2026-07-15, iter-30 P3). Sort-by-updated_at
+    # supports the diagnostic admin surface + future daily
+    # revalidator. The registry is small (bounded by universe size,
+    # ~50 rows at most on today's setup) so we don't need per-broker
+    # indexes yet.
+    await _safe_create_index(
+        db.symbol_registry, [("updated_at", -1)],
+        deadline_s=heavy_deadline_s, name="symbol_registry_updated_at",
+    )
+
     pass

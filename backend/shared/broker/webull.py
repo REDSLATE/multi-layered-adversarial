@@ -409,12 +409,34 @@ class WebullAdapter(BrokerAdapter):
         stay off the event loop. Cached per-symbol on the singleton
         so repeated orders for the same ticker don't re-hit the API.
 
+        2026-07-15 (iter-30 P3): consults the Mongo-backed
+        `symbol_registry` before probing Webull. On a registry HIT
+        with `tradable=False` we raise immediately with a clear
+        `UNSUPPORTED_BY_BROKER` message — that's the operator's
+        signal to route the symbol via a different broker (or
+        retire it from the universe). This short-circuits the
+        pre-2026-07-15 loop where a HOTH-shaped symbol would
+        re-probe Webull every pulse tick and burn the quotes-side
+        circuit breaker for real tickers on the same pod.
+
         Returns (instrument_id, last_price, fractionable).
         """
         sym_u = (symbol or "").upper().strip()
         cached = self._instrument_cache.get(sym_u)
         if cached is not None:
             return cached
+
+        # Registry short-circuit — Mongo-backed negative cache.
+        from shared.broker import symbol_registry  # noqa: WPS433
+        try:
+            registry_hit = await symbol_registry.get_cached("webull", sym_u)
+        except Exception:  # noqa: BLE001
+            registry_hit = None
+        if registry_hit is not None and not registry_hit.get("tradable", False):
+            raise RuntimeError(
+                f"Webull UNSUPPORTED_BY_BROKER for {sym_u!r} "
+                f"(reason={registry_hit.get('reason')!r}, cached); NO_TRADE"
+            )
 
         from shared.market_data.webull_quotes import get_quotes_client  # noqa: WPS433
         client = get_quotes_client()
@@ -434,14 +456,36 @@ class WebullAdapter(BrokerAdapter):
                 f"Webull instrument lookup failed for {symbol!r}: {e}"
             ) from e
         if not iid:
+            # Broker said "no". Stamp into the registry so we don't
+            # re-probe for the TTL window. Fail-soft: registry write
+            # errors are logged inside the module and swallowed.
+            try:
+                await symbol_registry.mark_unsupported(
+                    "webull", sym_u, reason="instrument_not_found",
+                )
+            except Exception:  # noqa: BLE001
+                pass
             raise RuntimeError(
                 f"Webull instrument_id not found for {symbol!r}; NO_TRADE"
             )
         if price <= 0.0:
+            # Instrument exists but no live price — don't poison the
+            # registry (this can be transient), just raise.
             raise RuntimeError(
                 f"Webull last-price unavailable for {symbol!r}; NO_TRADE"
             )
         self._instrument_cache[sym_u] = (iid, price, frac)
+        # Positive stamp — record a good resolution so future ticks
+        # can reuse it without touching the SDK.
+        try:
+            await symbol_registry.stamp(
+                "webull", sym_u,
+                instrument_id=iid,
+                tradable=True,
+                reason="resolved",
+            )
+        except Exception:  # noqa: BLE001
+            pass
         return iid, price, frac
 
     # 2026-07-15 (iter-30, P1) — `get_latest_trade` for unowned equities.
@@ -485,9 +529,10 @@ class WebullAdapter(BrokerAdapter):
         if _is_synthetic_marker(sym_u):
             return None
 
-        # Negative-cache short-circuit. If we've already learned
-        # Webull can't resolve this symbol, return None immediately
-        # until the TTL expires.
+        # L1 (in-memory, per-process) negative-cache short-circuit.
+        # Kept alongside the Mongo-backed registry (L2) so the hot
+        # path skips a Motor round-trip when this pod has already
+        # learned the symbol is unsupported.
         entry = self._unsupported_symbols.get(sym_u)
         if entry is not None:
             _reason, expires_at = entry
@@ -495,6 +540,22 @@ class WebullAdapter(BrokerAdapter):
                 return None
             # TTL expired — evict and re-probe below.
             self._unsupported_symbols.pop(sym_u, None)
+
+        # L2 (Mongo-backed symbol_registry) — shared across pods.
+        # A tradable=False hit here means we've already learned
+        # (potentially on another pod) that Webull can't quote this
+        # symbol; propagate that to L1 and skip the probe.
+        from shared.broker import symbol_registry  # noqa: WPS433
+        try:
+            registry_hit = await symbol_registry.get_cached("webull", sym_u)
+        except Exception:  # noqa: BLE001
+            registry_hit = None
+        if registry_hit is not None and not registry_hit.get("tradable", False):
+            self._unsupported_symbols[sym_u] = (
+                registry_hit.get("reason") or "unsupported",
+                time.monotonic() + self._UNSUPPORTED_TTL_SEC,
+            )
+            return None
 
         lane = _lane_for_symbol(sym_u)
 
@@ -545,18 +606,42 @@ class WebullAdapter(BrokerAdapter):
             return None
 
         if result is None:
-            # Symbol didn't resolve. Stamp into negative cache so we
-            # stop hammering Webull on it. Also visible for P3's
-            # Symbol Registry surface.
+            # Symbol didn't resolve. Stamp both L1 (this pod) and L2
+            # (Mongo registry, all pods) so subsequent calls skip
+            # this symbol until the TTL expires.
             self._unsupported_symbols[sym_u] = (
                 "no_quote",
                 time.monotonic() + self._UNSUPPORTED_TTL_SEC,
             )
+            try:
+                await symbol_registry.mark_unsupported(
+                    "webull", sym_u, reason="no_quote",
+                )
+            except Exception:  # noqa: BLE001
+                pass
             logger.info(
-                "get_latest_trade %s: no quote — negative-cached for %ds",
+                "get_latest_trade %s: no quote — negative-cached (L1+L2) "
+                "for %ds",
                 sym_u, self._UNSUPPORTED_TTL_SEC,
             )
             return None
+
+        # Positive resolution: stamp the registry as tradable so
+        # future ticks (this pod OR another) can skip the probe on
+        # cache hits. The `instrument_id` is not fetched on the
+        # quote path (that's `_resolve_instrument_id`'s job); leaving
+        # it None here just means the registry row's positive stamp
+        # doesn't carry an instrument_id — the order-submit path
+        # still writes one when it fires.
+        try:
+            await symbol_registry.stamp(
+                "webull", sym_u,
+                instrument_id=None,
+                tradable=True,
+                reason="quote_ok",
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
         return result
 
