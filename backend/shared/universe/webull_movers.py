@@ -34,7 +34,29 @@ logger = logging.getLogger("risedual.universe.webull_movers")
 
 def _row_to_mover(row: dict, reason: str) -> Optional[dict]:
     """Normalize a screener row into the universe-symbol shape.
-    Returns None on unparseable rows (drop silently)."""
+    Returns None on unparseable rows (drop silently).
+
+    ── On `change_ratio` (verified 2026-07-15) ──
+    Webull returns `change_ratio` as a RAW RATIO, not a pre-scaled
+    percent. Proof: on any row the identity
+        change_ratio == change / (price - change)
+    holds exactly. Example (NXTC, top gainer 2026-07-15):
+        price=6.58, change=4.40, change_ratio=2.0183
+        B = price - change = 2.18
+        change / B = 4.40 / 2.18 = 2.0183   ✓
+    Therefore multiplying by 100 to display as a percent is
+    CORRECT. Do not "fix" this without re-running the reconciliation
+    identity above on a same-instant single-call snapshot.
+
+    ── Do NOT use `pre_close` as a fallback previous-close ──
+    In the same snapshot, `pre_close` does NOT reconcile with
+    `change`/`change_ratio` — it's something else (probably a
+    stale/mislabeled reference, possibly a prior regular-session
+    close while the ratio is measured against a pre-market
+    baseline). Feature-builder fallback paths that want "previous
+    close" MUST get it from `shared_ohlcv_bars` (tf=1d), NOT from
+    this screener row's `pre_close`.
+    """
     if not isinstance(row, dict):
         return None
     sym = (row.get("symbol") or row.get("ticker") or "").upper().strip()

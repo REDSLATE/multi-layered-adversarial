@@ -1,3 +1,83 @@
+## 2026-07-15 — iter-30 P4: broker-driven live universe
+
+Replaced the operator-curated static universe (`patterns_universe`) with an
+ephemeral 15-min-refreshed live universe sourced from broker screeners.
+
+**Doctrine shift (operator directive):**
+> "Whatever Webull or Kraken has for each day as symbols to roll with them
+> and not lock down anything. What they offer is what we look at. Like
+> their top gainers and losers from the session."
+
+**Sources per lane:**
+- Equity → Webull screener: top 20 gainers + 20 losers + 20 most-active
+  (uses `get_gainers_losers` + `get_most_active`)
+- Crypto → Kraken public: top 20 gainers + 20 losers + top 20 by liquidity
+  (24h % change from `/0/public/Ticker`)
+
+**Safeguards (all shipped):**
+- Off-to-the-side build → atomic `replace_one` swap → never see empty state
+- Refuse-to-publish-empty over a non-empty previous (screener outage safety)
+- Fail-soft per source (bad endpoint doesn't kill the refresh)
+- Symbol Registry integration — quarantines Webull-rejected symbols pre-publish
+- Hysteresis: admit @ top 50, retain existing while inside top 65
+- Lane-specific quality gates (equity ≥ $1 to skip penny stocks; crypto no floor)
+- Operator pins from `patterns_universe.pinned=true` still merge in
+- Refresh report per cycle: added / retained / removed / quarantined /
+  failed_resolution / used_last_good
+
+**New files:**
+- `backend/shared/universe/live_universe.py` — accessor + atomic writer
+- `backend/shared/universe/webull_movers.py` — Webull screener wrappers
+- `backend/shared/universe/kraken_movers.py` — Kraken 24h movers fetcher
+- `backend/shared/universe/refresher.py` — main refresh loop (started in lifespan)
+- `backend/routes/live_universe_admin.py` — `GET /api/admin/universe/live`,
+  `GET /api/admin/universe/refresh-reports`, `POST /api/admin/universe/refresh`
+
+**Files wired:**
+- `backend/mc_pulse/snapshot_service.py::_discover_universe` — reads live_universe
+  first, falls back to `patterns_universe`, then env defaults
+- `backend/shared/feeders/webull_ohlc.py` — same fallback chain (feeder pulls
+  bars for whatever's currently in the live universe)
+- `backend/shared/feeders/kraken_ohlc.py` — same
+- `backend/server_modules/lifespan.py` — starts `universe_refresher_loop()` as
+  a background task
+- `backend/db.py` — indexes on `symbol_registry.updated_at` and
+  `universe_refresh_reports (lane, refreshed_at)` + 30d TTL
+
+**Also this iter (P3 Symbol Registry + P2 orchestration_error + P2 price_change_pct split + P1 get_latest_trade):**
+- `shared/broker/symbol_registry.py` — Mongo-backed canonical↔broker resolver
+  with 6h TTL; consulted by Webull's `_resolve_instrument_id` and
+  `get_latest_trade` before probing the SDK
+- `receipt.py::orchestration_error` — stamps captured exception summary on the
+  pulse receipt when the orchestrator itself throws (`pulse.py` now wraps
+  `_pulse_tick_impl` in a try/except that stamps + persists before re-raising)
+- `feature_builders/camino.py` — emits `bar_change_pct`, `session_change_pct`,
+  `window_change_pct` alongside `price_change_pct` (BC alias of bar_change_pct);
+  Camino + GTO strategies prefer the explicit field
+- `shared/broker/webull.py::get_latest_trade` — Webull adapter now exposes an
+  async quote fetcher (was missing → `observation_resolver` fell back to
+  `list_positions`, which only had prices for owned symbols). L1 in-memory +
+  L2 Mongo negative cache on unresolved symbols
+
+**Verified 2026-07-15 11:43 UTC (preview):**
+- pulse tick snapshots=50, brains_completed=4, arbitrations=50,
+  orchestration_ok=True, orchestration_error=none
+- universe refresh equity: 39 symbols (NXTC, VEEE, LEDS, CRMT top by change_ratio)
+- universe refresh crypto: 50 symbols (AKE/USD, BMB/USD, OMNI/USD top)
+- crypto churn: added=2, removed=2 (hysteresis working)
+- zero TRIPWIRE_SPREAD_A / zero mock- reconcile / zero E11000 (iter-30 P0/A/B/C)
+
+**Field-semantics confirmed (Webull screener):**
+Reconciliation proof (`change_ratio == change / (price - change)` holds
+exactly on every row) confirmed `change_ratio` is a raw ratio, not a
+pre-scaled percent — the `×100` for display is CORRECT. Documented in-code
+so future review doesn't relitigate this. Also flagged: `pre_close` on
+screener rows does NOT reconcile with `change`/`change_ratio` — must NOT
+be used as a "previous close" fallback anywhere in the feature builder.
+Feature builders continue reading previous close from
+`shared_ohlcv_bars` (tf=1d), unchanged.
+
+
 ## 2026-07-15 — iter-30: three-in-one log-flood cleanup (A/B/C)
 
 Fixed three unrelated warning floods that had been co-tenanting the backend
