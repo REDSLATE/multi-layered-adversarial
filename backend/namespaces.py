@@ -139,6 +139,16 @@ KRAKEN_AUDIT_LOG = "kraken_audit_log"
 WEBULL_CREDENTIALS = "webull_credentials"
 WEBULL_AUDIT_LOG = "webull_audit_log"
 
+# Symbol Registry (2026-07-15, iter-30 P3) — the source-of-truth mapping
+# from CANONICAL symbol → per-broker resolution. One doc per canonical
+# symbol; each doc carries a `brokers.{name}` sub-doc holding the
+# instrument_id, tradable flag, last-seen reason, and TTL. Adapters ask
+# the registry first; on cache miss they probe the broker's REST API,
+# stamp the result, and never re-probe for the TTL. Kills the "HOTH
+# fires 4x/minute against Webull's INVALID_SYMBOL wall" pattern.
+SYMBOL_REGISTRY = "symbol_registry"
+
+
 # Brain Roster — dynamic role assignment across the four brains.
 # Doctrine: the roster is descriptive metadata. Assigning Camaro to
 # "executor" does NOT grant Camaro execution authority. `may_execute`

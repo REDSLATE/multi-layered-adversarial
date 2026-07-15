@@ -102,6 +102,53 @@ async def pulse_tick(
         A completed `PulseReceipt` with per-brain outcomes.
     """
     receipt = await begin_pulse(cadence_seconds)
+    try:
+        return await _pulse_tick_impl(
+            receipt,
+            snapshots,
+            cadence_seconds=cadence_seconds,
+            runtime_mode=runtime_mode,
+            compare_only=compare_only,
+            auto_arbitrate=auto_arbitrate,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # 2026-07-15 (iter-30 P2): defensive belt on the pulse
+        # orchestrator. Any exception that escapes brain-level
+        # containment is a genuine orchestrator bug — stamp the
+        # receipt with a compact `orchestration_error` string so
+        # the operator health strip can point at THIS exception,
+        # not just an empty red ⚠. We STILL persist the receipt
+        # (so the tick is visible in the tape) and re-raise so the
+        # worker can log the traceback for forensics.
+        err_msg = f"{type(exc).__name__}: {str(exc)[:200]}"
+        receipt.orchestration_error = err_msg
+        logger.exception(
+            "pulse orchestrator raised pulse_id=%s: %s",
+            receipt.pulse_id, err_msg,
+        )
+        try:
+            await complete_pulse(receipt)
+        except Exception as persist_exc:  # noqa: BLE001
+            logger.warning(
+                "pulse orchestrator error-path receipt persist failed "
+                "pulse_id=%s: %s",
+                receipt.pulse_id, persist_exc,
+            )
+        raise
+
+
+async def _pulse_tick_impl(
+    receipt: PulseReceipt,
+    snapshots: Iterable[MarketSnapshot],
+    *,
+    cadence_seconds: int,
+    runtime_mode: str,
+    compare_only: bool,
+    auto_arbitrate: bool,
+) -> PulseReceipt:
+    """Extracted body of `pulse_tick`. Kept as a private helper so
+    the outer `pulse_tick` can wrap it in a single top-level
+    exception handler without indenting the whole file."""
     registry = get_registry()
     now = datetime.now(timezone.utc)
 

@@ -120,11 +120,30 @@ def build_camino_features(
         # bar-over-bar percent change. Falls back to the window
         # return if only two bars are available so we still emit
         # a value.
+        #
+        # 2026-07-15 (iter-30 P2): three semantic axes now emitted
+        # in parallel so different doctrines can consume EXACTLY
+        # the time-scale they need without piggy-backing:
+        #   - `bar_change_pct`     : last close vs previous close
+        #                            (single-bar impulse — GTO,
+        #                            Camino confirmation)
+        #   - `session_change_pct` : from session open (comes from
+        #                            `session_features`; None when
+        #                            session grouping doesn't apply)
+        #   - `window_change_pct`  : from window start to now
+        #                            (20-bar drift — slow bias,
+        #                            same period as `trend_score`
+        #                            pre-scaling)
+        # `price_change_pct` remains populated (= `bar_change_pct`)
+        # for backward compat with any consumer we haven't migrated
+        # yet + the input_manifest schema check.
         prev_close = closes[-2] if len(closes) >= 2 else closes[0]
-        price_change_pct = (
+        bar_change_pct = (
             ((last_close - prev_close) / prev_close * 100.0)
             if prev_close else 0.0
         )
+        window_change_pct = trend_return * 100.0
+        price_change_pct = bar_change_pct  # BC alias, same value
         # 2026-07-14 fix (iter-29c): RSI was hardcoded to 50.0 for
         # parity with the (now decommissioned) runner. Barracuda's
         # thresholds are 35/65 → constant 50.0 made Barracuda
@@ -154,6 +173,8 @@ def build_camino_features(
             "symbol": symbol,
             "price": last_close,
             "price_change_pct": round(price_change_pct, 3),
+            "bar_change_pct": round(bar_change_pct, 3),
+            "window_change_pct": round(window_change_pct, 3),
             "volume_change_pct": round(vol_change_pct, 2),
             "rsi": rsi_val,
             "spread_bps": round(spread_bps, 2),
@@ -209,6 +230,13 @@ def build_camino_features(
         "symbol": symbol,
         "price": round(base * (1 + drift / 100), 4),
         "price_change_pct": round(drift, 3),
+        # 2026-07-15 (iter-30 P2): the three semantic axes carry the
+        # same synthetic drift in the cold branch — a cold snapshot
+        # has no real time-scale to distinguish them, so consistency
+        # keeps downstream shape checks happy.
+        "bar_change_pct": round(drift, 3),
+        "session_change_pct": round(drift, 3),
+        "window_change_pct": round(drift, 3),
         "volume_change_pct": round(rng.uniform(-30, 60), 2),
         "rsi": round(rng.uniform(28, 72), 1),
         "spread_bps": round(spread_bps + rng.uniform(0, 5), 2),

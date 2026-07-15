@@ -116,16 +116,25 @@ class PulseReceipt:
     grader_enqueued: int = 0
     runtime_mode: str = "DISARMED"
     overrun: bool = False
+    # 2026-07-15 (iter-30 P2): captured exception summary when the
+    # pulse orchestrator itself throws (as opposed to a brain failing).
+    # Written as `"{ExceptionClass}: {message}"` (message truncated).
+    # None on healthy pulses. When set, `orchestration_ok` is False —
+    # this is the ONE place a red ⚠ on the operator health strip can
+    # be traced back to an actionable message instead of "something".
+    orchestration_error: Optional[str] = None
 
     @property
     def orchestration_ok(self) -> bool:
         """Green ONLY when every expected brain returned AND we
-        didn't miss the next cadence window. Design freeze §7:
-        never conflate pulse and brain health."""
+        didn't miss the next cadence window AND no orchestrator
+        exception was captured. Design freeze §7: never conflate
+        pulse and brain health."""
         return (
             self.completed_at is not None
             and len(self.brains_failed) == 0
             and not self.overrun
+            and self.orchestration_error is None
         )
 
     def to_mongo(self) -> dict:

@@ -34,7 +34,14 @@ class MomentumConfirmationStrategy:
 
     def evaluate(self, snapshot: MarketSnapshot) -> StrategyResult:
         feats = snapshot.feature_snapshot or {}
-        pc = _f(feats.get("price_change_pct"))
+        # 2026-07-15 (iter-30 P2): GTO's "MOMENTUM" doctrine is
+        # single-bar impulse confirmation — the bar-over-bar
+        # semantic. Prefer the explicit field; fall back to
+        # `price_change_pct` for backward compat during the roll-
+        # forward window.
+        pc = _f(feats.get("bar_change_pct"))
+        if pc is None:
+            pc = _f(feats.get("price_change_pct"))
         vc = _f(feats.get("volume_change_pct"))
         rv = _f(feats.get("relative_volume"))
         gap = _f(feats.get("gap_pct"))

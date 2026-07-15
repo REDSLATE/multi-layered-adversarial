@@ -962,6 +962,7 @@ async def get_recent_ticks(
                 "intents_emitted": 1,
                 "orchestration_ok": 1,
                 "overrun": 1,
+                "orchestration_error": 1,
             },
             sort=[("started_at", -1)],
         ).to_list(limit)

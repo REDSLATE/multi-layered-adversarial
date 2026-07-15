@@ -35,7 +35,14 @@ class TrendFollowingStrategy:
     def evaluate(self, snapshot: MarketSnapshot) -> StrategyResult:
         feats = snapshot.feature_snapshot or {}
         trend = _f(feats.get("trend_score"))
-        pc = _f(feats.get("price_change_pct"))
+        # 2026-07-15 (iter-30 P2): TrendFollowing wants the RECENT
+        # bar's impulse to confirm the trend direction — that's the
+        # bar-over-bar semantic. Prefer the new explicit field;
+        # fall back to `price_change_pct` for any legacy path that
+        # hasn't been re-run through the new feature builder yet.
+        pc = _f(feats.get("bar_change_pct"))
+        if pc is None:
+            pc = _f(feats.get("price_change_pct"))
         regime = str(feats.get("market_regime") or snapshot.market_state or "unknown").lower()
 
         # Nothing to grade — bail with a family-specific reason.

@@ -93,7 +93,8 @@ async def _pulse_loop() -> None:
                 "pulse tick pulse_id=%s snapshots=%d "
                 "brains_completed=%d brains_failed=%d "
                 "arbitrations=%d intents=%d "
-                "runtime_mode=%s orchestration_ok=%s overrun=%s",
+                "runtime_mode=%s orchestration_ok=%s overrun=%s "
+                "orchestration_error=%s",
                 receipt.pulse_id,
                 receipt.snapshot_count,
                 len(receipt.brains_completed),
@@ -103,6 +104,7 @@ async def _pulse_loop() -> None:
                 runtime_mode,
                 receipt.orchestration_ok,
                 receipt.overrun,
+                receipt.orchestration_error or "-",
             )
         except asyncio.CancelledError:
             logger.info("mc_pulse loop cancelled")

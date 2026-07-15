@@ -52,7 +52,9 @@ import asyncio
 import logging
 import os
 import threading
+import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 # 2026-02-19 — Quiet the Webull SDK's INFO-level token-check chatter
@@ -163,6 +165,14 @@ class WebullAdapter(BrokerAdapter):
         # a ticker; the lookup is the same one used for quotes and is
         # safe to cache for the life of the singleton.
         self._instrument_cache: dict[str, tuple[str, float, bool]] = {}
+        # 2026-07-15 (iter-30, P1): negative cache for symbols Webull
+        # rejects. Value is `(reason, expires_at_monotonic)`. Once a
+        # symbol lands here, `get_latest_trade` short-circuits to
+        # None for the TTL — no more per-pulse hammering on a symbol
+        # Webull will never resolve. P3's Symbol Registry will
+        # promote this to a Mongo-backed structure with periodic
+        # revalidation; this in-memory version is the P1 stopgap.
+        self._unsupported_symbols: dict[str, tuple[str, float]] = {}
 
     # ── SDK plumbing ──────────────────────────────────────────────
 
@@ -433,6 +443,134 @@ class WebullAdapter(BrokerAdapter):
             )
         self._instrument_cache[sym_u] = (iid, price, frac)
         return iid, price, frac
+
+    # 2026-07-15 (iter-30, P1) — `get_latest_trade` for unowned equities.
+    # Previously the observation resolver's `_fetch_price` only got a
+    # real number when the symbol was already in `list_positions` —
+    # anchor prices for fresh, unowned brain calls (e.g. TSLA on a
+    # cold day) were silently `None`, blocking grading. Webull's REST
+    # quotes API returns a real quote for any subscribed symbol,
+    # owned or not, so we route through the same
+    # `webull_quotes.equity_snapshot` singleton the instrument
+    # resolver already uses — free reuse of its cache + circuit
+    # breaker.
+    #
+    # Symbol registry (P3 preview): when Webull returns None or the
+    # circuit-breaker is open we stamp the symbol into
+    # `_unsupported_symbols` with a 6h TTL. Subsequent calls
+    # short-circuit for 6h — no more per-pulse hammering on a symbol
+    # Webull will never resolve. Revalidation is automatic (the TTL
+    # expires and the next call re-probes). P3 will promote this to
+    # a Mongo-backed `symbol_registry` collection so the fleet
+    # shares negative results across pods.
+    _UNSUPPORTED_TTL_SEC = 6 * 3600  # 6h — daily-ish revalidation
+
+    async def get_latest_trade(self, symbol: str) -> Optional[dict]:
+        """Return `{"symbol", "price", "ts", "source"}` for `symbol`,
+        or None if Webull can't quote it.
+
+        Callers (observation_resolver, opinion_resolver, anchor-price
+        writers) treat None as "no mark this tick" and skip. Never
+        raises — the quote path is best-effort.
+        """
+        sym_u = (symbol or "").upper().strip()
+        if not sym_u:
+            return None
+
+        # Reject synthetic markers (mirrors the webull_quotes filter).
+        # This is belt-and-braces — the quotes client already filters,
+        # but keeping the check here means we skip the SDK dispatch
+        # entirely and never even build the executor task.
+        from shared.market_data.webull_quotes import _is_synthetic_marker  # noqa: WPS433
+        if _is_synthetic_marker(sym_u):
+            return None
+
+        # Negative-cache short-circuit. If we've already learned
+        # Webull can't resolve this symbol, return None immediately
+        # until the TTL expires.
+        entry = self._unsupported_symbols.get(sym_u)
+        if entry is not None:
+            _reason, expires_at = entry
+            if time.monotonic() < expires_at:
+                return None
+            # TTL expired — evict and re-probe below.
+            self._unsupported_symbols.pop(sym_u, None)
+
+        lane = _lane_for_symbol(sym_u)
+
+        from shared.market_data.webull_quotes import get_quotes_client  # noqa: WPS433
+        client = get_quotes_client()
+        if client is None:
+            return None
+
+        def _sync_quote() -> Optional[dict]:
+            try:
+                if lane == "crypto":
+                    snap = client.crypto_snapshot(sym_u) or {}
+                else:
+                    snap = client.equity_snapshot(sym_u) or {}
+            except Exception:  # noqa: BLE001
+                return None
+            if not snap:
+                return None
+            # Webull's snapshot shape varies by product; try the most
+            # common price fields in the same order the instrument
+            # resolver does so behaviour stays consistent.
+            for k in ("price", "last_price", "ask", "close"):
+                v = snap.get(k)
+                if v is None:
+                    continue
+                try:
+                    p = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if p > 0:
+                    return {
+                        "symbol": sym_u,
+                        "price": p,
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "source": (
+                            "webull_crypto_snapshot" if lane == "crypto"
+                            else "webull_equity_snapshot"
+                        ),
+                    }
+            return None
+
+        try:
+            result = await self._sdk_call(_sync_quote)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "get_latest_trade %s: SDK dispatch failed: %s", sym_u, e,
+            )
+            return None
+
+        if result is None:
+            # Symbol didn't resolve. Stamp into negative cache so we
+            # stop hammering Webull on it. Also visible for P3's
+            # Symbol Registry surface.
+            self._unsupported_symbols[sym_u] = (
+                "no_quote",
+                time.monotonic() + self._UNSUPPORTED_TTL_SEC,
+            )
+            logger.info(
+                "get_latest_trade %s: no quote — negative-cached for %ds",
+                sym_u, self._UNSUPPORTED_TTL_SEC,
+            )
+            return None
+
+        return result
+
+    def unsupported_symbols_snapshot(self) -> dict[str, str]:
+        """Diagnostic accessor — returns `{symbol: reason}` for every
+        symbol currently in the negative cache (excluding expired
+        entries). Exposed for the eventual Symbol Registry admin
+        tile (P3). Never modifies state."""
+        now = time.monotonic()
+        out: dict[str, str] = {}
+        for sym, (reason, expires_at) in list(self._unsupported_symbols.items()):
+            if now < expires_at:
+                out[sym] = reason
+        return out
 
     @staticmethod
     def _extended_hours_branch(

@@ -229,6 +229,7 @@ def session_features(
             "vwap_distance_pct": None,
             "rvol_acceleration": None, "trend_score": None,
             "velocity_5m": None,
+            "session_change_pct": None,
             "market_regime": market_regime,
             "session_bars_seen": 0,
         }
@@ -251,6 +252,7 @@ def session_features(
             "vwap_distance_pct": None,
             "rvol_acceleration": None, "trend_score": None,
             "velocity_5m": None,
+            "session_change_pct": None,
             "market_regime": market_regime,
             "session_bars_seen": 0,
         }
@@ -409,6 +411,26 @@ def session_features(
         except (TypeError, ValueError):
             velocity_5m = None
 
+    # ─── session_change_pct ───
+    # 2026-07-15 (iter-30 P2): percent price change from THIS
+    # SESSION'S OPEN to the latest close, expressed as `(last_c -
+    # session_open) / session_open * 100`. Distinct semantic from
+    # `price_change_pct` (bar-over-bar) and from `trend_score`
+    # (last-N-bar directional slope). Useful for doctrines that
+    # want "how much has the tape moved intraday" without conflating
+    # a large 20-bar drift with a fresh single-bar impulse.
+    # Returns None for feeds where session grouping is meaningless
+    # (single-bar or empty today_bars).
+    session_change_pct: Optional[float] = None
+    if today_bars:
+        try:
+            sess_open = float(today_bars[0].get("o"))
+            sess_last = float(today_bars[-1].get("c"))
+            if sess_open > 0:
+                session_change_pct = (sess_last - sess_open) / sess_open * 100.0
+        except (TypeError, ValueError):
+            session_change_pct = None
+
     return {
         "gap_pct": gap_pct,
         "relative_volume": relative_volume,
@@ -416,6 +438,7 @@ def session_features(
         "rvol_acceleration": rvol_acceleration,
         "trend_score": trend_score,
         "velocity_5m": velocity_5m,
+        "session_change_pct": session_change_pct,
         # `market_regime` is injected from the SHARED resolver, not
         # per-symbol — same value across all symbols in the same
         # tick window. Doctrine + resolver: `shared/market_regime.py`.
