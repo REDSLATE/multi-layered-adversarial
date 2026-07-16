@@ -443,16 +443,6 @@ export default function OperatorControl() {
               >
                 {busyForceTick ? "ticking…" : "force tick"}
               </button>
-              <button
-                onClick={nukeTestData}
-                disabled={busyNuke}
-                data-testid="nuke-test-data-btn"
-                className="text-[10px] font-mono uppercase tracking-widest border px-2 py-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                style={{ borderColor: "#EF4444", color: "#EF4444" }}
-                title="One-shot: drop all disposable collections (receipts, bars, opinions, intents, universe, memory). Preserves users, credentials, seats, pins."
-              >
-                {busyNuke ? "nuking…" : "☢ nuke test data"}
-              </button>
               <span
                 className="text-[10px] font-mono font-bold uppercase tracking-widest"
                 style={{ color: router.task_alive ? "#10B981" : "#EF4444" }}
@@ -598,6 +588,44 @@ export default function OperatorControl() {
           Non-zero <span style={{ color: "#10B981" }}>Intents</span> = pulse→arbiter→intent
           loop is firing. If Intents stays 0 while Brains shows 4/4 and Mode is LIVE,
           every seat is resolving all_flat — check confidence thresholds / regime gates.
+        </div>
+
+        {/* ── Danger Zone ─────────────────────────────────────────
+            Deliberately at the very bottom, visually isolated, with
+            a two-step reveal to prevent muscle-memory misclicks
+            between Force-Tick and destructive operations. */}
+        <div
+          className="mt-8 pt-4 border-t"
+          style={{ borderColor: "#EF4444", opacity: 0.6 }}
+          data-testid="operator-control-danger-zone"
+        >
+          <details>
+            <summary
+              className="text-[10px] font-mono uppercase tracking-widest cursor-pointer select-none"
+              style={{ color: "#EF4444" }}
+              data-testid="danger-zone-toggle"
+            >
+              ▶ Danger Zone (destructive operations)
+            </summary>
+            <div className="mt-3 border p-3" style={{ borderColor: "#EF4444" }}>
+              <div className="text-[10px] font-mono text-rd-dim mb-2 leading-relaxed">
+                <div className="mb-1" style={{ color: "#EF4444" }}>☢ Nuke Test Data</div>
+                Drops disposable collections (receipts, bars, opinions, intents,
+                universe, memory). <b>Preserves</b> users, credentials, seats,
+                operator pins. Use only to shrink a bloated Atlas cluster after
+                heavy dev/test churn. Requires typing YES_I_MEAN_IT to confirm.
+              </div>
+              <button
+                onClick={nukeTestData}
+                disabled={busyNuke}
+                data-testid="nuke-test-data-btn"
+                className="text-[10px] font-mono uppercase tracking-widest border px-3 py-1 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-red-950"
+                style={{ borderColor: "#EF4444", color: "#EF4444" }}
+              >
+                {busyNuke ? "nuking…" : "☢ nuke test data"}
+              </button>
+            </div>
+          </details>
         </div>
       </div>
     </Card>
