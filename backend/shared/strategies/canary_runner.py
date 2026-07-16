@@ -181,6 +181,9 @@ async def fire_canary(
         "requested_notional_usd": notional,
         "ingest_ts": now,
         "created_at": now,
+        # BSON Date stamp for the 90d TTL reaper (paired with
+        # `shared_intents_ttl_at_90d` in db.ensure_indexes).
+        "ttl_at": datetime.now(timezone.utc),
         "source": "ma_canary",
         "evidence": {
             **signal.evidence,

@@ -972,4 +972,55 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         deadline_s=heavy_deadline_s, name="shared_ohlcv_bars_sym_tf_ts",
     )
 
+    # ── 2026-02-16 (Emmy triage — post-shard-saturation) ──────────
+    # Follow-up sweep after the Atlas cluster started throttling
+    # under multi-worker load. Query-pattern audit of the ~24 hot
+    # readers/writers on `shared_intents` (auto_router_supervisor,
+    # auto_router_reconciliation, session_fingerprint, brain_runtime_metrics,
+    # intent_clearance_funnel, intents.py list, admin_execution_lifecycle,
+    # broker_reconcile_routes, ...) surfaced three uncovered shapes:
+    #
+    #   1. session_fingerprint aggregate:
+    #        find({stack_canonical, lane, ingest_ts:{$gte,$lt}})
+    #      Existing `(stack_canonical, ingest_ts)` doesn't include
+    #      `lane` so the planner scans one brain's full history
+    #      then filters lane in-memory. Compound with `lane` in
+    #      the middle covers the whole predicate in-index.
+    #
+    #   2. auto-router-supervisor sample scan + brain-outage tiles:
+    #        find({gate_state: {$nin: [...]} , sort ingest_ts DESC})
+    #      No index leading on `gate_state`. The router uses this
+    #      every 30s on a multi-million-row collection. `$nin` is
+    #      not a great index scan on its own, but the alternative
+    #      form (`gate_state="pending"`) is a common single-value
+    #      filter for the brain-outage/pending queue tiles, which
+    #      this covers cleanly.
+    #
+    #   3. TTL 90d — Emmy explicit ask. Mongo TTL requires a BSON
+    #      Date field; writers now stamp `ttl_at = datetime.now(utc)`
+    #      (see `_ttl_at_dt` in shared/intents.py and mirrored
+    #      writers in the crypto/canary bridges). Rows without
+    #      `ttl_at` (legacy data) are ignored by the reaper — that
+    #      honors her "do not delete existing data" line. New writes
+    #      auto-expire 90 days after landing.
+    await _safe_create_index(
+        db.shared_intents,
+        [("stack_canonical", 1), ("lane", 1), ("ingest_ts", -1)],
+        deadline_s=heavy_deadline_s,
+        name="shared_intents_stack_canonical_lane_ingest_idx",
+    )
+    await _safe_create_index(
+        db.shared_intents,
+        [("gate_state", 1), ("ingest_ts", -1)],
+        deadline_s=heavy_deadline_s,
+        name="shared_intents_gate_state_ingest_idx",
+    )
+    await _safe_create_index(
+        db.shared_intents,
+        [("ttl_at", 1)],
+        deadline_s=heavy_deadline_s,
+        name="shared_intents_ttl_at_90d",
+        expireAfterSeconds=90 * 86400,
+    )
+
     pass

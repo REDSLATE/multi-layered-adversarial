@@ -140,6 +140,9 @@ async def build_redeye_crypto_intent(
         "created_at": now,
         "updated_at": now,
         "ingest_ts": now,
+        # BSON Date stamp for the 90d TTL reaper (paired with
+        # `shared_intents_ttl_at_90d` in db.ensure_indexes).
+        "ttl_at": datetime.now(timezone.utc),
         "ingest_method": "redeye_crypto_bridge",
     }
 

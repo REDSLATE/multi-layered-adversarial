@@ -1,3 +1,56 @@
+## 2026-02-16 — Atlas index sweep + 90d TTL on shared_intents (Emergent Support triage)
+
+**Context:** Emmy (Emergent Support) requested a query-pattern audit
+on `shared_intents` and `shared_ohlcv_bars`, compound indexes on the
+hottest filter+sort shapes, and a 90d TTL on `shared_intents` — the
+Atlas cluster kept saturating on collscans across 700K+ documents.
+
+**What landed (`backend/db.py`):**
+- `shared_intents_stack_canonical_lane_ingest_idx` = `(stack_canonical 1, lane 1, ingest_ts -1)`
+  Covers `session_fingerprint`'s per-(brain × lane × window) aggregate
+  and any other reader keyed on brain + lane. Previous best index
+  was `(stack_canonical, ingest_ts)` — that scanned one brain's full
+  history and filtered `lane` in-memory.
+- `shared_intents_gate_state_ingest_idx` = `(gate_state 1, ingest_ts -1)`
+  Covers `auto_router_supervisor._tick`'s scan + brain-outage/pending
+  queue tiles that filter by `gate_state`. Previous index
+  `(gate_state, lane, executed_at)` covers the reconcile sweep but
+  not the lane-agnostic router sample.
+- `shared_intents_ttl_at_90d` = `(ttl_at 1)` **expireAfterSeconds=90*86400**
+  Mongo TTL requires BSON Date. New writers (see below) stamp
+  `ttl_at = datetime.now(utc)` on every insert. Legacy rows without
+  `ttl_at` are IGNORED by the reaper — that honors Emmy's "do not
+  delete existing data" line. New writes auto-expire 90d out.
+
+**Writer changes (BSON Date stamp `ttl_at`):**
+- `shared/intents.py::_ttl_at_dt()` — new helper (paired with
+  `_now_iso`); stamped at the 3 primary insert paths (slim reject,
+  runtime-token, admin-proxy).
+- `shared/chevelle_crypto_intent_bridge.py::build_hellcat_crypto_intent`
+- `shared/redeye_crypto_intent_bridge.py::build_redeye_crypto_intent`
+- `shared/intent_bridge_factory.py::make_intent_bridge` (all
+  runtime_alias/lane bridges)
+- `shared/strategies/canary_runner.py` (MA canary intents)
+
+**Verification:**
+- `ensure_indexes(heavy_deadline_s=45)` on preview created all three
+  new indexes cleanly (existing indexes no-op'd via
+  `_safe_create_index`).
+- BSON-Date roundtrip confirmed via `python -c` insert+query
+  (`ttl_at type=date match=1`).
+- Legacy doc audit: 283 preview intents currently exist, 0 have
+  `ttl_at` → the reaper correctly leaves them alone. New intents
+  will acquire the field going forward.
+- `/api/health` p50 ~120ms (unchanged, non-regressive).
+
+**Combined with the four workers Emmy asked to disable**, this
+should drop Atlas IOPS meaningfully. Next diagnostic step (per
+Emmy's playbook): watch cluster metrics over 24h and reassess
+whether the cluster still needs to be scaled up.
+
+---
+
+
 ## 2026-07-15 — iter-30 P4c: Atlas-slow defense (pulse deadline + upsert timeout)
 
 Root cause of the 12:24 UTC production incident (9m 30s pulse overrun,

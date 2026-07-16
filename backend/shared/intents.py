@@ -397,6 +397,25 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _ttl_at_dt() -> datetime:
+    """BSON-Date stamp for the `ttl_at` field on `shared_intents`
+    docs. Paired with the TTL index in `db.ensure_indexes()`
+    (`shared_intents_ttl_at_90d`, `expireAfterSeconds=90*86400`).
+
+    Mongo TTL requires a BSON Date — ISO strings are silently
+    ignored by the TTL reaper. Every writer that lands a doc into
+    `shared_intents` MUST stamp this field or the row lives forever.
+
+    Doctrine (2026-02-16, Emergent Support triage):
+    Emmy asked for a 90-day TTL to relieve the saturated Atlas
+    cluster. Existing rows without `ttl_at` are NOT touched — the
+    TTL reaper only sees docs where the field is a Date. That
+    satisfies her explicit "do not delete existing data" line;
+    only new writes acquire the 90d expiry going forward.
+    """
+    return datetime.now(timezone.utc)
+
+
 async def _audit_lane_policy_rejection(
     *,
     stack: str,
@@ -455,6 +474,7 @@ async def _audit_lane_policy_rejection(
         "executed": False,
         # ── audit ──
         "ingest_ts": now,
+        "ttl_at": _ttl_at_dt(),
         "ingest_method": ingest_method,
         "ingest_admin_email": admin_email,
         "audit_only": True,
@@ -1168,6 +1188,7 @@ async def _post_intent_impl(
         "matched_seat_at_post": matched_seat_at_post,
         # AUDIT (MC-stamped)
         "ingest_ts": _now_iso(),
+        "ttl_at": _ttl_at_dt(),
         "ingest_method": "runtime_token",
         # MARKET SNAPSHOT — persisted so gates that need ground-truth
         # market structure (RoadGuard reads `spread_bps`, future gates
@@ -1945,6 +1966,7 @@ async def admin_post_intent(
         "holds_executor_seat": holds_executor,
         "matched_seat_at_post": matched_seat_at_post,
         "ingest_ts": _now_iso(),
+        "ttl_at": _ttl_at_dt(),
         "ingest_method": "admin_proxy",
         "ingest_admin_email": user.get("email"),
         # See doctrine note on the runtime-token ingest path: the
