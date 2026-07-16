@@ -152,6 +152,34 @@ export default function OperatorControl() {
     }
   };
 
+  const [busyNuke, setBusyNuke] = React.useState(false);
+  const nukeTestData = async () => {
+    const typed = window.prompt(
+      "This wipes ALL disposable/test collections (receipts, bars, opinions, intents, universe, memory). " +
+      "Preserves users, credentials, seats, pins. Type exactly:  YES_I_MEAN_IT",
+      ""
+    );
+    if (typed !== "YES_I_MEAN_IT") {
+      alert("Cancelled — you must type YES_I_MEAN_IT exactly.");
+      return;
+    }
+    setBusyNuke(true);
+    try {
+      const r = await api.post("/admin/nuke-test-data?confirm=YES_I_MEAN_IT");
+      const results = r.data?.results || {};
+      const lines = Object.entries(results).map(
+        ([coll, info]) => `${coll}: ${info.dropped ? `dropped (was ${info.before} rows)` : info.skipped || info.err || "?"}`
+      );
+      alert("Nuke complete:\n\n" + lines.join("\n"));
+    } catch (e) {
+      const raw = e?.response?.data?.detail ?? e.message;
+      alert("Nuke failed: " + (typeof raw === "string" ? raw : JSON.stringify(raw)));
+    } finally {
+      setBusyNuke(false);
+      load();
+    }
+  };
+
   const flipMaster = async () => {
     const current = !!tradingCtl?.trading_enabled_runtime;
     const next = !current;
@@ -414,6 +442,16 @@ export default function OperatorControl() {
                 title="Run one auto-router tick immediately instead of waiting for the 30s interval"
               >
                 {busyForceTick ? "ticking…" : "force tick"}
+              </button>
+              <button
+                onClick={nukeTestData}
+                disabled={busyNuke}
+                data-testid="nuke-test-data-btn"
+                className="text-[10px] font-mono uppercase tracking-widest border px-2 py-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ borderColor: "#EF4444", color: "#EF4444" }}
+                title="One-shot: drop all disposable collections (receipts, bars, opinions, intents, universe, memory). Preserves users, credentials, seats, pins."
+              >
+                {busyNuke ? "nuking…" : "☢ nuke test data"}
               </button>
               <span
                 className="text-[10px] font-mono font-bold uppercase tracking-widest"
