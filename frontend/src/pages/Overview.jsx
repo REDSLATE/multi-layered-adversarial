@@ -34,33 +34,50 @@ export default function Overview() {
   const [err, setErr] = useState("");
 
   useEffect(() => {
+    // Doctrine pin (2026-02-16, prod hotfix):
+    // Previously this was `Promise.all` on 6 endpoints with the
+    // first 3 UNWRAPPED. Any one of `/shared/overview`, `/admin/flags`,
+    // `/admin/diagnostics` hanging on a saturated Atlas would keep the
+    // whole promise pending forever → `<LoadingRow />` rendered
+    // indefinitely with no error banner, no partial data, and no
+    // way for the operator to see WHICH endpoint was stuck.
+    // `Promise.allSettled` gives us partial degradation: each tile
+    // renders as soon as ITS endpoint returns, and per-tile errors
+    // surface inline instead of blanking the whole page.
     (async () => {
-      try {
-        const [o, f, d, sc, ps, sd] = await Promise.all([
-          api.get("/shared/overview"),
-          api.get("/admin/flags"),
-          api.get("/admin/diagnostics"),
-          // Fail-soft on each diagnostic — none of them must blank the page.
-          api.get("/admin/conflicts/stale?older_than_hours=24")
-            .catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
-          api.get("/admin/patterns/scan?limit=10&min_score=0.5")
-            .catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
-          api.get("/admin/sidecar-diagnostics")
-            .catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
-        ]);
-        setOverview(o.data);
-        setFlags(f.data);
-        setDiag(d.data);
-        setStaleConflicts(sc.data);
-        setPatternScan(ps.data);
-        setSidecarDiag(sd.data);
-      } catch (e) {
-        setErr(e?.response?.data?.detail || e.message);
+      const results = await Promise.allSettled([
+        api.get("/shared/overview"),
+        api.get("/admin/flags"),
+        api.get("/admin/diagnostics"),
+        api.get("/admin/conflicts/stale?older_than_hours=24"),
+        api.get("/admin/patterns/scan?limit=10&min_score=0.5"),
+        api.get("/admin/sidecar-diagnostics"),
+      ]);
+      const pick = (r) => (r.status === "fulfilled" ? r.value.data : { _error: r.reason?.message || "unavailable" });
+      setOverview(pick(results[0]));
+      setFlags(pick(results[1]));
+      setDiag(pick(results[2]));
+      setStaleConflicts(pick(results[3]));
+      setPatternScan(pick(results[4]));
+      setSidecarDiag(pick(results[5]));
+      // Aggregate top-line error banner ONLY when a "must-have"
+      // endpoint failed — operator sees at a glance that a required
+      // tile is down without every fail-soft tile screaming.
+      const failedRequired = [results[0], results[1], results[2]].filter(r => r.status === "rejected");
+      if (failedRequired.length) {
+        setErr(
+          `${failedRequired.length} required endpoint${failedRequired.length > 1 ? "s" : ""} failed — ` +
+          failedRequired.map(r => r.reason?.message || "unavailable").join(" · ")
+        );
       }
     })();
   }, []);
 
-  const ready = overview && flags && diag;
+  // Render the page as soon as we've SETTLED (either data or an
+  // `_error` placeholder). This flips off the top-level spinner even
+  // when some tiles are degraded — operator can see the rest of the
+  // dashboard while the failing tile shows its own inline error.
+  const ready = overview !== null && flags !== null && diag !== null;
 
   return (
     <div className="reveal" data-testid="overview-page">

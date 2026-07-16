@@ -174,6 +174,18 @@ async function tryRefresh() {
 const TRANSIENT_STATUS_CODES = new Set([502, 503, 504, 520, 522, 523, 524]);
 const READ_RETRY_DELAYS_MS   = [400, 1200, 2500];   // ~4s end-to-end
 
+// Doctrine pin (2026-02-16, prod hotfix — dashboard hung forever
+// after login): the browser's `fetch()` has no default timeout —
+// a slow/dead backend leaves every request Pending until the
+// TCP socket eventually errors out (Cloudflare's ~30s idle kill,
+// or never on some proxies). That made every dashboard panel
+// render its skeleton indefinitely with no way for the operator
+// to know something was wrong. This client-side ceiling ensures
+// EVERY request either resolves or fails within the timeout, so
+// panel-level `catch` blocks always fire. GET auto-retry on
+// timeout is handled by `_retryIfTransient` (same path as 5xx).
+const FETCH_TIMEOUT_MS = 25_000;
+
 async function request(method, path, body, cfg = {}) {
   const url = buildUrl(path, cfg.params);
   const headers = { ...(cfg.headers || {}) };
@@ -195,6 +207,13 @@ async function request(method, path, body, cfg = {}) {
     });
   };
 
+  // AbortController-based fetch timeout — caller may override via
+  // `cfg.timeoutMs` for endpoints that are known-slow (e.g., admin
+  // rebuild-index) but the default MUST fire so panels can't hang.
+  const timeoutMs = cfg.timeoutMs || FETCH_TIMEOUT_MS;
+  const ac = new AbortController();
+  const timeoutId = setTimeout(() => ac.abort(), timeoutMs);
+
   let resp;
   try {
     resp = await fetch(url, {
@@ -208,17 +227,27 @@ async function request(method, path, body, cfg = {}) {
       // post-60-min 401 cascade.
       credentials: "include",
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal: ac.signal,
     });
   } catch (e) {
+    clearTimeout(timeoutId);
+    // AbortController fired → treat as a transient timeout so GETs
+    // auto-retry and callers see a humane error message.
+    const isTimeout = e?.name === "AbortError";
     // Network-class error (DNS / TCP reset / TLS / offline).
     // For idempotent GETs treat as transient and retry with
     // backoff. Otherwise propagate as before.
     const retried = await _retryIfTransient();
     if (retried !== null) return retried;
-    const err = new Error(e.message || "Network error");
+    const msg = isTimeout
+      ? `Request timed out after ${Math.round(timeoutMs / 1000)}s — Mission Control did not respond.`
+      : (e.message || "Network error");
+    const err = new Error(msg);
     err.response = null;
+    err.isTimeout = isTimeout;
     throw err;
   }
+  clearTimeout(timeoutId);
 
   // Cloudflare-class transient 5xx — retry idempotent GETs only.
   // Non-GET methods fall through to the normal error pipeline
