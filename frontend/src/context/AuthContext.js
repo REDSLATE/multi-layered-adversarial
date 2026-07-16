@@ -187,7 +187,13 @@ export function AuthProvider({ children }) {
     if (detail != null) {
       msg = formatApiErrorDetail(detail);
     } else if (typeof e?.message === "string" && e.message.trim()) {
-      msg = `Cannot reach Mission Control: ${e.message}`;
+      // The api.js error extractor already produces a humane
+      // status-appropriate message for ingress/CDN 5xx (504, 502,
+      // 520, ...). Surface it as-is instead of double-prefixing
+      // with "Cannot reach Mission Control:" (which used to also
+      // splice raw HTML into the banner on prod outages —
+      // 2026-02-16 hotfix).
+      msg = e.message;
     } else {
       msg = "Login failed. Please try again.";
     }

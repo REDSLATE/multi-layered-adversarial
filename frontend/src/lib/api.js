@@ -316,7 +316,28 @@ async function request(method, path, body, cfg = {}) {
           msg = detail.reason;
         }
       } else if (typeof data === "string" && data.trim()) {
-        msg = data.length > 400 ? `${data.slice(0, 400)}…` : data;
+        // Doctrine pin (2026-02-16): ingress/proxy 5xx responses
+        // are HTML pages (Cloudflare 520, emergent.cloud 504
+        // gateway timeout, nginx 502, etc.). Dumping the raw HTML
+        // into the operator's error banner is worse than useless
+        // — it leaks internal infra names and buries the actual
+        // status. Detect HTML shape, drop the body, and surface
+        // a status-appropriate humane message instead.
+        const looksHtml = /^\s*(<!doctype|<html|<head|<body)/i.test(data)
+          || (ct && ct.includes("text/html"));
+        if (looksHtml) {
+          msg = _humanTransientMessage(resp.status);
+        } else {
+          // Non-HTML text body (rare — e.g., a plain-text 500).
+          // Trim aggressively so a long stack-trace doesn't
+          // overflow the UI.
+          const trimmed = data.trim();
+          msg = trimmed.length > 200 ? `${trimmed.slice(0, 200)}…` : trimmed;
+        }
+      } else if (TRANSIENT_STATUS_CODES.has(resp.status)) {
+        // Empty body on a known-transient status — still show a
+        // humane message rather than "HTTP 504".
+        msg = _humanTransientMessage(resp.status);
       }
     } catch (e) {
       // Defensive: if the detail-extraction logic itself throws, fall
@@ -329,6 +350,24 @@ async function request(method, path, body, cfg = {}) {
     throw err;
   }
   return { data, status: resp.status };
+}
+
+// Humane message for ingress/CDN-class 5xx. Kept short and
+// action-oriented — the operator's next move is always "retry".
+function _humanTransientMessage(status) {
+  if (status === 504 || status === 524) {
+    return "Mission Control is not responding (gateway timeout). Please retry in a moment.";
+  }
+  if (status === 502) {
+    return "Mission Control is temporarily unreachable (bad gateway). Please retry in a moment.";
+  }
+  if (status === 503) {
+    return "Mission Control is temporarily unavailable. Please retry in a moment.";
+  }
+  if (status === 520 || status === 522 || status === 523) {
+    return "Edge could not reach Mission Control. Please retry in a moment.";
+  }
+  return `Mission Control returned HTTP ${status}. Please retry in a moment.`;
 }
 
 export const api = {

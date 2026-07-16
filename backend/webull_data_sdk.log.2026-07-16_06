@@ -1,0 +1,529 @@
+280017271255456 2026-07-16 05:13:23,320 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "WAI",
+    "category": "US_STOCK",
+    "timespan": "M1",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-16T05:13:23Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "4aee2b74-bc2d-5823-bd8c-c7fc27f1fdde",
+    "x-signature": "2biWAxTlt2VpkoSbPilBeSGCOmo=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbol does not exist in the category.', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbol does not exist in the category., RequestID: 598f3108-b808-4b38-a9be-a6dd4b275f6c
+280017271255456 2026-07-16 05:13:23,321 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbol does not exist in the category.",
+  "http_status": 417,
+  "request_id": "598f3108-b808-4b38-a9be-a6dd4b275f6c"
+}
+280017262801312 2026-07-16 05:13:23,413 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "WAI",
+    "category": "US_STOCK",
+    "timespan": "M5",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-16T05:13:23Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "ffdc05c0-916a-554c-9aef-0d23cd43c3e7",
+    "x-signature": "bvEYrWBgR24asRUG8AGy7B9ElOQ=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbol does not exist in the category.', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbol does not exist in the category., RequestID: 04c5872c-bd10-4549-8925-e4a4dccb55c8
+280017262801312 2026-07-16 05:13:23,414 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbol does not exist in the category.",
+  "http_status": 417,
+  "request_id": "04c5872c-bd10-4549-8925-e4a4dccb55c8"
+}
+280017279709600 2026-07-16 05:14:32,214 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "WAI",
+    "category": "US_STOCK",
+    "timespan": "M1",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-16T05:14:32Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "2d5510eb-e2c8-5bdf-ada6-b73e5746132f",
+    "x-signature": "kyV5vSHgQrXZ9v6jxUzS1/YEzuk=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbol does not exist in the category.', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbol does not exist in the category., RequestID: 7b6dc9e7-5311-4a31-be6d-26ad5538f424
+280017279709600 2026-07-16 05:14:32,214 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbol does not exist in the category.",
+  "http_status": 417,
+  "request_id": "7b6dc9e7-5311-4a31-be6d-26ad5538f424"
+}
+280017271255456 2026-07-16 05:14:32,308 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "WAI",
+    "category": "US_STOCK",
+    "timespan": "M5",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-16T05:14:32Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "86c0fad3-cf34-5389-a4a4-c5c8233042bd",
+    "x-signature": "pcSNM5O8Fa6HFTyEIoZZbjgWvhY=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbol does not exist in the category.', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbol does not exist in the category., RequestID: 069ad20d-1fbd-4921-bdc4-6f3f1526a81c
+280017271255456 2026-07-16 05:14:32,308 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbol does not exist in the category.",
+  "http_status": 417,
+  "request_id": "069ad20d-1fbd-4921-bdc4-6f3f1526a81c"
+}
+280017262801312 2026-07-16 05:15:41,028 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "WAI",
+    "category": "US_STOCK",
+    "timespan": "M1",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-16T05:15:40Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "eba7dc59-43b5-5001-b555-d2b015f79fd5",
+    "x-signature": "e2lW7cGls1mJKlkOCi43BOoeAGU=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbol does not exist in the category.', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbol does not exist in the category., RequestID: 164f4c29-b4a4-4ab4-8cea-81d0761e106a
+280017262801312 2026-07-16 05:15:41,028 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbol does not exist in the category.",
+  "http_status": 417,
+  "request_id": "164f4c29-b4a4-4ab4-8cea-81d0761e106a"
+}
+280016759746976 2026-07-16 05:15:41,123 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "WAI",
+    "category": "US_STOCK",
+    "timespan": "M5",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-16T05:15:41Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "9eb30751-c34e-5a88-92bf-13874f4c5239",
+    "x-signature": "fWp0MHzif0UimLAgkx1vax3C1lk=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbol does not exist in the category.', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbol does not exist in the category., RequestID: 8a67a48e-66e2-4ea1-8934-6527136baf72
+280016759746976 2026-07-16 05:15:41,123 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbol does not exist in the category.",
+  "http_status": 417,
+  "request_id": "8a67a48e-66e2-4ea1-8934-6527136baf72"
+}
+280017271255456 2026-07-16 05:16:49,994 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "WAI",
+    "category": "US_STOCK",
+    "timespan": "M1",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-16T05:16:49Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "6d9a5685-5870-5691-996d-158f3f7ca654",
+    "x-signature": "8/PpxPCRIsPJXQDjvgA15NJJvew=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbol does not exist in the category.', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbol does not exist in the category., RequestID: 83580794-a323-46b0-92c8-0a0f58ff0340
+280017271255456 2026-07-16 05:16:49,994 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbol does not exist in the category.",
+  "http_status": 417,
+  "request_id": "83580794-a323-46b0-92c8-0a0f58ff0340"
+}
+280016759746976 2026-07-16 05:16:50,088 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "WAI",
+    "category": "US_STOCK",
+    "timespan": "M5",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-16T05:16:49Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "f6b1823e-5145-50b4-a9e9-152aeccfb9d9",
+    "x-signature": "2QByj9BTfZ4wtBPpQS1jCcQkKvU=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbol does not exist in the category.', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbol does not exist in the category., RequestID: 9afe2f2b-03b1-4cfa-990d-eb673863a17d
+280016759746976 2026-07-16 05:16:50,088 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbol does not exist in the category.",
+  "http_status": 417,
+  "request_id": "9afe2f2b-03b1-4cfa-990d-eb673863a17d"
+}
+280017279709600 2026-07-16 05:18:00,477 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "WAI",
+    "category": "US_STOCK",
+    "timespan": "M1",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-16T05:18:00Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "5ea90ce6-8de5-540a-89ce-c48a27102d58",
+    "x-signature": "D3kmLqJduwn9l0VvQvflOdwoyws=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbol does not exist in the category.', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbol does not exist in the category., RequestID: d92f0d10-f9f0-4558-8bdc-a898b9efa9e3
+280017279709600 2026-07-16 05:18:00,479 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbol does not exist in the category.",
+  "http_status": 417,
+  "request_id": "d92f0d10-f9f0-4558-8bdc-a898b9efa9e3"
+}
+280017271255456 2026-07-16 05:18:00,567 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "WAI",
+    "category": "US_STOCK",
+    "timespan": "M5",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-16T05:18:00Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "e70b4235-0001-5ae7-b296-4f406c189120",
+    "x-signature": "t4gxnPzGybpvcPAZMR6nP6qSD1M=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbol does not exist in the category.', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbol does not exist in the category., RequestID: 7955ad75-e40e-47c6-a1ea-01cf40d263ec
+280017271255456 2026-07-16 05:18:00,567 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbol does not exist in the category.",
+  "http_status": 417,
+  "request_id": "7955ad75-e40e-47c6-a1ea-01cf40d263ec"
+}
+274138987622816 2026-07-16 05:56:06,375 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "WAI",
+    "category": "US_STOCK",
+    "timespan": "M1",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-16T05:56:06Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "28b3dec4-01ab-5252-b096-380dae43e20a",
+    "x-signature": "p03AnaFTBg/m0AmR5E497EvWVng=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbol does not exist in the category.', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbol does not exist in the category., RequestID: 71acbf25-e1fb-40ac-a223-a1a07619bdf4
+274138987622816 2026-07-16 05:56:06,377 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbol does not exist in the category.",
+  "http_status": 417,
+  "request_id": "71acbf25-e1fb-40ac-a223-a1a07619bdf4"
+}
+274138484568480 2026-07-16 05:56:06,474 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "WAI",
+    "category": "US_STOCK",
+    "timespan": "M5",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-16T05:56:06Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "038f34ca-cf59-5e47-bb6d-469d63d33afa",
+    "x-signature": "QJ4Y8qAV75Ba9U3msXtIunyE594=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbol does not exist in the category.', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbol does not exist in the category., RequestID: 4a9f3e54-6b69-4948-90e6-448f5a694c4d
+274138484568480 2026-07-16 05:56:06,474 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbol does not exist in the category.",
+  "http_status": 417,
+  "request_id": "4a9f3e54-6b69-4948-90e6-448f5a694c4d"
+}
+274138476114336 2026-07-16 06:13:48,352 webull.core.client ERROR HttpError occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "KUST",
+    "category": "US_STOCK",
+    "timespan": "M5",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-16T06:13:28Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "7671505d-8a96-5560-9745-4f210b9de339",
+    "x-signature": "KskJhP71B721lY6TmSWh5z9p1v8=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} ClientException:SDK.HttpError HTTPSConnectionPool(host='api.webull.com', port=443): Max retries exceeded with url: /openapi/market-data/stock/bars?symbol=KUST&category=US_STOCK&timespan=M5&count=30 (Caused by ConnectTimeoutError(<HTTPSConnection(host='api.webull.com', port=443) at 0xf953fc181a90>, 'Connection to api.webull.com timed out. (connect timeout=5)'))
+276377638854688 2026-07-16 06:58:09,769 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+276377638854688 2026-07-16 06:58:09,857 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
