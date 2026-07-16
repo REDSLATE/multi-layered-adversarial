@@ -945,4 +945,31 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         expireAfterSeconds=30 * 86400,
     )
 
+    # 2026-07-16 (Emergent Support triage) — the prod Atlas cluster
+    # is saturated by full collection scans on shared_intents and
+    # shared_ohlcv_bars (700K+ docs each). Add hot-path indexes to
+    # short-circuit the auto-router and feature-builder queries.
+    #
+    # shared_intents hot paths:
+    #  - auto_router: find({gate_state: "pending", lane, executed_at})
+    #  - reconcile:   find({gate_state: "submitted", lane, broker_order.id})
+    #  - TTL sweep:   find({created_at: <cutoff})
+    await _safe_create_index(
+        db.shared_intents, [("gate_state", 1), ("lane", 1), ("executed_at", 1)],
+        deadline_s=heavy_deadline_s, name="shared_intents_state_lane_executed",
+    )
+    await _safe_create_index(
+        db.shared_intents, [("created_at", -1)],
+        deadline_s=heavy_deadline_s, name="shared_intents_created_at",
+    )
+
+    # shared_ohlcv_bars hot path:
+    #  - feature builder: find({symbol, tf, ts: {$gte, $lte}}).sort(ts,-1)
+    #    → without this index it's a full scan of every bar the pod
+    #    has ever ingested for every symbol on every tick.
+    await _safe_create_index(
+        db.shared_ohlcv_bars, [("symbol", 1), ("tf", 1), ("ts", -1)],
+        deadline_s=heavy_deadline_s, name="shared_ohlcv_bars_sym_tf_ts",
+    )
+
     pass

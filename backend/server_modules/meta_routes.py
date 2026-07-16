@@ -60,32 +60,81 @@ async def root():
 
 @router.get("/health")
 async def health():
+    """K8s readiness probe. MUST be lightweight — no DB pings, no
+    broker adapter init, no auth. Just 'the pod's HTTP server is
+    up'. That's the only signal k8s needs to route traffic here.
+
+    The previous implementation did `client.admin.command("ping")`
+    plus `get_kraken_adapter()` + `get_webull_adapter()` on EVERY
+    hit — which caused k8s readiness timeouts during pod boot when
+    Atlas was slow, and turned every probe into a cascade of DB
+    reads + Fernet decrypts + SDK inits. That's exactly the
+    scenario that took prod down for 6+ hours on 2026-07-15.
+
+    Deep-check equivalent (with mongo ping + broker adapters) is
+    now available at `/api/health/deep` for operator use — hit it
+    manually when you want that state, but do NOT wire k8s probes
+    to it.
+    """
+    return {"ok": True, "status": "ok"}
+
+
+@router.get("/health/deep")
+async def health_deep():
+    """Original heavy health check — pings Atlas + initializes
+    broker adapters. USE MANUALLY ONLY; k8s probes must hit
+    `/health` (above), not this."""
+    mongo_ok = False
+    try:
+        await client.admin.command("ping")
+        mongo_ok = True
+    except Exception:  # noqa: BLE001
+        pass
+    kraken_ok = False
+    webull_ok = False
+    try:
+        from shared.crypto.broker_adapter import get_kraken_adapter  # noqa: WPS433
+        k = await get_kraken_adapter()
+        kraken_ok = k is not None
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from shared.broker.webull import get_webull_adapter  # noqa: WPS433
+        w = await get_webull_adapter()
+        webull_ok = w is not None
+    except Exception:  # noqa: BLE001
+        pass
+    return {
+        "ok": mongo_ok,
+        "mongo": mongo_ok,
+        "kraken": kraken_ok,
+        "webull": webull_ok,
+    }
+
+
+@router.get("/deploy-mode")
+async def deploy_mode_endpoint():
+    """Report OBSERVABLE deploy state based on broker adapter
+    availability. Heavy (Atlas ping + adapter init) — hit only
+    when the operator needs it, NOT for k8s probes."""
+    mongo_ok = False
     try:
         await client.admin.command("ping")
         mongo_ok = True
     except Exception:  # noqa: BLE001
         mongo_ok = False
-    # Doctrine (2026-05-18 rev): deploy_mode reports OBSERVABLE STATE
-    # based on what the broker ADAPTERS can actually do, not on a
-    # DB-side `execution_enabled` flag (which is decorative — the
-    # adapters never read it). If a broker adapter can be constructed
-    # from current credentials, that's live trading capability.
     env_mode = os.environ.get("DEPLOY_MODE", "observation").lower()
     derived_mode = "observation"
     if mongo_ok:
         try:
-            # Crypto: a Kraken adapter loads iff valid credentials are
-            # present + decrypt cleanly.
             from shared.crypto.broker_adapter import get_kraken_adapter  # noqa: WPS433
             kraken_adapter = await get_kraken_adapter()
-            # Equity: Webull adapter loads iff env vars are armed.
             from shared.broker.webull import get_webull_adapter  # noqa: WPS433
             equity_adapter = await get_webull_adapter()
             if kraken_adapter is not None or equity_adapter is not None:
                 derived_mode = "execution"
         except Exception:  # noqa: BLE001
             pass
-    # If either source says "execution", report execution.
     deploy_mode = "execution" if env_mode == "execution" or derived_mode == "execution" else "observation"
     return {
         "ok": True,

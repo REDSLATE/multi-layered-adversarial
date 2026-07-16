@@ -657,6 +657,21 @@ class WebullAdapter(BrokerAdapter):
                 out[sym] = reason
         return out
 
+    async def list_history(
+        self,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        page_size: int = 200,
+        max_pages: int = 5,
+    ) -> list[dict]:
+        """Broker-fills poller expects every adapter to expose
+        `list_history()`. Webull's SDK doesn't have a matching
+        transaction-history endpoint wired up yet — return an
+        empty list so `broker_fills` doesn't AttributeError every
+        tick. The reconcile path already handles zero-fills
+        correctly. 2026-07-16 fix per Emergent Support triage."""
+        return []
+
     @staticmethod
     def _extended_hours_branch(
         *,
