@@ -333,11 +333,14 @@ frontend/node_modules/.cache/default-development/30.pack
 # backend/.env and frontend/.env to be tracked so production values
 # can be auto-populated at deploy time. Secrets in these files are
 # rotated by the platform, not committed by hand.
+# 2026-02-16 hotfix: three lines below (`.env`, `.env.*`, `*.env`) were
+# accidentally appended between webpack cache entries at some point,
+# silently overriding the doctrine above. Result: prod redeploy at
+# 02:43 UTC shipped without env vars → pod boot crashed on
+# `os.environ["MONGO_URL"]` KeyError → ingress 504 on /api/auth/login
+# for ~2 hours. Doctrine restored — these files MUST be tracked.
 frontend/node_modules/.cache/default-development/50.pack
 frontend/node_modules/.cache/default-development/51.pack
-.env
-.env.*
-*.env
 frontend/node_modules/.cache/default-development/53.pack
 frontend/node_modules/.cache/default-development/55.pack
 frontend/node_modules/.cache/default-development/57.pack
