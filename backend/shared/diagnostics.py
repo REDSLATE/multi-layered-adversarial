@@ -108,21 +108,37 @@ async def _last_receipt_ts(runtime: str) -> str | None:
     """
     candidates: list[str] = []
 
+    # Doctrine pin (2026-07-16, prod-hang triage):
+    # This helper is called 4x per /admin/diagnostics request. Each
+    # of the 4 sub-queries below hits a different collection — bounded
+    # to 1.5s each so a single slow collection can't drag the whole
+    # helper past the endpoint's overall budget. Missing candidates
+    # just mean "we couldn't confirm freshness from that source" —
+    # if any other source is fresh, the brain still isn't silent.
+
     # 1. Legacy receipts collection — still consulted for backward
     #    compat with the authority-call mirror written by
     #    `shared/opinions.py::_mirror_authority_call_to_receipt`.
-    doc = await db[SHARED_RECEIPTS].find_one(
-        {"runtime": runtime}, {"_id": 0, "timestamp": 1},
-        sort=[("timestamp", -1)],
-    )
+    try:
+        doc = await db[SHARED_RECEIPTS].find_one(
+            {"runtime": runtime}, {"_id": 0, "timestamp": 1},
+            sort=[("timestamp", -1)],
+            max_time_ms=1500,
+        )
+    except Exception:  # noqa: BLE001
+        doc = None
     if doc and doc.get("timestamp"):
         candidates.append(doc["timestamp"])
 
     # 2. Cross-brain opinion stream — runner posts on every intent.
-    doc = await db[SHARED_OPINIONS].find_one(
-        {"runtime": runtime}, {"_id": 0, "posted_at": 1},
-        sort=[("posted_at", -1)],
-    )
+    try:
+        doc = await db[SHARED_OPINIONS].find_one(
+            {"runtime": runtime}, {"_id": 0, "posted_at": 1},
+            sort=[("posted_at", -1)],
+            max_time_ms=1500,
+        )
+    except Exception:  # noqa: BLE001
+        doc = None
     if doc and doc.get("posted_at"):
         candidates.append(doc["posted_at"])
 
@@ -166,10 +182,14 @@ async def _last_receipt_ts(runtime: str) -> str | None:
         "gto":   REDEYE_DECISION_LOG,
     }.get(runtime)
     if coll_per_brain:
-        doc = await db[coll_per_brain].find_one(
-            {}, {"_id": 0, "timestamp": 1},
-            sort=[("timestamp", -1)],
-        )
+        try:
+            doc = await db[coll_per_brain].find_one(
+                {}, {"_id": 0, "timestamp": 1},
+                sort=[("timestamp", -1)],
+                max_time_ms=1500,
+            )
+        except Exception:  # noqa: BLE001
+            doc = None
         if doc and doc.get("timestamp"):
             candidates.append(doc["timestamp"])
 
@@ -199,10 +219,18 @@ async def _runtime_log_count(runtime: str) -> int:
         "hellcat": CHEVELLE_MEMORY_LABELS,
         "gto":   REDEYE_DECISION_LOG,
     }.get(runtime)
-    if coll is None:
-        # Unknown runtime — opinion-post count as the safe fallback.
-        return await db[SHARED_OPINIONS].count_documents({"runtime": runtime})
-    return await db[coll].count_documents({})
+    # Doctrine pin (2026-07-16, prod-hang triage): count_documents
+    # can collscan under Atlas pressure. Bounded to 1.5s — timeout
+    # falls back to 0 rather than dragging /admin/diagnostics past
+    # the frontend's 25s ceiling.
+    try:
+        if coll is None:
+            return await db[SHARED_OPINIONS].count_documents(
+                {"runtime": runtime}, maxTimeMS=1500,
+            )
+        return await db[coll].count_documents({}, maxTimeMS=1500)
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 def _hb_age_and_stale(hb: dict | None) -> tuple[float | None, bool]:

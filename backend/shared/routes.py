@@ -1,4 +1,5 @@
 """Shared infrastructure read endpoints (receipts, memory, calibrators, feature builders, artifacts)."""
+import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -69,81 +70,145 @@ async def artifacts(
     return {"items": await list_artifacts(db, runtime)}
 
 
+_OVERVIEW_QUERY_MAX_MS = 1500  # per-DB-call ceiling
+
+
+def _safe_int(v, default=0):
+    return v if isinstance(v, int) else default
+
+
+async def _overview_for_runtime(rt: str, roster_assignments: dict, seat_policy: dict, now: datetime) -> dict:
+    """Build one runtime's overview card.
+
+    Doctrine pin (2026-07-16, prod-hang triage):
+    The 4 per-runtime blocks now run under `asyncio.gather` at the
+    caller — previously this was a for-loop with 8 sequential
+    awaits × 4 runtimes = ~33 round-trips per request. Under Atlas
+    load that dragged /shared/overview past the frontend's 25s
+    ceiling and blanked the dashboard. Inside this function, the
+    5 independent DB calls also run in parallel via `gather`, and
+    every call has `maxTimeMS=1500` so no single slow scan can
+    saturate the endpoint. Failures degrade to safe defaults (0 /
+    None) — the operator sees the working brains even when one
+    query trips its budget.
+    """
+    receipts_count, labels_count, violation_count, last_receipt, hb, artifacts_list, state_doc = await asyncio.gather(
+        db[SHARED_RECEIPTS].count_documents(
+            {"runtime": rt}, maxTimeMS=_OVERVIEW_QUERY_MAX_MS,
+        ),
+        db[SHARED_MEMORY].count_documents(
+            {"runtime": rt}, maxTimeMS=_OVERVIEW_QUERY_MAX_MS,
+        ),
+        db[SHARED_RECEIPTS].count_documents(
+            {"runtime": rt, "role_violation": True}, maxTimeMS=_OVERVIEW_QUERY_MAX_MS,
+        ),
+        db[SHARED_RECEIPTS].find_one(
+            {"runtime": rt}, {"_id": 0},
+            sort=[("timestamp", -1)],
+            max_time_ms=_OVERVIEW_QUERY_MAX_MS,
+        ),
+        db[SHARED_HEARTBEATS].find_one(
+            {"runtime": rt}, {"_id": 0},
+            max_time_ms=_OVERVIEW_QUERY_MAX_MS,
+        ),
+        list_artifacts(db, rt),
+        db["shared_authority_state"].find_one(
+            {"runtime": rt}, {"_id": 0},
+            max_time_ms=_OVERVIEW_QUERY_MAX_MS,
+        ),
+        return_exceptions=True,
+    )
+    # Coerce exceptions to safe defaults — one bad query does NOT
+    # blank the whole card.
+    receipts_count   = _safe_int(receipts_count)
+    labels_count     = _safe_int(labels_count)
+    violation_count  = _safe_int(violation_count)
+    if isinstance(last_receipt, Exception):
+        last_receipt = None
+    if isinstance(hb, Exception):
+        hb = None
+    if isinstance(artifacts_list, Exception):
+        artifacts_list = []
+    if isinstance(state_doc, Exception):
+        state_doc = None
+
+    authority_state = state_doc["authority_state"] if state_doc else "observer"
+    latest_artifact = artifacts_list[-1] if artifacts_list else None
+
+    # Seat-based execution permission. Look up the current roster
+    # assignment and ask seat_policy whether THAT seat may execute.
+    execution_allowed = False
+    seat_name = None
+    for seat, occupant in roster_assignments.items():
+        if occupant == rt:
+            seat_name = seat
+            pol = seat_policy.get(seat) or {}
+            if pol.get("may_execute") is True:
+                execution_allowed = True
+                break
+
+    # Heartbeat staleness — visibility only
+    hb_age = None
+    if hb and hb.get("last_seen"):
+        try:
+            hb_age = (now - datetime.fromisoformat(hb["last_seen"])).total_seconds()
+        except Exception:  # noqa: BLE001
+            hb_age = None
+    hb_stale = hb_age is None or hb_age > HEARTBEAT_STALE_AFTER_SECONDS
+
+    return {
+        "runtime": rt,
+        "role": ROLES[rt]["role"],
+        "role_title": ROLES[rt]["title"],
+        "role_tagline": ROLES[rt]["tagline"],
+        "authority_state": authority_state,
+        "execution_allowed": execution_allowed,
+        "current_seat": seat_name,
+        "mode": "observation",
+        "receipts_count": receipts_count,
+        "memory_labels_count": labels_count,
+        "role_violation_count": violation_count,
+        "artifact_count": len(artifacts_list),
+        "latest_artifact": latest_artifact,
+        "last_receipt": last_receipt,
+        "heartbeat_age_seconds": hb_age,
+        "heartbeat_stale": hb_stale,
+    }
+
+
 @router.get("/overview")
 async def overview(_user: dict = Depends(get_current_user)):
     """Mission-control overview: per-runtime summary card data."""
-    out = []
-    violation_total = await db[SHARED_RECEIPTS].count_documents({"role_violation": True})
     now = datetime.now(timezone.utc)
-    for rt in RUNTIMES:
-        receipts_count = await db[SHARED_RECEIPTS].count_documents({"runtime": rt})
-        labels_count = await db[SHARED_MEMORY].count_documents({"runtime": rt})
-        violation_count = await db[SHARED_RECEIPTS].count_documents({"runtime": rt, "role_violation": True})
-        artifacts_list = await list_artifacts(db, rt)
-        latest_artifact = artifacts_list[-1] if artifacts_list else None
-        last_receipt = await db[SHARED_RECEIPTS].find_one(
-            {"runtime": rt}, {"_id": 0}, sort=[("timestamp", -1)]
+
+    # Roster + seat policy are shared inputs — fetch once, not per-runtime.
+    roster_assignments: dict = {}
+    seat_policy: dict = {}
+    try:
+        from shared.roster import get_roster  # noqa: WPS433
+        from shared.seat_policy import SEAT_POLICY  # noqa: WPS433
+        roster = await get_roster()
+        roster_assignments = (roster or {}).get("assignments") or {}
+        seat_policy = SEAT_POLICY or {}
+    except Exception:  # noqa: BLE001
+        # Fail-CLOSED downstream: no seat lookup = no execution_allowed.
+        roster_assignments = {}
+        seat_policy = {}
+
+    # Global aggregate — bounded so it can't drag the whole endpoint.
+    try:
+        violation_total = await db[SHARED_RECEIPTS].count_documents(
+            {"role_violation": True}, maxTimeMS=_OVERVIEW_QUERY_MAX_MS,
         )
-        # Authority state — informational metadata only (2026-05-26
-        # doctrine collapse). The lock is now SEAT POLICY + KILL SWITCH:
-        #   * `execution_allowed` = is this runtime currently sitting
-        #     in a seat whose `may_execute=True` policy? (Seat-based,
-        #     not identity-based.)
-        #   * The authority_state field is kept for historical
-        #     continuity but no longer gates anything.
-        state_doc = await db["shared_authority_state"].find_one({"runtime": rt}, {"_id": 0})
-        authority_state = state_doc["authority_state"] if state_doc else "observer"
+    except Exception:  # noqa: BLE001
+        violation_total = 0
 
-        # Seat-based execution permission. Look up the current roster
-        # assignment and ask seat_policy whether THAT seat may execute.
-        execution_allowed = False
-        seat_name = None
-        try:
-            from shared.roster import get_roster  # noqa: WPS433
-            from shared.seat_policy import SEAT_POLICY  # noqa: WPS433
-            roster = await get_roster()
-            assignments = (roster or {}).get("assignments") or {}
-            for seat, occupant in assignments.items():
-                if occupant == rt:
-                    seat_name = seat
-                    pol = SEAT_POLICY.get(seat) or {}
-                    if pol.get("may_execute") is True:
-                        execution_allowed = True
-                        break
-        except Exception:  # noqa: BLE001
-            # Fail-CLOSED: if seat policy can't be consulted, no execution.
-            execution_allowed = False
-            seat_name = None
-
-        # Heartbeat staleness — visibility only
-        hb = await db[SHARED_HEARTBEATS].find_one({"runtime": rt}, {"_id": 0})
-        hb_age = None
-        if hb and hb.get("last_seen"):
-            try:
-                hb_age = (now - datetime.fromisoformat(hb["last_seen"])).total_seconds()
-            except Exception:  # noqa: BLE001
-                hb_age = None
-        hb_stale = hb_age is None or hb_age > HEARTBEAT_STALE_AFTER_SECONDS
-
-        out.append({
-            "runtime": rt,
-            "role": ROLES[rt]["role"],
-            "role_title": ROLES[rt]["title"],
-            "role_tagline": ROLES[rt]["tagline"],
-            "authority_state": authority_state,
-            "execution_allowed": execution_allowed,
-            "current_seat": seat_name,
-            "mode": "observation",
-            "receipts_count": receipts_count,
-            "memory_labels_count": labels_count,
-            "role_violation_count": violation_count,
-            "artifact_count": len(artifacts_list),
-            "latest_artifact": latest_artifact,
-            "last_receipt": last_receipt,
-            "heartbeat_age_seconds": hb_age,
-            "heartbeat_stale": hb_stale,
-        })
-    return {"runtimes": out, "role_violation_total": violation_total}
+    # All 4 runtime cards in parallel — bounded worst-case wall clock.
+    out = await asyncio.gather(*[
+        _overview_for_runtime(rt, roster_assignments, seat_policy, now)
+        for rt in RUNTIMES
+    ])
+    return {"runtimes": list(out), "role_violation_total": violation_total}
 
 
 @router.get("/role-violations")
