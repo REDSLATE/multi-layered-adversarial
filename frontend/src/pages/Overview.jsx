@@ -69,12 +69,22 @@ export default function Overview() {
       setSettled(true);
       // Aggregate top-line error banner ONLY when a "must-have"
       // endpoint failed — operator sees at a glance that a required
-      // tile is down without every fail-soft tile screaming.
-      const failedRequired = [results[0], results[1], results[2]].filter(r => r.status === "rejected");
+      // tile is down without every fail-soft tile screaming. Name
+      // the specific failing endpoint(s) so we know exactly what to
+      // debug (a nameless "1 required endpoint failed" wastes an
+      // entire diagnostic round-trip with the operator).
+      const REQUIRED = [
+        { r: results[0], label: "/shared/overview" },
+        { r: results[1], label: "/admin/flags" },
+        { r: results[2], label: "/admin/diagnostics" },
+      ];
+      const failedRequired = REQUIRED.filter(x => x.r.status === "rejected");
       if (failedRequired.length) {
         setErr(
           `${failedRequired.length} required endpoint${failedRequired.length > 1 ? "s" : ""} failed — ` +
-          failedRequired.map(r => r.reason?.message || "unavailable").join(" · ")
+          failedRequired
+            .map(x => `${x.label}: ${x.r.reason?.message || "unavailable"}`)
+            .join(" · ")
         );
       }
     })();

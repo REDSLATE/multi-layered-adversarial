@@ -1,4 +1,5 @@
 """Diagnostics endpoints. Read-only system health + per-runtime liveness."""
+import asyncio
 import os
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
@@ -135,10 +136,23 @@ async def _last_receipt_ts(runtime: str) -> str | None:
         # 2026-02-23 dual-field migration — canonical-aware query.
         from shared.brain_legend import canonicalize_stack as _canon  # noqa: WPS433
         runtime_c = _canon(runtime) or runtime
-        doc = await db[SHARED_INTENTS].find_one(
-            {"stack_canonical": runtime_c}, {"_id": 0, "ingest_ts": 1},
-            sort=[("ingest_ts", -1)],
-        )
+        # Doctrine pin (2026-07-16, prod-hang triage):
+        # /admin/diagnostics fires ONE of these per runtime and the
+        # collection can be 700K+ docs on prod. Without maxTimeMS,
+        # a single slow scan takes the whole endpoint over the
+        # frontend's 25s ceiling and blanks the dashboard. Bound it
+        # to 1.5s — Atlas either serves it from the compound
+        # index (~5ms) or the brain gets "no recent decision"
+        # instead of the dashboard hanging.
+        try:
+            doc = await db[SHARED_INTENTS].find_one(
+                {"stack_canonical": runtime_c},
+                {"_id": 0, "ingest_ts": 1},
+                sort=[("ingest_ts", -1)],
+                max_time_ms=1500,
+            )
+        except Exception:  # noqa: BLE001
+            doc = None
         if doc and doc.get("ingest_ts"):
             candidates.append(doc["ingest_ts"])
 
@@ -202,6 +216,70 @@ def _hb_age_and_stale(hb: dict | None) -> tuple[float | None, bool]:
     return age, age > HEARTBEAT_STALE_AFTER_SECONDS
 
 
+async def _diag_for_runtime(rt: str) -> dict:
+    """Build one runtime's diagnostic row. Extracted from the main
+    loop so the 4 runtime blocks can run in parallel under
+    `asyncio.gather` (2026-07-16 prod-hang fix). Also runs the 4
+    per-runtime DB fetches (`heartbeat`, `last_receipt_ts`,
+    `log_count`, `memory_labels_count`) themselves in parallel —
+    they don't depend on each other."""
+    hb, last_receipt_ts, log_count, memory_labels_count = await asyncio.gather(
+        db[SHARED_HEARTBEATS].find_one({"runtime": rt}, {"_id": 0}),
+        _last_receipt_ts(rt),
+        _runtime_log_count(rt),
+        db[SHARED_MEMORY].count_documents(
+            {"runtime": rt},
+            # Bounded — a slow scan of `shared_memory` under Atlas
+            # pressure used to drag /admin/diagnostics past 25s. On
+            # timeout, the operator sees "0 memory labels" for that
+            # brain instead of a blanked dashboard.
+            maxTimeMS=1500,
+        ),
+        # Any single sub-query failing (e.g., maxTimeMS trip, network
+        # blip) should degrade THAT field to a safe default, not
+        # blank the entire diagnostics response. Frontend renders
+        # zeros/dashes for missing fields.
+        return_exceptions=True,
+    )
+    # Coerce exceptions from gather() back to safe defaults.
+    if isinstance(hb, Exception):
+        hb = None
+    if isinstance(last_receipt_ts, Exception):
+        last_receipt_ts = None
+    if isinstance(log_count, Exception):
+        log_count = 0
+    if isinstance(memory_labels_count, Exception):
+        memory_labels_count = 0
+    hb_age, hb_stale = _hb_age_and_stale(hb)
+    hb_tier = _heartbeat_tier(hb_age)
+    # Receipt freshness — joined against hb_tier to produce the
+    # `silent` band (May-14 tripwire). None means no receipt ever.
+    receipt_age_s: float | None = None
+    if last_receipt_ts:
+        try:
+            receipt_age_s = (
+                datetime.now(timezone.utc)
+                - datetime.fromisoformat(last_receipt_ts)
+            ).total_seconds()
+        except Exception:  # noqa: BLE001
+            receipt_age_s = None
+    return {
+        "runtime": rt,
+        "last_receipt_ts": last_receipt_ts,
+        "last_receipt_age_seconds": receipt_age_s,
+        "log_count": log_count,
+        "memory_labels_count": memory_labels_count,
+        "heartbeat": hb,
+        "heartbeat_age_seconds": hb_age,
+        "heartbeat_stale": hb_stale,
+        "heartbeat_tier": hb_tier,
+        # Operator-facing tier that joins heartbeat + receipt
+        # freshness. The UI keys its badge color/label off this
+        # field (2026-02-19 silent-hang tripwire).
+        "effective_tier": _effective_tier(hb_tier, receipt_age_s),
+    }
+
+
 @router.get("")
 async def diagnostics(_user: dict = Depends(get_current_user)):
     try:
@@ -212,38 +290,16 @@ async def diagnostics(_user: dict = Depends(get_current_user)):
         mongo_ok = False
         mongo_err = str(e)
 
-    per_runtime = []
-    for rt in RUNTIMES:
-        hb = await db[SHARED_HEARTBEATS].find_one({"runtime": rt}, {"_id": 0})
-        hb_age, hb_stale = _hb_age_and_stale(hb)
-        hb_tier = _heartbeat_tier(hb_age)
-        last_receipt_ts = await _last_receipt_ts(rt)
-        # Receipt freshness — joined against hb_tier to produce the
-        # `silent` band (May-14 tripwire). None means no receipt ever.
-        receipt_age_s: float | None = None
-        if last_receipt_ts:
-            try:
-                receipt_age_s = (
-                    datetime.now(timezone.utc)
-                    - datetime.fromisoformat(last_receipt_ts)
-                ).total_seconds()
-            except Exception:  # noqa: BLE001
-                receipt_age_s = None
-        per_runtime.append({
-            "runtime": rt,
-            "last_receipt_ts": last_receipt_ts,
-            "last_receipt_age_seconds": receipt_age_s,
-            "log_count": await _runtime_log_count(rt),
-            "memory_labels_count": await db[SHARED_MEMORY].count_documents({"runtime": rt}),
-            "heartbeat": hb,
-            "heartbeat_age_seconds": hb_age,
-            "heartbeat_stale": hb_stale,
-            "heartbeat_tier": hb_tier,
-            # Operator-facing tier that joins heartbeat + receipt
-            # freshness. The UI keys its badge color/label off this
-            # field (2026-02-19 silent-hang tripwire).
-            "effective_tier": _effective_tier(hb_tier, receipt_age_s),
-        })
+    # Doctrine pin (2026-07-16, prod-hang triage):
+    # Previously this looped `for rt in RUNTIMES:` with `await` on
+    # every DB call inside, serializing ~7 queries × 4 runtimes = 28
+    # round-trips against a Mongo pool that can be pressured. Under
+    # Atlas load that dragged the endpoint past the frontend's 25s
+    # ceiling. Running the 4 runtime blocks in parallel drops the
+    # wall-clock to whichever brain's slowest — typically 4-5x
+    # faster on a healthy pool, and degrades gracefully to a single
+    # runtime's slowest query under load.
+    per_runtime = await asyncio.gather(*[_diag_for_runtime(rt) for rt in RUNTIMES])
 
     # Lane execution toggles — the operator's real kill switch.
     # Surface alongside `deploy_mode` so the UI can stop misleading
