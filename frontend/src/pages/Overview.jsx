@@ -32,6 +32,12 @@ export default function Overview() {
   const [patternScan, setPatternScan] = useState(null);
   const [sidecarDiag, setSidecarDiag] = useState(null);
   const [err, setErr] = useState("");
+  // `settled` is set once every fetch has resolved OR errored. It's
+  // separate from `ready` (which additionally requires the required
+  // slots to have real shape). When settled=true and ready=false, we
+  // stop showing the spinner and instead render an error state — no
+  // more infinite spinner when a required endpoint errored.
+  const [settled, setSettled] = useState(false);
 
   useEffect(() => {
     // Doctrine pin (2026-02-16, prod hotfix):
@@ -60,6 +66,7 @@ export default function Overview() {
       setStaleConflicts(pick(results[3]));
       setPatternScan(pick(results[4]));
       setSidecarDiag(pick(results[5]));
+      setSettled(true);
       // Aggregate top-line error banner ONLY when a "must-have"
       // endpoint failed — operator sees at a glance that a required
       // tile is down without every fail-soft tile screaming.
@@ -77,7 +84,17 @@ export default function Overview() {
   // `_error` placeholder). This flips off the top-level spinner even
   // when some tiles are degraded — operator can see the rest of the
   // dashboard while the failing tile shows its own inline error.
-  const ready = overview !== null && flags !== null && diag !== null;
+  //
+  // 2026-02-16 fixup: the map()-heavy render path assumes the three
+  // "required" endpoints returned their real shape (e.g.,
+  // `overview.runtimes` is an array). When an endpoint fails, the
+  // slot holds `{_error: "..."}` instead — `overview.runtimes.map`
+  // crashes and the outer ErrorBoundary catches it as a page-level
+  // render error. Guard: `ready` requires the required slots to have
+  // real data. If a required slot errored, we show the aggregated
+  // error banner instead of trying to render the crashing tree.
+  const hasShape = (v) => v && typeof v === "object" && !v._error;
+  const ready = hasShape(overview) && hasShape(flags) && hasShape(diag);
 
   return (
     <div className="reveal" data-testid="overview-page">
@@ -101,7 +118,13 @@ export default function Overview() {
         </div>
       )}
 
-      {!ready && <LoadingRow testid="overview-loading" />}
+      {!ready && !settled && <LoadingRow testid="overview-loading" />}
+
+      {!ready && settled && !err && (
+        <div className="border border-rd-line/40 px-3 py-2 mb-4 text-xs font-mono text-rd-muted" data-testid="overview-degraded">
+          Some tiles couldn&apos;t load — refresh to retry.
+        </div>
+      )}
 
       {ready && (
         <>
