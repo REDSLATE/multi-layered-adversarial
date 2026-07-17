@@ -1,3 +1,91 @@
+## 2026-07-16 — Prod outage recovery (auth 504 → login OK → Overview render crash → recovered)
+
+**Timeline of what happened and what fixed each stage:**
+
+1. **Prod redeployed at 02:43 UTC returning HTTP 504 on `/api/auth/login`**
+   Root cause: `.gitignore` had three accidentally-appended lines
+   (`.env`, `.env.*`, `*.env`) wedged between webpack cache-pack
+   entries that contradicted the doctrine comment right above them.
+   `backend/.env` + `frontend/.env` were ignored → prod pod deployed
+   without env vars → `os.environ["MONGO_URL"]` KeyError on boot →
+   pod restart loop → ingress 504.
+   **Fix:** Removed the three ignore lines. Force-added both `.env`
+   files to git. Doctrine pin added to `.gitignore` explaining what
+   happened.
+
+2. **After `.env` fix redeploy, login form dumped raw 504 HTML**
+   into its red banner (`<!DOCTYPE html>...emergent.cloud | 504:
+   Gateway time-out...`). Root cause: `frontend/src/lib/api.js`
+   error-message extractor did `msg = data.slice(0, 400)` on any
+   string response body — including ingress HTML pages.
+   **Fix:** Detect HTML shape (`^\s*(<!doctype|<html|...)/i` or
+   `content-type: text/html`) and substitute a status-appropriate
+   humane message (`_humanTransientMessage()` — 502/503/504/520/524
+   all covered). Also dropped the double-prefix in `AuthContext.js`.
+
+3. **After redeploy, dashboard "loading forever"** on operator
+   mobile. Root cause: `Overview.jsx` used `Promise.all` on 6 API
+   calls with the first 3 UNWRAPPED. Any one endpoint hanging on
+   the still-saturated Atlas kept the whole promise pending, so
+   `<LoadingRow />` rendered indefinitely.
+   **Fix:** Switched to `Promise.allSettled`. Per-tile `_error`
+   placeholders. Aggregated required-endpoint failures into a
+   single error banner. Added global `AbortController` fetch
+   timeout in `api.js` (default 25s) so NO request in the app can
+   hang forever going forward — GET auto-retries on timeout via
+   the existing 5xx retry path.
+
+4. **After redeploy, dashboard showed a "PAGE · RENDER ERROR"
+   card**: `Cannot read properties of undefined (reading 'map')`.
+   Root cause: my Promise.allSettled change set slots to
+   `{_error: "..."}` on failure, but the JSX still did
+   `overview.runtimes.map(...)` unconditionally.
+   **Fix:** New `hasShape(v)` gate — `ready` now requires the 3
+   required slots to hold real data (not error placeholders).
+   Added `settled` state so a required-endpoint failure surfaces
+   the aggregated error banner instead of an infinite spinner.
+
+5. **In parallel: Atlas cluster saturated on 700K+ `shared_intents`
+   + 1.9M `shared_ohlcv_bars`.** Operator did not have direct Atlas
+   credentials (Emergent-provisioned cluster) and could not log in
+   to hit the existing session-authenticated `nuke_test_data`
+   endpoint (chicken-and-egg — login was the thing being starved).
+   **Fix:** Shipped `routes/emergency_purge.py` — token-auth,
+   GET+POST variants, scoped to a hardcoded allowlist of 3
+   collections (`shared_intents`, `shared_ohlcv_bars`,
+   `mc_pulse_receipts`) with a mandatory `before` ISO cutoff.
+   Token in `EMERGENCY_PURGE_TOKEN` env var. Operator invoked it
+   from mobile browser once and drained the historical bulk.
+   Login recovered inside seconds.
+
+**Cleanup owed (P0 once operator confirms sustained prod stability):**
+- Delete `routes/emergency_purge.py` + wiring in
+  `server_modules/router_registry.py`.
+- Delete `routes/nuke_test_data.py` + wiring (also flagged as temp
+  in the previous session's handoff).
+- Rotate `EMERGENCY_PURGE_TOKEN` out of `backend/.env`.
+- Audit other pages (Positions, Intents, Receipts, Pulse Health…)
+  for the same "map-on-`_error`-shape" crash pattern the Overview
+  refactor exposed.
+
+**Backend-side changes surviving from this session:**
+- Compound + TTL indexes on `shared_intents` (see 2026-02-16 entry
+  below — same session, dates got confused because the pod clock
+  reports July 2026).
+- `_ttl_at_dt()` writer stamps across 7 intent-creation paths.
+
+**Frontend-side changes surviving:**
+- `api.js`: `_humanTransientMessage`, 25s `AbortController` fetch
+  timeout, HTML-body detection.
+- `AuthContext.js`: dropped double-prefix "Cannot reach Mission
+  Control:" on already-humane messages.
+- `Overview.jsx`: `Promise.allSettled` + `hasShape` gate + `settled`
+  state + aggregated required-error banner.
+- `.gitignore`: doctrine pin against re-adding the `.env` ignore.
+
+---
+
+
 ## 2026-02-16 — Atlas index sweep + 90d TTL on shared_intents (Emergent Support triage)
 
 **Context:** Emmy (Emergent Support) requested a query-pattern audit
