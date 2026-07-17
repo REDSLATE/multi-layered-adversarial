@@ -34,6 +34,14 @@ mongo_url = os.environ["MONGO_URL"]
 
 # Connection-pool config (2026-02-27 prod hotfix — Kraken loop & 520s).
 # Updated 2026-06-30 — softened timeouts after prod 500s.
+# Updated 2026-07-16 — added `waitQueueTimeoutMS` + `socketTimeoutMS`
+#   after prod login hung for ~2min under Atlas connection-pool
+#   starvation. Background workers were holding all 100 sockets on
+#   slow collscans → login queued for a pool slot forever. Fix caps
+#   pool-acquisition wait to 8s (login handler fails fast with a
+#   proper HTTP error the frontend can surface) and caps individual
+#   socket ops to 20s so a single hung query can't hold its
+#   connection hostage indefinitely.
 #
 # The previous tight timeouts (`serverSelectionTimeoutMS=15s`,
 # `waitQueueTimeoutMS=10s`) were too aggressive for the Atlas shared
@@ -53,6 +61,15 @@ mongo_url = os.environ["MONGO_URL"]
 #     starve under burst load.
 #   * `serverSelectionTimeoutMS` left at pymongo default (30s) so
 #     transient Atlas slowness doesn't 500-cascade.
+#   * `waitQueueTimeoutMS=8_000` — pool-acquire ceiling. If the
+#     pool is starved by background workers, request-serving paths
+#     (login, /auth/me, dashboard reads) return a proper 500 within
+#     8s instead of hanging for the frontend's 25s ceiling.
+#   * `socketTimeoutMS=20_000` — kill sockets stuck on individual
+#     operations after 20s so they can't hold their pool slot
+#     forever. This is the "belt" behind `maxTimeMS` (the query
+#     server-side ceiling): if the server takes the query but
+#     never returns, this reclaims the connection.
 #   * `appname="risedual-mc"` — diagnostic only; helps identify the
 #     workload in Atlas dashboards. No timeout impact.
 client = AsyncIOMotorClient(
@@ -60,6 +77,8 @@ client = AsyncIOMotorClient(
     retryWrites=True,
     retryReads=True,
     maxIdleTimeMS=45_000,
+    waitQueueTimeoutMS=8_000,
+    socketTimeoutMS=20_000,
     appname="risedual-mc",
 )
 db = client[os.environ["DB_NAME"]]

@@ -139,7 +139,11 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
-    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+    user = await db.users.find_one(
+        {"id": payload["sub"]},
+        {"_id": 0, "password_hash": 0},
+        max_time_ms=2500,
+    )
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     return user
@@ -173,6 +177,12 @@ async def login(req: LoginRequest, response: Response, request: Request):
     # in db.py can auto-prune rows older than the 15-min window.
     # count_documents capped at 5 — we only need to know if we've hit
     # the lockout threshold, not the precise count.
+    #
+    # 2026-07-16: added `maxTimeMS=2500` to every DB call in the
+    # login path. Even with the new `waitQueueTimeoutMS=8000` on
+    # the Motor client, a socket that DOES get acquired can still
+    # be held by a slow query — belt-and-suspenders so the login
+    # handler cannot cause a pool socket to be held indefinitely.
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
     fails = await db.login_attempts.count_documents(
         {
@@ -181,11 +191,12 @@ async def login(req: LoginRequest, response: Response, request: Request):
             "ts": {"$gte": cutoff},
         },
         limit=5,
+        maxTimeMS=2500,
     )
     if fails >= 5:
         raise HTTPException(status_code=429, detail="Too many failed attempts. Try again later.")
 
-    user = await db.users.find_one({"email": email})
+    user = await db.users.find_one({"email": email}, max_time_ms=2500)
     pw_ok = False
     if user:
         # bcrypt verify runs in a worker thread so the event loop

@@ -946,6 +946,10 @@ async def get_recent_ticks(
     NOTE: registered BEFORE `/{brain_id}` so FastAPI doesn't treat
     "ticks" as a brain identifier.
     """
+    # Bounded query — sort on `started_at` on mc_pulses can be
+    # expensive if the collection is large. 2s ceiling means the
+    # operator sees "no recent ticks" rather than a 25s wait when
+    # Atlas is degraded.
     try:
         rows = await db[MC_PULSES].find(
             {},
@@ -965,7 +969,7 @@ async def get_recent_ticks(
                 "orchestration_error": 1,
             },
             sort=[("started_at", -1)],
-        ).to_list(limit)
+        ).max_time_ms(2000).to_list(limit)
     except Exception as exc:  # noqa: BLE001
         logger.warning("get_recent_ticks read failed: %s", exc)
         rows = []
