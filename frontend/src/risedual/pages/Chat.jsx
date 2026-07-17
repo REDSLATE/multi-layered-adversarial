@@ -14,7 +14,7 @@ function ProMaxGate() {
       </div>
       <div className="font-display text-xl text-white">RiseDualGPT is Pro Max only.</div>
       <p className="mx-auto mt-3 max-w-md text-[13px] text-zinc-400">
-        Grounded multi-turn chat with the council's live data. Switch the
+        Grounded multi-turn chat with the council&apos;s live data. Switch the
         tier selector to <span className="font-mono text-emerald-300">Pro Max</span> in the
         header to start a conversation.
       </p>
@@ -136,9 +136,9 @@ export default function Chat() {
                 alt="RiseDualGPT"
                 className="mb-6 h-44 w-auto drop-shadow-[0_0_32px_rgba(16,185,129,0.18)]"
               />
-              <div className="font-display text-base text-white">Grounded in MC's live data.</div>
+              <div className="font-display text-base text-white">Grounded in MC&apos;s live data.</div>
               <p className="mt-2 max-w-md text-[13px] text-zinc-400">
-                Ask about a ticker, today's signals, the consensus on a position,
+                Ask about a ticker, today&apos;s signals, the consensus on a position,
                 or what the AIs disagree about right now.
               </p>
             </div>

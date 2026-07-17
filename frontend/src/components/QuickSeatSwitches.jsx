@@ -259,7 +259,7 @@ export default function QuickSeatSwitches() {
       <div className="text-[9px] font-mono text-rd-dim leading-relaxed border-t border-rd-border pt-2">
         Eligibility-locked: GOVERNOR seats only accept Chevelle or RedEye
         (operator-pinned doctrine). Disallowed brains render struck-through.
-        Same-lane multi-seating auto-vacates the brain's previous seat.
+        Same-lane multi-seating auto-vacates the brain&apos;s previous seat.
         Cross-lane multi-seating allowed.
       </div>
     </div>

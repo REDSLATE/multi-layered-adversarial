@@ -50,7 +50,7 @@ export default function Markets() {
         setItems({ loading: false, list: [], error: e.message });
       });
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [tier]);
 
   const filtered = (items.list || []).filter((x) =>

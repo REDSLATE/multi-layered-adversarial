@@ -120,7 +120,7 @@ export default function SignalDetail() {
 
       {state.loading && (
         <div data-testid="rd-signal-loading" className="rounded-lg border border-slate-700 bg-slate-800/40 p-12 text-center font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-600">
-          Pulling the council's vote…
+          Pulling the council&apos;s vote…
         </div>
       )}
 

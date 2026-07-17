@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useTier } from "../context/TierContext";
 import { mc, fmtAgo } from "../lib/mc";
 import { ShieldAlert, ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
+import DarkPoolWidget from "../components/DarkPoolWidget";
 
 function DirectionTag({ direction }) {
   const map = {
@@ -170,7 +171,7 @@ export default function Signals() {
         </h1>
         <p className="mt-3 max-w-xl text-[14px] text-zinc-400">
           Every open signal the AI council is currently watching. Direction is
-          the Commander's call. Consensus is the cross-brain vote.
+          the Commander&apos;s call. Consensus is the cross-brain vote.
         </p>
       </div>
 

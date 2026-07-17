@@ -68,7 +68,7 @@ export function AuthProvider({ children }) {
           // Transient: keep the token, wait, retry.
           if (i < attempts - 1) {
             const waitMs = RETRY_DELAYS_MS[i];
-            // eslint-disable-next-line no-console
+             
             console.warn(
               `[auth] /auth/me transient failure (attempt ${i + 1}/${attempts}); retrying in ${waitMs}ms —`,
               e?.response?.status ?? e?.message,
@@ -85,7 +85,7 @@ export function AuthProvider({ children }) {
       // app falls through to /login rather than hanging on "Authenticating"
       // forever, but the operator can sign in again without losing their
       // saved token state.
-      // eslint-disable-next-line no-console
+       
       console.error(
         "[auth] /auth/me exhausted retries; keeping token, falling through to login —",
         lastErr?.response?.status ?? lastErr?.message,
@@ -171,7 +171,7 @@ export function AuthProvider({ children }) {
         // Transient (5xx / network / Cloudflare). Backoff + retry.
         if (i < attempts - 1) {
           const waitMs = RETRY_DELAYS_MS[i];
-          // eslint-disable-next-line no-console
+           
           console.warn(
             `[auth] /auth/login transient failure (attempt ${i + 1}/${attempts}); retrying in ${waitMs}ms —`,
             e?.response?.status ?? e?.message,

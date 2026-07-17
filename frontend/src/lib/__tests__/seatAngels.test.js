@@ -1,3 +1,5 @@
+/* eslint-env jest */
+/* global describe, test, expect */
 /**
  * Pin the seat-angel mapping (2026-02-20 marketing rebrand).
  *

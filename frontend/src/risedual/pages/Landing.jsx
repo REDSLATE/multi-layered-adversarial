@@ -144,7 +144,7 @@ export default function Landing() {
         <div className="relative flex flex-col items-start gap-4 md:flex-row md:items-end md:justify-between">
           <div className="max-w-xl">
             <h2 className="font-display text-2xl text-white md:text-3xl">
-              Today's tape, read by four AIs.
+              Today&apos;s tape, read by four AIs.
             </h2>
             <p className="mt-3 text-[14px] text-zinc-400">
               Pull the daily digest, scan active signals, or have a grounded
@@ -157,7 +157,7 @@ export default function Landing() {
               data-testid="rd-cta-digest"
               className="inline-flex items-center gap-2 rounded-md bg-white px-5 py-2.5 text-[13px] font-medium text-black transition-colors hover:bg-zinc-200"
             >
-              Read today's digest <ArrowUpRight size={14} strokeWidth={2.2} />
+              Read today&apos;s digest <ArrowUpRight size={14} strokeWidth={2.2} />
             </Link>
           </div>
         </div>

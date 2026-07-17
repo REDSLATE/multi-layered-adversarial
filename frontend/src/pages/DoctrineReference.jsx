@@ -147,7 +147,7 @@ function TrainingExportBlock({ token, strategyIds }) {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (e) {
-      // eslint-disable-next-line no-alert
+       
       alert(`Export failed: ${e.message || e}`);
     } finally {
       setBusy(false);
@@ -211,7 +211,7 @@ function EvalBlock({ token }) {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [token]);
 
   const selected = questions.find((q) => q.id === selectedId);

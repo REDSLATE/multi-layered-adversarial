@@ -74,7 +74,7 @@ export default function Scanner() {
       }
     });
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [tier]);
 
   useEffect(() => {
@@ -101,7 +101,7 @@ export default function Scanner() {
         </h1>
         <p className="mt-3 max-w-xl text-[14px] text-zinc-400">
           Classic technical patterns — MACD crosses, Bollinger squeezes, RSI extremes,
-          52-week breakouts — detected across MC's covered tape in real time.
+          52-week breakouts — detected across MC&apos;s covered tape in real time.
         </p>
       </div>
 

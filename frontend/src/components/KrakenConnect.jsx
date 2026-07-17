@@ -146,9 +146,9 @@ function ConnectForm({ onSaved }) {
       <div className="border border-rd-warning/40 bg-rd-warning/5 px-3 py-2 text-[11px] font-mono text-rd-warning flex gap-2">
         <Warning size={14} weight="bold" />
         <div>
-          Create a Kraken API key scoped READ-ONLY: tick "Query Funds",
-          "Query Open Orders & Trades", "Query Closed Orders & Trades",
-          "Query Ledger Entries". Leave Trade / Withdraw <span className="font-bold">unchecked</span>.
+          Create a Kraken API key scoped READ-ONLY: tick &quot;Query Funds&quot;,
+          &quot;Query Open Orders &amp; Trades&quot;, &quot;Query Closed Orders &amp; Trades&quot;,
+          &quot;Query Ledger Entries&quot;. Leave Trade / Withdraw <span className="font-bold">unchecked</span>.
         </div>
       </div>
 

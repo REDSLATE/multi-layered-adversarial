@@ -223,7 +223,7 @@ export default function SidecarCheckinPanel() {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 border-b border-rd-border bg-rd-bg3">
         <div className="label-eyebrow text-rd-dim">Sidecar identity check-ins</div>
         <span className="text-[10px] font-mono text-rd-dim">
-          who's PROD vs preview · companion to the Portable Survival Layer
+          who&apos;s PROD vs preview · companion to the Portable Survival Layer
         </span>
         <div className="ml-auto flex items-center gap-2">
           {data && (

@@ -56,7 +56,7 @@ export default function Digest() {
     <div className="space-y-10" data-testid="rd-digest-page">
       <div>
         <div className="text-[10px] font-mono uppercase tracking-[0.22em] text-zinc-500">
-          Today's Tape
+          Today&apos;s Tape
         </div>
         <h1 className="mt-2 font-display text-3xl tracking-tight text-white md:text-4xl">
           The market, narrated.
@@ -75,7 +75,7 @@ export default function Digest() {
           </div>
           {narrative.loading && (
             <div data-testid="rd-narrative-loading" className="font-mono text-[12px] uppercase tracking-[0.18em] text-zinc-600">
-              Composing today's overview…
+              Composing today&apos;s overview…
             </div>
           )}
           {narrative.error && (
