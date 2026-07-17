@@ -1,3 +1,65 @@
+## 2026-07-17 — Code Review Findings (deferred to post-stabilization)
+
+Received a static-analysis code quality report during prod-outage
+recovery. Operator chose Option A (deploy as-is, address post-
+stabilization). Findings recorded here so they're not lost.
+
+### Do-when-stable (in priority order)
+
+**Small, targeted, high value:**
+1. `frontend/src/pages/PulseHealth.jsx` lines 160, 450 — replace
+   array-index-as-key with stable identifiers (`item.symbol` or
+   `${name}_${timestamp}`). Real UI bug: list reorder loses state.
+2. `backend/ml/open_mythos/main.py:164` — replace `eval()` with
+   `ast.literal_eval()` or JSON parsing. ML dir not imported at
+   runtime so no live risk, but security hygiene.
+3. Audit the "137 possibly undefined variables" — needs the actual
+   list from the analyzer since Python static-analysis over-reports
+   on dynamic attribute access. Fix any real ones surfaced.
+
+**Medium effort:**
+4. Missing React hook dependencies in:
+   - `src/risedual/pages/Markets.jsx:24`
+   - `src/pages/RiseAI.jsx:214` (14 deps flagged — likely needs
+     split or move logic outside)
+   - `src/risedual/components/CandleChart.jsx:35` (23+ deps)
+   - `src/pages/RuntimeDetail.jsx:45, 89`
+   These aren't on the critical login → dashboard path.
+5. Migrate `frontend/src/lib/api.js` localStorage tokens to
+   httpOnly cookies. Requires coordinated backend cookie-mode
+   change; auth already writes httpOnly cookies via `_set_cookies`
+   in `auth.py`, so this is finishing the migration.
+6. `frontend/src/risedual/context/TierContext.jsx` lines 10, 18 —
+   move sensitive tier data off localStorage.
+
+**Larger refactors (do NOT touch during outage recovery):**
+7. Split `backend/db.py::ensure_indexes()` (866 lines, complexity
+   12). This function literally just saved prod — every line is
+   doctrine-pinned to a specific incident. Refactor requires full
+   regression test with paper-trading verification.
+8. Break circular imports:
+   - `shared/auto_router.py` ↔ `shared/auto_router_stages.py`
+   - `shared/positions.py` ↔ `shared/positions_state.py`
+   Extract shared types to `_types.py` files.
+9. Reduce complexity in strategy evaluators:
+   - `mc_brains/strategies/mean_reversion.py::evaluate` (complexity 29)
+   - `mc_brains/strategies/momentum_confirmation.py::evaluate` (24)
+   - `mc_arbiter/arbiter.py::arbitrate` (complexity 13, 136 lines)
+10. Split large components:
+    - `pages/RiseAI.jsx` (485 lines)
+    - `components/OperatorControl.jsx` (567 lines)
+    - `pages/Intents.jsx` (406 lines)
+    - `pages/Overview.jsx` (373 lines)
+
+### Won't-fix (test/dev code)
+- Hardcoded "secrets" in `tests/test_*.py` files (50+ files) —
+  non-production code, no runtime impact, no deploy impact.
+- `exec()` in `tests/test_trader_store.py:226-228` — test
+  isolation code, not runtime.
+
+---
+
+
 ## 2026-07-16 — Prod outage recovery (auth 504 → login OK → Overview render crash → recovered)
 
 **Timeline of what happened and what fixed each stage:**
