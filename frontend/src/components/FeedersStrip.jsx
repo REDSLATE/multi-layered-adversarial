@@ -66,20 +66,20 @@ export default function FeedersStrip() {
       // whose fetch fails simply doesn't render; the rest do.
       const [feeders, webullSt] = await Promise.all([
         api.get("/shared/technical/feeders").catch((e) => ({ data: { items: [], _error: e?.response?.data?.detail || e.message } })),
-        api.get("/admin/trader/webull-token-status").catch(() => ({ data: null })),
+        // 2026-07-19: /admin/trader/webull-token-status died with the
+        // sidecar trader; /admin/webull/status is the live source.
+        api.get("/admin/webull/status").catch(() => ({ data: null })),
       ]);
       const baseItems = feeders.data?.items || [];
       // Webull — broker + equity market-data slot.
       const wb = webullSt?.data;
-      const webullConfigured = Boolean(wb?.has_token || wb?.token_present);
+      const webullConfigured = Boolean(wb?.connected || wb?.env_configured);
       const webullItem = {
         key: "webull",
         env_key: "—",
         configured: webullConfigured,
-        status: webullConfigured
-          ? (wb?.token_valid === false ? "stale" : "live")
-          : "unconfigured",
-        last_bar_ts: wb?.last_used_at || wb?.acquired_at || null,
+        status: wb?.connected ? "live" : (webullConfigured ? "stale" : "unconfigured"),
+        last_bar_ts: null,
         symbols: [],
         symbols_count: 0,
         bars_count: 0,

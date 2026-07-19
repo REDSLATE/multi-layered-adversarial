@@ -27,10 +27,9 @@ const ENV_OPTIONS = ["pro"];
  *     fail fast with Webull's actual rejection reason.
  *   - Successful save hot-hydrates the running process env — no
  *     supervisor restart needed for the trader threads.
- *   - NOT the 2FA access-token layer. Token creation still happens via
- *     the "Webull 2FA token" strip in SpreadWatcher (POST
- *     /admin/trader/webull-token-create) AFTER the app-key/secret is
- *     in place here.
+ *   - NOT the 2FA access-token layer. Session (re)activation happens via
+ *     the TokenPushCard below (POST /admin/webull/reauth) AFTER the
+ *     app-key/secret is in place here.
  */
 export default function WebullConnect({ onChange }) {
   const [open, setOpen] = useState(false);
@@ -373,7 +372,9 @@ function TokenPushCard({ onProbe }) {
 
   const refreshToken = useCallback(async () => {
     try {
-      const { data } = await api.get("/admin/trader/webull-token-status");
+      // 2026-07-19: switched from the dead /admin/trader/webull-token-status
+      // (sidecar-era) to /admin/webull/status — the live session probe.
+      const { data } = await api.get("/admin/webull/status");
       setTokenStatus(data);
       return data;
     } catch (e) {
@@ -416,7 +417,7 @@ function TokenPushCard({ onProbe }) {
     const tick = async () => {
       const s = await refreshToken();
       if (cancelled) return;
-      const activated = s?.status === "NORMAL" || (s?.present && !s?.expired);
+      const activated = Boolean(s?.connected);
       if (activated) {
         setPollActive(false);
         setPushDeadline(null);
@@ -467,10 +468,7 @@ function TokenPushCard({ onProbe }) {
     }
   };
 
-  const present = tokenStatus?.present;
-  const expired = tokenStatus?.expired;
-  const activated = present && !expired;
-  const expiresIn = tokenStatus?.expires_in_hours;
+  const activated = Boolean(tokenStatus?.connected);
 
   return (
     <Card
@@ -487,29 +485,15 @@ function TokenPushCard({ onProbe }) {
           <Badge color="#71717A" testid="webull-token-status-loading">CHECKING…</Badge>
         )}
         {activated && (
-          <>
-            <Badge color="#22C55E" testid="webull-token-status-active">
-              {justActivated ? "✓ ACTIVE" : "ACTIVE"}
-            </Badge>
-            {expiresIn != null && (
-              <span className="text-rd-dim">expires in {expiresIn}h</span>
-            )}
-            {tokenStatus?.preview && (
-              <span className="text-rd-text">· {tokenStatus.preview}</span>
-            )}
-          </>
+          <Badge color="#22C55E" testid="webull-token-status-active">
+            {justActivated ? "✓ CONNECTED" : "CONNECTED"}
+          </Badge>
         )}
-        {present && expired && (
+        {tokenStatus && !activated && (
           <>
-            <Badge color="#EF4444" testid="webull-token-status-expired">EXPIRED</Badge>
-            <span className="text-rd-dim">re-issue required</span>
-          </>
-        )}
-        {tokenStatus && !present && (
-          <>
-            <Badge color="#F59E0B" testid="webull-token-status-missing">NOT ISSUED</Badge>
+            <Badge color="#F59E0B" testid="webull-token-status-missing">NOT CONNECTED</Badge>
             <span className="text-rd-dim">
-              trigger a push to activate. Server-side TTL: 15 days.
+              trigger a push to (re)activate the session.
             </span>
           </>
         )}

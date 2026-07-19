@@ -18,16 +18,15 @@ import ExecutionScoreBreakdown from "@/components/ExecutionScoreBreakdown";
 //   * DoctrineHealthPanel — /doctrine/promotion-status all samples=0
 //   * PipelineBlockerChip — /pipeline/recent-blocker-histogram total=0
 // Other operator-visible surfaces (TraderPostMortem, Trade Tape on
-// Overview, ParabolicPhaseStrip) already cover these operator
+// Overview) already cover these operator
 // questions with live data.
-import ParabolicPhaseStrip from "@/components/ParabolicPhaseStrip";
 import BrokerSelectionMenu from "@/components/BrokerSelectionMenu";
 import DoctrineStrip from "@/components/DoctrineStrip";
 import PanelErrorBoundary from "@/components/PanelErrorBoundary";
 import SeatRegistryDriftBanner from "@/components/SeatRegistryDriftBanner";
 import { toast } from "sonner";
 import {
-  Lightning, ArrowsClockwise, Funnel, Pulse,
+  ArrowsClockwise, Funnel, Pulse,
   CheckCircle, XCircle, Hourglass, CaretDown, CaretUp,
   CurrencyBtc, Buildings,
 } from "@phosphor-icons/react";
@@ -144,7 +143,7 @@ function StatTile({ label, value, color, testid }) {  return (
   );
 }
 
-function IntentRow({ intent, expanded, onToggle, onDryRun, dryRunResult }) {
+function IntentRow({ intent, expanded, onToggle }) {
   const meta = BRAIN_META[intent.stack] || { label: intent.stack, color: "#A1A1AA" };
   const GateIcon = GATE_ICON[intent.gate_state] || Hourglass;
   const gateColor = GATE_COLOR[intent.gate_state] || "#A1A1AA";
@@ -220,15 +219,9 @@ function IntentRow({ intent, expanded, onToggle, onDryRun, dryRunResult }) {
         </td>
         <td className="px-3 py-2 text-right">
           <div className="flex items-center justify-end gap-2">
-            <button
-              onClick={(e) => { e.stopPropagation(); onDryRun(); }}
-              data-testid={`intent-dryrun-${intent.intent_id}`}
-              className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border border-rd-border text-rd-dim hover:text-rd-text hover:border-rd-text"
-              title="Run gate chain against this intent (no broker call)"
-            >
-              <Lightning size={10} weight="bold" className="inline mr-1" />
-              dry-run
-            </button>
+            {/* dry-run button removed 2026-07-19 — POST /execution/dry_run
+                was deleted in the Pass 2/3 simplification; the button
+                404'd on every click. */}
             {isExecuted && (
               <span
                 className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border border-rd-success text-rd-success"
@@ -286,33 +279,6 @@ function IntentRow({ intent, expanded, onToggle, onDryRun, dryRunResult }) {
                     </pre>
                   </>
                 )}
-                {dryRunResult && (
-                  <>
-                    <div className="label-eyebrow mt-4 mb-2">
-                      Dry-run verdict ·{" "}
-                      <span style={{
-                        color: dryRunResult.verdict === "would_pass" ? "#10B981" : "#F59E0B",
-                      }}>
-                        {dryRunResult.verdict?.replace("_", " ")?.toUpperCase()}
-                      </span>
-                    </div>
-                    <div className="border border-rd-border bg-rd-bg2 divide-y divide-rd-border">
-                      {(dryRunResult.gates || []).map((g) => (
-                        <div key={g.name} className="px-3 py-2 flex items-start gap-3" data-testid={`gate-${g.name}`}>
-                          {g.passed ? (
-                            <CheckCircle size={13} weight="bold" className="text-rd-success mt-0.5 shrink-0" />
-                          ) : (
-                            <XCircle size={13} weight="bold" className="text-rd-danger mt-0.5 shrink-0" />
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <div className="font-mono text-[11px] text-rd-text">{g.name}</div>
-                            <div className="text-[10px] text-rd-muted leading-relaxed mt-0.5">{g.reason}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
                 {/* Submit result block removed 2026-07-01 — MC no longer
                     routes intents to the broker. The Sidecar Trader
                     (background asyncio task) owns all execution and
@@ -366,7 +332,6 @@ export default function Intents() {
   const [enabledLanes, setEnabledLanes] = useState([]);
   const [queueNote, setQueueNote] = useState("");
   const [expanded, setExpanded] = useState(null);
-  const [dryRunByIntent, setDryRunByIntent] = useState({});
   const [autoRefresh, setAutoRefresh] = useState(true);
   // 2026-07-01: submit/caps/modal state removed. MC is eyes-only;
   // the Sidecar Trader owns execution. Dry-run stays because it's a
@@ -434,21 +399,6 @@ export default function Intents() {
     return { total: filtered.length, byStack, byGate, byAction };
   }, [filtered]);
 
-  const runDryRun = async (intentId) => {
-    setDryRunByIntent((m) => ({ ...m, [intentId]: { loading: true } }));
-    try {
-      const res = await api.post(`/execution/dry_run?intent_id=${encodeURIComponent(intentId)}`);
-      setDryRunByIntent((m) => ({ ...m, [intentId]: res.data }));
-      setExpanded(intentId);
-      // refresh to pick up gate_state change
-      load();
-    } catch (e) {
-      setDryRunByIntent((m) => ({
-        ...m,
-        [intentId]: { error: e?.response?.data?.detail || e.message },
-      }));
-    }
-  };
 
   // 2026-07-01: runSubmit/performSubmit removed. Sidecar trader owns
   // execution — no manual submit button on this page anymore.
@@ -595,9 +545,9 @@ export default function Intents() {
       <div className="mt-3">
         <BrokerSelectionMenu />
       </div>
-      <div className="mt-3">
-        <ParabolicPhaseStrip />
-      </div>
+      {/* ParabolicPhaseStrip removed 2026-07-19 — its
+          /admin/parabolic/phases endpoint doesn't exist in this backend;
+          the strip had never rendered data. */}
 
       {/* Live exposure caps strip removed 2026-07-01 — /config/exposure-caps
           was deleted in Pass 2/3. The Sidecar Trader's caps
@@ -736,8 +686,6 @@ export default function Intents() {
                     intent={it}
                     expanded={expanded === it.intent_id}
                     onToggle={() => setExpanded((e) => (e === it.intent_id ? null : it.intent_id))}
-                    onDryRun={() => runDryRun(it.intent_id)}
-                    dryRunResult={dryRunByIntent[it.intent_id]}
                   />
                 ))}
               </tbody>

@@ -20,7 +20,6 @@ import MarketRegimeTape from "@/components/MarketRegimeTape";
 import PositionMisreadsCard from "@/components/PositionMisreadsCard";
 import DivergenceChopGauge from "@/components/DivergenceChopGauge";
 import TradeTape from "@/components/TradeTape";
-import SpreadWatcher from "@/components/SpreadWatcher";
 import BrainPersonalities from "@/components/BrainPersonalities";
 import OperatorControl from "@/components/OperatorControl";
 
@@ -30,7 +29,6 @@ export default function Overview() {
   const [diag, setDiag] = useState(null);
   const [staleConflicts, setStaleConflicts] = useState(null);
   const [patternScan, setPatternScan] = useState(null);
-  const [sidecarDiag, setSidecarDiag] = useState(null);
   const [err, setErr] = useState("");
   // `settled` is set once every fetch has resolved OR errored. It's
   // separate from `ready` (which additionally requires the required
@@ -57,7 +55,6 @@ export default function Overview() {
         api.get("/admin/diagnostics"),
         api.get("/admin/conflicts/stale?older_than_hours=24"),
         api.get("/admin/patterns/scan?limit=10&min_score=0.5"),
-        api.get("/admin/sidecar-diagnostics"),
       ]);
       const pick = (r) => (r.status === "fulfilled" ? r.value.data : { _error: r.reason?.message || "unavailable" });
       setOverview(pick(results[0]));
@@ -65,7 +62,6 @@ export default function Overview() {
       setDiag(pick(results[2]));
       setStaleConflicts(pick(results[3]));
       setPatternScan(pick(results[4]));
-      setSidecarDiag(pick(results[5]));
       setSettled(true);
       // Aggregate top-line error banner ONLY when a "must-have"
       // endpoint failed — operator sees at a glance that a required
@@ -284,12 +280,9 @@ export default function Overview() {
                 their endpoints belonged to the deleted sidecar. */}
           </div>
 
-          {/* 2026-07-02 — Spread Watcher. Live bid/ask spread for
-              Kraken (crypto) + Webull public gateway (equity).
-              Optional risk gate; observability-only by default. */}
-          <PanelErrorBoundary panelName="Spread Watcher" testid="panel-error-spread-watcher">
-            <SpreadWatcher />
-          </PanelErrorBoundary>
+          {/* SpreadWatcher removed 2026-07-19 — its /admin/trader/spread
+              endpoint died with the sidecar trader; the tile had been
+              self-hiding on 404 (rendering nothing) since 2026-07-11. */}
 
           {/* 2026-07-02 — Brain Personalities. Per-brain track
               records (D+E). Preserves specialist identities. */}
@@ -326,13 +319,10 @@ export default function Overview() {
             <StaleConflictsTile data={staleConflicts} />
           )}
 
-          {/* Sidecar Diagnostics — fleet health at a glance.
-              Doctrine: read-only. Surfaces the "21k mystery" answer
-              (audit log totals are healthy heartbeats, not backlogs)
-              and per-brain operator hints. */}
-          {sidecarDiag && !sidecarDiag._error && (
-            <SidecarDiagnosticsTile data={sidecarDiag} />
-          )}
+          {/* Sidecar Diagnostics tile removed 2026-07-19 — the
+              /admin/sidecar-diagnostics endpoint died with the retired
+              sidecar architecture; brain liveness lives in Pulse Health
+              and the Operator Control tick table now. */}
 
           {/* Pattern Watch — top symbols showing the textbook
               base-formation → consolidation → breakout pattern.
@@ -497,119 +487,6 @@ function StaleConflictsTile({ data }) {
     </Card>
   );
 }
-
-function SidecarDiagnosticsTile({ data }) {
-  const fleet = data?.fleet || {};
-  const brains = data?.brains || [];
-  // Color the tile by the worst verdict in the fleet — danger if any
-  // brain is `dead`, warn if any `stale`/`partial`/`never`, else ok.
-  const danger = fleet.dead > 0;
-  const warn = !danger && (fleet.stale > 0 || fleet.partial > 0 || fleet.never > 0);
-  const color = danger ? "#EF4444" : warn ? "#FBBF24" : "#10B981";
-  const label = danger ? "ACTION REQUIRED" : warn ? "ATTENTION" : "FLEET HEALTHY";
-
-  const verdictColor = {
-    connected: "#10B981",
-    partial: "#FBBF24",
-    stale: "#FB923C",
-    dead: "#EF4444",
-    never: "#71717A",
-  };
-
-  return (
-    <Card
-      accentColor={color}
-      className="mb-6"
-      testid="sidecar-diagnostics-tile"
-    >
-      <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
-        <div>
-          <div className="label-eyebrow mb-1">Sidecar fleet</div>
-          <div className="flex items-baseline gap-3">
-            <span
-              className="font-display text-4xl font-black tracking-tighter"
-              style={{ color }}
-              data-testid="sidecar-diagnostics-connected-count"
-            >
-              {fleet.connected}/{fleet.total_brains}
-            </span>
-            <span className="text-xs font-mono text-rd-muted">connected</span>
-            <Badge color={color} testid="sidecar-diagnostics-label">
-              {label}
-            </Badge>
-          </div>
-          <div className="text-[11px] font-mono text-rd-muted mt-2 flex flex-wrap gap-3">
-            {fleet.partial > 0 && (
-              <span data-testid="sidecar-diagnostics-partial">
-                {fleet.partial} partial
-              </span>
-            )}
-            {fleet.stale > 0 && (
-              <span data-testid="sidecar-diagnostics-stale">
-                {fleet.stale} stale
-              </span>
-            )}
-            {fleet.dead > 0 && (
-              <span data-testid="sidecar-diagnostics-dead" className="text-rd-danger">
-                {fleet.dead} dead
-              </span>
-            )}
-            {fleet.brains_with_no_intents_ever > 0 && (
-              <span data-testid="sidecar-diagnostics-noemitters">
-                {fleet.brains_with_no_intents_ever} never-emitted
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {brains.map((b) => {
-          const meta = RUNTIME_META[b.brain] || { color: "#A1A1AA", label: b.brain.toUpperCase() };
-          const v = b.verdict;
-          return (
-            <div
-              key={b.brain}
-              className="border border-rd-line/40 p-3 text-[11px] font-mono space-y-1"
-              data-testid={`sidecar-row-${b.brain}`}
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-display text-sm tracking-tight" style={{ color: meta.color }}>
-                  {meta.label}
-                </span>
-                <Badge color={verdictColor[v] || "#71717A"} testid={`sidecar-row-verdict-${b.brain}`}>
-                  {v.toUpperCase()}
-                </Badge>
-              </div>
-              <div className="text-rd-muted">{b.operator_hint}</div>
-              <div className="grid grid-cols-2 gap-x-2 gap-y-0 mt-2">
-                <span>intents</span>
-                <span className="text-right" data-testid={`sidecar-row-intents-${b.brain}`}>
-                  {b.intents.total}
-                </span>
-                <span>opinions</span>
-                <span className="text-right" data-testid={`sidecar-row-opinions-${b.brain}`}>
-                  {b.opinions.total}
-                </span>
-                <span>audit log</span>
-                <span className="text-right" data-testid={`sidecar-row-audit-${b.brain}`}>
-                  {b.sovereign_contribution.audit_log_total}
-                </span>
-                <span>heartbeat age</span>
-                <span className="text-right">
-                  {b.heartbeat.age_seconds != null
-                    ? `${Math.round(b.heartbeat.age_seconds)}s`
-                    : "—"}
-                </span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </Card>
-  );
-}
-
 
 function PatternWatchTile({ data }) {
   const items = data?.items || [];

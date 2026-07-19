@@ -247,8 +247,6 @@ export default function BrainConsole() {
   const [opinions, setOpinions] = useState(null);
   const [scorecard, setScorecard] = useState(null);
   const [conflicts, setConflicts] = useState(null);
-  const [proposals, setProposals] = useState(null);
-  const [authority, setAuthority] = useState(null);
   const [roster, setRoster] = useState(null);
   const [err, setErr] = useState("");
 
@@ -256,7 +254,7 @@ export default function BrainConsole() {
     if (!meta) return;
     setErr("");
     try {
-      const [s, o, sc, cf, pr, au, rs] = await Promise.all([
+      const [s, o, sc, cf, rs] = await Promise.all([
         // The old public `/api/heartbeat-status/{brain}` route was
         // retired in the 2026-06 admin/runtime consolidation. Read
         // the same signal from the unified admin status endpoint
@@ -265,8 +263,8 @@ export default function BrainConsole() {
         api.get("/shared/opinions", { params: { runtime: brain, limit: 10 } }),
         api.get("/shared/scorecard", { params: { runtime: brain } }).catch(() => ({ data: null })),
         api.get("/shared/conflicts", { params: { runtime: brain, limit: 8 } }).catch(() => ({ data: { items: [] } })),
-        api.get("/admin/promotion/proposals").catch(() => ({ data: { items: [] } })),
-        api.get("/admin/promotion/state").catch(() => ({ data: { items: [] } })),
+        // /admin/promotion/proposals + /state fetches removed 2026-07-19 —
+        // both endpoints 404 (read side deleted); results were never rendered.
         api.get("/admin/roster").catch(() => ({ data: null })),
       ]);
 
@@ -306,8 +304,6 @@ export default function BrainConsole() {
       setOpinions(o.data?.items || []);
       setScorecard(sc.data);
       setConflicts(cf.data?.items || []);
-      setProposals((pr.data?.items || []).filter((p) => p.runtime === brain));
-      setAuthority((au.data?.items || []).find((a) => a.runtime === brain) || null);
       setRoster(rs.data);
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
@@ -321,10 +317,7 @@ export default function BrainConsole() {
     ? ((summary.wins || 0) / summary.total_resolved * 100).toFixed(1)
     : null;
 
-  const pendingForBrain = useMemo(
-    () => (proposals || []).filter((p) => p.status === "awaiting_second_sign" || p.status === "pending"),
-    [proposals],
-  );
+  // pendingForBrain memo removed 2026-07-19 with the dead promotion fetches.
 
   // Pass #19 (2026-05-28) — seat-as-authority doctrine.
   // The brain's current seat IS its authority. The promotion-ladder

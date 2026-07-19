@@ -77,7 +77,7 @@ export default function BrainOperatorPage() {
   const [diag, setDiag] = useState(null);
   const [intents, setIntents] = useState(null);
   const [honesty, setHonesty] = useState(null);
-  const [sovereign, setSovereign] = useState(null);
+  // sovereign state removed 2026-07-19 (dead endpoint)
   const [roster, setRoster] = useState(null);
   const [testResult, setTestResult] = useState(null);
   const [testSubmitting, setTestSubmitting] = useState(false);
@@ -88,15 +88,15 @@ export default function BrainOperatorPage() {
     // The per-lane activity card was replaced by the Sidecar Trader's
     // Trade Tape on Overview, which shows the same signals live from
     // local SQLite.
-    const [d, h, s, r] = await Promise.all([
+    const [d, h, r] = await Promise.all([
       api.get("/admin/diagnostics"),
       api.get(`/admin/intents/honesty?stack=${brain}&hours=24`),
-      api.get(`/admin/sovereign/state/${brain}`).catch(() => ({ data: null })),
+      // /admin/sovereign/state fetch removed 2026-07-19 — no sovereign
+      // routes exist in this backend; the rows it fed always read "—".
       api.get("/admin/roster").catch(() => ({ data: null })),
     ]);
     setDiag(d.data);
     setHonesty(h.data);
-    setSovereign(s.data);
     setRoster(r.data);
     try {
       const rt = await api.get(`/runtime/${brain}/status`);
@@ -203,10 +203,6 @@ export default function BrainOperatorPage() {
                     warn={!seatOk}
                   />
                   <Row k="Eligible seats" v={expected.join(" or ")} />
-                  <Row k="Authority" v={sovereign?.authority_state || sovereign?.posted_as || "—"} />
-                  <Row k="may_decide" v={String(sovereign?.may_decide ?? "—")} />
-                  <Row k="may_execute" v={String(sovereign?.may_execute ?? "—")} />
-                  <Row k="may_veto" v={String(sovereign?.may_veto ?? "—")} />
                   <Row k="Seat epoch" v={roster?.seat_epoch ?? "—"} />
                   {unexpectedSeats.length > 0 && (
                     <p className="mt-3 rounded border border-amber-700/50 bg-amber-950/30 p-2 text-xs text-amber-300"
