@@ -1,5 +1,28 @@
 # RISEDUAL Mission Control — PRD
 
+### 🧹 2026-07-19: Dead-section audit — 10 dead endpoints, 9 UI surfaces removed, 2 repaired
+
+**Method:** Extracted all 97 frontend API paths, matched against the live FastAPI route table, curl-verified every suspect with an admin token (all 404).
+
+**Removed (dead subsystem, no read-side replacement):**
+- Diagnostics: AdvisorPerformanceTile (`/admin/advisor-performance` never existed), NativeBrainRuntimeTile (subsystem flag-gated off forever; backend route + test file also deleted)
+- Overview: SpreadWatcher (self-hiding since 07-11), SidecarDiagnosticsTile (`/admin/sidecar-diagnostics` died with sidecar architecture)
+- RuntimeDetail: SovereignTile + "Last blocks" table (`/admin/sovereign/*`, `/admin/execution/last-block-reason` gone)
+- Intents: ParabolicPhaseStrip, dry-run button (`/execution/dry_run` gone — 404'd on every click)
+- BrainConsole: promotion proposals/state fetches (read side deleted; results never rendered)
+- BrainOperatorPage: sovereign authority rows (always "—")
+
+**Repaired (live replacement existed):**
+- FeedersStrip webull slot → now reads `/admin/webull/status` (was permanently "unconfigured"; now correctly shows stale/live)
+- WebullConnect TokenPushCard → status now from `/admin/webull/status`, push via live `/admin/webull/reauth`
+
+**Testing:** iteration_27.json — 100% pass, network sniffing confirmed ZERO requests to any of the 10 dead endpoints across all pages, no JS crashes, no regressions.
+
+**Known follow-ups:**
+- WebullConnect.jsx is ORPHANED — not mounted on any route (pre-existing). Operator has no UI to connect/reauth Webull. Decide: mount on Setup page or delete.
+- Pre-existing LOW issues: React duplicate-key warnings on list pages; `/api/runtime/{brain}/status` 404 console noise on RuntimeDetail (caught, fallback renders).
+
+
 ### 🩺 2026-07-19: Pipeline Doctor endpoint (prod SNAPS=0 diagnosis)
 
 **Context:** Prod pulse-health shows `no_data 100%` on all 4 brains — zero snapshots built for weeks, no trades. Preview verified fully healthy (SNAPS=50, fresh Kraken bars, universe 40 eq + 50 crypto), so the fault is prod-state only (prod = Atlas DB, preview = local Mongo; can't inspect prod from preview).
