@@ -15,8 +15,13 @@ import BrainDeepDiagnoseCard from "@/components/BrainDeepDiagnoseCard";
 // The Sidecar Trader's Trade Tape + Post-Mortem panels serve the
 // same operator question ("what did the trader do / why didn't it
 // fire?") from local SQLite, Mongo-independent.
-import AdvisorPerformanceTile from "@/components/AdvisorPerformanceTile";
-import NativeBrainRuntimeTile from "@/components/NativeBrainRuntimeTile";  // 2026-02-23 in-process brain migration
+// AdvisorPerformanceTile removed 2026-07-19 — its
+// `/admin/advisor-performance` endpoint never existed in this
+// backend; the tile threw "Not Found" on every load.
+// NativeBrainRuntimeTile removed 2026-07-19 — it watched the
+// flag-gated native-runtime subsystem (<BRAIN>_NATIVE_RUNTIME_ENABLED,
+// never set anywhere); brains run through the MC Pulse orchestrator,
+// so the tile permanently read "0/4 dormant".
 import BrainInputHealthTile from "@/components/BrainInputHealthTile";  // 2026-02-23 instrument quality
 import HealthcheckTile from "@/components/HealthcheckTile";  // 2026-02-26 post-deploy validation
 import FingerprintDiffPanel from "@/components/FingerprintDiffPanel";  // 2026-02-20 doctrine-change before/after
@@ -272,10 +277,6 @@ export default function Diagnostics() {
       <div className="mt-6">
         <HealthcheckTile />
       </div>
-
-      <AdvisorPerformanceTile />
-
-      <NativeBrainRuntimeTile />
 
       <BrainInputHealthTile />
 

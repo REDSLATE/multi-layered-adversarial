@@ -125,7 +125,8 @@ from routes.kraken_pair_floors import router as kraken_pair_floors_router  # 202
 from routes.admin_system_flags import router as admin_system_flags_router
 from routes.admin_brain_legend import router as admin_brain_legend_router  # 2026-02-23
 from routes.admin_execution_lifecycle_funnel import router as admin_execution_lifecycle_funnel_router  # 2026-02-23 P3
-from routes.admin_native_runtime_status import router as admin_native_runtime_status_router  # 2026-02-23 in-process brain migration
+# admin_native_runtime_status removed 2026-07-19 — the native-runtime
+# subsystem was never enabled; only the dead NativeBrainRuntimeTile read it.
 from routes.admin_brain_input_health import router as admin_brain_input_health_router  # 2026-02-23 instrument quality
 from routes.admin_external_signals import router as admin_external_signals_router  # 2026-02-23 witness-council read-only panel
 from routes.admin_feature_coverage import router as admin_feature_coverage_router  # 2026-02-19 doctrine-input coverage health
@@ -203,7 +204,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(admin_system_flags_router)
     api_router.include_router(admin_brain_legend_router)  # 2026-02-23 dual-field migration
     api_router.include_router(admin_execution_lifecycle_funnel_router)  # 2026-02-23 P3 lifecycle funnel
-    api_router.include_router(admin_native_runtime_status_router)  # 2026-02-23 native brain runtimes
+    # native-runtime status route removed 2026-07-19
     api_router.include_router(admin_brain_input_health_router)  # 2026-02-23 instrument quality
     api_router.include_router(admin_external_signals_router)  # 2026-02-23 witness-council read-only panel
     api_router.include_router(admin_feature_coverage_router)  # 2026-02-19 doctrine-input coverage health
