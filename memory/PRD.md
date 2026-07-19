@@ -1,5 +1,26 @@
 # RISEDUAL Mission Control — PRD
 
+### 🩺 2026-07-19: Pipeline Doctor endpoint (prod SNAPS=0 diagnosis)
+
+**Context:** Prod pulse-health shows `no_data 100%` on all 4 brains — zero snapshots built for weeks, no trades. Preview verified fully healthy (SNAPS=50, fresh Kraken bars, universe 40 eq + 50 crypto), so the fault is prod-state only (prod = Atlas DB, preview = local Mongo; can't inspect prod from preview).
+
+**Shipped:** `GET /api/admin/pipeline-doctor` (`routes/pipeline_doctor.py`, JWT admin auth, all reads indexed + max_time_ms bounded):
+- Stage 1 universe: live_universe/patterns_universe/env-default counts + effective universe
+- Stage 2 feeders: latest feeder_health_audit row per provider with age + env flags
+- Stage 3 freshness: 5 sampled symbols per lane, replays the EXACT `_build_one` tf-preference + max-age gate (1m→300s, 5m→900s, 1d→3d), verdict per symbol
+- Stage 4 pulse: last 5 receipts with snaps + silence reason counts
+- Top-level `verdict` string names the first broken stage.
+
+**Operator playbook:** deploy, then from a terminal:
+```
+TOKEN=$(curl -s -X POST https://mission.risedual.ai/api/auth/login -H "Content-Type: application/json" -d '{"email":"admin@risedual.io","password":"<pw>"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+curl -s https://mission.risedual.ai/api/admin/pipeline-doctor -H "Authorization: Bearer $TOKEN"
+```
+Paste the JSON back; the `verdict` field pinpoints the broken stage.
+
+**Note:** user chose to KEEP emergency_purge + nuke_test_data endpoints for now (option b, 2026-07-19). Removal remains a pending P1/P2 task.
+
+
 ## Doctrine — Fresh-Data Contract (locked 2026-07-11, operator directive)
 
 **Core commitment:**
