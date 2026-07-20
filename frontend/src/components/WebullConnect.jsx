@@ -89,15 +89,23 @@ export default function WebullConnect({ onChange }) {
               App Key + App Secret + Account ID. Secret stored
               encrypted at rest, never returned. This is the LOWER
               credential layer — you still need to run the 2FA push
-              (from the Spread Watcher) to mint an access token before
-              quote / trade endpoints activate.
+              (button below) to mint an access token before quote /
+              trade endpoints activate.
             </DialogDescription>
           </DialogHeader>
 
           {!loadingStatus && (
             connected
               ? <ConnectedView status={status} onChange={refresh} onClose={() => setOpen(false)} />
-              : <ConnectForm envOnly={envOnly} onSaved={() => { refresh(); setOpen(false); }} />
+              : (
+                <>
+                  {/* 2026-07-20: the 2FA push card used to render only
+                      AFTER connected=true — backwards: the push IS the
+                      activation step. Show it whenever creds exist. */}
+                  {envOnly && <TokenPushCard onProbe={refresh} />}
+                  <ConnectForm envOnly={envOnly} onSaved={() => { refresh(); setOpen(false); }} />
+                </>
+              )
           )}
         </DialogContent>
       </Dialog>

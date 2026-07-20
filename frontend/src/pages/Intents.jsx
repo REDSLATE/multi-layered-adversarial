@@ -6,6 +6,7 @@ import KrakenBrokerTile from "@/components/KrakenBrokerTile";
 import LaneRoutingPill from "@/components/LaneRoutingPill";
 import MasterTradingSwitch from "@/components/MasterTradingSwitch";
 import WebullOtocoTestPanel from "@/components/WebullOtocoTestPanel";
+import WebullConnect from "@/components/WebullConnect";
 import IntentStageTrace from "@/components/IntentStageTrace";
 import WebullOtocoLivePanel from "@/components/WebullOtocoLivePanel";
 import TraderPostMortem from "@/components/TraderPostMortem";
@@ -511,6 +512,19 @@ export default function Intents() {
           purged in Pass 2 and options-aware brain logic is deferred.
           The sidecar trader submits orders via REST; it doesn't need
           streaming entitlements. */}
+
+      {/* Webull broker connection — mounted 2026-07-20. This card
+          was orphaned (built but on no route), which meant the
+          operator had NO UI path to connect Webull credentials on
+          prod — the primary equity feeder starved silently for 13
+          days. Connecting here hydrates env from Mongo at runtime;
+          the OHLC feeder picks the client up on its next tick, no
+          restart needed. */}
+      <div className="mt-3">
+        <PanelErrorBoundary panelName="Webull Connect" testid="panel-error-webull-connect">
+          <WebullConnect />
+        </PanelErrorBoundary>
+      </div>
 
       {/* Atomic OTOCO bracket — P1 Phase 2 (2026-02-19). Whole-share
           only; operator-driven so we can observe Webull's combo

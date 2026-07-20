@@ -231,6 +231,23 @@ async def _tick() -> dict:
     """One poll cycle: for each symbol in the equity universe,
     pull tf=1m AND tf=5m bars. Rate budget is per-key; the
     circuit breaker in `webull_quotes` guards against runaway."""
+    # 2026-07-20: credential-less feeders must be VISIBLE. The old
+    # behavior silently skipped every symbol when the quotes client
+    # couldn't build (missing WEBULL_APP_KEY/SECRET), leaving zero
+    # audit trail — prod starved for 13 days with no alarm. Now the
+    # absence itself is recorded every tick so pipeline-doctor and
+    # the kill map can name it.
+    if get_quotes_client() is None:
+        await record_feeder_health(
+            provider=PROVIDER, endpoint="_tick",
+            status_code=None, error_type="no_client",
+            message=(
+                "quotes client unavailable — WEBULL_APP_KEY/SECRET missing "
+                "(connect via the Webull card on the Intents page) or SDK "
+                "not importable. Feeder is running but writing nothing."
+            ),
+        )
+        return {"universe_size": 0, "bars_written": 0, "per_symbol": {}}
     count = _env_int("WEBULL_OHLC_BAR_COUNT", DEFAULT_BAR_COUNT)
     universe = await _discover_universe()
     total = 0

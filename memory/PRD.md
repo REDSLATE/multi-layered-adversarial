@@ -1,5 +1,22 @@
 # RISEDUAL Mission Control — PRD
 
+### 🔌 2026-07-20 (evening): Broker-as-feed restoration path (prod equity starvation)
+
+**Prod diagnosis (user screenshots):** equity bars stale 13.3d (died ~Jul 7), last source finnhub_equity (the FALLBACK — Webull primary never wrote on prod). MONGO ONLINE / MODE EXECUTE / lanes ON → pure data starvation, not governance. Crypto (Kraken) appears fresh on prod.
+
+**Root cause found in code:** `webull_ohlc._fetch_and_persist_one` silently skipped when `get_quotes_client()` returned None (missing WEBULL_APP_KEY/SECRET) — zero audit trail, invisible to all diagnostics. AND the WebullConnect UI was orphaned → no way to supply creds on prod.
+
+**Shipped:**
+1. `webull_ohlc._tick` now records `error_type=no_client` audit row every tick when the quotes client can't build — starvation is visible to pipeline-doctor/kill-map. Tested both branches (creds present: 2220 bars; absent: audit row).
+2. `WebullConnect` mounted on Intents page → Equity Lane (with PanelErrorBoundary).
+3. TokenPushCard ("Trigger 2FA push" → POST /admin/webull/reauth, 5-min poll of /admin/webull/status) now renders when creds exist but session NOT connected (was gated behind connected=true — backwards). Verified via screenshot.
+4. Key mechanism: `get_quotes_client()` re-reads env until client builds; connect endpoint hydrates env from Mongo at runtime → feeder activates without restart.
+
+**Prod runbook:** deploy → Intents → Connect Webull (save creds if env lacks them) → Trigger 2FA push → approve on phone → equity bars flow within one 5-min poll during RTH. Finnhub remains dead-fallback until its prod key/env is confirmed (user hasn't pasted doctor stage_2_feeders yet).
+
+**User question answered:** "where is the button to activate Webull trading" → Trigger 2FA push in the Connect Webull dialog, Intents page.
+
+
 ### 🔍 2026-07-20 (later still): Per-intent stage trace
 
 **Operator directive:** "failures can hide between stages — build a single per-intent stage trace."
