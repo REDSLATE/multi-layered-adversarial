@@ -63,6 +63,9 @@ _LAST_TICK_EXECUTED: int = 0
 _LAST_TICK_ERROR: Optional[str] = None
 _LAST_TICK_TIMEOUTS: int = 0
 _LAST_TICK_DEFERRED: int = 0
+_LAST_TICK_DISARMED: bool = False
+_LAST_TICK_EXCEPTIONS: int = 0
+_LAST_INTENT_ERROR: Optional[str] = None
 _STARTED_AT: Optional[str] = None
 
 # Route-phase wall budget per tick. 5 intents × 20s each could hit
@@ -128,9 +131,11 @@ async def _tick() -> list[dict]:
     in-flight submitted order must not be stranded just because the
     operator flipped the switch mid-flight.
     """
-    global _LAST_TICK_TIMEOUTS, _LAST_TICK_DEFERRED
+    global _LAST_TICK_TIMEOUTS, _LAST_TICK_DEFERRED, _LAST_TICK_EXCEPTIONS
+    global _LAST_INTENT_ERROR
     _LAST_TICK_TIMEOUTS = 0
     _LAST_TICK_DEFERRED = 0
+    _LAST_TICK_EXCEPTIONS = 0
     # Sweep first — cheap update_many, keeps the funnel honest.
     # Attribute lookup on _ar so monkeypatched mocks are picked up.
     try:
@@ -150,8 +155,14 @@ async def _tick() -> list[dict]:
 
     # MASTER-SWITCH PREFLIGHT — read the Mongo arm doc. If disarmed,
     # we still reconciled (above) but do NOT ingest new intents.
+    # 2026-07-20: the skip is now VISIBLE — `last_tick_disarmed=true`
+    # on the status payload. "Everything stays pending forever with
+    # zero errors" was this branch hiding in plain sight.
+    global _LAST_TICK_DISARMED
     if not await _ar._is_master_switch_armed():
+        _LAST_TICK_DISARMED = True
         return []
+    _LAST_TICK_DISARMED = False
 
     try:
         lookback_min = int(os.environ.get("AUTO_ROUTER_LOOKBACK_MIN", "60"))
@@ -220,6 +231,11 @@ async def _tick() -> list[dict]:
             )
             await _stamp_route_timeout(intent)
         except Exception as e:  # noqa: BLE001
+            # 2026-07-20: per-intent crashes are no longer invisible.
+            # "0 picked, no error" on the tile while route_one throws
+            # every tick was undiagnosable from the UI.
+            _LAST_TICK_EXCEPTIONS += 1
+            _LAST_INTENT_ERROR = f"{type(e).__name__}: {e}"[:300]
             logger.exception(
                 "auto-router error on intent %s: %s",
                 intent.get("intent_id"), e,
@@ -287,6 +303,9 @@ def get_status() -> dict:
         "last_tick_error": _LAST_TICK_ERROR,
         "last_tick_route_timeouts": _LAST_TICK_TIMEOUTS,
         "last_tick_deferred": _LAST_TICK_DEFERRED,
+        "last_tick_disarmed": _LAST_TICK_DISARMED,
+        "last_tick_exceptions": _LAST_TICK_EXCEPTIONS,
+        "last_intent_error": _LAST_INTENT_ERROR,
         "route_budget_sec": ROUTE_BUDGET_SEC,
         "now": _now_iso(),
         "pipeline": "unified",

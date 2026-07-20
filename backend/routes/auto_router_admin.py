@@ -65,6 +65,72 @@ async def auto_router_status(_user: dict = Depends(get_current_user)):  # noqa: 
     return get_status()
 
 
+@router.get("/pick-probe")
+async def auto_router_pick_probe(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Diagnose 'router ticking but 0 picked'. Runs the router's EXACT
+    pick query, then applies its filters cumulatively so the step where
+    the count collapses exposes exactly which filter kills the match on
+    THIS environment's data. Read-only, bounded, safe to poll."""
+    import os  # noqa: WPS433
+    from datetime import timedelta  # noqa: WPS433
+    try:
+        lookback_min = int(os.environ.get("AUTO_ROUTER_LOOKBACK_MIN", "60"))
+    except (TypeError, ValueError):
+        lookback_min = 60
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(minutes=lookback_min)
+    ).isoformat()
+    filters = [
+        ("window", {"ingest_ts": {"$gte": cutoff}}),
+        ("not_executed", {"executed": {"$ne": True}}),
+        ("directional_action", {"action": {"$in": ["BUY", "SELL", "SHORT", "COVER"]}}),
+        ("has_symbol", {"symbol": {"$ne": None}}),
+        ("gate_state_open", {"gate_state": {"$nin": [
+            "blocked", "no_trade", "advisory_only", "submitted",
+            "expired_unrouted",
+        ]}}),
+        ("not_poisoned", {"route_timeouts": {"$not": {"$gte": 3}}}),
+    ]
+    q: dict = {}
+    breakdown = []
+    for name, f in filters:
+        q.update(f)
+        try:
+            n = await db["shared_intents"].count_documents(dict(q), maxTimeMS=6000)
+            breakdown.append({"filter_added": name, "count": n})
+        except Exception as exc:  # noqa: BLE001
+            breakdown.append({"filter_added": name, "error": str(exc)[:150]})
+    sample = []
+    try:
+        sample = await (
+            db["shared_intents"]
+            .find(q, {"_id": 0, "intent_id": 1, "symbol": 1, "action": 1,
+                      "lane": 1, "gate_state": 1, "ingest_ts": 1,
+                      "executed": 1, "route_timeouts": 1})
+            .sort("ingest_ts", -1)
+            .max_time_ms(6000)
+            .to_list(3)
+        )
+    except Exception as exc:  # noqa: BLE001
+        sample = [{"error": str(exc)[:150]}]
+    counts = [b.get("count") for b in breakdown if "count" in b]
+    routable_now = counts[-1] if counts else None
+    return {
+        "lookback_min": lookback_min,
+        "cutoff": cutoff,
+        "filter_breakdown": breakdown,
+        "routable_now": routable_now,
+        "sample_would_pick": sample,
+        "router_status": get_status(),
+        "reading": (
+            "routable_now > 0 with last_tick 0 picked → check "
+            "router_status.last_intent_error (_route_one crashing). "
+            "routable_now == 0 → the filter step where count collapses "
+            "is the killer."
+        ),
+    }
+
+
 @router.post("/force-tick")
 async def auto_router_force_tick(
     _user: dict = Depends(get_current_user),  # noqa: B008

@@ -195,21 +195,66 @@ async def get_dissent(
 
 @router.get("/status")
 async def get_trader_status(_user: dict = Depends(get_current_user)) -> dict:
-    """Sidecar trader status — DECOMMISSIONED. Returns a shape the
-    UI can render as a healthy "no sidecar" empty state. The real
-    live-trading status is on `/api/mc/arbiter/state` +
-    `/api/admin/trading/status`."""
+    """Live-trading loop status for the Trade Tape strip.
+
+    2026-07-20: previously a decommissioned-sidecar stub that pinned
+    the tiles to DISABLED/IDLE forever. Now surfaces the REAL
+    authority — the auto-router loop + master switch — in the shape
+    the TradeTape frontend consumes (`loop.alive_inference`,
+    `trades.fires_today`, `trades.spent_today_usd`,
+    `loop.last_receipt_ts`)."""
+    from shared.auto_router_supervisor import get_status  # noqa: WPS433
+    from routes.trading_controls import is_trading_enabled  # noqa: WPS433
+
+    st = get_status()
+    try:
+        armed = bool(await is_trading_enabled())
+    except Exception:  # noqa: BLE001
+        armed = False
+
+    today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    fires_today = 0
+    spent_today = 0.0
+    try:
+        pipe = [
+            {"$match": {"ts": {"$regex": f"^{today_iso}"}, "ok": True}},
+            {"$group": {"_id": None, "n": {"$sum": 1},
+                        "spent": {"$sum": {"$ifNull": ["$notional_usd", 0]}}}},
+        ]
+        async for row in db["executions"].aggregate(pipe, maxTimeMS=5000):
+            fires_today = int(row.get("n") or 0)
+            spent_today = float(row.get("spent") or 0.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("trader/status fires-today read failed: %s", exc)
+
+    task_alive = bool(st.get("task_alive"))
+    if not task_alive:
+        loop_state = "dead"
+    elif not armed:
+        loop_state = "disarmed"
+    else:
+        loop_state = "live"
+
     return {
-        "trader_enabled": False,
-        "loop_state": "decommissioned",
-        "fires_today": None,
-        "spent_today": None,
-        "last_cycle_at": None,
-        "note": (
-            "Sidecar trader was decommissioned in iter-23. Live-trading "
-            "authority is now `shared/auto_router.py`. See Operator "
-            "Control tile for the current loop state."
-        ),
+        "trader_enabled": armed and task_alive,
+        "loop_state": loop_state,
+        "master_switch_armed": armed,
+        "loop": {
+            "alive_inference": task_alive,
+            "last_receipt_ts": st.get("last_tick_ts"),
+        },
+        "trades": {
+            "fires_today": fires_today,
+            "spent_today_usd": spent_today,
+        },
+        "router": {
+            "tick_count": st.get("tick_count"),
+            "last_tick_ts": st.get("last_tick_ts"),
+            "last_tick_error": st.get("last_tick_error"),
+            "last_tick_disarmed": st.get("last_tick_disarmed"),
+            "last_tick_route_timeouts": st.get("last_tick_route_timeouts"),
+            "interval_sec": st.get("interval_sec"),
+        },
     }
 
 

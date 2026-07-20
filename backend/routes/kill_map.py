@@ -158,6 +158,67 @@ async def _sum_dict_field(field: str, since_iso: str) -> dict:
     return out
 
 
+async def _stage_router(since_iso: str) -> dict:
+    """Stage 3b — is the auto-router actually consuming the queue?
+    Answers 'everything is pending' directly: loop alive? armed?
+    erroring? how many routable candidates are waiting right now?"""
+    out: dict = {}
+    try:
+        from shared.auto_router_supervisor import (  # noqa: WPS433
+            AUTO_ROUTER_INTERVAL_SEC, get_status,
+        )
+        st = get_status()
+        out.update({
+            "task_alive": st.get("task_alive"),
+            "tick_count": st.get("tick_count"),
+            "last_tick_ts": st.get("last_tick_ts"),
+            "last_tick_error": st.get("last_tick_error"),
+            "last_tick_disarmed": st.get("last_tick_disarmed"),
+            "last_tick_route_timeouts": st.get("last_tick_route_timeouts"),
+            "last_tick_exceptions": st.get("last_tick_exceptions"),
+            "last_intent_error": st.get("last_intent_error"),
+            "interval_sec": st.get("interval_sec"),
+        })
+        ltt = st.get("last_tick_ts")
+        stale = True
+        if ltt:
+            try:
+                age = (datetime.now(timezone.utc)
+                       - datetime.fromisoformat(ltt)).total_seconds()
+                stale = age > (2 * AUTO_ROUTER_INTERVAL_SEC + 30)
+                out["last_tick_age_sec"] = round(age, 1)
+            except ValueError:
+                pass
+        out["tick_stale"] = stale
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = str(exc)[:200]
+    try:
+        from routes.trading_controls import is_trading_enabled  # noqa: WPS433
+        out["master_switch_armed"] = bool(await is_trading_enabled())
+    except Exception as exc:  # noqa: BLE001
+        out["master_switch_armed"] = None
+        out["master_switch_error"] = str(exc)[:120]
+    # Routable candidates — the router's exact pick query, as a count.
+    try:
+        out["routable_candidates_now"] = await db["shared_intents"].count_documents(
+            {
+                "ingest_ts": {"$gte": since_iso},
+                "executed": {"$ne": True},
+                "action": {"$in": ["BUY", "SELL", "SHORT", "COVER"]},
+                "symbol": {"$ne": None},
+                "gate_state": {"$nin": [
+                    "blocked", "no_trade", "advisory_only", "submitted",
+                    "expired_unrouted",
+                ]},
+                "route_timeouts": {"$not": {"$gte": 3}},
+            },
+            maxTimeMS=6000,
+        )
+    except Exception as exc:  # noqa: BLE001
+        out["routable_candidates_error"] = str(exc)[:120]
+    return out
+
+
 async def _stage_intents(since_iso: str) -> dict:
     out = {"intents_created": 0, "by_gate_state": {}, "by_lane": {}, "by_brain": {}}
     pipe = [
@@ -272,7 +333,7 @@ async def _stage_broker(since_iso: str) -> dict:
     return out
 
 
-def _verdict(pulse: dict, intents: dict, broker: dict) -> str:
+def _verdict(pulse: dict, intents: dict, broker: dict, router: dict) -> str:
     if pulse.get("pulses", 0) == 0:
         return "DIES AT STAGE 1: no pulse receipts in window — pulse worker not running."
     if pulse.get("snapshots_total", 0) == 0:
@@ -301,10 +362,41 @@ def _verdict(pulse: dict, intents: dict, broker: dict) -> str:
     gs = intents.get("by_gate_state", {})
     executed = broker.get("executed_intents") or 0
     blocked = gs.get("blocked", 0) + gs.get("rejected_at_ingest", 0) + gs.get("advisory_only", 0)
-    if isinstance(executed, int) and executed == 0 and blocked > 0:
+    # ── Stage 3b: intents land but NOTHING gets stamped → the router
+    # itself is the killer. Diagnose it before blaming the gates.
+    nothing_stamped = (
+        (not isinstance(executed, int) or executed == 0) and blocked == 0
+    )
+    if nothing_stamped and router:
+        if router.get("master_switch_armed") is False:
+            return ("DIES AT STAGE 3b: intents land in shared_intents but the auto-router "
+                    "MASTER SWITCH is DISARMED — every intent stays `pending` forever. "
+                    "Flip the Master switch on the Operator Control tile to open the tap.")
+        if router.get("task_alive") is False:
+            return ("DIES AT STAGE 3b: auto-router task is DEAD — no loop is consuming the "
+                    "queue. Restart the pod to revive it.")
+        if router.get("last_tick_error"):
+            return (f"DIES AT STAGE 3b: auto-router is ticking but FAILING — last error: "
+                    f"{str(router['last_tick_error'])[:140]}. Intents stay pending until this clears.")
+        if router.get("last_intent_error"):
+            return (f"DIES AT STAGE 3b: router picks intents but _route_one CRASHES on them — "
+                    f"last intent error: {str(router['last_intent_error'])[:140]}. Nothing gets "
+                    "stamped, so the queue reads all-pending.")
+        if (router.get("routable_candidates_now") or 0) > 0 and router.get("tick_count", 0) > 2:
+            return (f"DIES AT STAGE 3b: {router['routable_candidates_now']} routable intents are "
+                    "waiting and the router is ticking cleanly yet picks 0 — the pick query is not "
+                    "matching this environment's data. Run GET /api/admin/auto-router/pick-probe "
+                    "to see which filter kills the match.")
+        if router.get("tick_stale"):
+            return ("DIES AT STAGE 3b: auto-router tick is STALE (last tick "
+                    f"{router.get('last_tick_age_sec', '?')}s ago) — the loop is stuck. Pod restart recovers.")
+    if not isinstance(executed, int):
+        return (f"STAGE 5 READ ERROR: executed-intents count failed ({str(executed)[:100]}) — "
+                "funnel blind at the broker stage, check Atlas load.")
+    if executed == 0 and blocked > 0:
         return (f"DIES AT STAGE 4: {created} intents created, {blocked} blocked, 0 executed — "
                 "governance inflation confirmed. See top_block_reasons for the kill list.")
-    if isinstance(executed, int) and created:
+    if created:
         rate = executed / created * 100
         return (f"FLOW: {created} intents → {executed} executed ({rate:.0f}% passage). "
                 f"Blocked: {blocked}. See top_block_reasons for the biggest killers.")
@@ -323,19 +415,20 @@ async def kill_map(
     # the frontend's 25s budget. All stages are independent reads —
     # run them concurrently; wall time = slowest stage, not the sum.
     import asyncio  # noqa: WPS433
-    pulse, duplication, feeders, intents, reasons, broker = await asyncio.gather(
+    pulse, duplication, feeders, intents, reasons, broker, router_stage = await asyncio.gather(
         _stage_pulse(since_iso),
         _stance_metrics(hours),
         _stage_feeders(now),
         _stage_intents(since_iso),
         _stage_block_reasons(since_iso),
         _stage_broker(since_iso),
+        _stage_router(since_iso),
     )
     pulse["opinion_duplication"] = duplication
     return {
         "generated_at": now.isoformat(),
         "window_hours": hours,
-        "verdict": _verdict(pulse, intents, broker),
+        "verdict": _verdict(pulse, intents, broker, router_stage),
         "stage_0_feeders": feeders.get("latest_audit_per_provider", feeders),
         "stage_1_pulse": pulse,
         "stage_2_arbiter": {
@@ -345,6 +438,7 @@ async def kill_map(
             "emission_suppression": pulse.pop("emission_suppression"),
         },
         "stage_3_ingest": intents,
+        "stage_3b_router": router_stage,
         "stage_4_top_block_reasons": reasons,
         "stage_5_broker": broker,
     }

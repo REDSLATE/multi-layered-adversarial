@@ -2766,3 +2766,43 @@ Operator input: Webull broker-side minimum is now **$5/order** (Kraken stays fra
 - P3: db.ensure_indexes 866-line refactor.
 - Idea: fill alerts (notify operator on live broker fill).
 
+
+---
+
+## 2026-07-20 — Iteration 30: Prod "pending everywhere" diagnosis instruments
+
+### Prod symptom (from operator screenshots)
+Both switches ON, router TASK ALIVE ticking every 30s, NO errors — yet "0 picked"
+every tick while fresh directional intents sit `pending`. BLOCKED=0 in kill map.
+
+### Preview reproduction: LOOP WORKS
+Armed preview (arbiter LIVE + master ON, Webull temporarily disarmed): pulse emitted
+58 intents → router picked → multipliers + $5 floor size-up applied → capital
+reserved → honestly blocked at WEBULL_NOT_ARMED. All stamped. Code path is correct.
+Preview restored to safe state after (arbiter DISARMED, master OFF, WEBULL_ARMED=true).
+
+### Two possible prod causes (indistinguishable from the tile before this iteration)
+1. Pick query doesn't match prod documents (env/data-specific)
+2. Intents ARE picked but _route_one crashes per-intent — exceptions were SWALLOWED
+   into logs; tile showed "0 picked, no error"
+
+### Instruments shipped (all locally verified + 54 passed/2 skipped regression)
+- `GET /api/admin/auto-router/pick-probe` — runs the router's exact pick query with
+  cumulative filter breakdown; the step where count collapses = the killer
+- Supervisor: `last_tick_exceptions` + `last_intent_error` now surfaced in status
+  (per-intent crashes no longer invisible); `last_tick_disarmed` flag added
+- Kill map `stage_3b_router` stage + verdict now names the router-level killer
+  (DISARMED / task DEAD / tick FAILING / route_one CRASHING / query-mismatch → probe)
+- `/api/admin/trader/status` rewritten: Trade Tape tiles now show REAL loop state
+  (was a decommissioned-sidecar stub pinned to DISABLED/IDLE forever)
+
+### Kill-switch layers (for reference — answer to operator question)
+1. Master switch `trading_controls.enabled` — router preflight; OFF = silent pending-forever
+2. Broker-freeze `runtime_flags.master_trading_switch` — risk gate; OFF = stamped blocked/master_freeze_on
+3. Per-lane toggles `runtime_flags.lane_enabled` — risk gate; stamped blocked/lane_disabled
+Only layer 1 produces unstamped pending intents. Prod tile shows it ON.
+
+### NEXT STEP (waiting on operator)
+Redeploy prod, then either screenshot the Kill Map verdict (now self-diagnosing) or
+open `/api/admin/auto-router/pick-probe`.
+
