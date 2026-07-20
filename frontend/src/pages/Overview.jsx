@@ -22,6 +22,7 @@ import DivergenceChopGauge from "@/components/DivergenceChopGauge";
 import TradeTape from "@/components/TradeTape";
 import BrainPersonalities from "@/components/BrainPersonalities";
 import OperatorControl from "@/components/OperatorControl";
+import KillMapTile from "@/components/KillMapTile";
 
 export default function Overview() {
   const [overview, setOverview] = useState(null);
@@ -262,6 +263,14 @@ export default function Overview() {
               cadence instead of weeks. */}
           <PanelErrorBoundary panelName="Operator Control" testid="panel-error-operator-control">
             <OperatorControl />
+          </PanelErrorBoundary>
+
+          {/* Kill Map — full-funnel throughput view (2026-07-19,
+              passage-logic doctrine Phase 1). Shows exactly which
+              stage kills trades: pulse → arbiter → intent → gates
+              → broker. */}
+          <PanelErrorBoundary panelName="Kill Map" testid="panel-error-kill-map">
+            <KillMapTile />
           </PanelErrorBoundary>
 
           <div

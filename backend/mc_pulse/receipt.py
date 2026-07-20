@@ -113,6 +113,15 @@ class PulseReceipt:
     brains_silent: list[BrainSilence] = field(default_factory=list)
     arbitrations_completed: int = 0
     intents_emitted: int = 0                # 0 while DISARMED
+    # 2026-07-20 (kill-map Phase 1): per-brain envelope counts this
+    # tick, e.g. {"camino": 12, "gto": 9}. Answers "did the
+    # adversarial core get to compete?" without unwinding mc_seats.
+    opinions_by_brain: dict = field(default_factory=dict)
+    # 2026-07-20 (kill-map Phase 1): emission-suppression tally.
+    # Keys: emitted · suppressed_disarmed · emit_error · no_opinions
+    # · all_flat. Previously these outcomes were computed and thrown
+    # away — the exact "arbiter runs but nothing comes out" blind spot.
+    arbitration_outcomes: dict = field(default_factory=dict)
     grader_enqueued: int = 0
     runtime_mode: str = "DISARMED"
     overrun: bool = False

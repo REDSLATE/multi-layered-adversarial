@@ -240,6 +240,10 @@ async def _pulse_tick_impl(
                 lane=_snap.lane,
             ))
     receipt.brains_completed = sorted(brains_completed)
+    for env in envelopes:
+        receipt.opinions_by_brain[env.brain_id] = (
+            receipt.opinions_by_brain.get(env.brain_id, 0) + 1
+        )
 
     # ── Manifest persistence (2026-07 parity step 4) ──
     # After every brain has evaluated, drain hints from any brain
@@ -278,12 +282,23 @@ async def _pulse_tick_impl(
         except ValueError:
             mode = RuntimeMode.DISARMED
         seat_keys = sorted({e.seat_key for e in envelopes if e.seat_key})
+        outcomes = receipt.arbitration_outcomes
         for seat_key in seat_keys:
             try:
                 decision = await arbitrate(seat_key, runtime_mode=mode)
                 receipt.arbitrations_completed += 1
                 if decision.get("intent_id"):
                     receipt.intents_emitted += 1
+                    outcomes["emitted"] = outcomes.get("emitted", 0) + 1
+                elif decision.get("emit_error"):
+                    outcomes["emit_error"] = outcomes.get("emit_error", 0) + 1
+                elif decision.get("winner_brain") and mode != RuntimeMode.LIVE:
+                    outcomes["suppressed_disarmed"] = (
+                        outcomes.get("suppressed_disarmed", 0) + 1
+                    )
+                else:
+                    reason = decision.get("reason") or "no_winner"
+                    outcomes[reason] = outcomes.get(reason, 0) + 1
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "auto_arbitrate failed pulse_id=%s seat=%s err=%s",

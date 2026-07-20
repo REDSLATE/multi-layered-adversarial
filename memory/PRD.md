@@ -1,5 +1,30 @@
 # RISEDUAL Mission Control — PRD
 
+### 🗺️ 2026-07-20: Kill Map — Phase 1 of passage-logic doctrine (EXTENDED per operator spec)
+
+**Operator-approved sequence: 1 → feeder fix → 2a → 2b → 3 → 4.** ("Measure first, restore upstream emission second, then soften downstream blocking.")
+
+**Instrumentation added (was a blind spot — arbiter outcomes were computed then thrown away):**
+- `PulseReceipt.opinions_by_brain` — per-brain envelope counts per tick
+- `PulseReceipt.arbitration_outcomes` — emission-suppression tally: emitted · suppressed_disarmed · emit_error · no_opinions · all_flat (`mc_pulse/pulse.py` auto-arbitrate loop classifies each decision)
+
+**Kill-map v2 dimensions:** stage_0_feeders (latest audit per provider), per-brain opinions, emission_suppression, block reasons now grouped by reason×bucket×lane×brain with sample_symbols, broker_submits from `executions` (attempts/ok/by_status). 8-stage funnel on the tile: SNAPS → OPINIONS → ARBS → EMITTED → CREATED → BLOCKED → SUBMITS → EXECUTED with auto-highlighted death stage + feeder dots + suppression chips.
+
+**Verified live on preview:** verdict "arbiter picked 498 winners but is DISARMED"; all 4 brains competing (598 opinions each); feeders green. Lesson: two search_replace edits silently didn't land (stray fragment in kill_map.py caused backend SyntaxError; missing consts in KillMapTile caused ReferenceError caught by PanelErrorBoundary) — both found via logs and fixed.
+
+**Operator directive:** "The pipeline should block invalidity, not uncertainty. Invalid→stop, Uncertain→shrink, Conflicted→rank, Weak edge→deprioritize." Plan approved: Phase 1 (kill-map evidence) first, Phases 2-4 (soft degradation, lane quotas, trading modes) decided after prod evidence.
+
+**Audit finding:** much of the doctrine already exists — arbiter does disagreement→size multiplier [0.30-2.00] ("only mechanical invalidity blocks emission"), sizing_gate has observation_only→micro_live→normal_live ladder, blocker histogram exists. Actual hard blocks: master switch, seat vacancy (→advisory), pair floor, risk.check (freeze/lane/daily-cap), market closed, capital ledger, broker errors; ingest: lane policy + RR floor (Phase A soft).
+
+**Shipped:**
+- `GET /api/admin/kill-map?hours=24|72|168` (`routes/kill_map.py`, JWT auth, indexed+bounded): stage_1_pulse (pulses/snaps/silence reasons), stage_2_arbiter (arbs/emitted/modes), stage_3_ingest (gate_state distribution), stage_4_top_block_reasons (grouped by reason×bucket×lane), stage_5_broker (executed/fills), top-level `verdict` naming the death stage.
+- `KillMapTile.jsx` on Overview (below Operator Control): verdict banner, 6-stage funnel with auto-highlighted death stage, 24H/72H/7D toggle, top-5 block reasons table. 30s auto-refresh.
+
+**Verified:** curl 200 in 0.15s; screenshot confirms tile renders with correct data (preview verdict: DIES AT STAGE 2 — arbiter DISARMED).
+
+**Pending Phases (await prod kill-map JSON):** Phase 2 soft degradation (seat-vacancy/weak-RR → size-down), Phase 3 lane quotas (top-4 ranked admission per lane), Phase 4 trading modes (live_cautious/live_normal/lockdown).
+
+
 ### 🧹 2026-07-19: Dead-section audit — 10 dead endpoints, 9 UI surfaces removed, 2 repaired
 
 **Method:** Extracted all 97 frontend API paths, matched against the live FastAPI route table, curl-verified every suspect with an admin token (all 404).
