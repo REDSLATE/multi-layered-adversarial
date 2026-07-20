@@ -239,6 +239,15 @@ async def reprobe(_user: dict = Depends(get_current_user)):
         }
 
     ok = live["ok"]
+    if ok:
+        # Live call succeeded → heal the stale token mirror (it holds
+        # the 6-min PENDING TTL and reads "expired" forever otherwise)
+        # and re-read so this response reports the corrected state.
+        try:
+            _wa.mark_live_ok()
+            token_status = _wa.status()
+        except Exception:  # noqa: BLE001
+            pass
     detail = {
         "endpoint": "webull trade API (list_open_orders_v3)",
         "live_trade_api": live,

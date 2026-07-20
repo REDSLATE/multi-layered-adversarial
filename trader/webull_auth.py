@@ -306,6 +306,34 @@ async def create_token() -> dict:
     return _sanitized(payload)
 
 
+def mark_live_ok() -> None:
+    """A live trade-API call just succeeded — heal the local mirror.
+
+    2026-07-22: the mirror's `expires` is the 6-minute PENDING TTL from
+    token creation; Webull extends it to 15 days server-side on 2FA
+    approval but never tells us. Result: `expired: true / -253h` while
+    live calls work fine. A successful authenticated call is PROOF the
+    token is NORMAL and unexpired, so stamp that truth locally."""
+    now = datetime.now(timezone.utc)
+    now_ms = int(now.timestamp() * 1000)
+    with _lock:
+        global _cache
+        if _cache is None:
+            _cache = _read_from_disk() or {}
+        _cache["status"] = "NORMAL"
+        _cache["last_live_ok"] = now.isoformat()
+        exp = _cache.get("expires") or 0
+        if exp < now_ms:
+            # Webull's documented token TTL is 15 days; a working call
+            # means we're inside it. Refresh the mirror to now+15d —
+            # re-confirmed (and re-extended) on every successful probe.
+            _cache["expires"] = now_ms + 15 * 86_400_000
+        try:
+            _write_to_disk(_cache)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def status() -> dict:
     """Cheap read for the UI — never hits Webull."""
     with _lock:
