@@ -54,7 +54,7 @@ from typing import Optional
 # Sentinel values used by the router when the gate refuses an order.
 # 2026-02-19 (rev): min lowered $3 → $1 to align with Webull's
 # fractional-share order minimum. Max held at $10 for blast-radius.
-DEFAULT_MIN_NOTIONAL_USD = 1.00
+DEFAULT_MIN_NOTIONAL_USD = 5.00  # 2026-07-20: Webull rejects < $5
 DEFAULT_MAX_NOTIONAL_USD = 10.00
 
 # 2026-02-20 (operator directive): the static `WEBULL_MAX_NOTIONAL_USD`
@@ -275,9 +275,12 @@ def webull_notional_band(
     # how the operator flips $3 → $1 (or any value) from the admin UI
     # without redeploying. The env var remains as a fallback for
     # operators who prefer deploy-config control.
+    # 2026-07-20: Webull now hard-rejects orders under $5 broker-side,
+    # so the override can only TIGHTEN (raise) the floor — a stale
+    # low override in Mongo must not reopen the sub-$5 reject path.
     mongo_floor = _read_cached_floor_override()
     if mongo_floor is not None:
-        lo = mongo_floor
+        lo = max(lo, mongo_floor)
     # Sanity rails — never let the floor invert.
     lo = max(0.01, lo)
 

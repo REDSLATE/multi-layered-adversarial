@@ -171,7 +171,64 @@ async def _gate_risk(ctx: RouteContext) -> Optional[dict]:
     sd = ctx.sd
     # 2a. Governor multiplier applied here — ONE PASS.
     adjusted_notional = max(0.0, ctx.notional_raw * sd.risk_multiplier)
+
+    # 2a-ii. Soft degradation (Phase 2, 2026-07-20): the arbiter's
+    # conviction multiplier (disagreement × quality, stamped on
+    # evidence.size_multiplier at emit time) now scales size. Weak
+    # conviction = smaller order, not a dead intent.
+    arb_mult = 1.0
+    try:
+        raw_m = (ctx.intent.get("evidence") or {}).get("size_multiplier")
+        if raw_m is not None:
+            arb_mult = min(1.0, max(0.0, float(raw_m)))
+    except (TypeError, ValueError):
+        arb_mult = 1.0
+    adjusted_notional *= arb_mult
     final_notional = adjusted_notional
+
+    # 2a-iii. Sized-to-zero is a conviction outcome, not a risk
+    # rejection — stamp advisory_only so the kill map reads honestly.
+    if final_notional <= 0:
+        await executions.record(
+            intent=ctx.intent,
+            seat_verdict=sd.verdict,
+            seat_holder=sd.executor,
+            seat_reason=sd.reason,
+            strategist=sd.strategist,
+            governor=sd.governor,
+            executor=sd.executor,
+            auditor=sd.auditor,
+            angels=sd.angels,
+            risk_multiplier=sd.risk_multiplier,
+            risk_ok=False,
+            risk_reason="sized_to_zero",
+            notional_usd=0.0,
+            broker_status="sized_to_zero",
+            ok=False,
+        )
+        try:
+            await _db()[SHARED_INTENTS].update_one(
+                {"intent_id": ctx.intent_id},
+                {"$set": {
+                    "gate_state": "advisory_only",
+                    "last_submit_ts": _now_iso(),
+                    "last_submit_by": _auto_router_email(),
+                    "broker_reason": "SIZED_TO_ZERO",
+                    "broker_error_bucket": "conviction_sizing",
+                    "notional_source": ctx.notional_source,
+                    "sizing_degradation": {
+                        "base_usd": ctx.notional_raw,
+                        "seat_multiplier": sd.risk_multiplier,
+                        "arbiter_multiplier": arb_mult,
+                        "final_usd": 0.0,
+                    },
+                }},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return {"verdict": "advisory_only", "reason": "SIZED_TO_ZERO",
+                "seat_multiplier": sd.risk_multiplier,
+                "arbiter_multiplier": arb_mult}
 
     # 2b. Kraken per-pair notional floor (crypto only).
     if ctx.lane == "crypto":
@@ -270,6 +327,87 @@ async def _gate_risk(ctx: RouteContext) -> Optional[dict]:
                         "floor_usd": far.notional_usd,
                         "cap_usd": cap,
                         "pair": far.floor.pair}
+
+    # 2c. Equity broker floor size-up (2026-07-20 soft degradation).
+    # Webull rejects orders under $5 (operator-confirmed broker
+    # change). Mirrors the crypto pair-floor doctrine: size UP to the
+    # floor instead of letting a quality-dampened order die at
+    # WEBULL_NOTIONAL_BELOW_FLOOR. Cap stays the authority — a floor
+    # above the per-order cap blocks honestly.
+    floor_sized_up = False
+    equity_floor_usd = None
+    if ctx.lane == "equity":
+        from shared.broker.webull_caps import webull_notional_band  # noqa: WPS433
+        eq_lo, _eq_hi, _src = webull_notional_band(None)
+        equity_floor_usd = eq_lo
+        if final_notional < eq_lo:
+            cap = risk.per_order_cap()
+            if eq_lo > cap:
+                detail = (
+                    f"floor=${eq_lo:.2f}>cap=${cap:.2f} "
+                    f"for {ctx.intent.get('symbol')}"
+                )
+                await executions.record(
+                    intent=ctx.intent,
+                    seat_verdict=sd.verdict,
+                    seat_holder=sd.executor,
+                    seat_reason=sd.reason,
+                    strategist=sd.strategist,
+                    governor=sd.governor,
+                    executor=sd.executor,
+                    auditor=sd.auditor,
+                    angels=sd.angels,
+                    risk_multiplier=sd.risk_multiplier,
+                    risk_ok=False,
+                    risk_reason=f"equity_floor_exceeds_per_order_cap:{detail}",
+                    notional_usd=final_notional,
+                    broker_status="blocked_by_cap_authority",
+                    exception_type="EquityFloorExceedsCap",
+                    exception_msg=detail,
+                    ok=False,
+                )
+                try:
+                    await _db()[SHARED_INTENTS].update_one(
+                        {"intent_id": ctx.intent_id},
+                        {"$set": {
+                            "gate_state": "blocked",
+                            "last_submit_ts": _now_iso(),
+                            "last_submit_by": _auto_router_email(),
+                            "broker_reason": "equity_floor_exceeds_per_order_cap",
+                            "broker_error_bucket": "min_order_notional",
+                            "broker_error_detail": detail,
+                            "notional_source": ctx.notional_source,
+                        }},
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                return {"verdict": "blocked",
+                        "reason": "equity_floor_exceeds_per_order_cap",
+                        "floor_usd": eq_lo, "cap_usd": cap}
+            logger.info(
+                "auto_router equity floor size_up $%.2f → $%.2f for %s",
+                final_notional, eq_lo, ctx.intent.get("symbol"),
+            )
+            final_notional = eq_lo
+            floor_sized_up = True
+
+    # 2d. Sizing provenance — full trail of how the size was derived.
+    try:
+        await _db()[SHARED_INTENTS].update_one(
+            {"intent_id": ctx.intent_id},
+            {"$set": {"sizing_degradation": {
+                "base_usd": ctx.notional_raw,
+                "notional_source": ctx.notional_source,
+                "seat_multiplier": sd.risk_multiplier,
+                "arbiter_multiplier": arb_mult,
+                "floor_sized_up": floor_sized_up,
+                "equity_floor_usd": equity_floor_usd,
+                "final_usd": final_notional,
+                "ts": _now_iso(),
+            }}},
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
     # 3. Risk hard limits.
     rc = await risk.check(ctx.intent, notional_usd=final_notional)
