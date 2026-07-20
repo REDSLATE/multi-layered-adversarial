@@ -330,7 +330,10 @@ export default function Intents() {
   //   showDisabledLanes: when crypto (or any lane) is paused, hide its
   //         intents from the operator queue by default. Toggle ON to
   //         inspect them for QA / forensics.
-  const [sort, setSort] = useState("conviction");
+  //   sort: newest (default — 2026-07-22: conviction-default pinned
+  //   5d-old conf=1.0 intents to the top and read as "crypto stopped
+  //   emitting"; recency is the honest first view)
+  const [sort, setSort] = useState("newest");
   const [showDisabledLanes, setShowDisabledLanes] = useState(false);
   const [enabledLanes, setEnabledLanes] = useState([]);
   const [queueNote, setQueueNote] = useState("");
