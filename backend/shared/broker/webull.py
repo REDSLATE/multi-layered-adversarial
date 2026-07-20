@@ -54,8 +54,17 @@ import os
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Optional
+
+# 2026-07-21: dedicated bounded pool for Webull SDK calls. The SDK is
+# sync/blocking; running it on the DEFAULT executor let a hung HTTPS
+# call (no socket timeout pre-fix) strand zombie threads that starved
+# every other run_in_executor user in the process — the prod
+# auto-router's persistent `TimeoutError` traced back to this pool
+# exhaustion. Worst case now: 4 stuck threads, contained here.
+_SDK_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="webull-sdk")
 
 # 2026-02-19 — Quiet the Webull SDK's INFO-level token-check chatter
 # so the operator can actually see request/response lines in the
@@ -201,7 +210,7 @@ class WebullAdapter(BrokerAdapter):
         thread is the cheapest correct fix.
         """
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
+        return await loop.run_in_executor(_SDK_EXECUTOR, lambda: fn(*args, **kwargs))
 
     async def _resolve_account_id(self) -> str:
         if self.account_id:
@@ -1654,7 +1663,17 @@ async def get_webull_adapter() -> Optional[WebullAdapter]:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Webull clock-skew compensator install raised: %s", exc)
         try:
-            api_client = ApiClient(app_key, app_secret, region_id)
+            # 2026-07-21: hard socket deadlines. SDK defaults are
+            # None (= hang forever); a stalled Webull endpoint froze
+            # executor threads and cascaded into auto-router
+            # TimeoutErrors. 8s connect / 15s read keeps every SDK
+            # round-trip under the router's 20s per-intent budget.
+            connect_t = float(os.environ.get("WEBULL_CONNECT_TIMEOUT_SEC", "8"))
+            read_t = float(os.environ.get("WEBULL_READ_TIMEOUT_SEC", "15"))
+            api_client = ApiClient(
+                app_key, app_secret, region_id,
+                connect_timeout=connect_t, timeout=read_t,
+            )
             if environment == "uat":
                 api_client.add_endpoint(region_id, "us-openapi-alb.uat.webullbroker.com")
         except Exception as e:  # noqa: BLE001

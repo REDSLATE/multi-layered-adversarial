@@ -61,7 +61,44 @@ _LAST_TICK_TS: Optional[str] = None
 _LAST_TICK_RESULTS: int = 0
 _LAST_TICK_EXECUTED: int = 0
 _LAST_TICK_ERROR: Optional[str] = None
+_LAST_TICK_TIMEOUTS: int = 0
+_LAST_TICK_DEFERRED: int = 0
 _STARTED_AT: Optional[str] = None
+
+# Route-phase wall budget per tick. 5 intents × 20s each could hit
+# 100s — far past the old 45s whole-tick bound, which fired
+# TimeoutError and threw away ALL results ("0 picked"). Now the
+# route loop self-bounds: intents past the budget are DEFERRED to
+# the next tick instead of blowing up the tick.
+ROUTE_BUDGET_SEC = float(os.environ.get("AUTO_ROUTER_ROUTE_BUDGET_SEC", "35"))
+ROUTE_TIMEOUT_POISON_LIMIT = 3
+
+
+async def _stamp_route_timeout(intent: dict) -> None:
+    """Record a per-intent route timeout. After 3 strikes the intent
+    is terminally stamped `blocked/ROUTE_TIMEOUT_POISON` so one hung
+    symbol can't head-of-line-block the queue forever."""
+    iid = intent.get("intent_id")
+    if not iid:
+        return
+    strikes = int(intent.get("route_timeouts") or 0) + 1
+    update: dict = {
+        "$inc": {"route_timeouts": 1},
+        "$set": {"last_route_timeout_at": _now_iso()},
+    }
+    if strikes >= ROUTE_TIMEOUT_POISON_LIMIT:
+        update["$set"].update({
+            "gate_state": "blocked",
+            "broker_reason": "ROUTE_TIMEOUT_POISON",
+            "broker_error_bucket": "timeout",
+        })
+    try:
+        await asyncio.wait_for(
+            db[SHARED_INTENTS].update_one({"intent_id": iid}, update),
+            timeout=5.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("route-timeout stamp failed intent=%s: %s", iid, exc)
 
 
 def _now_iso() -> str:
@@ -91,9 +128,17 @@ async def _tick() -> list[dict]:
     in-flight submitted order must not be stranded just because the
     operator flipped the switch mid-flight.
     """
+    global _LAST_TICK_TIMEOUTS, _LAST_TICK_DEFERRED
+    _LAST_TICK_TIMEOUTS = 0
+    _LAST_TICK_DEFERRED = 0
     # Sweep first — cheap update_many, keeps the funnel honest.
     # Attribute lookup on _ar so monkeypatched mocks are picked up.
-    await _ar._sweep_expired_unrouted()
+    try:
+        await asyncio.wait_for(_ar._sweep_expired_unrouted(), timeout=10.0)
+    except asyncio.TimeoutError:
+        logger.warning("expired-unrouted sweep exceeded 10s timeout")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("expired-unrouted sweep raised unexpectedly: %s", exc)
     # Reconcile submitted broker orders (2026-07-06). Independently
     # timeout-guarded; a broker outage cannot block routing.
     try:
@@ -127,6 +172,9 @@ async def _tick() -> list[dict]:
             "blocked", "no_trade", "advisory_only", "submitted",
             "expired_unrouted",
         ]},
+        # Poison guard: 3 route timeouts and you're out of the queue
+        # ($not matches docs where the field is missing too).
+        "route_timeouts": {"$not": {"$gte": ROUTE_TIMEOUT_POISON_LIMIT}},
     }
     sample = await asyncio.wait_for(
         (
@@ -142,12 +190,20 @@ async def _tick() -> list[dict]:
         return []
 
     results: list[dict] = []
+    loop_time = asyncio.get_event_loop().time
+    deadline = loop_time() + ROUTE_BUDGET_SEC
     for intent in sample:
+        remaining = deadline - loop_time()
+        if remaining < 3.0:
+            _LAST_TICK_DEFERRED += 1
+            continue
         try:
-            # 2026-06-30: route_one wrapped in its own bounded timeout
-            # so a slow broker call cannot block the entire tick. The
-            # tick exits in ≤30s no matter what.
-            r = await asyncio.wait_for(_ar._route_one(intent), timeout=20.0)
+            # Per-intent bound, capped by the tick's remaining route
+            # budget — a slow broker call slips to the next tick
+            # instead of killing this one.
+            r = await asyncio.wait_for(
+                _ar._route_one(intent), timeout=min(20.0, remaining),
+            )
             results.append(r)
             if r.get("verdict") == "executed":
                 logger.info(
@@ -157,10 +213,12 @@ async def _tick() -> list[dict]:
                     r.get("final_notional") or r.get("notional_usd") or 0,
                 )
         except asyncio.TimeoutError:
+            _LAST_TICK_TIMEOUTS += 1
             logger.error(
                 "auto-router _route_one timeout intent=%s symbol=%s action=%s",
                 intent.get("intent_id"), intent.get("symbol"), intent.get("action"),
             )
+            await _stamp_route_timeout(intent)
         except Exception as e:  # noqa: BLE001
             logger.exception(
                 "auto-router error on intent %s: %s",
@@ -184,7 +242,9 @@ async def _loop() -> None:
             # this the tile reads `tick_count=0 · last_tick_ts=None
             # · last_tick_error=None` indefinitely because the await
             # never returns and the try/except never fires.
-            results = await asyncio.wait_for(_tick(), timeout=45.0)
+            # 90s safety net only — the tick now self-bounds every
+            # phase (sweeps 10+15s, query 12s, route budget 35s).
+            results = await asyncio.wait_for(_tick(), timeout=90.0)
             _TICK_COUNT += 1
             _LAST_TICK_TS = _now_iso()
             _LAST_TICK_RESULTS = len(results) if results else 0
@@ -225,6 +285,9 @@ def get_status() -> dict:
         "last_tick_results": _LAST_TICK_RESULTS,
         "last_tick_executed": _LAST_TICK_EXECUTED,
         "last_tick_error": _LAST_TICK_ERROR,
+        "last_tick_route_timeouts": _LAST_TICK_TIMEOUTS,
+        "last_tick_deferred": _LAST_TICK_DEFERRED,
+        "route_budget_sec": ROUTE_BUDGET_SEC,
         "now": _now_iso(),
         "pipeline": "unified",
         "doctrine_note": (

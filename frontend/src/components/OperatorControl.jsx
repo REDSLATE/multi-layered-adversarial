@@ -152,34 +152,6 @@ export default function OperatorControl() {
     }
   };
 
-  const [busyNuke, setBusyNuke] = React.useState(false);
-  const nukeTestData = async () => {
-    const typed = window.prompt(
-      "This wipes ALL disposable/test collections (receipts, bars, opinions, intents, universe, memory). " +
-      "Preserves users, credentials, seats, pins. Type exactly:  YES_I_MEAN_IT",
-      ""
-    );
-    if (typed !== "YES_I_MEAN_IT") {
-      alert("Cancelled — you must type YES_I_MEAN_IT exactly.");
-      return;
-    }
-    setBusyNuke(true);
-    try {
-      const r = await api.post("/admin/nuke-test-data?confirm=YES_I_MEAN_IT");
-      const results = r.data?.results || {};
-      const lines = Object.entries(results).map(
-        ([coll, info]) => `${coll}: ${info.dropped ? `dropped (was ${info.before} rows)` : info.skipped || info.err || "?"}`
-      );
-      alert("Nuke complete:\n\n" + lines.join("\n"));
-    } catch (e) {
-      const raw = e?.response?.data?.detail ?? e.message;
-      alert("Nuke failed: " + (typeof raw === "string" ? raw : JSON.stringify(raw)));
-    } finally {
-      setBusyNuke(false);
-      load();
-    }
-  };
-
   const flipMaster = async () => {
     const current = !!tradingCtl?.trading_enabled_runtime;
     const next = !current;
@@ -590,43 +562,6 @@ export default function OperatorControl() {
           every seat is resolving all_flat — check confidence thresholds / regime gates.
         </div>
 
-        {/* ── Danger Zone ─────────────────────────────────────────
-            Deliberately at the very bottom, visually isolated, with
-            a two-step reveal to prevent muscle-memory misclicks
-            between Force-Tick and destructive operations. */}
-        <div
-          className="mt-8 pt-4 border-t"
-          style={{ borderColor: "#EF4444", opacity: 0.6 }}
-          data-testid="operator-control-danger-zone"
-        >
-          <details>
-            <summary
-              className="text-[10px] font-mono uppercase tracking-widest cursor-pointer select-none"
-              style={{ color: "#EF4444" }}
-              data-testid="danger-zone-toggle"
-            >
-              ▶ Danger Zone (destructive operations)
-            </summary>
-            <div className="mt-3 border p-3" style={{ borderColor: "#EF4444" }}>
-              <div className="text-[10px] font-mono text-rd-dim mb-2 leading-relaxed">
-                <div className="mb-1" style={{ color: "#EF4444" }}>☢ Nuke Test Data</div>
-                Drops disposable collections (receipts, bars, opinions, intents,
-                universe, memory). <b>Preserves</b> users, credentials, seats,
-                operator pins. Use only to shrink a bloated Atlas cluster after
-                heavy dev/test churn. Requires typing YES_I_MEAN_IT to confirm.
-              </div>
-              <button
-                onClick={nukeTestData}
-                disabled={busyNuke}
-                data-testid="nuke-test-data-btn"
-                className="text-[10px] font-mono uppercase tracking-widest border px-3 py-1 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-red-950"
-                style={{ borderColor: "#EF4444", color: "#EF4444" }}
-              >
-                {busyNuke ? "nuking…" : "☢ nuke test data"}
-              </button>
-            </div>
-          </details>
-        </div>
       </div>
     </Card>
   );

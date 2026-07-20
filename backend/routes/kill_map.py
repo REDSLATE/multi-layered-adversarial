@@ -180,6 +180,15 @@ async def _stage_intents(since_iso: str) -> dict:
             out["by_brain"][brain] = out["by_brain"].get(brain, 0) + n
     except Exception as exc:  # noqa: BLE001
         out["error"] = str(exc)[:300]
+        # Fallback: cheap indexed count so the funnel isn't blind
+        # just because the $group blew its Atlas time budget.
+        try:
+            out["intents_created"] = await db["shared_intents"].count_documents(
+                {"ingest_ts": {"$gte": since_iso}}, maxTimeMS=5000,
+            )
+            out["count_source"] = "fallback_count"
+        except Exception as exc2:  # noqa: BLE001
+            out["count_error"] = str(exc2)[:120]
     return out
 
 
@@ -284,6 +293,10 @@ def _verdict(pulse: dict, intents: dict, broker: dict) -> str:
         return "DIES AT STAGE 2: arbiter runs but emits 0 intents (all_flat / no directional opinions). Brains aren't forming directional views — check brain thresholds, not gates."
     created = intents.get("intents_created", 0)
     if created == 0:
+        if intents.get("error"):
+            return (f"STAGE 3 READ ERROR: shared_intents aggregation failed ({intents['error'][:120]}) — "
+                    "the funnel is BLIND here, not necessarily dead. Trade Tape reads the same collection; "
+                    "if it shows fresh rows, intents ARE landing.")
         return "DIES AT STAGE 3: arbiter emitted intents but none landed in shared_intents — ingest path failing (auth/lane policy). Check emit_error on mc_seats decisions."
     gs = intents.get("by_gate_state", {})
     executed = broker.get("executed_intents") or 0
