@@ -6,6 +6,7 @@ import KrakenBrokerTile from "@/components/KrakenBrokerTile";
 import LaneRoutingPill from "@/components/LaneRoutingPill";
 import MasterTradingSwitch from "@/components/MasterTradingSwitch";
 import WebullOtocoTestPanel from "@/components/WebullOtocoTestPanel";
+import IntentStageTrace from "@/components/IntentStageTrace";
 import WebullOtocoLivePanel from "@/components/WebullOtocoLivePanel";
 import TraderPostMortem from "@/components/TraderPostMortem";
 import InputProvenanceBadge from "@/components/InputProvenanceBadge";
@@ -283,6 +284,7 @@ function IntentRow({ intent, expanded, onToggle }) {
                     routes intents to the broker. The Sidecar Trader
                     (background asyncio task) owns all execution and
                     writes to `executions.sqlite` + Mongo mirror. */}
+                <IntentStageTrace intentId={intent.intent_id} />
               </div>
               <div className="text-[11px] font-mono space-y-2">
                 <div className="label-eyebrow mb-2">Stamped by MC</div>

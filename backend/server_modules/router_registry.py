@@ -142,6 +142,7 @@ from routes.db_admin import router as db_admin_router
 from routes.healthcheck_full import router as healthcheck_full_router
 from routes.pipeline_doctor import router as pipeline_doctor_router
 from routes.kill_map import router as kill_map_router
+from routes.intent_trace import router as intent_trace_router
 from routes.admin_quiver import router as admin_quiver_router
 from routes.broker_selection import router as broker_selection_router
 from routes.strategy_reference import router as strategy_reference_router
@@ -221,6 +222,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(healthcheck_full_router)
     api_router.include_router(pipeline_doctor_router)
     api_router.include_router(kill_map_router)
+    api_router.include_router(intent_trace_router)
     api_router.include_router(admin_quiver_router)
     api_router.include_router(live_positions_router)
     api_router.include_router(brain_lane_policy_router)

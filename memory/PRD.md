@@ -1,5 +1,19 @@
 # RISEDUAL Mission Control — PRD
 
+### 🔍 2026-07-20 (later still): Per-intent stage trace
+
+**Operator directive:** "failures can hide between stages — build a single per-intent stage trace."
+
+**Shipped:**
+- `GET /api/admin/intent-trace/{intent_id}` (`routes/intent_trace.py`): stitches mc_seats decision (arbiter: winner/size cascade/duplicate suppression) + shared_intents contract row + shared_gate_results (chronological) + executions submits + shared_broker_fills (matched by symbol ±30min — fills carry no intent link) into one response with a terminal `verdict` (FILLED / EXECUTED / DIED AT GATES / DIED UNROUTED / DIED AT FIREWALL / DIED AT BROKER / PENDING / NOT FOUND).
+- `IntentStageTrace.jsx` inside the expanded intent row on Intents page: verdict banner + ARBITER→INTENT→GATES→BROKER→FILLS chain with pass/block/wait/none states + gate check rows.
+- New sparse index `mc_seats_intent_id` in `db.ensure_indexes` for the arbiter-stage lookup.
+
+**Verified:** curl on real intents (blocked one → "DIED AT GATES: broker 'kraken' adapter not configured"; executed one → EXECUTED with 2 submits); UI screenshot confirms trace renders in expanded row. Note: legacy intents show ARBITER·none (pre-dated intent_id stamping on seat docs); all new emissions carry the full arbiter record.
+
+**Env note discovered:** `/api/intents` default hides disabled-lane intents; preview's recent intents are all crypto (lane disabled) → Intents page looks empty until "show disabled lanes" toggle (data-testid intents-show-disabled-checkbox).
+
+
 ### 🔒 2026-07-20 (later): Recurrence firewall + stance-duplication metrics
 
 **Operator directive:** "persistent belief ≠ repeated order request" — enforce before LIVE.

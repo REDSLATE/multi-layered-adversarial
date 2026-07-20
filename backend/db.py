@@ -356,6 +356,15 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         [("ts", 1)],
         name="mc_seats_ts_grader",
     )
+    # Per-intent stage trace (2026-07-20): look up the arbiter
+    # decision that minted a given intent. Sparse — only winner
+    # rows carry an intent_id.
+    await _safe_create_index(
+        db.mc_seats,
+        [("intent_id", 1)],
+        name="mc_seats_intent_id",
+        sparse=True,
+    )
     # MC Pulse — 2026-07-11 (iter-27). Pulse-owned envelopes carry
     # a `pulse_id` that lets retried pulses complete missing work
     # without ever double-executing. Two unique constraints
