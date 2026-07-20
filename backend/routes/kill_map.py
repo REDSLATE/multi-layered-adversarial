@@ -82,6 +82,64 @@ async def _stage_pulse(since_iso: str) -> dict:
     return totals
 
 
+async def _stance_metrics(hours: int) -> dict:
+    """Opinion-duplication readout: how much of the directional flow
+    is the SAME stance re-asserted across consecutive 5-min buckets?
+
+    Capped at a 24h window — mc_seats grows ~2.4k rows/hour and this
+    group-by must stay cheap on Atlas. Uses the `ts` index.
+    """
+    capped = min(hours, 24)
+    since = (datetime.now(timezone.utc) - timedelta(hours=capped)).isoformat()
+    out: dict = {"window_hours_used": capped}
+    groups: list[tuple[tuple, int]] = []
+    unique_rows = 0
+    directional_rows = 0
+    flat_rows = 0
+    pipe = [
+        {"$match": {"ts": {"$gte": since}}},
+        {"$group": {
+            "_id": {"brain": "$brain", "symbol": "$symbol",
+                    "direction": "$direction"},
+            "n": {"$sum": 1},
+        }},
+    ]
+    try:
+        async for d in db["mc_seats"].aggregate(pipe, maxTimeMS=10000):
+            n = d["n"]
+            unique_rows += n
+            key = d["_id"]
+            if key.get("direction") in ("LONG", "SHORT"):
+                directional_rows += n
+                groups.append((
+                    (key.get("brain"), key.get("direction"), key.get("symbol")), n,
+                ))
+            else:
+                flat_rows += n
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = str(exc)[:200]
+        return out
+    distinct = len(groups)
+    repeated = directional_rows - distinct
+    out.update({
+        "unique_opinion_rows": unique_rows,
+        "flat_rows": flat_rows,
+        "directional_rows": directional_rows,
+        "distinct_stances": distinct,
+        "repeated_directional_rows": repeated,
+        "pct_repeated_directional": round(
+            repeated / directional_rows * 100, 1) if directional_rows else 0.0,
+    })
+    if groups:
+        (brain, direction, symbol), n = max(groups, key=lambda g: g[1])
+        out["top_repeated_stance"] = {
+            "brain": brain, "direction": direction, "symbol": symbol,
+            "buckets": n,
+        }
+        out["max_buckets_same_stance"] = n
+    return out
+
+
 async def _sum_dict_field(field: str, since_iso: str) -> dict:
     """Sum a `{key: int}` dict field across receipts in the window."""
     out: dict[str, int] = {}
@@ -248,6 +306,7 @@ async def kill_map(
     since_iso = (now - timedelta(hours=hours)).isoformat()
     from routes.pipeline_doctor import _stage_feeders  # noqa: WPS433
     pulse = await _stage_pulse(since_iso)
+    pulse["opinion_duplication"] = await _stance_metrics(hours)
     feeders = await _stage_feeders(now)
     intents = await _stage_intents(since_iso)
     reasons = await _stage_block_reasons(since_iso)

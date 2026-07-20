@@ -290,6 +290,10 @@ async def _pulse_tick_impl(
                 if decision.get("intent_id"):
                     receipt.intents_emitted += 1
                     outcomes["emitted"] = outcomes.get("emitted", 0) + 1
+                elif decision.get("suppressed_duplicate"):
+                    outcomes["suppressed_duplicate"] = (
+                        outcomes.get("suppressed_duplicate", 0) + 1
+                    )
                 elif decision.get("emit_error"):
                     outcomes["emit_error"] = outcomes.get("emit_error", 0) + 1
                 elif decision.get("winner_brain") and mode != RuntimeMode.LIVE:

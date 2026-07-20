@@ -1,5 +1,17 @@
 # RISEDUAL Mission Control — PRD
 
+### 🔒 2026-07-20 (later): Recurrence firewall + stance-duplication metrics
+
+**Operator directive:** "persistent belief ≠ repeated order request" — enforce before LIVE.
+
+**1. Emit-side idempotency (`mc_arbiter/arbiter.py::_find_duplicate_stance`)** — before `_emit_intent` (LIVE only), suppress when: (A) un-routed `pending` intent exists for same (brain, symbol, action), or (B) open/pending_open/held position exists for same (brain, symbol, direction). Decision doc gets `suppressed_duplicate` + `suppression_reason` + `duplicate_of` (first_intent_id). Fail-OPEN on query errors (transient Mongo issue must not strangle emission; downstream gates still stand). Pulse receipt tallies `suppressed_duplicate` in `arbitration_outcomes`. Guards against the 2026-07-11 "472 identical intents" class failure.
+**Tested:** 65/65 arbiter tests pass + 5-case direct unit test (clean→emit, pending→suppress w/ first_intent_id, opposite direction→emit, open position→suppress, other brain→emit). NOTE: LIVE emit path not exercisable in preview (DISARMED) — guard tested directly.
+
+**2. Kill-map `opinion_duplication`** (`_stance_metrics`, capped 24h window, uses mc_seats `ts` index): unique rows, flat vs directional, distinct stances, % repeated directional, top repeated stance, max buckets same stance. Tile row on Overview: "10556 events · 7936 unique · 206 stances · 87.9% repeated directional · top: barracuda SHORT COPM/USD ×39 buckets" — verified via screenshot.
+
+**Preview evidence (24h):** 87.9% of directional opinions are re-asserted stances; worst case one stance held 39 consecutive buckets (3.25h) — without the new guard that would have been up to 39 intents in LIVE.
+
+
 ### 🗺️ 2026-07-20: Kill Map — Phase 1 of passage-logic doctrine (EXTENDED per operator spec)
 
 **Operator-approved sequence: 1 → feeder fix → 2a → 2b → 3 → 4.** ("Measure first, restore upstream emission second, then soften downstream blocking.")

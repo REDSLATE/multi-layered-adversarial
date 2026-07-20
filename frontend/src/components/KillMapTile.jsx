@@ -46,6 +46,8 @@ export default function KillMapTile() {
     .filter(([k]) => !k.startsWith("_") && k !== "emitted")
     .sort((x, y) => y[1] - x[1]);
   const submits = b.broker_submits || {};
+  const dup = p.opinion_duplication || {};
+  const topStance = dup.top_repeated_stance;
 
   const stages = [
     { label: "SNAPS", value: p.snapshots_total },
@@ -170,6 +172,30 @@ export default function KillMapTile() {
                   ⊘ {reason.replace(/_/g, " ")} <span className="font-bold">{n}</span>
                 </span>
               ))}
+            </div>
+          )}
+
+          {typeof dup.distinct_stances === "number" && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-mono text-rd-dim mb-1" data-testid="kill-map-duplication">
+              <span>
+                {opinionsTotal} events · {dup.unique_opinion_rows} unique ·{" "}
+                <span className="text-rd-text">{dup.distinct_stances} stances</span>
+              </span>
+              <span
+                className={dup.pct_repeated_directional >= 50 ? "text-rd-warn" : ""}
+                data-testid="kill-map-pct-repeated"
+                title="Directional opinions that re-assert an existing (brain, symbol, direction) stance from an earlier 5-min bucket"
+              >
+                {dup.pct_repeated_directional}% repeated directional
+              </span>
+              {topStance && (
+                <span data-testid="kill-map-top-stance">
+                  top: {topStance.brain} {topStance.direction} {topStance.symbol} ×{topStance.buckets} buckets
+                </span>
+              )}
+              {dup.window_hours_used < hours && (
+                <span className="text-rd-dim">({dup.window_hours_used}h window)</span>
+              )}
             </div>
           )}
 

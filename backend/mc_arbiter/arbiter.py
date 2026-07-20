@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from db import db
+from namespaces import SHARED_INTENTS, SHARED_POSITIONS
 from mc_arbiter.dawe import (
     compute_effective_weight,
     size_multiplier as dawe_size_multiplier,
@@ -247,17 +248,38 @@ async def arbitrate(seat_key: str, runtime_mode: RuntimeMode) -> dict:
 
     # Emit (LIVE only). Failures don't nuke the decision record —
     # we log the emit outcome onto the seat doc, honest either way.
+    #
+    # 2026-07-20 (recurrence firewall, operator directive):
+    # persistent belief ≠ repeated order request. Before emitting,
+    # check whether this exact stance (brain, symbol, direction) is
+    # already in flight — an un-routed `pending` intent or an open
+    # position from the same brain. If so, SUPPRESS the duplicate
+    # and record why. This is the guard against the 2026-07-11
+    # "472 identical intents" class failure: a stable thesis held
+    # across N consecutive 5-min buckets must not mint N intents.
     intent_id: Optional[str] = None
     emit_error: Optional[str] = None
     if runtime_mode == RuntimeMode.LIVE:
-        try:
-            intent_id = await _emit_intent(decision, winner["opinion"])
-        except Exception as exc:  # noqa: BLE001
-            emit_error = f"{type(exc).__name__}: {exc}"
-            logger.exception(
-                "arbiter emit failed seat=%s winner=%s",
-                seat_key, winner["brain"],
+        dup = await _find_duplicate_stance(winner["brain"], symbol, winning_dir)
+        if dup is not None:
+            decision["suppressed_duplicate"] = True
+            decision["suppression_reason"] = dup["reason"]
+            decision["duplicate_of"] = dup.get("first_intent_id")
+            logger.info(
+                "arbiter duplicate stance suppressed seat=%s brain=%s "
+                "%s %s reason=%s first=%s",
+                seat_key, winner["brain"], winning_dir, symbol,
+                dup["reason"], dup.get("first_intent_id"),
             )
+        else:
+            try:
+                intent_id = await _emit_intent(decision, winner["opinion"])
+            except Exception as exc:  # noqa: BLE001
+                emit_error = f"{type(exc).__name__}: {exc}"
+                logger.exception(
+                    "arbiter emit failed seat=%s winner=%s",
+                    seat_key, winner["brain"],
+                )
 
     decision["intent_id"] = intent_id
     decision["emit_error"] = emit_error
@@ -271,6 +293,65 @@ async def arbitrate(seat_key: str, runtime_mode: RuntimeMode) -> dict:
         upsert=False,
     )
     return decision
+
+
+async def _find_duplicate_stance(
+    brain: str, symbol: str, direction: str,
+) -> Optional[dict]:
+    """Return `{reason, first_intent_id}` when the same stance is
+    already in flight; None when emission is genuinely new.
+
+    Two checks, cheapest first (both indexed + bounded):
+      A. an un-routed `pending` intent for the same
+         (brain, symbol, action) — the previous bucket's emission
+         hasn't even been routed yet; re-emitting is pure spam.
+      B. an open/pending position for the same (brain, symbol,
+         direction) — the thesis is already expressed in the book;
+         a repeat would stack the position mechanically.
+
+    Fail-OPEN on query errors: a transient Mongo issue must not
+    silently strangle emission (the auto-router's own gates still
+    stand downstream). The error is logged for the audit trail.
+    """
+    action = {"LONG": "BUY", "SHORT": "SELL"}[direction]
+    try:
+        doc = await db[SHARED_INTENTS].find_one(
+            {
+                "stack": brain,
+                "symbol": symbol,
+                "action": action,
+                "gate_state": "pending",
+            },
+            {"_id": 0, "intent_id": 1},
+            max_time_ms=1500,
+        )
+        if doc:
+            return {
+                "reason": "pending_intent_exists",
+                "first_intent_id": doc.get("intent_id"),
+            }
+        pos = await db[SHARED_POSITIONS].find_one(
+            {
+                "symbol": symbol,
+                "state": {"$in": ["open", "pending_open", "held"]},
+                "direction": {"$in": [direction, direction.lower()]},
+                "$or": [{"proposed_by": brain}, {"brain": brain}],
+            },
+            {"_id": 0, "position_id": 1, "opened_by_intent_id": 1},
+            max_time_ms=1500,
+        )
+        if pos:
+            return {
+                "reason": "position_already_open",
+                "first_intent_id": pos.get("opened_by_intent_id")
+                or pos.get("position_id"),
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "duplicate-stance check failed brain=%s symbol=%s: %s "
+            "(failing OPEN — emitting)", brain, symbol, exc,
+        )
+    return None
 
 
 async def _emit_intent(decision: dict, winner_opinion: dict) -> Optional[str]:
