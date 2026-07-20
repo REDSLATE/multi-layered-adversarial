@@ -116,30 +116,75 @@ _ARM_CACHE_VAL: Optional[bool] = None
 _ARM_CACHE_TS: float = 0.0
 _ARM_CACHE_TTL_SEC = 2.0
 _ARM_LAST_LOGGED: Optional[bool] = None
+# ── Read-failure grace window (2026-07-22) ─────────────────────────
+# Prod Atlas intermittently times out the trading_controls read; the
+# old behaviour instantly failed closed → the tick silently returned
+# "0 picked" with no error while the UI toggle showed ON (same class
+# as the pulse DISARMED_READ_ERROR bug). Now a failed read retries
+# once, then falls back to the LAST KNOWN switch state for up to
+# AUTO_ROUTER_SWITCH_GRACE_SEC before failing closed — and the
+# degradation is visible on `get_status()` / Operator Control.
+_ARM_GRACE_SEC = float(os.environ.get("AUTO_ROUTER_SWITCH_GRACE_SEC", "300"))
+_ARM_LAST_GOOD: Optional[bool] = None
+_ARM_LAST_GOOD_TS: float = 0.0
+_ARM_READ_DEGRADED: bool = False
+_ARM_LAST_READ_ERROR: Optional[str] = None
+
+
+async def _read_switch_once() -> tuple[Optional[bool], Optional[str]]:
+    """One bounded read attempt. Returns (armed, error) — error is
+    non-None when the underlying Mongo read failed (as opposed to the
+    switch genuinely being OFF)."""
+    try:
+        import routes.trading_controls as _tc  # noqa: WPS433
+        val = bool(await asyncio.wait_for(_tc.is_trading_enabled(), timeout=6.0))
+        return val, getattr(_tc, "LAST_READ_ERROR", None)
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{type(exc).__name__}: {exc}"[:200]
 
 
 async def _is_master_switch_armed() -> bool:
     """Consult the operator's master-switch Mongo doc, cached ~2s.
 
-    Fail-CLOSED on any error: an unreadable arm state means we do
-    NOT submit new orders. The reconcile sweep still runs (called
-    unconditionally at the top of `_tick`) so in-flight orders keep
-    their acks flowing.
+    Read-failure policy (2026-07-22): retry once (0.5s backoff), then
+    serve the last-known state for up to `_ARM_GRACE_SEC` (marked
+    DEGRADED), and only fail closed when no recent known state exists.
+    The reconcile sweep still runs (called unconditionally at the top
+    of `_tick`) so in-flight orders keep their acks flowing.
     """
     global _ARM_CACHE_VAL, _ARM_CACHE_TS, _ARM_LAST_LOGGED
+    global _ARM_LAST_GOOD, _ARM_LAST_GOOD_TS, _ARM_READ_DEGRADED
+    global _ARM_LAST_READ_ERROR
     now = _time_module.monotonic()
     if _ARM_CACHE_VAL is not None and (now - _ARM_CACHE_TS) < _ARM_CACHE_TTL_SEC:
         return _ARM_CACHE_VAL
-    try:
-        from routes.trading_controls import is_trading_enabled  # noqa: WPS433
-        armed = bool(await is_trading_enabled())
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "auto_router: master-switch read FAILED (%s: %s) — "
-            "failing closed (armed=False)",
-            type(exc).__name__, exc,
-        )
-        armed = False
+    armed, err = await _read_switch_once()
+    if err is not None:
+        await asyncio.sleep(0.5)
+        armed, err = await _read_switch_once()
+    if err is not None:
+        _ARM_READ_DEGRADED = True
+        _ARM_LAST_READ_ERROR = err
+        age = now - _ARM_LAST_GOOD_TS
+        if _ARM_LAST_GOOD is not None and age < _ARM_GRACE_SEC:
+            logger.error(
+                "auto_router: master-switch read FAILED twice (%s) — "
+                "using last-known state %s (age %.0fs, grace %.0fs)",
+                err, "ARMED" if _ARM_LAST_GOOD else "DISARMED",
+                age, _ARM_GRACE_SEC,
+            )
+            armed = _ARM_LAST_GOOD
+        else:
+            logger.error(
+                "auto_router: master-switch read FAILED twice (%s) and no "
+                "recent known state — failing closed (armed=False)", err,
+            )
+            armed = False
+    else:
+        _ARM_READ_DEGRADED = False
+        _ARM_LAST_READ_ERROR = None
+        _ARM_LAST_GOOD = armed
+        _ARM_LAST_GOOD_TS = now
     _ARM_CACHE_VAL = armed
     _ARM_CACHE_TS = now
     # State-change logging so the operator can grep the log for

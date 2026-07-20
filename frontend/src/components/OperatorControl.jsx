@@ -503,6 +503,12 @@ export default function OperatorControl() {
               Last tick skipped intake: MASTER SWITCH read as DISARMED by the router. Intents stay pending while this shows.
             </div>
           )}
+          {router.master_switch_read_degraded && (
+            <div className="mt-2 border border-orange-600 px-2 py-1 text-[10px] font-mono text-orange-400" data-testid="router-switch-read-degraded">
+              <Warning size={10} className="inline mr-1" />
+              MASTER SWITCH read DEGRADED — Mongo read failing ({router.master_switch_read_error || "unknown"}). Router is using last-known state: {router.master_switch_last_known === true ? "ARMED" : router.master_switch_last_known === false ? "DISARMED" : "none (fail-closed)"}. Check Atlas load.
+            </div>
+          )}
           {probe && (
             <div className="mt-3 border border-rd-border p-2" data-testid="router-pick-probe-result">
               <div className="flex items-center justify-between mb-1.5">

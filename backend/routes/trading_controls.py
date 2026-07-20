@@ -43,7 +43,9 @@ async def get_trading_status() -> dict:
     """Return the live trading-controls state. Seeds an OFF default on
     first read — fail-CLOSED: if the doc has never been touched, MC
     refuses to fire orders. Operator must explicitly enable."""
-    doc = await db[COLLECTION].find_one({"_id": DOC_ID}, {"_id": 0})
+    doc = await db[COLLECTION].find_one(
+        {"_id": DOC_ID}, {"_id": 0}, max_time_ms=4000,
+    )
     if doc:
         return doc
     seed = {
@@ -60,13 +62,25 @@ async def get_trading_status() -> dict:
     return seed
 
 
+
+# Last read failure, if any — lets callers (auto_router preflight)
+# distinguish "switch is OFF" from "read FAILED and we fail-closed".
+# 2026-07-22: on prod Atlas the read intermittently times out; the
+# router was silently reporting "0 picked" every such tick.
+LAST_READ_ERROR: Optional[str] = None
+
+
 async def is_trading_enabled() -> bool:
     """Single-line check for the auto-router. Fail-CLOSED on error
-    (Mongo unreachable → no orders fire)."""
+    (Mongo unreachable → no orders fire). Sets `LAST_READ_ERROR` so
+    the caller can tell an OFF switch from a failed read."""
+    global LAST_READ_ERROR
     try:
         doc = await get_trading_status()
+        LAST_READ_ERROR = None
         return bool(doc.get("enabled", False))
     except Exception as exc:  # noqa: BLE001
+        LAST_READ_ERROR = f"{type(exc).__name__}: {exc}"[:200]
         logger.warning("trading_controls fail-CLOSED: %s", exc)
         return False
 

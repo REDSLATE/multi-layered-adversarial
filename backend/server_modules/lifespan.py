@@ -337,6 +337,16 @@ async def lifespan(app: FastAPI):
             "Auto-router NOT started — runtime_flags.auto_router_enabled is not true. "
             "POST /api/admin/auto-router/start to enable."
         )
+    # Retention sweeper (2026-07-22 operator directive): telemetry
+    # backlog expires after RETENTION_DAYS (default 7); only real
+    # executions/fills are kept forever. Directly attacks prod Atlas
+    # "operation exceeded time limit" saturation.
+    try:
+        from shared.retention import start_worker_if_enabled as _start_retention
+        _start_retention()
+        logger.info("Retention sweeper started")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Retention sweeper start failed: %s", e)
 
     # ── Stale-intent sweeper (2026-02-19 operator directive) ──────
     # 30-minute cadence, 6-hour age gate, archive-then-delete
@@ -965,6 +975,11 @@ async def lifespan(app: FastAPI):
     try:
         from shared.brain_tuning_cache import stop_refresher as _stop_brain_tuning_refresher
         await _stop_brain_tuning_refresher()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from shared.retention import stop_worker as _stop_retention
+        await _stop_retention()
     except Exception:  # noqa: BLE001
         pass
     client.close()

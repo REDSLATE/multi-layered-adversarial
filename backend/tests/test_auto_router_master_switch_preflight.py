@@ -106,7 +106,7 @@ async def test_master_switch_returns_true_when_armed(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_master_switch_fails_closed_on_read_error(monkeypatch):
-    """A Mongo read failure MUST NOT accidentally arm the loop."""
+    """A Mongo read failure with NO recent known state MUST NOT arm."""
     async def _boom():
         raise RuntimeError("mongo unreachable")
 
@@ -115,6 +115,38 @@ async def test_master_switch_fails_closed_on_read_error(monkeypatch):
         _boom,
     )
     auto_router._invalidate_arm_cache()
+    monkeypatch.setattr(auto_router, "_ARM_LAST_GOOD", None)
+    monkeypatch.setattr(auto_router, "_ARM_LAST_GOOD_TS", 0.0)
+    assert await auto_router._is_master_switch_armed() is False
+    assert auto_router._ARM_READ_DEGRADED is True
+
+
+@pytest.mark.asyncio
+async def test_master_switch_grace_window_uses_last_known(monkeypatch):
+    """2026-07-22: a transient read failure within the grace window
+    serves the LAST KNOWN state (marked degraded) instead of silently
+    disarming the loop — prod Atlas blips must not zero the router."""
+    import time as _t
+
+    async def _boom():
+        raise RuntimeError("operation exceeded time limit")
+
+    monkeypatch.setattr(
+        "routes.trading_controls.is_trading_enabled",
+        _boom,
+    )
+    auto_router._invalidate_arm_cache()
+    monkeypatch.setattr(auto_router, "_ARM_LAST_GOOD", True)
+    monkeypatch.setattr(auto_router, "_ARM_LAST_GOOD_TS", _t.monotonic())
+    assert await auto_router._is_master_switch_armed() is True
+    assert auto_router._ARM_READ_DEGRADED is True
+
+    # Past the grace window → fail closed.
+    auto_router._invalidate_arm_cache()
+    monkeypatch.setattr(
+        auto_router, "_ARM_LAST_GOOD_TS",
+        _t.monotonic() - auto_router._ARM_GRACE_SEC - 1,
+    )
     assert await auto_router._is_master_switch_armed() is False
 
 

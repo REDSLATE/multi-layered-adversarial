@@ -1,4 +1,13 @@
-### 📱 2026-07-20 (late night): Webull 2FA code flow clarified
+### 🧹 2026-07-22: 7-day retention sweeper + master-switch read hardening
+**Operator directive:** "Eliminate the backlog, expire after 7 days. Only data we need is actual executions; failed ones eliminate." Confirmed: OHLCV bars trimmed to 7d too.
+- **`shared/retention.py`**: hourly worker, 27 collection rules, batched deletes (2000 ids × 50 batches/coll/cycle, 0.2s sleeps — gentle on Atlas). KEPT FOREVER: `shared_intents` executed=true, `executions` ok=true, `shared_broker_fills`, config/creds/controls. Env: RETENTION_DAYS=7, RETENTION_SWEEP_INTERVAL_SEC=3600, RETENTION_ENABLED.
+- Endpoints: `GET /api/admin/retention/status`, `POST /api/admin/retention/run` (routes/retention_admin.py). Wired in lifespan (start after auto-router block, stop at shutdown).
+- **Preview first cycle: 1,338,580 docs purged in 156s.** Invariants verified: 620 ok=true executions >7d kept, 0 failed rows remain, fills untouched. Capped collections (mc_shelly, ohlcv_bars, brain_silences, etc.) drain progressively each cycle.
+- **Master-switch read hardening** (`auto_router._is_master_switch_armed`): prod screenshots showed "0 picked • 0 exec" with switches ON + Kill Map "STAGE 5 READ ERROR: operation exceeded time limit" — root cause: trading_controls read fails on saturated Atlas → is_trading_enabled fail-closed silently → tick returns [] with no error. Fix: `trading_controls.LAST_READ_ERROR` distinguishes OFF from read-failure; retry once (0.5s), then last-known state within 300s grace (AUTO_ROUTER_SWITCH_GRACE_SEC), else fail closed. `get_trading_status` find_one bounded max_time_ms=4000. Status now exposes master_switch_read_degraded/last_known/read_error; OperatorControl shows orange "SWITCH READ DEGRADED" banner (data-testid router-switch-read-degraded).
+- Tests: 23/23 pass incl. new grace-window tests (test_auto_router_master_switch_preflight.py).
+- **Prod runbook:** deploy → sweeper auto-drains hourly (or POST /api/admin/retention/run to accelerate) → Atlas load drops → "operation exceeded time limit" errors should disappear → router picks flow. User also advised Atlas M10 upgrade (support confirmed Emergent has no managed Mongo; MONGO_URL is user-supplied).
+
+
 - User: "Webull sends a code" — verified via Webull OpenAPI docs: the SMS code is entered INSIDE the Webull mobile app (Menu → Messages → OpenAPI Notifications → Check Now), never in our app; their API has no code-submission endpoint. Our push-trigger flow is correct.
 - Updated TokenPushCard copy + `/admin/webull/reauth` response message to spell out the in-app code-entry path.
 - User confirmed keys are already in prod env; user redeploying to get the Connect Webull card (was absent from their earlier deploys — commits verified present in repo).

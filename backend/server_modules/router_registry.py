@@ -98,6 +98,7 @@ from routes.broker_lane_admin import router as broker_lane_admin_router
 from routes.symbol_registry_admin import router as symbol_registry_admin_router
 from routes.live_universe_admin import router as live_universe_admin_router
 from routes.auto_router_admin import router as auto_router_admin_router
+from routes.retention_admin import router as retention_admin_router
 from routes.intent_sweeper_admin import router as intent_sweeper_admin_router
 from routes.counterfactuals_admin import router as counterfactuals_admin_router
 from routes.broker_fills_admin import router as broker_fills_admin_router
@@ -267,6 +268,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(observation_receipts_router)
     api_router.include_router(learning_ladder_router)
     api_router.include_router(auto_router_admin_router)
+    api_router.include_router(retention_admin_router)
     api_router.include_router(intent_sweeper_admin_router)
     api_router.include_router(counterfactuals_admin_router)
     api_router.include_router(broker_fills_admin_router)
