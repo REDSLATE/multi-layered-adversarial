@@ -147,8 +147,15 @@ def _parse_iso(ts: Any) -> Optional[datetime]:
 
 
 async def _load_universe() -> list[str]:
+    # 2026-07-21: respect the `active` flag. Counting retired /
+    # frozen universe members made a healthy feeder look dead —
+    # prod showed "31 stale" where most were symbols the refresher
+    # had dropped and feeders correctly no longer feed.
     cursor = db["patterns_universe"].find(
-        {"$or": [{"lane": "equity"}, {"lane": {"$exists": False}}]},
+        {
+            "$or": [{"lane": "equity"}, {"lane": {"$exists": False}}],
+            "active": {"$ne": False},
+        },
         {"_id": 0, "symbol": 1},
     )
     symbols: set[str] = set()

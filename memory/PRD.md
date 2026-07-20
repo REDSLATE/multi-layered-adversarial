@@ -3,6 +3,20 @@
 - Updated TokenPushCard copy + `/admin/webull/reauth` response message to spell out the in-app code-entry path.
 - User confirmed keys are already in prod env; user redeploying to get the Connect Webull card (was absent from their earlier deploys — commits verified present in repo).
 
+### 🎯 2026-07-21: PROD ROOT CAUSE FULLY TRACED — one cause, five symptoms
+**The dead Webull token (Jul 6) caused the entire prod equity outage:**
+1. Token died → webull_ohlc feeder silent (invisible pre-fix)
+2. Equity universe refresher (`shared/universe/refresher.py::refresh_equity_universe`) builds from Webull screener (fetch_top_gainers/losers/most_active — need token) → every 15-min cycle failed since Jul 6 → universe FROZE
+3. Feeders feed only active universe members → finnhub keeps frozen-core symbols (AAPL/AMD/AMZN...) fresh at 12-23s — feeder was NEVER broken
+4. Other ~29 equity symbols left/froze in the universe → bars frozen at 13.4d (= Jul 6)
+5. Brain Input Health `_load_universe` had NO active filter → counted retired symbols as "stale problems" → made healthy feeder look dead
+
+**Fix shipped:** `routes/admin_brain_input_health.py::_load_universe` now filters `active: {"$ne": False}`. Verified preview: universe 20 / fresh 19 / stale 0.
+
+**Recovery path (user executing):** 2FA push pending on prod → SMS code entered in Webull app → token NORMAL → screener works → universe rebuilds within 15 min → equity bars flow. User informed of T+0/T+15/T+20 timeline.
+
+**Also answered:** "keys every time?" → No: keys once (env), token every ~15 days (Mongo mirror survives redeploys — if prod still loses it per-deploy, investigate token mirror rehydration). "13.4d" = days.
+
 # RISEDUAL Mission Control — PRD
 
 ### ⚡ 2026-07-20 (night): DISARMED read-error fix + kill-map parallelization
