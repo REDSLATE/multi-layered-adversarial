@@ -2688,3 +2688,49 @@ scope if either field needs a new query/cache pattern.
 - Not backfilling crypto `tf=1d` bars in this pass (separate small
   follow-up, noted above, not blocking)
 
+
+---
+
+## 2026-07-20 — Iteration 28: Auto-Router TimeoutError root-caused + purge footguns removed
+
+### Root cause of the persistent `last error: TimeoutError · 0 picked`
+1. **Webull SDK zombie threads**: `ApiClient` was built with NO socket timeouts
+   (SDK default = hang forever). SDK calls ran on the DEFAULT thread executor via
+   `run_in_executor(None, ...)`. `asyncio.wait_for` cancels the awaiter but NOT the
+   thread → hung HTTPS calls stranded threads → default pool exhausted → every
+   subsequent executor user (incl. router ticks) timed out forever.
+2. **Incoherent tick budget**: 5 intents × 20s per `_route_one` = up to 100s inside
+   a 45s whole-tick `wait_for` → tick blew up and threw ALL results away.
+
+### Fixes shipped (all tested — iteration_28.json, 11/11 PASS)
+- `shared/broker/webull.py`: dedicated `ThreadPoolExecutor(4, "webull-sdk")` for
+  `_sdk_call`; `ApiClient(connect_timeout=8, timeout=15)` (env: WEBULL_CONNECT_TIMEOUT_SEC,
+  WEBULL_READ_TIMEOUT_SEC).
+- `shared/auto_router_supervisor.py`: deadline-based route loop
+  (`AUTO_ROUTER_ROUTE_BUDGET_SEC=35`, per-intent `min(20, remaining)`, over-budget
+  intents DEFERRED to next tick); `_loop` safety bound 45→90s; `_sweep_expired_unrouted`
+  bounded 10s; poison guard — 3 route timeouts → `gate_state=blocked` /
+  `broker_reason=ROUTE_TIMEOUT_POISON` + excluded from pick query; status now exposes
+  `last_tick_route_timeouts`, `last_tick_deferred`, `route_budget_sec`.
+- `routes/kill_map.py`: stage-3 aggregation error now falls back to indexed
+  `count_documents`; verdict says "STAGE 3 READ ERROR (funnel blind, not dead)"
+  instead of falsely claiming intents never landed (explains the Trade-Tape-vs-KillMap
+  discrepancy the operator saw on prod).
+- Purge footguns removed: `routes/emergency_purge.py` + `routes/nuke_test_data.py`
+  deleted, router_registry wiring removed, Danger Zone UI removed from
+  `OperatorControl.jsx`, `EMERGENCY_PURGE_TOKEN` removed from backend/.env. Both
+  endpoints verified 404.
+
+### Remaining backlog (unchanged priorities)
+- P1: Phase 2 — soft degradation / sizing multipliers instead of hard blocks
+  (was gated on this router fix; now unblocked, needs prod validation of fills first).
+- P2: Phase 3 — Top-4 lane admission by rank/quota.
+- P2: Migrate trade log to append-only JSONL (Atlas IOPS).
+- P3: `db.ensure_indexes` 866-line refactor.
+
+### Note for next agent
+Preview arbiter is DISARMED — force-tick returning 0 results in preview is expected.
+Operator must redeploy prod and watch `/api/admin/auto-router/status`: expect
+`last_tick_error=null` and, if a symbol still hangs, `last_tick_route_timeouts>0`
+with poisoned intents visible in kill-map top block reasons as ROUTE_TIMEOUT_POISON.
+
