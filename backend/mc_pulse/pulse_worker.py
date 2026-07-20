@@ -53,14 +53,31 @@ def _env_bool(key: str, default: bool = False) -> bool:
 
 async def _read_runtime_mode_safe() -> str:
     """Cheap single-doc read of the persisted arbiter runtime mode.
-    Falls back to `DISARMED` on any error — that's the safe default
-    (arbitration still runs, no intent is emitted)."""
-    try:
-        from mc_arbiter.arbiter import get_runtime_mode  # noqa: WPS433
-        mode = await get_runtime_mode()
-        return mode.value
-    except Exception:  # noqa: BLE001
-        return "DISARMED"
+    Falls back to `DISARMED` on error — the safe posture — but as of
+    2026-07-20 the failure is RETRIED once and LOGGED LOUDLY, and the
+    fallback is flagged on the receipt via the returned sentinel.
+
+    Why: on prod this read was silently failing under Atlas load,
+    so the pulse ran DISARMED on every tick while the operator's
+    toggle (whose own read succeeded) showed LIVE. "It says disarmed
+    but nothing is disarming it" — a swallowed exception was.
+    """
+    last_exc: Exception | None = None
+    for attempt in (1, 2):
+        try:
+            from mc_arbiter.arbiter import get_runtime_mode  # noqa: WPS433
+            mode = await get_runtime_mode()
+            return mode.value
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if attempt == 1:
+                await asyncio.sleep(0.5)
+    logger.error(
+        "runtime_mode read FAILED twice — pulse falling back to "
+        "DISARMED for this tick (operator toggle may still show LIVE). "
+        "err=%s", last_exc,
+    )
+    return "DISARMED_READ_ERROR"
 
 
 async def _pulse_loop() -> None:

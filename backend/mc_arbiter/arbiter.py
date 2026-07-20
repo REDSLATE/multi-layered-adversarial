@@ -400,6 +400,7 @@ async def get_runtime_mode() -> RuntimeMode:
     the safe posture when the doc is missing or malformed."""
     doc = await db[BRM].find_one(
         {"_id": STACK_ID}, {"arbiter.runtime_mode": 1},
+        max_time_ms=3000,
     )
     raw = (((doc or {}).get("arbiter") or {}).get("runtime_mode") or "DISARMED")
     try:

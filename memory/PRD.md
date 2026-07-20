@@ -1,5 +1,18 @@
 # RISEDUAL Mission Control — PRD
 
+### ⚡ 2026-07-20 (night): DISARMED read-error fix + kill-map parallelization
+
+**User report (prod):** Operator Control toggle showed ARBITER ON but every pulse tick reported MODE=DISARMED ("it says disarmed but nothing is disarming it"). Meanwhile Trade Tape showed fresh intents seconds old — intermittent behavior.
+
+**Root cause:** `mc_pulse/pulse_worker._read_runtime_mode_safe` swallowed ALL exceptions and returned "DISARMED" silently. On prod Atlas, the per-tick BRM read intermittently fails → tick runs DISARMED; when it succeeds → LIVE emits. UI toggle read succeeds separately → shows ON. Fix: read bounded (max_time_ms=3000 in `get_runtime_mode`), retried once with 0.5s backoff, logged at ERROR, and failure now returns sentinel "DISARMED_READ_ERROR" (maps safely to DISARMED via existing ValueError catch in pulse.py; receipt/UI show the true string).
+
+**Kill-map prod timeout fixed:** user screenshot showed "Request timed out after 25s" on prod tile. Stages were serial; now `asyncio.gather` across all 6 stages (+ inner dict-sum pair). Verified: 7d window in 0.81s on preview (mc_pulses HAS started_at index; confirmed).
+
+**Also answered:** Webull 2FA button location = Intents page → Equity Lane → Connect Webull → "Trigger 2FA push" (needs redeploy to appear on prod). Crypto is NOT on the equity schedule (market-closed pre-flight is `if ctx.lane == "equity"` fenced; `_evaluate_gates`/shared/execution.py in lane-toggle docstring is a stale reference to deleted direct-execute path).
+
+**Prod open thread:** router reports "0 picked · 0 exec" while pending intents exist seconds-old — next diagnosis via per-intent Stage trace after user redeploys.
+
+
 ### 🔌 2026-07-20 (evening): Broker-as-feed restoration path (prod equity starvation)
 
 **Prod diagnosis (user screenshots):** equity bars stale 13.3d (died ~Jul 7), last source finnhub_equity (the FALLBACK — Webull primary never wrote on prod). MONGO ONLINE / MODE EXECUTE / lanes ON → pure data starvation, not governance. Crypto (Kraken) appears fresh on prod.

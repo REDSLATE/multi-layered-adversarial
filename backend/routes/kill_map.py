@@ -57,12 +57,13 @@ async def _stage_pulse(since_iso: str) -> dict:
 
     # Per-brain opinion counts + emission-suppression tallies —
     # instrumented on the receipt 2026-07-20; pre-instrumentation
-    # receipts simply contribute nothing.
-    totals["opinions_by_brain"] = await _sum_dict_field(
-        "opinions_by_brain", since_iso,
-    )
-    totals["emission_suppression"] = await _sum_dict_field(
-        "arbitration_outcomes", since_iso,
+    # receipts simply contribute nothing. Run concurrently.
+    import asyncio as _aio  # noqa: WPS433
+    totals["opinions_by_brain"], totals["emission_suppression"] = (
+        await _aio.gather(
+            _sum_dict_field("opinions_by_brain", since_iso),
+            _sum_dict_field("arbitration_outcomes", since_iso),
+        )
     )
 
     # Silence reasons — sample last 40 receipts (cheap, representative).
@@ -305,12 +306,19 @@ async def kill_map(
     now = datetime.now(timezone.utc)
     since_iso = (now - timedelta(hours=hours)).isoformat()
     from routes.pipeline_doctor import _stage_feeders  # noqa: WPS433
-    pulse = await _stage_pulse(since_iso)
-    pulse["opinion_duplication"] = await _stance_metrics(hours)
-    feeders = await _stage_feeders(now)
-    intents = await _stage_intents(since_iso)
-    reasons = await _stage_block_reasons(since_iso)
-    broker = await _stage_broker(since_iso)
+    # 2026-07-20: prod Atlas is slow enough that serial stages blew
+    # the frontend's 25s budget. All stages are independent reads —
+    # run them concurrently; wall time = slowest stage, not the sum.
+    import asyncio  # noqa: WPS433
+    pulse, duplication, feeders, intents, reasons, broker = await asyncio.gather(
+        _stage_pulse(since_iso),
+        _stance_metrics(hours),
+        _stage_feeders(now),
+        _stage_intents(since_iso),
+        _stage_block_reasons(since_iso),
+        _stage_broker(since_iso),
+    )
+    pulse["opinion_duplication"] = duplication
     return {
         "generated_at": now.isoformat(),
         "window_hours": hours,
