@@ -389,10 +389,12 @@ async def reauth(
     return {
         "ok": True,
         "message": (
-            "Push sent to your Webull mobile app. Approve the "
-            "notification within ~5 minutes. Once server-side "
-            "status flips to NORMAL, equity spreads and orders "
-            "resume automatically — no redeploy required."
+            "Push sent. Webull will SMS you a 6-digit code — enter it "
+            "INSIDE the Webull mobile app (Menu → Messages → OpenAPI "
+            "Notifications → Check Now → enter code → Confirm). Once "
+            "server-side status flips to NORMAL (~30s after confirm), "
+            "equity spreads and orders resume automatically — no "
+            "redeploy required."
         ),
         "disk_purged": disk_purged,
         "mongo_mirror_updated": True,

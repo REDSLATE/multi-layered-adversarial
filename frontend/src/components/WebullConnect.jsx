@@ -501,7 +501,8 @@ function TokenPushCard({ onProbe }) {
           <>
             <Badge color="#F59E0B" testid="webull-token-status-missing">NOT CONNECTED</Badge>
             <span className="text-rd-dim">
-              trigger a push to (re)activate the session.
+              trigger a push, then enter the SMS code INSIDE the Webull
+              app (Menu → Messages → OpenAPI Notifications → Check Now).
             </span>
           </>
         )}

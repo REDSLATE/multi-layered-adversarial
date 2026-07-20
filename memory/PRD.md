@@ -1,3 +1,8 @@
+### 📱 2026-07-20 (late night): Webull 2FA code flow clarified
+- User: "Webull sends a code" — verified via Webull OpenAPI docs: the SMS code is entered INSIDE the Webull mobile app (Menu → Messages → OpenAPI Notifications → Check Now), never in our app; their API has no code-submission endpoint. Our push-trigger flow is correct.
+- Updated TokenPushCard copy + `/admin/webull/reauth` response message to spell out the in-app code-entry path.
+- User confirmed keys are already in prod env; user redeploying to get the Connect Webull card (was absent from their earlier deploys — commits verified present in repo).
+
 # RISEDUAL Mission Control — PRD
 
 ### ⚡ 2026-07-20 (night): DISARMED read-error fix + kill-map parallelization
