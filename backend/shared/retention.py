@@ -1,8 +1,9 @@
-"""Retention sweeper — 7-day expiry for pipeline/telemetry backlog.
+"""Retention sweeper — 72-hour expiry for pipeline/telemetry backlog.
 
 Operator directive (2026-07-22): "eliminate the backlog, expire after
 7 days. The only data we need is the actual executions. The ones that
-failed we can eliminate."
+failed we can eliminate." Tightened to 72 hours (3 days) on operator
+request to further relieve Atlas IOPS.
 
 Keeps FOREVER:
   * `shared_intents` rows with `executed=true`  (real trades)
@@ -19,7 +20,7 @@ of millions of stale telemetry rows.
 
 Env tunables:
   RETENTION_ENABLED=true            master gate
-  RETENTION_DAYS=7                  age threshold
+  RETENTION_DAYS=3                  age threshold (72h)
   RETENTION_SWEEP_INTERVAL_SEC=3600 cycle cadence
   RETENTION_BATCH_SIZE=2000         ids per delete batch
   RETENTION_MAX_BATCHES=50          per-collection cap per cycle
@@ -37,7 +38,7 @@ from db import db
 logger = logging.getLogger("risedual.retention")
 
 RETENTION_ENABLED = os.environ.get("RETENTION_ENABLED", "true").lower() == "true"
-RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "7"))
+RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "3"))
 RETENTION_SWEEP_INTERVAL_SEC = int(os.environ.get("RETENTION_SWEEP_INTERVAL_SEC", "3600"))
 RETENTION_BATCH_SIZE = int(os.environ.get("RETENTION_BATCH_SIZE", "2000"))
 RETENTION_MAX_BATCHES = int(os.environ.get("RETENTION_MAX_BATCHES", "50"))

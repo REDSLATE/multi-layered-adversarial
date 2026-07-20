@@ -588,7 +588,7 @@ export default function OperatorControl() {
         </div>
       )}
 
-      {/* Retention / backlog drain — 7-day expiry sweeper. Prod Atlas
+      {/* Retention / backlog drain — 72h expiry sweeper. Prod Atlas
           chokes ("operation exceeded time limit") until the stale
           telemetry backlog is drained; this gives the operator a
           one-click drain instead of a raw API call. */}
