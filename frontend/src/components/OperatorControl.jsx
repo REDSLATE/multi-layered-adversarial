@@ -74,6 +74,8 @@ export default function OperatorControl() {
   const [busyMaster, setBusyMaster] = useState(false);
   const [busyRefresh, setBusyRefresh] = useState(false);
   const [busyForceTick, setBusyForceTick] = useState(false);
+  const [busyProbe, setBusyProbe] = useState(false);
+  const [probe, setProbe] = useState(null);
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
@@ -149,6 +151,20 @@ export default function OperatorControl() {
     } finally {
       setBusyForceTick(false);
       load();
+    }
+  };
+
+  const runPickProbe = async () => {
+    setBusyProbe(true);
+    try {
+      const r = await api.get("/admin/auto-router/pick-probe");
+      setProbe(r.data);
+      setErr("");
+    } catch (e) {
+      const raw = e?.response?.data?.detail ?? e.message;
+      setErr(typeof raw === "string" ? raw : JSON.stringify(raw));
+    } finally {
+      setBusyProbe(false);
     }
   };
 
@@ -407,6 +423,15 @@ export default function OperatorControl() {
             </div>
             <div className="flex items-center gap-2">
               <button
+                onClick={runPickProbe}
+                disabled={busyProbe}
+                data-testid="router-pick-probe"
+                className="text-[10px] font-mono uppercase tracking-widest border border-rd-border hover:border-rd-text px-2 py-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Run the router's exact pick query with a step-by-step filter breakdown — shows exactly why 0 intents get picked"
+              >
+                {busyProbe ? "probing…" : "pick probe"}
+              </button>
+              <button
                 onClick={forceTick}
                 disabled={busyForceTick}
                 data-testid="router-force-tick"
@@ -464,6 +489,59 @@ export default function OperatorControl() {
             <div className="mt-2 border border-rd-danger px-2 py-1 text-[10px] font-mono text-rd-danger" data-testid="router-last-tick-error">
               <Warning size={10} className="inline mr-1" />
               last error: {router.last_tick_error}
+            </div>
+          )}
+          {router.last_intent_error && (
+            <div className="mt-2 border border-rd-danger px-2 py-1 text-[10px] font-mono text-rd-danger" data-testid="router-last-intent-error">
+              <Warning size={10} className="inline mr-1" />
+              route_one crashing ({router.last_tick_exceptions || 0}× last tick): {router.last_intent_error}
+            </div>
+          )}
+          {router.last_tick_disarmed && (
+            <div className="mt-2 border border-yellow-600 px-2 py-1 text-[10px] font-mono text-yellow-500" data-testid="router-last-tick-disarmed">
+              <ShieldSlash size={10} className="inline mr-1" />
+              Last tick skipped intake: MASTER SWITCH read as DISARMED by the router. Intents stay pending while this shows.
+            </div>
+          )}
+          {probe && (
+            <div className="mt-3 border border-rd-border p-2" data-testid="router-pick-probe-result">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="text-[9px] uppercase tracking-widest text-rd-dim font-mono">
+                  Pick probe · lookback {probe.lookback_min}m
+                </div>
+                <div
+                  className="text-[10px] font-mono font-bold"
+                  style={{ color: (probe.routable_now || 0) > 0 ? "#10B981" : "#EF4444" }}
+                  data-testid="router-pick-probe-routable"
+                >
+                  {probe.routable_now ?? "?"} routable now
+                </div>
+              </div>
+              <div className="space-y-0.5">
+                {(probe.filter_breakdown || []).map((s, i, arr) => {
+                  const prev = i > 0 ? arr[i - 1].count : null;
+                  const collapsed = typeof s.count === "number" && s.count === 0 && (prev === null || prev > 0);
+                  return (
+                    <div
+                      key={s.filter_added}
+                      className="flex items-center justify-between text-[10px] font-mono"
+                      data-testid={`probe-step-${s.filter_added}`}
+                    >
+                      <span className={collapsed ? "text-rd-danger font-bold" : "text-rd-muted"}>
+                        {collapsed ? "▶ " : ""}+{s.filter_added}
+                      </span>
+                      <span className={collapsed ? "text-rd-danger font-bold" : "text-rd-text"}>
+                        {s.error ? `err: ${s.error}` : s.count}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              {(probe.routable_now || 0) > 0 && (
+                <div className="mt-1.5 text-[10px] font-mono text-yellow-500 leading-relaxed">
+                  Intents ARE matchable — if "last tick" still says 0 picked, route_one is failing on them (see error strip above after next tick).
+                </div>
+              )}
             </div>
           )}
           {router.task_exception && (
