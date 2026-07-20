@@ -2734,3 +2734,35 @@ Operator must redeploy prod and watch `/api/admin/auto-router/status`: expect
 `last_tick_error=null` and, if a symbol still hangs, `last_tick_route_timeouts>0`
 with poisoned intents visible in kill-map top block reasons as ROUTE_TIMEOUT_POISON.
 
+
+---
+
+## 2026-07-20 — Iteration 29: Soft Degradation Phase 2 SHIPPED
+
+Operator input: Webull broker-side minimum is now **$5/order** (Kraken stays fractional).
+
+### Changes (all in _gate_risk sizing stage; money-safety gates untouched)
+- Arbiter conviction multiplier (`evidence.size_multiplier`, clamp 0–1.0) now scales
+  notional alongside the seat/governor multiplier — graded conviction = graded size.
+- Notional sized to $0 by multipliers → `gate_state=advisory_only`,
+  `broker_reason=SIZED_TO_ZERO`, bucket `conviction_sizing` (was blocked/RISK_REJECTED).
+- Equity floor size-up: post-multiplier notional < $5 Webull floor → sized UP to floor
+  (mirrors crypto pair-floor); floor > per-order cap → honest block
+  `equity_floor_exceeds_per_order_cap`.
+- `sizing_degradation` provenance stamped on every routed intent
+  (base_usd, notional_source, seat_multiplier, arbiter_multiplier, floor_sized_up,
+  equity_floor_usd, final_usd, ts).
+- `webull_caps.py`: DEFAULT_MIN_NOTIONAL_USD 1.00→5.00; env WEBULL_MIN_NOTIONAL_USD=5.00;
+  Mongo floor override can now only RAISE the floor (stale low override can't reopen
+  the sub-$5 reject path).
+
+### Testing
+- iteration_29.json: 10/10 new tests PASS (tests/test_iter29_soft_degradation_phase2.py),
+  46/46 regression PASS, live status/force-tick smoke PASS. No real broker orders submitted.
+
+### Remaining backlog
+- P2: Phase 3 — Top-4 lane admission by rank/quota (mc_arbiter/arbiter.py lane logic).
+- P2: Migrate trade log to append-only JSONL (Atlas IOPS).
+- P3: db.ensure_indexes 866-line refactor.
+- Idea: fill alerts (notify operator on live broker fill).
+
