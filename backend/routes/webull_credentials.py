@@ -218,9 +218,30 @@ async def reprobe(_user: dict = Depends(get_current_user)):
         token_status = {"present": False, "error": f"{type(e).__name__}: {e}"}
 
     now = _now_iso()
-    ok = bool(token_status.get("present") and not token_status.get("expired"))
+    # 2026-07-21: the local token status is UNRELIABLE — it inferred
+    # NORMAL from the deleted sidecar's spread poller and can never
+    # flip anymore. The authoritative check is a LIVE trade-API call:
+    # if open-orders answers, trading is active. The operator did the
+    # 2FA dance three times while the UI read the dead flag.
+    live: dict = {"ok": False, "checked": False}
+    try:
+        from shared.broker.webull import get_webull_adapter  # noqa: WPS433
+        adapter = await get_webull_adapter()
+        if adapter is None:
+            live = {"ok": False, "checked": True, "error": "adapter_not_configured"}
+        else:
+            rows = await adapter.list_open_orders_v3(page_size=10)
+            live = {"ok": True, "checked": True, "open_orders_seen": len(rows)}
+    except Exception as e:  # noqa: BLE001
+        live = {
+            "ok": False, "checked": True,
+            "error": f"{type(e).__name__}: {str(e)[:180]}",
+        }
+
+    ok = live["ok"]
     detail = {
-        "endpoint": "webull_token.status()",
+        "endpoint": "webull trade API (list_open_orders_v3)",
+        "live_trade_api": live,
         "token_present": token_status.get("present", False),
         "token_expired": token_status.get("expired", False),
         "token_expires_in_hours": token_status.get("expires_in_hours"),
@@ -228,9 +249,9 @@ async def reprobe(_user: dict = Depends(get_current_user)):
     }
     if not ok:
         detail["hint"] = (
-            "Credentials are stored but no live token exists yet. "
-            "Click 'init token' in the Webull 2FA strip to trigger the "
-            "mobile push — that's the real end-to-end auth check."
+            "Live trade-API call failed — see live_trade_api.error. "
+            "If it mentions auth/token, trigger the 2FA push and enter "
+            "the SMS code inside the Webull app, then probe again."
         )
 
     await db[WEBULL_CREDENTIALS].update_one(

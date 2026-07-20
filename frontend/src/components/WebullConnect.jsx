@@ -380,9 +380,10 @@ function TokenPushCard({ onProbe }) {
 
   const refreshToken = useCallback(async () => {
     try {
-      // 2026-07-19: switched from the dead /admin/trader/webull-token-status
-      // (sidecar-era) to /admin/webull/status — the live session probe.
-      const { data } = await api.get("/admin/webull/status");
+      // 2026-07-21: poll the LIVE probe (real trade-API call), not
+      // /status — that flag only meant "creds doc saved in Mongo"
+      // and stayed false forever for env-only keys.
+      const { data } = await api.post("/admin/webull/probe");
       setTokenStatus(data);
       return data;
     } catch (e) {
@@ -425,7 +426,7 @@ function TokenPushCard({ onProbe }) {
     const tick = async () => {
       const s = await refreshToken();
       if (cancelled) return;
-      const activated = Boolean(s?.connected);
+      const activated = Boolean(s?.ok);
       if (activated) {
         setPollActive(false);
         setPushDeadline(null);
@@ -476,7 +477,7 @@ function TokenPushCard({ onProbe }) {
     }
   };
 
-  const activated = Boolean(tokenStatus?.connected);
+  const activated = Boolean(tokenStatus?.ok);
 
   return (
     <Card
@@ -494,15 +495,16 @@ function TokenPushCard({ onProbe }) {
         )}
         {activated && (
           <Badge color="#22C55E" testid="webull-token-status-active">
-            {justActivated ? "✓ CONNECTED" : "CONNECTED"}
+            {justActivated ? "✓ TRADING ACTIVE" : "TRADING ACTIVE"}
           </Badge>
         )}
         {tokenStatus && !activated && (
           <>
-            <Badge color="#F59E0B" testid="webull-token-status-missing">NOT CONNECTED</Badge>
-            <span className="text-rd-dim">
-              trigger a push, then enter the SMS code INSIDE the Webull
-              app (Menu → Messages → OpenAPI Notifications → Check Now).
+            <Badge color="#F59E0B" testid="webull-token-status-missing">NOT ACTIVE</Badge>
+            <span className="text-rd-dim" title={tokenStatus?.live_trade_api?.error || ""}>
+              {tokenStatus?.live_trade_api?.error
+                ? `trade API: ${String(tokenStatus.live_trade_api.error).slice(0, 60)}`
+                : "trigger a push, then enter the SMS code INSIDE the Webull app (Menu → Messages → OpenAPI Notifications)."}
             </span>
           </>
         )}

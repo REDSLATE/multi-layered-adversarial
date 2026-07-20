@@ -17,6 +17,11 @@
 
 **Also answered:** "keys every time?" → No: keys once (env), token every ~15 days (Mongo mirror survives redeploys — if prod still loses it per-deploy, investigate token mirror rehydration). "13.4d" = days.
 
+### 🩹 2026-07-21 (cont): Webull activation status was double-lying
+- User did the 2FA dance 3× with card stuck NOT CONNECTED. Two dead flags found: (1) `/admin/webull/status` `connected` = "creds doc in Mongo" →永 false for env-only keys; (2) `trader/webull_auth.status()` inferred NORMAL from the DELETED sidecar spread poller → can never flip.
+- Fix: `/admin/webull/probe` now performs a LIVE trade-API call (`get_webull_adapter().list_open_orders_v3`) — authoritative "can we trade" answer with real error surfaced. TokenPushCard polls the probe; badge = TRADING ACTIVE / NOT ACTIVE + actual error text. Verified preview: probe ok=True in 0.26s.
+- Answered: user does NOT need to enter keys (env is fine); their 3 activations may have succeeded while UI lied.
+
 # RISEDUAL Mission Control — PRD
 
 ### ⚡ 2026-07-20 (night): DISARMED read-error fix + kill-map parallelization
