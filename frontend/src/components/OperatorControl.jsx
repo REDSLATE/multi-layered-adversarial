@@ -76,23 +76,28 @@ export default function OperatorControl() {
   const [busyForceTick, setBusyForceTick] = useState(false);
   const [busyProbe, setBusyProbe] = useState(false);
   const [probe, setProbe] = useState(null);
+  const [retention, setRetention] = useState(null); // /admin/retention/status
+  const [busyPurge, setBusyPurge] = useState(false);
+  const [purgeResult, setPurgeResult] = useState(null);
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
     setBusyRefresh(true);
     try {
-      const [a, t, k, r, ro] = await Promise.all([
+      const [a, t, k, r, ro, re] = await Promise.all([
         api.get("/mc/arbiter/state").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
         api.get("/admin/trading/status").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
         api.get("/mc/pulse-health/ticks?limit=15").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
         api.get("/admin/roster").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
         api.get("/admin/auto-router/status").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
+        api.get("/admin/retention/status").catch((e) => ({ data: { _error: e?.response?.data?.detail || e.message } })),
       ]);
       setArbiter(a.data);
       setTradingCtl(t.data);
       setTicks(k.data?.ticks || []);
       setRoster(r.data);
       setRouter(ro.data);
+      setRetention(re.data);
       setErr("");
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
@@ -165,6 +170,24 @@ export default function OperatorControl() {
       setErr(typeof raw === "string" ? raw : JSON.stringify(raw));
     } finally {
       setBusyProbe(false);
+    }
+  };
+
+  const runPurge = async () => {
+    setBusyPurge(true);
+    setPurgeResult(null);
+    try {
+      // One cycle is batch-capped server-side; big backlogs need
+      // several clicks — the `capped` flags below say when to re-run.
+      const r = await api.post("/admin/retention/run", null, { timeout: 290_000 });
+      setPurgeResult(r.data);
+      setErr("");
+    } catch (e) {
+      const raw = e?.response?.data?.detail ?? e.message;
+      setErr(typeof raw === "string" ? raw : JSON.stringify(raw));
+    } finally {
+      setBusyPurge(false);
+      load();
     }
   };
 
@@ -560,6 +583,81 @@ export default function OperatorControl() {
             <div className="mt-2 text-[10px] font-mono text-yellow-500 leading-relaxed">
               <Warning size={10} className="inline mr-1" />
               Router picked {router.last_tick_results} intents last tick but executed 0 with no error. Every intent is being blocked or timing out silently — check seat / risk / broker stages in server logs.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Retention / backlog drain — 7-day expiry sweeper. Prod Atlas
+          chokes ("operation exceeded time limit") until the stale
+          telemetry backlog is drained; this gives the operator a
+          one-click drain instead of a raw API call. */}
+      {retention && !retention._error && (
+        <div className="border border-rd-border p-3 mb-5" data-testid="operator-control-retention">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[10px] uppercase tracking-widest text-rd-dim font-mono">
+              Retention · {retention.retention_days}d backlog expiry
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={runPurge}
+                disabled={busyPurge || retention.running_now}
+                data-testid="retention-purge-now"
+                className="text-[10px] font-mono uppercase tracking-widest border border-rd-border hover:border-rd-text px-2 py-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Run one purge cycle now (batched — big backlogs need several clicks; watch the 'more remains' flag)"
+              >
+                {busyPurge || retention.running_now ? "purging…" : "purge backlog now"}
+              </button>
+              <span
+                className="text-[10px] font-mono font-bold uppercase tracking-widest"
+                style={{ color: retention.task_alive ? "#10B981" : "#EF4444" }}
+                data-testid="retention-task-state"
+              >
+                {retention.task_alive ? "SWEEPER ALIVE" : "SWEEPER DEAD"}
+              </span>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
+            <div>
+              <div className="text-[9px] uppercase tracking-widest text-rd-dim">Cycles run</div>
+              <div className="font-bold" data-testid="retention-cycle-count">{retention.cycle_count ?? 0}</div>
+            </div>
+            <div>
+              <div className="text-[9px] uppercase tracking-widest text-rd-dim">Total purged</div>
+              <div className="font-bold" data-testid="retention-total-deleted">
+                {(retention.total_deleted ?? 0).toLocaleString()}
+              </div>
+            </div>
+            <div>
+              <div className="text-[9px] uppercase tracking-widest text-rd-dim">Last run</div>
+              <div className="font-bold" data-testid="retention-last-run">
+                {retention.last_run_at ? `${retention.last_run_sec}s` : "—"}
+              </div>
+            </div>
+            <div>
+              <div className="text-[9px] uppercase tracking-widest text-rd-dim">Kept forever</div>
+              <div className="font-bold text-[10px] leading-tight">executed intents · fills</div>
+            </div>
+          </div>
+          {retention.last_error && (
+            <div className="mt-2 border border-rd-danger px-2 py-1 text-[10px] font-mono text-rd-danger" data-testid="retention-last-error">
+              <Warning size={10} className="inline mr-1" />
+              {retention.last_error}
+            </div>
+          )}
+          {purgeResult && (
+            <div className="mt-2 border border-rd-border p-2 text-[10px] font-mono" data-testid="retention-purge-result">
+              <span className="font-bold" style={{ color: purgeResult.ok ? "#10B981" : "#EF4444" }}>
+                {purgeResult.ok ? "PURGED" : "FAILED"} {(purgeResult.deleted ?? 0).toLocaleString()} docs in {purgeResult.took_sec}s
+              </span>
+              {Object.values(purgeResult.collections || {}).some((c) => c.capped) && (
+                <span className="text-yellow-500 ml-2" data-testid="retention-more-remains">
+                  · more remains — click purge again to keep draining
+                </span>
+              )}
+              {(purgeResult.deleted ?? 0) === 0 && purgeResult.ok && (
+                <span className="text-rd-dim ml-2">· backlog fully drained</span>
+              )}
             </div>
           )}
         </div>
