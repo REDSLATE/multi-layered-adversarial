@@ -1056,6 +1056,13 @@ async def _post_intent_impl(
     # router picks, and a broker call only to die NO_TRADE at
     # broker_symbol_resolver. Reject at the door instead — audited as
     # rejected_at_ingest / no_kraken_pair_mapping.
+    #
+    # 2026-07-21 HOTFIX (same day): the first version raised HTTP 422
+    # here. The external sidecar brains treat non-2xx on intent POST
+    # as fatal — all four crashed within minutes of deploy #12 and
+    # heartbeats went stale. Brain-facing contract is now ALWAYS 200:
+    # the rejection rides in the body (`ok: false`,
+    # `gate_state: rejected_at_ingest`) mirroring the success shape.
     if effective_lane == "crypto":
         from shared.broker_symbol_resolver import has_kraken_mapping  # noqa: WPS433
         if not has_kraken_mapping(canonical):
@@ -1065,14 +1072,19 @@ async def _post_intent_impl(
                 rationale=body.rationale, ingest_method="runtime_token",
                 reason="no_kraken_pair_mapping",
             )
-            raise HTTPException(
-                status_code=422,
-                detail=(
+            return {
+                "ok": False,
+                "intent_id": None,
+                "stack": body.stack,
+                "gate_state": "rejected_at_ingest",
+                "rejected_reason": "no_kraken_pair_mapping",
+                "detail": (
                     f"{body.symbol} has no Kraken pair mapping "
-                    f"(canonical={canonical!r}) — intent rejected at ingest. "
-                    "Extend BROKER_SYMBOL_MAP['kraken'] to enable this pair."
+                    f"(canonical={canonical!r}) — intent rejected at "
+                    "ingest. Extend BROKER_SYMBOL_MAP['kraken'] to "
+                    "enable this pair."
                 ),
-            )
+            }
 
     seat = await _seat_at_post_time(body.stack)
 
