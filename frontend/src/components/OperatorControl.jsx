@@ -6,6 +6,7 @@ import ConvictionFloorKnob from "@/components/ConvictionFloorKnob";
 import GateFailureDigest from "@/components/GateFailureDigest";
 import KrakenPairEditor from "@/components/KrakenPairEditor";
 import WatchlistPanel from "@/components/WatchlistPanel";
+import ExitMonitorPanel from "@/components/ExitMonitorPanel";
 
 /**
  * Operator Control — one-glance status + one-click toggles for the
@@ -672,6 +673,7 @@ export default function OperatorControl() {
       <GateFailureDigest />
       <KrakenPairEditor />
       <WatchlistPanel />
+      <ExitMonitorPanel />
 
       {/* Last N pulse ticks */}
       <div>

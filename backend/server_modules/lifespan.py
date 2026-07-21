@@ -348,6 +348,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("Retention sweeper start failed: %s", e)
 
+    # Exit monitor (2026-07-22 operator directive): broker-reconciled
+    # SL/TP/max-hold closure — no position runs unbounded. Lane
+    # switches default OFF; operator arms per-lane in the UI.
+    try:
+        from shared.exits.monitor import start_if_enabled as _start_exits
+        _start_exits()
+        logger.info("Exit monitor started")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Exit monitor start failed: %s", e)
+
     # ── Stale-intent sweeper (2026-02-19 operator directive) ──────
     # 30-minute cadence, 6-hour age gate, archive-then-delete
     # (learning-aware bifurcation). Scheduler ON by default.
@@ -980,6 +990,11 @@ async def lifespan(app: FastAPI):
     try:
         from shared.retention import stop_worker as _stop_retention
         await _stop_retention()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from shared.exits.monitor import stop as _stop_exits
+        await _stop_exits()
     except Exception:  # noqa: BLE001
         pass
     client.close()

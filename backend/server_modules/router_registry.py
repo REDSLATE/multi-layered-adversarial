@@ -102,6 +102,7 @@ from routes.retention_admin import router as retention_admin_router
 from routes.gate_failure_digest import router as gate_failure_digest_router
 from routes.kraken_pair_admin import router as kraken_pair_admin_router
 from routes.universe_admin import router as universe_admin_router
+from routes.exit_admin import router as exit_admin_router
 from routes.intent_sweeper_admin import router as intent_sweeper_admin_router
 from routes.counterfactuals_admin import router as counterfactuals_admin_router
 from routes.broker_fills_admin import router as broker_fills_admin_router
@@ -275,6 +276,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(gate_failure_digest_router)
     api_router.include_router(kraken_pair_admin_router)
     api_router.include_router(universe_admin_router)
+    api_router.include_router(exit_admin_router)
     api_router.include_router(intent_sweeper_admin_router)
     api_router.include_router(counterfactuals_admin_router)
     api_router.include_router(broker_fills_admin_router)

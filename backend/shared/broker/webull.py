@@ -1661,6 +1661,108 @@ class WebullAdapter(BrokerAdapter):
                 })
         return out
 
+    async def submit_close_market(
+        self,
+        symbol: str,
+        qty: float,
+        client_order_id: Optional[str] = None,
+    ) -> BrokerOrder:
+        """Exit-monitor close path — decimal-qty MARKET SELL via v3.
+
+        2026-07-22: `close_position` used the v1 integer path, which
+        cannot close fractional (<1 share) positions at all
+        (WEBULL_QTY_BELOW_ONE). This method sells an exact decimal
+        quantity. It deliberately BYPASSES the $5-10 entry cap band —
+        closing a position must never be blocked by the entry-sizing
+        policy — but keeps ARMED + held-qty clamp as safety rails.
+        MARKET + CORE only (Webull prohibits LIMIT on fractional)."""
+        if not is_webull_armed():
+            raise WebullCapBlocked(
+                "WEBULL_NOT_ARMED — set WEBULL_ARMED=true in .env; NO_TRADE"
+            )
+        sym_u = (symbol or "").upper().strip()
+        held = 0.0
+        for p in await self.list_positions():
+            if (p.get("symbol") or "").upper() == sym_u:
+                q = float(p.get("qty") or 0)
+                if q > 0:
+                    held += q
+        if held <= 0:
+            raise RuntimeError(
+                f"WEBULL_SELL_NO_POSITION — close {sym_u} blocked: no "
+                f"long position held; NO_TRADE"
+            )
+        sell_qty = min(float(qty), held)
+        qty_truncated = int(sell_qty * 1_000_000) / 1_000_000.0
+        if qty_truncated <= 0:
+            raise RuntimeError(
+                f"Webull close sizing produced zero for {sym_u} "
+                f"(qty={qty} held={held}); NO_TRADE"
+            )
+        qty_str = f"{qty_truncated:.6f}".rstrip("0").rstrip(".")
+        if "." not in qty_str:
+            qty_str = f"{qty_str}.0"
+
+        account_id = await self._resolve_account_id()
+        instrument_id, last_price, _frac = await self._resolve_instrument_id(sym_u)
+        order_id = (client_order_id or str(uuid.uuid4()))[:40]
+        stock_order = {
+            "client_order_id": order_id,
+            "symbol": sym_u,
+            "instrument_type": "EQUITY",
+            "market": "US",
+            "order_type": "MARKET",
+            "side": "SELL",
+            "time_in_force": "DAY",
+            "entrust_type": "QTY",
+            "quantity": qty_str,
+            "support_trading_session": "CORE",
+            "combo_type": "NORMAL",
+            "account_tax_type": "GENERAL",
+        }
+        logger.info(
+            "Webull submit_close_market symbol=%s qty=%s held=%.6f "
+            "last_price=%s", sym_u, qty_str, held, last_price,
+        )
+        try:
+            res = await self._sdk_call(
+                self._trade().order_v3.place_order,
+                account_id, [stock_order],
+            )
+            data = res.json() if hasattr(res, "json") else res
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(f"Webull submit_close_market failed: {e}") from e
+        if isinstance(data, dict):
+            code = data.get("code")
+            if code not in (None, "200", 200):
+                raise RuntimeError(
+                    f"Webull submit_close_market returned code={code} "
+                    f"msg={data.get('msg')!r}"
+                )
+        body = (data or {}).get("data") if isinstance(data, dict) else data
+        if isinstance(body, list):
+            body = body[0] if body else {}
+        body = body if isinstance(body, dict) else {}
+        return {
+            "order_id": str(
+                body.get("orderId") or body.get("order_id") or
+                body.get("clientOrderId") or order_id
+            ),
+            "client_order_id": order_id,
+            "symbol": sym_u,
+            "qty": qty_truncated,
+            "notional": qty_truncated * last_price,
+            "side": "SELL",
+            "type": "market",
+            "limit_price": None,
+            "time_in_force": "DAY",
+            "status": str(body.get("status") or "SUBMITTED"),
+            "submitted_at": body.get("createTime") or body.get("submitted_at"),
+            "filled_at": None,
+            "filled_qty": float(body.get("filledQuantity") or 0),
+            "filled_avg_price": None,
+        }
+
     async def close_position(self, symbol: str) -> BrokerOrder:
         positions = await self.list_positions()
         pos = next((p for p in positions if p["symbol"] == symbol.upper()), None)
