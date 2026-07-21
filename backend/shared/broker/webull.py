@@ -949,18 +949,53 @@ class WebullAdapter(BrokerAdapter):
                 float(limit_price_str) if limit_price_str else last_price
             )
             raw_qty = effective_notional / price_for_qty if price_for_qty > 0 else 0.0
-            # 6-dp truncate (not round-half-up) so the resulting cash
-            # spend is always ≤ effective_notional.
-            qty_truncated = int(raw_qty * 1_000_000) / 1_000_000.0
-            if qty_truncated <= 0:
-                raise RuntimeError(
-                    f"Webull QTY sizing produced zero for {sym_u} "
-                    f"(notional={effective_notional} price={price_for_qty}); "
-                    f"NO_TRADE"
+
+            # ── 2026-07-21 ROOT-CAUSE FIX: fractional = MARKET only ──
+            # Webull US fractional policy (developer.webull.com trade
+            # API + policy FAJEGIA64Q87BD79KS2IHD3IJA): orders for
+            # < 1 share accept MARKET + CORE + DAY ONLY — LIMIT is
+            # explicitly prohibited for fractional quantities. The
+            # broker rejects the LIMIT+fractional combo with the
+            # catch-all HTTP 417 "The time you sent is not supported",
+            # which our taxonomy buckets as market_closed. That killed
+            # EVERY RTH equity submit (0 equity executions in 72h
+            # while Kraken fired 3,342×). Whole-share (>= 1) orders
+            # keep LIMIT + slippage band for the cash-spend cap, and
+            # remain extended-hours eligible.
+            if raw_qty < 1.0:
+                if ext_flag:
+                    raise RuntimeError(
+                        f"WEBULL_FRACTIONAL_RTH_ONLY — fractional "
+                        f"(<1 share) US orders trade the CORE session "
+                        f"only; {sym_u} sized {raw_qty:.6f} sh at "
+                        f"${last_price}; NO_TRADE"
+                    )
+                order_kind, limit_price_str = "MARKET", None
+                session_str, ext_flag = "CORE", False
+                raw_qty = (
+                    effective_notional / last_price if last_price > 0 else 0.0
                 )
-            qty_str = f"{qty_truncated:.6f}".rstrip("0").rstrip(".")
-            if "." not in qty_str:
-                qty_str = f"{qty_str}.0"
+                # 6-dp truncate (not round-half-up) so the resulting
+                # cash spend is always <= effective_notional at the
+                # quoted price.
+                qty_truncated = int(raw_qty * 1_000_000) / 1_000_000.0
+                if qty_truncated <= 0:
+                    raise RuntimeError(
+                        f"Webull QTY sizing produced zero for {sym_u} "
+                        f"(notional={effective_notional} price={last_price}); "
+                        f"NO_TRADE"
+                    )
+                qty_str = f"{qty_truncated:.6f}".rstrip("0").rstrip(".")
+                if "." not in qty_str:
+                    qty_str = f"{qty_str}.0"
+            else:
+                # Whole-share path: Webull decimal quantities are only
+                # valid at <= 1 share, so floor to an integer. The
+                # dropped fractional remainder keeps spend under the
+                # notional cap.
+                whole_shares = int(raw_qty)
+                qty_truncated = float(whole_shares)
+                qty_str = str(whole_shares)
 
             stock_order = {
                 "client_order_id": order_id,

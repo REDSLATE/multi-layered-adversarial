@@ -164,18 +164,21 @@ async def test_notional_buy_uses_place_order_v2_with_qty_decimal():
     assert 0 < qty_val < 1.0, (
         f"expected fractional qty <1 share for $1 NVDA @ $140, got {qty_val}"
     )
-    # 2026-02-26 doctrine: equity always LIMIT (not MARKET).
-    assert stock_order["order_type"] == "LIMIT", (
-        "equity fractional path must always use LIMIT (Webull rejects "
-        "AMOUNT+MARKET with HTTP 417)"
+    # 2026-07-21 doctrine: fractional (<1 share) must be MARKET —
+    # Webull explicitly prohibits LIMIT for fractional quantities and
+    # rejects the combo with the catch-all HTTP 417 "time not
+    # supported" (0 equity fills in 72h until this fix).
+    assert stock_order["order_type"] == "MARKET", (
+        "equity fractional path must use MARKET (Webull prohibits "
+        "LIMIT for <1-share orders; combo 417s as 'time not supported')"
     )
-    assert "limit_price" in stock_order
+    assert "limit_price" not in stock_order
     assert stock_order["symbol"] == "NVDA"
     assert stock_order["side"] == "BUY"
     assert stock_order["time_in_force"] == "DAY"
     assert stock_order["instrument_type"] == "EQUITY"
     assert stock_order["market"] == "US"
-    assert stock_order["support_trading_session"] in {"CORE", "ALL"}
+    assert stock_order["support_trading_session"] == "CORE"
 
     # The returned order receipt reflects the fractional intent.
     assert result["symbol"] == "NVDA"
@@ -208,12 +211,14 @@ async def test_ten_dollar_aapl_uses_qty_decimal_not_qty_rounding():
     assert len(trade.order.place_order_v2_calls) == 1
     _, stock_order = trade.order.place_order_v2_calls[0]
     assert stock_order["entrust_type"] == "QTY"
-    assert stock_order["order_type"] == "LIMIT"
+    # 2026-07-21: fractional must be MARKET (Webull prohibits LIMIT
+    # for <1-share orders). Qty computed off last_price.
+    assert stock_order["order_type"] == "MARKET"
+    assert "limit_price" not in stock_order
     qty_val = float(stock_order["quantity"])
-    limit_price = float(stock_order["limit_price"])
-    # Truncated quantity × limit price must stay within the notional cap.
-    assert qty_val * limit_price <= 10.00, (
-        f"truncated qty {qty_val} × limit {limit_price} must stay ≤ notional 10.00"
+    # Truncated quantity × last_price must stay within the notional cap.
+    assert qty_val * 225.0 <= 10.00, (
+        f"truncated qty {qty_val} × last 225.0 must stay ≤ notional 10.00"
     )
     # $10 on AAPL @ ~$225 → definitely fractional (< 1 share).
     assert 0 < qty_val < 1.0
@@ -241,19 +246,15 @@ async def test_quantity_is_string_with_decimal_precision():
 @pytest.mark.asyncio
 async def test_sell_side_routes_through_qty_decimal_too():
     """SELL intents should also use fractional QTY-decimal path so
-    partial-share liquidations work cleanly. SELL uses the DOWNWARD
-    slippage band to keep the LIMIT achievable."""
+    partial-share liquidations work cleanly. 2026-07-21: fractional
+    is MARKET-only per Webull policy — no limit band either side."""
     adapter = _adapter_with_instrument("TSLA", "913303891", 250.0)
     await adapter.submit_market_order("TSLA", notional=3.50, side="SELL")
     _, stock_order = adapter._trade_client.order.place_order_v2_calls[0]
     assert stock_order["side"] == "SELL"
     assert stock_order["entrust_type"] == "QTY"
-    assert stock_order["order_type"] == "LIMIT"
-    limit_price = float(stock_order["limit_price"])
-    # SELL slippage is DOWN from last_price — 50bps below 250 = 248.75.
-    assert limit_price < 250.0, (
-        f"SELL limit must be below last_price, got {limit_price}"
-    )
+    assert stock_order["order_type"] == "MARKET"
+    assert "limit_price" not in stock_order
     qty_val = float(stock_order["quantity"])
     assert 0 < qty_val < 1.0  # $3.50 on TSLA @ $250 → fractional
 
@@ -294,3 +295,39 @@ async def test_qty_below_one_still_blocked_on_legacy_path():
     assert "notional" in msg, (
         "error message must point the caller at the fractional path"
     )
+
+
+# ── 2026-07-21: fractional=MARKET doctrine branches ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_whole_share_notional_uses_integer_limit():
+    """Notional sizing to >= 1 share floors to whole shares and keeps
+    LIMIT + slippage band (whole shares are LIMIT-eligible)."""
+    adapter = _adapter_with_instrument("SIRI", "913254321", 4.0)
+    await adapter.submit_market_order("SIRI", notional=10.00, side="BUY")
+    _, stock_order = adapter._trade_client.order.place_order_v2_calls[0]
+    assert stock_order["order_type"] == "LIMIT"
+    assert "limit_price" in stock_order
+    qty = stock_order["quantity"]
+    assert qty == "2", f"$10 @ $4 (limit ~4.02) → 2 whole shares, got {qty!r}"
+
+
+@pytest.mark.asyncio
+async def test_fractional_extended_hours_raises_rth_only(monkeypatch):
+    """Fractional (<1 share) has no extended-hours path at Webull —
+    the adapter must fail loudly BEFORE the HTTP call."""
+    import shared.market_hours as mh
+    from routes import equity_extended_hours_admin as ext_admin
+
+    monkeypatch.setattr(mh, "is_equity_rth", lambda *a, **k: False)
+    monkeypatch.setattr(mh, "is_equity_extended_hours", lambda *a, **k: True)
+
+    async def _ext_on():
+        return True
+    monkeypatch.setattr(ext_admin, "get_equity_extended_hours_enabled", _ext_on)
+
+    adapter = _adapter_with_instrument("NVDA", "913355100", 140.0)
+    with pytest.raises(RuntimeError, match="WEBULL_FRACTIONAL_RTH_ONLY"):
+        await adapter.submit_market_order("NVDA", notional=5.00, side="BUY")
+    assert len(adapter._trade_client.order.place_order_v2_calls) == 0

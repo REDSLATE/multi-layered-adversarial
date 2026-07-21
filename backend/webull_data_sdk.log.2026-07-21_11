@@ -1,22 +1,24 @@
-279208726753696 2026-06-30 05:14:45,291 webull.core.client ERROR HttpError occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+279063721406880 2026-07-21 11:42:06,149 webull.core.client ERROR HttpError occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
   "_version": "v2",
-  "_action_name": "/openapi/market-data/crypto/snapshot",
+  "_action_name": "/openapi/market-data/stock/bars",
   "_protocol_type": "https",
   "_accept_format": "JSON",
   "_params": {
-    "symbols": "BTCUSD",
-    "category": "US_CRYPTO"
+    "symbol": "JXG",
+    "category": "US_STOCK",
+    "timespan": "M5",
+    "count": "30"
   },
   "_method": "GET",
   "_header": {
     "x-version": "v2",
     "Accept-Encoding": "gzip",
     "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
-    "x-timestamp": "2026-06-30T05:14:25Z",
+    "x-timestamp": "2026-07-21T11:41:46Z",
     "x-signature-version": "1.0",
     "x-signature-algorithm": "HMAC-SHA1",
-    "x-signature-nonce": "c40eae55-3426-53cb-88d1-46a735b3bf1e",
-    "x-signature": "cmAtRImr1bwRMr26NyMx9BJnlNw=",
+    "x-signature-nonce": "802741d8-0785-57a7-9244-861c10d39e8f",
+    "x-signature": "0ULjYpiowVnJwtrvYG2wM+kta0I=",
     "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
     "x-webull-client-source": "sdk"
   },
@@ -30,26 +32,28 @@
   "_request_read_timeout": null,
   "endpoint": "api.webull.com",
   "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
-} ClientException:SDK.HttpError HTTPSConnectionPool(host='api.webull.com', port=443): Max retries exceeded with url: /openapi/market-data/crypto/snapshot?symbols=BTCUSD&category=US_CRYPTO (Caused by ConnectTimeoutError(<HTTPSConnection(host='api.webull.com', port=443) at 0xfdf05834edd0>, 'Connection to api.webull.com timed out. (connect timeout=5)'))
-279208743661984 2026-06-30 05:14:47,472 webull.core.client ERROR HttpError occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+} ClientException:SDK.HttpError HTTPSConnectionPool(host='api.webull.com', port=443): Max retries exceeded with url: /openapi/market-data/stock/bars?symbol=JXG&category=US_STOCK&timespan=M5&count=30 (Caused by ConnectTimeoutError(<HTTPSConnection(host='api.webull.com', port=443) at 0xfdce5704ee50>, 'Connection to api.webull.com timed out. (connect timeout=5)'))
+279063729861024 2026-07-21 11:42:26,281 webull.core.client ERROR HttpError occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
   "_version": "v2",
-  "_action_name": "/openapi/market-data/crypto/snapshot",
+  "_action_name": "/openapi/market-data/stock/bars",
   "_protocol_type": "https",
   "_accept_format": "JSON",
   "_params": {
-    "symbols": "BTCUSD",
-    "category": "US_CRYPTO"
+    "symbol": "KPTI",
+    "category": "US_STOCK",
+    "timespan": "M1",
+    "count": "30"
   },
   "_method": "GET",
   "_header": {
     "x-version": "v2",
     "Accept-Encoding": "gzip",
     "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
-    "x-timestamp": "2026-06-30T05:14:27Z",
+    "x-timestamp": "2026-07-21T11:42:06Z",
     "x-signature-version": "1.0",
     "x-signature-algorithm": "HMAC-SHA1",
-    "x-signature-nonce": "349557d1-a848-58e6-baf1-43071d309485",
-    "x-signature": "ulVsQGFoWIOH0lDzzDbX2sewD/4=",
+    "x-signature-nonce": "49527905-f30e-55ba-a8bf-7f48a84ad376",
+    "x-signature": "kHDVWMhcfWNAlCOOItqVGQkc93s=",
     "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
     "x-webull-client-source": "sdk"
   },
@@ -63,4 +67,4 @@
   "_request_read_timeout": null,
   "endpoint": "api.webull.com",
   "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
-} ClientException:SDK.HttpError HTTPSConnectionPool(host='api.webull.com', port=443): Max retries exceeded with url: /openapi/market-data/crypto/snapshot?symbols=BTCUSD&category=US_CRYPTO (Caused by ConnectTimeoutError(<HTTPSConnection(host='api.webull.com', port=443) at 0xfdf035539c50>, 'Connection to api.webull.com timed out. (connect timeout=5)'))
+} ClientException:SDK.HttpError HTTPSConnectionPool(host='api.webull.com', port=443): Max retries exceeded with url: /openapi/market-data/stock/bars?symbol=KPTI&category=US_STOCK&timespan=M1&count=30 (Caused by ConnectTimeoutError(<HTTPSConnection(host='api.webull.com', port=443) at 0xfdce57a59a90>, 'Connection to api.webull.com timed out. (connect timeout=5)'))
