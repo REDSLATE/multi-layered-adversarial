@@ -16,6 +16,8 @@ export default function GateFailureDigest() {
   const [hours, setHours] = useState(24);
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
+  const [openKey, setOpenKey] = useState(null);
+  const [drill, setDrill] = useState({});
 
   const load = useCallback(async (h) => {
     try {
@@ -27,7 +29,25 @@ export default function GateFailureDigest() {
     }
   }, []);
 
-  useEffect(() => { load(hours); }, [hours, load]);
+  useEffect(() => { load(hours); setOpenKey(null); setDrill({}); }, [hours, load]);
+
+  const toggleDrill = async (r) => {
+    const key = `${r.reason}-${r.lane}-${r.gate_state}`;
+    if (openKey === key) { setOpenKey(null); return; }
+    setOpenKey(key);
+    if (!drill[key]) {
+      try {
+        const params = new URLSearchParams({
+          reason: r.reason, hours: String(hours),
+          lane: r.lane, gate_state: r.gate_state, limit: "15",
+        });
+        const { data: d } = await api.get(`/admin/gate-failure-digest/intents?${params}`);
+        setDrill((prev) => ({ ...prev, [key]: d.intents || [] }));
+      } catch {
+        setDrill((prev) => ({ ...prev, [key]: [] }));
+      }
+    }
+  };
 
   const max = data?.top_reasons?.[0]?.count || 1;
 
@@ -72,16 +92,45 @@ export default function GateFailureDigest() {
             <div className="space-y-1" data-testid="gate-digest-reasons">
               {data.top_reasons.slice(0, 10).map((r) => {
                 const color = STATE_COLORS[r.gate_state] || "#71717A";
+                const key = `${r.reason}-${r.lane}-${r.gate_state}`;
+                const isOpen = openKey === key;
+                const rows = drill[key];
                 return (
-                  <div key={`${r.reason}-${r.lane}-${r.gate_state}`} className="flex items-center gap-2 text-[11px] font-mono">
-                    <span className="w-12 text-right font-bold" style={{ color }}>{r.count}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-rd-text">{r.reason}</span>
-                        <span className="text-[9px] text-rd-dim shrink-0">{r.lane} · {r.gate_state}</span>
+                  <div key={key}>
+                    <button
+                      onClick={() => toggleDrill(r)}
+                      data-testid="gate-digest-reason-row"
+                      className={`w-full text-left flex items-center gap-2 text-[11px] font-mono hover:bg-rd-bg1/40 px-1 -mx-1 rounded ${isOpen ? "bg-rd-bg1/40" : ""}`}
+                      title="Click to see the intents this reason killed"
+                    >
+                      <span className="w-12 text-right font-bold" style={{ color }}>{r.count}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-rd-text">{r.reason}</span>
+                          <span className="text-[9px] text-rd-dim shrink-0">{r.lane} · {r.gate_state}</span>
+                        </div>
+                        <div className="h-1 mt-0.5 rounded" style={{ width: `${Math.max(2, (r.count / max) * 100)}%`, backgroundColor: color, opacity: 0.7 }} />
                       </div>
-                      <div className="h-1 mt-0.5 rounded" style={{ width: `${Math.max(2, (r.count / max) * 100)}%`, backgroundColor: color, opacity: 0.7 }} />
-                    </div>
+                    </button>
+                    {isOpen && (
+                      <div className="ml-14 my-1 border-l-2 pl-2" style={{ borderColor: color }} data-testid="gate-digest-drilldown">
+                        {rows === undefined ? (
+                          <div className="text-[10px] font-mono text-rd-dim italic">loading…</div>
+                        ) : rows.length === 0 ? (
+                          <div className="text-[10px] font-mono text-rd-dim italic">no matching intents (may have been purged)</div>
+                        ) : (
+                          rows.map((it) => (
+                            <div key={it.intent_id} className="flex items-center gap-2 text-[10px] font-mono py-0.5">
+                              <span className="text-rd-dim w-24 shrink-0">{(it.ingest_ts || "").slice(5, 16).replace("T", " ")}</span>
+                              <span className="font-bold text-rd-text w-20 shrink-0 truncate">{it.symbol}</span>
+                              <span className="w-10 shrink-0" style={{ color: it.action === "BUY" ? "#10B981" : "#EF4444" }}>{it.action}</span>
+                              <span className="text-rd-dim w-20 shrink-0 truncate">{it.stack}</span>
+                              <span className="text-rd-dim">conf {it.confidence != null ? Number(it.confidence).toFixed(2) : "—"}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

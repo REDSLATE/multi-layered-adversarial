@@ -233,6 +233,9 @@ async def set_conviction_floor(
     if not (0.0 <= value <= 1.0):
         raise HTTPException(status_code=422, detail="value must be within 0.0-1.0")
     now = datetime.now(timezone.utc).isoformat()
+    prev_doc = await db["runtime_flags"].find_one(
+        {"_id": "conviction_floor"}, {"value": 1},
+    )
     await db["runtime_flags"].update_one(
         {"_id": "conviction_floor"},
         {"$set": {
@@ -241,5 +244,33 @@ async def set_conviction_floor(
         }},
         upsert=True,
     )
+    # Change log (2026-07-21): so floor tuning can be correlated with
+    # fill outcomes. Small collection, not retention-purged.
+    try:
+        await db["conviction_floor_history"].insert_one({
+            "value": value,
+            "prev": (prev_doc or {}).get("value"),
+            "updated_by": _user.get("email") or "unknown",
+            "ts": now,
+        })
+    except Exception:  # noqa: BLE001
+        pass
     invalidate_conviction_floor_cache()
     return {"ok": True, "floor": value, "updated_at": now}
+
+
+@router.get("/conviction-floor/history")
+async def conviction_floor_history(
+    limit: int = 10,
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Last N floor adjustments, newest first."""
+    limit = max(1, min(50, limit))
+    rows = await (
+        db["conviction_floor_history"]
+        .find({}, {"_id": 0})
+        .sort("ts", -1)
+        .limit(limit)
+        .to_list(limit)
+    )
+    return {"history": rows}

@@ -426,6 +426,7 @@ async def _audit_lane_policy_rejection(
     rationale: str,
     ingest_method: str,
     admin_email: Optional[str] = None,
+    reason: str = "brain_lane_policy",
 ) -> None:
     """Record a brain-lane-policy rejection so the operator can see
     that a brain TRIED to emit and was muted at ingest.
@@ -467,8 +468,9 @@ async def _audit_lane_policy_rejection(
         "confidence": float(confidence),
         # ── gate-state: rejected before any gate ran ──
         "gate_state": "rejected_at_ingest",
-        "rejected_reason": "brain_lane_policy",
-        "rejected_policy": "brain_lane_policy",
+        "rejected_reason": reason,
+        "rejected_policy": reason,
+        "broker_reason": reason,
         "may_execute": False,
         "requires_gate_pass": False,
         "executed": False,
@@ -497,7 +499,7 @@ async def _audit_lane_policy_rejection(
             rationale=rationale,
             ref_id=rejection_id,
             extra={
-                "reason": "brain_lane_policy",
+                "reason": reason,
                 "lane": lane,
                 "ingest_method": ingest_method,
             },
@@ -1048,6 +1050,29 @@ async def _post_intent_impl(
                 f"(per /api/admin/brain-lane-policy)."
             ),
         )
+
+    # Symbol-mapping guard (2026-07-21, operator directive): a crypto
+    # intent whose canonical has no Kraken pair mapping burns gates,
+    # router picks, and a broker call only to die NO_TRADE at
+    # broker_symbol_resolver. Reject at the door instead — audited as
+    # rejected_at_ingest / no_kraken_pair_mapping.
+    if effective_lane == "crypto":
+        from shared.broker_symbol_resolver import has_kraken_mapping  # noqa: WPS433
+        if not has_kraken_mapping(canonical):
+            await _audit_lane_policy_rejection(
+                stack=body.stack, lane=effective_lane, symbol=body.symbol,
+                action=body.action, confidence=float(body.confidence),
+                rationale=body.rationale, ingest_method="runtime_token",
+                reason="no_kraken_pair_mapping",
+            )
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"{body.symbol} has no Kraken pair mapping "
+                    f"(canonical={canonical!r}) — intent rejected at ingest. "
+                    "Extend BROKER_SYMBOL_MAP['kraken'] to enable this pair."
+                ),
+            )
 
     seat = await _seat_at_post_time(body.stack)
 
@@ -1871,6 +1896,26 @@ async def admin_post_intent(
                 f"(per /api/admin/brain-lane-policy). Toggle the policy first."
             ),
         )
+
+    # Symbol-mapping guard — applies to the admin proxy too (2026-07-21).
+    if effective_lane == "crypto":
+        from shared.broker_symbol_resolver import has_kraken_mapping  # noqa: WPS433
+        if not has_kraken_mapping(canonical):
+            await _audit_lane_policy_rejection(
+                stack=body.stack, lane=effective_lane, symbol=body.symbol,
+                action=body.action, confidence=float(body.confidence),
+                rationale=body.rationale, ingest_method="admin_proxy",
+                admin_email=user.get("email"),
+                reason="no_kraken_pair_mapping",
+            )
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"{body.symbol} has no Kraken pair mapping "
+                    f"(canonical={canonical!r}) — intent rejected at ingest. "
+                    "Extend BROKER_SYMBOL_MAP['kraken'] to enable this pair."
+                ),
+            )
 
     seat = await _seat_at_post_time(body.stack)
 

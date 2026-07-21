@@ -302,6 +302,14 @@ def _rule_based_webull_native(canonical: str) -> Optional[str]:
     return None
 
 
+def has_kraken_mapping(canonical: Optional[str]) -> bool:
+    """True when the canonical (e.g. `CRYPTO:BTC-USD`) has an explicit
+    Kraken pair entry. Used by the ingest symbol-mapping guard —
+    crypto intents without a mapping would only die downstream at the
+    broker router with NO_TRADE, so we reject them at the door."""
+    return bool(canonical) and canonical in BROKER_SYMBOL_MAP["kraken"]
+
+
 def resolve_broker_symbol(asset: AssetKey, broker: str) -> Any:
     """Translate canonical → broker-native. Fail-closed.
 

@@ -20,7 +20,10 @@ from db import db
 
 router = APIRouter(prefix="/admin/gate-failure-digest", tags=["admin-gate-digest"])
 
-_KILL_STATES = ["blocked", "advisory_only", "no_trade", "expired_unrouted"]
+_KILL_STATES = [
+    "blocked", "advisory_only", "no_trade", "expired_unrouted",
+    "rejected_at_ingest",
+]
 
 
 @router.get("")
@@ -93,3 +96,51 @@ async def gate_failure_digest(
             "the retention sweeper after 3 days."
         ),
     }
+
+
+@router.get("/intents")
+async def gate_failure_intents(
+    reason: str = Query(..., min_length=1, max_length=200),
+    hours: int = Query(default=24, ge=1, le=72),
+    lane: str | None = Query(default=None),
+    gate_state: str | None = Query(default=None),
+    limit: int = Query(default=25, ge=1, le=100),
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Drilldown: the actual intents a kill reason claimed.
+
+    `reason` matches by anchored prefix — digest reasons are truncated
+    to 120 chars, so exact equality would miss long broker messages.
+    `(unstamped)` matches rows with no broker_reason at all."""
+    import re as _re
+    since = (
+        datetime.now(timezone.utc) - timedelta(hours=hours)
+    ).isoformat()
+    q: dict = {
+        "gate_state": {"$in": _KILL_STATES},
+        "ingest_ts": {"$gte": since},
+    }
+    if gate_state in _KILL_STATES:
+        q["gate_state"] = gate_state
+    if lane in ("equity", "crypto"):
+        q["lane"] = lane
+    if reason == "(unstamped)":
+        q["broker_reason"] = None
+    else:
+        q["broker_reason"] = {"$regex": "^" + _re.escape(reason)}
+    rows = await (
+        db["shared_intents"]
+        .find(q, {
+            "_id": 0, "intent_id": 1, "symbol": 1, "lane": 1, "stack": 1,
+            "action": 1, "confidence": 1, "ingest_ts": 1,
+            "gate_state": 1, "broker_reason": 1, "last_submit_ts": 1,
+        })
+        .sort("ingest_ts", -1)
+        .max_time_ms(8000)
+        .limit(limit)
+        .to_list(limit)
+    )
+    for r in rows:
+        if r.get("broker_reason"):
+            r["broker_reason"] = str(r["broker_reason"])[:200]
+    return {"reason": reason, "hours": hours, "count": len(rows), "intents": rows}

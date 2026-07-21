@@ -10,6 +10,7 @@ export default function ConvictionFloorKnob() {
   const [draft, setDraft] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [history, setHistory] = useState([]);
 
   const load = useCallback(async () => {
     try {
@@ -19,6 +20,12 @@ export default function ConvictionFloorKnob() {
       setErr(null);
     } catch (e) {
       setErr(e?.response?.data?.detail || String(e));
+    }
+    try {
+      const { data: h } = await api.get("/admin/auto-router/conviction-floor/history?limit=5");
+      setHistory(h.history || []);
+    } catch {
+      /* history is best-effort */
     }
   }, []);
 
@@ -84,6 +91,22 @@ export default function ConvictionFloorKnob() {
       {err && (
         <div className="mt-2 border border-rd-danger px-2 py-1 text-[10px] font-mono text-rd-danger" data-testid="conviction-floor-error">
           <Warning size={10} className="inline mr-1" />{err}
+        </div>
+      )}
+      {history.length > 0 && (
+        <div className="mt-2 border-t border-rd-border/50 pt-2" data-testid="conviction-floor-history">
+          <div className="text-[9px] uppercase tracking-widest text-rd-dim font-mono mb-1">
+            Change Log
+          </div>
+          {history.map((h) => (
+            <div key={h.ts} className="flex items-center gap-2 text-[10px] font-mono">
+              <span className="text-rd-dim w-32 shrink-0">{(h.ts || "").slice(0, 16).replace("T", " ")}</span>
+              <span className="text-rd-text">
+                ×{h.prev !== null && h.prev !== undefined ? Number(h.prev).toFixed(2) : "—"} → <span className="font-bold">×{Number(h.value).toFixed(2)}</span>
+              </span>
+              <span className="text-rd-dim truncate">{h.updated_by}</span>
+            </div>
+          ))}
         </div>
       )}
     </div>
