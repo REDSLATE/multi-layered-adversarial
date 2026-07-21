@@ -108,6 +108,14 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _read_min_conviction_mult():
+    try:
+        from shared.auto_router_stages import _min_conviction_mult
+        return _min_conviction_mult()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def _tick() -> list[dict]:
     """One scan pass. Picks up at most AUTO_ROUTER_MAX_PER_TICK unexecuted
     intents and routes them through Seat → Risk → Broker.
@@ -310,6 +318,7 @@ def get_status() -> dict:
         "last_tick_exceptions": _LAST_TICK_EXCEPTIONS,
         "last_intent_error": _LAST_INTENT_ERROR,
         "last_route_stage_trace": getattr(_ar, "_LAST_STAGE_TRACE", None) or None,
+        "min_conviction_mult": _read_min_conviction_mult(),
         "route_budget_sec": ROUTE_BUDGET_SEC,
         "now": _now_iso(),
         "pipeline": "unified",

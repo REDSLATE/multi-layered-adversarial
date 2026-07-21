@@ -316,12 +316,15 @@ async def test_equity_sub_floor_sized_up_to_five(monkeypatch):
 # 5. size_multiplier=0 → advisory_only + SIZED_TO_ZERO short-circuit
 # ═══════════════════════════════════════════════════════════════════
 @pytest.mark.asyncio
-async def test_size_multiplier_zero_short_circuits_advisory_only():
-    """evidence.size_multiplier=0.0 → verdict='advisory_only',
+async def test_size_multiplier_zero_short_circuits_advisory_only(monkeypatch):
+    """FLOOR DISABLED (AUTO_ROUTER_MIN_CONVICTION_MULT=0):
+    evidence.size_multiplier=0.0 → verdict='advisory_only',
     reason='SIZED_TO_ZERO', gate_state='advisory_only' (NOT blocked),
     broker_reason='SIZED_TO_ZERO', broker_error_bucket='conviction_sizing'.
     Executions row: broker_status='sized_to_zero'. NO risk.check call."""
     from shared.auto_router_stages import _gate_risk
+
+    monkeypatch.setenv("AUTO_ROUTER_MIN_CONVICTION_MULT", "0")
 
     intent = {
         "intent_id": "test-sized-zero-1", "symbol": "AAPL",
@@ -472,3 +475,80 @@ def test_live_auto_router_force_tick_ok(live_token):
     assert d.get("ok") is True, f"force-tick returned not-ok: {d}"
     # Preview arbiter is DISARMED — 0 results expected
     assert "results_count" in d
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 8. Conviction multiplier floor (2026-07-21, operator directive)
+# ═══════════════════════════════════════════════════════════════════
+@pytest.mark.asyncio
+async def test_conviction_floor_rescues_zero_multiplier(monkeypatch):
+    """FLOOR ON (default 0.25): size_multiplier=0.0 no longer dies as
+    SIZED_TO_ZERO — it proceeds sized at floor×base and the
+    sizing_degradation stamp records the floor."""
+    from shared.auto_router_stages import _gate_risk
+
+    monkeypatch.setenv("AUTO_ROUTER_MIN_CONVICTION_MULT", "0.25")
+    intent = {
+        "intent_id": "test-floor-1", "symbol": "BTC/USD",
+        "action": "BUY", "lane": "crypto",
+        "stack": "camino", "ingest_ts": "2026-07-20T00:00:00+00:00",
+        "requested_notional_usd": 10.0,
+        "evidence": {"size_multiplier": 0.0},
+    }
+    sd = _seat_fire(lane="crypto", risk_multiplier=1.0)
+    ctx = _make_ctx(intent, sd, notional_raw=10.0)
+
+    seen_notionals: list[float] = []
+
+    async def capture(_intent, *, notional_usd):
+        seen_notionals.append(notional_usd)
+        return _RiskOK(notional_usd=notional_usd)
+
+    stack, updated_docs, execs_mod, _risk = _install_mocks(risk_check=capture)
+    with stack:
+        verdict = await _gate_risk(ctx)
+
+    assert verdict is None, f"floor should rescue the intent; got {verdict}"
+    assert seen_notionals == [2.5], (
+        f"risk.check saw {seen_notionals}, expected [2.5] (10.0 × 0.25 floor)"
+    )
+    stamps = [d["update"]["$set"] for d in updated_docs
+              if "sizing_degradation" in d["update"].get("$set", {})]
+    assert len(stamps) == 1
+    sd_doc = stamps[0]["sizing_degradation"]
+    assert sd_doc["conviction_floor_applied"] is True
+    assert sd_doc["conviction_floor_mult"] == 0.25
+    assert sd_doc["final_usd"] == 2.5
+
+
+@pytest.mark.asyncio
+async def test_conviction_floor_not_applied_above_floor(monkeypatch):
+    """Multiplier above the floor is untouched — floor only rescues."""
+    from shared.auto_router_stages import _gate_risk
+
+    monkeypatch.setenv("AUTO_ROUTER_MIN_CONVICTION_MULT", "0.25")
+    intent = {
+        "intent_id": "test-floor-2", "symbol": "BTC/USD",
+        "action": "BUY", "lane": "crypto",
+        "stack": "camino", "ingest_ts": "2026-07-20T00:00:00+00:00",
+        "requested_notional_usd": 10.0,
+        "evidence": {"size_multiplier": 0.6},
+    }
+    sd = _seat_fire(lane="crypto", risk_multiplier=1.0)
+    ctx = _make_ctx(intent, sd, notional_raw=10.0)
+
+    seen_notionals: list[float] = []
+
+    async def capture(_intent, *, notional_usd):
+        seen_notionals.append(notional_usd)
+        return _RiskOK(notional_usd=notional_usd)
+
+    stack, updated_docs, _execs, _risk = _install_mocks(risk_check=capture)
+    with stack:
+        verdict = await _gate_risk(ctx)
+
+    assert verdict is None
+    assert seen_notionals == [6.0]
+    stamps = [d["update"]["$set"] for d in updated_docs
+              if "sizing_degradation" in d["update"].get("$set", {})]
+    assert stamps[0]["sizing_degradation"]["conviction_floor_applied"] is False

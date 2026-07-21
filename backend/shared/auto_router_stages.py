@@ -21,6 +21,7 @@ was flattened.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -29,6 +30,18 @@ from shared.auto_router_helpers import RouteContext, resolve_notional
 
 
 logger = logging.getLogger("auto_router")
+
+
+def _min_conviction_mult() -> float:
+    """Floor for the combined seat×arbiter conviction multiplier.
+    0 disables the floor (restores hard SIZED_TO_ZERO). Read at call
+    time so operators can retune via env without a code change."""
+    try:
+        return max(0.0, min(1.0, float(
+            os.environ.get("AUTO_ROUTER_MIN_CONVICTION_MULT", "0.25"),
+        )))
+    except (TypeError, ValueError):
+        return 0.25
 
 
 def _db():
@@ -184,6 +197,26 @@ async def _gate_risk(ctx: RouteContext) -> Optional[dict]:
     except (TypeError, ValueError):
         arb_mult = 1.0
     adjusted_notional *= arb_mult
+
+    # 2a-ii-b. Conviction multiplier floor (2026-07-21, operator
+    # directive): doctrine dampens trades, it does not kill them.
+    # When seat×arbiter collapses the size below floor×base, trade
+    # at floor×base instead of dying as SIZED_TO_ZERO.
+    conviction_floor = _min_conviction_mult()
+    conviction_floored = False
+    if (
+        conviction_floor > 0
+        and ctx.notional_raw > 0
+        and adjusted_notional < ctx.notional_raw * conviction_floor
+    ):
+        adjusted_notional = ctx.notional_raw * conviction_floor
+        conviction_floored = True
+        logger.info(
+            "auto_router conviction floor ×%.2f applied intent=%s "
+            "(seat=%.2f arb=%.2f) → $%.4f",
+            conviction_floor, ctx.intent_id, sd.risk_multiplier,
+            arb_mult, adjusted_notional,
+        )
     final_notional = adjusted_notional
 
     # 2a-iii. Sized-to-zero is a conviction outcome, not a risk
@@ -400,6 +433,8 @@ async def _gate_risk(ctx: RouteContext) -> Optional[dict]:
                 "notional_source": ctx.notional_source,
                 "seat_multiplier": sd.risk_multiplier,
                 "arbiter_multiplier": arb_mult,
+                "conviction_floor_applied": conviction_floored,
+                "conviction_floor_mult": conviction_floor,
                 "floor_sized_up": floor_sized_up,
                 "equity_floor_usd": equity_floor_usd,
                 "final_usd": final_notional,
