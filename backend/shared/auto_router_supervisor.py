@@ -309,6 +309,7 @@ def get_status() -> dict:
         "master_switch_read_error": getattr(_ar, "_ARM_LAST_READ_ERROR", None),
         "last_tick_exceptions": _LAST_TICK_EXCEPTIONS,
         "last_intent_error": _LAST_INTENT_ERROR,
+        "last_route_stage_trace": getattr(_ar, "_LAST_STAGE_TRACE", None) or None,
         "route_budget_sec": ROUTE_BUDGET_SEC,
         "now": _now_iso(),
         "pipeline": "unified",

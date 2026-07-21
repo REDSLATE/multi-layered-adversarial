@@ -1050,5 +1050,20 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         name="shared_intents_ttl_at_90d",
         expireAfterSeconds=90 * 86400,
     )
+    # ── 2026-07-21 ROOT-CAUSE FIX: `_route_one` timeouts ──────────
+    # Every routing stage does `find_one/update_one({"intent_id": ..})`
+    # on shared_intents (3-6 calls per intent: risk idempotency check,
+    # sizing provenance, terminal stamps, broker-order write). With NO
+    # index on `intent_id`, each of those was a FULL COLLSCAN over the
+    # multi-million-row prod collection → 20s per-intent cap fired →
+    # every pick died as a route timeout and 0 intents ever executed.
+    # Even `_stamp_route_timeout`'s poison write collscanned and timed
+    # out, so the same intents were re-picked forever.
+    await _safe_create_index(
+        db.shared_intents,
+        [("intent_id", 1)],
+        deadline_s=heavy_deadline_s,
+        name="shared_intents_intent_id_idx",
+    )
 
     pass

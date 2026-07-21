@@ -2,6 +2,12 @@
 - **"Crypto silent 5 days" solved — misread, not a bug:** user's Intents page screenshot showed SORT="Highest Conviction" pinning 5d-old conf=1.000 ETH/USD intents (0% exec score, died at gates) to the top while fresh crypto intents (conf 0.55-0.73) sat below. Fix: Intents page default sort flipped conviction → **newest** (`Intents.jsx` useState("newest")); conviction still in dropdown. Verified via screenshot (select value = newest).
 - **Webull token mirror healed:** `status()` computed `expired` from the 6-min PENDING TTL stamped at token creation; Webull extends to 15d server-side on 2FA approval without telling us → `expired:true/-253h` while live calls worked. Fix: `trader/webull_auth.mark_live_ok()` (stamps status=NORMAL, last_live_ok, bumps expires to now+15d when past) called by `/admin/webull/probe` on live success, response re-read. Verified: probe now `token_expired:false, 360h`. 6/6 webull_auth tests pass.
 
+### 🎯 2026-07-21 ROOT CAUSE FOUND & FIXED: 0-executed route timeouts
+- **Evidence chain (all from live prod API):** router alive & picking 5/tick but every tick = 2 route timeouts + 3 deferred → 0 executed; Kraken private API from prod pod answers in 0.4s (broker fine); e2e stages before router fine.
+- **Root cause:** `shared_intents` had NO index on `intent_id` (checked all 128 index defs in db.py). Every routing stage does 3-6 `find_one/update_one({"intent_id":..})` → each a FULL COLLSCAN on the multi-million-row prod collection → 20s per-intent cap fired → TimeoutError on every pick. The poison stamp itself collscanned & timed out, so the same intents re-picked forever.
+- **Fix:** `shared_intents_intent_id_idx` added to `db.ensure_indexes` (db.py ~line 1053). Plus per-stage timing trace in `_route_one` (`_LAST_STAGE_TRACE`: stages_ms + `in_flight` = stage running when cancelled), surfaced as `last_route_stage_trace` on `GET /api/admin/auto-router/status`.
+- Verified: index builds on startup, trace records correctly, 38 router tests pass. **NEEDS DEPLOY (#10) to reach prod** — index builds automatically at boot.
+
 ### 🧹 2026-06 (fork): Retention tightened 7d → 72h
 - Operator: "Let's take it down a few days. How about 72hrs?" — `RETENTION_DAYS` default now **3** in `shared/retention.py` (env-overridable). Kept-forever set unchanged (executed intents, ok executions, fills, config). UI badge reads value dynamically. Verified live: `/api/admin/retention/status` returns `retention_days: 3`, sweeper alive. **Prod needs a redeploy to pick this up.**
 

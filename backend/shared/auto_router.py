@@ -212,6 +212,15 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# ── Per-stage route trace (2026-07-21) ─────────────────────────────
+# When a `_route_one` call is killed by the tick's 20s wait_for, the
+# cancellation is silent about WHERE it hung. This module-level trace
+# records per-stage wall time for the most recent route attempt and,
+# crucially, `in_flight` — the stage that was running when the
+# coroutine was cancelled. Surfaced on `get_status()`.
+_LAST_STAGE_TRACE: dict = {}
+
+
 async def _route_one(intent: dict) -> dict:
     """Orchestrator (2026-02-11, P6b-finish).
 
@@ -242,17 +251,41 @@ async def _route_one(intent: dict) -> dict:
     ctx = RouteContext(intent=intent)
     ctx.finalize_inputs()
 
+    global _LAST_STAGE_TRACE
+    trace: dict = {
+        "intent_id": ctx.intent_id,
+        "symbol": intent.get("symbol"),
+        "lane": intent.get("lane"),
+        "ts": _now_iso(),
+        "stages_ms": {},
+        "in_flight": None,
+    }
+    _LAST_STAGE_TRACE = trace
+    _perf = _time_module.perf_counter
+
     for stage in (
         _gate_master_switch,
         _gate_seat,
         _gate_risk,
         _route_and_submit,
     ):
+        name = stage.__name__
+        trace["in_flight"] = name
+        t0 = _perf()
         verdict = await stage(ctx)
+        trace["stages_ms"][name] = round((_perf() - t0) * 1000)
+        trace["in_flight"] = None
         if verdict is not None:
+            trace["verdict"] = verdict.get("verdict")
             return verdict
 
-    return await _finalize_gate_state(ctx)
+    trace["in_flight"] = "_finalize_gate_state"
+    t0 = _perf()
+    final = await _finalize_gate_state(ctx)
+    trace["stages_ms"]["_finalize_gate_state"] = round((_perf() - t0) * 1000)
+    trace["in_flight"] = None
+    trace["verdict"] = final.get("verdict")
+    return final
 
 
 # ─── Reconciliation & expiration sweeps (extracted 2026-02-19) ────
