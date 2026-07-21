@@ -280,6 +280,14 @@ async def _diag_for_runtime(rt: str) -> dict:
         memory_labels_count = 0
     hb_age, hb_stale = _hb_age_and_stale(hb)
     hb_tier = _heartbeat_tier(hb_age)
+    # 2026-07-21: external sidecar pods retired (pulse-only doctrine).
+    # Their heartbeats stop forever — report the layer as
+    # decommissioned instead of paging the operator with "dead".
+    from shared.runtime.sidecar_checkin import DECOMMISSIONED_SIDECARS
+    decommissioned = rt in DECOMMISSIONED_SIDECARS
+    if decommissioned:
+        hb_tier = "decommissioned"
+        hb_stale = False
     # Receipt freshness — joined against hb_tier to produce the
     # `silent` band (May-14 tripwire). None means no receipt ever.
     receipt_age_s: float | None = None
@@ -301,10 +309,14 @@ async def _diag_for_runtime(rt: str) -> dict:
         "heartbeat_age_seconds": hb_age,
         "heartbeat_stale": hb_stale,
         "heartbeat_tier": hb_tier,
+        "decommissioned": decommissioned,
         # Operator-facing tier that joins heartbeat + receipt
         # freshness. The UI keys its badge color/label off this
         # field (2026-02-19 silent-hang tripwire).
-        "effective_tier": _effective_tier(hb_tier, receipt_age_s),
+        "effective_tier": (
+            "decommissioned" if decommissioned
+            else _effective_tier(hb_tier, receipt_age_s)
+        ),
     }
 
 

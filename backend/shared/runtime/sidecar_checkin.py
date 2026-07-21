@@ -53,6 +53,15 @@ from shared.runtime.platform_survival import RuntimeStamp, policy_hash
 
 router = APIRouter(prefix="/admin/runtime", tags=["sidecar-checkin"])
 
+# ── Operator directive 2026-07-21: sidecar layer DECOMMISSIONED ────
+# The external sidecar pods (neutral-camino-v2 lineage) were retired
+# for good: the in-process pulse worker has been the sole brain path
+# since 2026-07-12 (P3 step 3), and the operator confirmed shutdown
+# of the external pods on 2026-07-21. Their check-in/heartbeat rows
+# are kept as a historical record but must NEVER page the operator —
+# freshness reports "decommissioned" instead of "dead"/"never".
+DECOMMISSIONED_SIDECARS = frozenset({"camino", "barracuda", "hellcat", "gto"})
+
 
 # ────────────────────── Helpers ───────────────────────────────────────
 
@@ -553,10 +562,14 @@ def _row_for_response(doc: Optional[Dict[str, Any]], brain: str, now: datetime) 
             "errors": [],
         }
     fresh = _freshness(doc.get("last_checkin_at"), now)
+    runtime_name = doc.get("runtime", brain)
     return {
-        "runtime": doc.get("runtime", brain),
+        "runtime": runtime_name,
         "verdict": doc.get("verdict", "invalid"),
-        "freshness": fresh["freshness"],
+        "freshness": (
+            "decommissioned" if runtime_name in DECOMMISSIONED_SIDECARS
+            else fresh["freshness"]
+        ),
         "age_seconds": fresh["age_seconds"],
         "first_checkin_at": doc.get("first_checkin_at"),
         "last_checkin_at": doc.get("last_checkin_at"),

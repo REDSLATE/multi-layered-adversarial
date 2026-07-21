@@ -80,9 +80,10 @@ def test_diagnostics_runtime_rows_carry_new_tier(auth_client, base_url):
     assert "runtimes" in body
     for row in body["runtimes"]:
         assert "heartbeat_tier" in row, f"missing heartbeat_tier on {row.get('runtime')}"
-        assert row["heartbeat_tier"] in {"ok", "stale", "dead", "unknown"}, (
+        assert row["heartbeat_tier"] in {"ok", "stale", "dead", "unknown", "decommissioned"}, (
             f"{row.get('runtime')} carries a non-canonical heartbeat_tier "
-            f"{row['heartbeat_tier']!r} — only ok/stale/dead/unknown are allowed"
+            f"{row['heartbeat_tier']!r} — only ok/stale/dead/unknown/"
+            "decommissioned are allowed (sidecar layer retired 2026-07-21)"
         )
 
 

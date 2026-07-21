@@ -370,11 +370,9 @@ export default function Diagnostics() {
           </div>
 
           {/* Legacy Runtimes table + CompositeLivenessCard dropped
-              2026-02-19. The BrainHealthTile that briefly replaced
-              them was itself removed 2026-07-06 as dead-on-arrival
-              in prod. STALE HEARTBEAT alert below is preserved as
-              the loudest liveness signal — any dead heartbeat needs
-              operator eyes immediately. */}
+              2026-02-19. Sidecar layer DECOMMISSIONED 2026-07-21
+              (pulse-only since 07-12) — the STALE HEARTBEAT banner
+              now only fires for non-decommissioned runtimes. */}
           {data.runtimes.some((r) => r.heartbeat_tier === "dead") && (
             <div
               className="bg-rd-danger/15 border border-rd-danger px-4 py-2 mb-4 text-[11px] font-mono text-rd-danger"
@@ -385,6 +383,14 @@ export default function Diagnostics() {
                 .map((r) => r.runtime.toUpperCase())
                 .join(", ")}{" "}
               heartbeating ≥{data.heartbeat_preview_drift_seconds || 110}s ago. Possible hang, slow LLM call, or pod restart. For an actual MC-URL misconfig check, expand the <span className="text-rd-text font-bold">Sidecar identity check-ins</span> details below.
+            </div>
+          )}
+          {data.runtimes.some((r) => r.heartbeat_tier === "decommissioned") && (
+            <div
+              className="border border-rd-border px-4 py-2 mb-4 text-[11px] font-mono text-rd-dim"
+              data-testid="sidecar-decommissioned-note"
+            >
+              SIDECAR LAYER DECOMMISSIONED · pulse-only since 2026-07-12 — the in-process pulse worker runs all four brains; external sidecar pods were retired 2026-07-21. Check-in history below is preserved as a record.
             </div>
           )}
 

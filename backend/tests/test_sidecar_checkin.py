@@ -224,7 +224,9 @@ def test_post_then_get_reflects_latest_stamp(auth_client, base_url):
     body = r.json()
     assert body["runtime"] == "camino"
     assert body["verdict"] == "prod"
-    assert body["freshness"] in ("fresh", "stale")  # just persisted → fresh
+    # 2026-07-21: sidecar layer decommissioned — freshness pins to
+    # "decommissioned" for retired brains regardless of stamp age.
+    assert body["freshness"] == "decommissioned"
     assert body["checkin_count"] >= 1
     assert body["stamp"]["env_name"] == "prod"
     assert body["stamp"]["mc_url"].startswith("https://mission.risedual.ai")

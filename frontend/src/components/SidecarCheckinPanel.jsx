@@ -36,6 +36,7 @@ const FRESHNESS_META = {
   stale: { color: "#F59E0B", label: "stale" },
   dead:  { color: "#DC2626", label: "dead" },
   never: { color: "#71717A", label: "never" },
+  decommissioned: { color: "#71717A", label: "retired" },
 };
 
 function VerdictChip({ verdict, testid }) {
