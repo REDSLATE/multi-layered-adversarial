@@ -40,6 +40,7 @@ TERMINAL_BUCKETS = frozenset({
     "min_order_notional",
     "invalid_order_args",
     "auth_or_permission",
+    "no_position_to_sell",
 })
 
 TRANSIENT_BUCKETS = frozenset({
@@ -65,6 +66,17 @@ def classify(exc: BaseException) -> BrokerErrorClass:
     msg = raw.lower()
 
     # ─── TERMINAL — order matters ────────────────────────────────
+    # no_position_to_sell first — Webull's cash-account short reject
+    # is "HTTP Status: 417, Code: OAUTH_OPENAPI_GENERATE_NEW_SHORT_
+    # POSITION"; the adapter's pre-submit guard raises
+    # WEBULL_SELL_NO_POSITION / WEBULL_SELL_INSUFFICIENT_POSITION for
+    # the same condition. Retrying cannot conjure a position.
+    if ("generate_new_short_position" in msg
+            or "webull_sell_no_position" in msg
+            or "webull_sell_insufficient_position" in msg
+            or "short position" in msg):
+        return BrokerErrorClass("no_position_to_sell", True, _detail(raw))
+
     # market_closed must precede invalid_order_args because Webull's
     # weekend rejection reads:
     #   "HTTP Status: 417, Code: INVALID_PARAMETER, Msg: The time you

@@ -146,6 +146,12 @@ def _adapter_with_instrument(symbol: str, instrument_id: str, last_price: float)
     a._resolve_instrument_id = AsyncMock(  # type: ignore[method-assign]
         return_value=(instrument_id, last_price, True)
     )
+    # 2026-07-22 SELL guard: pre-submit position check. Default the
+    # stub to a large long position so BUY tests are unaffected and
+    # legacy SELL tests keep passing; guard-specific tests override.
+    a.list_positions = AsyncMock(  # type: ignore[method-assign]
+        return_value=[{"symbol": symbol.upper(), "qty": 1000.0, "side": "long"}]
+    )
     a._trade_client = _StubTradeClient()
     return a
 
@@ -284,6 +290,55 @@ async def test_sell_side_routes_through_qty_decimal_too():
     assert "limit_price" not in stock_order
     qty_val = float(stock_order["quantity"])
     assert 0 < qty_val < 1.0  # $3.50 on TSLA @ $250 → fractional
+
+
+# ── 2026-07-22: SELL guard — cash account cannot short ─────────────
+
+
+@pytest.mark.asyncio
+async def test_sell_with_no_position_raises_before_broker_call():
+    """A SELL with zero held shares must be blocked IN the adapter
+    with WEBULL_SELL_NO_POSITION — never reach Webull, which would
+    417 with OAUTH_OPENAPI_GENERATE_NEW_SHORT_POSITION."""
+    adapter = _adapter_with_instrument("TSLA", "913303891", 250.0)
+    adapter.list_positions = AsyncMock(return_value=[])
+    with pytest.raises(RuntimeError, match="WEBULL_SELL_NO_POSITION"):
+        await adapter.submit_market_order("TSLA", notional=3.50, side="SELL")
+    assert len(adapter._trade_client.order_v3.place_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_sell_clamps_to_held_fractional_position():
+    """SELL sized above the held quantity is clamped to the position
+    (full liquidation) instead of raising or shorting the excess."""
+    adapter = _adapter_with_instrument("TSLA", "913303891", 250.0)
+    adapter.list_positions = AsyncMock(
+        return_value=[{"symbol": "TSLA", "qty": 0.01, "side": "long"}]
+    )
+    # $10 @ $250 = 0.04 sh requested, only 0.01 held → clamp to 0.01.
+    await adapter.submit_market_order("TSLA", notional=10.0, side="SELL")
+    _, stock_order = adapter._trade_client.order_v3.place_calls[0]
+    assert float(stock_order["quantity"]) <= 0.01
+
+
+@pytest.mark.asyncio
+async def test_sell_whole_share_clamps_to_held_integer():
+    """Whole-share (v1) SELL path clamps qty to the held integer."""
+    adapter = _adapter_with_instrument("AAPL", "913256135", 225.0)
+    adapter.list_positions = AsyncMock(
+        return_value=[{"symbol": "AAPL", "qty": 2.0, "side": "long"}]
+    )
+    result = await adapter.submit_market_order("AAPL", qty=5, side="SELL")
+    assert result["qty"] == 2.0
+
+
+@pytest.mark.asyncio
+async def test_buy_does_not_touch_positions():
+    """BUY orders never consult positions — guard is SELL-only."""
+    adapter = _adapter_with_instrument("NVDA", "913355100", 140.0)
+    adapter.list_positions = AsyncMock(return_value=[])
+    await adapter.submit_market_order("NVDA", notional=5.0, side="BUY")
+    assert adapter.list_positions.await_count == 0
 
 
 # ── whole-share path (legacy) still works for explicit qty ─────────

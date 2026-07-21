@@ -54,6 +54,30 @@ UNKNOWN_BLOB    = "Some novel broker error we've never seen before, 0xdeadbeef"
 
 # ─── Taxonomy: bucket assignment ────────────────────────────────────
 
+def test_classify_webull_short_position_terminal():
+    """Webull's cash-account short reject (2026-07-21 v3 autopsy)
+    must classify no_position_to_sell TERMINAL — retrying can never
+    conjure a position. Must beat market_closed AND the 4xx catch-all."""
+    from shared.broker_error_taxonomy import classify
+    r = classify(RuntimeError(
+        "Webull submit_market_order (v3) failed: HTTP Status: 417, "
+        "Code: OAUTH_OPENAPI_GENERATE_NEW_SHORT_POSITION, "
+        "Msg: Short selling is not supported."
+    ))
+    assert r.bucket == "no_position_to_sell"
+    assert r.is_terminal is True
+
+
+def test_classify_adapter_sell_guard_terminal():
+    """The adapter's pre-submit guard message maps to the same bucket."""
+    from shared.broker_error_taxonomy import classify
+    r = classify(RuntimeError(
+        "WEBULL_SELL_NO_POSITION — SELL AAPL blocked pre-submit; NO_TRADE"
+    ))
+    assert r.bucket == "no_position_to_sell"
+    assert r.is_terminal is True
+
+
 def test_classify_market_closed_beats_invalid_args_on_webull_sunday():
     """Precedence guard: Webull's Sunday error has BOTH 'INVALID_PARAMETER'
     and 'not supported'. Must classify as market_closed — invalid_order_args
@@ -158,7 +182,7 @@ def test_bucket_sets_are_disjoint_and_named_correctly():
     assert TERMINAL_BUCKETS.isdisjoint(TRANSIENT_BUCKETS)
     expected_terminal = {
         "market_closed", "insufficient_funds", "min_order_notional",
-        "invalid_order_args", "auth_or_permission",
+        "invalid_order_args", "auth_or_permission", "no_position_to_sell",
     }
     expected_transient = {"rate_limited", "network_transient", "unknown"}
     assert TERMINAL_BUCKETS == expected_terminal

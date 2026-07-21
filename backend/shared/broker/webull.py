@@ -907,6 +907,30 @@ class WebullAdapter(BrokerAdapter):
 
         sym_u = (symbol or "").upper().strip()
 
+        # ── 2026-07-22: SELL pre-check — cash account cannot short ──
+        # Webull rejects any SELL exceeding the held long quantity with
+        # HTTP 417 OAUTH_OPENAPI_GENERATE_NEW_SHORT_POSITION (observed
+        # in the v3 autopsy). Pre-check the position here so the
+        # operator sees a clean WEBULL_SELL_NO_POSITION reason instead
+        # of a misleading 417, and clamp oversized SELLs to the held
+        # quantity so partial liquidations still fill.
+        max_sell_qty: Optional[float] = None
+        if side_str == "SELL" and lane == "equity":
+            held = 0.0
+            for p in await self.list_positions():
+                if (p.get("symbol") or "").upper() == sym_u:
+                    q = float(p.get("qty") or 0)
+                    if q > 0:
+                        held += q
+            if held <= 0:
+                raise RuntimeError(
+                    f"WEBULL_SELL_NO_POSITION — SELL {sym_u} blocked "
+                    f"pre-submit: no long position held; a cash account "
+                    f"cannot open a short (broker would 417 "
+                    f"GENERATE_NEW_SHORT_POSITION); NO_TRADE"
+                )
+            max_sell_qty = held
+
         if notional is not None:
             # ── FRACTIONAL PATH (v2 + QTY) ────────────────────────────
             # Doctrine pin (2026-02-26): Webull's v2 API DEPRECATED the
@@ -949,6 +973,13 @@ class WebullAdapter(BrokerAdapter):
                 float(limit_price_str) if limit_price_str else last_price
             )
             raw_qty = effective_notional / price_for_qty if price_for_qty > 0 else 0.0
+            if max_sell_qty is not None and raw_qty > max_sell_qty:
+                logger.info(
+                    "Webull SELL %s clamped to held position: requested "
+                    "%.6f sh → held %.6f sh", sym_u, raw_qty, max_sell_qty,
+                )
+                raw_qty = max_sell_qty
+                effective_notional = max_sell_qty * price_for_qty
 
             # ── 2026-07-21 ROOT-CAUSE FIX: fractional = MARKET only ──
             # Webull US fractional policy (developer.webull.com trade
@@ -975,6 +1006,8 @@ class WebullAdapter(BrokerAdapter):
                 raw_qty = (
                     effective_notional / last_price if last_price > 0 else 0.0
                 )
+                if max_sell_qty is not None:
+                    raw_qty = min(raw_qty, max_sell_qty)
                 # 6-dp truncate (not round-half-up) so the resulting
                 # cash spend is always <= effective_notional at the
                 # quoted price.
@@ -1109,6 +1142,20 @@ class WebullAdapter(BrokerAdapter):
         # branch — it always sends notional intents through the v2
         # fractional path above.
         qty_int = int(float(qty))
+        if max_sell_qty is not None and qty_int > int(max_sell_qty):
+            clamped = int(max_sell_qty)
+            if clamped < 1:
+                raise RuntimeError(
+                    f"WEBULL_SELL_INSUFFICIENT_POSITION — SELL {sym_u} "
+                    f"qty={qty_int} but only {max_sell_qty:.6f} sh held "
+                    f"(fractional); use the notional path to liquidate; "
+                    f"NO_TRADE"
+                )
+            logger.info(
+                "Webull SELL %s whole-share clamped: requested %d → held %d",
+                sym_u, qty_int, clamped,
+            )
+            qty_int = clamped
         if qty_int < 1:
             raise WebullCapBlocked(
                 f"WEBULL_QTY_BELOW_ONE — qty={qty} < 1; the integer "

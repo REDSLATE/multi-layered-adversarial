@@ -52,9 +52,10 @@ def test_armed_false_values(monkeypatch, val):
     assert is_webull_armed() is False
 
 
-def test_default_band_is_1_to_10():
+def test_default_band_is_5_to_10():
+    # 2026-07-20: floor raised $1 → $5 (Webull rejects sub-$5 orders).
     lo, hi, src = webull_notional_band()
-    assert lo == DEFAULT_MIN_NOTIONAL_USD == 1.00
+    assert lo == DEFAULT_MIN_NOTIONAL_USD == 5.00
     assert hi == DEFAULT_MAX_NOTIONAL_USD == 10.00
     assert src == "env"
 
@@ -172,7 +173,7 @@ def test_blocks_when_notional_missing(monkeypatch):
 
 def test_boundary_floor_is_inclusive(monkeypatch):
     monkeypatch.setenv("WEBULL_ARMED", "true")
-    d = evaluate_webull_order(notional_usd=1.00, symbol="AAPL")
+    d = evaluate_webull_order(notional_usd=5.00, symbol="AAPL")
     assert d.ok is True
 
 
@@ -206,25 +207,23 @@ def test_crypto_canonical_symbol_in_reason(monkeypatch):
 # ── doctrine pin: $1 fractional floor (2026-02-19 rev) ─────────────
 
 
-def test_one_dollar_fractional_intent_passes(monkeypatch):
-    """Doctrine pin (operator, 2026-02-19): Webull supports fractional
-    shares starting at a $1 notional minimum. The gate floor was lowered
-    $3 → $1 to align with that. A $1.00 BUY intent on AAPL MUST pass
-    the cap gate — if a future env-tweak or doctrine drift raises the
-    floor back above $1 without intent, this test fails loudly."""
+def test_one_dollar_fractional_intent_blocked_by_5_floor(monkeypatch):
+    """2026-07-20 doctrine: Webull rejects sub-$5 orders, so the
+    default floor is $5. A $1.00 intent must be blocked with the
+    BELOW_FLOOR reason (operators can still lower via env)."""
     monkeypatch.setenv("WEBULL_ARMED", "true")
     d = evaluate_webull_order(notional_usd=1.00, symbol="AAPL")
-    assert d.ok is True, (
-        "$1.00 notional must clear the floor — Webull's fractional "
-        "minimum is $1, MC must not refuse smaller-than-$3 intents"
+    assert d.ok is False, (
+        "$1.00 notional must be blocked by the $5 default floor "
+        "(Webull rejects sub-$5 orders since 2026-07-20)"
     )
 
 
-def test_intermediate_two_dollar_intent_passes(monkeypatch):
-    """The exact case that motivated the floor drop: a fractional
-    BUY around $2 (e.g., 0.05 shares of a $40 ticker) used to be
-    rejected under the $3 floor; with the $1 floor it MUST pass."""
+def test_intermediate_two_dollar_intent_with_env_floor_lowered(monkeypatch):
+    """Operators can still trade sub-$5 fractionals by lowering the
+    env floor explicitly — env override beats the $5 default."""
     monkeypatch.setenv("WEBULL_ARMED", "true")
+    monkeypatch.setenv("WEBULL_MIN_NOTIONAL_USD", "1.00")
     d = evaluate_webull_order(notional_usd=2.00, symbol="AAPL")
     assert d.ok is True
 
