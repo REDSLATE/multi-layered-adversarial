@@ -79,6 +79,21 @@ def _daily_cap() -> float:
         return 1000.0
 
 
+async def _daily_cap_effective() -> float:
+    """Operator override (`runtime_flags._id=risk_caps.cap_daily_usd`,
+    set via POST /api/admin/risk/budget/cap) beats the env default."""
+    try:
+        doc = await db["runtime_flags"].find_one(
+            {"_id": "risk_caps"}, {"cap_daily_usd": 1},
+        )
+        v = (doc or {}).get("cap_daily_usd")
+        if v is not None:
+            return float(v)
+    except Exception:  # noqa: BLE001
+        pass
+    return _daily_cap()
+
+
 async def _is_freeze_on() -> bool:
     """Master Trading Switch — when OFF, every Risk check fails. The
     flag lives in `runtime_flags._id='master_trading_switch'`.
@@ -107,10 +122,24 @@ async def _is_lane_enabled(lane: str) -> bool:
 
 
 async def _daily_spent_usd() -> float:
-    """Sum of `notional_usd` on `executions` for the current UTC day."""
-    today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    """Sum of `notional_usd` on `executions` for the current UTC day,
+    from the later of UTC-day-start and the operator's reset marker
+    (2026-07-22: RESET SPEND button rebuilt on THIS gate — the old
+    /exposure-caps/reset-daily-spend marker fed the pre-reduction
+    module and was dead wiring)."""
+    now = datetime.now(timezone.utc)
+    start = now.strftime("%Y-%m-%dT00:00:00")
+    try:
+        doc = await db["runtime_flags"].find_one(
+            {"_id": "daily_spend_reset"}, {"reset_at": 1},
+        )
+        reset_at = (doc or {}).get("reset_at")
+        if reset_at and str(reset_at) > start:
+            start = str(reset_at)
+    except Exception:  # noqa: BLE001
+        pass
     pipeline = [
-        {"$match": {"ts": {"$regex": f"^{today_iso}"}, "ok": True}},
+        {"$match": {"ts": {"$gte": start}, "ok": True}},
         {"$group": {"_id": None, "spent": {"$sum": "$notional_usd"}}},
     ]
     async for row in db["executions"].aggregate(pipeline, maxTimeMS=4000):
@@ -129,7 +158,7 @@ async def check(
     intent_id = intent.get("intent_id") or ""
 
     per_order = _per_order_cap()
-    daily = _daily_cap()
+    daily = await _daily_cap_effective()
     n = float(notional_usd) if notional_usd is not None else per_order
     n = min(n, per_order)
     spent = await _daily_spent_usd()

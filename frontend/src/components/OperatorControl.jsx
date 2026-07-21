@@ -7,6 +7,7 @@ import GateFailureDigest from "@/components/GateFailureDigest";
 import KrakenPairEditor from "@/components/KrakenPairEditor";
 import WatchlistPanel from "@/components/WatchlistPanel";
 import ExitMonitorPanel from "@/components/ExitMonitorPanel";
+import DailyBudgetTile from "@/components/DailyBudgetTile";
 
 /**
  * Operator Control — one-glance status + one-click toggles for the
@@ -669,6 +670,7 @@ export default function OperatorControl() {
       )}
 
       {/* Conviction floor knob + gate-failure digest (2026-07-21) */}
+      <DailyBudgetTile />
       <ConvictionFloorKnob />
       <GateFailureDigest />
       <KrakenPairEditor />
