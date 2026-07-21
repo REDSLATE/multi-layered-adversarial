@@ -1,7 +1,56 @@
 # RISEDUAL Mission Control
 
+**AI Trading Enterprise — Intelligence, Execution, and Learning at Scale.**
 Operator console + execution gating + ladder doctrine for the RISE_AI multi-brain
-trading system.
+trading system. Live production: [mission.risedual.ai](https://mission.risedual.ai)
+
+![RISEDUAL Architecture](docs/architecture.png)
+
+## Core Principles
+
+- **Brains advise. The Seat decides.**
+- **The Seat executes. No other.**
+- **Every order is real.** No paper. No simulation.
+- **Every outcome is learned.**
+- **One Pulse. One Truth. One System.**
+
+## The Pipeline
+
+```
+Pulse → Advisor Brains → Opinion/Intent Layer → Seat Holder → Risk & Sizing
+      → Auto-Router → Broker (Webull / Kraken) → Reconcile & Verify (VRL)
+      → Learning Kernel → (weights feed the next pulse)
+```
+
+Four advisor brains (**Barracuda** mean-reversion, **GTO** momentum, **Camino**
+trend/execution, **Hellcat** execution logic) evaluate a unified market snapshot
+on every pulse. None has execution authority. A single **Seat Holder** weighs
+their opinions and creates executable intent; the **auto-router** — the only
+loop allowed to turn intents into broker calls — routes live orders to
+**Webull** (equities) and **Kraken** (crypto).
+
+## Diagnostic & Observability Spine
+
+| Tool | Answers |
+|---|---|
+| **Kill Map** | Where do trades die, stage by stage, and why? |
+| **Stage Trace** | Which routing stage was in flight when something hung? |
+| **E2E Trace** | Drive one synthetic intent through the whole stack, timed per stage |
+| **Trader Post-Mortem** | Why isn't the trader firing? Per-lane fired/hold/risk-blocked |
+| **Receipts & Reconciliation** | Independent verification of every broker fill and state |
+| **Retention Sweeper** | Autonomous 72h lifecycle for diagnostic data (Atlas IOPS guard) |
+
+## Stack (what runs today — diagram §12A)
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 19, Tailwind, shadcn/ui — Mission Control cockpit |
+| Backend | FastAPI (Python) application monolith |
+| Data | MongoDB Atlas (primary), SQLite hot-path stores |
+| Brokers | Webull OpenAPI (equities), Kraken Pro (crypto) |
+| Auth | JWT, role-based |
+
+*Diagram §12B (Kafka / data lake / microservices) is target-scale, not currently deployed.*
 
 ## Key documents in this repo
 

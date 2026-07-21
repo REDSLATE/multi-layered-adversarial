@@ -1,22 +1,24 @@
-279788379828640 2026-06-30 04:01:12,249 webull.core.client ERROR HttpError occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+274593331540384 2026-07-21 06:13:49,430 webull.core.client ERROR HttpError occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
   "_version": "v2",
-  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_action_name": "/openapi/market-data/stock/bars",
   "_protocol_type": "https",
   "_accept_format": "JSON",
   "_params": {
-    "symbols": "AFG",
-    "category": "US_STOCK"
+    "symbol": "NU",
+    "category": "US_STOCK",
+    "timespan": "M1",
+    "count": "30"
   },
   "_method": "GET",
   "_header": {
     "x-version": "v2",
     "Accept-Encoding": "gzip",
     "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
-    "x-timestamp": "2026-06-30T04:01:12Z",
+    "x-timestamp": "2026-07-21T06:13:44Z",
     "x-signature-version": "1.0",
     "x-signature-algorithm": "HMAC-SHA1",
-    "x-signature-nonce": "9e8a0653-7301-5754-b8f4-cc52c99f08cf",
-    "x-signature": "Zz/0Stt6QK70SYM2x9ZOyHhZZEI=",
+    "x-signature-nonce": "d409b04b-a9eb-5ebb-91a5-a297c1045c9c",
+    "x-signature": "1KYkizHfcam33l5dwOoOM2ER6Gg=",
     "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
     "x-webull-client-source": "sdk"
   },

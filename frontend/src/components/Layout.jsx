@@ -39,6 +39,7 @@ const SECTIONS = [
       { to: "/admin/kernel-review",     label: "Kernel Review",  icon: Brain,   testid: "nav-kernel-review" },
       { to: "/admin/pulse-health",      label: "Pulse Health",   icon: Pulse,   testid: "nav-pulse-health" },
       { to: "/admin/doctrine-reference", label: "Doctrine Ref",  icon: Shield,  testid: "nav-doctrine-reference" },
+      { to: "/admin/architecture",       label: "Architecture",  icon: ChartBar, testid: "nav-architecture" },
     ],
   },
   {

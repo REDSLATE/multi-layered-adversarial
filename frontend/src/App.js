@@ -15,6 +15,7 @@ import BrainOperatorPage from "@/pages/BrainOperatorPage";
 import Intents from "@/pages/Intents";
 import McShelly from "@/pages/McShelly";
 import DoctrineReference from "@/pages/DoctrineReference";
+import Architecture from "@/pages/Architecture";
 import Positions from "@/pages/Positions";
 import LlmLedger from "@/pages/LlmLedger";
 import RiseAI from "@/pages/RiseAI";
@@ -100,6 +101,7 @@ function App() {
             <Route path="brain-op/:brain" element={<BrainOperatorPage />} />
             <Route path="runtime/:runtime" element={<RuntimeDetail />} />
             <Route path="doctrine-reference" element={<DoctrineReference />} />
+            <Route path="architecture" element={<Architecture />} />
             <Route path="flags" element={<Flags />} />
             <Route path="diagnostics" element={<Diagnostics />} />
             <Route path="recent" element={<RecentIngests />} />

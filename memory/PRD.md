@@ -2,6 +2,11 @@
 - **"Crypto silent 5 days" solved — misread, not a bug:** user's Intents page screenshot showed SORT="Highest Conviction" pinning 5d-old conf=1.000 ETH/USD intents (0% exec score, died at gates) to the top while fresh crypto intents (conf 0.55-0.73) sat below. Fix: Intents page default sort flipped conviction → **newest** (`Intents.jsx` useState("newest")); conviction still in dropdown. Verified via screenshot (select value = newest).
 - **Webull token mirror healed:** `status()` computed `expired` from the 6-min PENDING TTL stamped at token creation; Webull extends to 15d server-side on 2FA approval without telling us → `expired:true/-253h` while live calls worked. Fix: `trader/webull_auth.mark_live_ok()` (stamps status=NORMAL, last_live_ok, bumps expires to now+15d when past) called by `/admin/webull/probe` on live success, response re-read. Verified: probe now `token_expired:false, 360h`. 6/6 webull_auth tests pass.
 
+### 🗺️ 2026-07-21: Architecture page + README
+- New `/admin/architecture` page (`pages/Architecture.jsx`): full diagram (click/button zoom, open-full-size link), Core Principles + Observability Spine panels. Nav entry "Architecture" in Learning group (`nav-architecture`). Diagram stored at `frontend/public/architecture.png` + `docs/architecture.png`.
+- `/app/README.md` rewritten (merged with existing key-docs table): diagram header, principles, pipeline, observability spine table, honest stack table (§12A today / §12B target-scale note). Ready for "Save to GitHub".
+- Verified via screenshot: page renders with diagram and nav highlight.
+
 ### 📐 2026-07-21: Conviction Multiplier Floor (operator-requested)
 - New: `AUTO_ROUTER_MIN_CONVICTION_MULT` (default **0.25**, env-tunable, 0 disables) in `shared/auto_router_stages.py::_gate_risk`. When seat×arbiter multipliers collapse below the floor, the intent trades at floor×base instead of dying SIZED_TO_ZERO. Broker floors (Kraken pair floor / Webull $5) then size up as usual; per-order cap remains the authority.
 - `sizing_degradation` stamp now records `conviction_floor_applied` + `conviction_floor_mult`. Router status exposes `min_conviction_mult`.
