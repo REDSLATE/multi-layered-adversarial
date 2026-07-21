@@ -1008,6 +1008,9 @@ class WebullAdapter(BrokerAdapter):
                 "entrust_type": "QTY",
                 "quantity": qty_str,
                 "support_trading_session": session_str,
+                # v3 requirement (2026-07-21): single orders are
+                # combo_type NORMAL on the unified place endpoint.
+                "combo_type": "NORMAL",
                 "account_tax_type": "GENERAL",
             }
             if order_kind == "LIMIT" and limit_price_str is not None:
@@ -1034,30 +1037,40 @@ class WebullAdapter(BrokerAdapter):
 
             try:
                 logger.info(
-                    "Webull v2 REQUEST account_id=%s stock_order=%r",
+                    "Webull v3 REQUEST account_id=%s stock_order=%r",
                     account_id, stock_order,
                 )
+                # ── 2026-07-21 ROOT-CAUSE FIX #2: v2 endpoint RETIRED.
+                # `place_order_v2` now rejects EVERY order — any
+                # payload, any order type — with the catch-all 417
+                # "The time you sent is not supported" (verified via
+                # direct-execute autopsy: 6 payload variants, all 417;
+                # the identical payload via `order_v3.place_order`
+                # passed validation and returned a genuine business
+                # verdict). Webull migrated order placement to the
+                # unified list-based v3 endpoint.
                 res = await self._sdk_call(
-                    self._trade().order.place_order_v2,
-                    account_id, stock_order,
+                    self._trade().order_v3.place_order,
+                    account_id, [stock_order],
                 )
                 data = res.json() if hasattr(res, "json") else res
             except Exception as e:  # noqa: BLE001
-                raise RuntimeError(f"Webull submit_market_order (v2) failed: {e}") from e
+                raise RuntimeError(f"Webull submit_market_order (v3) failed: {e}") from e
 
-            # Surface SDK envelope-level errors. Webull's response
-            # wraps the result in {code, msg, data}; code "200" means
-            # accepted.
+            # Surface SDK envelope-level errors. Envelope may be
+            # {code, msg, data} or a bare per-order result list (v3).
             if isinstance(data, dict):
                 code = data.get("code")
                 if code not in (None, "200", 200):
                     raise RuntimeError(
-                        f"Webull place_order_v2 returned code={code} "
+                        f"Webull place_order (v3) returned code={code} "
                         f"msg={data.get('msg')!r}"
                     )
 
-            body = (data or {}).get("data") if isinstance(data, dict) else None
-            body = body if isinstance(body, dict) else (data if isinstance(data, dict) else {})
+            body = (data or {}).get("data") if isinstance(data, dict) else data
+            if isinstance(body, list):
+                body = body[0] if body else {}
+            body = body if isinstance(body, dict) else {}
 
             # Fractional qty estimate for receipt — broker will fill
             # the exact decimal share count, but we surface our best

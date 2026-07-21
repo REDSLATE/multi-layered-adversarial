@@ -448,6 +448,11 @@ async def route_order(
 
     # 3. Translate canonical → broker-native.
     try:
+        if broker_name == "kraken":
+            from shared.broker_symbol_resolver import (  # noqa: WPS433
+                ensure_kraken_overrides_fresh,
+            )
+            await ensure_kraken_overrides_fresh()
         broker_symbol = resolve_broker_symbol(asset, broker_name)
     except BrokerSymbolUnresolved as e:
         raise BrokerRouteBlocked(str(e)) from e

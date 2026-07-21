@@ -4,6 +4,7 @@ import { Card, Badge } from "@/components/ui-bits";
 import { ArrowsClockwise, Warning, CheckCircle, Lightning, ShieldSlash } from "@phosphor-icons/react";
 import ConvictionFloorKnob from "@/components/ConvictionFloorKnob";
 import GateFailureDigest from "@/components/GateFailureDigest";
+import KrakenPairEditor from "@/components/KrakenPairEditor";
 
 /**
  * Operator Control — one-glance status + one-click toggles for the
@@ -668,6 +669,7 @@ export default function OperatorControl() {
       {/* Conviction floor knob + gate-failure digest (2026-07-21) */}
       <ConvictionFloorKnob />
       <GateFailureDigest />
+      <KrakenPairEditor />
 
       {/* Last N pulse ticks */}
       <div>

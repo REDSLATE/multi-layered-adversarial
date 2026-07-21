@@ -45,17 +45,15 @@ def test_webull_adapter_uses_correct_place_order_signature():
     """
     from shared.broker.webull import WebullAdapter
     src = inspect.getsource(WebullAdapter.submit_market_order)
-    # Notional path must hit v2/AMOUNT.
-    assert "place_order_v2" in src, (
-        "submit_market_order must call place_order_v2 for fractional "
-        "notional intents — the operator's $1 NVDA case proves this is "
-        "the right entry point"
+    # 2026-07-21: place_order_v2 endpoint RETIRED by Webull (every
+    # payload 417s "The time you sent is not supported"). Notional
+    # path must hit the unified v3 list-based placement.
+    assert "order_v3.place_order" in src, (
+        "submit_market_order must place via order_v3.place_order — "
+        "the v2 endpoint is retired and rejects every order"
     )
-    assert '"AMOUNT"' in src, (
-        "fractional path must set entrust_type=AMOUNT"
-    )
-    assert "total_cash_amount" in src, (
-        "AMOUNT mode requires total_cash_amount in the stock_order dict"
+    assert '"combo_type": "NORMAL"' in src, (
+        "v3 single orders must carry combo_type=NORMAL"
     )
     # Whole-share legacy path is still wired (used by reconcile /
     # manual scripts) — must still use the SDK enums.

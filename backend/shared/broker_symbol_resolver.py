@@ -304,10 +304,50 @@ def _rule_based_webull_native(canonical: str) -> Optional[str]:
 
 def has_kraken_mapping(canonical: Optional[str]) -> bool:
     """True when the canonical (e.g. `CRYPTO:BTC-USD`) has an explicit
-    Kraken pair entry. Used by the ingest symbol-mapping guard —
-    crypto intents without a mapping would only die downstream at the
-    broker router with NO_TRADE, so we reject them at the door."""
-    return bool(canonical) and canonical in BROKER_SYMBOL_MAP["kraken"]
+    Kraken pair entry — static map OR operator-added override. Used by
+    the ingest symbol-mapping guard — crypto intents without a mapping
+    would only die downstream at the broker router with NO_TRADE, so
+    we reject them at the door."""
+    return bool(canonical) and (
+        canonical in BROKER_SYMBOL_MAP["kraken"]
+        or canonical in _KRAKEN_OVERRIDES
+    )
+
+
+# ── Operator-added Kraken pairs (2026-07-21, Pair Map Editor) ──────
+# Static map stays authoritative for the curated top-30; operators
+# extend coverage at runtime via `POST /api/admin/kraken-pairs`
+# (validated against Kraken's public AssetPairs before save). Docs
+# live in `kraken_pair_overrides`; this in-process mirror refreshes
+# lazily (60s TTL) from the async touchpoints (ingest guard + router)
+# and immediately on admin mutation.
+_KRAKEN_OVERRIDES: dict[str, str] = {}
+_OVERRIDES_TS: float = 0.0
+_OVERRIDES_TTL_S = 60.0
+KRAKEN_OVERRIDES_COLLECTION = "kraken_pair_overrides"
+
+
+async def ensure_kraken_overrides_fresh(force: bool = False) -> int:
+    """Refresh the override mirror from Mongo when stale. Best-effort:
+    a failed read keeps the previous mirror."""
+    global _OVERRIDES_TS
+    import time as _t
+    if not force and (_t.monotonic() - _OVERRIDES_TS) < _OVERRIDES_TTL_S:
+        return len(_KRAKEN_OVERRIDES)
+    try:
+        from db import db  # noqa: WPS433
+        fresh: dict[str, str] = {}
+        async for d in db[KRAKEN_OVERRIDES_COLLECTION].find(
+            {}, {"kraken_pair": 1},
+        ).max_time_ms(4000):
+            if d.get("_id") and d.get("kraken_pair"):
+                fresh[str(d["_id"])] = str(d["kraken_pair"])
+        _KRAKEN_OVERRIDES.clear()
+        _KRAKEN_OVERRIDES.update(fresh)
+        _OVERRIDES_TS = _t.monotonic()
+    except Exception:  # noqa: BLE001
+        pass
+    return len(_KRAKEN_OVERRIDES)
 
 
 def resolve_broker_symbol(asset: AssetKey, broker: str) -> Any:
@@ -330,6 +370,9 @@ def resolve_broker_symbol(asset: AssetKey, broker: str) -> Any:
             f"broker {broker!r} is not registered in BROKER_SYMBOL_MAP; NO_TRADE"
         )
     resolved = broker_map.get(asset.canonical)
+    if resolved is None and broker == "kraken":
+        # Operator-added pairs (Pair Map Editor, 2026-07-21).
+        resolved = _KRAKEN_OVERRIDES.get(asset.canonical)
     if resolved is not None:
         return resolved
     # Rule-based fallback (Webull only, today).

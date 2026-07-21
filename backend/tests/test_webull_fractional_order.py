@@ -40,6 +40,32 @@ class _StubApiClient:
         pass
 
 
+class _CapturingOrderV3Client:
+    """Stand-in for `trade_client.order_v3` (unified list-based
+    placement — v2 retired 2026-07-21). Records `(account_id,
+    stock_order)` where stock_order is the FIRST (only) order in the
+    submitted list."""
+
+    def __init__(self) -> None:
+        self.place_calls: list[tuple] = []
+
+    def place_order(self, account_id, new_orders, *args, **kwargs):
+        stock_order = new_orders[0]
+        self.place_calls.append((account_id, stock_order))
+
+        class _Res:
+            def json(self_inner):
+                return {
+                    "code": "200",
+                    "data": [{
+                        "order_id": "WB-FRACTIONAL-1",
+                        "client_order_id": stock_order["client_order_id"],
+                        "status": "SUBMITTED",
+                    }],
+                }
+        return _Res()
+
+
 class _CapturingOrderClient:
     """Stand-in for `trade_client.order`. Records the args of every
     SDK call so the test can assert WHAT was sent to Webull."""
@@ -82,6 +108,7 @@ class _CapturingOrderClient:
 class _StubTradeClient:
     def __init__(self) -> None:
         self.order = _CapturingOrderClient()
+        self.order_v3 = _CapturingOrderV3Client()
         # account_v2 is unused in these tests — we mock _resolve_account_id
         # directly so get_account_balance is never called.
         self.account_v2 = None
@@ -135,7 +162,7 @@ async def test_notional_buy_uses_place_order_v2_with_qty_decimal():
     result = await adapter.submit_market_order("NVDA", notional=1.00, side="BUY")
 
     trade = adapter._trade_client
-    assert len(trade.order.place_order_v2_calls) == 1, (
+    assert len(trade.order_v3.place_calls) == 1, (
         "exactly one place_order_v2 call expected for fractional notional"
     )
     assert len(trade.order.place_order_calls) == 0, (
@@ -143,7 +170,7 @@ async def test_notional_buy_uses_place_order_v2_with_qty_decimal():
         "the integer-only path is the bug the operator just hit"
     )
 
-    account_id, stock_order = trade.order.place_order_v2_calls[0]
+    account_id, stock_order = trade.order_v3.place_calls[0]
     assert account_id == "SUB123"
     # 2026-02-26 doctrine: QTY + decimal, NOT AMOUNT + total_cash_amount.
     assert stock_order["entrust_type"] == "QTY", (
@@ -208,8 +235,8 @@ async def test_ten_dollar_aapl_uses_qty_decimal_not_qty_rounding():
     result = await adapter.submit_market_order("AAPL", notional=10.00, side="BUY")
 
     trade = adapter._trade_client
-    assert len(trade.order.place_order_v2_calls) == 1
-    _, stock_order = trade.order.place_order_v2_calls[0]
+    assert len(trade.order_v3.place_calls) == 1
+    _, stock_order = trade.order_v3.place_calls[0]
     assert stock_order["entrust_type"] == "QTY"
     # 2026-07-21: fractional must be MARKET (Webull prohibits LIMIT
     # for <1-share orders). Qty computed off last_price.
@@ -232,7 +259,7 @@ async def test_quantity_is_string_with_decimal_precision():
     a float, Webull rejects with a parse error."""
     adapter = _adapter_with_instrument("MSFT", "913349712", 380.0)
     await adapter.submit_market_order("MSFT", notional=5, side="BUY")
-    _, stock_order = adapter._trade_client.order.place_order_v2_calls[0]
+    _, stock_order = adapter._trade_client.order_v3.place_calls[0]
     qty = stock_order["quantity"]
     assert isinstance(qty, str), (
         f"quantity must be a string per Webull v2 docs, got {type(qty)}"
@@ -250,7 +277,7 @@ async def test_sell_side_routes_through_qty_decimal_too():
     is MARKET-only per Webull policy — no limit band either side."""
     adapter = _adapter_with_instrument("TSLA", "913303891", 250.0)
     await adapter.submit_market_order("TSLA", notional=3.50, side="SELL")
-    _, stock_order = adapter._trade_client.order.place_order_v2_calls[0]
+    _, stock_order = adapter._trade_client.order_v3.place_calls[0]
     assert stock_order["side"] == "SELL"
     assert stock_order["entrust_type"] == "QTY"
     assert stock_order["order_type"] == "MARKET"
@@ -270,7 +297,7 @@ async def test_qty_path_still_uses_v1_integer_place_order():
     await adapter.submit_market_order("AAPL", qty=2, side="BUY")
 
     trade = adapter._trade_client
-    assert len(trade.order.place_order_v2_calls) == 0, (
+    assert len(trade.order_v3.place_calls) == 0, (
         "qty path must NOT call v2 — v2 is for fractional only"
     )
     assert len(trade.order.place_order_calls) == 1
@@ -306,7 +333,7 @@ async def test_whole_share_notional_uses_integer_limit():
     LIMIT + slippage band (whole shares are LIMIT-eligible)."""
     adapter = _adapter_with_instrument("SIRI", "913254321", 4.0)
     await adapter.submit_market_order("SIRI", notional=10.00, side="BUY")
-    _, stock_order = adapter._trade_client.order.place_order_v2_calls[0]
+    _, stock_order = adapter._trade_client.order_v3.place_calls[0]
     assert stock_order["order_type"] == "LIMIT"
     assert "limit_price" in stock_order
     qty = stock_order["quantity"]
@@ -330,4 +357,4 @@ async def test_fractional_extended_hours_raises_rth_only(monkeypatch):
     adapter = _adapter_with_instrument("NVDA", "913355100", 140.0)
     with pytest.raises(RuntimeError, match="WEBULL_FRACTIONAL_RTH_ONLY"):
         await adapter.submit_market_order("NVDA", notional=5.00, side="BUY")
-    assert len(adapter._trade_client.order.place_order_v2_calls) == 0
+    assert len(adapter._trade_client.order_v3.place_calls) == 0

@@ -67,9 +67,21 @@ class _StubOrderV1:
         return _StubResponse({"data": {"orderId": "ORD-V2-1", "status": "SUBMITTED"}})
 
 
+class _StubOrderV3:
+    def place_order(self, account_id, new_orders, *args, **kwargs):  # noqa: ARG002
+        # 2026-07-21: unified v3 list-based placement (v2 retired).
+        time.sleep(0.5)
+        return _StubResponse({"data": [{
+            "order_id": "ORD-V3-1",
+            "client_order_id": new_orders[0].get("client_order_id"),
+            "status": "SUBMITTED",
+        }]})
+
+
 class _StubTradeClient:
     account_v2 = _StubAccountV2()
     order = _StubOrderV1()
+    order_v3 = _StubOrderV3()
 
 
 @pytest.fixture(autouse=True)
@@ -129,7 +141,7 @@ async def test_submit_market_order_does_not_block_event_loop(monkeypatch):
     # doctrine flip from AMOUNT after Webull returned HTTP 417) →
     # orderId from the v2 stub. The whole-share path would surface
     # "ORD-1".
-    assert order["order_id"] == "ORD-V2-1"
+    assert order["order_id"] == "ORD-V3-1"
     # The submit path makes TWO sequential SDK calls (BP fetch via
     # get_account_balance THEN place_order_v2), each stubbed at 0.5s.
     # If executor-wrapped correctly they don't block the heartbeat,
