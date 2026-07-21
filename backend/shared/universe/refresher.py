@@ -126,6 +126,19 @@ async def _load_operator_pins(lane: str) -> list[dict]:
     return out
 
 
+async def _quality_overrides() -> dict:
+    """Operator quality knobs from `runtime_flags._id=universe_quality`
+    (set via POST /api/admin/universe/quality). Read fresh each
+    refresh tick — a 15-min cadence makes caching pointless. Fail-soft
+    to {} so a Mongo hiccup never blocks a refresh."""
+    try:
+        return await db["runtime_flags"].find_one(
+            {"_id": "universe_quality"},
+        ) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _dedupe_and_merge(candidates: list[dict]) -> list[dict]:
     """Collapse multiple rows for the same canonical symbol into one,
     accumulating `source_reasons[]` and taking the max signal
@@ -168,6 +181,7 @@ def _dedupe_and_merge(candidates: list[dict]) -> list[dict]:
 
 def _apply_hysteresis(
     ranked: list[dict], previous_members: set[str],
+    admit_cap: Optional[int] = None,
 ) -> list[dict]:
     """Admit new members from the top HYSTERESIS_ADMIT; retain
     existing members while they remain inside the top HYSTERESIS_RETAIN.
@@ -179,40 +193,59 @@ def _apply_hysteresis(
     explicit `retained_hysteresis` source_reason so the operator can
     see WHY the symbol is still in the universe on a tick where it
     wouldn't otherwise be admitted.
+
+    2026-07-22: `admit_cap` (operator knob, runtime_flags
+    universe_quality.screener_admit_cap) overrides HYSTERESIS_ADMIT
+    for NON-PINNED rows. 0 = pins-only universe. Retain window scales
+    with it (+15) so hysteresis semantics survive the override.
     """
+    admit_n = HYSTERESIS_ADMIT if admit_cap is None else max(0, int(admit_cap))
+    retain_n = HYSTERESIS_RETAIN if admit_cap is None else admit_n + 15
     admitted: list[dict] = []
-    for i, row in enumerate(ranked):
+    screener_i = 0  # rank among non-pinned rows only
+    for row in ranked:
         sym = row["canonical_symbol"]
         if row.get("pinned"):
             # Pins bypass hysteresis entirely.
             row["_admit_reason"] = "pinned"
             admitted.append(row)
             continue
-        if i < HYSTERESIS_ADMIT:
+        if screener_i < admit_n:
             row["_admit_reason"] = "top_admit"
             admitted.append(row)
-        elif i < HYSTERESIS_RETAIN and sym in previous_members:
+        elif screener_i < retain_n and sym in previous_members:
             row["_admit_reason"] = "hysteresis_retain"
             reasons = row.get("source_reasons") or []
             if "retained_hysteresis" not in reasons:
                 reasons.append("retained_hysteresis")
                 row["source_reasons"] = reasons
             admitted.append(row)
+        screener_i += 1
     return admitted
 
 
 def _apply_quality_filters(
     rows: list[dict], lane: str,
+    min_price_override: Optional[float] = None,
 ) -> tuple[list[dict], list[dict]]:
     """Drop rows that don't meet minimum quality. Return (kept, dropped).
 
     Uses a lane-specific price floor (Ervin spec 2026-07-15): equity
     at $1 to skip penny-stock noise, crypto at 0 because valid pairs
-    routinely trade sub-cent."""
-    min_price = MIN_PRICE_EQUITY if lane == "equity" else MIN_PRICE_CRYPTO
+    routinely trade sub-cent. 2026-07-22: operator knob
+    (universe_quality.min_price_equity) can raise the equity floor at
+    runtime. Pinned rows are exempt — the operator explicitly asked
+    for them."""
+    if min_price_override is not None and lane == "equity":
+        min_price = float(min_price_override)
+    else:
+        min_price = MIN_PRICE_EQUITY if lane == "equity" else MIN_PRICE_CRYPTO
     kept: list[dict] = []
     dropped: list[dict] = []
     for r in rows:
+        if r.get("pinned"):
+            kept.append(r)
+            continue
         price = r.get("price") or 0.0
         # Only enforce a price floor when the source populated one;
         # some pins arrive with price=0 (we didn't probe on merge).
@@ -298,6 +331,7 @@ async def refresh_equity_universe() -> dict:
         )
 
     pins = await _load_operator_pins(lane)
+    quality = await _quality_overrides()
 
     # Merge candidates (order matters for hysteresis ranking —
     # movers first, pins prepended so they never lose the merge).
@@ -311,9 +345,14 @@ async def refresh_equity_universe() -> dict:
         ),
     )
 
-    admitted = _apply_hysteresis(merged, prev_members)
+    admitted = _apply_hysteresis(
+        merged, prev_members,
+        admit_cap=quality.get("screener_admit_cap"),
+    )
     kept, quarantined = await _filter_by_registry(admitted, "webull")
-    quality_kept, quality_dropped = _apply_quality_filters(kept, lane)
+    quality_kept, quality_dropped = _apply_quality_filters(
+        kept, lane, min_price_override=quality.get("min_price_equity"),
+    )
     quality_kept = quality_kept[:UNIVERSE_CAP_EQUITY]
 
     return await _publish_and_report(
@@ -492,6 +531,7 @@ async def refresh_crypto_universe() -> dict:
         )
 
     pins = await _load_operator_pins(lane)
+    quality = await _quality_overrides()
 
     merged = _dedupe_and_merge([*pins, *movers])
     merged.sort(
@@ -502,7 +542,10 @@ async def refresh_crypto_universe() -> dict:
         ),
     )
 
-    admitted = _apply_hysteresis(merged, prev_members)
+    admitted = _apply_hysteresis(
+        merged, prev_members,
+        admit_cap=quality.get("screener_admit_cap"),
+    )
     kept, quarantined = await _filter_by_registry(admitted, "kraken")
     quality_kept, quality_dropped = _apply_quality_filters(kept, lane)
     quality_kept = quality_kept[:UNIVERSE_CAP_CRYPTO]
