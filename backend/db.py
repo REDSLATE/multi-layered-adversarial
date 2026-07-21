@@ -177,6 +177,20 @@ async def _safe_create_index(coll, keys, *, deadline_s: float = 6.0, **opts) -> 
 
 
 async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
+    # ── CRITICAL FIRST (2026-07-21) ───────────────────────────────
+    # `shared_intents.intent_id` is the hot key of the entire routing
+    # path (3-6 find_one/update_one per routed intent). It sits FIRST
+    # so no later create_index failure (e.g. an index-spec conflict
+    # raising OperationFailure mid-function) can ever abort before
+    # this one is requested — exactly what stranded prod on 2026-07-21:
+    # ensure_indexes died at `external_signals_dedup_unique` and the
+    # intent_id index (defined near the end) was never built.
+    await _safe_create_index(
+        db.shared_intents,
+        [("intent_id", 1)],
+        deadline_s=heavy_deadline_s,
+        name="shared_intents_intent_id_idx",
+    )
     # ── Consensus pool indexes (2026-06-24) ───────────────────────
     # Non-executor brains' opinions land in `intent_consensus_pool`.
     # The seat policy reads it by (lane, symbol, ts) and writes by
@@ -793,12 +807,32 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # scratch rows in tests); a non-partial unique index would reject
     # any second such doc with dedup_key=null. Uniqueness is still
     # strictly enforced for the string values that DO get set.
-    await db.external_signals.create_index(
-        "dedup_key",
-        unique=True,
-        name="external_signals_dedup_unique",
-        partialFilterExpression={"dedup_key": {"$type": "string"}},
-    )
+    #
+    # 2026-07-21 self-heal: prod still carries the ORIGINAL non-partial
+    # spec under the same name — Mongo raises IndexKeySpecsConflict
+    # (OperationFailure) on the mismatched re-create, which aborted the
+    # rest of ensure_indexes. Drop-and-recreate on conflict, mirroring
+    # the consensus_telemetry TTL migration pattern above.
+    try:
+        await db.external_signals.create_index(
+            "dedup_key",
+            unique=True,
+            name="external_signals_dedup_unique",
+            partialFilterExpression={"dedup_key": {"$type": "string"}},
+        )
+    except OperationFailure:
+        try:
+            await db.external_signals.drop_index("external_signals_dedup_unique")
+            await db.external_signals.create_index(
+                "dedup_key",
+                unique=True,
+                name="external_signals_dedup_unique",
+                partialFilterExpression={"dedup_key": {"$type": "string"}},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "external_signals_dedup_unique migration failed: %s", exc,
+            )
     await db.external_signals.create_index(
         [("received_at", -1)], name="external_signals_recent_idx",
     )
