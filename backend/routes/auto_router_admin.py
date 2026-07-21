@@ -195,3 +195,51 @@ async def auto_router_stop(_user: dict = Depends(get_current_user)):  # noqa: B0
         upsert=True,
     )
     return {"ok": True, "flag": "disabled", "updated_at": now}
+
+
+@router.get("/conviction-floor")
+async def get_conviction_floor_state(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Effective conviction multiplier floor + its source.
+
+    `runtime_flags._id=conviction_floor` (operator knob) beats the
+    `AUTO_ROUTER_MIN_CONVICTION_MULT` env default. 0 disables the
+    floor entirely (weak intents die SIZED_TO_ZERO again)."""
+    from shared.auto_router_stages import _min_conviction_mult, get_conviction_floor
+    doc = await db["runtime_flags"].find_one(
+        {"_id": "conviction_floor"}, {"_id": 0},
+    )
+    return {
+        "floor": await get_conviction_floor(),
+        "source": "operator_knob" if doc and doc.get("value") is not None else "env_default",
+        "env_default": _min_conviction_mult(),
+        "updated_at": (doc or {}).get("updated_at"),
+        "updated_by": (doc or {}).get("updated_by"),
+    }
+
+
+@router.post("/conviction-floor")
+async def set_conviction_floor(
+    body: dict,
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Set the floor (0.0-1.0). 0 disables. Takes effect within one
+    tick (15s cache TTL is invalidated on write)."""
+    from fastapi import HTTPException
+    from shared.auto_router_stages import invalidate_conviction_floor_cache
+    try:
+        value = float(body.get("value"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="value must be a number 0.0-1.0")
+    if not (0.0 <= value <= 1.0):
+        raise HTTPException(status_code=422, detail="value must be within 0.0-1.0")
+    now = datetime.now(timezone.utc).isoformat()
+    await db["runtime_flags"].update_one(
+        {"_id": "conviction_floor"},
+        {"$set": {
+            "value": value, "updated_at": now,
+            "updated_by": _user.get("email") or "unknown",
+        }},
+        upsert=True,
+    )
+    invalidate_conviction_floor_cache()
+    return {"ok": True, "floor": value, "updated_at": now}

@@ -44,6 +44,54 @@ def _min_conviction_mult() -> float:
         return 0.25
 
 
+# ── Operator knob (2026-07-21): runtime_flags override ─────────────
+# `runtime_flags._id=conviction_floor` beats the env default so the
+# operator can retune from Operator Control without a redeploy. The
+# Mongo value is cached ~15s; env fallback is NOT cached so tests
+# (which monkeypatch the env) stay deterministic.
+import time as _time  # noqa: E402
+
+_FLOOR_CACHE: dict = {"val": None, "ts": 0.0}
+_FLOOR_TTL_SEC = 15.0
+
+
+def invalidate_conviction_floor_cache() -> None:
+    _FLOOR_CACHE["val"] = None
+    _FLOOR_CACHE["ts"] = 0.0
+
+
+def peek_conviction_floor() -> float:
+    """Sync best-effort read for status payloads: cached Mongo value
+    if fresh, else the env default."""
+    if (
+        _FLOOR_CACHE["val"] is not None
+        and (_time.monotonic() - _FLOOR_CACHE["ts"]) < _FLOOR_TTL_SEC
+    ):
+        return _FLOOR_CACHE["val"]
+    return _min_conviction_mult()
+
+
+async def get_conviction_floor() -> float:
+    now = _time.monotonic()
+    if (
+        _FLOOR_CACHE["val"] is not None
+        and (now - _FLOOR_CACHE["ts"]) < _FLOOR_TTL_SEC
+    ):
+        return _FLOOR_CACHE["val"]
+    try:
+        doc = await _db()["runtime_flags"].find_one(
+            {"_id": "conviction_floor"}, {"value": 1},
+        )
+        if doc and doc.get("value") is not None:
+            val = max(0.0, min(1.0, float(doc["value"])))
+            _FLOOR_CACHE["val"] = val
+            _FLOOR_CACHE["ts"] = now
+            return val
+    except Exception:  # noqa: BLE001
+        pass
+    return _min_conviction_mult()
+
+
 def _db():
     """Late-bound db handle.
 
@@ -202,7 +250,7 @@ async def _gate_risk(ctx: RouteContext) -> Optional[dict]:
     # directive): doctrine dampens trades, it does not kill them.
     # When seat×arbiter collapses the size below floor×base, trade
     # at floor×base instead of dying as SIZED_TO_ZERO.
-    conviction_floor = _min_conviction_mult()
+    conviction_floor = await get_conviction_floor()
     conviction_floored = False
     if (
         conviction_floor > 0

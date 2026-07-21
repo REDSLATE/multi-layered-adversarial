@@ -110,8 +110,8 @@ def _now_iso() -> str:
 
 def _read_min_conviction_mult():
     try:
-        from shared.auto_router_stages import _min_conviction_mult
-        return _min_conviction_mult()
+        from shared.auto_router_stages import peek_conviction_floor
+        return peek_conviction_floor()
     except Exception:  # noqa: BLE001
         return None
 

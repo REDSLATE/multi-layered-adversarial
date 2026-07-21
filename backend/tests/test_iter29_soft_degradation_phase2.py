@@ -324,6 +324,8 @@ async def test_size_multiplier_zero_short_circuits_advisory_only(monkeypatch):
     Executions row: broker_status='sized_to_zero'. NO risk.check call."""
     from shared.auto_router_stages import _gate_risk
 
+    from shared.auto_router_stages import invalidate_conviction_floor_cache
+    invalidate_conviction_floor_cache()
     monkeypatch.setenv("AUTO_ROUTER_MIN_CONVICTION_MULT", "0")
 
     intent = {
@@ -485,8 +487,9 @@ async def test_conviction_floor_rescues_zero_multiplier(monkeypatch):
     """FLOOR ON (default 0.25): size_multiplier=0.0 no longer dies as
     SIZED_TO_ZERO — it proceeds sized at floor×base and the
     sizing_degradation stamp records the floor."""
-    from shared.auto_router_stages import _gate_risk
+    from shared.auto_router_stages import _gate_risk, invalidate_conviction_floor_cache
 
+    invalidate_conviction_floor_cache()
     monkeypatch.setenv("AUTO_ROUTER_MIN_CONVICTION_MULT", "0.25")
     intent = {
         "intent_id": "test-floor-1", "symbol": "BTC/USD",
@@ -524,8 +527,9 @@ async def test_conviction_floor_rescues_zero_multiplier(monkeypatch):
 @pytest.mark.asyncio
 async def test_conviction_floor_not_applied_above_floor(monkeypatch):
     """Multiplier above the floor is untouched — floor only rescues."""
-    from shared.auto_router_stages import _gate_risk
+    from shared.auto_router_stages import _gate_risk, invalidate_conviction_floor_cache
 
+    invalidate_conviction_floor_cache()
     monkeypatch.setenv("AUTO_ROUTER_MIN_CONVICTION_MULT", "0.25")
     intent = {
         "intent_id": "test-floor-2", "symbol": "BTC/USD",
