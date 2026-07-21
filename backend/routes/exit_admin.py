@@ -24,11 +24,13 @@ async def exits_overview(_user: dict = Depends(get_current_user)):  # noqa: B008
         {}, {"_id": 0},
     ).sort("ts", -1).limit(20):
         recent.append(r)
+    from shared.exits.outcomes import brain_scorecard
     return {
         "policy": await get_policy(),
         "monitor": exit_monitor.get_status(),
         "plans": plans,
         "recent_receipts": recent,
+        "scorecard": await brain_scorecard(),
     }
 
 

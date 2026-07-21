@@ -177,6 +177,20 @@ async def _crypto_price(symbol: str) -> Optional[float]:
 
 # ── plan adoption / levels ──────────────────────────────────────────
 
+async def _origin_intent(symbol: str, lane: str) -> Optional[dict]:
+    """Most recent executed intent for attribution (brain = `stack`)."""
+    since = (_now() - timedelta(hours=BRAIN_LEVEL_LOOKBACK_H)).isoformat()
+    try:
+        return await db["shared_intents"].find_one(
+            {"symbol": symbol, "lane": lane, "executed": True,
+             "ingest_ts": {"$gte": since}},
+            {"intent_id": 1, "stack": 1},
+            sort=[("ingest_ts", -1)],
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def _brain_levels(symbol: str, lane: str) -> Optional[tuple[float, float]]:
     """(target, stop) from the most recent executed intent that
     carried a bracket thesis. Exact stored prices — no recompute."""
@@ -231,6 +245,7 @@ async def _adopt(lane: str, pos: dict, policy: dict) -> dict:
     entry = float(entry)
 
     brain = await _brain_levels(symbol, lane)
+    origin = await _origin_intent(symbol, lane)
     lane_p = policy[lane]
     if brain and brain[1] < entry < brain[0]:
         target, stop, source = brain[0], brain[1], "brain"
@@ -248,6 +263,8 @@ async def _adopt(lane: str, pos: dict, policy: dict) -> dict:
         "stop_price": stop,
         "target_price": target,
         "levels_source": source,
+        "origin_intent_id": (origin or {}).get("intent_id"),
+        "origin_stack": (origin or {}).get("stack"),
         "qty_held": float(pos["qty"]),
         "adopted_at": _iso(),
         "max_hold_until": _iso(_now() + timedelta(hours=lane_p["max_hold_h"])),
@@ -279,16 +296,20 @@ async def _reconcile(lane: str, positions: list[dict], policy: dict) -> list[dic
         pos = by_symbol.get(sym)
         if pos is None:
             # Position gone at broker → lifecycle complete.
+            detail = (
+                "exit_order_filled" if plan["status"] == "exiting"
+                else "position_closed_externally"
+            )
             await db[EXIT_PLANS].update_one(
                 {"plan_id": plan["plan_id"]},
                 {"$set": {
                     "status": "closed", "closed_at": _iso(),
-                    "close_detail": (
-                        "exit_order_filled" if plan["status"] == "exiting"
-                        else "position_closed_externally"
-                    ),
+                    "close_detail": detail,
                 }},
             )
+            # Realized outcome → permanent ledger + brain DAWE fold.
+            from shared.exits.outcomes import record_outcome  # noqa: WPS433
+            await record_outcome({**plan, "close_detail": detail})
             if plan["status"] == "exiting":
                 await _receipt({
                     "event": "exit_complete", "plan_id": plan["plan_id"],
@@ -406,7 +427,7 @@ async def _submit_exit(plan: dict, price: float, *, force_market: bool = False) 
         error = str(exc)[:400]
 
     attempts = int(plan.get("attempts") or 0) + 1
-    update: dict = {"attempts": attempts}
+    update: dict = {"attempts": attempts, "exit_price_est": price}
     if order is not None:
         update["exit_order"] = {
             "order_id": order.get("order_id"),

@@ -1,0 +1,165 @@
+"""Realized exit outcomes → brain learning loop (2026-07-22).
+
+Operator directive: stamp each closed plan's result (tp_hit / sl_hit
+/ timeout + realized P&L) onto the originating brain's record so the
+arbiter seats brains by REALIZED performance, not confidence alone.
+
+Mechanics: the arbiter already seats by DAWE weights
+(`brain_runtime_metrics.brains.{brain}.dawe.{lane}`), which the
+grader feeds from 15m/60m PREDICTION grades. This module folds
+realized round-trip P&L into the same `session_weight` EWMA using
+identical semantics (`quality_from_signed_return` → `update_session`)
+so realized outcomes and prediction grades converge in one stream.
+
+Quality scaling: `expected_move` = the lane's take-profit band
+(tp_pct/100). A full TP hit grades 1.0; a full SL hit (−sl_pct)
+grades below 0.5 toward 0.0; scratch exits grade ~0.5 (neutral).
+
+Ledger: every outcome is written to `shared_exit_outcomes`
+(permanent — not in retention rules) with brain attribution.
+"""
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from typing import Optional
+
+from db import db
+
+logger = logging.getLogger("risedual.exit_outcomes")
+
+EXIT_OUTCOMES = "shared_exit_outcomes"
+
+_OUTCOME_LABELS = {
+    "take_profit": "tp_hit",
+    "stop_loss": "sl_hit",
+    "max_hold": "timeout",
+    "manual_close": "manual",
+}
+
+
+def _label(plan: dict) -> str:
+    if plan.get("close_detail") == "position_closed_externally":
+        return "external"
+    return _OUTCOME_LABELS.get(plan.get("exit_reason") or "", "unknown")
+
+
+async def record_outcome(plan: dict) -> Optional[dict]:
+    """Write the permanent outcome row and fold realized P&L into
+    the originating brain's DAWE. Fail-soft — an outcome-write
+    failure must never block plan closure."""
+    try:
+        return await _record(plan)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "exit outcome record failed plan=%s: %s",
+            plan.get("plan_id"), exc,
+        )
+        return None
+
+
+async def _record(plan: dict) -> dict:
+    lane = plan["lane"]
+    entry = float(plan.get("entry_price") or 0)
+    exit_price = plan.get("exit_price_est")
+    qty = float(plan.get("qty_held") or 0)
+    outcome = _label(plan)
+
+    pnl_pct: Optional[float] = None
+    pnl_usd: Optional[float] = None
+    if exit_price and entry > 0:
+        pnl_pct = (float(exit_price) / entry - 1.0) * 100.0
+        pnl_usd = (float(exit_price) - entry) * qty
+
+    row = {
+        "plan_id": plan["plan_id"],
+        "lane": lane,
+        "symbol": plan["symbol"],
+        "outcome": outcome,
+        "brain": plan.get("origin_stack"),
+        "origin_intent_id": plan.get("origin_intent_id"),
+        "entry_price": entry or None,
+        "exit_price": float(exit_price) if exit_price else None,
+        "qty": qty,
+        "realized_pnl_pct": pnl_pct,
+        "realized_pnl_usd": pnl_usd,
+        "levels_source": plan.get("levels_source"),
+        "adopted_at": plan.get("adopted_at"),
+        "closed_at": datetime.now(timezone.utc).isoformat(),
+        "dawe_folded": False,
+    }
+
+    brain = plan.get("origin_stack")
+    if brain and pnl_pct is not None:
+        row["dawe_folded"] = await _fold_into_dawe(brain, lane, pnl_pct / 100.0)
+
+    await db[EXIT_OUTCOMES].insert_one(dict(row))
+    logger.info(
+        "exit outcome %s %s %s brain=%s pnl=%s%% dawe_folded=%s",
+        lane, plan["symbol"], outcome, brain,
+        f"{pnl_pct:+.2f}" if pnl_pct is not None else "?",
+        row["dawe_folded"],
+    )
+    return row
+
+
+async def _fold_into_dawe(brain: str, lane: str, realized_return: float) -> bool:
+    """One `update_session` fold — same path the prediction grader
+    uses, so the arbiter needs zero changes to feel it."""
+    try:
+        from mc_arbiter.arbiter import load_dawe, save_dawe  # noqa: WPS433
+        from mc_arbiter.dawe import (  # noqa: WPS433
+            quality_from_signed_return, update_session,
+        )
+        from shared.exits.policy import get_policy  # noqa: WPS433
+
+        policy = await get_policy()
+        expected_move = max(1e-4, policy[lane]["tp_pct"] / 100.0)
+        quality = quality_from_signed_return(
+            signed_return=realized_return, expected_move=expected_move,
+        )
+        state = await load_dawe(brain, lane)
+        state.session_weight = update_session(
+            prev_weight=state.session_weight, observed_quality=quality,
+        )
+        state.grades_used_session += 1
+        await save_dawe(state)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("dawe fold failed brain=%s lane=%s: %s", brain, lane, exc)
+        return False
+
+
+async def brain_scorecard(limit_days: int = 30) -> list[dict]:
+    """Per-brain realized performance aggregate for the operator UI."""
+    from datetime import timedelta
+    since = (
+        datetime.now(timezone.utc) - timedelta(days=limit_days)
+    ).isoformat()
+    pipeline = [
+        {"$match": {"closed_at": {"$gte": since}}},
+        {"$group": {
+            "_id": {"brain": {"$ifNull": ["$brain", "unattributed"]},
+                    "lane": "$lane"},
+            "closed": {"$sum": 1},
+            "tp_hit": {"$sum": {"$cond": [{"$eq": ["$outcome", "tp_hit"]}, 1, 0]}},
+            "sl_hit": {"$sum": {"$cond": [{"$eq": ["$outcome", "sl_hit"]}, 1, 0]}},
+            "timeout": {"$sum": {"$cond": [{"$eq": ["$outcome", "timeout"]}, 1, 0]}},
+            "avg_pnl_pct": {"$avg": "$realized_pnl_pct"},
+            "total_pnl_usd": {"$sum": "$realized_pnl_usd"},
+        }},
+        {"$sort": {"total_pnl_usd": -1}},
+    ]
+    out = []
+    async for r in db[EXIT_OUTCOMES].aggregate(pipeline):
+        out.append({
+            "brain": r["_id"]["brain"],
+            "lane": r["_id"]["lane"],
+            "closed": r["closed"],
+            "tp_hit": r["tp_hit"],
+            "sl_hit": r["sl_hit"],
+            "timeout": r["timeout"],
+            "avg_pnl_pct": round(r["avg_pnl_pct"], 3) if r.get("avg_pnl_pct") is not None else None,
+            "total_pnl_usd": round(r["total_pnl_usd"], 4) if r.get("total_pnl_usd") is not None else None,
+        })
+    return out

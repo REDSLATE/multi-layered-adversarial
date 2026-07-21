@@ -16,8 +16,10 @@ SYM = "LIFEC/USD"
 
 async def _cleanup():
     from db import db
+    from shared.exits.outcomes import EXIT_OUTCOMES
     await db[em.EXIT_PLANS].delete_many({"symbol": SYM})
     await db[em.EXIT_RECEIPTS].delete_many({"symbol": SYM})
+    await db[EXIT_OUTCOMES].delete_many({"symbol": SYM})
 
 
 def _policy(sl=3.0, tp=8.0, hold=48.0):

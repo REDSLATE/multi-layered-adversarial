@@ -87,7 +87,7 @@ export default function ExitMonitorPanel() {
 
   if (!data) return null;
 
-  const { policy, monitor, plans } = data;
+  const { policy, monitor, plans, scorecard } = data;
   const pct = (a, b) => (b ? (((a - b) / b) * 100).toFixed(1) : "?");
 
   return (
@@ -144,6 +144,39 @@ export default function ExitMonitorPanel() {
               >
                 close
               </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(scorecard || []).length > 0 && (
+        <div className="mt-2 border-t border-rd-border/50 pt-2" data-testid="exit-scorecard">
+          <div className="text-[9px] uppercase tracking-widest text-rd-dim font-mono pb-1">
+            Brain scorecard · realized outcomes (30d) — folds into arbiter seat weights
+          </div>
+          <div className="grid grid-cols-[90px_36px_50px_90px_60px_70px_80px] gap-1 text-[9px] uppercase tracking-widest text-rd-dim font-mono pb-0.5">
+            <span>brain</span><span>lane</span><span>closed</span><span>tp/sl/to</span><span>avg %</span><span>pnl $</span><span></span>
+          </div>
+          {scorecard.map((s) => (
+            <div
+              key={`${s.brain}-${s.lane}`}
+              className="grid grid-cols-[90px_36px_50px_90px_60px_70px_80px] gap-1 text-[10px] font-mono py-0.5"
+              data-testid={`exit-scorecard-${s.brain}-${s.lane}`}
+            >
+              <span className="font-bold text-rd-text">{s.brain}</span>
+              <span className="text-rd-dim">{s.lane === "crypto" ? "cr" : "eq"}</span>
+              <span className="text-rd-dim">{s.closed}</span>
+              <span className="text-rd-dim">
+                <span className="text-emerald-500">{s.tp_hit}</span>/
+                <span className="text-rd-danger">{s.sl_hit}</span>/{s.timeout}
+              </span>
+              <span className={s.avg_pnl_pct >= 0 ? "text-emerald-500" : "text-rd-danger"}>
+                {s.avg_pnl_pct != null ? `${s.avg_pnl_pct > 0 ? "+" : ""}${s.avg_pnl_pct.toFixed(2)}` : "—"}
+              </span>
+              <span className={s.total_pnl_usd >= 0 ? "text-emerald-500" : "text-rd-danger"}>
+                {s.total_pnl_usd != null ? `${s.total_pnl_usd > 0 ? "+" : ""}${s.total_pnl_usd.toFixed(2)}` : "—"}
+              </span>
+              <span></span>
             </div>
           ))}
         </div>
