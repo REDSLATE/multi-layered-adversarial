@@ -1,0 +1,334 @@
+280778772443552 2026-07-21 15:49:30,893 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "ZYBT",
+    "category": "US_STOCK",
+    "timespan": "M1",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-21T15:49:30Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "451c6c19-f7cb-5b84-beba-cbe6b00da55b",
+    "x-signature": "56oFcqAGXTGc/giQ0RTtfAzY3K8=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 200ed2d5-7614-4c9f-af2b-f540e2a414af
+280778772443552 2026-07-21 15:49:30,895 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "200ed2d5-7614-4c9f-af2b-f540e2a414af"
+}
+280779342606752 2026-07-21 15:49:30,985 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "ZYBT",
+    "category": "US_STOCK",
+    "timespan": "M5",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-21T15:49:30Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "19e0be08-bea9-5582-9472-70dad49c6d57",
+    "x-signature": "em5V3ewm7oW+GfKFXLQ5us6sF6A=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 62ceff46-ac97-47fd-adeb-666643f19f44
+280779342606752 2026-07-21 15:49:30,985 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "62ceff46-ac97-47fd-adeb-666643f19f44"
+}
+280764746690976 2026-07-21 16:45:39,616 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "TELO",
+    "category": "US_STOCK",
+    "timespan": "M5",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-21T16:45:39Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "2642e337-ff2b-544e-899b-71ede5ec7609",
+    "x-signature": "EaTHt15EjlKGKw9Q0jSQyITPh0w=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 79daff8f-5888-4d24-bc7b-273be98f7a8f
+280764746690976 2026-07-21 16:45:39,618 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "79daff8f-5888-4d24-bc7b-273be98f7a8f"
+}
+280765283561888 2026-07-21 16:45:39,706 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "UTZ",
+    "category": "US_STOCK",
+    "timespan": "M1",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-21T16:45:39Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "ef28c87c-186b-51bd-a288-6bc496559ead",
+    "x-signature": "pnUaF2bYEqCVJ89StrUIXqCL14Q=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 3ef921bd-8a0e-416b-b233-a45b4bf6054d
+280765283561888 2026-07-21 16:45:39,706 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "3ef921bd-8a0e-416b-b233-a45b4bf6054d"
+}
+280765275107744 2026-07-21 16:45:39,808 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "UTZ",
+    "category": "US_STOCK",
+    "timespan": "M5",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-21T16:45:39Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "a7f362d7-c67a-5abb-8c6a-278550ebdaa2",
+    "x-signature": "OBQxRnMk4sJDbeekOyVvK/6pMBA=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 20c3f5f4-02ab-4571-849e-8e2f057d87ec
+280765275107744 2026-07-21 16:45:39,808 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "20c3f5f4-02ab-4571-849e-8e2f057d87ec"
+}
+274998417551776 2026-07-21 16:49:29,397 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "VIVK",
+    "category": "US_STOCK",
+    "timespan": "M5",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-21T16:49:29Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "5613fbce-94c5-5c42-a9b0-8a08c48f9e88",
+    "x-signature": "0muE3qU16G+OxbURLwBxhzAcWsc=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: c3fb1db8-cc2a-4ae3-8d2d-f0b5b2416a8a
+274998417551776 2026-07-21 16:49:29,397 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "c3fb1db8-cc2a-4ae3-8d2d-f0b5b2416a8a"
+}
+274999013077408 2026-07-21 16:49:29,480 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "VTIX",
+    "category": "US_STOCK",
+    "timespan": "M1",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-21T16:49:29Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "831e1162-ccf6-5f57-9c45-8c06abcc9295",
+    "x-signature": "wmgkR72zieaXpwmPSpJwDgIwEHI=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 7f35d214-424a-4f56-bdf7-05a098a8cd3f
+274999013077408 2026-07-21 16:49:29,480 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "7f35d214-424a-4f56-bdf7-05a098a8cd3f"
+}
+274999004623264 2026-07-21 16:49:29,570 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/bars",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbol": "VTIX",
+    "category": "US_STOCK",
+    "timespan": "M5",
+    "count": "30"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-21T16:49:29Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "f985b55c-2b22-5f0b-a14b-a85773a0428a",
+    "x-signature": "aoQGGBgDO+yAQbjzct0KlCs/wuU=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: 9ecbc0a7-2a45-42a4-bf7d-0fa1e6ee63dd
+274999004623264 2026-07-21 16:49:29,570 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "9ecbc0a7-2a45-42a4-bf7d-0fa1e6ee63dd"
+}
+281049862250528 2026-07-21 17:09:52,084 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+281049862250528 2026-07-21 17:09:52,169 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+277286999666720 2026-07-21 17:12:21,652 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+277286999666720 2026-07-21 17:12:21,739 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+275801358422048 2026-07-21 17:12:44,641 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
+275801358422048 2026-07-21 17:12:44,731 webull.core.http.initializer.client_initializer INFO _check_token_enable result is False
