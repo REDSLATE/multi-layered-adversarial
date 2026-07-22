@@ -534,6 +534,23 @@ async def refresh_crypto_universe() -> dict:
     quality = await _quality_overrides()
 
     merged = _dedupe_and_merge([*pins, *movers])
+
+    # ── 2026-07-22: auto-map + affordability (fail-soft) ──
+    # Every mover comes FROM Kraken, so unmapped-but-tradable pairs
+    # get mapped automatically; pairs whose ordermin×price exceeds
+    # the per-order cap are dropped so brains stop emitting intents
+    # that can only die as REJECTED_CAP_EXCEEDED.
+    try:
+        from shared.crypto.kraken_pair_sync import (  # noqa: WPS433
+            auto_map_symbols, filter_affordable,
+        )
+        from shared.risk.check import _per_order_cap  # noqa: WPS433
+        await auto_map_symbols(
+            [r["canonical_symbol"] for r in merged],
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("kraken pair auto-sync failed: %s", exc)
+
     merged.sort(
         key=lambda r: (
             0 if r.get("pinned") else 1,
@@ -548,6 +565,16 @@ async def refresh_crypto_universe() -> dict:
     )
     kept, quarantined = await _filter_by_registry(admitted, "kraken")
     quality_kept, quality_dropped = _apply_quality_filters(kept, lane)
+
+    # Affordability: ordermin × price must fit the per-order cap.
+    try:
+        quality_kept, unaffordable = await filter_affordable(
+            quality_kept, _per_order_cap(),
+        )
+        quality_dropped.extend(unaffordable)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("kraken affordability filter failed: %s", exc)
+
     quality_kept = quality_kept[:UNIVERSE_CAP_CRYPTO]
 
     return await _publish_and_report(
