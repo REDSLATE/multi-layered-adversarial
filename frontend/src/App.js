@@ -17,6 +17,7 @@ import McShelly from "@/pages/McShelly";
 import DoctrineReference from "@/pages/DoctrineReference";
 import Architecture from "@/pages/Architecture";
 import Positions from "@/pages/Positions";
+import KrakenUniverse from "@/pages/KrakenUniverse";
 import LlmLedger from "@/pages/LlmLedger";
 import RiseAI from "@/pages/RiseAI";
 import KernelReview from "@/pages/KernelReview";
@@ -93,6 +94,7 @@ function App() {
             <Route index element={<Navigate to="/admin/overview" replace />} />
             <Route path="overview" element={<Overview />} />
             <Route path="positions" element={<Positions />} />
+            <Route path="kraken-universe" element={<KrakenUniverse />} />
             <Route path="intents" element={<Intents />} />
             <Route path="receipts" element={<Receipts />} />
             <Route path="kernel-review" element={<KernelReview />} />

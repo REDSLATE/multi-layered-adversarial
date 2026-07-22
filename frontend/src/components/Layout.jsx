@@ -11,6 +11,7 @@ import {
   Flag,
   Lightning,
   Crosshair,
+  CurrencyBtc,
   Sparkle,
   Brain,
   SignOut,
@@ -31,6 +32,7 @@ const SECTIONS = [
       { to: "/admin/positions",    label: "Positions", icon: Crosshair, testid: "nav-positions" },
       { to: "/admin/intents",      label: "Intents",   icon: Lightning, testid: "nav-intents" },
       { to: "/admin/receipts",     label: "Receipts",  icon: Receipt,   testid: "nav-receipts" },
+      { to: "/admin/kraken-universe", label: "Kraken Universe", icon: CurrencyBtc, testid: "nav-kraken-universe" },
     ],
   },
   {
