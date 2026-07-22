@@ -164,6 +164,77 @@ async def _gate_seat(ctx: RouteContext) -> Optional[dict]:
 
     ctx.notional_raw, ctx.notional_source = resolve_notional(ctx.intent)
 
+    # ── 2026-07-22 opportunity policy: authority window + tiers ──
+    # (aggression lives HERE, safety gates below stay untouched)
+    from shared.opportunity.policy import (  # noqa: WPS433
+        classify_tier, get_opportunity_policy,
+    )
+    policy = await get_opportunity_policy()
+    lane = (ctx.intent.get("lane") or "").lower()
+
+    # Execution authority: a signal older than the lane window is
+    # RETAINED (72h sweeper) but never EXECUTED — the opportunity
+    # has passed. Replaces the flat 120-min window for execution.
+    authority_min = policy["authority_min"].get(lane)
+    ingest_ts = ctx.intent.get("ingest_ts")
+    if authority_min and ingest_ts:
+        try:
+            age_min = (
+                datetime.now(timezone.utc)
+                - datetime.fromisoformat(str(ingest_ts))
+            ).total_seconds() / 60.0
+        except ValueError:
+            age_min = 0.0
+        if age_min > float(authority_min):
+            try:
+                await _db()[SHARED_INTENTS].update_one(
+                    {"intent_id": ctx.intent_id},
+                    {"$set": {
+                        "gate_state": "expired_unrouted",
+                        "broker_reason": "AUTHORITY_EXPIRED",
+                        "broker_error_detail": (
+                            f"intent age {age_min:.1f}m > {lane} authority "
+                            f"window {authority_min:.0f}m"
+                        ),
+                        "routed_at": _now_iso(),
+                    }},
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return {"verdict": "blocked", "reason": "authority_expired",
+                    "intent_id": ctx.intent_id}
+
+    # Conviction → action tier: WATCH / PROBE / ENTER / FULL.
+    action_upper = str(ctx.intent.get("action") or "").upper()
+    if policy["tiers_enabled"] and action_upper in ("BUY", "SELL"):
+        tier, tier_notional = classify_tier(
+            float(ctx.intent.get("confidence") or 0.0), lane, policy,
+        )
+        if tier == "WATCH":
+            try:
+                await _db()[SHARED_INTENTS].update_one(
+                    {"intent_id": ctx.intent_id},
+                    {"$set": {
+                        "gate_state": "blocked",
+                        "action_tier": "WATCH",
+                        "broker_reason": "BELOW_PROBE_THRESHOLD",
+                        "routed_at": _now_iso(),
+                    }},
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return {"verdict": "blocked", "reason": "below_probe_threshold",
+                    "intent_id": ctx.intent_id}
+        ctx.notional_raw = tier_notional
+        ctx.notional_source = f"tier_{tier.lower()}"
+        try:
+            await _db()[SHARED_INTENTS].update_one(
+                {"intent_id": ctx.intent_id},
+                {"$set": {"action_tier": tier}},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
     ctx.sd = await seat.decide(ctx.intent)
     if ctx.sd.verdict == "fire":
         return None

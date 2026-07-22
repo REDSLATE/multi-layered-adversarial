@@ -8,6 +8,7 @@ import KrakenPairEditor from "@/components/KrakenPairEditor";
 import WatchlistPanel from "@/components/WatchlistPanel";
 import ExitMonitorPanel from "@/components/ExitMonitorPanel";
 import DailyBudgetTile from "@/components/DailyBudgetTile";
+import OpportunityPolicyPanel from "@/components/OpportunityPolicyPanel";
 
 /**
  * Operator Control — one-glance status + one-click toggles for the
@@ -671,6 +672,7 @@ export default function OperatorControl() {
 
       {/* Conviction floor knob + gate-failure digest (2026-07-21) */}
       <DailyBudgetTile />
+      <OpportunityPolicyPanel />
       <ConvictionFloorKnob />
       <GateFailureDigest />
       <KrakenPairEditor />

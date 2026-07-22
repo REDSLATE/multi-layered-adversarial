@@ -214,8 +214,20 @@ async def arbitrate(seat_key: str, runtime_mode: RuntimeMode) -> dict:
     # clamp [0.30, 2.00] is the sanity gate — the multiplicative
     # cascade CANNOT nudge size beyond these bounds even if a
     # future kernel multiplier goes wild.
+    #
+    # 2026-07-22: Rise Kernel wired LIVE (was KERNEL_MULTIPLIER_
+    # DEFAULT=1.0 constant). Hot-score from realized exit outcomes
+    # → multiplier clamped [0.50, 1.35]. Throttle, never veto —
+    # fail-soft to neutral 1.0.
+    try:
+        from shared.brains.kernel_throttle import get_kernel_throttle  # noqa: WPS433
+        kernel = await get_kernel_throttle(winner["brain"], lane)
+        kernel_mult = float(kernel.get("multiplier") or 1.0)
+    except Exception:  # noqa: BLE001
+        kernel = {"multiplier": 1.0, "score": None, "state": "error"}
+        kernel_mult = 1.0
     size_mult_raw = (
-        KERNEL_MULTIPLIER_DEFAULT
+        kernel_mult
         * disagreement_mult
         * dawe_size_multiplier(winner["effective_weight"])
     )
@@ -235,7 +247,9 @@ async def arbitrate(seat_key: str, runtime_mode: RuntimeMode) -> dict:
         "disagreement_multiplier": disagreement_mult,
         "size_multiplier_raw": size_mult_raw,
         "size_multiplier": size_mult,
-        "kernel_multiplier": KERNEL_MULTIPLIER_DEFAULT,
+        "kernel_multiplier": kernel_mult,
+        "kernel_score": kernel.get("score"),
+        "kernel_state": kernel.get("state"),
         "runtime_mode": runtime_mode.value,
         "arbitrated_at": _now_iso(),
         "field": [

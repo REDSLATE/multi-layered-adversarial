@@ -65,13 +65,17 @@ sys.path.insert(0, "/app/backend")
 # ─── Helpers ────────────────────────────────────────────────────────
 
 def _intent(**overrides):
+    from datetime import datetime, timezone
     base = {
         "intent_id": "test-intent-live-path",
         "symbol": "AAPL",
         "action": "BUY",
         "lane": "equity",
         "stack": "camino",
-        "ingest_ts": "2026-02-27T00:00:00+00:00",
+        "confidence": 0.9,  # FULL tier — opportunity policy (2026-07-22)
+        # Fresh ts — intents older than the lane authority window are
+        # now correctly blocked before the seat (2026-07-22).
+        "ingest_ts": datetime.now(timezone.utc).isoformat(),
         "requested_notional_usd": 10.0,
     }
     base.update(overrides)
@@ -545,13 +549,15 @@ async def test_crypto_pair_floor_size_up_raises_broker_notional(route_one_scaffo
     with _apply_patches(s, floor_result=floor_result):
         r = await s["ar"]._route_one(_intent(
             lane="crypto", symbol="BTC/USD", requested_notional_usd=3.0,
+            confidence=0.33,  # PROBE tier → $5 base (2026-07-22 policy)
         ))
 
     assert r["verdict"] == "executed"
-    # Broker saw the FLOORED notional, not the original $3.
+    # Broker saw the FLOORED notional, not the tier base.
     assert s["broker_calls"][0]["notional_usd"] == 10.0
-    # apply_floor was consulted with the requested pair BEFORE risk.
-    assert s["floor_calls"] == [{"pair": "BTC/USD", "notional": 3.0}]
+    # apply_floor consulted with the tier-assigned base BEFORE risk
+    # (action tiers assign base notional; crypto PROBE = $5).
+    assert s["floor_calls"] == [{"pair": "BTC/USD", "notional": 5.0}]
     # Risk received the FLOORED value (10.0), not the raw pre-floor
     # value (3.0). This is the key ordering assertion of the 2026-02-28
     # reorder — risk is authoritative on the actual shipped notional.
