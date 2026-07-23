@@ -78,32 +78,39 @@ def test_lane_defaults_match_operator_spec():
     }
 
 
-# ── atomic reservation (live db) ────────────────────────────────────
+# ── atomic reservation (sqlite hot-path store) ──────────────────────
+
+@pytest.fixture
+def _isolated_hotpath(tmp_path):
+    from shared.hotpath import exit_plans as ps
+    from shared.hotpath import outbox as ob
+    ob.reset_for_tests(tmp_path / "hp.sqlite")
+    ps.reset_for_tests()
+    yield
+    ob.reset_for_tests("/app/backend/data/hotpath.sqlite")
+    ps.reset_for_tests()
+
 
 @pytest.mark.asyncio
-async def test_reservation_is_atomic_and_single_winner():
-    from db import db
+async def test_reservation_is_atomic_and_single_winner(_isolated_hotpath):
+    from shared.hotpath import exit_plans as ps
     plan = _plan(plan_id="test-reserve-atomic")
-    await db[em.EXIT_PLANS].delete_many({"plan_id": plan["plan_id"]})
-    await db[em.EXIT_PLANS].insert_one(dict(plan))
-    try:
-        first = await em._reserve(plan["plan_id"], "stop_loss")
-        second = await em._reserve(plan["plan_id"], "take_profit")
-        assert first is True
-        assert second is False, "second reservation must lose"
-        doc = await db[em.EXIT_PLANS].find_one({"plan_id": plan["plan_id"]})
-        assert doc["status"] == "exiting"
-        assert doc["exit_reason"] == "stop_loss"
-    finally:
-        await db[em.EXIT_PLANS].delete_many({"plan_id": plan["plan_id"]})
+    ps.upsert(plan, mirror=False)
+    first = await em._reserve(plan["plan_id"], "stop_loss")
+    second = await em._reserve(plan["plan_id"], "take_profit")
+    assert first is True
+    assert second is False, "second reservation must lose"
+    doc = ps.get(plan["plan_id"])
+    assert doc["status"] == "exiting"
+    assert doc["exit_reason"] == "stop_loss"
 
 
 @pytest.mark.asyncio
-async def test_adoption_uses_brain_levels_only_when_coherent():
+async def test_adoption_uses_brain_levels_only_when_coherent(_isolated_hotpath):
     """Incoherent brain bracket (stop above entry) falls back to lane
     defaults."""
     from unittest.mock import AsyncMock, patch
-    from db import db
+    from shared.hotpath import exit_plans as ps
     pos = {"symbol": "TEST/USD", "qty": 1.0, "entry_price": 100.0,
            "current_price": 100.0}
     policy = {
@@ -111,19 +118,17 @@ async def test_adoption_uses_brain_levels_only_when_coherent():
         "crypto": dict(DEFAULTS["crypto"]),
         "escalate_after_s": 120.0,
     }
-    await db[em.EXIT_PLANS].delete_many({"symbol": "TEST/USD"})
-    try:
-        with patch.object(em, "_brain_levels", new=AsyncMock(return_value=(95.0, 110.0))):
-            plan = await em._adopt("crypto", pos, policy)
-        assert plan["levels_source"] == "lane_default"
-        assert plan["stop_price"] == pytest.approx(97.0)
-        assert plan["target_price"] == pytest.approx(108.0)
+    with patch.object(em, "_brain_levels", new=AsyncMock(return_value=(95.0, 110.0))), \
+         patch.object(em, "_origin_intent", new=AsyncMock(return_value=None)):
+        plan = await em._adopt("crypto", pos, policy)
+    assert plan["levels_source"] == "lane_default"
+    assert plan["stop_price"] == pytest.approx(97.0)
+    assert plan["target_price"] == pytest.approx(108.0)
+    assert ps.get(plan["plan_id"])["status"] == "active"
 
-        await db[em.EXIT_PLANS].delete_many({"symbol": "TEST/USD"})
-        with patch.object(em, "_brain_levels", new=AsyncMock(return_value=(112.0, 96.0))):
-            plan = await em._adopt("crypto", pos, policy)
-        assert plan["levels_source"] == "brain"
-        assert plan["stop_price"] == 96.0
-        assert plan["target_price"] == 112.0
-    finally:
-        await db[em.EXIT_PLANS].delete_many({"symbol": "TEST/USD"})
+    with patch.object(em, "_brain_levels", new=AsyncMock(return_value=(112.0, 96.0))), \
+         patch.object(em, "_origin_intent", new=AsyncMock(return_value=None)):
+        plan = await em._adopt("crypto", pos, policy)
+    assert plan["levels_source"] == "brain"
+    assert plan["stop_price"] == 96.0
+    assert plan["target_price"] == 112.0

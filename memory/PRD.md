@@ -3155,3 +3155,35 @@ policy_version, risk_state_version, router_version, chain_hash (options)}.
   apply (gto/strategy.py Decision edit, shared/routes.py import + gather
   edits reported success but landed corrupted/missing). Sequence edits to
   one file, or verify with grep after batch.
+
+## 2026-07-23 — Iteration 35: Exit-Plan Migration to Memory+SQLite (audit P0 #2)
+
+### What changed
+- New `shared/hotpath/exit_plans.py`: plans live in MEMORY + SQLite
+  (`exit_plans` table, same hotpath DB as the outbox). Atlas gets
+  full-snapshot mirrors via `exit_plan_mirror` outbox events (cold path,
+  dashboards only). API: upsert/get/load_live/load_panel/update/reserve
+  (SQLite conditional UPDATE = atomic arbiter)/mark_closed/counts/bootstrap.
+- `monitor.py` fully migrated: adopt/reconcile/reserve/submit/tend/close_now
+  all operate on the store — ZERO Atlas reads or writes in the exit decision
+  path (adoption enrichment reads remain fail-soft to lane defaults).
+- Restart recovery: SQLite live plans rebuild memory; one-time `bootstrap()`
+  imports active/exiting plans from Mongo on first boot after this ships
+  (prod continuity — runs automatically in _loop).
+- `routes/exit_admin.py` GET /admin/exits now serves plans from the store
+  (real-time, Atlas-independent); `get_status()` exposes plan_store counts.
+- handlers.py: new `exit_plan_mirror` idempotent upsert-by-plan_id.
+
+### Testing (all pass, 44 total in exit/hotpath/expectancy selection)
+- Lifecycle suite rewritten against the store (isolated tmp SQLite per test)
+  incl. NEW test_restart_recovery_rebuilds_from_sqlite (memory wipe →
+  SQLite rebuild → trigger still fires, no Atlas).
+- Mirror verified: closed-plan snapshot lands in Mongo after outbox drain.
+- e2e: /api/admin/exits serves store plans; run-once clean; pulse healthy.
+- REDEPLOY needed for prod to pick this up (bootstrap imports live prod plans).
+
+### Doctrine status after this iteration
+The Exit Monitor now satisfies "never needs Atlas to decide to close":
+policy (last-known-good cache) + plans (SQLite) + outcomes/receipts (outbox).
+Remaining packages: ExecutionPolicySnapshot (risk-gate reads) → capital
+ledger local reserve → local router intent queue → intent stamping via outbox.

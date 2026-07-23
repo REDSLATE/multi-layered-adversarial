@@ -25,8 +25,10 @@ Doctrine:
   * Protections: atomic trigger reservation (one active exit order
     per position), broker-held qty as the sell ceiling, partial-fill
     handling via re-reconciliation, restart recovery (plans persist
-    in Mongo), stale-quote rejection, per-lane enable switches,
-    permanent receipts in `shared_exit_receipts` (not retention-swept).
+    in local SQLite — hot-path doctrine 2026-07-23; Atlas holds a
+    write-behind mirror), stale-quote rejection, per-lane enable
+    switches, permanent receipts in `shared_exit_receipts` (not
+    retention-swept).
   * Max-hold clock starts at plan adoption — positions are adopted
     within one monitor tick (~20s) of the first confirmed fill.
   * Scope day-1: LONG spot/cash positions. Kraken margin positions
@@ -43,6 +45,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from db import db
+from shared.hotpath import exit_plans as plan_store
 
 logger = logging.getLogger("risedual.exit_monitor")
 
@@ -284,7 +287,7 @@ async def _adopt(lane: str, pos: dict, policy: dict) -> dict:
         "exit_reason": None,
         "attempts": 0,
     }
-    await db[EXIT_PLANS].insert_one(dict(plan))
+    plan_store.upsert(plan)
     logger.info(
         "exit_monitor ADOPTED %s %s qty=%.8f entry=%.4f stop=%.4f "
         "target=%.4f source=%s hold_until=%s",
@@ -301,9 +304,7 @@ async def _reconcile(lane: str, positions: list[dict], policy: dict) -> list[dic
     live: list[dict] = []
     seen: set[str] = set()
 
-    async for plan in db[EXIT_PLANS].find(
-        {"lane": lane, "status": {"$in": ["active", "exiting"]}},
-    ):
+    for plan in [dict(p) for p in plan_store.load_live(lane)]:
         sym = plan["symbol"]
         pos = by_symbol.get(sym)
         if pos is None:
@@ -312,13 +313,9 @@ async def _reconcile(lane: str, positions: list[dict], policy: dict) -> list[dic
                 "exit_order_filled" if plan["status"] == "exiting"
                 else "position_closed_externally"
             )
-            await db[EXIT_PLANS].update_one(
-                {"plan_id": plan["plan_id"]},
-                {"$set": {
-                    "status": "closed", "closed_at": _iso(),
-                    "close_detail": detail,
-                }},
-            )
+            plan_store.mark_closed(plan["plan_id"], {
+                "closed_at": _iso(), "close_detail": detail,
+            })
             # Realized outcome → durable local outbox first (2026-07-23);
             # the writer applies it to Atlas (ledger + DAWE fold) with
             # retry. Direct call only if the local commit fails.
@@ -346,10 +343,7 @@ async def _reconcile(lane: str, positions: list[dict], policy: dict) -> list[dic
             continue
         seen.add(sym)
         if abs(float(pos["qty"]) - float(plan.get("qty_held") or 0)) > 1e-9:
-            await db[EXIT_PLANS].update_one(
-                {"plan_id": plan["plan_id"]},
-                {"$set": {"qty_held": float(pos["qty"])}},
-            )
+            plan_store.update(plan["plan_id"], {"qty_held": float(pos["qty"])})
             plan["qty_held"] = float(pos["qty"])
         plan["_pos"] = pos
         live.append(plan)
@@ -375,15 +369,10 @@ def _trigger_for(plan: dict, price: float) -> Optional[str]:
 
 
 async def _reserve(plan_id: str, reason: str) -> bool:
-    """Atomic trigger reservation — one active exit order per position."""
-    res = await db[EXIT_PLANS].find_one_and_update(
-        {"plan_id": plan_id, "status": "active"},
-        {"$set": {
-            "status": "exiting", "exit_reason": reason,
-            "reserved_at": _iso(),
-        }},
-    )
-    return res is not None
+    """Atomic trigger reservation — one active exit order per
+    position. Arbitrated by the local SQLite store (hot path);
+    no Atlas involvement (2026-07-23 P0 #2)."""
+    return plan_store.reserve(plan_id, reason)
 
 
 def _mint_exit_receipt(lane: str, symbol: str, qty: float) -> Optional[dict]:
@@ -469,9 +458,7 @@ async def _submit_exit(plan: dict, price: float, *, force_market: bool = False) 
         update["last_error"] = error
         if attempts >= MAX_EXIT_ATTEMPTS:
             update["status"] = "error"
-    await db[EXIT_PLANS].update_one(
-        {"plan_id": plan["plan_id"]}, {"$set": update},
-    )
+    plan_store.update(plan["plan_id"], update)
     await _receipt({
         "event": "exit_submit" if order else "exit_submit_failed",
         "plan_id": plan["plan_id"], "lane": lane, "symbol": symbol,
@@ -521,9 +508,7 @@ async def _tend_exiting(plan: dict, price: Optional[float], escalate_after_s: fl
             "lane": plan["lane"], "symbol": plan["symbol"],
             "stale_order_id": eo.get("order_id"), "age_s": round(age_s, 1),
         })
-        await db[EXIT_PLANS].update_one(
-            {"plan_id": plan["plan_id"]}, {"$set": {"exit_order": None}},
-        )
+        plan_store.update(plan["plan_id"], {"exit_order": None})
         if price:
             plan["exit_order"] = None
             await _submit_exit(plan, price, force_market=True)
@@ -593,30 +578,35 @@ async def run_once() -> dict:
 
 async def close_now(plan_id: str) -> dict:
     """Manual CLOSE NOW — operator override, always MARKET."""
-    plan = await db[EXIT_PLANS].find_one({"plan_id": plan_id})
+    plan = plan_store.get(plan_id)
     if not plan:
         return {"ok": False, "error": "plan not found"}
     if plan["status"] not in ("active", "exiting"):
         return {"ok": False, "error": f"plan status is {plan['status']}"}
     if plan["status"] == "active" and not await _reserve(plan_id, "manual_close"):
         return {"ok": False, "error": "reservation lost (already exiting)"}
+    plan = dict(plan_store.get(plan_id) or plan)
     plan["exit_reason"] = plan.get("exit_reason") or "manual_close"
     price = (
         await _crypto_price(plan["symbol"])
         if plan["lane"] == "crypto" else None
     ) or float(plan.get("entry_price") or 0)
     await _submit_exit(plan, price, force_market=True)
-    fresh = await db[EXIT_PLANS].find_one(
-        {"plan_id": plan_id}, {"_id": 0, "last_error": 1, "exit_order": 1},
-    )
-    ok = bool((fresh or {}).get("exit_order"))
-    return {"ok": ok, "error": (fresh or {}).get("last_error")}
+    fresh = plan_store.get(plan_id) or {}
+    ok = bool(fresh.get("exit_order"))
+    return {"ok": ok, "error": fresh.get("last_error")}
 
 
 # ── loop / lifecycle ────────────────────────────────────────────────
 
 async def _loop() -> None:
     logger.info("exit_monitor loop start interval=%.0fs", INTERVAL_SEC)
+    # One-time Atlas → SQLite continuity import, then indexes for the
+    # Atlas MIRROR collection (dashboards/history only).
+    try:
+        await plan_store.bootstrap()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("exit_plans bootstrap failed: %s", exc)
     try:
         await db[EXIT_PLANS].create_index([("status", 1), ("lane", 1)])
         await db[EXIT_PLANS].create_index("plan_id", unique=True)
@@ -667,4 +657,5 @@ def get_status() -> dict:
         "tick_count": _state.get("tick_count", 0),
         "exits_submitted": _state.get("exits_submitted", 0),
         "errors": _state.get("errors", 0),
+        "plan_store": {"backend": "sqlite_hotpath", "counts": plan_store.counts()},
     }

@@ -21,6 +21,13 @@ async def _apply_exit_outcome(event_id: str, payload: dict) -> None:
         raise RuntimeError("record_outcome failed (Atlas write error)")
 
 
+async def _apply_exit_plan_mirror(event_id: str, payload: dict) -> None:
+    await db["shared_exit_plans"].update_one(
+        {"plan_id": payload["plan_id"]}, {"$set": payload}, upsert=True,
+    )
+
+
 def register_all() -> None:
     register_handler("exit_receipt", _apply_exit_receipt)
     register_handler("exit_outcome", _apply_exit_outcome)
+    register_handler("exit_plan_mirror", _apply_exit_plan_mirror)

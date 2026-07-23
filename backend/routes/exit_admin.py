@@ -13,12 +13,13 @@ router = APIRouter(prefix="/admin/exits", tags=["exit-monitor"])
 
 @router.get("")
 async def exits_overview(_user: dict = Depends(get_current_user)):  # noqa: B008
-    plans = []
-    cursor = db[exit_monitor.EXIT_PLANS].find(
-        {"status": {"$in": ["active", "exiting", "error"]}}, {"_id": 0},
-    ).sort("adopted_at", -1).limit(100)
-    async for p in cursor:
-        plans.append(p)
+    # Live plans come from the hot-path store (memory + SQLite) —
+    # real-time and Atlas-independent (2026-07-23 P0 #2 migration).
+    from shared.hotpath import exit_plans as plan_store  # noqa: WPS433
+    plans = sorted(
+        plan_store.load_panel(),
+        key=lambda p: p.get("adopted_at") or "", reverse=True,
+    )[:100]
     recent = []
     async for r in db[exit_monitor.EXIT_RECEIPTS].find(
         {}, {"_id": 0},

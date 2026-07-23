@@ -1,7 +1,12 @@
 """Exit Monitor full-lifecycle integration (mocked broker) —
-reconcile → adopt → trigger → reserve → submit → complete."""
+reconcile → adopt → trigger → reserve → submit → complete.
+
+2026-07-23 P0 #2: plans live in the SQLite hot-path store; Atlas holds
+a write-behind mirror. Tests assert against the store and drain the
+outbox before checking Mongo-side receipts."""
 from __future__ import annotations
 
+import json
 import sys
 from unittest.mock import AsyncMock, patch
 
@@ -10,17 +15,37 @@ import pytest
 sys.path.insert(0, "/app/backend")
 
 from shared.exits import monitor as em
+from shared.hotpath import exit_plans as ps
+from shared.hotpath import outbox as ob
 
 SYM = "LIFEC/USD"
 
 
+@pytest.fixture(autouse=True)
+def _isolated_hotpath(tmp_path):
+    ob.reset_for_tests(tmp_path / "hp.sqlite")
+    ps.reset_for_tests()
+    yield
+    ob.reset_for_tests("/app/backend/data/hotpath.sqlite")
+    ps.reset_for_tests()
+
+
+def _plan_by_symbol(sym):
+    row = ps._conn().execute(
+        "SELECT payload_json FROM exit_plans "
+        "WHERE json_extract(payload_json, '$.symbol')=? "
+        "ORDER BY updated_at DESC LIMIT 1",
+        (sym,),
+    ).fetchone()
+    return json.loads(row["payload_json"]) if row else None
+
+
 async def _drain_outbox():
-    """Receipts/outcomes now commit to the local SQLite outbox first
-    (2026-07-23); apply them to Mongo before asserting."""
-    from shared.hotpath import outbox
+    """Receipts/outcomes/mirrors commit to the local SQLite outbox
+    first; apply them to Mongo before asserting Mongo-side rows."""
     from shared.hotpath.handlers import register_all
     register_all()
-    await outbox.drain_once()
+    await ob.drain_once()
 
 
 async def _cleanup():
@@ -72,7 +97,7 @@ async def test_full_lifecycle_stop_loss_market_exit():
             with patch("shared.exits.policy.get_policy", new=AsyncMock(return_value=_policy())):
                 # Tick 1: adoption — no trigger at entry price.
                 await em.run_once()
-                plan = await db[em.EXIT_PLANS].find_one({"symbol": SYM})
+                plan = _plan_by_symbol(SYM)
                 assert plan and plan["status"] == "active"
                 assert plan["stop_price"] == pytest.approx(97.0)
                 assert plan["target_price"] == pytest.approx(108.0)
@@ -83,7 +108,7 @@ async def test_full_lifecycle_stop_loss_market_exit():
                 with patch("shared.crypto.broker_adapter.get_kraken_adapter",
                            new=AsyncMock(return_value=fake)):
                     await em.run_once()
-                plan = await db[em.EXIT_PLANS].find_one({"symbol": SYM})
+                plan = _plan_by_symbol(SYM)
                 assert plan["status"] == "exiting"
                 assert plan["exit_reason"] == "stop_loss"
                 assert plan["exit_order"]["kind"] == "market"
@@ -94,10 +119,13 @@ async def test_full_lifecycle_stop_loss_market_exit():
                 with patch.object(em, "_crypto_positions",
                                   new=AsyncMock(return_value=([], 0))):
                     await em.run_once()
-                plan = await db[em.EXIT_PLANS].find_one({"symbol": SYM})
+                plan = _plan_by_symbol(SYM)
                 assert plan["status"] == "closed"
                 assert plan["close_detail"] == "exit_order_filled"
                 await _drain_outbox()
+                # Atlas mirror carries the final closed snapshot.
+                mirror = await db[em.EXIT_PLANS].find_one({"symbol": SYM})
+                assert mirror and mirror["status"] == "closed"
                 receipts = await db[em.EXIT_RECEIPTS].find(
                     {"symbol": SYM}).to_list(20)
                 events = sorted(r["event"] for r in receipts)
@@ -108,7 +136,6 @@ async def test_full_lifecycle_stop_loss_market_exit():
 
 @pytest.mark.asyncio
 async def test_take_profit_uses_marketable_limit_then_completes():
-    from db import db
     await _cleanup()
     fake = _FakeKraken()
     pos = [{"symbol": SYM, "qty": 1.0, "entry_price": None, "current_price": 100.0}]
@@ -124,7 +151,7 @@ async def test_take_profit_uses_marketable_limit_then_completes():
             with patch("shared.crypto.broker_adapter.get_kraken_adapter",
                        new=AsyncMock(return_value=fake)):
                 await em.run_once()
-            plan = await db[em.EXIT_PLANS].find_one({"symbol": SYM})
+            plan = _plan_by_symbol(SYM)
             assert plan["exit_reason"] == "take_profit"
             assert plan["exit_order"]["kind"] == "limit"
             assert not fake.market_calls
@@ -144,7 +171,7 @@ async def test_stale_limit_exit_escalates_to_market():
     await _cleanup()
     fake = _FakeKraken()
     stale_ts = em._iso(em._now() - timedelta(seconds=300))
-    await db[em.EXIT_PLANS].insert_one({
+    ps.upsert({
         "plan_id": "esc-1", "lane": "crypto", "symbol": SYM,
         "status": "exiting", "exit_reason": "take_profit",
         "entry_price": 100.0, "stop_price": 97.0, "target_price": 108.0,
@@ -152,7 +179,7 @@ async def test_stale_limit_exit_escalates_to_market():
         "reserved_at": stale_ts,
         "exit_order": {"order_id": "LIM-OLD", "kind": "limit",
                        "submitted_at": stale_ts, "qty": 1.0},
-    })
+    }, mirror=False)
     pos = [{"symbol": SYM, "qty": 1.0, "entry_price": None, "current_price": 108.5}]
     try:
         with patch.object(em, "_crypto_positions", new=AsyncMock(return_value=(pos, 0))), \
@@ -164,7 +191,7 @@ async def test_stale_limit_exit_escalates_to_market():
             await em.run_once()
         assert fake.cancelled == ["LIM-OLD"], "stale limit must be cancelled"
         assert fake.market_calls, "escalation must resubmit MARKET"
-        plan = await db[em.EXIT_PLANS].find_one({"plan_id": "esc-1"})
+        plan = ps.get("esc-1")
         assert plan["exit_order"]["kind"] == "market"
         await _drain_outbox()
         receipts = await db[em.EXIT_RECEIPTS].find({"symbol": SYM}).to_list(20)
@@ -175,19 +202,18 @@ async def test_stale_limit_exit_escalates_to_market():
 
 @pytest.mark.asyncio
 async def test_partial_fill_updates_held_qty_and_sells_remainder_only():
-    from db import db
     await _cleanup()
     fake = _FakeKraken()
     # Plan reserved but submit previously failed (no exit_order) —
     # restart-recovery path sells the CURRENT broker qty (0.4 left
     # after a partial fill), not the original 1.0.
-    await db[em.EXIT_PLANS].insert_one({
+    ps.upsert({
         "plan_id": "part-1", "lane": "crypto", "symbol": SYM,
         "status": "exiting", "exit_reason": "stop_loss",
         "entry_price": 100.0, "stop_price": 97.0, "target_price": 108.0,
         "qty_held": 1.0, "max_hold_until": em._iso(), "attempts": 1,
         "reserved_at": em._iso(), "exit_order": None,
-    })
+    }, mirror=False)
     pos = [{"symbol": SYM, "qty": 0.4, "entry_price": None, "current_price": 96.0}]
     try:
         with patch.object(em, "_crypto_positions", new=AsyncMock(return_value=(pos, 0))), \
@@ -202,3 +228,22 @@ async def test_partial_fill_updates_held_qty_and_sells_remainder_only():
         )
     finally:
         await _cleanup()
+
+
+@pytest.mark.asyncio
+async def test_restart_recovery_rebuilds_from_sqlite():
+    """Memory wiped (process restart) → live plans rebuild from SQLite
+    and the monitor keeps protecting the position — NO Atlas needed."""
+    ps.upsert({
+        "plan_id": "restart-1", "lane": "crypto", "symbol": SYM,
+        "status": "active", "entry_price": 100.0,
+        "stop_price": 97.0, "target_price": 108.0,
+        "qty_held": 1.0, "max_hold_until": em._iso(em._now()), "attempts": 0,
+    }, mirror=False)
+    # Simulate restart: memory cache cleared, SQLite survives.
+    ps._cache.clear()
+    ps._cache_loaded = False
+    live = ps.load_live("crypto")
+    assert [p["plan_id"] for p in live] == ["restart-1"]
+    # And the trigger still evaluates from the recovered plan.
+    assert em._trigger_for(live[0], 96.0) == "stop_loss"
