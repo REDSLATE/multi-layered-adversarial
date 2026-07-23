@@ -83,7 +83,12 @@ TRAIL_ACTIVATE_PCT = _env_float("POSITION_MONITOR_TRAIL_ACTIVATE_PCT", 1.0)
 # brains can finally be graded. Env override stays so the operator can
 # tune without redeploy.
 MAX_HOLD_MINUTES = _env_float("POSITION_MONITOR_MAX_HOLD_MINUTES", 60.0 * 24.0 * 7)
-ENABLED = _env_bool("POSITION_MONITOR_ENABLED", True)
+# 2026-07-23: default OFF — this loop watched `shared_live_positions`,
+# which nothing has written to since the direct-execute path was
+# deleted; the Exit Monitor (shared/exits/monitor.py) supersedes it
+# with broker-led reconciliation. Re-enable explicitly via env if a
+# live_positions writer ever returns.
+ENABLED = _env_bool("POSITION_MONITOR_ENABLED", False)
 
 
 # In-process state — read by /admin/risk/monitor/status.

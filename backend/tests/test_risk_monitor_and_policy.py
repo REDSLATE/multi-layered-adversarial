@@ -42,7 +42,10 @@ def test_monitor_status(client: requests.Session):
     r = client.get(f"{BASE_URL}/api/admin/risk/monitor/status", timeout=10)
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body.get("running") is True
+    # 2026-07-23: loop retired by default (superseded by the Exit
+    # Monitor; shared_live_positions has no writer). Status endpoint
+    # and manual run-once remain available.
+    assert body.get("running") is False
     pr = body.get("priority")
     assert pr == ["stop_loss", "take_profit", "trailing_stop", "max_hold_time"], pr
     cfg = body.get("config") or {}

@@ -3187,3 +3187,30 @@ The Exit Monitor now satisfies "never needs Atlas to decide to close":
 policy (last-known-good cache) + plans (SQLite) + outcomes/receipts (outbox).
 Remaining packages: ExecutionPolicySnapshot (risk-gate reads) → capital
 ledger local reserve → local router intent queue → intent stamping via outbox.
+
+## 2026-07-23 — Iteration 36: Duplicate-Code Report Triage (user-supplied artifact)
+
+### Applied (verified against CURRENT code first — report was from a snapshot)
+1. Deleted dead `backend/shared/doctrine.py` (85 lines) — shadowed by the
+   `shared/doctrine/` package since the package conversion; unreachable code.
+   Verified: `import shared.doctrine` resolves to the package; 262 doctrine
+   tests pass post-delete.
+2. Retired the zombie `position_monitor` loop (POSITION_MONITOR_ENABLED now
+   defaults False): it polled `shared_live_positions` (0 open rows, no writer
+   since the direct-execute path was deleted) against Atlas 24/7 — pure
+   hot-path waste; Exit Monitor supersedes it. Status endpoint + manual
+   run-once remain. Test updated (13 pass).
+
+### Discarded (with reasons)
+- crypto⇔equity risk-rule consolidation (report's #2): those 8 modules only
+  back manual admin evaluate routes on the same DEAD live_positions
+  subsystem; also duplicated intentionally per lane-isolation doctrine.
+  Consolidating dead code = no value. Marked instead as REMOVAL candidates
+  (with position_monitor + live_positions + risk/routes evaluate endpoints)
+  once operator confirms the admin evaluate routes are unused.
+- chevelle/redeye bridge merge: live routes with dedicated tests;
+  intent_bridge_factory already exists for new bridges; migration = route
+  compat risk for zero functional gain. Deferred.
+- feeder/LLM-adapter/seat/test-fixture dedupe: 10-15 line structural clones,
+  low payoff per the report's own assessment. Deferred.
+- revert_snapshots / runtime_patch_kit dupes: intentional by design.
