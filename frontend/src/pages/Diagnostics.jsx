@@ -24,6 +24,7 @@ import BrainDeepDiagnoseCard from "@/components/BrainDeepDiagnoseCard";
 // so the tile permanently read "0/4 dormant".
 import BrainInputHealthTile from "@/components/BrainInputHealthTile";  // 2026-02-23 instrument quality
 import HealthcheckTile from "@/components/HealthcheckTile";  // 2026-02-26 post-deploy validation
+import AtlasOutboxTile from "@/components/AtlasOutboxTile";  // 2026-07-23 durable write-behind queue
 import FingerprintDiffPanel from "@/components/FingerprintDiffPanel";  // 2026-02-20 doctrine-change before/after
 // ImposterScanCard removed 2026-02-21: the sidecar HTTP brain plumbing
 // it monitored was deleted (brains run in-process now), and the
@@ -279,6 +280,7 @@ export default function Diagnostics() {
       </div>
 
       <BrainInputHealthTile />
+      <AtlasOutboxTile />
 
       {/* ImposterScanCard removed 2026-02-21 — see import-block note. */}
 

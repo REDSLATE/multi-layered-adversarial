@@ -78,10 +78,22 @@ def _iso(dt: Optional[datetime] = None) -> str:
 
 
 async def _receipt(row: dict) -> None:
-    """Permanent audit row — never purged (collection not in
-    retention rules)."""
+    """Permanent audit row — committed to the local SQLite outbox
+    first (2026-07-23 durable-outbox doctrine); the write-behind
+    writer mirrors it to Atlas with retry. Falls back to a direct
+    Atlas insert only if the local commit itself fails."""
+    row.setdefault("ts", _iso())
     try:
-        row.setdefault("ts", _iso())
+        from shared.hotpath import outbox  # noqa: WPS433
+        outbox.enqueue(
+            "exit_receipt",
+            f"{row.get('plan_id', 'na')}-{uuid.uuid4().hex[:8]}",
+            row,
+        )
+        return
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("exit receipt outbox enqueue failed: %s", exc)
+    try:
         await db[EXIT_RECEIPTS].insert_one(dict(row))
     except Exception as exc:  # noqa: BLE001
         logger.warning("exit receipt write failed: %s", exc)
@@ -307,9 +319,23 @@ async def _reconcile(lane: str, positions: list[dict], policy: dict) -> list[dic
                     "close_detail": detail,
                 }},
             )
-            # Realized outcome → permanent ledger + brain DAWE fold.
-            from shared.exits.outcomes import record_outcome  # noqa: WPS433
-            await record_outcome({**plan, "close_detail": detail})
+            # Realized outcome → durable local outbox first (2026-07-23);
+            # the writer applies it to Atlas (ledger + DAWE fold) with
+            # retry. Direct call only if the local commit fails.
+            try:
+                from shared.hotpath import outbox  # noqa: WPS433
+                payload = {
+                    k: v for k, v in plan.items() if not k.startswith("_")
+                }
+                payload["close_detail"] = detail
+                outbox.enqueue("exit_outcome", plan["plan_id"], payload)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "exit outcome outbox enqueue failed plan=%s: %s",
+                    plan["plan_id"], exc,
+                )
+                from shared.exits.outcomes import record_outcome  # noqa: WPS433
+                await record_outcome({**plan, "close_detail": detail})
             if plan["status"] == "exiting":
                 await _receipt({
                     "event": "exit_complete", "plan_id": plan["plan_id"],

@@ -21,13 +21,25 @@ DEFAULTS: dict[str, Any] = {
 
 _LANE_FIELDS = {"enabled", "sl_pct", "tp_pct", "max_hold_h"}
 
+# Last-known-good policy (2026-07-23 hot-path audit P0 fix): a Mongo
+# outage previously collapsed get_policy() to DEFAULTS where
+# enabled=False — silently disabling stop-loss enforcement while
+# positions stayed open. Now an Atlas failure returns the last
+# successfully loaded policy instead; DEFAULTS apply only before the
+# first successful load.
+_LAST_GOOD: dict | None = None
+
 
 async def get_policy() -> dict:
-    """Merged view: stored overrides on top of DEFAULTS. Fail-soft to
-    DEFAULTS so a Mongo hiccup never leaves the monitor configless."""
+    """Merged view: stored overrides on top of DEFAULTS. On Mongo
+    failure, fall back to the LAST KNOWN GOOD policy (stamped
+    `_stale`), then DEFAULTS."""
+    global _LAST_GOOD  # noqa: PLW0603
     try:
         doc = await db["runtime_flags"].find_one({"_id": POLICY_FLAG_ID}) or {}
     except Exception:  # noqa: BLE001
+        if _LAST_GOOD is not None:
+            return {**_LAST_GOOD, "_stale": True}
         doc = {}
     out: dict = {"escalate_after_s": float(
         doc.get("escalate_after_s", DEFAULTS["escalate_after_s"])
@@ -42,6 +54,7 @@ async def get_policy() -> dict:
         for k in ("sl_pct", "tp_pct", "max_hold_h"):
             merged[k] = float(merged[k])
         out[lane] = merged
+    _LAST_GOOD = out
     return out
 
 

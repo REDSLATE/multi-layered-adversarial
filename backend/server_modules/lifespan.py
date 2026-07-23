@@ -354,6 +354,10 @@ async def lifespan(app: FastAPI):
     try:
         from shared.exits.monitor import start_if_enabled as _start_exits
         _start_exits()
+        from shared.hotpath.handlers import register_all as _register_outbox
+        _register_outbox()
+        from shared.hotpath.outbox import start_if_enabled as _start_outbox
+        _start_outbox()
         logger.info("Exit monitor started")
     except Exception as e:  # noqa: BLE001
         logger.warning("Exit monitor start failed: %s", e)
@@ -995,6 +999,8 @@ async def lifespan(app: FastAPI):
     try:
         from shared.exits.monitor import stop as _stop_exits
         await _stop_exits()
+        from shared.hotpath.outbox import stop as _stop_outbox
+        await _stop_outbox()
     except Exception:  # noqa: BLE001
         pass
     client.close()

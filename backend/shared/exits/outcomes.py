@@ -59,6 +59,15 @@ async def record_outcome(plan: dict) -> Optional[dict]:
 
 
 async def _record(plan: dict) -> dict:
+    # Idempotency guard (2026-07-23 outbox replay safety): the outbox
+    # writer may re-apply this event after a crash between apply and
+    # ack. One outcome row + one DAWE fold per plan, ever.
+    existing = await db[EXIT_OUTCOMES].find_one(
+        {"plan_id": plan["plan_id"]}, {"_id": 0},
+    )
+    if existing:
+        return existing
+
     lane = plan["lane"]
     entry = float(plan.get("entry_price") or 0)
     exit_price = plan.get("exit_price_est")

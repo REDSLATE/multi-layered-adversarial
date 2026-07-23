@@ -14,6 +14,15 @@ from shared.exits import monitor as em
 SYM = "LIFEC/USD"
 
 
+async def _drain_outbox():
+    """Receipts/outcomes now commit to the local SQLite outbox first
+    (2026-07-23); apply them to Mongo before asserting."""
+    from shared.hotpath import outbox
+    from shared.hotpath.handlers import register_all
+    register_all()
+    await outbox.drain_once()
+
+
 async def _cleanup():
     from db import db
     from shared.exits.outcomes import EXIT_OUTCOMES
@@ -88,6 +97,7 @@ async def test_full_lifecycle_stop_loss_market_exit():
                 plan = await db[em.EXIT_PLANS].find_one({"symbol": SYM})
                 assert plan["status"] == "closed"
                 assert plan["close_detail"] == "exit_order_filled"
+                await _drain_outbox()
                 receipts = await db[em.EXIT_RECEIPTS].find(
                     {"symbol": SYM}).to_list(20)
                 events = sorted(r["event"] for r in receipts)
@@ -156,6 +166,7 @@ async def test_stale_limit_exit_escalates_to_market():
         assert fake.market_calls, "escalation must resubmit MARKET"
         plan = await db[em.EXIT_PLANS].find_one({"plan_id": "esc-1"})
         assert plan["exit_order"]["kind"] == "market"
+        await _drain_outbox()
         receipts = await db[em.EXIT_RECEIPTS].find({"symbol": SYM}).to_list(20)
         assert any(r["event"] == "exit_escalated" for r in receipts)
     finally:

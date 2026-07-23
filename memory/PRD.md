@@ -3070,3 +3070,60 @@ requests, eliminates inter-brain data inconsistency, removes Atlas pressure.
   (DAWE + Expectancy Panel integrity depends on the outcome stream)
 - Options Seat gets this doctrine from day one; existing lanes get a
   migration plan, not an exemption
+
+## 2026-07-23 — Operator Doctrine Pin #2: Coherent Local State Version
+> Every live decision must use one coherent local state version.
+> Configuration, market snapshot, risk state, and position state must not
+> change halfway through a decision.
+Receipts carry a reproducible context: {pulse_id, market_snapshot_version,
+policy_version, risk_state_version, router_version, chain_hash (options)}.
+
+### Migration work packages (operator-locked order)
+1. Exit-plan migration (FIRST — protects open capital): plans in memory,
+   SQLite transaction commits plan, Atlas mirror queued. Restart: SQLite
+   plans + broker reconcile → resume. Exit Monitor NEVER needs Atlas to
+   decide to close a live position.
+2. Durable outbox (SQLite `atlas_outbox` table — id/event_type/aggregate_id/
+   payload_json/created_at/attempt_count/next_attempt_at/atlas_acked_at/
+   last_error). Critical transaction: broker result → BEGIN LOCAL TX (receipt
+   + position state + exit plan + outbox event) COMMIT → return; Atlas writer
+   independent. JSONL demoted to emergency audit log only.
+3. Local policy snapshot: ExecutionPolicySnapshot (version, loaded_at,
+   conviction_floors, daily_budgets, opportunity_policy, lane_controls) —
+   async pull, atomic swap; a trade reads ONE immutable version end-to-end.
+4. Local router queue: MC Pulse → normalized intents → durable SQLite queue
+   + memory index → auto-router → Seat; Atlas gets intent history async.
+
+## 2026-07-23 — Iteration 33: Durable Atlas Outbox + Hot-Path Audit (packages b + a)
+
+### Durable SQLite outbox (SHIPPED)
+- `shared/hotpath/outbox.py` — `atlas_outbox` table (operator schema:
+  id/event_type/aggregate_id/payload_json/created_at/attempt_count/
+  next_attempt_at/atlas_acked_at/last_error), WAL SQLite at
+  /app/backend/data/hotpath.sqlite (HOTPATH_DB_PATH override). Idempotency
+  via deterministic event ids + INSERT OR IGNORE. Exponential backoff
+  (5s·2^n, cap 600s), dead-letter at 12 attempts, operator retry-reset.
+  JSONL (`outbox_audit.jsonl`) = emergency append-only trail only.
+- Writer loop (5s, OUTBOX_WRITER_ENABLED) started/stopped in lifespan.
+- Rerouted through outbox: exit outcomes (`exit_outcome` events →
+  record_outcome, now idempotent by plan_id — one ledger row + one DAWE
+  fold ever) and permanent exit receipts (`exit_receipt` → upsert by
+  outbox_id). Local enqueue failure falls back to direct Atlas write.
+- Routes: GET /api/admin/hotpath/outbox, POST .../drain, POST .../retry-dead
+- Diagnostics UI: `AtlasOutboxTile.jsx` (pending/oldest/dead/acked/writer,
+  drain + retry-dead buttons). Verified rendering in preview.
+- Tests: tests/test_hotpath_outbox.py (7) incl. replay-idempotency e2e;
+  lifecycle tests updated to drain before receipt asserts. 47 pass.
+
+### Hot-path audit (SHIPPED) — /app/memory/audits/hotpath_atlas_audit.md
+- P0 #1 (FIXED): `exits/policy.get_policy` collapsed to enabled=False on
+  Atlas failure → outage silently disabled stop-losses. Now last-known-good
+  cache (stamped _stale); DEFAULTS only before first successful load.
+  tests/test_exit_policy_last_known_good.py (2).
+- P0 #2 (NEXT): exit plans Atlas-only → migrate to memory+SQLite+outbox mirror.
+- P1: risk gate 5-6 Atlas round trips/intent → ExecutionPolicySnapshot +
+  local daily-spent counter; broker freeze; capital ledger → SQLite reserve.
+- P2: router pick query → local intent queue; ~15 intent stamps/intent →
+  outbox/batch.
+- Already mitigated: trading_controls grace cache, conviction floor TTL,
+  opportunity policy TTL, outcomes/receipts outbox.
