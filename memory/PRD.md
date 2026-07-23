@@ -3036,3 +3036,37 @@ This panel is the operator-locked gate before Options Seat development begins.
   gross winner to net loser" — the panel's core purpose
 - e2e verified in preview: login → /admin/overview → panel renders all
   sections with seeded rows (seed removed after verification, config restored)
+
+## 2026-07-23 — Operator Doctrine Pin: Hot/Cold Storage Split (pre-Options)
+
+### Rule (operator-locked)
+> No live execution decision should depend on a synchronous Atlas read.
+
+### Storage classes
+HOT PATH (memory + SQLite — must never wait on Atlas):
+  live option chain cache (memory, pulse-scoped snapshot), selected/validated
+  contracts (SQLite), greeks, seat state, risk state, open positions,
+  exit monitor plans
+COLD PATH (Atlas, write-behind): historical trades, expectancy history,
+  learning records, analytics, long-term stats, operator dashboards
+
+### Snapshot cache design (operator diagram)
+Webull → Option Chain Cache (fetch ONCE per pulse, normalize once) →
+MC Pulse → all four brains evaluate the SAME snapshot. Reduces external
+requests, eliminates inter-brain data inconsistency, removes Atlas pressure.
+
+### Known current violations (equity/crypto lanes, to migrate over time)
+- auto-router pick query, gate-chain reads (conviction floor / daily budget /
+  opportunity policy), exit monitor plan table — all synchronous Mongo reads
+  mid-decision today. Fail-soft but not Atlas-independent.
+- Exit plans should become memory + SQLite mirror; Atlas gets closed outcomes
+  write-behind (outcomes already behave this way).
+
+### Agent refinement (accepted design notes)
+- Chain snapshot = process-memory object with pulse-scoped version stamp
+  (symbol, fetched_at, chain_hash); brains read by reference
+- Write-behind receipts need a local durable queue (SQLite/JSONL) between
+  "execution done" and "Atlas ack" so outages never drop learning records
+  (DAWE + Expectancy Panel integrity depends on the outcome stream)
+- Options Seat gets this doctrine from day one; existing lanes get a
+  migration plan, not an exemption
