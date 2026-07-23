@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
 from shared.brain_doctrine import DOCTRINES
+from shared.brains._confluence import PARTIAL_SIZE_MULT, confluence_signal
 from shared.brains._doctrine_overrides import effective_min_confidence
 
 
@@ -113,9 +114,10 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
     # 2026-02-25 — read operator UI override (placebo bug fix).
     min_conf = effective_min_confidence(doctrine, lane="equity")
 
-    # ── BUY branch — confirmed uptrend continuation ────────────────
-    # last_close > SMA(20) > SMA(50), RSI in 45..70 (healthy), and
-    # price within striking distance of EMA(12) (not extended).
+    # ── BUY branch — weighted 2-of-3 trend confluence ──────────────
+    # Gates: (1) uptrend structure, (2) RSI healthy band, (3) not
+    # extended past EMA12. 3/3 = full size; 2/3 = half-size PROBE
+    # with dampened confidence (2026-06 doctrine relaxation).
     uptrend = last_close > sma20 > sma50
     rsi_healthy_long = 45.0 <= rsi14 <= 70.0
     near_ema12_long = last_close <= ema12 * 1.04  # within +4% of EMA12
@@ -124,28 +126,28 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
     sma_slope_pct = (sma20 - sma50) / sma50 if sma50 > 0 else 0.0
     trend_strength = max(0.0, min(1.0, sma_slope_pct * 25.0))  # 4% slope=1.0
     rsi_band_strength = max(0.0, (rsi14 - 45.0) / 25.0) if rsi14 <= 70.0 else 0.0
-    buy_signal = (
-        (trend_strength + rsi_band_strength) / 2.0
-        if (uptrend and rsi_healthy_long and near_ema12_long)
-        else 0.0
+    raw_buy = ((trend_strength if uptrend else 0.0) + rsi_band_strength) / 2.0
+    buy_signal, buy_mode, buy_gates_passed = confluence_signal(
+        raw_buy, (uptrend, rsi_healthy_long, near_ema12_long),
     )
 
-    # ── SHORT branch — confirmed downtrend (env-gated) ─────────────
+    # ── SHORT branch — weighted 2-of-3 downtrend (env-gated) ───────
     downtrend = last_close < sma20 < sma50
     rsi_healthy_short = 30.0 <= rsi14 <= 55.0
     near_ema12_short = last_close >= ema12 * 0.96
     sma_slope_pct_neg = (sma50 - sma20) / sma50 if sma50 > 0 else 0.0
     trend_strength_short = max(0.0, min(1.0, sma_slope_pct_neg * 25.0))
     rsi_band_strength_short = max(0.0, (55.0 - rsi14) / 25.0) if rsi14 >= 30.0 else 0.0
-    sell_signal = (
-        (trend_strength_short + rsi_band_strength_short) / 2.0
-        if (downtrend and rsi_healthy_short and near_ema12_short)
-        else 0.0
+    raw_sell = (
+        (trend_strength_short if downtrend else 0.0) + rsi_band_strength_short
+    ) / 2.0
+    sell_signal, sell_mode, sell_gates_passed = confluence_signal(
+        raw_sell, (downtrend, rsi_healthy_short, near_ema12_short),
     )
 
     evidence_common: dict[str, Any] = {
         "doctrine": "trend",
-        "doctrine_version": "camino_native_v1",
+        "doctrine_version": "camino_native_v2_weighted",
         "rsi14": round(rsi14, 2),
         "sma20": round(sma20, 4),
         "sma50": round(sma50, 4),
@@ -156,6 +158,11 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
         "sell_signal": round(sell_signal, 4),
         "buy_score": round(buy_signal, 4),
         "sell_score": round(sell_signal, 4),
+        "confluence": {
+            "buy_mode": buy_mode, "buy_gates_passed": buy_gates_passed,
+            "sell_mode": sell_mode, "sell_gates_passed": sell_gates_passed,
+            "gates_total": 3,
+        },
     }
 
     if buy_signal > 0.20 and buy_signal >= sell_signal:
@@ -170,19 +177,24 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
         stop_price = round(last_close - 2.0 * atr14, 4)
         if stop_price <= 0 or target_price <= last_close:
             return _hold("invalid_rr_prices", evidence=evidence_common)
+        partial = buy_mode == "partial"
+        evidence_out = dict(evidence_common)
+        if partial:
+            evidence_out["size_multiplier"] = PARTIAL_SIZE_MULT
         rationale = (
-            f"Camino trend BUY {symbol}: SMA(20)>SMA(50) uptrend, "
-            f"RSI={rsi14:.1f} healthy. target=+2.5*ATR({target_price}), "
-            f"stop=-2*ATR({stop_price})."
+            f"Camino trend BUY {symbol} ({buy_gates_passed}/3 confluence"
+            f"{', half-size probe' if partial else ''}): "
+            f"RSI={rsi14:.1f}, slope={sma_slope_pct * 100:.2f}%. "
+            f"target=+2.5*ATR({target_price}), stop=-2*ATR({stop_price})."
         )
         return Decision(
             action="BUY",
             confidence=round(confidence, 4),
-            size_bias=1.0,
+            size_bias=PARTIAL_SIZE_MULT if partial else 1.0,
             rationale=rationale,
             target_price=target_price,
             stop_price=stop_price,
-            evidence=evidence_common,
+            evidence=evidence_out,
         )
 
     if _shorts_enabled() and sell_signal > 0.20 and sell_signal > buy_signal:
@@ -196,19 +208,24 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
         stop_price = round(last_close + 2.0 * atr14, 4)
         if target_price >= last_close or target_price <= 0:
             return _hold("invalid_rr_prices", evidence=evidence_common)
+        partial_s = sell_mode == "partial"
+        evidence_out_s = dict(evidence_common)
+        if partial_s:
+            evidence_out_s["size_multiplier"] = PARTIAL_SIZE_MULT
         rationale = (
-            f"Camino trend SHORT {symbol}: SMA(20)<SMA(50) downtrend, "
-            f"RSI={rsi14:.1f}. target=-2.5*ATR({target_price}), "
-            f"stop=+2*ATR({stop_price})."
+            f"Camino trend SHORT {symbol} ({sell_gates_passed}/3 confluence"
+            f"{', half-size probe' if partial_s else ''}): "
+            f"RSI={rsi14:.1f}, slope=-{sma_slope_pct_neg * 100:.2f}%. "
+            f"target=-2.5*ATR({target_price}), stop=+2*ATR({stop_price})."
         )
         return Decision(
             action="SHORT",
             confidence=round(confidence, 4),
-            size_bias=1.0,
+            size_bias=PARTIAL_SIZE_MULT if partial_s else 1.0,
             rationale=rationale,
             target_price=target_price,
             stop_price=stop_price,
-            evidence=evidence_common,
+            evidence=evidence_out_s,
         )
 
     return _hold("no_trend_signal", evidence=evidence_common)

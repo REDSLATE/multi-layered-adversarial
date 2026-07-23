@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
 from shared.brain_doctrine import DOCTRINES
+from shared.brains._confluence import PARTIAL_SIZE_MULT, confluence_signal
 from shared.brains._doctrine_overrides import effective_min_confidence
 
 
@@ -119,35 +120,25 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
     # 2026-02-25 — read operator UI override (placebo bug fix).
     min_conf = effective_min_confidence(doctrine, lane="equity")
 
-    # ── BUY branch — confirmed upper-band breakout ─────────────────
-    # Hellcat fires only on CONFIRMED breakouts:
-    #   * bbands.position > 0.85 (near/above upper band)
-    #   * RSI > 60 (momentum confirms)
-    #   * last_close > SMA(20) (above intermediate trend)
-    #   * last_close >= bb_upper * 0.99 (genuinely touching the band)
+    # ── BUY branch — weighted 2-of-3 breakout confluence ───────────
+    # Gates: (1) bbands.position > 0.85, (2) above SMA(20),
+    # (3) genuinely touching the upper band. 3/3 = full size;
+    # 2/3 = half-size PROBE (2026-06 doctrine relaxation).
     bb_buy_strength = max(0.0, (bb_pos - 0.85) / 0.15)
     rsi_buy_strength = max(0.0, (rsi14 - 60.0) / 15.0) if rsi14 <= 80.0 else 0.0
-    confirmed_breakout = (
-        last_close > sma20
-        and last_close >= bb_upper * 0.99
-    )
-    buy_signal = (
-        (bb_buy_strength + rsi_buy_strength) / 2.0
-        if confirmed_breakout
-        else 0.0
+    raw_buy = (bb_buy_strength + rsi_buy_strength) / 2.0
+    buy_signal, buy_mode, buy_gates_passed = confluence_signal(
+        raw_buy,
+        (bb_pos > 0.85, last_close > sma20, last_close >= bb_upper * 0.99),
     )
 
-    # ── SHORT branch — confirmed lower-band breakdown (env-gated) ──
+    # ── SHORT branch — weighted 2-of-3 breakdown (env-gated) ───────
     bb_sell_strength = max(0.0, (0.15 - bb_pos) / 0.15)
     rsi_sell_strength = max(0.0, (40.0 - rsi14) / 15.0) if rsi14 >= 20.0 else 0.0
-    confirmed_breakdown = (
-        last_close < sma20
-        and last_close <= bb_lower * 1.01
-    )
-    sell_signal = (
-        (bb_sell_strength + rsi_sell_strength) / 2.0
-        if confirmed_breakdown
-        else 0.0
+    raw_sell = (bb_sell_strength + rsi_sell_strength) / 2.0
+    sell_signal, sell_mode, sell_gates_passed = confluence_signal(
+        raw_sell,
+        (bb_pos < 0.15, last_close < sma20, last_close <= bb_lower * 1.01),
     )
 
     evidence_common: dict[str, Any] = {
@@ -164,6 +155,11 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
         "sell_signal": round(sell_signal, 4),
         "buy_score": round(buy_signal, 4),
         "sell_score": round(sell_signal, 4),
+        "confluence": {
+            "buy_mode": buy_mode, "buy_gates_passed": buy_gates_passed,
+            "sell_mode": sell_mode, "sell_gates_passed": sell_gates_passed,
+            "gates_total": 3,
+        },
     }
 
     # ── Operator-pinned evidence-citation contract (2026-06-26) ─────
@@ -229,20 +225,24 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
         stop_price = round(last_close - 1.5 * atr14, 4)
         if stop_price <= 0 or target_price <= last_close:
             return _hold("invalid_rr_prices", evidence=evidence_common)
+        partial = buy_mode == "partial"
+        evidence_out = dict(evidence_common)
+        if partial:
+            evidence_out["size_multiplier"] = PARTIAL_SIZE_MULT
         rationale = (
-            f"Hellcat breakout BUY {symbol}: BB position={bb_pos:.2f} "
-            f"(upper-band break), RSI={rsi14:.1f} momentum confirmed, "
-            f"above SMA(20). target=+4*ATR({target_price}), "
-            f"stop=-1.5*ATR({stop_price})."
+            f"Hellcat breakout BUY {symbol} ({buy_gates_passed}/3 confluence"
+            f"{', half-size probe' if partial else ''}): "
+            f"BB position={bb_pos:.2f}, RSI={rsi14:.1f}. "
+            f"target=+4*ATR({target_price}), stop=-1.5*ATR({stop_price})."
         )
         return Decision(
             action="BUY",
             confidence=round(confidence, 4),
-            size_bias=1.0,
+            size_bias=PARTIAL_SIZE_MULT if partial else 1.0,
             rationale=rationale,
             target_price=target_price,
             stop_price=stop_price,
-            evidence=evidence_common,
+            evidence=evidence_out,
             evidence_fields=evidence_fields_cited,
             objection=";".join(_execution_objections()) or None,
         )
@@ -258,20 +258,24 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
         stop_price = round(last_close + 1.5 * atr14, 4)
         if target_price >= last_close or target_price <= 0:
             return _hold("invalid_rr_prices", evidence=evidence_common)
+        partial_s = sell_mode == "partial"
+        evidence_out_s = dict(evidence_common)
+        if partial_s:
+            evidence_out_s["size_multiplier"] = PARTIAL_SIZE_MULT
         rationale = (
-            f"Hellcat breakout SHORT {symbol}: BB position={bb_pos:.2f} "
-            f"(lower-band break), RSI={rsi14:.1f} downside confirmed, "
-            f"below SMA(20). target=-4*ATR({target_price}), "
-            f"stop=+1.5*ATR({stop_price})."
+            f"Hellcat breakout SHORT {symbol} ({sell_gates_passed}/3 confluence"
+            f"{', half-size probe' if partial_s else ''}): "
+            f"BB position={bb_pos:.2f}, RSI={rsi14:.1f}. "
+            f"target=-4*ATR({target_price}), stop=+1.5*ATR({stop_price})."
         )
         return Decision(
             action="SHORT",
             confidence=round(confidence, 4),
-            size_bias=1.0,
+            size_bias=PARTIAL_SIZE_MULT if partial_s else 1.0,
             rationale=rationale,
             target_price=target_price,
             stop_price=stop_price,
-            evidence=evidence_common,
+            evidence=evidence_out_s,
             evidence_fields=evidence_fields_cited,
             objection=";".join(_execution_objections()) or None,
         )

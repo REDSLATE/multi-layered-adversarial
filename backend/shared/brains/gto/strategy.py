@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
 from shared.brain_doctrine import DOCTRINES
+from shared.brains._confluence import PARTIAL_SIZE_MULT, confluence_signal
 from shared.brains._doctrine_overrides import effective_min_confidence
 
 
@@ -134,20 +135,20 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
     ema_trend_up = ema12 > ema26
     above_intermediate_trend = last_close > sma20
 
-    buy_signal = (
-        (macd_strength + rsi_buy_strength) / 2.0
-        if (macd_hist > 0 and ema_trend_up and above_intermediate_trend)
-        else 0.0
+    # Weighted 2-of-3 confluence (2026-06 doctrine relaxation): full
+    # gate stack = normal size; one missing gate = half-size PROBE.
+    raw_buy = ((macd_strength if macd_hist > 0 else 0.0) + rsi_buy_strength) / 2.0
+    buy_signal, buy_mode, buy_gates_passed = confluence_signal(
+        raw_buy, (macd_hist > 0, ema_trend_up, above_intermediate_trend),
     )
 
     # ── SHORT branch — confirmed downside (env-gated) ──────────────
     rsi_sell_strength = max(0.0, (45.0 - rsi14) / 17.0) if rsi14 >= 28.0 else 0.0
     ema_trend_down = ema26 > ema12
     below_intermediate_trend = last_close < sma20
-    sell_signal = (
-        (macd_strength + rsi_sell_strength) / 2.0
-        if (macd_hist < 0 and ema_trend_down and below_intermediate_trend)
-        else 0.0
+    raw_sell = ((macd_strength if macd_hist < 0 else 0.0) + rsi_sell_strength) / 2.0
+    sell_signal, sell_mode, sell_gates_passed = confluence_signal(
+        raw_sell, (macd_hist < 0, ema_trend_down, below_intermediate_trend),
     )
 
     evidence_common: dict[str, Any] = {
@@ -164,6 +165,11 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
         "sell_signal": round(sell_signal, 4),
         "buy_score": round(buy_signal, 4),
         "sell_score": round(sell_signal, 4),
+        "confluence": {
+            "buy_mode": buy_mode, "buy_gates_passed": buy_gates_passed,
+            "sell_mode": sell_mode, "sell_gates_passed": sell_gates_passed,
+            "gates_total": 3,
+        },
     }
 
     # ── Operator-pinned evidence-citation contract (2026-06-26) ─────
@@ -196,9 +202,14 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
             return _hold("invalid_stop_price", evidence=evidence_common)
         if target_price <= last_close:
             return _hold("target_not_above_entry", evidence=evidence_common)
+        partial = buy_mode == "partial"
+        evidence_out = dict(evidence_common)
+        if partial:
+            evidence_out["size_multiplier"] = PARTIAL_SIZE_MULT
         rationale = (
-            f"GTO momentum BUY {symbol}: MACD hist={macd_hist:.4f} bullish, "
-            f"RSI={rsi14:.1f}, EMA(12)>EMA(26), above SMA(20). "
+            f"GTO momentum BUY {symbol} ({buy_gates_passed}/3 confluence"
+            f"{', half-size probe' if partial else ''}): "
+            f"MACD hist={macd_hist:.4f}, RSI={rsi14:.1f}. "
             f"target=+3*ATR({target_price}), stop=-1.5*ATR({stop_price})."
         )
         # Operator-spec objection rules for BUY (momentum confirmation):
@@ -219,11 +230,11 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
         return Decision(
             action="BUY",
             confidence=round(confidence, 4),
-            size_bias=1.0,
+            size_bias=PARTIAL_SIZE_MULT if partial else 1.0,
             rationale=rationale,
             target_price=target_price,
             stop_price=stop_price,
-            evidence=evidence_common,
+            evidence=evidence_out,
             evidence_fields=evidence_fields_cited,
             objection=";".join(objection_codes_buy) or None,
         )
@@ -239,9 +250,14 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
         stop_price = round(last_close + 1.5 * atr14, 4)
         if target_price >= last_close or target_price <= 0:
             return _hold("invalid_target_price", evidence=evidence_common)
+        partial_s = sell_mode == "partial"
+        evidence_out_s = dict(evidence_common)
+        if partial_s:
+            evidence_out_s["size_multiplier"] = PARTIAL_SIZE_MULT
         rationale = (
-            f"GTO momentum SHORT {symbol}: MACD hist={macd_hist:.4f} bearish, "
-            f"RSI={rsi14:.1f}, EMA(26)>EMA(12), below SMA(20). "
+            f"GTO momentum SHORT {symbol} ({sell_gates_passed}/3 confluence"
+            f"{', half-size probe' if partial_s else ''}): "
+            f"MACD hist={macd_hist:.4f}, RSI={rsi14:.1f}. "
             f"target=-3*ATR({target_price}), stop=+1.5*ATR({stop_price})."
         )
         # Operator-spec objection rules for SELL/SHORT (symmetric):
@@ -262,11 +278,11 @@ def evaluate(symbol: str, indicators: dict[str, Any]) -> Decision:
         return Decision(
             action="SHORT",
             confidence=round(confidence, 4),
-            size_bias=1.0,
+            size_bias=PARTIAL_SIZE_MULT if partial_s else 1.0,
             rationale=rationale,
             target_price=target_price,
             stop_price=stop_price,
-            evidence=evidence_common,
+            evidence=evidence_out_s,
             evidence_fields=evidence_fields_cited,
             objection=";".join(objection_codes_sell) or None,
         )

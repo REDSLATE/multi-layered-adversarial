@@ -2959,3 +2959,46 @@ Only layer 1 produces unstamped pending intents. Prod tile shows it ON.
 Redeploy prod, then either screenshot the Kill Map verdict (now self-diagnosing) or
 open `/api/admin/auto-router/pick-probe`.
 
+
+## 2026-07-22 — Iteration 31: Weighted 2-of-3 Confluence Doctrines (dormant-brain fix)
+
+### Operator approvals (this session)
+- Sequencing: (1) relax doctrines → (2) Expectancy Panel → (3) let kernel collect
+  outcomes → (4) Options Seat only after positive expectancy is demonstrated
+- Partial-confluence probes at 0.5× size (option A) — brains re-earn trust via
+  the outcome learning loop
+- Options Seat architecture acknowledged ("Answer, no work") — see Roadmap below
+
+### Shipped
+- `shared/brains/_confluence.py` — shared 2-of-3 scorer:
+  full (3/3) → legacy behavior; partial (2/3) → signal ×0.85 penalty + half-size;
+  <2 gates → HOLD. Constants: PARTIAL_PENALTY=0.85, PARTIAL_SIZE_MULT=0.5
+- Camino/GTO/Hellcat `strategy.py` migrated from strict AND chains to gate counting:
+  - Camino gates: uptrend structure / RSI band / not extended past EMA12
+  - GTO gates: MACD hist sign / EMA12>EMA26 / close vs SMA20 (failed MACD gate
+    contributes 0 strength — direction honesty)
+  - Hellcat gates: bb_pos>0.85 / close vs SMA20 / touching upper band
+- Partial mode stamps `evidence.size_multiplier=0.5` (consumed by auto_router
+  stage 2a-ii soft degradation) + `size_bias=0.5` + `evidence.confluence`
+  {buy_mode, sell_mode, gates_passed, gates_total} + rationale "(2/3 confluence,
+  half-size probe)". doctrine_version bumped to `<brain>_native_v2_weighted`
+- Barracuda untouched (already loose — mean-reversion)
+
+### Testing
+- New `tests/test_weighted_confluence_doctrines.py` (11 tests) — full/partial/none
+  per brain + confidence dampening + size_multiplier stamping. All pass.
+- Regression: 932 passed on brain/runtime/doctrine/intent selection; 6 failures
+  pre-existing on baseline (test_micro_notional_fallback, test_broker_error_taxonomy
+  — env-dependent, fail without these changes too)
+
+### Roadmap (operator-locked ordering)
+1. DONE — weighted 2-of-3 doctrines + 0.5× probes
+2. NEXT — Expectancy Panel (realized P&L minus Kraken taker fees + spread drag)
+3. Kernel collects ~2 weeks of verified outcomes from diversified brains
+4. Options Seat (P2, gated on positive expectancy): option-chain cache, contract
+   validation (IV/DTE/liquidity/greeks), probability/EV engine (P(touch), P(ITM),
+   EV after theta+spread), delta-adjusted risk budget, long calls/puts first,
+   simulation/replay on historical chains before capital. Also on operator's list:
+   kernel regime-aware learning (why right/wrong per regime), regime detection
+   (trending/range/high-low vol/news/earnings), portfolio-level intelligence
+   (correlation/sector/gamma concentration checks)
