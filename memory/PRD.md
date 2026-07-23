@@ -3127,3 +3127,31 @@ policy_version, risk_state_version, router_version, chain_hash (options)}.
   outbox/batch.
 - Already mitigated: trading_controls grace cache, conviction floor TTL,
   opportunity policy TTL, outcomes/receipts outbox.
+
+## 2026-07-23 — Iteration 34: Stale Heartbeat Fix (Overview brain cards)
+
+### Root cause (user report: prod cards "STALE — 173122s" after deploy)
+- 173k seconds ≈ 48h = exactly when sidecar pods were retired (2026-07-21).
+- `/api/shared/overview` still computed heartbeat from `shared_heartbeats`
+  (sidecar check-ins, frozen forever) and LAST SIGNAL from the sidecar
+  receipts stream (also frozen). The decommissioned-layer handling had only
+  been applied to /admin/diagnostics, not the overview endpoint.
+
+### Fix
+- `shared/routes.py`: for runtimes in DECOMMISSIONED_SIDECARS, heartbeat now
+  reads MC Pulse liveness (`brain_runtime_metrics.risedual_stack.pulse
+  .latest_at`, one shared read, stale threshold 300s vs ~30s ticks). Adds
+  `heartbeat_source` ("mc_pulse"|"sidecar") + `last_signal_ts` = freshest of
+  legacy receipt vs latest intent emission by stack.
+- `Overview.jsx`: green "PULSE · Ns" badge when fresh (testid
+  heartbeat-pulse-{runtime}); stale badge unchanged for genuine outages;
+  LAST SIGNAL prefers last_signal_ts.
+- Verified in preview: all 4 brains src=mc_pulse, stale=False, age ~13s;
+  screenshot confirms 4 green pulse badges, 0 stale.
+- NOTE: user must REDEPLOY for prod (mission.risedual.ai) to pick this up.
+
+### Agent learning (recorded)
+- Parallel search_replace batches on the SAME file can conflict/partially
+  apply (gto/strategy.py Decision edit, shared/routes.py import + gather
+  edits reported success but landed corrupted/missing). Sequence edits to
+  one file, or verify with grep after batch.

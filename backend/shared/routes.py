@@ -8,7 +8,7 @@ from auth import get_current_user
 from db import db
 from namespaces import (
     SHARED_RECEIPTS, SHARED_MEMORY, SHARED_HEARTBEATS, SHARED_PROMOTION_ARTIFACTS,
-    RUNTIMES, ROLES, HEARTBEAT_STALE_AFTER_SECONDS,
+    RUNTIMES, ROLES, HEARTBEAT_STALE_AFTER_SECONDS, SHARED_INTENTS,
 )
 from shared.calibration_layer import list_calibrators
 from shared.feature_builders import list_feature_builders
@@ -71,13 +71,19 @@ async def artifacts(
 
 
 _OVERVIEW_QUERY_MAX_MS = 1500  # per-DB-call ceiling
+# The MC Pulse ticks every ~30s; a 5-minute gap means the in-process
+# orchestrator is genuinely down (2026-07-23 pulse-heartbeat rewire).
+PULSE_STALE_AFTER_SECONDS = 300.0
 
 
 def _safe_int(v, default=0):
     return v if isinstance(v, int) else default
 
 
-async def _overview_for_runtime(rt: str, roster_assignments: dict, seat_policy: dict, now: datetime) -> dict:
+async def _overview_for_runtime(
+    rt: str, roster_assignments: dict, seat_policy: dict, now: datetime,
+    pulse_latest_at: Optional[str] = None,
+) -> dict:
     """Build one runtime's overview card.
 
     Doctrine pin (2026-07-16, prod-hang triage):
@@ -92,7 +98,7 @@ async def _overview_for_runtime(rt: str, roster_assignments: dict, seat_policy: 
     None) — the operator sees the working brains even when one
     query trips its budget.
     """
-    receipts_count, labels_count, violation_count, last_receipt, hb, artifacts_list, state_doc = await asyncio.gather(
+    receipts_count, labels_count, violation_count, last_receipt, hb, artifacts_list, state_doc, last_intent = await asyncio.gather(
         db[SHARED_RECEIPTS].count_documents(
             {"runtime": rt}, maxTimeMS=_OVERVIEW_QUERY_MAX_MS,
         ),
@@ -116,6 +122,14 @@ async def _overview_for_runtime(rt: str, roster_assignments: dict, seat_policy: 
             {"runtime": rt}, {"_id": 0},
             max_time_ms=_OVERVIEW_QUERY_MAX_MS,
         ),
+        # Pulse-era "last signal": the sidecar receipts stream froze
+        # at decommission (2026-07-21); a brain's real activity is its
+        # intent emissions through the in-process pulse.
+        db[SHARED_INTENTS].find_one(
+            {"stack": rt}, {"_id": 0, "ingest_ts": 1},
+            sort=[("ingest_ts", -1)],
+            max_time_ms=_OVERVIEW_QUERY_MAX_MS,
+        ),
         return_exceptions=True,
     )
     # Coerce exceptions to safe defaults — one bad query does NOT
@@ -131,6 +145,8 @@ async def _overview_for_runtime(rt: str, roster_assignments: dict, seat_policy: 
         artifacts_list = []
     if isinstance(state_doc, Exception):
         state_doc = None
+    if isinstance(last_intent, Exception):
+        last_intent = None
 
     authority_state = state_doc["authority_state"] if state_doc else "observer"
     latest_artifact = artifacts_list[-1] if artifacts_list else None
@@ -147,14 +163,38 @@ async def _overview_for_runtime(rt: str, roster_assignments: dict, seat_policy: 
                 execution_allowed = True
                 break
 
-    # Heartbeat staleness — visibility only
+    # Heartbeat staleness — visibility only. Sidecar pods were retired
+    # 2026-07-21 (pulse-only doctrine); their check-ins froze forever,
+    # so the card heartbeat for pulse-run brains now reads MC Pulse
+    # liveness instead (2026-07-23 fix: cards showed STALE — ~173000s
+    # in prod after deploy despite the pulse ticking every 30s).
+    from shared.runtime.sidecar_checkin import DECOMMISSIONED_SIDECARS  # noqa: WPS433
     hb_age = None
-    if hb and hb.get("last_seen"):
+    heartbeat_source = "sidecar"
+    if rt in DECOMMISSIONED_SIDECARS and pulse_latest_at:
+        heartbeat_source = "mc_pulse"
         try:
-            hb_age = (now - datetime.fromisoformat(hb["last_seen"])).total_seconds()
+            hb_age = (
+                now - datetime.fromisoformat(str(pulse_latest_at))
+            ).total_seconds()
         except Exception:  # noqa: BLE001
             hb_age = None
-    hb_stale = hb_age is None or hb_age > HEARTBEAT_STALE_AFTER_SECONDS
+        hb_stale = hb_age is None or hb_age > PULSE_STALE_AFTER_SECONDS
+    else:
+        if hb and hb.get("last_seen"):
+            try:
+                hb_age = (now - datetime.fromisoformat(hb["last_seen"])).total_seconds()
+            except Exception:  # noqa: BLE001
+                hb_age = None
+        hb_stale = hb_age is None or hb_age > HEARTBEAT_STALE_AFTER_SECONDS
+
+    # Freshest of legacy receipt stream vs pulse-era intent emissions.
+    last_signal_ts: Optional[str] = None
+    if last_receipt and last_receipt.get("timestamp"):
+        last_signal_ts = str(last_receipt["timestamp"])
+    li_ts = (last_intent or {}).get("ingest_ts")
+    if li_ts and (last_signal_ts is None or str(li_ts) > last_signal_ts):
+        last_signal_ts = str(li_ts)
 
     return {
         "runtime": rt,
@@ -171,8 +211,10 @@ async def _overview_for_runtime(rt: str, roster_assignments: dict, seat_policy: 
         "artifact_count": len(artifacts_list),
         "latest_artifact": latest_artifact,
         "last_receipt": last_receipt,
+        "last_signal_ts": last_signal_ts,
         "heartbeat_age_seconds": hb_age,
         "heartbeat_stale": hb_stale,
+        "heartbeat_source": heartbeat_source,
     }
 
 
@@ -203,9 +245,24 @@ async def overview(_user: dict = Depends(get_current_user)):
     except Exception:  # noqa: BLE001
         violation_total = 0
 
+    # Pulse liveness — one single-doc read shared by all 4 cards
+    # (mirrored by `mc_pulse.receipt.persist_receipt` on every tick).
+    pulse_latest_at = None
+    try:
+        stack = await db["brain_runtime_metrics"].find_one(
+            {"_id": "risedual_stack"}, {"pulse.latest_at": 1},
+            max_time_ms=_OVERVIEW_QUERY_MAX_MS,
+        )
+        pulse_latest_at = ((stack or {}).get("pulse") or {}).get("latest_at")
+    except Exception:  # noqa: BLE001
+        pulse_latest_at = None
+
     # All 4 runtime cards in parallel — bounded worst-case wall clock.
     out = await asyncio.gather(*[
-        _overview_for_runtime(rt, roster_assignments, seat_policy, now)
+        _overview_for_runtime(
+            rt, roster_assignments, seat_policy, now,
+            pulse_latest_at=pulse_latest_at,
+        )
         for rt in RUNTIMES
     ])
     return {"runtimes": list(out), "role_violation_total": violation_total}

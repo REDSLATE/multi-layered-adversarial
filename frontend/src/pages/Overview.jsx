@@ -215,7 +215,7 @@ export default function Overview() {
                     <Row label="MEMORY LABELS" value={
                       <span className="font-mono text-sm">{rt.memory_labels_count}</span>
                     } />
-                    {rt.heartbeat_stale && (
+                    {rt.heartbeat_stale ? (
                       <>
                         <Row label="HEARTBEAT" value={
                           <Badge color="#EF4444" testid={`heartbeat-stale-${rt.runtime}`}>
@@ -236,10 +236,18 @@ export default function Overview() {
                           </a>
                         } />
                       </>
+                    ) : rt.heartbeat_source === "mc_pulse" && (
+                      <Row label="HEARTBEAT" value={
+                        <Badge color="#10B981" testid={`heartbeat-pulse-${rt.runtime}`}>
+                          PULSE · {rt.heartbeat_age_seconds == null ? "—" : `${Math.floor(rt.heartbeat_age_seconds)}s`}
+                        </Badge>
+                      } />
                     )}
                     <Row label="LAST SIGNAL" value={
                       <span className="font-mono text-xs text-rd-muted">
-                        {rt.last_receipt ? relTime(rt.last_receipt.timestamp) : "—"}
+                        {rt.last_signal_ts
+                          ? relTime(rt.last_signal_ts)
+                          : rt.last_receipt ? relTime(rt.last_receipt.timestamp) : "—"}
                       </span>
                     } />
                   </div>
