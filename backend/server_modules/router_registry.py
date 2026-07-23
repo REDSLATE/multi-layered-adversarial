@@ -103,6 +103,7 @@ from routes.gate_failure_digest import router as gate_failure_digest_router
 from routes.kraken_pair_admin import router as kraken_pair_admin_router
 from routes.universe_admin import router as universe_admin_router
 from routes.exit_admin import router as exit_admin_router
+from routes.expectancy_admin import router as expectancy_admin_router
 from routes.risk_budget_admin import router as risk_budget_admin_router
 from routes.opportunity_admin import router as opportunity_admin_router
 from routes.kraken_universe_admin import router as kraken_universe_admin_router
@@ -280,6 +281,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(kraken_pair_admin_router)
     api_router.include_router(universe_admin_router)
     api_router.include_router(exit_admin_router)
+    api_router.include_router(expectancy_admin_router)
     api_router.include_router(risk_budget_admin_router)
     api_router.include_router(opportunity_admin_router)
     api_router.include_router(kraken_universe_admin_router)

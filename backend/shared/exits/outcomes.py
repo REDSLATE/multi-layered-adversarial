@@ -89,6 +89,22 @@ async def _record(plan: dict) -> dict:
         "dawe_folded": False,
     }
 
+    # Confluence attribution (2026-07-22 weighted-doctrine rollout):
+    # lets the Expectancy Panel compare full-confluence trades vs
+    # 2/3 half-size probes. Fail-soft — intent may be swept already.
+    intent_id = plan.get("origin_intent_id")
+    if intent_id:
+        try:
+            idoc = await db["shared_intents"].find_one(
+                {"intent_id": intent_id}, {"evidence": 1},
+            )
+            ev = (idoc or {}).get("evidence") or {}
+            conf = ev.get("confluence") or {}
+            row["confluence_mode"] = conf.get("buy_mode")
+            row["size_multiplier"] = ev.get("size_multiplier")
+        except Exception:  # noqa: BLE001
+            pass
+
     brain = plan.get("origin_stack")
     if brain and pnl_pct is not None:
         row["dawe_folded"] = await _fold_into_dawe(brain, lane, pnl_pct / 100.0)

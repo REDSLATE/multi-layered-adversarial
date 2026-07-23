@@ -3002,3 +3002,37 @@ open `/api/admin/auto-router/pick-probe`.
    kernel regime-aware learning (why right/wrong per regime), regime detection
    (trending/range/high-low vol/news/earnings), portfolio-level intelligence
    (correlation/sector/gamma concentration checks)
+
+## 2026-07-23 — Iteration 32: Expectancy Panel SHIPPED
+
+### What it answers
+"Is ~310 trades/day net-positive after Kraken taker fees + spread drag?"
+This panel is the operator-locked gate before Options Seat development begins.
+
+### Backend
+- `shared/expectancy.py` — cost model per closed round trip from
+  `shared_exit_outcomes`: turnover=(entry+exit)*qty; fees=fee%/side×turnover;
+  spread=spread_bps/2/side×turnover; net=gross−fees−spread. Lane-scoped knobs
+  in `runtime_flags._id=expectancy_model` (crypto 0.40%/20bps, equity 0/5bps
+  defaults). Aggregates: overall / by_lane / by_brain / by_confluence / daily.
+- `routes/expectancy_admin.py` — GET /api/admin/expectancy?days=N,
+  GET+POST /api/admin/expectancy/config (validated 0-5% fee, 0-500bps spread)
+- `shared/exits/outcomes.py` now stamps `confluence_mode` + `size_multiplier`
+  from the origin intent onto every outcome row (fail-soft) — enables
+  full-vs-2/3-probe expectancy comparison
+- Bug fixed during self-test: all-win buckets produced profit_factor=inf →
+  FastAPI JSON 500. Now None.
+
+### Frontend
+- `components/ExpectancyPanel.jsx` mounted in OperatorControl after
+  ExitMonitorPanel: 8 headline tiles (net/gross/fees/spread/exp-per-trade/
+  trades/win%/pf), lane rows, per-brain table, confluence-mode breakdown
+  (full vs partial vs unknown), 7/30/90d window switch, editable cost-model
+  knobs per lane. data-testids: expectancy-panel, expectancy-net,
+  expectancy-brains, expectancy-conf-{mode}, expectancy-save-{lane}.
+
+### Testing
+- `tests/test_expectancy.py` (7 tests, pass) incl. "fee drag flips small
+  gross winner to net loser" — the panel's core purpose
+- e2e verified in preview: login → /admin/overview → panel renders all
+  sections with seeded rows (seed removed after verification, config restored)
