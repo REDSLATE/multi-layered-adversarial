@@ -79,12 +79,17 @@ async def get_watchlist(_user: dict = Depends(get_current_user)):  # noqa: B008
         }
 
     flags = await db["runtime_flags"].find_one({"_id": QUALITY_FLAG_ID}) or {}
+    from shared.universe.refresher import DEFAULT_CORE_EQUITY  # noqa: WPS433
     return {
         "pins": pins,
         "composition": composition,
         "quality": {
             "min_price_equity": flags.get("min_price_equity"),
             "screener_admit_cap": flags.get("screener_admit_cap"),
+            "universe_cap_equity": flags.get("universe_cap_equity"),
+            "universe_cap_crypto": flags.get("universe_cap_crypto"),
+            "core_equity_symbols": flags.get("core_equity_symbols"),
+            "core_equity_default": DEFAULT_CORE_EQUITY,
         },
     }
 
@@ -176,6 +181,34 @@ async def set_quality(
             if not (0 <= i <= 200):
                 raise HTTPException(status_code=422, detail="screener_admit_cap out of range")
             update["screener_admit_cap"] = i
+    for cap_key in ("universe_cap_equity", "universe_cap_crypto"):
+        if cap_key in body:
+            v = body[cap_key]
+            if v is None:
+                update[cap_key] = None
+            else:
+                try:
+                    i = int(v)
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=422, detail=f"{cap_key} must be an integer")
+                if not (1 <= i <= 300):
+                    raise HTTPException(status_code=422, detail=f"{cap_key} out of range [1,300]")
+                update[cap_key] = i
+    if "core_equity_symbols" in body:
+        v = body["core_equity_symbols"]
+        if v is None:
+            update["core_equity_symbols"] = None  # revert to default list
+        else:
+            if not isinstance(v, list):
+                raise HTTPException(status_code=422, detail="core_equity_symbols must be a list")
+            cleaned = []
+            for s in v[:100]:
+                sym = str(s).strip().upper()
+                if not _EQUITY_RE.match(sym):
+                    raise HTTPException(status_code=422, detail=f"invalid core symbol {s!r}")
+                if sym not in cleaned:
+                    cleaned.append(sym)
+            update["core_equity_symbols"] = cleaned
     if not update:
         raise HTTPException(status_code=422, detail="nothing to update")
 

@@ -3214,3 +3214,37 @@ ledger local reserve → local router intent queue → intent stamping via outbo
 - feeder/LLM-adapter/seat/test-fixture dedupe: 10-15 line structural clones,
   low payoff per the report's own assessment. Deferred.
 - revert_snapshots / runtime_patch_kit dupes: intentional by design.
+
+## 2026-07-24 — Iteration 37: Equity Universe Expansion — Core Liquid List + Quality Scoring (operator: "garbage tickers", target 150)
+
+### Root cause of bad trading
+Equity universe = Webull top-gainers/losers/most-active screener (60 rows,
+dominated by low-float penny movers) + hand-pins. Preview showed 11 symbols,
+9 garbage. Quality names (MSFT/TSLA/SPY...) never entered the pool.
+
+### Shipped
+- `DEFAULT_CORE_EQUITY` (63 liquid names: ETFs + megacaps + liquid mids)
+  merged into EVERY equity refresh; core rows bypass hysteresis + price
+  floor (like pins), source_reason "core_liquid". Operator-editable via
+  `universe_quality.core_equity_symbols` (null = default list).
+- `_quality_score()` composite admission ranking for screener rows:
+  momentum 30% (capped 30%), liquidity 45% (log volume), price band 25%
+  ($5-800 ideal). A +6% move on 40M shares now outranks a +250% penny pump.
+- Universe caps: UNIVERSE_CAP_EQUITY env default 50→150 (operator "150?");
+  runtime knobs `universe_cap_equity` / `universe_cap_crypto` (1-300).
+- Feeder API budget: `webull_ohlc._budget_slice` — max 90 symbols/tick
+  (WEBULL_OHLC_MAX_SYMBOLS_PER_TICK); ranked head (pins+core, 60) polls
+  every tick, screener tail rotates. `_discover_universe` now preserves
+  rank order (was alphabetical sort).
+- universe_admin: GET exposes new knobs + core default; POST validates
+  core_equity_symbols (list, ≤100, A-Z{1,5}) + caps.
+- WatchlistPanel: universe-cap input + collapsible core-list editor
+  (save/revert, testids watchlist-core-*, watchlist-universe-cap).
+
+### Verified
+- 14 new tests (test_universe_core_list.py) + 77 universe/feeder pass.
+- Live refresh in preview: equity 11 → 74 (63 core + 2 pins + 11 scored
+  movers); UI screenshot confirms editor + composition line.
+- "Decide best ticker" = brains evaluate all 74-150 and arbiter picks by
+  confidence — already the architecture; the pool was the broken part.
+- REDEPLOY required for prod.

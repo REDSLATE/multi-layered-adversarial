@@ -12,6 +12,9 @@ export default function WatchlistPanel() {
   const [msg, setMsg] = useState(null);
   const [minPrice, setMinPrice] = useState("");
   const [admitCap, setAdmitCap] = useState("");
+  const [capEquity, setCapEquity] = useState("");
+  const [coreList, setCoreList] = useState("");
+  const [coreOpen, setCoreOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -19,6 +22,10 @@ export default function WatchlistPanel() {
       setData(d);
       setMinPrice(d.quality?.min_price_equity ?? "");
       setAdmitCap(d.quality?.screener_admit_cap ?? "");
+      setCapEquity(d.quality?.universe_cap_equity ?? "");
+      setCoreList(
+        (d.quality?.core_equity_symbols || d.quality?.core_equity_default || []).join(", "),
+      );
     } catch (e) {
       setMsg({ ok: false, text: e?.response?.data?.detail || String(e) });
     }
@@ -58,8 +65,22 @@ export default function WatchlistPanel() {
     () => api.post("/admin/universe/quality", {
       min_price_equity: minPrice === "" ? null : Number(minPrice),
       screener_admit_cap: admitCap === "" ? null : Number(admitCap),
+      universe_cap_equity: capEquity === "" ? null : Number(capEquity),
     }),
     () => "quality knobs saved — takes effect next refresh",
+  );
+
+  const saveCoreList = () => {
+    const syms = coreList.split(/[\s,]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
+    run(
+      () => api.post("/admin/universe/quality", { core_equity_symbols: syms }),
+      () => `core list saved (${syms.length} symbols) — hit REFRESH NOW to apply`,
+    );
+  };
+
+  const resetCoreList = () => run(
+    () => api.post("/admin/universe/quality", { core_equity_symbols: null }),
+    () => "core list reverted to default",
   );
 
   const refreshNow = () => run(
@@ -188,6 +209,16 @@ export default function WatchlistPanel() {
             data-testid="watchlist-admit-cap"
           />
         </label>
+        <label className="text-[10px] font-mono text-rd-dim flex items-center gap-1">
+          universe cap (equity)
+          <input
+            value={capEquity}
+            onChange={(e) => setCapEquity(e.target.value)}
+            placeholder="150"
+            className="w-14 bg-transparent border border-rd-border px-1 py-0.5 text-[10px] font-mono text-rd-text focus:outline-none focus:border-rd-text"
+            data-testid="watchlist-universe-cap"
+          />
+        </label>
         <button
           onClick={applyQuality}
           disabled={busy}
@@ -198,10 +229,42 @@ export default function WatchlistPanel() {
         </button>
       </div>
 
+      <div className="mt-2 border-t border-rd-border/50 pt-2">
+        <button
+          onClick={() => setCoreOpen(!coreOpen)}
+          data-testid="watchlist-core-toggle"
+          className="text-[9px] uppercase tracking-widest text-rd-dim hover:text-rd-text font-mono"
+        >
+          {coreOpen ? "▾" : "▸"} core liquid list ({(data.quality?.core_equity_symbols || data.quality?.core_equity_default || []).length} symbols — always in the universe)
+        </button>
+        {coreOpen && (
+          <div className="mt-1">
+            <textarea
+              value={coreList}
+              onChange={(e) => setCoreList(e.target.value)}
+              rows={4}
+              className="w-full bg-transparent border border-rd-border px-2 py-1 text-[10px] font-mono text-rd-text focus:outline-none focus:border-rd-text"
+              data-testid="watchlist-core-textarea"
+            />
+            <div className="flex gap-2 mt-1">
+              <button onClick={saveCoreList} disabled={busy} data-testid="watchlist-core-save"
+                className="text-[10px] font-mono uppercase tracking-widest border border-rd-border hover:border-rd-text px-2 py-1 disabled:opacity-40">
+                save core list
+              </button>
+              <button onClick={resetCoreList} disabled={busy} data-testid="watchlist-core-reset"
+                className="text-[10px] font-mono uppercase tracking-widest border border-rd-border text-rd-dim hover:text-rd-text px-2 py-1 disabled:opacity-40">
+                revert to default
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="text-[10px] text-rd-muted mt-2 font-mono leading-relaxed">
-        Pins enter every universe refresh first — they bypass hysteresis and quality filters, so brains
-        always evaluate them. Raise min price to kill penny-pump noise; set max screener admits to 0 for a
-        pins-only universe. Crypto pins need a Kraken pair mapping first. Knobs apply next refresh (≤15min) or hit REFRESH NOW.
+        Pins and the core liquid list enter every universe refresh first — they bypass hysteresis and
+        quality filters, so brains always evaluate real tickers. Screener movers fill the remaining slots
+        ranked by a liquidity-weighted quality score (not raw %-change). Raise min price to kill penny-pump
+        noise. Knobs apply next refresh (≤15min) or hit REFRESH NOW.
       </div>
     </div>
   );

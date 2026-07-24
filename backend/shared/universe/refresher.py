@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -72,7 +73,9 @@ logger = logging.getLogger("risedual.universe.refresher")
 # ── config (env-overridable, sensible defaults) ────────────────────
 REFRESH_INTERVAL_SEC = int(os.environ.get("UNIVERSE_REFRESH_INTERVAL_SEC", "900"))  # 15min
 UNIVERSE_TTL_SEC = int(os.environ.get("UNIVERSE_TTL_SEC", "3600"))  # 1h — stale-but-usable window
-UNIVERSE_CAP_EQUITY = int(os.environ.get("UNIVERSE_CAP_EQUITY", "50"))
+# 2026-07-24 operator directive: equity universe target 150 so the
+# brains can look wider and pick the best ticker during RTH.
+UNIVERSE_CAP_EQUITY = int(os.environ.get("UNIVERSE_CAP_EQUITY", "150"))
 UNIVERSE_CAP_CRYPTO = int(os.environ.get("UNIVERSE_CAP_CRYPTO", "50"))
 HYSTERESIS_ADMIT = 50   # new members admitted from top N
 HYSTERESIS_RETAIN = 65  # existing members retained while inside top N
@@ -139,6 +142,64 @@ async def _quality_overrides() -> dict:
         return {}
 
 
+# 2026-07-24 (operator: "it should be able to trade other tickers
+# during RTH", universe target 150): quality liquid names merged into
+# EVERY equity refresh so the brains always see real tickers, not just
+# whatever the top-gainers screener coughed up. Operator-editable via
+# universe_quality.core_equity_symbols.
+DEFAULT_CORE_EQUITY: list[str] = [
+    "SPY", "QQQ", "IWM", "DIA",
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA",
+    "AMD", "AVGO", "NFLX", "CRM", "ORCL", "ADBE", "INTC", "MU",
+    "QCOM", "TXN", "AMAT", "LRCX", "PLTR", "SNOW", "UBER", "ABNB",
+    "SHOP", "COIN", "MSTR", "HOOD", "PYPL",
+    "JPM", "BAC", "GS", "MS", "WFC", "C", "V", "MA",
+    "XOM", "CVX", "COP", "SLB",
+    "BA", "CAT", "DE", "GE", "HON",
+    "UNH", "LLY", "JNJ", "PFE", "MRK", "ABBV",
+    "COST", "WMT", "HD", "NKE", "MCD", "DIS", "KO", "PEP",
+]
+
+
+def _core_equity_candidates(quality: dict) -> list[dict]:
+    """Mover-shape rows for the core liquid list (operator override or
+    DEFAULT_CORE_EQUITY). Core rows bypass hysteresis and the price
+    floor — they are quality by definition."""
+    raw = quality.get("core_equity_symbols")
+    symbols = (
+        [str(s).upper().strip() for s in raw if str(s).strip()]
+        if isinstance(raw, list) and raw else list(DEFAULT_CORE_EQUITY)
+    )
+    return [{
+        "canonical_symbol": sym,
+        "broker_instrument_id": None,
+        "change_pct": 0.0,
+        "volume": 0.0,
+        "price": 0.0,
+        "source_reason": "core_liquid",
+        "_core": True,
+    } for sym in symbols[:100]]
+
+
+def _quality_score(r: dict) -> float:
+    """Composite admission score for SCREENER rows — the 'decide on
+    the best ticker' ranking (2026-07-24). Liquidity-weighted so thin
+    300% pumps stop outranking real movers:
+      momentum 30% (|change| capped at 30%), liquidity 45%
+      (log-scaled volume), price-band sanity 25% ($5-$800 ideal)."""
+    momentum = min(abs(float(r.get("change_pct") or 0.0)), 30.0) / 30.0
+    vol = float(r.get("volume") or 0.0)
+    liquidity = min(math.log10(vol + 1.0) / 8.0, 1.0)  # 100M shares ≈ 1.0
+    price = float(r.get("price") or 0.0)
+    if 5.0 <= price <= 800.0:
+        band = 1.0
+    elif 1.0 <= price < 5.0 or price > 800.0:
+        band = 0.5
+    else:
+        band = 0.2
+    return momentum * 0.3 + liquidity * 0.45 + band * 0.25
+
+
 def _dedupe_and_merge(candidates: list[dict]) -> list[dict]:
     """Collapse multiple rows for the same canonical symbol into one,
     accumulating `source_reasons[]` and taking the max signal
@@ -157,6 +218,7 @@ def _dedupe_and_merge(candidates: list[dict]) -> list[dict]:
                 "volume": float(c.get("volume") or 0.0),
                 "price": float(c.get("price") or 0.0),
                 "pinned": bool(c.get("_pinned") or False),
+                "core": bool(c.get("_core") or False),
             }
         else:
             existing = by_symbol[sym]
@@ -165,6 +227,8 @@ def _dedupe_and_merge(candidates: list[dict]) -> list[dict]:
                 existing["source_reasons"].append(reason)
             if c.get("_pinned"):
                 existing["pinned"] = True
+            if c.get("_core"):
+                existing["core"] = True
             # Prefer the most-populated broker_instrument_id.
             if not existing.get("broker_instrument_id") and c.get("broker_instrument_id"):
                 existing["broker_instrument_id"] = c["broker_instrument_id"]
@@ -205,9 +269,9 @@ def _apply_hysteresis(
     screener_i = 0  # rank among non-pinned rows only
     for row in ranked:
         sym = row["canonical_symbol"]
-        if row.get("pinned"):
-            # Pins bypass hysteresis entirely.
-            row["_admit_reason"] = "pinned"
+        if row.get("pinned") or row.get("core"):
+            # Pins and core-liquid rows bypass hysteresis entirely.
+            row["_admit_reason"] = "pinned" if row.get("pinned") else "core_liquid"
             admitted.append(row)
             continue
         if screener_i < admit_n:
@@ -243,7 +307,7 @@ def _apply_quality_filters(
     kept: list[dict] = []
     dropped: list[dict] = []
     for r in rows:
-        if r.get("pinned"):
+        if r.get("pinned") or r.get("core"):
             kept.append(r)
             continue
         price = r.get("price") or 0.0
@@ -293,6 +357,7 @@ def _finalize_row(r: dict, rank: int) -> dict:
         "volume": r.get("volume", 0.0),
         "price": r.get("price", 0.0),
         "pinned": r.get("pinned", False),
+        "core": r.get("core", False),
         "tradable": r.get("tradable", True),
     }
 
@@ -332,15 +397,18 @@ async def refresh_equity_universe() -> dict:
 
     pins = await _load_operator_pins(lane)
     quality = await _quality_overrides()
+    core = _core_equity_candidates(quality)
 
-    # Merge candidates (order matters for hysteresis ranking —
-    # movers first, pins prepended so they never lose the merge).
-    merged = _dedupe_and_merge([*pins, *gainers, *losers, *active])
-    # Rank by pinned first, then |change_pct| desc, then volume desc.
+    # Merge candidates: pins + core-liquid list + screener movers
+    # (2026-07-24 — universe expansion so brains see real tickers).
+    merged = _dedupe_and_merge([*pins, *core, *gainers, *losers, *active])
+    # Rank: pins, then core, then screener rows by composite QUALITY
+    # SCORE (liquidity-weighted — see _quality_score) instead of raw
+    # |change|, so thin pumps stop crowding out tradable movers.
     merged.sort(
         key=lambda r: (
-            0 if r.get("pinned") else 1,
-            -abs(r.get("change_pct", 0.0)),
+            0 if r.get("pinned") else (1 if r.get("core") else 2),
+            -_quality_score(r),
             -float(r.get("volume", 0.0)),
         ),
     )
@@ -353,7 +421,8 @@ async def refresh_equity_universe() -> dict:
     quality_kept, quality_dropped = _apply_quality_filters(
         kept, lane, min_price_override=quality.get("min_price_equity"),
     )
-    quality_kept = quality_kept[:UNIVERSE_CAP_EQUITY]
+    cap = int(quality.get("universe_cap_equity") or UNIVERSE_CAP_EQUITY)
+    quality_kept = quality_kept[:max(1, cap)]
 
     return await _publish_and_report(
         lane=lane,
@@ -364,6 +433,7 @@ async def refresh_equity_universe() -> dict:
         raw_sources={
             "gainers": len(gainers), "losers": len(losers),
             "most_active": len(active), "pins": len(pins),
+            "core_liquid": len(core),
         },
         previous=previous,
         at=at,
@@ -575,7 +645,8 @@ async def refresh_crypto_universe() -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.warning("kraken affordability filter failed: %s", exc)
 
-    quality_kept = quality_kept[:UNIVERSE_CAP_CRYPTO]
+    cap_c = int(quality.get("universe_cap_crypto") or UNIVERSE_CAP_CRYPTO)
+    quality_kept = quality_kept[:max(1, cap_c)]
 
     return await _publish_and_report(
         lane=lane,

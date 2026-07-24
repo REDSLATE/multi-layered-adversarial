@@ -95,11 +95,13 @@ async def _discover_universe() -> list[str]:
         from shared.universe.live_universe import read_universe  # noqa: WPS433
         doc = await read_universe("equity")
         if doc:
-            syms = sorted({
-                (s.get("canonical_symbol") or "").upper()
-                for s in (doc.get("symbols") or [])
-                if s.get("canonical_symbol") and s.get("tradable", True)
-            })
+            # Preserve RANK order (pins → core → best-scored screener)
+            # so the budget slice keeps priority names fresh every tick.
+            syms: list[str] = []
+            for s in (doc.get("symbols") or []):
+                sym = (s.get("canonical_symbol") or "").upper()
+                if sym and s.get("tradable", True) and sym not in syms:
+                    syms.append(sym)
             if syms:
                 return syms
     except Exception as e:  # noqa: BLE001
@@ -227,6 +229,27 @@ async def _fetch_and_persist_one(symbol: str, tf: str, count: int) -> int:
     return written
 
 
+_rotation = 0
+
+
+def _budget_slice(universe: list[str]) -> list[str]:
+    """API-budget guard for large universes (150-cap, 2026-07-24):
+    poll at most WEBULL_OHLC_MAX_SYMBOLS_PER_TICK per cycle. The
+    ranked head (pins + core liquid names) refreshes EVERY tick; the
+    screener tail rotates across ticks so every symbol stays no more
+    than a few minutes stale — fine for 5m-bar doctrines."""
+    global _rotation  # noqa: PLW0603
+    max_n = _env_int("WEBULL_OHLC_MAX_SYMBOLS_PER_TICK", 90)
+    if len(universe) <= max_n:
+        return universe
+    head_n = min(60, max_n // 2)
+    head, tail = universe[:head_n], universe[head_n:]
+    k = max_n - head_n
+    take = [tail[(_rotation + i) % len(tail)] for i in range(min(k, len(tail)))]
+    _rotation = (_rotation + k) % len(tail)
+    return head + take
+
+
 async def _tick() -> dict:
     """One poll cycle: for each symbol in the equity universe,
     pull tf=1m AND tf=5m bars. Rate budget is per-key; the
@@ -249,7 +272,7 @@ async def _tick() -> dict:
         )
         return {"universe_size": 0, "bars_written": 0, "per_symbol": {}}
     count = _env_int("WEBULL_OHLC_BAR_COUNT", DEFAULT_BAR_COUNT)
-    universe = await _discover_universe()
+    universe = _budget_slice(await _discover_universe())
     total = 0
     per_symbol: dict[str, int] = {}
     for sym in universe:
