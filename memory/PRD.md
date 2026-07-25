@@ -3294,3 +3294,82 @@ admitted candidates arrive with history.
 - Live e2e: forced scan cycle → 60 fetched, 60 rejected stale_data (market
   closed — correct), publish to live_universe OK. UI verified by screenshot.
 - REDEPLOY required; candidates will admit during next RTH session.
+
+## 2026-07-25 — Iteration 39: Hot-Path Audit COMPLETE — ExecutionPolicySnapshot + Local Router Intent Queue (audit P1 #3/#4, P2 #6)
+
+Doctrine pin satisfied end-to-end: the live execution loop no longer
+performs ANY synchronous Atlas read per intent. Remaining audit items are
+P1 #5 (capital ledger SQLite reserve) and P2 #7/#8 (intent stamping via
+outbox) — see /app/memory/audits/hotpath_atlas_audit.md.
+
+### ExecutionPolicySnapshot (`shared/hotpath/policy_snapshot.py`)
+- Versioned in-memory snapshot of every gate knob: cap_daily_usd override,
+  master_trading_switch, lane_enabled, broker freeze, conviction floor,
+  merged opportunity policy, daily_spend_reset marker.
+- Persisted in hotpath.sqlite (`policy_snapshot` table), recovered at boot,
+  refreshed from Atlas every 20s (POLICY_SNAPSHOT_REFRESH_SEC) with per-key
+  4s timeouts + last-known-good on failure (degraded_keys surfaced).
+- Write-through: broker freeze/thaw applies LOCALLY FIRST (apply_local),
+  lane/master admin routes refresh after write; conviction-floor and
+  opportunity-policy invalidate() now mark_dirty → next async accessor
+  refreshes once (test contract preserved).
+- Consumers migrated: shared/risk/check.py (freeze/lane/cap gates),
+  shared/broker_freeze.py (is_frozen/assert_not_frozen),
+  auto_router_stages get/peek_conviction_floor,
+  shared/opportunity/policy.get_opportunity_policy (old 15s TTL caches
+  deleted — they still blocked on Atlas at expiry).
+
+### Local daily-spend counter (`shared/hotpath/daily_spend.py`)
+- Incremented at execution success (`_finalize_gate_state`), SQLite row per
+  UTC day, rebuilt at boot (SQLite first; ONE Atlas aggregate only if the
+  day row is missing). Replaces the per-intent executions aggregate.
+- RESET SPEND zeroes locally (write-through) + Atlas marker reconciliation
+  via the snapshot refresher (observe_reset_marker).
+- Bonus: live budget no longer polluted by pytest-written executions rows.
+
+### Local Router Intent Queue (`shared/hotpath/intent_queue.py`)
+- Every shared_intents.insert_one mirrored locally (7 ingest sites:
+  intents.py ×3, chevelle/redeye bridges, bridge factory, canary runner).
+- auto_router_supervisor._tick picks from the local queue (identical
+  semantics: newest-first, lookback, terminal gate_states, poison guard);
+  Atlas query only as exception fallback (`intent_queue_source` on status).
+- Verdicts + route timeouts mark back locally; executed flag committed in
+  _finalize_gate_state BEFORE the Atlas stamp.
+- risk.check idempotency double-check now reads the local queue (the
+  per-intent Atlas find_one is gone).
+- One-time bootstrap imports last-24h intents from Atlas at startup.
+
+### Ops surface
+- GET /api/admin/hotpath/policy (snapshot + daily_spend status),
+  POST /api/admin/hotpath/policy/refresh, GET /api/admin/hotpath/queue.
+
+### Fixed along the way (pre-existing, exposed by regression runs)
+- tests/conftest.py: pytest session now redirects HOTPATH_DB_PATH to a
+  throwaway sqlite (tests were inflating the LIVE spend counter).
+- mc_pulse/e2e_trace.py verify stage: prefer the ok=True executions row
+  (force_one_tick can legitimately race the trace's own route stage; the
+  idempotency guard blocks the loser — exactly one broker submit).
+- routes/brain_runtime.py + shared/brain_runtime_metrics.py: latest_ts now
+  recomputed within the bounded 24h window (was stale next to fresh counts)
+  and hard-bounded to 48h in the status payload.
+- Stale legacy suites updated to current doctrine (authority window, tier
+  gate, Webull $5 equity floor, lightweight /api/health contract):
+  test_broker_error_taxonomy, test_micro_notional_fallback,
+  test_webull_fractional_order (RTH pinned — was weekend-flaky),
+  test_risedual_backend health.
+
+### Verified
+- Full pytest suite: 2953 passed / 0 failed (baseline before session: 10
+  failures). New suites: test_policy_snapshot.py (7), test_intent_queue.py
+  (8), test_risk_budget.py (5, rewritten for counter semantics).
+- Testing agent iteration_30: 11/11 live API checks pass (snapshot refresh
+  version bump, cap override 750→null round-trip, budget reset, queue
+  status, router status, outbox/scanner/expectancy regression, 48h bound).
+- Live boot verified: refresher running, queue cache loaded, daily_spend
+  bootstrapped and resynced to Atlas truth.
+
+### Next (per audit order)
+1. Capital ledger → SQLite atomic reserve + Atlas mirror (P1 #5).
+2. Intent gate_state stamping via outbox (P2 #7/#8, ~15 update_one/intent).
+3. Options Seat remains ON HOLD until Expectancy proves net-positive AND
+   hot-path work fully closed (items 1-2 above).
