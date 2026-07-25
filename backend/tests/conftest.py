@@ -28,6 +28,18 @@ if os.path.exists(_be_env):
 os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
 os.environ.setdefault("DB_NAME", "test_database")
 
+# ───────── hotpath SQLite isolation (2026-07-25) ─────────────────────
+# The live backend persists execution-critical state (daily-spend
+# counter, intent queue, policy snapshot, outbox) in
+# /app/backend/data/hotpath.sqlite. Tests that exercise `_route_one`
+# with mocked brokers were found inflating the LIVE daily-spend
+# counter ($168 recorded vs $70 real). Redirect the whole pytest
+# session to a throwaway sqlite BEFORE any shared.hotpath import.
+import tempfile as _tempfile  # noqa: E402
+os.environ["HOTPATH_DB_PATH"] = os.path.join(
+    _tempfile.mkdtemp(prefix="hotpath_pytest_"), "hotpath.sqlite",
+)
+
 # ───────── SAFETY GUARDRAIL: refuse to run against prod DB ─────────
 # 2026-07-14 (iter-29d) — root-caused Kraken/Webull credentials
 # "vanishing on every deploy" to test suites executing against the

@@ -485,6 +485,8 @@ async def _audit_lane_policy_rejection(
     }
     try:
         await db[SHARED_INTENTS].insert_one(slim_doc)
+        from shared.hotpath import intent_queue  # noqa: WPS433
+        intent_queue.enqueue_safe(slim_doc)
     except Exception:  # noqa: BLE001
         pass
     try:
@@ -1356,6 +1358,8 @@ async def _post_intent_impl(
     #    the failure.
     try:
         insert_result = await db[SHARED_INTENTS].insert_one(doc)
+        from shared.hotpath import intent_queue  # noqa: WPS433
+        intent_queue.enqueue_safe(doc)
     except Exception as insert_exc:  # noqa: BLE001
         try:
             from shared.brain_runtime_metrics import (  # noqa: WPS433
@@ -2086,6 +2090,8 @@ async def admin_post_intent(
             doc.get("intent_id"), _sm_err,
         )
     await db[SHARED_INTENTS].insert_one(doc)
+    from shared.hotpath import intent_queue  # noqa: WPS433
+    intent_queue.enqueue_safe(doc)
 
     # MC Shelly — record this admin-proxied ingest too. Tagged with the
     # operator email under extra so we can distinguish brain pushes from

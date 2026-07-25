@@ -199,6 +199,8 @@ async def fire_canary(
     }
 
     await db[SHARED_INTENTS].insert_one(intent_doc)
+    from shared.hotpath import intent_queue  # noqa: WPS433
+    intent_queue.enqueue_safe(intent_doc)
     logger.info(
         "ma_canary FIRED: symbol=%s lane=%s action=%s conf=%.3f notional=$%.2f intent=%s holder=%s",
         symbol, lane, signal.action, signal.confidence, notional, intent_id, holder,

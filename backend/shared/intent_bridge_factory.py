@@ -249,6 +249,8 @@ def make_intent_bridge(cfg: BridgeConfig):
                 "intent": intent,
             }
         await db[SHARED_INTENTS].insert_one(dict(intent))
+        from shared.hotpath import intent_queue  # noqa: WPS433
+        intent_queue.enqueue_safe(dict(intent))
         return {"allowed": True, "intent": intent}
 
     # ────────── REST surface ──────────

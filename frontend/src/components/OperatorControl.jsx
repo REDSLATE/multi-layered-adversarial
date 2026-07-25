@@ -8,6 +8,7 @@ import KrakenPairEditor from "@/components/KrakenPairEditor";
 import WatchlistPanel from "@/components/WatchlistPanel";
 import ExitMonitorPanel from "@/components/ExitMonitorPanel";
 import ExpectancyPanel from "@/components/ExpectancyPanel";
+import ScannerPanel from "@/components/ScannerPanel";
 import DailyBudgetTile from "@/components/DailyBudgetTile";
 import OpportunityPolicyPanel from "@/components/OpportunityPolicyPanel";
 
@@ -679,6 +680,7 @@ export default function OperatorControl() {
       <KrakenPairEditor />
       <WatchlistPanel />
       <ExitMonitorPanel />
+      <ScannerPanel />
       <ExpectancyPanel />
 
       {/* Last N pulse ticks */}

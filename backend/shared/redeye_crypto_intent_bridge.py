@@ -222,6 +222,8 @@ async def emit_redeye_crypto_intent(
             "intent": intent,
         }
     await db[SHARED_INTENTS].insert_one(dict(intent))
+    from shared.hotpath import intent_queue  # noqa: WPS433
+    intent_queue.enqueue_safe(dict(intent))
     return {"allowed": True, "intent": intent}
 
 

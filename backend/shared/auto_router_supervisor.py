@@ -66,6 +66,7 @@ _LAST_TICK_DEFERRED: int = 0
 _LAST_TICK_DISARMED: bool = False
 _LAST_TICK_EXCEPTIONS: int = 0
 _LAST_INTENT_ERROR: Optional[str] = None
+_LAST_TICK_QUEUE_SOURCE: Optional[str] = None
 _STARTED_AT: Optional[str] = None
 
 # Route-phase wall budget per tick. 5 intents × 20s each could hit
@@ -95,6 +96,12 @@ async def _stamp_route_timeout(intent: dict) -> None:
             "broker_reason": "ROUTE_TIMEOUT_POISON",
             "broker_error_bucket": "timeout",
         })
+    # Local queue mirror first — the pick path reads it (2026-07-24).
+    try:
+        from shared.hotpath import intent_queue  # noqa: WPS433
+        intent_queue.bump_route_timeout(iid, ROUTE_TIMEOUT_POISON_LIMIT)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("local route-timeout bump failed intent=%s: %s", iid, exc)
     try:
         await asyncio.wait_for(
             db[SHARED_INTENTS].update_one({"intent_id": iid}, update),
@@ -176,35 +183,53 @@ async def _tick() -> list[dict]:
         lookback_min = int(os.environ.get("AUTO_ROUTER_LOOKBACK_MIN", "60"))
     except (TypeError, ValueError):
         lookback_min = 60
-    lookback_cutoff = (
-        datetime.now(timezone.utc) - timedelta(minutes=lookback_min)
-    ).isoformat()
-    q = {
-        "ingest_ts": {"$gte": lookback_cutoff},
-        "executed": {"$ne": True},
-        "action": {"$in": ["BUY", "SELL", "SHORT", "COVER"]},
-        "symbol": {"$ne": None},
-        # Honest queue: don't re-process intents already terminally
-        # stamped by an earlier tick (blocked, advisory_only, submitted,
-        # or aged-out via the expiration sweeper).
-        "gate_state": {"$nin": [
-            "blocked", "no_trade", "advisory_only", "submitted",
-            "expired_unrouted",
-        ]},
-        # Poison guard: 3 route timeouts and you're out of the queue
-        # ($not matches docs where the field is missing too).
-        "route_timeouts": {"$not": {"$gte": ROUTE_TIMEOUT_POISON_LIMIT}},
-    }
-    sample = await asyncio.wait_for(
-        (
-            db[SHARED_INTENTS]
-            .find(q, {"_id": 0})
-            .sort("ingest_ts", -1)
-            .max_time_ms(8000)
-            .to_list(AUTO_ROUTER_MAX_PER_TICK)
-        ),
-        timeout=12.0,
-    )
+
+    # 2026-07-24 hot-path audit P2 #6: pick from the LOCAL durable
+    # intent queue (memory + SQLite). Atlas is only a fallback when
+    # the local store itself errors — never the per-tick default.
+    global _LAST_TICK_QUEUE_SOURCE
+    sample: Optional[list[dict]] = None
+    try:
+        from shared.hotpath import intent_queue  # noqa: WPS433
+        sample = intent_queue.pick(
+            limit=AUTO_ROUTER_MAX_PER_TICK,
+            lookback_min=lookback_min,
+            poison_limit=ROUTE_TIMEOUT_POISON_LIMIT,
+        )
+        _LAST_TICK_QUEUE_SOURCE = "local"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("local intent queue pick failed, Atlas fallback: %s", exc)
+        _LAST_TICK_QUEUE_SOURCE = "atlas_fallback"
+    if sample is None:
+        lookback_cutoff = (
+            datetime.now(timezone.utc) - timedelta(minutes=lookback_min)
+        ).isoformat()
+        q = {
+            "ingest_ts": {"$gte": lookback_cutoff},
+            "executed": {"$ne": True},
+            "action": {"$in": ["BUY", "SELL", "SHORT", "COVER"]},
+            "symbol": {"$ne": None},
+            # Honest queue: don't re-process intents already terminally
+            # stamped by an earlier tick (blocked, advisory_only, submitted,
+            # or aged-out via the expiration sweeper).
+            "gate_state": {"$nin": [
+                "blocked", "no_trade", "advisory_only", "submitted",
+                "expired_unrouted",
+            ]},
+            # Poison guard: 3 route timeouts and you're out of the queue
+            # ($not matches docs where the field is missing too).
+            "route_timeouts": {"$not": {"$gte": ROUTE_TIMEOUT_POISON_LIMIT}},
+        }
+        sample = await asyncio.wait_for(
+            (
+                db[SHARED_INTENTS]
+                .find(q, {"_id": 0})
+                .sort("ingest_ts", -1)
+                .max_time_ms(8000)
+                .to_list(AUTO_ROUTER_MAX_PER_TICK)
+            ),
+            timeout=12.0,
+        )
     if not sample:
         return []
 
@@ -224,6 +249,13 @@ async def _tick() -> list[dict]:
                 _ar._route_one(intent), timeout=min(20.0, remaining),
             )
             results.append(r)
+            # Mirror the terminal verdict onto the local queue so
+            # this intent is never re-picked (2026-07-24).
+            try:
+                from shared.hotpath import intent_queue  # noqa: WPS433
+                intent_queue.mark_from_verdict(intent.get("intent_id"), r)
+            except Exception:  # noqa: BLE001
+                pass
             if r.get("verdict") == "executed":
                 logger.info(
                     "auto-routed %s %s %s -> $%s",
@@ -317,6 +349,7 @@ def get_status() -> dict:
         "master_switch_read_error": getattr(_ar, "_ARM_LAST_READ_ERROR", None),
         "last_tick_exceptions": _LAST_TICK_EXCEPTIONS,
         "last_intent_error": _LAST_INTENT_ERROR,
+        "intent_queue_source": _LAST_TICK_QUEUE_SOURCE,
         "last_route_stage_trace": getattr(_ar, "_LAST_STAGE_TRACE", None) or None,
         "min_conviction_mult": _read_min_conviction_mult(),
         "route_budget_sec": ROUTE_BUDGET_SEC,

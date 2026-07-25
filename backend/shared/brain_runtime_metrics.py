@@ -181,6 +181,30 @@ async def refresh_windows(brain: str, *, force: bool = False) -> Optional[Dict[s
         )
         return None
 
+    # Recompute latest_ts from the same bounded window — `bump_on_emit`
+    # misses emit paths that bypass it, leaving a stale latest_ts next
+    # to fresh window counts (observed 2026-07-25: gto last_24h=2 with
+    # a 4.7-day-old latest_ts). Bounded + indexed, cheap.
+    latest_fields: Dict[str, Any] = {}
+    if total_24h > 0:
+        try:
+            latest_doc = await db[SHARED_INTENTS].find_one(
+                {"stack_canonical": brain_c, "ingest_ts": {"$gte": cutoff_24h}},
+                {"_id": 0, "ingest_ts": 1, "symbol": 1, "action": 1},
+                sort=[("ingest_ts", -1)],
+            )
+            if latest_doc and latest_doc.get("ingest_ts"):
+                latest_fields = {
+                    "latest_ts": latest_doc["ingest_ts"],
+                    "latest_symbol": latest_doc.get("symbol"),
+                    "latest_action": latest_doc.get("action"),
+                }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "brain_runtime_metrics latest_ts recompute failed "
+                "brain=%s err=%s", brain, exc,
+            )
+
     try:
         await db[COLLECTION].update_one(
             {"_id": brain},
@@ -191,6 +215,7 @@ async def refresh_windows(brain: str, *, force: bool = False) -> Optional[Dict[s
                     "by_action": by_action,
                     "windows_refreshed_at": _now_iso(),
                     "updated_at": _now_iso(),
+                    **latest_fields,
                 },
                 "$setOnInsert": {
                     "_id": brain,

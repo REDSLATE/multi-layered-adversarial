@@ -130,6 +130,12 @@ def _isolate_env(monkeypatch):
     # Pin slippage to a stable value so quantity math is predictable.
     monkeypatch.setenv("WEBULL_LIMIT_SLIPPAGE_BPS", "50")
     monkeypatch.setenv("WEBULL_EXTENDED_HOURS_SLIPPAGE_BPS", "50")
+    # Pin RTH so these tests are deterministic on weekends/off-hours —
+    # fractional (<1 sh) orders are CORE-session-only by Webull policy;
+    # the off-hours branch has its own dedicated test below.
+    import shared.market_hours as _mh
+    monkeypatch.setattr(_mh, "is_equity_rth", lambda *a, **k: True)
+    monkeypatch.setattr(_mh, "is_equity_extended_hours", lambda *a, **k: False)
     reset_webull_adapter_for_tests()
     yield
     reset_webull_adapter_for_tests()

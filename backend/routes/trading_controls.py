@@ -285,6 +285,13 @@ async def _set_lane_enabled(
         {"$set": set_payload, "$setOnInsert": {"created_at": _now_iso()}},
         upsert=True,
     )
+    # Write-through to the execution-policy snapshot so the risk gate
+    # honors the flip on the NEXT intent, not the next refresh tick.
+    try:
+        from shared.hotpath import policy_snapshot  # noqa: WPS433
+        await policy_snapshot.refresh_from_atlas()
+    except Exception:  # noqa: BLE001
+        pass
     return await _get_lane_enabled_state()
 
 
@@ -459,6 +466,13 @@ async def arm(
         {"$set": tr_payload, "$setOnInsert": {"created_at": _now_iso()}},
         upsert=True,
     )
+    # Write-through to the execution-policy snapshot (risk gate reads
+    # the master switch from memory — 2026-07-24 hot-path audit).
+    try:
+        from shared.hotpath import policy_snapshot  # noqa: WPS433
+        await policy_snapshot.refresh_from_atlas()
+    except Exception:  # noqa: BLE001
+        pass
 
     # 3. Optional per-lane update (only if the operator specified it).
     ln_new = ln_pre

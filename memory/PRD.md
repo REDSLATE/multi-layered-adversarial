@@ -3248,3 +3248,49 @@ dominated by low-float penny movers) + hand-pins. Preview showed 11 symbols,
 - "Decide best ticker" = brains evaluate all 74-150 and arbiter picks by
   confidence — already the architecture; the pool was the broken part.
 - REDEPLOY required for prod.
+
+## 2026-07-25 — Iteration 38: RTH Dynamic Opportunity Scanner (operator spec, MVP)
+
+### Architecture shipped
+US discovery universe (419 curated: S&P500 majors + NDX100 + sector ETFs +
+liquid growth; `shared/scanner/universe500.py`, leveraged/inverse hard-denied)
+→ `rth_scanner.scan_once` (rotating 60-symbol chunks / 180s → full sweep
+~21 min; Webull has no batch-quote API) → hard filters (leveraged, min price
+$5, min hourly $vol $2M, ≥20 bars, bar age ≤20 min, RTH gate via
+America/New_York) → light classifier (etf/large_cap/growth_equity) →
+opportunity_score with operator's exact weights (rel-vol .22, $vol .18,
+momentum .16, vol-accel .14, rel-strength .12, volatility .10, spread-proxy
+.08) → per-brain affinity (barracuda=stretch-z, camino=trend-alignment,
+hellcat=compression+near-high, gto=momentum×relvol) → SQLite candidate cache
+(`scanner_candidates`, TTL 15 min, hot path) → refresher merges top-15
+discovery + pins + 63-core into live_universe each scan cycle → MC pulse →
+brains → Seat → Risk → Webull. Bars fetched for scoring are PERSISTED so
+admitted candidates arrive with history.
+
+### Boundaries honored (tested)
+- Advisory only: source-level test asserts no order/intent APIs in scanner.
+- Scanner rows bypass hysteresis (reason "rth_scanner") but flow through
+  registry tradability + price filters in the refresher like everything else.
+- Honest gaps recorded: spread_quality is a price-band proxy (no L1 quote
+  feed); relative_strength is vs session-open (not yet SPY-relative);
+  full Universe Classifier/Doctrine Registry does not exist — classification
+  is recorded per candidate as the routing hook for that future work.
+
+### Ops surface
+- Routes: GET /api/admin/scanner (status+policy+pool), POST /scan-now,
+  POST /policy (min_price, min_hourly_dollar_vol, min_bars, max_bar_age_min,
+  allow_leveraged, extra/exclude_symbols → runtime_flags scanner_policy).
+- Envs: SCANNER_ENABLED, SCANNER_INTERVAL_SEC=180, SCANNER_CHUNK_SIZE=60,
+  SCANNER_CANDIDATE_TTL_MIN=15, SCANNER_MIN_SCORE=0.35, SCANNER_IGNORE_RTH.
+- UI: ScannerPanel on Overview → Operator Control (pool, rejects by filter,
+  per-candidate score/class/momentum/age/brain-affinity chips, SCAN NOW).
+  (Fixed: phosphor `Radar` icon not exported → Crosshair.)
+- Loop wired in lifespan start/stop.
+
+### Verified
+- 20 deterministic tests (test_rth_scanner.py): ranking, stale/spread-proxy/
+  liquidity/price/bars rejections, classification, expiry+invalidation,
+  advisory boundary, refresher merge. 94 pass in universe/feeder/scanner.
+- Live e2e: forced scan cycle → 60 fetched, 60 rejected stale_data (market
+  closed — correct), publish to live_universe OK. UI verified by screenshot.
+- REDEPLOY required; candidates will admit during next RTH session.

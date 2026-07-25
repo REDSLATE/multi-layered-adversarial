@@ -79,8 +79,26 @@ FREQ = calls per unit · DIFF = migration difficulty
 ## Recommended migration order (matches operator packages)
 1. DONE — durable outbox (outcomes + receipts)
 2. DONE — exit policy last-known-good cache (P0 #1)
-3. NEXT — exit-plan migration to memory+SQLite (P0 #2)
-4. ExecutionPolicySnapshot + local daily-spent counter (P1 #3, #4)
-5. Capital ledger → SQLite atomic reserve + Atlas mirror (P1 #5)
-6. Local router intent queue (P2 #6)
-7. Intent stamping via outbox (P2 #7, #8)
+3. DONE — exit-plan migration to memory+SQLite (P0 #2)
+4. DONE 2026-07-25 — ExecutionPolicySnapshot + local daily-spent counter (P1 #3, #4)
+   `shared/hotpath/policy_snapshot.py` (versioned snapshot: cap override,
+   master switch, lane toggles, broker freeze, conviction floor,
+   opportunity policy, reset marker; SQLite-recovered, 20s async
+   refresh, admin write-through) + `shared/hotpath/daily_spend.py`
+   (counter incremented at execution, SQLite-persisted, Atlas
+   aggregate only ONCE at boot). Risk gate + broker freeze +
+   conviction floor + opportunity policy now read memory only.
+5. Capital ledger → SQLite atomic reserve + Atlas mirror (P1 #5) — REMAINING
+6. DONE 2026-07-25 — local router intent queue (P2 #6)
+   `shared/hotpath/intent_queue.py`: every `shared_intents.insert_one`
+   mirrors locally (7 ingest sites); router picks from memory/SQLite
+   with identical semantics (newest-first, lookback, terminal states,
+   poison guard); verdicts + route timeouts mark back; Atlas is
+   exception-only fallback. Risk idempotency double-check reads the
+   local queue instead of a per-intent Atlas find_one.
+7. Intent stamping via outbox (P2 #7, #8) — REMAINING
+
+## Guardrail added 2026-07-25
+pytest session redirects HOTPATH_DB_PATH to a throwaway sqlite
+(`tests/conftest.py`) — mocked-broker e2e tests were inflating the
+LIVE daily-spend counter.

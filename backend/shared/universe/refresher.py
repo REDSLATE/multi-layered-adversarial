@@ -219,6 +219,7 @@ def _dedupe_and_merge(candidates: list[dict]) -> list[dict]:
                 "price": float(c.get("price") or 0.0),
                 "pinned": bool(c.get("_pinned") or False),
                 "core": bool(c.get("_core") or False),
+                "scanner": bool(c.get("_scanner") or False),
             }
         else:
             existing = by_symbol[sym]
@@ -229,6 +230,8 @@ def _dedupe_and_merge(candidates: list[dict]) -> list[dict]:
                 existing["pinned"] = True
             if c.get("_core"):
                 existing["core"] = True
+            if c.get("_scanner"):
+                existing["scanner"] = True
             # Prefer the most-populated broker_instrument_id.
             if not existing.get("broker_instrument_id") and c.get("broker_instrument_id"):
                 existing["broker_instrument_id"] = c["broker_instrument_id"]
@@ -269,9 +272,13 @@ def _apply_hysteresis(
     screener_i = 0  # rank among non-pinned rows only
     for row in ranked:
         sym = row["canonical_symbol"]
-        if row.get("pinned") or row.get("core"):
-            # Pins and core-liquid rows bypass hysteresis entirely.
-            row["_admit_reason"] = "pinned" if row.get("pinned") else "core_liquid"
+        if row.get("pinned") or row.get("core") or row.get("scanner"):
+            # Pins, core-liquid and pre-scored scanner rows bypass
+            # hysteresis entirely.
+            row["_admit_reason"] = (
+                "pinned" if row.get("pinned")
+                else ("core_liquid" if row.get("core") else "rth_scanner")
+            )
             admitted.append(row)
             continue
         if screener_i < admit_n:
@@ -358,11 +365,30 @@ def _finalize_row(r: dict, rank: int) -> dict:
         "price": r.get("price", 0.0),
         "pinned": r.get("pinned", False),
         "core": r.get("core", False),
+        "scanner": r.get("scanner", False),
         "tradable": r.get("tradable", True),
     }
 
 
 # ── equity refresh ────────────────────────────────────────────────
+
+
+def _scanner_discovery_candidates(top_n: int = 15) -> list[dict]:
+    """Top unexpired RTH-scanner candidates from the SQLite hot-path
+    pool (2026-07-24 Opportunity Scanner). Fail-soft to []."""
+    try:
+        from shared.scanner import store as scanner_store  # noqa: WPS433
+        return [{
+            "canonical_symbol": c["symbol"],
+            "broker_instrument_id": None,
+            "change_pct": float(c.get("momentum_pct") or 0.0),
+            "volume": 0.0,
+            "price": float(c.get("price") or 0.0),
+            "source_reason": "rth_scanner",
+            "_scanner": True,
+        } for c in scanner_store.live_candidates(limit=top_n)]
+    except Exception:  # noqa: BLE001
+        return []
 
 
 async def refresh_equity_universe() -> dict:
@@ -398,16 +424,19 @@ async def refresh_equity_universe() -> dict:
     pins = await _load_operator_pins(lane)
     quality = await _quality_overrides()
     core = _core_equity_candidates(quality)
+    scanner_rows = _scanner_discovery_candidates()
 
-    # Merge candidates: pins + core-liquid list + screener movers
-    # (2026-07-24 — universe expansion so brains see real tickers).
-    merged = _dedupe_and_merge([*pins, *core, *gainers, *losers, *active])
+    # Merge candidates: pins + core-liquid + RTH-scanner discovery +
+    # screener movers (2026-07-24 Opportunity Scanner integration).
+    merged = _dedupe_and_merge([*pins, *core, *scanner_rows, *gainers, *losers, *active])
     # Rank: pins, then core, then screener rows by composite QUALITY
     # SCORE (liquidity-weighted — see _quality_score) instead of raw
     # |change|, so thin pumps stop crowding out tradable movers.
     merged.sort(
         key=lambda r: (
-            0 if r.get("pinned") else (1 if r.get("core") else 2),
+            0 if r.get("pinned") else (
+                1 if r.get("core") else (2 if r.get("scanner") else 3)
+            ),
             -_quality_score(r),
             -float(r.get("volume", 0.0)),
         ),

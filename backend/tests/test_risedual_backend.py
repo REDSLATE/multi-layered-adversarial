@@ -45,8 +45,9 @@ class TestHealth:
         assert r.status_code == 200
         d = r.json()
         assert d["ok"] is True
-        assert d["mongo"] is True
-        assert d["deploy_mode"] in VALID_DEPLOY_MODES
+        # 2026-07-15 doctrine: /api/health is a LIGHTWEIGHT k8s probe —
+        # no DB pings (mongo/deploy_mode live on /api/health/deep now).
+        assert d["status"] == "ok"
 
 
 # ---------- Auth ----------

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import sys
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -103,6 +104,9 @@ async def _insert_intent(intent_id, action, *, legacy=None, v3=None,
         "stack": "camino",
         "stack_canonical": "camino",
         "gate_state": "queued",
+        # Fresh ingest_ts — the 2026-07-22 authority-window gate blocks
+        # stale/absent timestamps before the notional stage under test.
+        "ingest_ts": datetime.now(timezone.utc).isoformat(),
     }
     if legacy is not None:
         doc["requested_notional_usd"] = legacy
@@ -118,6 +122,15 @@ def _wire_common_patches(monkeypatch, *, sizing_route="observe"):
     path is skipped entirely — keeps these tests focused on notional
     resolution, not ledger arithmetic.
     """
+    # These tests predate the 2026-07-22 tier doctrine — pin tiers OFF
+    # in the ExecutionPolicySnapshot so the tier gate doesn't override
+    # the legacy/v3 notional resolution under test.
+    from shared.hotpath import policy_snapshot
+    from shared.opportunity.policy import _merge
+    _pol = _merge({})
+    _pol["tiers_enabled"] = False
+    policy_snapshot._dirty = False  # noqa: SLF001
+    policy_snapshot.apply_local(opportunity_policy=_pol)
     # 2026-07-09 sys.modules leak fix: touch these modules FIRST so
     # pytest's monkeypatch resolver and `_route_one`'s runtime
     # `from ... import ...` calls both see the same module object.
@@ -132,6 +145,13 @@ def _wire_common_patches(monkeypatch, *, sizing_route="observe"):
     import shared.sizing_gate  # noqa: F401,WPS433
     import shared.broker_router  # noqa: F401,WPS433
     import routes.equity_extended_hours_admin  # noqa: F401,WPS433
+
+    # Neutralize the Webull $5 equity floor size-up (post-dates these
+    # tests) — this file pins notional RESOLUTION, not broker floors.
+    monkeypatch.setattr(
+        "shared.broker.webull_caps.webull_notional_band",
+        lambda _q=None: (0.0, 100000.0, "test"),
+    )
 
     import shared.seat as seat
     import shared.risk as risk

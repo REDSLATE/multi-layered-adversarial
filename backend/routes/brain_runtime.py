@@ -453,6 +453,14 @@ async def _build_in_process_status(brain: str) -> Dict[str, Any]:
     total_intents = None
 
     latest_intent_age_s = _age_seconds(latest_intent_ts, now)
+    # 48h bound (P0 contract): the tile must not present a week-old
+    # emit as live telemetry. The metrics-doc cache carries latest_ts
+    # unbounded, so enforce the window here.
+    if latest_intent_age_s is not None and latest_intent_age_s > 48 * 3600:
+        latest_intent_ts = None
+        latest_intent_age_s = None
+        latest_intent_symbol = None
+        latest_intent_action = None
     # 2026-02-11 (test-suite fix): if `latest_ts` came back but its
     # ISO string failed to parse to an age (e.g. corrupted preview-DB
     # doc with hex fractional seconds like `.8cd3be`), drop the bogus

@@ -358,6 +358,15 @@ async def lifespan(app: FastAPI):
         _register_outbox()
         from shared.hotpath.outbox import start_if_enabled as _start_outbox
         _start_outbox()
+        from shared.hotpath import policy_snapshot as _psnap
+        _psnap.start_if_enabled()
+        from shared.hotpath import daily_spend as _dspend
+        from shared.hotpath import intent_queue as _iqueue
+        import asyncio as _hp_asyncio
+        _hp_asyncio.get_event_loop().create_task(_dspend.bootstrap())
+        _hp_asyncio.get_event_loop().create_task(_iqueue.bootstrap())
+        from shared.scanner.rth_scanner import start_if_enabled as _start_scanner
+        _start_scanner()
         logger.info("Exit monitor started")
     except Exception as e:  # noqa: BLE001
         logger.warning("Exit monitor start failed: %s", e)
@@ -1001,6 +1010,10 @@ async def lifespan(app: FastAPI):
         await _stop_exits()
         from shared.hotpath.outbox import stop as _stop_outbox
         await _stop_outbox()
+        from shared.hotpath.policy_snapshot import stop as _stop_psnap
+        await _stop_psnap()
+        from shared.scanner.rth_scanner import stop as _stop_scanner
+        await _stop_scanner()
     except Exception:  # noqa: BLE001
         pass
     client.close()

@@ -37,9 +37,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from db import db
-from namespaces import SHARED_INTENTS
-
 
 @dataclass(frozen=True)
 class RiskCheck:
@@ -79,72 +76,44 @@ def _daily_cap() -> float:
         return 1000.0
 
 
+# ── 2026-07-24 hot-path audit P1 #3: every per-intent gate read below
+# comes from the in-memory ExecutionPolicySnapshot (SQLite-recovered,
+# async-refreshed from Atlas) — ZERO synchronous Atlas round trips in
+# the execution loop. Async signatures kept for caller compatibility.
+
 async def _daily_cap_effective() -> float:
-    """Operator override (`runtime_flags._id=risk_caps.cap_daily_usd`,
-    set via POST /api/admin/risk/budget/cap) beats the env default."""
-    try:
-        doc = await db["runtime_flags"].find_one(
-            {"_id": "risk_caps"}, {"cap_daily_usd": 1},
-        )
-        v = (doc or {}).get("cap_daily_usd")
-        if v is not None:
-            return float(v)
-    except Exception:  # noqa: BLE001
-        pass
+    """Operator override (`runtime_flags._id=risk_caps.cap_daily_usd`)
+    beats the env default. Snapshot-backed; refreshes only when an
+    admin write marked the snapshot dirty."""
+    from shared.hotpath import policy_snapshot  # noqa: WPS433
+    await policy_snapshot.ensure_fresh()
+    ov = policy_snapshot.get().get("cap_daily_usd_override")
+    if ov is not None:
+        return float(ov)
     return _daily_cap()
 
 
 async def _is_freeze_on() -> bool:
-    """Master Trading Switch — when OFF, every Risk check fails. The
-    flag lives in `runtime_flags._id='master_trading_switch'`.
-    Default to ON (freeze inactive) if missing — operator sets up
-    the switch explicitly via the UI."""
-    doc = await db["runtime_flags"].find_one(
-        {"_id": "master_trading_switch"}, {"_id": 0, "enabled": 1}
-    )
-    if not doc:
-        return False  # no doc → not frozen
-    # Convention: `enabled=True` means trading is ARMED, so freeze is OFF.
-    return not bool(doc.get("enabled"))
+    """Master Trading Switch — when OFF, every Risk check fails.
+    Snapshot-backed (`master_trading_switch` flag). Default: ARMED
+    (freeze inactive) when the flag was never written."""
+    from shared.hotpath import policy_snapshot  # noqa: WPS433
+    return policy_snapshot.is_freeze_on()
 
 
 async def _is_lane_enabled(lane: str) -> bool:
-    """Per-lane operator toggle. Doc:
-        runtime_flags._id='lane_enabled'  {equity: bool, crypto: bool}
-    Defaults to enabled when the doc/key is missing."""
-    doc = await db["runtime_flags"].find_one(
-        {"_id": "lane_enabled"}, {"_id": 0}
-    )
-    if not doc:
-        return True
-    val = doc.get((lane or "").lower())
-    return True if val is None else bool(val)
+    """Per-lane operator toggle (`lane_enabled` flag). Snapshot-backed;
+    defaults to enabled when the doc/key is missing."""
+    from shared.hotpath import policy_snapshot  # noqa: WPS433
+    return policy_snapshot.is_lane_enabled(lane)
 
 
 async def _daily_spent_usd() -> float:
-    """Sum of `notional_usd` on `executions` for the current UTC day,
-    from the later of UTC-day-start and the operator's reset marker
-    (2026-07-22: RESET SPEND button rebuilt on THIS gate — the old
-    /exposure-caps/reset-daily-spend marker fed the pre-reduction
-    module and was dead wiring)."""
-    now = datetime.now(timezone.utc)
-    start = now.strftime("%Y-%m-%dT00:00:00")
-    try:
-        doc = await db["runtime_flags"].find_one(
-            {"_id": "daily_spend_reset"}, {"reset_at": 1},
-        )
-        reset_at = (doc or {}).get("reset_at")
-        if reset_at and str(reset_at) > start:
-            start = str(reset_at)
-    except Exception:  # noqa: BLE001
-        pass
-    pipeline = [
-        {"$match": {"ts": {"$gte": start}, "ok": True}},
-        {"$group": {"_id": None, "spent": {"$sum": "$notional_usd"}}},
-    ]
-    async for row in db["executions"].aggregate(pipeline, maxTimeMS=4000):
-        return float(row.get("spent") or 0.0)
-    return 0.0
+    """Today's spend from the LOCAL counter (incremented at execution
+    time, SQLite-persisted, rebuilt at boot) — replaces the per-intent
+    Atlas `executions` aggregate."""
+    from shared.hotpath import daily_spend  # noqa: WPS433
+    return daily_spend.get_spent()
 
 
 async def check(
@@ -189,17 +158,19 @@ async def check(
             **base,
         )
 
-    # Idempotency double-check at the DB layer — race-safe; if another
-    # concurrent route already set executed=True, our update will see
-    # it on the way back via the broker_router's order writer.
+    # Idempotency double-check against the LOCAL intent queue —
+    # `_finalize_gate_state` marks executed synchronously there, so a
+    # concurrent route is caught without an Atlas round trip
+    # (2026-07-24 hot-path audit).
     if intent_id:
-        live = await db[SHARED_INTENTS].find_one(
-            {"intent_id": intent_id}, {"_id": 0, "executed": 1}
-        )
-        if live and live.get("executed"):
-            return RiskCheck(
-                ok=False, reason="already_executed_concurrent", **base,
-            )
+        try:
+            from shared.hotpath import intent_queue  # noqa: WPS433
+            if intent_queue.is_executed(intent_id):
+                return RiskCheck(
+                    ok=False, reason="already_executed_concurrent", **base,
+                )
+        except Exception:  # noqa: BLE001
+            pass
 
     return RiskCheck(ok=True, reason="ok", **base)
 

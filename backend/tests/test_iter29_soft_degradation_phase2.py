@@ -324,8 +324,12 @@ async def test_size_multiplier_zero_short_circuits_advisory_only(monkeypatch):
     Executions row: broker_status='sized_to_zero'. NO risk.check call."""
     from shared.auto_router_stages import _gate_risk
 
-    from shared.auto_router_stages import invalidate_conviction_floor_cache
-    invalidate_conviction_floor_cache()
+    # 2026-07-24 snapshot architecture: the floor lives in the
+    # ExecutionPolicySnapshot (Atlas value beats env). Pin "floor
+    # disabled" by clearing the snapshot value + env=0.
+    from shared.hotpath import policy_snapshot
+    policy_snapshot._dirty = False  # noqa: SLF001
+    policy_snapshot.apply_local(conviction_floor=None)
     monkeypatch.setenv("AUTO_ROUTER_MIN_CONVICTION_MULT", "0")
 
     intent = {

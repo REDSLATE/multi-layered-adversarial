@@ -28,6 +28,7 @@ size vs debug the request format).
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -197,6 +198,16 @@ def route_one_setup():
     """Common patch scaffold — Seat fires, Risk clears, Broker raises."""
     from shared import auto_router as ar
 
+    # These tests predate the 2026-07-22 tier doctrine — pin tiers OFF
+    # in the ExecutionPolicySnapshot so the tier gate doesn't hijack
+    # the broker-error path under test.
+    from shared.hotpath import policy_snapshot
+    from shared.opportunity.policy import _merge
+    _pol = _merge({})
+    _pol["tiers_enabled"] = False
+    policy_snapshot._dirty = False  # noqa: SLF001
+    policy_snapshot.apply_local(opportunity_policy=_pol)
+
     async def fake_seat_decide(_intent):
         return _seat_decision_fire()
 
@@ -273,7 +284,9 @@ def _intent(**overrides):
         "action": "BUY",
         "lane": "crypto",
         "stack": "camino",
-        "ingest_ts": "2026-02-17T00:00:00+00:00",
+        # Fresh ingest_ts — the 2026-07-22 authority-window gate blocks
+        # stale intents before the broker stage these tests target.
+        "ingest_ts": datetime.now(timezone.utc).isoformat(),
     }
     base.update(overrides)
     return base

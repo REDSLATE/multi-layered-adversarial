@@ -45,51 +45,32 @@ def _min_conviction_mult() -> float:
 
 
 # ── Operator knob (2026-07-21): runtime_flags override ─────────────
-# `runtime_flags._id=conviction_floor` beats the env default so the
-# operator can retune from Operator Control without a redeploy. The
-# Mongo value is cached ~15s; env fallback is NOT cached so tests
-# (which monkeypatch the env) stay deterministic.
-import time as _time  # noqa: E402
-
-_FLOOR_CACHE: dict = {"val": None, "ts": 0.0}
-_FLOOR_TTL_SEC = 15.0
+# `runtime_flags._id=conviction_floor` beats the env default. 2026-07-24
+# hot-path audit: the 15s TTL cache (sync Atlas read on expiry) is
+# replaced by the ExecutionPolicySnapshot — memory-only reads.
 
 
 def invalidate_conviction_floor_cache() -> None:
-    _FLOOR_CACHE["val"] = None
-    _FLOOR_CACHE["ts"] = 0.0
+    from shared.hotpath import policy_snapshot  # noqa: WPS433
+    policy_snapshot.mark_dirty()
 
 
 def peek_conviction_floor() -> float:
-    """Sync best-effort read for status payloads: cached Mongo value
-    if fresh, else the env default."""
-    if (
-        _FLOOR_CACHE["val"] is not None
-        and (_time.monotonic() - _FLOOR_CACHE["ts"]) < _FLOOR_TTL_SEC
-    ):
-        return _FLOOR_CACHE["val"]
-    return _min_conviction_mult()
+    """Sync best-effort read for status payloads: snapshot value if
+    present, else the env default."""
+    from shared.hotpath import policy_snapshot  # noqa: WPS433
+    v = policy_snapshot.get().get("conviction_floor")
+    return float(v) if v is not None else _min_conviction_mult()
 
 
 async def get_conviction_floor() -> float:
-    now = _time.monotonic()
-    if (
-        _FLOOR_CACHE["val"] is not None
-        and (now - _FLOOR_CACHE["ts"]) < _FLOOR_TTL_SEC
-    ):
-        return _FLOOR_CACHE["val"]
+    from shared.hotpath import policy_snapshot  # noqa: WPS433
     try:
-        doc = await _db()["runtime_flags"].find_one(
-            {"_id": "conviction_floor"}, {"value": 1},
-        )
-        if doc and doc.get("value") is not None:
-            val = max(0.0, min(1.0, float(doc["value"])))
-            _FLOOR_CACHE["val"] = val
-            _FLOOR_CACHE["ts"] = now
-            return val
+        await policy_snapshot.ensure_fresh()
     except Exception:  # noqa: BLE001
         pass
-    return _min_conviction_mult()
+    v = policy_snapshot.get().get("conviction_floor")
+    return float(v) if v is not None else _min_conviction_mult()
 
 
 def _db():
@@ -980,6 +961,18 @@ async def _finalize_gate_state(ctx: RouteContext) -> dict:
     rc = ctx.rc
     order = ctx.order
     shipped_notional = ctx.final_notional
+
+    # 2026-07-24 hot-path audit: commit spend + executed flag LOCALLY
+    # first — the risk gate's daily-cap and idempotency checks read
+    # these, so they must not depend on the Atlas write below landing.
+    try:
+        from shared.hotpath import daily_spend, intent_queue  # noqa: WPS433
+        daily_spend.add(shipped_notional)
+        intent_queue.mark_safe(
+            ctx.intent_id, executed=True, gate_state="submitted",
+        )
+    except Exception as _hp_exc:  # noqa: BLE001
+        logger.warning("hotpath spend/executed commit failed: %s", _hp_exc)
 
     await _db()[SHARED_INTENTS].update_one(
         {"intent_id": ctx.intent_id},

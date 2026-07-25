@@ -74,20 +74,19 @@ async def get_freeze_state() -> dict:
 
 
 async def is_frozen() -> bool:
-    """Single-statement read for the broker_router hot path.
-    Safe default when collection is empty: False."""
-    doc = await db[BROKER_FREEZE_STATE].find_one(
-        {"_id": _SINGLETON_ID}, {"_id": 0, "frozen": 1},
-    )
-    if not doc:
-        return False
-    return bool(doc.get("frozen", False))
+    """Hot-path read — snapshot-backed (2026-07-24 audit P1 #4), no
+    Atlas round trip. Safe default when never written: False."""
+    from shared.hotpath import policy_snapshot  # noqa: WPS433
+    return policy_snapshot.is_broker_frozen()
 
 
 async def freeze(reason: str, actor: str) -> dict:
     """Flip the freeze ON. Audit-logged. Idempotent (overwrites prior
-    freeze reason)."""
+    freeze reason). The LOCAL snapshot flips FIRST — a freeze must
+    take effect even if the Atlas write is slow or fails."""
     now = _now_iso()
+    from shared.hotpath import policy_snapshot  # noqa: WPS433
+    policy_snapshot.apply_local(broker_frozen=True, broker_freeze_reason=reason)
     prev = await get_freeze_state()
     await db[BROKER_FREEZE_STATE].update_one(
         {"_id": _SINGLETON_ID},
@@ -115,6 +114,8 @@ async def freeze(reason: str, actor: str) -> dict:
 async def thaw(actor: str, reason: Optional[str] = None) -> dict:
     """Flip the freeze OFF. Audit-logged. Idempotent."""
     now = _now_iso()
+    from shared.hotpath import policy_snapshot  # noqa: WPS433
+    policy_snapshot.apply_local(broker_frozen=False, broker_freeze_reason=None)
     prev = await get_freeze_state()
     await db[BROKER_FREEZE_STATE].update_one(
         {"_id": _SINGLETON_ID},
@@ -141,12 +142,13 @@ async def thaw(actor: str, reason: Optional[str] = None) -> dict:
 
 async def assert_not_frozen() -> None:
     """Raise `BrokerFrozen` if the freeze is on. Called by the broker
-    router BEFORE any adapter dispatch. Fail-closed."""
-    state = await get_freeze_state()
-    if state["frozen"]:
+    router BEFORE any adapter dispatch. Fail-closed. Snapshot-backed
+    — no Atlas read in the submit path."""
+    from shared.hotpath import policy_snapshot  # noqa: WPS433
+    snap = policy_snapshot.get()
+    if snap.get("broker_frozen"):
         raise BrokerFrozen(
-            f"BROKER FROZEN: {state.get('reason') or 'no reason given'} "
-            f"(by {state.get('frozen_by')} at {state.get('frozen_at')}). "
+            f"BROKER FROZEN: {snap.get('broker_freeze_reason') or 'no reason given'}. "
             f"All broker writes are blocked until an operator thaws. "
             f"NO_TRADE."
         )

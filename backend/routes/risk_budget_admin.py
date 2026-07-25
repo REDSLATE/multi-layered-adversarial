@@ -51,15 +51,18 @@ async def budget_status(_user: dict = Depends(get_current_user)):  # noqa: B008
 
 @router.post("/reset")
 async def reset_spend(_user: dict = Depends(get_current_user)):  # noqa: B008
-    """RESET SPEND — spend tally restarts from now. Executions before
-    this marker no longer count against today's cap."""
+    """RESET SPEND — spend tally restarts from now. Local counter
+    zeroes IMMEDIATELY (write-through); Atlas keeps the audit marker."""
     now_iso = _now().isoformat()
+    from shared.hotpath import daily_spend, policy_snapshot
+    daily_spend.reset(now_iso)
     await db["runtime_flags"].update_one(
         {"_id": "daily_spend_reset"},
         {"$set": {"reset_at": now_iso,
                   "reset_by": _user.get("email") or "unknown"}},
         upsert=True,
     )
+    policy_snapshot.mark_dirty()
     return {"ok": True, "reset_at": now_iso,
             "spent_today_usd": round(await _daily_spent_usd(), 2)}
 
@@ -91,4 +94,6 @@ async def set_cap(
                       "updated_at": _now().isoformat()}},
             upsert=True,
         )
+    from shared.hotpath import policy_snapshot
+    policy_snapshot.mark_dirty()
     return {"ok": True, "cap_daily_usd": await _daily_cap_effective()}

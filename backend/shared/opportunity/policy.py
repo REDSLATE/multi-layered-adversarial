@@ -24,13 +24,13 @@ Knobs (runtime_flags._id=opportunity_policy, ~15s cache):
 """
 from __future__ import annotations
 
-import time
 from typing import Any
 
-from db import db
-
 POLICY_FLAG_ID = "opportunity_policy"
-_CACHE_TTL_S = 15.0
+
+# 2026-07-24 hot-path audit: the ~15s TTL cache (which still did a
+# synchronous Atlas read on expiry, inside the route loop) is replaced
+# by the ExecutionPolicySnapshot — memory-only reads, async refresh.
 
 DEFAULTS: dict[str, Any] = {
     "tiers_enabled": True,
@@ -42,9 +42,6 @@ DEFAULTS: dict[str, Any] = {
     "tier_notionals": {"probe": 5.0, "enter": 7.5, "full": 10.0},
     "kernel": {"enabled": True, "min_mult": 0.50, "max_mult": 1.35},
 }
-
-_cache: dict[str, Any] = {"at": 0.0, "value": None}
-
 
 def _merge(stored: dict) -> dict:
     out: dict = {"tiers_enabled": bool(
@@ -78,22 +75,17 @@ def _merge(stored: dict) -> dict:
 
 
 async def get_opportunity_policy() -> dict:
-    now = time.monotonic()
-    if _cache["value"] is not None and (now - _cache["at"]) < _CACHE_TTL_S:
-        return _cache["value"]
+    from shared.hotpath import policy_snapshot  # noqa: WPS433
     try:
-        stored = await db["runtime_flags"].find_one(
-            {"_id": POLICY_FLAG_ID}, {"_id": 0},
-        ) or {}
+        await policy_snapshot.ensure_fresh()
     except Exception:  # noqa: BLE001
-        stored = {}
-    merged = _merge(stored)
-    _cache.update(at=now, value=merged)
-    return merged
+        pass
+    return policy_snapshot.get().get("opportunity_policy") or _merge({})
 
 
 def invalidate_policy_cache() -> None:
-    _cache.update(at=0.0, value=None)
+    from shared.hotpath import policy_snapshot  # noqa: WPS433
+    policy_snapshot.mark_dirty()
 
 
 def classify_tier(confidence: float, lane: str, policy: dict) -> tuple[str, float]:

@@ -630,11 +630,21 @@ async def _stage_verify_execution(intent_id: str) -> dict:
     """Verify the `executions` row landed. This is the system of
     record — its presence proves the router closed the loop. If the
     broker call succeeded but this row is missing, the executions
-    writer is broken."""
+    writer is broken.
+
+    Two rows can legitimately exist for one intent: `intents.py`
+    fires `force_one_tick()` on every insert, so the scheduled tick
+    can race the trace's own route stage. The idempotency guard
+    blocks the loser (`already_executed_concurrent`, ok=False) —
+    exactly one broker submit. Prefer the ok=True row."""
     from db import db
     row = await db["executions"].find_one(
-        {"intent_id": intent_id}, {"_id": 0},
+        {"intent_id": intent_id, "ok": True}, {"_id": 0},
     )
+    if not row:
+        row = await db["executions"].find_one(
+            {"intent_id": intent_id}, {"_id": 0},
+        )
     if not row:
         raise RuntimeError(
             f"no executions row for intent {intent_id}",
