@@ -303,6 +303,7 @@ def get_status() -> dict:
         "broker_frozen": snap.get("broker_frozen"),
         "conviction_floor": snap.get("conviction_floor"),
         "daily_spend_reset_at": snap.get("daily_spend_reset_at"),
+        "gain_goal": snap.get("gain_goal") or {"block": {}, "throttle": {}},
         "refresher": {
             "running": _state.get("running", False),
             "interval_sec": REFRESH_INTERVAL_SEC,

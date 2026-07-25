@@ -3373,3 +3373,64 @@ outbox) — see /app/memory/audits/hotpath_atlas_audit.md.
 2. Intent gate_state stamping via outbox (P2 #7/#8, ~15 update_one/intent).
 3. Options Seat remains ON HOLD until Expectancy proves net-positive AND
    hot-path work fully closed (items 1-2 above).
+
+## 2026-07-25 — Iteration 40: Gain Goal — operator profit objectives per lane
+
+Full operator spec implemented (measure progress, never chase it).
+
+### Core (`shared/goals/gain_goal.py`, `shared/goals/worker.py`)
+- Per-lane goals (equity RTH / crypto continuous) + read-only global
+  rollup. Dollar AND percent targets (primary metric selectable,
+  optional AND condition; pct converts via capital-ledger deployed
+  capital). Windows: calendar_month (default), calendar_week,
+  rolling_days, custom deadline — per-lane overridable.
+- Pace: equity uses completed RTH sessions (holiday-aware via
+  market_hours, fractional intra-day); crypto uses elapsed time;
+  rolling windows evaluate against the full target.
+- Statuses (precedence order): DRAWDOWN_BREACHED > DRAWDOWN_WARNING
+  (≥80% of limit) > NO_GOAL/WINDOW_COMPLETE > GOAL_REACHED >
+  INSUFFICIENT_SAMPLE (min 20 resolved trades) > AHEAD/BEHIND/ON_PACE
+  (±5% tolerance band). Projection = net/progress, labeled estimate.
+- Data source = Expectancy resolved outcomes (shared_exit_outcomes,
+  net of fees+spread). Excludes witness/advisory/shadow/unpriced rows.
+  NOTE: collection is empty in prod so far (Exit Monitor 48h holds
+  only now coming due) → INSUFFICIENT_SAMPLE until real closes land.
+- Per-brain attribution (trades/net/win rate/PF/expectancy/max dd)
+  recorded read-only for Kernel/learning. NO brain quotas, nothing
+  brain-facing is written.
+
+### Binding rules (hot-path compliant)
+- Drawdown hard stop: window peak-to-trough of cumulative net ≥ limit
+  → breach LATCH (exact reason+calc stamped) → new ENTRIES (BUY/SHORT)
+  blocked for the lane in shared/risk/check.py; exits keep flowing.
+  Resume ONLY via operator ack (POST /ack) or window rollover (fixed
+  windows; rolling windows never auto-clear). Never auto-resumes on a
+  later winning trade.
+- Ahead-of-pace throttle: built AND enabled per operator directive
+  (activation 100% of goal, ×0.50) — reduce-only cap on new-entry
+  notional in _gate_risk; inert until a target is set; stamped in
+  sizing_degradation.gain_goal_throttled.
+- Publication honors the Atlas doctrine: worker (60s loop, lifespan
+  wired) publishes block/throttle to ExecutionPolicySnapshot
+  (memory+SQLite) first, Atlas state doc (runtime_flags gain_goal_state)
+  for audit/restart recovery; snapshot refresher recovers it too.
+
+### Ops surface
+- GET /api/admin/gain-goals · POST /config (merge, 422 on unknown
+  keys) · POST /ack {lane} · POST /evaluate.
+- Config: runtime_flags._id=gain_goals (targets null by default).
+- UI: GainGoalPanel.jsx on Overview → Operator Control, above the
+  Expectancy panel — status chips, goal/net/progress/session-pace/
+  pace-variance/projection/drawdown/trade-sample rows, per-lane
+  goal editor, breach ACKNOWLEDGE button, account rollup.
+
+### Verified
+- 8 pytest tests (tests/test_gain_goal.py): window math, RTH session
+  pace (July 2026 = 17/22 sessions), status transitions, breach latch
+  + gate block + exits-flow + ack + no-auto-resume, reduce-only
+  throttle publication, pct targets + brain attribution, rollover
+  latch clear. Isolated from live data via scratch collection.
+- Testing agent iteration_31: backend 7/8 → fixed the one minor issue
+  (gain_goal now exposed in /api/admin/hotpath/policy snapshot,
+  re-verified by curl); frontend 100% (render, save→INSUFFICIENT
+  SAMPLE→restore NO GOAL flow, session labels, rollup).
