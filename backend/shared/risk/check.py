@@ -148,6 +148,19 @@ async def check(
     if not await _is_lane_enabled(lane):
         return RiskCheck(ok=False, reason=f"lane_disabled:{lane}", **base)
 
+    # Gain Goal drawdown hard stop (2026-07-25): a BINDING risk rule.
+    # New ENTRIES for a breached lane are blocked until operator ack
+    # or window reset; exits (SELL/COVER) keep flowing so open
+    # positions are managed and closed safely. Snapshot-backed.
+    action = (intent.get("action") or "").upper()
+    if action in ("BUY", "SHORT"):
+        from shared.hotpath import policy_snapshot  # noqa: WPS433
+        gg = policy_snapshot.get().get("gain_goal") or {}
+        if (gg.get("block") or {}).get(lane):
+            return RiskCheck(
+                ok=False, reason=f"gain_goal_drawdown_breach:{lane}", **base,
+            )
+
     if n <= 0:
         return RiskCheck(ok=False, reason="notional_zero_or_negative", **base)
 

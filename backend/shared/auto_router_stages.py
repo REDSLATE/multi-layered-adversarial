@@ -319,6 +319,29 @@ async def _gate_risk(ctx: RouteContext) -> Optional[dict]:
         )
     final_notional = adjusted_notional
 
+    # 2a-ii-c. Gain Goal ahead-of-pace throttle (2026-07-25):
+    # REDUCE-ONLY operator policy — caps new-entry notional once the
+    # lane's goal progress passes the configured activation level. It
+    # never touches confidence, rankings, doctrine results, or brain
+    # opinions, and never applies to exits.
+    gain_goal_throttled = False
+    try:
+        if (ctx.intent.get("action") or "").upper() in ("BUY", "SHORT"):
+            from shared.hotpath import policy_snapshot  # noqa: WPS433
+            _gg = policy_snapshot.get().get("gain_goal") or {}
+            _mult = (_gg.get("throttle") or {}).get(
+                (ctx.intent.get("lane") or "").lower(),
+            )
+            if _mult is not None and 0.0 < float(_mult) < 1.0:
+                final_notional = final_notional * float(_mult)
+                gain_goal_throttled = True
+                logger.info(
+                    "gain_goal ahead-of-pace throttle ×%.2f intent=%s → $%.4f",
+                    float(_mult), ctx.intent_id, final_notional,
+                )
+    except Exception:  # noqa: BLE001
+        pass
+
     # 2a-iii. Sized-to-zero is a conviction outcome, not a risk
     # rejection — stamp advisory_only so the kill map reads honestly.
     if final_notional <= 0:
@@ -535,6 +558,7 @@ async def _gate_risk(ctx: RouteContext) -> Optional[dict]:
                 "arbiter_multiplier": arb_mult,
                 "conviction_floor_applied": conviction_floored,
                 "conviction_floor_mult": conviction_floor,
+                "gain_goal_throttled": gain_goal_throttled,
                 "floor_sized_up": floor_sized_up,
                 "equity_floor_usd": equity_floor_usd,
                 "final_usd": final_notional,

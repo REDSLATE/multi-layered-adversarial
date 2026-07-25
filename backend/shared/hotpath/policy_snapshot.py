@@ -80,6 +80,7 @@ def _defaults() -> dict:
         "conviction_floor": None,
         "opportunity_policy": _merge({}),
         "daily_spend_reset_at": None,
+        "gain_goal": {"block": {}, "throttle": {}},
         "degraded_keys": [],
     }
 
@@ -227,6 +228,16 @@ async def refresh_from_atlas() -> dict:
         base["daily_spend_reset_at"] = (doc or {}).get("reset_at")
     except Exception:  # noqa: BLE001
         degraded.append("daily_spend_reset_at")
+
+    try:
+        doc = await _read("runtime_flags", {"_id": "gain_goal_state"},
+                          {"_id": 0, "block": 1, "throttle": 1})
+        base["gain_goal"] = {
+            "block": (doc or {}).get("block") or {},
+            "throttle": (doc or {}).get("throttle") or {},
+        }
+    except Exception:  # noqa: BLE001
+        degraded.append("gain_goal")
 
     _version += 1
     base["version"] = _version

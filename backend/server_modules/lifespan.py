@@ -365,6 +365,8 @@ async def lifespan(app: FastAPI):
         import asyncio as _hp_asyncio
         _hp_asyncio.get_event_loop().create_task(_dspend.bootstrap())
         _hp_asyncio.get_event_loop().create_task(_iqueue.bootstrap())
+        from shared.goals.worker import start_if_enabled as _start_gain_goal
+        _start_gain_goal()
         from shared.scanner.rth_scanner import start_if_enabled as _start_scanner
         _start_scanner()
         logger.info("Exit monitor started")
@@ -1012,6 +1014,8 @@ async def lifespan(app: FastAPI):
         await _stop_outbox()
         from shared.hotpath.policy_snapshot import stop as _stop_psnap
         await _stop_psnap()
+        from shared.goals.worker import stop as _stop_gain_goal
+        await _stop_gain_goal()
         from shared.scanner.rth_scanner import stop as _stop_scanner
         await _stop_scanner()
     except Exception:  # noqa: BLE001
