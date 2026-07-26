@@ -105,8 +105,10 @@ def test_status_returns_cached_source_and_shape(brain, auth_headers):
     # by_action non-null dict.
     ba = intents.get("by_action")
     assert isinstance(ba, dict), f"{brain} by_action not dict: {ba!r}"
-    # latest_ts non-null.
-    assert intents.get("latest_ts") is not None, (
+    # latest_ts is 48h-bounded (2026-07-25) — a brain idle beyond the
+    # window legitimately reports None; require it only with activity.
+    if intents.get("last_24h"):
+        assert intents.get("latest_ts") is not None, (
         f"{brain} latest_ts is null — brain has never emitted OR the "
         f"cached doc read is falling back to runner memory path"
     )

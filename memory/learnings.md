@@ -1,0 +1,1 @@
+- NEVER use git stash in this repo: runtime data files (trader/data/*.sqlite*, backend/data/hotpath.sqlite*) are constantly modified by live services and make 'git stash pop' fail with merge conflicts. To compare against baseline, use: git stash -> test -> git checkout stash@{0} -- <code files> -> git stash drop.

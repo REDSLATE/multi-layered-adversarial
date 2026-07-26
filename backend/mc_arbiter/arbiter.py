@@ -191,7 +191,32 @@ async def arbitrate(seat_key: str, runtime_mode: RuntimeMode) -> dict:
             ranked=ranked,
         )
 
-    winner = max(directional, key=lambda r: r["adjusted_rank"])
+    # ── 2026-07-25 primary-brain selection (dynamic risk sizer) ────
+    # Eligibility + weighted scoring INSIDE the existing winner path:
+    # confidence floor, expectancy soft gate (positive expectancy
+    # required only at ≥20 resolved lane trades, weights renormalized
+    # below the sample), regime/kernel blend. Falls back to pure
+    # adjusted_rank if annotation fails (fail-open on scoring, never
+    # on risk — sizing gates run downstream regardless).
+    selection_used = False
+    try:
+        from shared.risk_sizer.policy import lane_enabled as _sizer_on  # noqa: WPS433
+        if _sizer_on(lane):
+            from shared.risk_sizer.selection import annotate_candidates  # noqa: WPS433
+            await annotate_candidates(directional, lane)
+            eligible = [r for r in directional if r.get("eligible")]
+            selection_used = True
+            if not eligible:
+                return _no_decision(
+                    seat_key, reason="no_eligible_brain",
+                    runtime_mode=runtime_mode, ranked=ranked,
+                )
+            winner = max(eligible, key=lambda r: r["selection_score"])
+        else:
+            winner = max(directional, key=lambda r: r["adjusted_rank"])
+    except Exception as _sel_exc:  # noqa: BLE001
+        logger.warning("brain selection scoring failed, rank fallback: %s", _sel_exc)
+        winner = max(directional, key=lambda r: r["adjusted_rank"])
     winning_dir = winner["direction"]
 
     # Disagreement: strongest OPPOSING adjusted_rank.
@@ -250,6 +275,9 @@ async def arbitrate(seat_key: str, runtime_mode: RuntimeMode) -> dict:
         "kernel_multiplier": kernel_mult,
         "kernel_score": kernel.get("score"),
         "kernel_state": kernel.get("state"),
+        "selection_mode": "scored" if selection_used else "adjusted_rank",
+        "selection_score": winner.get("selection_score"),
+        "selection_detail": winner.get("selection_detail"),
         "runtime_mode": runtime_mode.value,
         "arbitrated_at": _now_iso(),
         "field": [

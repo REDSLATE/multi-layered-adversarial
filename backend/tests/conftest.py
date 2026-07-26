@@ -40,6 +40,12 @@ os.environ["HOTPATH_DB_PATH"] = os.path.join(
     _tempfile.mkdtemp(prefix="hotpath_pytest_"), "hotpath.sqlite",
 )
 
+# Dynamic risk sizer stays OFF inside pytest — it fetches LIVE Kraken
+# balances per entry. Unit coverage lives in tests/test_risk_sizer.py
+# with mocked providers; suites that want it on set the env per-test.
+os.environ["CRYPTO_DYNAMIC_RISK_SIZER_ENABLED"] = "false"
+os.environ["EQUITY_DYNAMIC_RISK_SIZER_ENABLED"] = "false"
+
 # ───────── SAFETY GUARDRAIL: refuse to run against prod DB ─────────
 # 2026-07-14 (iter-29d) — root-caused Kraken/Webull credentials
 # "vanishing on every deploy" to test suites executing against the

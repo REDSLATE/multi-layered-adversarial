@@ -277,6 +277,14 @@ async def _route_one(intent: dict) -> dict:
         trace["in_flight"] = None
         if verdict is not None:
             trace["verdict"] = verdict.get("verdict")
+            # Blocked/failed route → the sizer's pending-risk
+            # reservation must not linger and phantom-consume the
+            # 2% portfolio budget (no-op when nothing was reserved).
+            try:
+                from shared.risk_sizer.open_risk import release_pending  # noqa: WPS433
+                release_pending(ctx.intent_id)
+            except Exception:  # noqa: BLE001
+                pass
             return verdict
 
     trace["in_flight"] = "_finalize_gate_state"

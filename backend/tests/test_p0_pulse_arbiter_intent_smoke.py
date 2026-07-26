@@ -284,9 +284,13 @@ class TestBrainRuntimeStatusCache:
         assert src == "brain_runtime_metrics", (
             f"{brain}: intents.source={src!r} (expected 'brain_runtime_metrics')"
         )
-        assert intents.get("latest_ts") is not None, (
-            f"{brain}: intents.latest_ts is None"
-        )
+        # 2026-07-25: latest_ts is 48h-bounded (iteration 39) — a brain
+        # idle beyond the window legitimately reports None. Only demand
+        # hydration when the window shows activity.
+        if intents.get("last_24h"):
+            assert intents.get("latest_ts") is not None, (
+                f"{brain}: intents.latest_ts is None despite 24h activity"
+            )
 
 
 # ---------- pulse_tick auto_arbitrate signature ----------
@@ -352,6 +356,20 @@ class TestE2EPulseToIntent:
         baseline = self._list_arbiter_intents(auth_headers)
         baseline_ids = {it.get("intent_id") for it in baseline}
 
+        # 2026-07-25: the dynamic-risk-sizer selection layer enforces a
+        # 0.55 confidence floor + 0.50 score floor inside the arbiter's
+        # winner path. Live brain confidence can sit below that, which
+        # is a CORRECT no_eligible_brain outcome — this test asserts
+        # the pulse→arbiter→intent WIRING, so relax the floors for the
+        # duration and restore afterwards.
+        r = requests.post(
+            f"{BASE_URL}/api/admin/risk-sizer/policy",
+            headers=auth_headers,
+            json={"selection": {"min_confidence": 0.0, "min_score": 0.0}},
+            timeout=15,
+        )
+        assert r.status_code == 200, r.text
+
         # Flip arbiter to LIVE
         r = requests.post(
             f"{BASE_URL}/api/mc/arbiter/runtime-mode",
@@ -382,6 +400,12 @@ class TestE2EPulseToIntent:
                 "pulse->arbiter->intent path is BROKEN."
             )
         finally:
+            requests.post(
+                f"{BASE_URL}/api/admin/risk-sizer/policy",
+                headers=auth_headers,
+                json={"selection": {"min_confidence": 0.55, "min_score": 0.50}},
+                timeout=15,
+            )
             # ALWAYS reset arbiter to DISARMED, even on assertion fail.
             requests.post(
                 f"{BASE_URL}/api/mc/arbiter/runtime-mode",

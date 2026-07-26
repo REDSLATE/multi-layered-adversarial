@@ -342,6 +342,80 @@ async def _gate_risk(ctx: RouteContext) -> Optional[dict]:
     except Exception:  # noqa: BLE001
         pass
 
+    # 2a-ii-d. Dynamic risk sizer (2026-07-25 operator spec): for
+    # enabled lanes, entry size = live-balance risk budget ÷ canonical
+    # stop distance, capped by allocation / spendable cash / total
+    # open portfolio risk. REPLACES the notional pipeline above for
+    # entries; Governor stack folds in reduce-only (clamped ≤1).
+    _sizer_receipt = None
+    try:
+        from shared.risk_sizer.policy import lane_enabled as _sizer_enabled  # noqa: WPS433
+        _is_entry = (ctx.intent.get("action") or "").upper() in ("BUY", "SHORT")
+        if _is_entry and _sizer_enabled((ctx.intent.get("lane") or "").lower()):
+            from shared.risk_sizer.sizer import build_position_plan  # noqa: WPS433
+            _gm = min(1.0, max(0.0, sd.risk_multiplier)) * arb_mult
+            if gain_goal_throttled and adjusted_notional > 0:
+                _gm *= final_notional / adjusted_notional
+            plan = await build_position_plan(ctx.intent, governor_multiplier=_gm)
+            _sizer_receipt = plan
+            if not plan["approved"]:
+                await executions.record(
+                    intent=ctx.intent, seat_verdict=sd.verdict,
+                    seat_holder=sd.executor, seat_reason=sd.reason,
+                    strategist=sd.strategist, governor=sd.governor,
+                    executor=sd.executor, auditor=sd.auditor,
+                    angels=sd.angels, risk_multiplier=sd.risk_multiplier,
+                    risk_ok=False, risk_reason=f"risk_sizer:{plan['reason']}",
+                    notional_usd=0.0, ok=False,
+                )
+                try:
+                    await _db()[SHARED_INTENTS].update_one(
+                        {"intent_id": ctx.intent_id},
+                        {"$set": {
+                            "gate_state": "blocked",
+                            "risk_reason": f"risk_sizer:{plan['reason']}",
+                            "broker_reason": "RISK_SIZER_REJECTED",
+                            "broker_error_bucket": "risk",
+                            "risk_sizing": plan,
+                            "last_submit_ts": _now_iso(),
+                        }},
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                return {"verdict": "blocked",
+                        "reason": f"risk_sizer:{plan['reason']}"}
+            final_notional = plan["final_notional"]
+            ctx.notional_source = f"risk_sizer_{plan['stop_source'].lower()}"
+            # Canonical stop persistence: a validated BRAIN stop is
+            # stamped (with a policy target when the brain gave none)
+            # so the Exit Monitor enforces the EXACT stop we sized
+            # from. EXIT_POLICY stops need no stamp — the monitor
+            # derives the same policy SL% at adoption. The full sizing
+            # receipt rides on the intent for audit.
+            _stamp: dict = {}
+            if plan["stop_source"] == "BRAIN" and plan.get("stop_price"):
+                _stamp["stop_price"] = float(plan["stop_price"])
+                if not plan.get("target_price") and plan.get("entry_price"):
+                    from shared.exits.policy import get_policy as _gp  # noqa: WPS433
+                    _pol = (await _gp()).get(ctx.lane) or {}
+                    _tp_pct = float(_pol.get("tp_pct") or 8.0)
+                    _sign_tp = 1 if (ctx.intent.get("action") or "").upper() == "BUY" else -1
+                    _stamp["target_price"] = round(
+                        float(plan["entry_price"]) * (1 + _sign_tp * _tp_pct / 100.0), 8,
+                    )
+                    plan["target_price"] = _stamp["target_price"]
+            try:
+                await _db()[SHARED_INTENTS].update_one(
+                    {"intent_id": ctx.intent_id},
+                    {"$set": {**_stamp, "risk_sizing": plan}},
+                )
+                ctx.intent.update(_stamp)
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception as _sz_exc:  # noqa: BLE001
+        logger.warning("risk_sizer failed intent=%s: %s — legacy sizing kept",
+                       ctx.intent_id, _sz_exc)
+
     # 2a-iii. Sized-to-zero is a conviction outcome, not a risk
     # rejection — stamp advisory_only so the kill map reads honestly.
     if final_notional <= 0:

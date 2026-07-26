@@ -32,9 +32,12 @@ def _now_iso() -> str:
 
 
 @pytest.fixture
-def unique_seat():
+def unique_seat(monkeypatch):
     """Unique seat_key per test — includes a timestamp so parallel
-    runs don't collide either."""
+    runs don't collide either. Pins the dynamic-sizer selection path
+    OFF: these tests assert the underlying rank/DAWE mechanics (the
+    scored path is covered in tests/test_risk_sizer.py)."""
+    monkeypatch.setenv("EQUITY_DYNAMIC_RISK_SIZER_ENABLED", "false")
     lane = "equity"
     symbol = f"TEST{int(time.time() * 1000) % 100000}"
     key = build_seat_key(lane, symbol)
