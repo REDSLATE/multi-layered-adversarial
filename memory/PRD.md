@@ -3591,3 +3591,41 @@ EQUITY_DYNAMIC_RISK_SIZER_ENABLED=true, OPTIONS_ENABLED=true.
 - NOTE: preview browser traffic intermittently hits the Emergent
   wake-shim although services run; API bypasses it. Testing agent's
   browser got through.
+
+## 2026-07-26 (cont) — Exit Monitor OPTIONS ADOPTION + deploy readiness
+### Built
+- Webull adapter: _position_row_is_option() detection (explicit
+  instrument_type, else strike+expire heuristic); list_positions now
+  EXCLUDES option rows (CRITICAL fix — an option row parsed as shares
+  would let the equity exit path sell stock not held);
+  list_option_positions() parses contracts defensively + logs the raw
+  row on first sight (docs don't pin the option-row schema).
+- Exit policy: options lane {enabled:false (safe default), sl_pct:50
+  (−50% premium), tp_pct:100, max_hold_h:120,
+  close_before_expiry_days:1}; exit_admin accepts lane=options;
+  ExitMonitorPanel LANES includes options.
+- Monitor: _options_positions() (OCC identity via
+  chain.occ_symbol()), _option_quote() (live premium mid+bid),
+  premium_policy adoption levels, expiry_close_after trigger (closes
+  the day before expiration during RTH), SELL exits via
+  submit_option_limit_order — LIMIT-only at/below bid, stop_loss and
+  escalations price 4× deeper through the bid, escalation cancels via
+  Webull client_order_id; run_once tolerant of stubbed policies.
+- outcomes.record_outcome: ×100 contract multiplier on options dollar
+  PnL (pct unaffected → DAWE folding unchanged).
+### Deploy readiness (operator asked to deploy)
+- deployment_agent found the DOCUMENTED 2026-02-16 regression had
+  RECURRED: `.env`/`.env.*`/`*.env` lines re-appeared in .gitignore →
+  would have shipped prod without env vars (MONGO_URL KeyError, 504s).
+  Removed; git check-ignore clean; re-scan PASS.
+### Verified
+- 9 new tests (tests/test_options_exits.py) + 357 exit/options/risk/
+  webull regression pass; live API shows options exit policy + POST
+  accepts lane=options.
+### Post-deploy watch checklist (operator)
+1. /api/admin/risk-sizer → all lanes enabled, balances LIVE.
+2. First sized entries: intents carry risk_sizing receipts; stop on
+   intent == Exit Monitor plan stop.
+3. Options stays exit-DISABLED until operator enables lane in Exit
+   Monitor panel; first option position will log its raw Webull row
+   (check backend logs to confirm field mapping).
