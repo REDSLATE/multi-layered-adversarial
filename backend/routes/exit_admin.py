@@ -41,8 +41,8 @@ async def update_policy(
     _user: dict = Depends(get_current_user),  # noqa: B008
 ):
     lane = (body.get("lane") or "").strip().lower()
-    if lane not in ("equity", "crypto"):
-        raise HTTPException(status_code=422, detail="lane must be equity|crypto")
+    if lane not in ("equity", "crypto", "options"):
+        raise HTTPException(status_code=422, detail="lane must be equity|crypto|options")
     fields: dict = {}
     if "enabled" in body:
         fields["enabled"] = bool(body["enabled"])

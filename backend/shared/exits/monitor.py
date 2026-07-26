@@ -190,6 +190,59 @@ async def _crypto_price(symbol: str) -> Optional[float]:
         return None
 
 
+async def _options_positions() -> Optional[list[dict]]:
+    """Webull held option contracts, keyed by compact OCC symbol.
+    None = broker unreachable (skip lane this tick)."""
+    try:
+        from shared.broker.webull import get_webull_adapter  # noqa: WPS433
+        from shared.options.chain import occ_symbol  # noqa: WPS433
+        adapter = await get_webull_adapter()
+        if adapter is None:
+            return None
+        rows = await adapter.list_option_positions()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("exit_monitor option position fetch failed: %s", exc)
+        return None
+    out = []
+    for p in rows:
+        try:
+            sym = occ_symbol(p["underlying"], p["expiration"],
+                             p["option_type"], p["strike_price"])
+        except Exception:  # noqa: BLE001
+            continue
+        out.append({
+            "symbol": sym,
+            "qty": float(p["contracts"]),
+            "entry_price": p.get("entry_premium"),
+            "current_price": None,  # premium fetched via option quote
+            "option": {
+                "underlying": p["underlying"],
+                "option_type": p["option_type"],
+                "strike_price": p["strike_price"],
+                "expiration": p["expiration"],
+            },
+        })
+    return out
+
+
+async def _option_quote(occ: str) -> Optional[tuple[float, Optional[float]]]:
+    """(mid, bid) premium from the live option snapshot."""
+    try:
+        from shared.options.chain import _fetch_snapshots  # noqa: WPS433
+        loop = asyncio.get_running_loop()
+        rows = await loop.run_in_executor(None, _fetch_snapshots, [occ])
+        row = rows[0] if rows else {}
+        bid = float(row.get("bid") or 0) or None
+        ask = float(row.get("ask") or 0) or None
+        if bid and ask:
+            return ((bid + ask) / 2.0, bid)
+        if bid:
+            return (bid, bid)
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # ── plan adoption / levels ──────────────────────────────────────────
 
 async def _origin_intent(symbol: str, lane: str) -> Optional[dict]:
@@ -259,11 +312,17 @@ async def _adopt(lane: str, pos: dict, policy: dict) -> dict:
         entry = pos.get("current_price")  # last resort; documented
     entry = float(entry)
 
-    brain = await _brain_levels(symbol, lane)
+    brain = await _brain_levels(symbol, lane) if lane != "options" else None
     origin = await _origin_intent(symbol, lane)
     lane_p = policy[lane]
     if brain and brain[1] < entry < brain[0]:
         target, stop, source = brain[0], brain[1], "brain"
+    elif lane == "options":
+        # PREMIUM-based levels: sl/tp are percentages of the entry
+        # premium (sl 50 = exit at −50% premium).
+        stop = entry * (1.0 - lane_p["sl_pct"] / 100.0)
+        target = entry * (1.0 + lane_p["tp_pct"] / 100.0)
+        source = "premium_policy"
     else:
         stop = entry * (1.0 - lane_p["sl_pct"] / 100.0)
         target = entry * (1.0 + lane_p["tp_pct"] / 100.0)
@@ -287,6 +346,17 @@ async def _adopt(lane: str, pos: dict, policy: dict) -> dict:
         "exit_reason": None,
         "attempts": 0,
     }
+    if lane == "options":
+        opt = pos.get("option") or {}
+        plan["option"] = opt
+        # Force closure ahead of expiration regardless of P&L.
+        try:
+            exp = datetime.strptime(str(opt["expiration"])[:10], "%Y-%m-%d")
+            exp = exp.replace(tzinfo=timezone.utc)
+            days = float(lane_p.get("close_before_expiry_days") or 1.0)
+            plan["expiry_close_after"] = _iso(exp - timedelta(days=days))
+        except Exception:  # noqa: BLE001
+            pass
     plan_store.upsert(plan)
     logger.info(
         "exit_monitor ADOPTED %s %s qty=%.8f entry=%.4f stop=%.4f "
@@ -363,6 +433,8 @@ def _trigger_for(plan: dict, price: float) -> Optional[str]:
         return "stop_loss"
     if price >= float(plan["target_price"]):
         return "take_profit"
+    if plan.get("expiry_close_after") and _iso() > str(plan["expiry_close_after"]):
+        return "expiry_close"
     if _iso() > str(plan["max_hold_until"]):
         return "max_hold"
     return None
@@ -417,6 +489,35 @@ async def _submit_exit(plan: dict, price: float, *, force_market: bool = False) 
                 raise RuntimeError("webull adapter unavailable")
             order = await adapter.submit_close_market(
                 symbol, qty, client_order_id=coid,
+            )
+        elif lane == "options":
+            # Webull prohibits MARKET on options — every exit is a
+            # marketable LIMIT at/below the bid; stop_loss and
+            # escalations price MORE aggressively, never less.
+            from shared.broker.webull import get_webull_adapter  # noqa: WPS433
+            adapter = await get_webull_adapter()
+            if adapter is None:
+                raise RuntimeError("webull adapter unavailable")
+            o = plan.get("option") or {}
+            if not (o.get("underlying") and o.get("strike_price")
+                    and o.get("expiration") and o.get("option_type")):
+                raise RuntimeError("options plan missing contract fields")
+            kind = "limit"
+            base_px = float(plan.get("_bid") or price)
+            aggr = 4.0 if (force_market or trigger == "stop_loss") else 1.0
+            limit_price = max(
+                0.01,
+                round(base_px * (1.0 - aggr * MARKETABLE_LIMIT_BPS / 10_000.0), 2),
+            )
+            order = await adapter.submit_option_limit_order(
+                underlying=str(o["underlying"]),
+                option_type=str(o["option_type"]),
+                strike_price=float(o["strike_price"]),
+                expire_date=str(o["expiration"]),
+                contracts=int(qty),
+                limit_price=limit_price,
+                side="SELL",
+                client_order_id=coid,
             )
         else:
             from shared.crypto.broker_adapter import get_kraken_adapter  # noqa: WPS433
@@ -492,12 +593,19 @@ async def _tend_exiting(plan: dict, price: Optional[float], escalate_after_s: fl
     except ValueError:
         age_s = 0.0
     if eo.get("kind") == "limit" and age_s > escalate_after_s:
-        # Cancel + escalate to MARKET (certainty over price).
+        # Cancel + escalate (crypto → MARKET; options → deeper LIMIT,
+        # Webull prohibits MARKET on options).
         try:
-            from shared.crypto.broker_adapter import get_kraken_adapter  # noqa: WPS433
-            adapter = await get_kraken_adapter()
-            if adapter is not None and eo.get("order_id"):
-                await adapter.cancel_order(eo["order_id"])
+            if plan["lane"] == "options":
+                from shared.broker.webull import get_webull_adapter  # noqa: WPS433
+                adapter = await get_webull_adapter()
+                if adapter is not None and eo.get("client_order_id"):
+                    await adapter.cancel_order(eo["client_order_id"])
+            else:
+                from shared.crypto.broker_adapter import get_kraken_adapter  # noqa: WPS433
+                adapter = await get_kraken_adapter()
+                if adapter is not None and eo.get("order_id"):
+                    await adapter.cancel_order(eo["order_id"])
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "exit_monitor escalation cancel failed %s: %s",
@@ -521,13 +629,14 @@ async def run_once() -> dict:
     policy = await get_policy()
     summary: dict = {"started_at": _iso(), "lanes": {}}
 
-    for lane in ("equity", "crypto"):
-        lane_sum: dict = {"enabled": policy[lane]["enabled"]}
+    for lane in ("equity", "crypto", "options"):
+        lane_pol = policy.get(lane)
+        lane_sum: dict = {"enabled": bool(lane_pol and lane_pol["enabled"])}
         summary["lanes"][lane] = lane_sum
-        if not policy[lane]["enabled"]:
+        if not lane_pol or not lane_pol["enabled"]:
             continue
 
-        if lane == "equity":
+        if lane in ("equity", "options"):
             try:
                 from shared.market_hours import is_equity_rth  # noqa: WPS433
                 if not is_equity_rth():
@@ -535,7 +644,10 @@ async def run_once() -> dict:
                     continue
             except Exception:  # noqa: BLE001
                 pass
-            positions = await _equity_positions()
+            positions = (
+                await _equity_positions() if lane == "equity"
+                else await _options_positions()
+            )
             unmanaged_margin = 0
         else:
             res = await _crypto_positions()
@@ -555,6 +667,10 @@ async def run_once() -> dict:
             price = pos.get("current_price")
             if lane == "crypto" and not price:
                 price = await _crypto_price(plan["symbol"])
+            elif lane == "options" and not price:
+                pb = await _option_quote(plan["symbol"])
+                if pb:
+                    price, plan["_bid"] = pb
             if plan["status"] == "exiting":
                 await _tend_exiting(plan, price, policy["escalate_after_s"])
                 continue
@@ -587,10 +703,14 @@ async def close_now(plan_id: str) -> dict:
         return {"ok": False, "error": "reservation lost (already exiting)"}
     plan = dict(plan_store.get(plan_id) or plan)
     plan["exit_reason"] = plan.get("exit_reason") or "manual_close"
-    price = (
-        await _crypto_price(plan["symbol"])
-        if plan["lane"] == "crypto" else None
-    ) or float(plan.get("entry_price") or 0)
+    price = None
+    if plan["lane"] == "crypto":
+        price = await _crypto_price(plan["symbol"])
+    elif plan["lane"] == "options":
+        pb = await _option_quote(plan["symbol"])
+        if pb:
+            price, plan["_bid"] = pb
+    price = price or float(plan.get("entry_price") or 0)
     await _submit_exit(plan, price, force_market=True)
     fresh = plan_store.get(plan_id) or {}
     ok = bool(fresh.get("exit_order"))

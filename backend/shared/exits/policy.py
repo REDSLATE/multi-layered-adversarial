@@ -16,10 +16,16 @@ POLICY_FLAG_ID = "exit_policy"
 DEFAULTS: dict[str, Any] = {
     "equity": {"enabled": False, "sl_pct": 3.0, "tp_pct": 6.0, "max_hold_h": 24.0},
     "crypto": {"enabled": False, "sl_pct": 3.0, "tp_pct": 8.0, "max_hold_h": 48.0},
+    # Options: sl/tp are PREMIUM percentages (sl 50 = exit at −50%
+    # premium). close_before_expiry_days forces closure ahead of
+    # expiration regardless of P&L (assignment/expiry risk).
+    "options": {"enabled": False, "sl_pct": 50.0, "tp_pct": 100.0,
+                "max_hold_h": 120.0, "close_before_expiry_days": 1.0},
     "escalate_after_s": 120.0,
 }
 
-_LANE_FIELDS = {"enabled", "sl_pct", "tp_pct", "max_hold_h"}
+_LANE_FIELDS = {"enabled", "sl_pct", "tp_pct", "max_hold_h",
+                "close_before_expiry_days"}
 
 # Last-known-good policy (2026-07-23 hot-path audit P0 fix): a Mongo
 # outage previously collapsed get_policy() to DEFAULTS where
@@ -44,15 +50,16 @@ async def get_policy() -> dict:
     out: dict = {"escalate_after_s": float(
         doc.get("escalate_after_s", DEFAULTS["escalate_after_s"])
     )}
-    for lane in ("equity", "crypto"):
+    for lane in ("equity", "crypto", "options"):
         merged = dict(DEFAULTS[lane])
         stored = doc.get(lane) or {}
         for k in _LANE_FIELDS:
             if k in stored and stored[k] is not None:
                 merged[k] = stored[k]
         merged["enabled"] = bool(merged["enabled"])
-        for k in ("sl_pct", "tp_pct", "max_hold_h"):
-            merged[k] = float(merged[k])
+        for k in ("sl_pct", "tp_pct", "max_hold_h", "close_before_expiry_days"):
+            if k in merged:
+                merged[k] = float(merged[k])
         out[lane] = merged
     _LAST_GOOD = out
     return out

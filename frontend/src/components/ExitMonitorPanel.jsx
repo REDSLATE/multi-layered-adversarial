@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Warning, ShieldCheck } from "@phosphor-icons/react";
 
-const LANES = ["equity", "crypto"];
+const LANES = ["equity", "crypto", "options"];
 
 function LaneKnobs({ lane, policy, busy, onSave, onToggle }) {
   const p = policy[lane] || {};

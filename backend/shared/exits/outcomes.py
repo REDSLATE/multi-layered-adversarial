@@ -72,13 +72,16 @@ async def _record(plan: dict) -> dict:
     entry = float(plan.get("entry_price") or 0)
     exit_price = plan.get("exit_price_est")
     qty = float(plan.get("qty_held") or 0)
+    # Options: prices are per-share premiums, qty is contracts —
+    # dollar PnL scales by the contract multiplier (pct unaffected).
+    _mult = 100.0 if (plan.get("lane") == "options") else 1.0
     outcome = _label(plan)
 
     pnl_pct: Optional[float] = None
     pnl_usd: Optional[float] = None
     if exit_price and entry > 0:
         pnl_pct = (float(exit_price) / entry - 1.0) * 100.0
-        pnl_usd = (float(exit_price) - entry) * qty
+        pnl_usd = (float(exit_price) - entry) * qty * _mult
 
     row = {
         "plan_id": plan["plan_id"],

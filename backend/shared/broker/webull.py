@@ -92,6 +92,33 @@ from shared.broker_symbol_resolver import BROKER_SYMBOL_MAP
 logger = logging.getLogger("risedual.broker.webull")
 
 
+_OPT_TYPE_KEYS = ("instrument_type", "instrumentType", "asset_type",
+                  "assetType", "security_type", "securityType")
+_OPT_STRIKE_KEYS = ("strike_price", "strikePrice")
+_OPT_EXPIRE_KEYS = ("option_expire_date", "optionExpireDate", "expire_date",
+                    "expireDate", "expiration_date")
+
+
+def _first_field(row: dict, *keys):
+    for k in keys:
+        v = row.get(k)
+        if v not in (None, ""):
+            return v
+    return None
+
+
+def _position_row_is_option(row: dict) -> bool:
+    """OPTION detection: explicit instrument type first, option-field
+    presence as the fallback heuristic."""
+    t = str(_first_field(row, *_OPT_TYPE_KEYS) or "").upper()
+    if t == "OPTION":
+        return True
+    if t in ("EQUITY", "STOCK", "ETF", "CRYPTO"):
+        return False
+    return bool(_first_field(row, *_OPT_STRIKE_KEYS)
+                and _first_field(row, *_OPT_EXPIRE_KEYS))
+
+
 def _norm_side(s: str) -> str:
     s = (s or "BUY").upper()
     if s not in {"BUY", "SELL"}:
@@ -1743,6 +1770,10 @@ class WebullAdapter(BrokerAdapter):
         # 2026-02-19: real SDK does not have a `position.get_positions`
         # surface; positions are read via
         # `account_v2.get_account_position_details(account_id)`.
+        # 2026-07-26: OPTION rows are EXCLUDED here — an option
+        # position parsed as shares of the underlying would let the
+        # equity exit path try to sell stock the account doesn't
+        # hold. Options ride `list_option_positions()`.
         try:
             account_id = await self._resolve_account_id()
             res = await self._sdk_call(
@@ -1755,6 +1786,8 @@ class WebullAdapter(BrokerAdapter):
         out: list[BrokerPosition] = []
         if isinstance(rows, list):
             for p in rows:
+                if _position_row_is_option(p):
+                    continue
                 qty = float(p.get("quantity") or 0)
                 cost = float(p.get("costPrice") or p.get("avgPrice") or 0)
                 mv = float(p.get("marketValue") or 0)
@@ -1770,6 +1803,64 @@ class WebullAdapter(BrokerAdapter):
                     "unrealized_plpc": (upl / (cost * abs(qty))) if (cost and qty) else 0.0,
                     "current_price": (mv / qty) if qty else None,
                 })
+        return out
+
+    async def list_option_positions(self) -> list[dict]:
+        """Held option contracts from the same position-details feed.
+
+        Field names for option rows are parsed defensively (the docs
+        specify option fields only on the ORDER schema); the raw row
+        is logged on first sight so prod can pin the exact shape."""
+        try:
+            account_id = await self._resolve_account_id()
+            res = await self._sdk_call(
+                self._trade().account_v2.get_account_position_details, account_id,
+            )
+            data = res.json() if hasattr(res, "json") else res
+        except Exception:  # noqa: BLE001
+            return []
+        rows = (data or {}).get("data") or data or []
+        out: list[dict] = []
+        if not isinstance(rows, list):
+            return out
+        for p in rows:
+            if not _position_row_is_option(p):
+                continue
+            logger.info("Webull OPTION position raw row: %r", p)
+            qty = float(p.get("quantity") or p.get("qty") or 0)
+            if qty <= 0:
+                continue
+            strike = _first_field(p, "strike_price", "strikePrice")
+            expire = _first_field(
+                p, "option_expire_date", "optionExpireDate",
+                "expire_date", "expireDate", "expiration_date",
+            )
+            opt_type = _first_field(
+                p, "option_type", "optionType", "call_put", "callPut",
+            )
+            underlying = _first_field(
+                p, "underlying_symbol", "underlyingSymbol", "symbol", "ticker",
+            )
+            if not (strike and expire and opt_type and underlying):
+                logger.warning(
+                    "Webull option position row missing contract fields "
+                    "(strike=%r expire=%r type=%r underlying=%r) — skipped",
+                    strike, expire, opt_type, underlying,
+                )
+                continue
+            cost = float(p.get("costPrice") or p.get("avgPrice")
+                         or p.get("average_price") or 0)
+            out.append({
+                "underlying": str(underlying).upper(),
+                "option_type": (
+                    "CALL" if str(opt_type).upper().startswith("C") else "PUT"
+                ),
+                "strike_price": float(strike),
+                "expiration": str(expire)[:10],
+                "contracts": qty,
+                "entry_premium": cost or None,
+                "unrealized_pl": float(p.get("unrealizedPnL") or 0),
+            })
         return out
 
     async def submit_close_market(

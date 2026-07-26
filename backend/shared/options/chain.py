@@ -33,6 +33,16 @@ def reset_for_tests() -> None:
     _chain_cache.clear()
 
 
+def occ_symbol(underlying: str, expire_date: str, option_type: str,
+               strike: float) -> str:
+    """Compact OCC-style symbol matching Webull chain symbols
+    (AAPL260828C00340000)."""
+    d = datetime.strptime(str(expire_date)[:10], "%Y-%m-%d")
+    cp = "C" if str(option_type).upper().startswith("C") else "P"
+    return (f"{underlying.upper().strip()}{d.strftime('%y%m%d')}{cp}"
+            f"{int(round(float(strike) * 1000)):08d}")
+
+
 def _api_client():
     from shared.market_data.webull_quotes import get_quotes_client  # noqa: WPS433
     c = get_quotes_client()
