@@ -1,0 +1,702 @@
+278121964761504 2026-07-06 08:15:03,000 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/detail",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29",
+    "client_order_id": "SMOKETEST-ORDER-cb606af9"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-06T08:15:02Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "8c3253cc-ed05-56dd-91bf-e6817bcb94f8",
+    "x-signature": "5QiBKWeJNBii0Vv688sQnbuUie4=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'ORDER_NOT_FOUND', 'error_code': 'ORDER_NOT_FOUND'} ServerException:HTTP Status: 417, Code: ORDER_NOT_FOUND, Msg: ORDER_NOT_FOUND, RequestID: e3b3c004-8d3f-4a18-8ecc-79b2775a03a8
+278121964761504 2026-07-06 08:15:03,001 webull.core.client ERROR get_response exception. {
+  "error_code": "ORDER_NOT_FOUND",
+  "error_msg": "ORDER_NOT_FOUND",
+  "http_status": 417,
+  "request_id": "e3b3c004-8d3f-4a18-8ecc-79b2775a03a8"
+}
+278121991172512 2026-07-06 08:15:04,930 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/detail",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29",
+    "client_order_id": "SMOKETEST-ORDER-cb606af9"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-06T08:15:04Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "2760fdd0-9aed-5f78-8564-bceb6e4fe31b",
+    "x-signature": "esgl7ml2zxVGDmB7I1/ATgHEg9Y=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'ORDER_NOT_FOUND', 'error_code': 'ORDER_NOT_FOUND'} ServerException:HTTP Status: 417, Code: ORDER_NOT_FOUND, Msg: ORDER_NOT_FOUND, RequestID: 6c77ff5b-528b-4b35-b744-91acf5f79d12
+278121991172512 2026-07-06 08:15:04,930 webull.core.client ERROR get_response exception. {
+  "error_code": "ORDER_NOT_FOUND",
+  "error_msg": "ORDER_NOT_FOUND",
+  "http_status": 417,
+  "request_id": "6c77ff5b-528b-4b35-b744-91acf5f79d12"
+}
+278121395646880 2026-07-06 08:15:05,966 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/detail",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29",
+    "client_order_id": "SMOKETEST-ORDER-cb606af9"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-06T08:15:05Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "c4374ce5-c1ae-5f99-ba12-e37e0cabded6",
+    "x-signature": "lBx+Y4wcfdq9q6jS5G1zgj8ydVY=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'Too many requests', 'error_code': 'TOO_MANY_REQUESTS'} ServerException:HTTP Status: 429, Code: TOO_MANY_REQUESTS, Msg: Too many requests, RequestID: bdf49f10-f36b-4d01-8f1b-368576076382
+278121395646880 2026-07-06 08:15:05,967 webull.core.client ERROR get_response exception. {
+  "error_code": "TOO_MANY_REQUESTS",
+  "error_msg": "Too many requests",
+  "http_status": 429,
+  "request_id": "bdf49f10-f36b-4d01-8f1b-368576076382"
+}
+278121991172512 2026-07-06 08:15:08,314 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/detail",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29",
+    "client_order_id": "SMOKETEST-ORDER-cb606af9"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-06T08:15:08Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "cbc12b27-fd66-5662-b6bd-8ca5d9709287",
+    "x-signature": "7TD9XfxyGNnKdErH3jTWo7AX1aw=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'ORDER_NOT_FOUND', 'error_code': 'ORDER_NOT_FOUND'} ServerException:HTTP Status: 417, Code: ORDER_NOT_FOUND, Msg: ORDER_NOT_FOUND, RequestID: da6f36b3-0d86-4e11-a87f-1be19c906f1f
+278121991172512 2026-07-06 08:15:08,315 webull.core.client ERROR get_response exception. {
+  "error_code": "ORDER_NOT_FOUND",
+  "error_msg": "ORDER_NOT_FOUND",
+  "http_status": 417,
+  "request_id": "da6f36b3-0d86-4e11-a87f-1be19c906f1f"
+}
+278121982718368 2026-07-06 08:15:09,703 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/detail",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29",
+    "client_order_id": "SMOKETEST-ORDER-cb606af9"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-06T08:15:09Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "e593dfaf-e6af-560c-bce7-cb11f0642e1d",
+    "x-signature": "w3Lbaax2vhf61fK8tsm1h/kL9F8=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'ORDER_NOT_FOUND', 'error_code': 'ORDER_NOT_FOUND'} ServerException:HTTP Status: 417, Code: ORDER_NOT_FOUND, Msg: ORDER_NOT_FOUND, RequestID: b624c2d2-7963-4d94-9912-dcbc2e11693f
+278121982718368 2026-07-06 08:15:09,703 webull.core.client ERROR get_response exception. {
+  "error_code": "ORDER_NOT_FOUND",
+  "error_msg": "ORDER_NOT_FOUND",
+  "http_status": 417,
+  "request_id": "b624c2d2-7963-4d94-9912-dcbc2e11693f"
+}
+278121991172512 2026-07-06 08:15:35,231 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/detail",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29",
+    "client_order_id": "SMOKETEST-ORDER-cb606af9"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-06T08:15:35Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "d1372fa0-6847-5076-8183-dd2f9e93abc8",
+    "x-signature": "I2hrFQX/DW8a3zN/y8uZlLPj2lY=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'ORDER_NOT_FOUND', 'error_code': 'ORDER_NOT_FOUND'} ServerException:HTTP Status: 417, Code: ORDER_NOT_FOUND, Msg: ORDER_NOT_FOUND, RequestID: 93c3868b-e20c-47c5-a714-ee50e4523762
+278121991172512 2026-07-06 08:15:35,232 webull.core.client ERROR get_response exception. {
+  "error_code": "ORDER_NOT_FOUND",
+  "error_msg": "ORDER_NOT_FOUND",
+  "http_status": 417,
+  "request_id": "93c3868b-e20c-47c5-a714-ee50e4523762"
+}
+275291809051040 2026-07-06 08:21:15,633 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/trade/order/detail",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "account_id": "F8ISIGG74NU0C495ILNGG99D29",
+    "client_order_id": "SMOKE4-ORD-5d09d24d"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-06T08:21:15Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "b287e512-5045-5f64-a39e-667c30ca73c8",
+    "x-signature": "Giv5zxDU2z1ab5t/zyQ8LxrdKXs=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'message': 'ORDER_NOT_FOUND', 'error_code': 'ORDER_NOT_FOUND'} ServerException:HTTP Status: 417, Code: ORDER_NOT_FOUND, Msg: ORDER_NOT_FOUND, RequestID: 5fca4868-3ae3-40cf-9b7b-9628d1f7268d
+275291809051040 2026-07-06 08:21:15,634 webull.core.client ERROR get_response exception. {
+  "error_code": "ORDER_NOT_FOUND",
+  "error_msg": "ORDER_NOT_FOUND",
+  "http_status": 417,
+  "request_id": "5fca4868-3ae3-40cf-9b7b-9628d1f7268d"
+}
+280024781156768 2026-07-26 16:38:23,687 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "CON45CDEBE349",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-26T16:38:23Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "24b3627d-a257-5e38-b72b-c46af00b0a07",
+    "x-signature": "DG7z9JJwykCVWlGXm3ip3p2O4vQ=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [CON45CDEBE349].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [CON45CDEBE349]., RequestID: 96270f35-6533-4bb7-836b-b8c04b0e36b8
+280024781156768 2026-07-26 16:38:23,687 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [CON45CDEBE349].",
+  "http_status": 417,
+  "request_id": "96270f35-6533-4bb7-836b-b8c04b0e36b8"
+}
+280024781156768 2026-07-26 16:38:23,997 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "CON7F6C6EAAE7",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-26T16:38:23Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "c9f4cc54-5c70-50f7-98a6-6c43407a8baf",
+    "x-signature": "rCxYM0D0dDpFClh+gfN68iejKCw=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [CON7F6C6EAAE7].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [CON7F6C6EAAE7]., RequestID: 3448169e-ebff-43b9-b05d-48095388f976
+280024781156768 2026-07-26 16:38:23,997 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [CON7F6C6EAAE7].",
+  "http_status": 417,
+  "request_id": "3448169e-ebff-43b9-b05d-48095388f976"
+}
+281211086696864 2026-07-26 16:40:09,917 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "NDB56C67D",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-26T16:40:09Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "4a553d2f-c861-5215-8fda-961707d9b62b",
+    "x-signature": "U9Gn/pBECt7Zvv9i2mWkkGic6iw=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [NDB56C67D].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [NDB56C67D]., RequestID: 9ce54d36-495f-490a-9685-8adfac3344a8
+281211086696864 2026-07-26 16:40:09,917 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [NDB56C67D].",
+  "http_status": 417,
+  "request_id": "9ce54d36-495f-490a-9685-8adfac3344a8"
+}
+280024781156768 2026-07-26 16:43:07,801 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "NVDA-ROLE-SCORING-PROBE-948B78CBEFCD",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-26T16:43:07Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "ad2079ca-b932-5db5-90f1-c3bb2ab48ed7",
+    "x-signature": "Y+dxz4cjqNF49rCB6WMMWl0TR6w=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [NVDA-ROLE-SCORING-PROBE-948B78CBEFCD].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [NVDA-ROLE-SCORING-PROBE-948B78CBEFCD]., RequestID: efb6e5d1-85b6-458f-acf5-2c1de49f6a9a
+280024781156768 2026-07-26 16:43:07,801 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [NVDA-ROLE-SCORING-PROBE-948B78CBEFCD].",
+  "http_status": 417,
+  "request_id": "efb6e5d1-85b6-458f-acf5-2c1de49f6a9a"
+}
+280024781156768 2026-07-26 16:43:14,105 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "FIX1785084193",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-26T16:43:14Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "fe5aa832-7296-566b-93a1-0817a70e2fa6",
+    "x-signature": "hG7G2rfKq2iHkeVDSE21lwlB4+U=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [FIX1785084193].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [FIX1785084193]., RequestID: 1d10062c-1b6a-42a7-bd38-7db295e31694
+280024781156768 2026-07-26 16:43:14,105 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [FIX1785084193].",
+  "http_status": 417,
+  "request_id": "1d10062c-1b6a-42a7-bd38-7db295e31694"
+}
+279961738932640 2026-07-26 17:25:14,139 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "CON04FA263659",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-26T17:25:14Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "a7505fae-38af-5f7d-8369-3a7f42c553c8",
+    "x-signature": "UOieu1uh7yzCnc3mDa0egj6iKpE=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [CON04FA263659].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [CON04FA263659]., RequestID: ae1a2216-7de4-44a9-b07a-61a6649d48e4
+279961738932640 2026-07-26 17:25:14,141 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [CON04FA263659].",
+  "http_status": 417,
+  "request_id": "ae1a2216-7de4-44a9-b07a-61a6649d48e4"
+}
+279961738932640 2026-07-26 17:25:15,300 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "CON5C8A4A9117",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-26T17:25:15Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "6ee291fc-6535-5da5-834e-d6980461a378",
+    "x-signature": "9QOwip0wll4v0fXwYyXmZyvoutw=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [CON5C8A4A9117].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [CON5C8A4A9117]., RequestID: f99ae370-9c35-43a5-b8bc-a8fa8673fa61
+279961738932640 2026-07-26 17:25:15,300 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [CON5C8A4A9117].",
+  "http_status": 417,
+  "request_id": "f99ae370-9c35-43a5-b8bc-a8fa8673fa61"
+}
+279961738932640 2026-07-26 17:25:15,744 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "CON690A22923E",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-26T17:25:15Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "c0413f3b-b719-5bb5-bed6-0894ca86aaa0",
+    "x-signature": "06SVrvrkKPvoIoe2pvtJVu4GjVA=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [CON690A22923E].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [CON690A22923E]., RequestID: 4ffd0e11-c7b2-4884-97cf-71015a5b1908
+279961738932640 2026-07-26 17:25:15,744 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [CON690A22923E].",
+  "http_status": 417,
+  "request_id": "4ffd0e11-c7b2-4884-97cf-71015a5b1908"
+}
+272733912953248 2026-07-26 17:27:00,390 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "NDB9008E0",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-26T17:27:00Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "20136e6c-6968-563b-a3d6-a4c031a6f304",
+    "x-signature": "8kXS1jLtipxphlr+LI76RApD92M=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [NDB9008E0].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [NDB9008E0]., RequestID: 38172ce5-fcb5-4897-bb2a-a1d9d5250349
+272733912953248 2026-07-26 17:27:00,390 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [NDB9008E0].",
+  "http_status": 417,
+  "request_id": "38172ce5-fcb5-4897-bb2a-a1d9d5250349"
+}
+279961738932640 2026-07-26 17:29:48,812 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "NVDA-ROLE-SCORING-PROBE-535BD2C279D5",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-26T17:29:48Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "fb985f58-3270-5c57-9b1e-c18c699d46a7",
+    "x-signature": "7vswKhEDMTTOP2drfMUjvMMg8Ls=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [NVDA-ROLE-SCORING-PROBE-535BD2C279D5].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [NVDA-ROLE-SCORING-PROBE-535BD2C279D5]., RequestID: 7e0991be-4525-41fb-8e36-2f4e6fa33fef
+279961738932640 2026-07-26 17:29:48,812 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [NVDA-ROLE-SCORING-PROBE-535BD2C279D5].",
+  "http_status": 417,
+  "request_id": "7e0991be-4525-41fb-8e36-2f4e6fa33fef"
+}
+279961738932640 2026-07-26 17:29:54,943 webull.core.client ERROR ServerException occurred. Host:api.webull.com SDK-Version:2.0.10 Request:{
+  "_version": "v2",
+  "_action_name": "/openapi/market-data/stock/snapshot",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {
+    "symbols": "FIX1785086994",
+    "category": "US_STOCK"
+  },
+  "_method": "GET",
+  "_header": {
+    "x-version": "v2",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "bf67888c79f28465cba7afc02717dbcb",
+    "x-timestamp": "2026-07-26T17:29:54Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA1",
+    "x-signature-nonce": "dcba4c65-b897-5e30-9120-f69e4eb7acad",
+    "x-signature": "9sOsRVCf6gX++Teu7Nrkar4fIm0=",
+    "User-Agent": "WebullApiSDK (Linux 6.12.68+;aarch64) Python/3.11.15 Core/2.0.10 python-requests/2.33.1",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/root/.venv/lib/python3.11/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'INVALID_SYMBOL', 'message': 'The symbols does not exist in the category. [FIX1785086994].', 'status': 417} ServerException:HTTP Status: 417, Code: INVALID_SYMBOL, Msg: The symbols does not exist in the category. [FIX1785086994]., RequestID: f73cf6da-73b7-4ec1-9ca7-412c93cb3b4a
+279961738932640 2026-07-26 17:29:54,943 webull.core.client ERROR get_response exception. {
+  "error_code": "INVALID_SYMBOL",
+  "error_msg": "The symbols does not exist in the category. [FIX1785086994].",
+  "http_status": 417,
+  "request_id": "f73cf6da-73b7-4ec1-9ca7-412c93cb3b4a"
+}

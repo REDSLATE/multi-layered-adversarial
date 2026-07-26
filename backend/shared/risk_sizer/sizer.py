@@ -78,6 +78,7 @@ async def build_position_plan(
     intent: dict,
     *,
     governor_multiplier: float,
+    skip_roadguard: bool = False,
 ) -> dict:
     """Full sizing decision. `approved=False` plans carry the exact
     rejection reason. Approved plans reserve pending risk atomically
@@ -102,10 +103,14 @@ async def build_position_plan(
     # RoadGuard hard block — same authority the router's master-switch
     # gate enforces, consulted here so a sizer-level plan can NEVER be
     # approved while trading is frozen (final notional forced to 0).
+    # `skip_roadguard` exists ONLY for read-only admin previews.
     try:
         from shared.hotpath import policy_snapshot  # noqa: WPS433
         _ps = policy_snapshot.get()
-        if not _ps.get("master_switch_enabled", True) or _ps.get("broker_freeze_reason"):
+        if not skip_roadguard and (
+            not _ps.get("master_switch_enabled", True)
+            or _ps.get("broker_freeze_reason")
+        ):
             return _reject(
                 "roadguard_hard_block",
                 roadguard_reason=_ps.get("broker_freeze_reason") or "master_switch_off",

@@ -12,6 +12,7 @@ import GainGoalPanel from "@/components/GainGoalPanel";
 import ScannerPanel from "@/components/ScannerPanel";
 import DailyBudgetTile from "@/components/DailyBudgetTile";
 import OpportunityPolicyPanel from "@/components/OpportunityPolicyPanel";
+import OptionsPanel from "@/components/OptionsPanel";
 
 /**
  * Operator Control — one-glance status + one-click toggles for the
@@ -683,6 +684,7 @@ export default function OperatorControl() {
       <ExitMonitorPanel />
       <ScannerPanel />
       <GainGoalPanel />
+      <OptionsPanel />
       <ExpectancyPanel />
 
       {/* Last N pulse ticks */}
