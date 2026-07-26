@@ -3548,3 +3548,21 @@ EQUITY_DYNAMIC_RISK_SIZER_ENABLED=true, OPTIONS_ENABLED=true.
   exits via place_option SELL).
 - Brains emitting options intents (they can already: lane="options",
   symbol=underlying, action BUY/SHORT — MC resolves the contract).
+
+## 2026-07-26 (cont) — OPRA Open API subscription ACTIVATED, options feed LIVE
+- Operator subscribed to "OPRA Real-Time Non-display" ($4.99/mo) under
+  Open API Advanced Quotes (NOT the Terminal section — key distinction:
+  Terminal quotes power the app, Open API quotes bind to the API key).
+  Propagation took ~5 minutes after purchase.
+- LIVE first resolution: AAPL260828C00340000 ($340 CALL, exp
+  2026-08-28, DTE 33, premium $9.00, bid 8.80/ask 9.20, OI 2069,
+  delta 0.444, theta -0.165, IV 28.2%) — full quality-gate pass,
+  delta-targeted pick. Entire options data path operational.
+- Polygon alternative evaluated live with existing key: contracts OK,
+  snapshot NOT_AUTHORIZED (needs ~$29+/mo upgrade) — Webull OPRA won.
+- KNOWN SIZING REALITY: at ~$569 account equity, 0.5% risk = $2.85
+  budget; a $9-premium contract = $900 max loss → engine rejects
+  options_below_minimum_contracts. CORRECT fail-closed behavior.
+  Options entries become viable with account growth or deliberate
+  operator knob changes (premium_stop_fraction < 1.0 and/or higher
+  options risk_fraction via POST /api/admin/risk-sizer/policy).
