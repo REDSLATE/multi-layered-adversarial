@@ -220,7 +220,7 @@ def mc_canonical_gate(intent: Dict[str, Any]) -> Dict[str, Any]:
     if not symbol:
         errors.append("MISSING_SYMBOL")
 
-    if lane not in {"crypto", "equity"}:
+    if lane not in {"crypto", "equity", "options"}:
         errors.append("BAD_LANE")
 
     verdict = "APPROVED" if not errors else "BLOCKED"

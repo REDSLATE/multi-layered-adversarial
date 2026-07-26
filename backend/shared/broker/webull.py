@@ -773,6 +773,117 @@ class WebullAdapter(BrokerAdapter):
         # Webull documents US-equity prices at 2 decimals.
         return "LIMIT", f"{limit_price:.2f}", session, ext_flag
 
+    async def submit_option_limit_order(
+        self,
+        *,
+        underlying: str,
+        option_type: str,
+        strike_price: float,
+        expire_date: str,
+        contracts: int,
+        limit_price: float,
+        side: str = "BUY",
+        client_order_id: Optional[str] = None,
+        mc_receipt: Optional[dict] = None,
+    ) -> dict:
+        """Single-leg US option LIMIT order via place_option (v2).
+
+        Webull options doctrine (developer.webull.com trade-api/options):
+        MARKET is NOT supported for options — LIMIT only. Sides are
+        BUY/SELL (no SHORT). TIF DAY. client_order_id max 32 chars.
+        Sizing/caps are the risk sizer's job upstream; the adapter
+        keeps only the ARMED belt-and-braces gate.
+        """
+        if not is_webull_armed():
+            raise WebullCapBlocked(
+                "WEBULL_NOT_ARMED — set WEBULL_ARMED=true in .env; NO_TRADE"
+            )
+        contracts = int(contracts)
+        if contracts < 1:
+            raise ValueError("submit_option_limit_order requires contracts >= 1")
+        if float(limit_price) <= 0:
+            raise ValueError("submit_option_limit_order requires limit_price > 0")
+        opt_type = (option_type or "").upper()
+        if opt_type not in ("CALL", "PUT"):
+            raise ValueError(f"option_type must be CALL/PUT, got {option_type!r}")
+        side_str = _norm_side(side)
+        sym_u = (underlying or "").upper().strip()
+        order_id = (client_order_id or str(uuid.uuid4()).replace("-", ""))[:32]
+        account_id = await self._resolve_account_id()
+
+        leg = {
+            "side": side_str,
+            "quantity": str(contracts),
+            "symbol": sym_u,
+            "strike_price": f"{float(strike_price):.2f}",
+            "option_expire_date": str(expire_date)[:10],
+            "instrument_type": "OPTION",
+            "option_type": opt_type,
+            "market": "US",
+        }
+        new_order = {
+            "client_order_id": order_id,
+            "combo_type": "NORMAL",
+            "order_type": "LIMIT",
+            "limit_price": f"{float(limit_price):.2f}",
+            "quantity": str(contracts),
+            "option_strategy": "SINGLE",
+            "side": side_str,
+            "time_in_force": "DAY",
+            "entrust_type": "QTY",
+            "instrument_type": "OPTION",
+            "market": "US",
+            "symbol": sym_u,
+            "legs": [leg],
+        }
+        logger.info(
+            "Webull place_option REQUEST account_id=%s receipt_sig=%s order=%r",
+            account_id, ((mc_receipt or {}).get("signature") or "")[:12], new_order,
+        )
+        try:
+            res = await self._sdk_call(
+                self._trade().order_v2.place_option, account_id, [new_order],
+            )
+            data = res.json() if hasattr(res, "json") else res
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(f"Webull place_option failed: {e}") from e
+
+        if isinstance(data, dict):
+            code = data.get("code")
+            if code not in (None, "200", 200):
+                raise RuntimeError(
+                    f"Webull place_option returned code={code} "
+                    f"msg={data.get('msg')!r}"
+                )
+        body = (data or {}).get("data") if isinstance(data, dict) else data
+        if isinstance(body, list):
+            body = body[0] if body else {}
+        body = body if isinstance(body, dict) else {}
+
+        return {
+            "order_id": str(
+                body.get("orderId") or body.get("order_id") or
+                body.get("client_order_id") or order_id
+            ),
+            "client_order_id": order_id,
+            "symbol": sym_u,
+            "option_symbol": f"{sym_u} {expire_date} {opt_type} {strike_price}",
+            "qty": float(contracts),
+            "contracts": contracts,
+            "notional": round(contracts * float(limit_price) * 100.0, 2),
+            "side": side_str,
+            "type": "limit",
+            "limit_price": float(limit_price),
+            "time_in_force": "DAY",
+            "status": str(body.get("status") or "SUBMITTED"),
+            "submitted_at": body.get("createTime") or body.get("submitted_at"),
+            "filled_qty": float(body.get("filledQuantity") or 0),
+            "filled_avg_price": (
+                float(body["averagePrice"])
+                if body.get("averagePrice") is not None else None
+            ),
+        }
+
     async def submit_market_order(
         self,
         symbol: str,

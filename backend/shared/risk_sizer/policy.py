@@ -52,6 +52,7 @@ DEFAULTS: dict[str, Any] = {
         "max_spread_fraction": 0.10,       # (ask-bid)/mid
         "min_abs_delta": 0.25,
         "max_abs_delta": 0.85,
+        "target_abs_delta": 0.50,
         "max_theta_fraction_per_day": 0.03,
     },
     "selection": {

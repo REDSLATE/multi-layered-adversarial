@@ -51,7 +51,7 @@ router = APIRouter(prefix="/admin/broker/lanes", tags=["broker-lanes"])
 
 # The only legitimate lane identifiers. Keeps a typo from accidentally
 # creating a ghost `lane=equiti` toggle that does nothing.
-KNOWN_LANES: tuple[str, ...] = ("equity", "crypto")
+KNOWN_LANES: tuple[str, ...] = ("equity", "crypto", "options")
 
 
 def _now_iso() -> str:

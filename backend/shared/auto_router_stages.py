@@ -353,6 +353,57 @@ async def _gate_risk(ctx: RouteContext) -> Optional[dict]:
         _is_entry = (ctx.intent.get("action") or "").upper() in ("BUY", "SHORT")
         if _is_entry and _sizer_enabled((ctx.intent.get("lane") or "").lower()):
             from shared.risk_sizer.sizer import build_position_plan  # noqa: WPS433
+            # Options intents that carry only underlying + direction
+            # get the concrete contract resolved here (chain feed →
+            # premium/greeks/OI) BEFORE sizing. Unresolvable → NO_TRADE.
+            if ((ctx.intent.get("lane") or "").lower() == "options"
+                    and not ctx.intent.get("option")):
+                from shared.options.chain import resolve_contract  # noqa: WPS433
+                from shared.risk_sizer.policy import get_sizer_policy  # noqa: WPS433
+                _opt_pol = (await get_sizer_policy())["options"]
+                _res = await resolve_contract(
+                    ctx.intent.get("symbol") or "",
+                    ctx.intent.get("action") or "BUY", _opt_pol,
+                )
+                if not _res.get("contract"):
+                    _why = _res.get("reason") or "unresolved"
+                    await executions.record(
+                        intent=ctx.intent, seat_verdict=sd.verdict,
+                        seat_holder=sd.executor, seat_reason=sd.reason,
+                        strategist=sd.strategist, governor=sd.governor,
+                        executor=sd.executor, auditor=sd.auditor,
+                        angels=sd.angels, risk_multiplier=sd.risk_multiplier,
+                        risk_ok=False,
+                        risk_reason=f"options_contract_unresolved:{_why}",
+                        notional_usd=0.0, ok=False,
+                    )
+                    try:
+                        await _db()[SHARED_INTENTS].update_one(
+                            {"intent_id": ctx.intent_id},
+                            {"$set": {
+                                "gate_state": "blocked",
+                                "risk_reason": f"options_contract_unresolved:{_why}",
+                                "broker_reason": "OPTIONS_CONTRACT_UNRESOLVED",
+                                "options_resolution": {
+                                    k: _res.get(k) for k in
+                                    ("reason", "spot", "expiration",
+                                     "considered", "rejections")
+                                },
+                                "last_submit_ts": _now_iso(),
+                            }},
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return {"verdict": "blocked",
+                            "reason": f"options_contract_unresolved:{_why}"}
+                ctx.intent["option"] = _res["contract"]
+                try:
+                    await _db()[SHARED_INTENTS].update_one(
+                        {"intent_id": ctx.intent_id},
+                        {"$set": {"option": _res["contract"]}},
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             _gm = min(1.0, max(0.0, sd.risk_multiplier)) * arb_mult
             if gain_goal_throttled and adjusted_notional > 0:
                 _gm *= final_notional / adjusted_notional

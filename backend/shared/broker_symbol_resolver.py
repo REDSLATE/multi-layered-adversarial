@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
 
-LaneT = Literal["equity", "crypto"]
+LaneT = Literal["equity", "crypto", "options"]
 
 
 # Sentinel returned by the resolver when a (canonical, broker) pair has
@@ -116,6 +116,21 @@ def compose(symbol: str, lane: Optional[str]) -> AssetKey:
         return AssetKey(
             canonical=f"EQ:{sym}",
             lane="equity",
+            base=sym,
+            quote=None,
+        )
+
+    if lane_l == "options":
+        # Options intents carry the UNDERLYING ticker as symbol; the
+        # concrete contract (strike/expiry/type) rides on
+        # `intent.option` and never enters the canonical key.
+        if not sym.isalnum():
+            raise CanonicalError(
+                f"options underlying symbol must be alphanumeric, got {sym!r}"
+            )
+        return AssetKey(
+            canonical=f"OPT:{sym}",
+            lane="options",
             base=sym,
             quote=None,
         )
@@ -400,6 +415,7 @@ _RULE_BASED_SYMBOL_BROKERS: frozenset[str] = frozenset({"webull"})
 LANE_BROKER_REGISTRY: dict[LaneT, str] = {
     "equity": "webull",
     "crypto": "kraken",
+    "options": "webull",
 }
 
 

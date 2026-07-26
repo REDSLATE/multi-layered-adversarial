@@ -292,6 +292,9 @@ def compose_asset(intent: dict) -> AssetKey:
         if canonical.startswith("EQ:"):
             base = canonical.split(":", 1)[1]
             return AssetKey(canonical=canonical, lane="equity", base=base, quote=None)
+        if canonical.startswith("OPT:"):
+            base = canonical.split(":", 1)[1]
+            return AssetKey(canonical=canonical, lane="options", base=base, quote=None)
         if canonical.startswith("CRYPTO:"):
             tail = canonical.split(":", 1)[1]
             base, _, quote = tail.partition("-")
@@ -432,8 +435,7 @@ async def route_order(
     #     pin (operator, 2026-06-10): WEBULL_ARMED must be true AND
     #     notional must satisfy $3 ≤ N ≤ $10 per ticker for the
     #     small-pilot route. The cap evaluator carries both checks.
-    if broker_name == "webull":
-        # 2026-02-20: per-order cap now scales to live buying power
+    if broker_name == "webull" and asset.lane != "options":
         # (5% of BP default, env-overridable via WEBULL_PCT_OF_BUYING_POWER).
         # If the BP fetch fails, the cap falls back to the env-only
         # ceiling — never to $0.
@@ -446,16 +448,21 @@ async def route_order(
         if not decision.ok:
             raise BrokerRouteBlocked(decision.reason)
 
-    # 3. Translate canonical → broker-native.
-    try:
-        if broker_name == "kraken":
-            from shared.broker_symbol_resolver import (  # noqa: WPS433
-                ensure_kraken_overrides_fresh,
-            )
-            await ensure_kraken_overrides_fresh()
-        broker_symbol = resolve_broker_symbol(asset, broker_name)
-    except BrokerSymbolUnresolved as e:
-        raise BrokerRouteBlocked(str(e)) from e
+    # 3. Translate canonical → broker-native. Options orders carry
+    #    the full contract on `intent.option`; the underlying ticker
+    #    is the only symbol Webull's option endpoint needs.
+    if asset.lane == "options":
+        broker_symbol = asset.base
+    else:
+        try:
+            if broker_name == "kraken":
+                from shared.broker_symbol_resolver import (  # noqa: WPS433
+                    ensure_kraken_overrides_fresh,
+                )
+                await ensure_kraken_overrides_fresh()
+            broker_symbol = resolve_broker_symbol(asset, broker_name)
+        except BrokerSymbolUnresolved as e:
+            raise BrokerRouteBlocked(str(e)) from e
 
     # 4. Fetch the live adapter.
     loader = ADAPTER_LOADERS.get(broker_name)
@@ -504,7 +511,42 @@ async def route_order(
         except (TypeError, ValueError):
             short_leverage = 2
     try:
-        if limit_price is not None and float(limit_price) > 0:
+        if asset.lane == "options":
+            o = intent.get("option") or {}
+            missing = [k for k in
+                       ("symbol", "option_type", "strike_price",
+                        "expiration", "premium")
+                       if not o.get(k)]
+            if missing:
+                raise BrokerRouteBlocked(
+                    f"options intent {intent_id} missing contract fields "
+                    f"{missing}; NO_TRADE"
+                )
+            mult = float(o.get("multiplier") or 100.0)
+            premium = float(o["premium"])
+            contracts = int(
+                (intent.get("risk_sizing") or {}).get("contracts")
+                or round(float(notional_usd) / (premium * mult))
+            )
+            if contracts < 1:
+                raise BrokerRouteBlocked(
+                    f"options order {intent_id} sized below 1 contract; NO_TRADE"
+                )
+            # Marketable limit at the ask — the sizer's spread gate
+            # (≤10% of mid) already bounds the worst-case give-up.
+            opt_limit = float(o.get("ask") or premium)
+            order = await adapter.submit_option_limit_order(
+                underlying=asset.base,
+                option_type=str(o["option_type"]),
+                strike_price=float(o["strike_price"]),
+                expire_date=str(o["expiration"]),
+                contracts=contracts,
+                limit_price=opt_limit,
+                side=side,
+                client_order_id=client_order_id,
+                mc_receipt=receipt_check.get("receipt"),
+            )
+        elif limit_price is not None and float(limit_price) > 0:
             # Convert notional → qty using the limit price. Adapters
             # below accept `qty` directly on submit_limit_order.
             qty = float(notional_usd) / float(limit_price)
