@@ -3566,3 +3566,28 @@ EQUITY_DYNAMIC_RISK_SIZER_ENABLED=true, OPTIONS_ENABLED=true.
   Options entries become viable with account growth or deliberate
   operator knob changes (premium_stop_fraction < 1.0 and/or higher
   options risk_fraction via POST /api/admin/risk-sizer/policy).
+
+## 2026-07-26 (cont) — Options Panel in Operator Control (SHIPPED)
+- frontend/src/components/OptionsPanel.jsx rendered in OperatorControl
+  (after GainGoalPanel): status dots (lane enabled + OPRA feed
+  entitlement), sizing-knob editor (risk_fraction,
+  premium_stop_fraction, max_premium_fraction, target_abs_delta,
+  min/max DTE → POST /admin/risk-sizer/policy {options}), and a
+  contract dry-run box (underlying + CALL/PUT → resolve → contract
+  card with premium/bid-ask/spread/OI/Δ/Θ/IV/DTE + WOULD SIZE /
+  WOULD NOT SIZE verdict + ROADGUARD FROZEN indicator).
+- Backend: /api/admin/options/resolve now embeds a `sizing` preview —
+  runs the REAL build_position_plan with new skip_roadguard=True kwarg
+  (admin-preview only; no intent_id → no pending reservation) and a
+  roadguard_clear flag. Engine default remains strict.
+- LESSON (agent): two parallel search_replace edits to the SAME file
+  raced and one overwrote the other (sizer.py signature edit lost).
+  Sequential edits per file from now on. Also: stale __pycache__ can
+  mask a lost edit — verify with inspect.signature.
+- Verified: testing agent iteration_34 — all 7 checks pass, 39/39
+  pytest, UI e2e in real browser (dry-run showed live
+  AAPL260828C00340000, sizing verdict exact, knobs saved+restored,
+  ZZZZ shows no contract · empty_chain, no console errors).
+- NOTE: preview browser traffic intermittently hits the Emergent
+  wake-shim although services run; API bypasses it. Testing agent's
+  browser got through.
