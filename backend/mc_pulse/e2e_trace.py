@@ -608,6 +608,40 @@ async def _stage_verify_broker(intent_id: str) -> dict:
         )
     gate_state = row.get("gate_state")
     if gate_state != "submitted":
+        # Known race: intents.py fires force_one_tick() on insert, so
+        # the scheduled tick can beat the trace's own route stage —
+        # the loser is blocked `already_executed_concurrent` and its
+        # blocked stamp can even land AFTER the winner's submitted
+        # stamp. The `executions` row (ok=True) is the system of
+        # record — accept it as proof the broker call round-tripped.
+        exec_row = await db["executions"].find_one(
+            {"intent_id": intent_id, "risk_reason": "already_executed_concurrent"},
+            {"_id": 0, "risk_reason": 1},
+        )
+        if exec_row is not None:
+            import asyncio as _aio
+            for _ in range(15):
+                ok_row = await db["executions"].find_one(
+                    {"intent_id": intent_id, "ok": True},
+                    {"_id": 0, "broker": 1, "broker_order_id": 1,
+                     "broker_status": 1},
+                )
+                if ok_row:
+                    return {
+                        "broker": ok_row.get("broker"),
+                        "broker_order_id": ok_row.get("broker_order_id"),
+                        "status": ok_row.get("broker_status"),
+                    }
+                row = await db["shared_intents"].find_one(
+                    {"intent_id": intent_id},
+                    {"_id": 0, "broker_order": 1, "gate_state": 1,
+                     "broker_reason": 1},
+                ) or row
+                gate_state = row.get("gate_state")
+                if gate_state == "submitted":
+                    break
+                await _aio.sleep(0.2)
+    if gate_state != "submitted":
         raise RuntimeError(
             f"intent {intent_id} ended at gate_state={gate_state} "
             f"(broker_reason={row.get('broker_reason')}); no broker "

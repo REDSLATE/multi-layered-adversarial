@@ -3434,3 +3434,61 @@ Full operator spec implemented (measure progress, never chase it).
   (gain_goal now exposed in /api/admin/hotpath/policy snapshot,
   re-verified by curl); frontend 100% (render, save→INSUFFICIENT
   SAMPLE→restore NO GOAL flow, session labels, rollup).
+
+## 2026-07-26 — Shared Dynamic Risk Engine ACROSS ALL THREE LANES (operator-approved rollout change)
+
+### Operator decision (supersedes "options on hold")
+Stage the rollout by sharing ONE risk engine across all lanes with
+lane-specific execution rules. Enable crypto AND equity together;
+BEGIN the options lane (engine + validation; broker adapter later).
+Flags now live in backend/.env: CRYPTO_DYNAMIC_RISK_SIZER_ENABLED=true,
+EQUITY_DYNAMIC_RISK_SIZER_ENABLED=true, OPTIONS_ENABLED=true.
+
+### Built this session
+- Fixed failing edge-gate test by adding the PRODUCTION edge gate to
+  shared/risk_sizer/sizer.py (never weakened the assertion): reject
+  when expected_edge_fraction <= estimated_fee_fraction +
+  estimated_slippage_fraction (intent-provided estimates beat policy
+  fee_buffer_fraction + NEW slippage_buffer_fraction). No edge data →
+  gate skipped. Reason: edge_does_not_cover_costs.
+- RoadGuard hard block INSIDE build_position_plan: master switch off
+  or broker freeze (read from hotpath policy_snapshot — no Atlas) →
+  reject roadguard_hard_block, final_notional=0. Same authority as the
+  router's master-switch gate, not a second path.
+- Equity + options balance providers (shared/risk_sizer/balance.py):
+  _FETCHERS routes crypto→Kraken, equity/options→Webull get_account
+  (buying_power→cash coalesce for cash accounts). 3s live timeout,
+  ≤60s cache, else NO_TRADE — verified fail-closed incl. expired cache.
+- OPTIONS LANE (shared/risk_sizer/options_gate.py): contract-quality
+  gates (DTE 7-60, open interest ≥100, spread ≤10% of mid, |delta|
+  0.25-0.85, theta decay ≤3%/day of premium) run BEFORE the balance
+  fetch; premium-based sizing (contracts = risk_budget ÷ (premium ×
+  100 × premium_stop_fraction), capped by max_premium_fraction 5% of
+  equity, allocation, spendable). Whole contracts only → projected
+  loss ≤ budget by construction. Policy DEFAULTS["options"] +
+  OPTIONS_ENABLED flag; admin GET/POST exposes the options section.
+- Reservation hygiene: auto_router.route_intent releases the sizer's
+  pending-risk reservation on ANY stage short-circuit verdict, so a
+  blocked/failed route can't phantom-consume the 2% portfolio budget.
+- Stabilized test_e2e_trace_broker_mocked_full_stack: the documented
+  force_one_tick vs trace-route race (already_executed_concurrent) now
+  accepts the ok=True executions row (system of record) — 8/8 runs.
+- mc_arbiter/tests/test_arbiter.py unique_seat fixture pins
+  EQUITY_DYNAMIC_RISK_SIZER_ENABLED=false (those tests assert raw
+  rank/DAWE mechanics; scored path covered in test_risk_sizer.py).
+
+### Verified (testing agent iteration_32 + pytest)
+- 29 risk-sizer/lane tests + 105 combined suite pass; router/risk/
+  exits/universe regression 241 pass. Operator's 12 acceptance cases
+  all pinned in tests/test_risk_engine_lanes.py + test_risk_sizer.py.
+- Live API: all three lanes enabled=true; options policy keys present;
+  policy merge + 422 unknown-key validation verified; equity/options
+  balance_source=LIVE via Webull in preview ($569.38), crypto
+  UNAVAILABLE (no Kraken keys in preview — fail-closed by design).
+
+### Next (operator plan)
+1. Options broker adapter (Webull options order submission) + option
+   chain data source so options intents can carry premium/greeks.
+2. Watch prod after deploy: first live-sized crypto/equity entries,
+   risk_sizing receipts on intents, Exit Monitor stop identity.
+3. Backlog: fill alerts, JSONL trade log, db.ensure_indexes refactor.
