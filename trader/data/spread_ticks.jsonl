@@ -85141,3 +85141,10 @@
 {"ts": "2026-07-26T18:00:41.647262+00:00", "pair": "TSLA", "lane": "equity", "bid": 303.55, "ask": 333.16, "last": 313.03, "spread_abs": 29.610000000000014, "spread_bps": 930.0938, "source": "webull"}
 {"ts": "2026-07-26T18:00:41.771645+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 64619.2, "ask": 64619.3, "last": 64619.1, "spread_abs": 0.10000000000582077, "spread_bps": 0.0155, "source": "kraken"}
 {"ts": "2026-07-26T18:00:56.866659+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 64619.1, "ask": 64619.2, "last": 64619.2, "spread_abs": 0.09999999999854481, "spread_bps": 0.0155, "source": "kraken"}
+{"ts": "2026-07-26T18:01:01.765315+00:00", "pair": "TSLA", "lane": "equity", "bid": 303.55, "ask": 333.16, "last": 313.03, "spread_abs": 29.610000000000014, "spread_bps": 930.0938, "source": "webull"}
+{"ts": "2026-07-26T18:01:11.975788+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 64619.9, "ask": 64620.0, "last": 64619.9, "spread_abs": 0.09999999999854481, "spread_bps": 0.0155, "source": "kraken"}
+{"ts": "2026-07-26T18:01:21.847081+00:00", "pair": "TSLA", "lane": "equity", "bid": 303.55, "ask": 333.16, "last": 313.03, "spread_abs": 29.610000000000014, "spread_bps": 930.0938, "source": "webull"}
+{"ts": "2026-07-26T18:01:27.060357+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 64619.9, "ask": 64620.0, "last": 64620.0, "spread_abs": 0.09999999999854481, "spread_bps": 0.0155, "source": "kraken"}
+{"ts": "2026-07-26T18:01:41.928307+00:00", "pair": "TSLA", "lane": "equity", "bid": 303.55, "ask": 333.16, "last": 313.03, "spread_abs": 29.610000000000014, "spread_bps": 930.0938, "source": "webull"}
+{"ts": "2026-07-26T18:01:42.167689+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 64619.9, "ask": 64620.0, "last": 64620.0, "spread_abs": 0.09999999999854481, "spread_bps": 0.0155, "source": "kraken"}
+{"ts": "2026-07-26T18:01:57.261260+00:00", "pair": "XBTUSD", "lane": "crypto", "bid": 64622.9, "ask": 64623.0, "last": 64620.0, "spread_abs": 0.09999999999854481, "spread_bps": 0.0155, "source": "kraken"}

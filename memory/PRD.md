@@ -3492,3 +3492,59 @@ EQUITY_DYNAMIC_RISK_SIZER_ENABLED=true, OPTIONS_ENABLED=true.
 2. Watch prod after deploy: first live-sized crypto/equity entries,
    risk_sizing receipts on intents, Exit Monitor stop identity.
 3. Backlog: fill alerts, JSONL trade log, db.ensure_indexes refactor.
+
+## 2026-07-26 (cont) — Options Lane: Webull broker adapter + option-chain feed
+
+### Built
+- Chain feed (shared/options/chain.py): custom ApiRequest to
+  /openapi/instrument/option/contracts (paginated, 15-min cache) +
+  option snapshot batches (greeks/OI/bid/ask via DataClient
+  option_market_data). resolve_contract(underlying, action, pol):
+  spot from equity snapshot → ONE expiration nearest the DTE-window
+  midpoint → 14 strikes nearest the money → snapshots → quality gates
+  (reuses options_gate.check) → pick |delta| closest to
+  target_abs_delta (NEW policy knob, 0.50). Fail-closed everywhere,
+  returns full diagnostics {contract, reason, spot, expiration,
+  considered, rejections}.
+- Webull adapter: submit_option_limit_order — single-leg LIMIT via
+  SDK order_v2.place_option (Webull prohibits MARKET for options),
+  SINGLE/NORMAL/QTY/DAY, client_order_id ≤32 chars, ARMED gate,
+  v2-envelope error surfacing.
+- Lane routing: LaneT + LANE_BROKER_REGISTRY gained "options"→webull;
+  compose() emits OPT:<UNDERLYING> canonical (compose_asset parses it
+  back); mc_canonical_gate accepts options lane; route_order options
+  branch skips the equity $3-10 cap gate (risk sizer's
+  max_premium_fraction caps instead), validates contract fields,
+  derives contracts from the risk_sizing receipt, submits marketable
+  LIMIT at the ask; KNOWN_LANES toggle admin includes options.
+- Router enrichment (auto_router_stages): options intents carrying
+  only underlying+direction get the concrete contract resolved and
+  persisted (intent.option) BEFORE sizing; unresolvable →
+  gate_state=blocked OPTIONS_CONTRACT_UNRESOLVED with the resolver
+  diagnostics stamped on the intent.
+- Admin: GET /api/admin/options/status (lane flag, policy,
+  entitlement probe), GET /api/admin/options/resolve (live dry-run).
+
+### Verified (testing agent iteration_33 — all pass, zero issues)
+- 10 new tests in tests/test_options_lane.py (delta targeting, DTE
+  filter, gate rejections, fail-closed no-client/no-spot, place_option
+  payload shape, ARMED block, canonical/registry parity, mc gate).
+- LIVE e2e in preview: chain fetch works against real Webull (AAPL
+  spot 333.02, expiration 2026-08-28, 14 candidates); greeks snapshot
+  fails closed with MARKET_DATA_NOT_SUBSCRIBED — operator must
+  subscribe to US_OPTION market data in the Webull developer portal
+  to light the feed up. 559 broker/router regression tests pass.
+
+### Operator prod checklist for options
+1. Subscribe to US_OPTION market data on the Webull developer portal
+   (chain endpoint already works; snapshot/greeks needs it).
+2. After Webull account reset: re-verify /api/admin/risk-sizer shows
+   equity/options balance_source=LIVE.
+3. Options exits: Exit Monitor does NOT yet adopt option positions
+   (next task) — early entries are DAY-limit only, monitor manually.
+
+### Next
+- Exit Monitor options adoption (list option positions, premium-stop
+  exits via place_option SELL).
+- Brains emitting options intents (they can already: lane="options",
+  symbol=underlying, action BUY/SHORT — MC resolves the contract).
