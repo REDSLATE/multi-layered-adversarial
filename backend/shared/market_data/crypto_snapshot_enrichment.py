@@ -41,10 +41,16 @@ REQUIRED_FIELDS = ("bid", "ask", "spread_bps", "volume_24h_usd",
 
 # recent-ticker cache: pair → {at (monotonic), data}
 _ticker_cache: dict[str, dict[str, Any]] = {}
+# on-demand 5m-bar backfill throttle: symbol → monotonic ts of last try
+_backfill_last_try: dict[str, float] = {}
+BACKFILL_RETRY_S: float = float(
+    os.environ.get("CRYPTO_ENRICH_BACKFILL_RETRY_S", "300"),
+)
 
 
 def reset_for_tests() -> None:
     _ticker_cache.clear()
+    _backfill_last_try.clear()
 
 
 def _valid(v: Any) -> bool:
@@ -107,19 +113,53 @@ async def _ticker_with_ladder(symbol: str) -> tuple[Optional[dict], str, float]:
     return None, "NO_DATA", -1.0
 
 
+async def _read_5m_bars(symbol: str) -> list[dict]:
+    from db import db  # noqa: WPS433
+    cur = db["shared_ohlcv_bars"].find(
+        {"symbol": symbol, "tf": "5m"},
+        {"_id": 0, "o": 1, "h": 1, "l": 1, "c": 1, "ts": 1},
+    ).sort("ts", -1).limit(BARS_WINDOW)
+    bars = [b async for b in cur]
+    return [b for b in bars if _valid(b.get("c")) and float(b["c"]) > 0]
+
+
+async def _on_demand_backfill(symbol: str) -> list[dict]:
+    """Coverage repair (2026-07-28): pairs outside the feeder universe
+    had zero 5m bars → NO_DATA → artificially dampened sizing on valid
+    setups. One-shot fetch persists the bars (so the next intent reads
+    from Mongo), throttled per symbol so an unsupported pair can't
+    hammer Kraken on every intent."""
+    now = time.monotonic()
+    last = _backfill_last_try.get(symbol)
+    if last is not None and now - last < BACKFILL_RETRY_S:
+        return []
+    _backfill_last_try[symbol] = now
+    try:
+        from shared.feeders.kraken_ohlc import _fetch_and_persist_one  # noqa: WPS433
+        written = await _fetch_and_persist_one(symbol, 0.125, tf="5m")  # ~3h
+        logger.info(
+            "crypto enrichment on-demand 5m backfill %s: %d bars written",
+            symbol, written,
+        )
+        if written <= 0:
+            return []
+        return await _read_5m_bars(symbol)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("on-demand 5m backfill failed %s: %s", symbol, exc)
+        return []
+
+
 async def _bars_features(symbol: str) -> tuple[Optional[float], Optional[float], int]:
     """(volatility_1h, trend_strength, bars_used) from MC 5m bars."""
     try:
-        from db import db  # noqa: WPS433
-        cur = db["shared_ohlcv_bars"].find(
-            {"symbol": symbol, "tf": "5m"},
-            {"_id": 0, "o": 1, "h": 1, "l": 1, "c": 1, "ts": 1},
-        ).sort("ts", -1).limit(BARS_WINDOW)
-        bars = [b async for b in cur]
+        bars = await _read_5m_bars(symbol)
     except Exception as exc:  # noqa: BLE001
         logger.warning("crypto bars fetch failed %s: %s", symbol, exc)
         return None, None, 0
-    bars = [b for b in bars if _valid(b.get("c")) and float(b["c"]) > 0]
+    if len(bars) < MIN_BARS:
+        refreshed = await _on_demand_backfill(symbol)
+        if len(refreshed) > len(bars):
+            bars = refreshed
     if len(bars) < MIN_BARS:
         return None, None, len(bars)
     bars.reverse()  # chronological

@@ -245,6 +245,29 @@ async def _option_quote(occ: str) -> Optional[tuple[float, Optional[float]]]:
 
 # ── plan adoption / levels ──────────────────────────────────────────
 
+def _origin_risk(origin: Optional[dict]) -> Optional[float]:
+    try:
+        v = float(((origin or {}).get("risk_sizing") or {}).get("risk_budget") or 0)
+        return v if v > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+async def _origin_seat(origin: Optional[dict]) -> Optional[str]:
+    """Executor seat from the entry execution receipt (fail-soft)."""
+    if not origin:
+        return None
+    try:
+        ex = await db["executions"].find_one(
+            {"intent_id": origin["intent_id"], "ok": True},
+            {"seats": 1, "seat_holder": 1},
+        )
+        return (((ex or {}).get("seats") or {}).get("executor")
+                or (ex or {}).get("seat_holder"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def _origin_intent(symbol: str, lane: str) -> Optional[dict]:
     """Most recent executed intent for attribution (brain = `stack`)."""
     since = (_now() - timedelta(hours=BRAIN_LEVEL_LOOKBACK_H)).isoformat()
@@ -252,7 +275,8 @@ async def _origin_intent(symbol: str, lane: str) -> Optional[dict]:
         return await db["shared_intents"].find_one(
             {"symbol": symbol, "lane": lane, "executed": True,
              "ingest_ts": {"$gte": since}},
-            {"intent_id": 1, "stack": 1},
+            {"intent_id": 1, "stack": 1, "action": 1, "risk_sizing": 1,
+             "evidence": 1, "ingest_ts": 1},
             sort=[("ingest_ts", -1)],
         )
     except Exception:  # noqa: BLE001
@@ -339,6 +363,17 @@ async def _adopt(lane: str, pos: dict, policy: dict) -> dict:
         "levels_source": source,
         "origin_intent_id": (origin or {}).get("intent_id"),
         "origin_stack": (origin or {}).get("stack"),
+        # Immutable trade chain (2026-07-27): trade_id = the MC intent
+        # id, born at approval, on the execution receipt, carried by
+        # the plan, stamped on the resolved outcome. Attribution mode
+        # is explicit so symbol+time matching is visibly a REPAIR
+        # path, never silent truth.
+        "trade_id": (origin or {}).get("intent_id"),
+        "attribution": "trade_id" if origin else "unmatched",
+        "side": (origin or {}).get("action") or "BUY",
+        "initial_risk": _origin_risk(origin),
+        "regime": ((origin or {}).get("evidence") or {}).get("regime"),
+        "seat_role": await _origin_seat(origin),
         "qty_held": float(pos["qty"]),
         "adopted_at": _iso(),
         "max_hold_until": _iso(_now() + timedelta(hours=lane_p["max_hold_h"])),

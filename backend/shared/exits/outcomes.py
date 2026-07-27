@@ -85,10 +85,16 @@ async def _record(plan: dict) -> dict:
 
     row = {
         "plan_id": plan["plan_id"],
+        "trade_id": plan.get("trade_id") or plan.get("origin_intent_id"),
         "lane": lane,
         "symbol": plan["symbol"],
         "outcome": outcome,
         "brain": plan.get("origin_stack"),
+        "seat_role": plan.get("seat_role"),
+        "side": plan.get("side") or "BUY",
+        "regime": plan.get("regime"),
+        "attribution": plan.get("attribution")
+                       or ("trade_id" if plan.get("origin_intent_id") else "unmatched"),
         "origin_intent_id": plan.get("origin_intent_id"),
         "entry_price": entry or None,
         "exit_price": float(exit_price) if exit_price else None,
@@ -96,10 +102,56 @@ async def _record(plan: dict) -> dict:
         "realized_pnl_pct": pnl_pct,
         "realized_pnl_usd": pnl_usd,
         "levels_source": plan.get("levels_source"),
+        "stop_price": plan.get("stop_price"),
+        "target_price": plan.get("target_price"),
         "adopted_at": plan.get("adopted_at"),
         "closed_at": datetime.now(timezone.utc).isoformat(),
+        "source": "EXIT_MONITOR",
+        "verified": plan.get("close_detail") == "exit_order_filled",
         "dawe_folded": False,
     }
+
+    # ── ResolvedTradeOutcome economics (2026-07-27 operator spec) ──
+    # realized_r_multiple = net_pnl / initial_risk — lets a $10 trade
+    # and a $1,000 trade be compared fairly.
+    initial_risk = None
+    try:
+        initial_risk = float(plan.get("initial_risk") or 0) or None
+    except (TypeError, ValueError):
+        pass
+    fees_est = None
+    if pnl_usd is not None and entry > 0:
+        _fee_frac = {"crypto": 0.006, "equity": 0.001, "options": 0.01}.get(lane, 0.0)
+        fees_est = round(entry * qty * _mult * _fee_frac, 4)
+    net_pnl = (pnl_usd - fees_est) if (pnl_usd is not None and fees_est is not None) else pnl_usd
+    r_multiple = None
+    if net_pnl is not None and initial_risk and initial_risk > 0:
+        r_multiple = round(net_pnl / initial_risk, 3)
+    result = None
+    if net_pnl is not None:
+        _eps = max(0.01, 0.001 * entry * qty * _mult)
+        result = ("WIN" if net_pnl > _eps
+                  else "LOSS" if net_pnl < -_eps else "BREAKEVEN")
+    row.update({
+        "gross_pnl": pnl_usd,
+        "fees_est": fees_est,
+        "net_pnl": round(net_pnl, 4) if net_pnl is not None else None,
+        "initial_risk": initial_risk,
+        "realized_r_multiple": r_multiple,
+        "result": result,
+        "exit_reason": plan.get("exit_reason"),
+    })
+
+    # ── Loss-escalation doctrine (2026-07-27) ──
+    # <1R → normal expectancy update. 1–2R → LARGE_LOSS: double DAWE
+    # fold (EWMA decays, so influence reduction is temporary). >2R →
+    # EXCEPTIONAL_LOSS: automatic forensic report.
+    escalation = "NORMAL"
+    if r_multiple is not None and r_multiple < -1.0:
+        escalation = "EXCEPTIONAL_LOSS" if r_multiple < -2.0 else "LARGE_LOSS"
+    elif r_multiple is None and net_pnl is not None and net_pnl < -20.0:
+        escalation = "EXCEPTIONAL_LOSS"   # unknown risk budget + big $ loss
+    row["loss_escalation"] = escalation
 
     # Confluence attribution (2026-07-22 weighted-doctrine rollout):
     # lets the Expectancy Panel compare full-confluence trades vs
@@ -120,8 +172,17 @@ async def _record(plan: dict) -> dict:
     brain = plan.get("origin_stack")
     if brain and pnl_pct is not None:
         row["dawe_folded"] = await _fold_into_dawe(brain, lane, pnl_pct / 100.0)
+        if escalation in ("LARGE_LOSS", "EXCEPTIONAL_LOSS"):
+            # second fold = temporarily lowered influence (EWMA decays)
+            await _fold_into_dawe(brain, lane, pnl_pct / 100.0)
 
     await db[EXIT_OUTCOMES].insert_one(dict(row))
+    if escalation == "EXCEPTIONAL_LOSS":
+        try:
+            from shared.exits.forensics import file_forensic_report  # noqa: WPS433
+            await file_forensic_report(row)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("forensic filing failed %s: %s", row.get("trade_id"), exc)
     logger.info(
         "exit outcome %s %s %s brain=%s pnl=%s%% dawe_folded=%s",
         lane, plan["symbol"], outcome, brain,

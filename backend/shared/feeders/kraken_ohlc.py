@@ -119,6 +119,34 @@ def _env_int(key: str, default: int) -> int:
         return default
 
 
+MAX_UNIVERSE = 60  # rate-limit guard on the merged universe
+
+
+async def _recent_intent_symbols(hours: int = 24) -> list[str]:
+    """Tradable-pair coverage repair (2026-07-28): any /USD pair a
+    brain actually emitted an intent for in the window. Unioned into
+    every discovery result so actively traded pairs (e.g. ETH) never
+    lack 5m bars and fall back to NO_DATA in snapshot enrichment."""
+    try:
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(hours=hours)
+        ).isoformat()
+        syms = await db[SHARED_INTENTS].distinct(
+            "symbol",
+            {"lane": "crypto", "ingest_ts": {"$gte": cutoff}},
+        )
+        return sorted(
+            s for s in syms if isinstance(s, str) and s.endswith("/USD")
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("kraken_ohlc: intent-symbol discovery failed: %r", e)
+        return []
+
+
+def _cap_universe(syms: set[str]) -> list[str]:
+    return sorted(syms)[:MAX_UNIVERSE]
+
+
 async def _discover_universe() -> list[str]:
     """Discover the active crypto universe.
 
@@ -165,7 +193,9 @@ async def _discover_universe() -> list[str]:
         docs = await cursor.to_list(200)
         syms = sorted({(d.get("symbol") or "").upper() for d in docs if d.get("symbol")})
         if syms:
-            return syms
+            return _cap_universe(
+                set(syms) | set(await _recent_intent_symbols())
+            )
     except Exception as e:  # noqa: BLE001
         logger.warning("kraken_ohlc: patterns_universe discovery failed: %r", e)
 

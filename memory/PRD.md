@@ -3680,3 +3680,41 @@ Sentinels must never represent market conditions.
 prod fingerprints showed n=0 intents after July-8 pivot — parallel
 emission-path investigation; use /api/admin/pipeline/counters after
 redeploy to distinguish emission health from doctrine health.
+
+## 2026-07-28 — Outcome Collection & Attribution + Loss Forensics (P0)
+Operator pivot: "The problem is not AI learning. It is outcome
+collection and attribution." All shipped + verified in preview:
+### Built
+- shared/exits/forensics.py (NEW): build_autopsy() joins outcome →
+  origin intent (risk_sizing: governor_multiplier, risk_budget,
+  projected_loss_at_stop; snapshot data-completeness; doctrine
+  quality) → entry execution (roadguard risk_ok/risk_reason, seat,
+  broker). Names every broken link in attribution_gaps (never hides
+  a break). file_forensic_report() idempotent per (plan_id, kind) →
+  shared_forensic_reports. large_loss_report(min_loss_usd, days).
+- shared/exits/outcomes.py: outcome row now carries stop_price +
+  target_price (autopsy completeness). Loss-escalation doctrine was
+  already in place (<1R NORMAL, 1–2R LARGE_LOSS double DAWE fold,
+  >2R EXCEPTIONAL_LOSS auto-forensic) — now the forensics module it
+  imports actually exists.
+- routes/pipeline_admin.py: GET /api/admin/pipeline/outcome_health
+  (FAIL-LOUD: entries_seen, exits_submitted, exits_seen,
+  matched_round_trips, unmatched_entries, unmatched_exits,
+  resolved_outcomes, outcomes_missing_r_multiple + named alerts;
+  ok=false when chain broken). GET /forensics/large_losses
+  (?min_loss_usd=20&days=30). GET /forensics/filed.
+- 5m bar coverage fix (P1): kraken_ohlc._discover_universe unions
+  recent-intent /USD symbols into live_universe/patterns results
+  (cap 60); crypto_snapshot_enrichment._on_demand_backfill fetches+
+  persists 5m bars at enrichment time when <MIN_BARS (300s/symbol
+  throttle). ETH verified: 0 bars → 36 persisted → ENRICHED.
+- frontend/src/components/OutcomePipelinePanel.jsx (NEW) in
+  OperatorControl (Overview page): PASS/FAIL badge, 7 counters,
+  red alert strip, expandable loss autopsies (>$20/30d) with
+  governor/roadguard/data-completeness/gap detail.
+### Verified
+- Simulated −2.51R loss → EXCEPTIONAL_LOSS → forensic auto-filed
+  with full joins, idempotent replay-safe. 37 exits/enrichment/risk
+  tests pass. Health endpoint correctly FAILs in preview (72
+  historical entries with no round-trip — real signal).
+### NEEDS REDEPLOY to production for real outcome data.
