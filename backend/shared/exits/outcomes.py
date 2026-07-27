@@ -102,6 +102,7 @@ async def _record(plan: dict) -> dict:
         "realized_pnl_pct": pnl_pct,
         "realized_pnl_usd": pnl_usd,
         "levels_source": plan.get("levels_source"),
+        "entry_source": plan.get("entry_source"),
         "stop_price": plan.get("stop_price"),
         "target_price": plan.get("target_price"),
         "adopted_at": plan.get("adopted_at"),

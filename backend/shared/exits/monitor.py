@@ -325,15 +325,94 @@ async def _entry_price_fallback(symbol: str, lane: str) -> Optional[float]:
     return None
 
 
+def _vwap_cost_basis(trades: dict, symbol: str, qty: float) -> Optional[float]:
+    """VWAP of the most recent Kraken BUY fills covering the held qty.
+    <50% qty coverage → None (don't trust a partial basis)."""
+    if qty <= 0:
+        return None
+    base = symbol.split("/")[0].upper()
+    kbase = {"BTC": "XBT", "DOGE": "XDG"}.get(base, base)
+    try:
+        from shared.crypto.kraken import to_kraken_pair  # noqa: WPS433
+        kpair = (to_kraken_pair(symbol) or "").upper()
+    except Exception:  # noqa: BLE001
+        kpair = ""
+    cands = {kpair, f"{base}USD", f"{kbase}USD", f"X{kbase}ZUSD",
+             f"{base}/USD"} - {""}
+    buys = sorted(
+        (t for t in (trades or {}).values()
+         if t.get("type") == "buy"
+         and str(t.get("pair") or "").upper() in cands),
+        key=lambda t: float(t.get("time") or 0), reverse=True,
+    )
+    filled = 0.0
+    cost = 0.0
+    for t in buys:
+        try:
+            v, p = float(t.get("vol") or 0), float(t.get("price") or 0)
+        except (TypeError, ValueError):
+            continue
+        if v <= 0 or p <= 0:
+            continue
+        take = min(v, qty - filled)
+        cost += take * p
+        filled += take
+        if filled >= qty * 0.999:
+            break
+    if filled < qty * 0.5:
+        return None
+    return cost / filled
+
+
+async def _kraken_cost_basis(symbol: str, qty: float) -> Optional[float]:
+    """TRUE average cost from Kraken TradesHistory. Kraken's Balance
+    endpoint carries no cost basis; anchoring exit levels to the
+    adoption-time price instead let losing positions float past their
+    stops forever (operator report 2026-07-28)."""
+    try:
+        from shared.crypto.broker_adapter import get_kraken_adapter  # noqa: WPS433
+        from shared.crypto.kraken import call_private  # noqa: WPS433
+        adapter = await get_kraken_adapter()
+        if adapter is None:
+            return None
+        res = await call_private(
+            "/0/private/TradesHistory",
+            adapter.public_key, adapter.private_key, {},
+        )
+        trades = (res or {}).get("trades") or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("cost basis fetch failed %s: %s", symbol, exc)
+        return None
+    return _vwap_cost_basis(trades, symbol, qty)
+
+
+def _note_crypto_sell(symbol: str) -> None:
+    """Arm the post-sell BUY cooldown (2026-07-28). Fail-soft."""
+    try:
+        from shared.risk_sizer.sell_cooldown import note_crypto_sell  # noqa: WPS433
+        note_crypto_sell(symbol)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("sell cooldown note failed %s: %s", symbol, exc)
+
+
 async def _adopt(lane: str, pos: dict, policy: dict) -> dict:
     """Create an exit plan for a broker position that lacks one.
     Levels FIXED here — never recomputed later."""
     symbol = pos["symbol"]
     entry = pos.get("entry_price")
+    entry_source = "broker" if entry else None
+    if not entry and lane == "crypto":
+        # Kraken Balance carries no cost basis — pull the REAL one.
+        entry = await _kraken_cost_basis(symbol, float(pos["qty"]))
+        if entry:
+            entry_source = "kraken_trades"
     if not entry:
         entry = await _entry_price_fallback(symbol, lane)
+        if entry:
+            entry_source = "execution_fill"
     if not entry:
         entry = pos.get("current_price")  # last resort; documented
+        entry_source = "current_price_unknown_basis"
     entry = float(entry)
 
     brain = await _brain_levels(symbol, lane) if lane != "options" else None
@@ -358,6 +437,8 @@ async def _adopt(lane: str, pos: dict, policy: dict) -> dict:
         "symbol": symbol,
         "status": "active",
         "entry_price": entry,
+        "entry_source": entry_source,
+        "cost_basis_unknown": entry_source == "current_price_unknown_basis",
         "stop_price": stop,
         "target_price": target,
         "levels_source": source,
@@ -400,6 +481,40 @@ async def _adopt(lane: str, pos: dict, policy: dict) -> dict:
         plan["max_hold_until"],
     )
     return plan
+
+
+async def _reanchor_crypto_plan(plan: dict, policy: dict) -> dict:
+    """One-shot repair for legacy crypto plans adopted BEFORE the
+    cost-basis fix (2026-07-28): their entry was the adoption-time
+    price, so a position already underwater carried a stop it could
+    never hit. Re-anchor entry/stop/target to the TRUE Kraken cost
+    basis. Brain-authored levels are never overwritten."""
+    update: dict = {"reanchor_attempted": True}
+    basis = await _kraken_cost_basis(
+        plan["symbol"], float(plan.get("qty_held") or 0),
+    )
+    old = float(plan.get("entry_price") or 0)
+    if (basis and old > 0 and abs(basis - old) / old > 0.005
+            and plan.get("levels_source") != "brain"):
+        lane_p = policy["crypto"]
+        update.update({
+            "entry_price": basis,
+            "stop_price": basis * (1.0 - lane_p["sl_pct"] / 100.0),
+            "target_price": basis * (1.0 + lane_p["tp_pct"] / 100.0),
+            "entry_source": "kraken_trades_reanchor",
+            "levels_source": "lane_default_reanchored",
+        })
+        await _receipt({
+            "event": "plan_reanchored", "plan_id": plan["plan_id"],
+            "lane": "crypto", "symbol": plan["symbol"],
+            "old_entry": old, "new_entry": basis,
+        })
+        logger.info(
+            "exit_monitor REANCHORED %s entry %.4f → %.4f (true cost basis)",
+            plan["symbol"], old, basis,
+        )
+    updated = plan_store.update(plan["plan_id"], update)
+    return dict(updated) if updated else {**plan, **update}
 
 
 async def _reconcile(lane: str, positions: list[dict], policy: dict) -> list[dict]:
@@ -445,11 +560,19 @@ async def _reconcile(lane: str, positions: list[dict], policy: dict) -> list[dic
                     "trigger": plan.get("exit_reason"),
                     "order": plan.get("exit_order"),
                 })
+            if lane == "crypto":
+                # Position left the book (our fill OR the operator
+                # sold on Kraken directly) → freed cash cools.
+                _note_crypto_sell(sym)
             continue
         seen.add(sym)
         if abs(float(pos["qty"]) - float(plan.get("qty_held") or 0)) > 1e-9:
             plan_store.update(plan["plan_id"], {"qty_held": float(pos["qty"])})
             plan["qty_held"] = float(pos["qty"])
+        if (lane == "crypto" and plan["status"] == "active"
+                and not plan.get("entry_source")
+                and not plan.get("reanchor_attempted")):
+            plan = await _reanchor_crypto_plan(plan, policy)
         plan["_pos"] = pos
         live.append(plan)
 
@@ -590,6 +713,8 @@ async def _submit_exit(plan: dict, price: float, *, force_market: bool = False) 
         }
         update["last_error"] = None
         _state["exits_submitted"] += 1
+        if lane == "crypto":
+            _note_crypto_sell(symbol)
     else:
         update["last_error"] = error
         if attempts >= MAX_EXIT_ATTEMPTS:

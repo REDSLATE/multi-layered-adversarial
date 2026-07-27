@@ -118,6 +118,26 @@ async def build_position_plan(
     except Exception:  # noqa: BLE001
         pass  # router master-switch gate still enforces upstream
 
+    # Post-sell cooldown (2026-07-28 operator directive): freed cash
+    # must cool before the crypto lane BUYs again — stops the instant
+    # redeploy of sale proceeds into fresh 24h-mover intents.
+    if lane == "crypto" and (intent.get("action") or "").upper() == "BUY":
+        try:
+            from shared.risk_sizer.sell_cooldown import (  # noqa: WPS433
+                cooldown_remaining_s,
+            )
+            _rem, _sold = await cooldown_remaining_s(
+                float(lane_pol.get("post_sell_cooldown_min") or 0),
+            )
+        except Exception:  # noqa: BLE001
+            _rem, _sold = 0.0, None
+        if _rem > 0:
+            return _reject(
+                "post_sell_cooldown",
+                cooldown_remaining_s=round(_rem, 1),
+                last_sell_symbol=_sold,
+            )
+
     # Edge-vs-cost gate: expected edge must EXCEED estimated fees +
     # slippage or the trade is rejected. No edge data → gate skipped.
     edge = intent.get("expected_edge_fraction")

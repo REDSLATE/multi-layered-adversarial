@@ -3718,3 +3718,40 @@ collection and attribution." All shipped + verified in preview:
   tests pass. Health endpoint correctly FAILs in preview (72
   historical entries with no round-trip — real signal).
 ### NEEDS REDEPLOY to production for real outcome data.
+
+## 2026-07-28 — Crypto no-sell + insta-rebuy fixes (operator report)
+Report: unprofitable crypto never sold; the moment a sell freed cash,
+a fresh mover intent bought some obscure ticker.
+Root causes: (1) Kraken Balance has NO cost basis → exit plans
+anchored entry to adoption-time price → stops on losers could never
+fire; (2) brains emit fresh BUY intents on 24h movers every pulse
+tick; first one after a sell passes the balance check.
+### Built
+- shared/exits/monitor.py: _kraken_cost_basis (TradesHistory VWAP of
+  recent BUYs covering held qty, <50% coverage → distrust) now first
+  in the _adopt entry ladder; entry_source audit stamp (broker |
+  kraken_trades | execution_fill | current_price_unknown_basis);
+  _reanchor_crypto_plan one-shot repair of legacy plans (entry/stop/
+  target re-anchored to true basis; brain levels never overwritten;
+  reanchor_attempted guard; plan_reanchored receipt).
+- shared/risk_sizer/sell_cooldown.py (NEW): post-sell BUY cooldown.
+  Armed on every crypto exit submit AND externally observed close
+  (operator selling on Kraken directly). In-memory + runtime_flags
+  mirror for restart continuity.
+- shared/risk_sizer/sizer.py: build_position_plan rejects crypto BUYs
+  with reason post_sell_cooldown while cooling; SELL/COVER unaffected.
+  Knob crypto.post_sell_cooldown_min (DEFAULT 30, 0=off) in
+  risk_sizer policy (GET/PUT /api/admin/risk-sizer).
+- outcomes row now carries entry_source.
+### Verified
+- 13 new tests + 37 regression pass (VWAP math, XBT alias, coverage
+  guard, cooldown arm/expire/zero-knob, sizer gate reject/allow/
+  sell-passthrough). Live policy endpoint serves the knob.
+- NOT testable in preview: real Kraken TradesHistory call (no broker
+  creds) — logic unit-tested; validate on prod after redeploy.
+### Operator notes
+- After redeploy, legacy underwater plans re-anchor to TRUE cost —
+  positions below their real −3% stop will SELL AT MARKET on the next
+  monitor tick (this is the requested loss-cutting; losses realize).
+- Crypto exit lane must be ARMED in Exit Monitor panel or nothing
+  auto-sells.

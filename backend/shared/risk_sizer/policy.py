@@ -23,6 +23,7 @@ DEFAULTS: dict[str, Any] = {
         "max_open_risk_fraction": 0.02,    # 2% total open risk
         "min_stop_fraction": 0.01,         # brain stop bounds
         "max_stop_fraction": 0.05,
+        "post_sell_cooldown_min": 30.0,    # freed cash cools before BUYs
     },
     "equity": {
         "risk_fraction": 0.005,
