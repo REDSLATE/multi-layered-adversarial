@@ -68,6 +68,35 @@ def label_crypto_snapshot(snapshot: Dict[str, Any]) -> CryptoDoctrineLabels:
             reasons=["crypto doctrine received non-crypto lane snapshot"],
         )
 
+    # ── NO_DATA gate (operator doctrine, 2026-07-27) ──
+    # Real unfavorable market data → REJECT. Missing or STALE market
+    # data → NO_DATA. Sentinels (spread 9999, vol/volume/trend 0 from
+    # absent keys) must never be graded as actual market conditions.
+    _status = str(snapshot.get("enrichment_status") or "").upper()
+    _missing = list(snapshot.get("missing_required_fields") or [])
+    _bid = _num(snapshot, "bid")
+    _ask = _num(snapshot, "ask")
+    _spread_probe = _num(snapshot, "spread_bps", 9999.0)
+    if _status != "ENRICHED":
+        if (_status == "NO_DATA" or _missing or _bid <= 0 or _ask <= 0
+                or _ask < _bid or _spread_probe >= 9999.0):
+            _why = (", ".join(_missing) if _missing
+                    else "invalid or missing quotes")
+            return CryptoDoctrineLabels(
+                lane=lane,
+                symbol=symbol,
+                score=0.0,
+                quality="NO_DATA",
+                labels=["NO_DATA"],
+                reasons=[f"market data missing or stale — not graded ({_why})"],
+            )
+    elif _missing or _bid <= 0 or _ask <= 0 or _ask < _bid:
+        return CryptoDoctrineLabels(
+            lane=lane, symbol=symbol, score=0.0, quality="NO_DATA",
+            labels=["NO_DATA"],
+            reasons=["enrichment stamped ENRICHED but quotes invalid — not graded"],
+        )
+
     # 2026-02-20: baseline raised 0.00 → 0.20 per operator directive.
     # Crypto has no "small-cap toolkit" rubric to begin with — every
     # USD pair on Kraken clears the liquidity bar by virtue of being

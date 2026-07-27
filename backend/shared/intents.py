@@ -1146,8 +1146,30 @@ async def _post_intent_impl(
     evidence = dict(body.evidence or {})
     evidence["regime_fp"] = await _enrich_regime_fp(body.symbol, evidence.get("regime_fp"))
 
+    # ─── Market-data enrichment BEFORE doctrine grading (2026-07-27) ───
+    # Operator doctrine: real unfavorable market data → REJECT;
+    # missing/stale market data → NO_DATA. Crypto intents get the full
+    # snapshot enrichment (bid/ask, spread_bps, 24h quote volume, 1h
+    # volatility + trend from MC bars, provenance stamps) FIRST, and
+    # the doctrine packet grades the ENRICHED snapshot — never
+    # sentinels. Equity keeps the spread-only ladder.
+    from shared.market_data import enrich_snapshot_spread  # noqa: WPS433
+    if effective_lane == "crypto":
+        from shared.market_data.crypto_snapshot_enrichment import (  # noqa: WPS433
+            enrich_crypto_snapshot,
+        )
+        enriched_snapshot, spread_diag = await enrich_crypto_snapshot(
+            dict(body.doctrine_snapshot or {}), symbol=body.symbol,
+        )
+    else:
+        enriched_snapshot, spread_diag = await enrich_snapshot_spread(
+            dict(body.doctrine_snapshot or {}),
+            symbol=body.symbol, lane=effective_lane,
+        )
+
     # Brain doctrine sidecar packet — READ-ONLY ATTACHMENT (2026-02-17).
-    # Equity-only by doctrine. Never influences direction or any gate.
+    # Grades the ENRICHED snapshot (2026-07-27). Never influences
+    # direction or any gate.
     doctrine_packet = await _build_and_persist_doctrine_packet(
         intent_id=intent_id,
         stack=body.stack,
@@ -1155,24 +1177,23 @@ async def _post_intent_impl(
         symbol=body.symbol,
         action=body.action,
         confidence=float(body.confidence),
-        snapshot=body.doctrine_snapshot,
+        snapshot=enriched_snapshot,
         ingest_method="runtime_token",
         intent_version=body.intent_version,
         plan_execution_style=(body.plan.execution_style if body.plan else None),
     )
-
-    # ─── Spread-bps enrichment (2026-05-26) ───
-    # Doctrine: brains SHOULD ship `spread_bps` in `doctrine_snapshot`.
-    # When they don't (Camaro, historically), MC walks a fallback
-    # ladder: brain → derive(bid,ask) → indicator cache → kraken
-    # public (crypto, opt-in) → sentinel. Result is stamped on the
-    # persisted `snapshot` field so RoadGuard reads a value rather
-    # than failing with ROADGUARD_MISSING_SPREAD_BPS.
-    from shared.market_data import enrich_snapshot_spread  # noqa: WPS433
-    enriched_snapshot, spread_diag = await enrich_snapshot_spread(
-        dict(body.doctrine_snapshot or {}),
-        symbol=body.symbol, lane=effective_lane,
-    )
+    try:
+        from shared.observability.pipeline_counters import incr  # noqa: WPS433
+        if effective_lane == "crypto":
+            _st = str(enriched_snapshot.get("enrichment_status") or "").upper()
+            incr("intents_enriched" if _st == "ENRICHED" else "intents_no_data")
+            _q = ((doctrine_packet or {}).get("base_labels") or {}).get("quality")
+            if _q == "REJECT":
+                incr("intents_rejected")
+            elif _q == "NO_DATA":
+                incr("intents_graded_no_data")
+    except Exception:  # noqa: BLE001
+        pass
 
     doc = {
         "intent_id": intent_id,
@@ -1967,8 +1988,24 @@ async def admin_post_intent(
     evidence = dict(body.evidence or {})
     evidence["regime_fp"] = await _enrich_regime_fp(body.symbol, evidence.get("regime_fp"))
 
+    # Market-data enrichment BEFORE grading — same doctrine as the
+    # runtime path (2026-07-27). Crypto gets the full snapshot ladder.
+    from shared.market_data import enrich_snapshot_spread  # noqa: WPS433
+    if effective_lane == "crypto":
+        from shared.market_data.crypto_snapshot_enrichment import (  # noqa: WPS433
+            enrich_crypto_snapshot,
+        )
+        enriched_snapshot, spread_diag = await enrich_crypto_snapshot(
+            dict(body.doctrine_snapshot or {}), symbol=body.symbol,
+        )
+    else:
+        enriched_snapshot, spread_diag = await enrich_snapshot_spread(
+            dict(body.doctrine_snapshot or {}),
+            symbol=body.symbol, lane=effective_lane,
+        )
+
     # Brain doctrine sidecar packet — READ-ONLY ATTACHMENT (2026-02-17).
-    # Equity-only by doctrine. Never influences direction or any gate.
+    # Grades the ENRICHED snapshot (2026-07-27).
     doctrine_packet = await _build_and_persist_doctrine_packet(
         intent_id=intent_id,
         stack=body.stack,
@@ -1976,18 +2013,11 @@ async def admin_post_intent(
         symbol=body.symbol,
         action=body.action,
         confidence=float(body.confidence),
-        snapshot=body.doctrine_snapshot,
+        snapshot=enriched_snapshot,
         ingest_method="admin_proxy",
         admin_email=user.get("email"),
         intent_version=body.intent_version,
         plan_execution_style=(body.plan.execution_style if body.plan else None),
-    )
-
-    # Spread-bps enrichment ladder — same doctrine as runtime path.
-    from shared.market_data import enrich_snapshot_spread  # noqa: WPS433
-    enriched_snapshot, spread_diag = await enrich_snapshot_spread(
-        dict(body.doctrine_snapshot or {}),
-        symbol=body.symbol, lane=effective_lane,
     )
 
     doc = {

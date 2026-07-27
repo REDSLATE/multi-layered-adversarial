@@ -143,10 +143,10 @@ def test_large_cap_real_signal_does_not_clamp_to_toehold():
 
 def test_crypto_baseline_now_above_zero():
     """Crypto baseline raised 0.00 → 0.20 + 0.05 fractional default.
-    With completely empty snapshot, neutral labels (FUNDING_NEUTRAL,
-    LIQUIDATION_BALANCED) fire and add their own credits — but the
-    score must still be at least the baseline + fractional."""
-    snap = {"symbol": "BTC", "lane": "crypto", "spread_bps": 5.0}
+    Snapshot must carry VALID QUOTES to be graded at all (2026-07-27
+    doctrine: missing data → NO_DATA, never a market condition)."""
+    snap = {"symbol": "BTC", "lane": "crypto", "spread_bps": 5.0,
+            "bid": 100.00, "ask": 100.05}
     base = label_crypto_snapshot(snap)
     # baseline (0.20) + fractional (0.05) + TIGHT_SPREAD (+0.15) +
     # FUNDING_NEUTRAL (+0.10) + LIQUIDATION_BALANCED (+0.10) = 0.60
@@ -156,16 +156,17 @@ def test_crypto_baseline_now_above_zero():
 
 
 def test_crypto_baseline_only_tags_toehold():
-    """Snapshot with NO real signal (no volume, no trend, no OI exp)
-    must tag BASELINE_ONLY_TOEHOLD regardless of neutral noise labels."""
-    snap = {"symbol": "BTC", "lane": "crypto", "spread_bps": 5.0}
-    base = label_crypto_snapshot(snap)
-    # TIGHT_SPREAD is a quality-positive label → BASELINE_ONLY should
-    # NOT fire when TIGHT_SPREAD is present. Use wide spread to get
-    # a true baseline-only case:
-    snap2 = {"symbol": "BTC", "lane": "crypto"}  # defaults to wide spread
+    """Snapshot with valid quotes but NO real signal (no volume, no
+    trend, REAL wide spread) tags BASELINE_ONLY_TOEHOLD. A snapshot
+    with NO quotes at all is NO_DATA — never graded (2026-07-27)."""
+    snap2 = {"symbol": "BTC", "lane": "crypto",
+             "bid": 100.00, "ask": 101.20, "spread_bps": 119.0}
     base2 = label_crypto_snapshot(snap2)
     assert "BASELINE_ONLY_TOEHOLD" in base2.labels
+
+    empty = label_crypto_snapshot({"symbol": "BTC", "lane": "crypto"})
+    assert empty.quality == "NO_DATA"
+    assert empty.labels == ["NO_DATA"]
 
 
 # ── Seat: fractional sizing decision tree ─────────────────────────

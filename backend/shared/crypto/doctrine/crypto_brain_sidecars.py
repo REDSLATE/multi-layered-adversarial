@@ -77,6 +77,18 @@ def build_crypto_brain_doctrine_packet(
             "labels": base.labels,
             "reasons": base.reasons,
         },
+        # Provenance (2026-07-27): every doctrine result is auditable —
+        # WHERE the graded market data came from and how fresh it was.
+        "market_data_provenance": {
+            "snapshot_source": snapshot.get("snapshot_source"),
+            "spread_source": snapshot.get("spread_source"),
+            "snapshot_age_ms": snapshot.get("snapshot_age_ms"),
+            "bars_used": snapshot.get("bars_used"),
+            "enrichment_status": snapshot.get("enrichment_status"),
+            "missing_required_fields": snapshot.get("missing_required_fields"),
+            "doctrine_score": base.score,
+            "doctrine_result": base.quality,
+        },
         "seats": {
             "strategist": strategist,
             "adversary": adversary,
@@ -288,6 +300,11 @@ def _chevelle_dampeners(labels, snapshot) -> List[tuple[str, float]]:
     unsafety; this function never returns a block.
     """
     out: List[tuple[str, float]] = []
+    if "NO_DATA" in labels:
+        # Missing/stale market data is NOT a market condition — but it
+        # must never INCREASE sizing either. Conservative reduce-only
+        # dampener while data is dark.
+        out.append(("NO_DATA_CONSERVATIVE", 0.50))
     if "WIDE_SPREAD" in labels:
         out.append(("WIDE_SPREAD", GOVERNOR_DAMPENERS["WIDE_SPREAD"]))
     if "WRONG_LANE" in labels:

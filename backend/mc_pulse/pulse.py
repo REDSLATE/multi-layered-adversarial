@@ -61,6 +61,18 @@ async def complete_pulse(receipt: PulseReceipt) -> PulseReceipt:
         completed = datetime.fromisoformat(receipt.completed_at)
         elapsed = (completed - started).total_seconds()
         receipt.overrun = elapsed > receipt.cadence_seconds
+    # Emission-health counters (2026-07-27): brain flow vs doctrine
+    # flow must be independently observable.
+    try:
+        from shared.observability.pipeline_counters import incr  # noqa: WPS433
+        evaluated = len(receipt.brains_completed)
+        with_opinions = len(receipt.opinions_by_brain)
+        incr("brains_evaluated", evaluated)
+        incr("brain_holds", max(0, evaluated - with_opinions))
+        incr("actionable_opinions", sum(receipt.opinions_by_brain.values()))
+        incr("intents_emitted", receipt.intents_emitted)
+    except Exception:  # noqa: BLE001
+        pass
     await persist_receipt(receipt)
     return receipt
 

@@ -31,6 +31,8 @@ def test_crypto_good_snapshot_scores_a_quality():
     labels = label_crypto_snapshot({
         "lane": "crypto",
         "symbol": "BTC/USD",
+        "bid": 118000.0,
+        "ask": 118011.8,
         "volume_24h_usd": 500_000_000,
         "spread_bps": 10,
         "volatility_1h": 0.02,
@@ -49,6 +51,8 @@ def test_crypto_bad_snapshot_rejected():
     labels = label_crypto_snapshot({
         "lane": "crypto",
         "symbol": "DOGE/USD",
+        "bid": 0.1000,
+        "ask": 0.1025,
         "volume_24h_usd": 1_000_000,
         "spread_bps": 250,
         "volatility_1h": 0.001,
@@ -86,6 +90,8 @@ def test_chevelle_dampens_on_wide_spread():
         "lane": "crypto",
         "symbol": "DOGE/USD",
         "existing_intent": True,
+        "bid": 0.1000,
+        "ask": 0.1020,
         "spread_bps": 200,
     })
     gov = packet["seats"]["governor"]
@@ -141,6 +147,8 @@ def test_redeye_objections_on_bad_setup():
     packet = build_crypto_brain_doctrine_packet({
         "lane": "crypto",
         "symbol": "ALT/USD",
+        "bid": 1.000,
+        "ask": 1.020,
         "spread_bps": 200,         # WIDE_SPREAD
         "funding_rate": 0.002,     # FUNDING_CROWDED
         "liquidation_imbalance": 1.0,  # LIQUIDATION_RISK
@@ -271,6 +279,8 @@ def test_hoist_works_for_crypto_packet():
         "lane": "crypto",
         "symbol": "BTC/USD",
         "existing_intent": True,
+        "bid": 118000.0,
+        "ask": 118011.8,
         "volume_24h_usd": 500_000_000,
         "spread_bps": 10,
         "exchange_liquidity_score": 0.9,

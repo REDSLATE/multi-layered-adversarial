@@ -3629,3 +3629,54 @@ EQUITY_DYNAMIC_RISK_SIZER_ENABLED=true, OPTIONS_ENABLED=true.
 3. Options stays exit-DISABLED until operator enables lane in Exit
    Monitor panel; first option position will log its raw Webull row
    (check backend logs to confirm field mapping).
+
+## 2026-07-27 — Crypto NO_DATA doctrine + snapshot enrichment (FIXES "all crypto intents rejected")
+### Root cause (user bug report, prod)
+Brains post EMPTY doctrine_snapshots; MC only enriched spread_bps and
+even that fell to the 9999 sentinel (Kraken fallback flag was off).
+The doctrine then graded sentinels as market truth: spread 9999 →
+WIDE_SPREAD, vol 0 → DEAD_VOL, no volume credit → score exactly 0.20 →
+REJECT on 100% of crypto intents. Reproduced in preview.
+### Operator doctrine (pinned)
+Real unfavorable market data → REJECT. Missing/stale data → NO_DATA.
+Sentinels must never represent market conditions.
+### Built
+- shared/market_data/crypto_snapshot_enrichment.py: ingest-time
+  enrichment BEFORE grading — bid/ask + 24h quote volume from Kraken
+  public ticker (fresh-cache 15s → live → stale-cache ≤60s → NO_DATA
+  ladder; CRYPTO_SNAPSHOT_MAX_AGE_MS=60000), spread_bps from real
+  quotes, volatility_1h + trend efficiency from MC 5m bars
+  (shared_ohlcv_bars, ≥8 bars else NO_DATA). Brain values always win.
+  Protections: invalid quotes (bid/ask ≤0, ask<bid) → NO_DATA; stale →
+  NO_DATA; insufficient bars → NO_DATA. Stamps snapshot_source,
+  spread_source, snapshot_age_ms, bars_used, enrichment_status,
+  missing_required_fields.
+- crypto_labels.py: NO_DATA gate before scoring — sentinel/missing/
+  invalid → quality "NO_DATA" (never REJECT). Legacy empty snapshots
+  → NO_DATA. Snapshots with real quotes still grade (compat).
+- crypto_brain_sidecars.py: packet carries market_data_provenance
+  {sources, age, bars, status, missing, doctrine_score/result};
+  governor NO_DATA_CONSERVATIVE 0.50× dampener (dark data never sizes
+  up).
+- shared/intents.py BOTH ingest paths (runtime + admin): enrich FIRST,
+  grade the ENRICHED snapshot (was: grade raw, enrich after!).
+- Counters (shared/observability/pipeline_counters.py + GET
+  /api/admin/pipeline/counters): brains_evaluated, brain_holds,
+  actionable_opinions, intents_emitted (pulse), intents_enriched,
+  intents_no_data, intents_graded_no_data, intents_rejected (ingest).
+- .env: SPREAD_FETCH_KRAKEN_ENABLED=true, CRYPTO_SNAPSHOT_MAX_AGE_MS.
+### Verified (E2E in preview, real Kraken public data)
+- BTC/USD intent: ENRICHED (spread 0.02bps, $56M vol24h, 1.19% vol1h,
+  12 bars) → B_QUALITY 0.75 (was REJECT 0.20 before fix).
+- ETH/USD: real quotes but 0 MC bars in preview → NO_DATA (correct).
+- Live pulse-emitted gto BTC intent → ENRICHED B_QUALITY 0.75.
+- 64 doctrine/enrichment tests + 1030 crypto/intent/pulse regression
+  pass. Updated legacy fixtures to new doctrine (empty snapshot →
+  NO_DATA documented in test_fractional_sizing + sidecar tests).
+### Known pre-existing (NOT this session)
+- mc_pulse/tests/test_idempotency.py::test_different_pulses_produce_
+  separate_rows fails on clean checkout too (env data pollution).
+### NEEDS REDEPLOY to reach production. Separate open question:
+prod fingerprints showed n=0 intents after July-8 pivot — parallel
+emission-path investigation; use /api/admin/pipeline/counters after
+redeploy to distinguish emission health from doctrine health.

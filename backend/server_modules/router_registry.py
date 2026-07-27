@@ -108,6 +108,7 @@ from routes.hotpath_admin import router as hotpath_admin_router
 from routes.gain_goal_admin import router as gain_goal_admin_router
 from routes.risk_sizer_admin import router as risk_sizer_admin_router
 from routes.options_admin import router as options_admin_router
+from routes.pipeline_admin import router as pipeline_admin_router
 from routes.scanner_admin import router as scanner_admin_router
 from routes.risk_budget_admin import router as risk_budget_admin_router
 from routes.opportunity_admin import router as opportunity_admin_router
@@ -291,6 +292,7 @@ def register_routers(api_router: APIRouter) -> None:
     api_router.include_router(gain_goal_admin_router)
     api_router.include_router(risk_sizer_admin_router)
     api_router.include_router(options_admin_router)
+    api_router.include_router(pipeline_admin_router)
     api_router.include_router(scanner_admin_router)
     api_router.include_router(risk_budget_admin_router)
     api_router.include_router(opportunity_admin_router)
