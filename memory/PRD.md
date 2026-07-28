@@ -3755,3 +3755,32 @@ tick; first one after a sell passes the balance check.
   monitor tick (this is the requested loss-cutting; losses realize).
 - Crypto exit lane must be ARMED in Exit Monitor panel or nothing
   auto-sells.
+
+## 2026-07-28 (later) — "It hasn't sold anything" diagnosis + tooling
+- Evidence from operator's Kraken screenshot: BTC (mapped, adopted)
+  sold 4×; obscure losers (CXT −5%, ALLO, PI, CHEX) untouched.
+- Verified all those pairs ARE priceable via Kraken public ticker
+  (CXTUSD/ALLOUSD/PIUSD/CHEXUSD all resolve) — pricing is NOT the
+  blocker.
+- SMOKING GUN (preview DB): exit_policy.crypto.enabled=false, doc
+  updated by admin@risedual.io 07-26 with SL/TP knobs saved but lane
+  never ARMED. Saving knobs does NOT arm the lane. If prod matches,
+  the monitor skips the entire crypto lane every tick.
+### Built
+- GET /api/admin/exits/diagnose: per-holding autopsy — priced?,
+  adopted?, plan entry/source/stop/target, pnl vs entry, pct to
+  stop, status/attempts/last_error; FAIL-LOUD findings (lane OFF,
+  monitor not running, kraken unreachable, unpriceable holdings,
+  exhausted exit attempts, stop-breached-but-active).
+- ExitMonitorPanel.jsx: red "CRYPTO LANE IS OFF" banner whenever
+  positions could exist while disarmed + "WHY NOT SELLING?" button
+  rendering findings + holdings table.
+### Verified
+- Endpoint fail-loud in preview (lane OFF + no kraken creds both
+  flagged); UI screenshot confirms banner + diagnose flow.
+### Operator runbook after redeploy
+1. Exit Monitor panel → press "crypto" so it reads ARMED (green).
+2. Click "WHY NOT SELLING?" — every remaining blocker is named per
+   holding.
+3. Expect re-anchored losers below true −3% to market-sell within
+   one tick once armed.

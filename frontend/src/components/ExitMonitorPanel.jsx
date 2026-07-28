@@ -48,6 +48,20 @@ export default function ExitMonitorPanel() {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [diag, setDiag] = useState(null);
+  const [diagBusy, setDiagBusy] = useState(false);
+
+  const runDiagnose = async () => {
+    setDiagBusy(true);
+    try {
+      const { data: d } = await api.get("/admin/exits/diagnose");
+      setDiag(d);
+    } catch (e) {
+      setDiag({ findings: [e?.response?.data?.detail || String(e)], holdings: [] });
+    } finally {
+      setDiagBusy(false);
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -97,10 +111,61 @@ export default function ExitMonitorPanel() {
           <ShieldCheck size={11} />
           Exit Monitor · SL / TP / Max-Hold — {plans.length} plan{plans.length === 1 ? "" : "s"}
         </div>
-        <div className="text-[9px] font-mono text-rd-dim">
+        <div className="text-[9px] font-mono text-rd-dim flex items-center gap-2">
           {monitor.running ? `alive · tick ${monitor.tick_count} · ${monitor.exits_submitted} exits` : "LOOP NOT RUNNING"}
+          <button
+            onClick={runDiagnose}
+            disabled={diagBusy}
+            data-testid="exit-diagnose-btn"
+            className="text-[9px] font-mono uppercase tracking-widest border border-rd-border hover:border-rd-text px-2 py-0.5 disabled:opacity-40"
+          >
+            {diagBusy ? "…" : "why not selling?"}
+          </button>
         </div>
       </div>
+
+      {!policy.crypto?.enabled && (
+        <div className="mb-2 px-2 py-1 text-[10px] font-mono border border-red-500 text-red-500" data-testid="exit-crypto-off-warning">
+          <Warning size={10} className="inline mr-1" />
+          CRYPTO LANE IS OFF — no crypto holding will EVER auto-sell (stops, targets and max-hold are all skipped). Press "crypto" to ARM it.
+        </div>
+      )}
+
+      {diag && (
+        <div className="mb-2 border border-rd-border p-2" data-testid="exit-diagnose-result">
+          <div className="text-[9px] uppercase tracking-widest text-rd-dim font-mono pb-1">
+            Diagnose · why isn't it selling?
+          </div>
+          {(diag.findings || []).length === 0 ? (
+            <div className="text-[10px] font-mono text-emerald-500">no blockers found — all holdings have live exit plans</div>
+          ) : (
+            (diag.findings || []).map((f, i) => (
+              <div key={i} className="text-[10px] font-mono text-red-500 py-0.5">
+                <Warning size={10} className="inline mr-1" />{f}
+              </div>
+            ))
+          )}
+          {(diag.holdings || []).length > 0 && (
+            <div className="mt-1">
+              <div className="grid grid-cols-[80px_70px_70px_90px_70px_1fr] gap-1 text-[9px] uppercase tracking-widest text-rd-dim font-mono pb-0.5">
+                <span>symbol</span><span>value $</span><span>pnl %</span><span>entry src</span><span>to stop %</span><span>blocker / note</span>
+              </div>
+              {diag.holdings.map((h) => (
+                <div key={h.symbol} className="grid grid-cols-[80px_70px_70px_90px_70px_1fr] gap-1 text-[10px] font-mono py-0.5" data-testid={`diag-holding-${h.symbol?.split("/")[0]}`}>
+                  <span className="text-rd-text font-bold truncate">{h.symbol}</span>
+                  <span className="text-rd-dim">{h.value_usd ?? "?"}</span>
+                  <span className={h.pnl_pct_vs_entry >= 0 ? "text-emerald-500" : "text-rd-danger"}>
+                    {h.pnl_pct_vs_entry != null ? `${h.pnl_pct_vs_entry > 0 ? "+" : ""}${h.pnl_pct_vs_entry}` : "—"}
+                  </span>
+                  <span className="text-rd-dim truncate">{h.entry_source || "—"}</span>
+                  <span className="text-rd-dim">{h.pct_to_stop ?? "—"}</span>
+                  <span className={h.blocker ? "text-red-500" : "text-rd-dim"}>{h.blocker || h.last_error || h.note || "plan ok"}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {LANES.map((lane) => (
         <LaneKnobs key={lane} lane={lane} policy={policy} busy={busy} onSave={savePolicy} onToggle={toggle} />
