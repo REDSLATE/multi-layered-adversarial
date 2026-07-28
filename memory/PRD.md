@@ -3784,3 +3784,35 @@ tick; first one after a sell passes the balance check.
    holding.
 3. Expect re-anchored losers below true −3% to market-sell within
    one tick once armed.
+
+## 2026-07-28 (later 2) — Operator's 5-point fix list implemented
+1. SELL inventory gate (broker_router.route_order): spot crypto SELL
+   checks FREE Kraken base balance first (15s cached); zero →
+   terminal BrokerRouteBlocked "sell_no_inventory"; partial → clamp
+   notional to held. Margin SHORTs exempt. Kills the
+   insufficient_funds flood (GAIB/BTT/BONK...).
+2. Seat visibility: /api/admin/exits/diagnose now returns `flow`
+   (crypto execute seat holders vs emitting brains 24h) + SEAT
+   MISMATCH finding when emitters don't hold the seat.
+3. Broker-min bump (sizer): sub-minimum sizes (Governor RISK_DOWN
+   0.85/0.33 zeroing cards) bump UP to minimum_order_notional iff
+   min ticket fits UNMULTIPLIED risk budget + portfolio capacity +
+   caps. Receipt stamps min_notional_bump. Knob bump_to_broker_min
+   (crypto+equity, default true).
+4. Universe spread filter: kraken_movers stamps live spread_bps;
+   refresher drops non-pinned pairs > max_spread_bps_crypto knob
+   (default 150bps) with min_keep=12 floor (a first attempt at 60bps
+   collapsed the universe 23→5 and starved brain emission — floor
+   added, verified recovery to 11+).
+### Testing forensics (important for future agents)
+- test_p0_pulse_arbiter_intent_smoke::test_pulse_emits_intent_when_
+  arbiter_live is STATE-DEPENDENT: lingering gate_state=pending
+  crypto intents block the arbiter duplicate-stance guard (check A)
+  → no emission → 90s timeout. NOT a code regression. Cleanup:
+  update_many({"lane":"crypto","gate_state":"pending"},
+  {"$set":{"gate_state":"expired"}}) then it passes (verified 22s
+  pass with all changes active). Full suite: 1899 passed.
+- test_exit_monitor_lifecycle arms the post-sell cooldown mirror
+  (runtime_flags._id=crypto_sell_cooldown) via _note_crypto_sell —
+  delete the doc if preview BUY routing seems mysteriously blocked
+  after test runs.

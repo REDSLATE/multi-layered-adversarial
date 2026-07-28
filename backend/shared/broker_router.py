@@ -196,6 +196,42 @@ def _broker_require_mc_receipt() -> bool:
     }
 
 
+# ── SELL inventory guard (2026-07-28 operator fix #1) ──────────────
+# A spot SELL with zero base-asset inventory can only die at the
+# broker as insufficient_funds — the flood of failed GAIB/BTT/BONK
+# sells. Verify FREE base balance BEFORE submission: zero → terminal
+# block; partial → clamp the order to what we actually hold.
+_INV_CACHE: dict = {"at": 0.0, "data": None}
+_INV_TTL_S = 15.0
+
+
+async def _kraken_base_balance(adapter, base: str) -> Optional[float]:
+    """FREE base-asset balance. None = balance unreadable → fail-open
+    (the broker remains the final guard)."""
+    now = time.monotonic()
+    data = _INV_CACHE["data"] if now - _INV_CACHE["at"] <= _INV_TTL_S else None
+    if data is None:
+        try:
+            from shared.crypto.kraken import call_private  # noqa: WPS433
+            data = await call_private(
+                "/0/private/Balance",
+                adapter.public_key, adapter.private_key, {},
+            )
+            _INV_CACHE.update(at=now, data=data)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("sell inventory balance fetch failed: %s", exc)
+            return None
+    from shared.exits.monitor import _normalize_kraken_asset  # noqa: WPS433
+    total = 0.0
+    for code, raw in (data or {}).items():
+        if _normalize_kraken_asset(code) == base.upper():
+            try:
+                total += float(raw)
+            except (TypeError, ValueError):
+                pass
+    return total
+
+
 def _mint_and_verify_mc_receipt(
     *,
     intent: dict,
@@ -510,6 +546,33 @@ async def route_order(
             )
         except (TypeError, ValueError):
             short_leverage = 2
+
+    # SELL inventory gate (2026-07-28 operator fix #1). Margin SHORTs
+    # exempt — leverage is their mechanism, not inventory.
+    if (side == "SELL" and not is_short
+            and asset.lane == "crypto" and broker_name == "kraken"):
+        held = await _kraken_base_balance(adapter, asset.base)
+        if held is not None:
+            px = None
+            try:
+                from shared.crypto.broker_adapter import _ticker_price  # noqa: WPS433
+                from shared.crypto.kraken import to_kraken_pair  # noqa: WPS433
+                px = await _ticker_price(to_kraken_pair(f"{asset.base}/USD"))
+            except Exception:  # noqa: BLE001
+                px = None
+            held_notional = held * px if (px and px > 0) else None
+            if held <= 0 or (held_notional is not None and held_notional < 0.50):
+                raise BrokerRouteBlocked(
+                    f"sell_no_inventory: free {asset.base} balance is "
+                    f"{held:.8f} — a spot SELL would die at the broker as "
+                    "insufficient_funds; NO_TRADE"
+                )
+            if held_notional is not None and held_notional < float(notional_usd):
+                logger.info(
+                    "route_order SELL clamped to inventory %s: $%.2f → $%.2f",
+                    asset.canonical, notional_usd, held_notional,
+                )
+                notional_usd = int(held_notional * 100) / 100.0
     try:
         if asset.lane == "options":
             o = intent.get("option") or {}

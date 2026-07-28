@@ -214,10 +214,29 @@ async def build_position_plan(
     spendable = available * (1.0 - float(lane_pol["reserve_fraction"]))
     final_notional = math.floor(min(risk_based, allocation_cap, spendable) * 100) / 100.0
 
-    if final_notional < float(lane_pol["minimum_order_notional"]):
-        return _reject("below_minimum_order_notional",
-                       computed_notional=final_notional,
-                       balance_source=snap["source"])
+    min_notional = float(lane_pol["minimum_order_notional"])
+    min_notional_bump = False
+    if final_notional < min_notional:
+        # 2026-07-28 operator fix #3: Governor RISK_DOWN multipliers
+        # (0.85 / 0.33) were zeroing every card below the broker
+        # minimum. The ticket is binary at the floor — broker-minimum
+        # or nothing. Bump UP iff the minimum ticket still fits the
+        # UNMULTIPLIED per-trade risk budget, the remaining portfolio
+        # capacity, and the cash/allocation caps. Governor stays
+        # meaningful above the floor; below it, it degrades to a
+        # go/no-go instead of a silent zero.
+        min_risk = min_notional * stop_frac
+        if (bool(lane_pol.get("bump_to_broker_min", True))
+                and min_notional <= min(allocation_cap, spendable)
+                and min_risk <= base_risk
+                and min_risk <= remaining_capacity):
+            final_notional = min_notional
+            final_risk = max(final_risk, min_risk)
+            min_notional_bump = True
+        else:
+            return _reject("below_minimum_order_notional",
+                           computed_notional=final_notional,
+                           balance_source=snap["source"])
 
     # Re-derive the risk actually carried at the final notional — the
     # caps can only shrink it, never grow it.
@@ -263,6 +282,7 @@ async def build_position_plan(
         "governor_multiplier": gm,
         "gross_notional": round(risk_based, 2),
         "final_notional": final_notional,
+        "min_notional_bump": min_notional_bump,
         "projected_loss_at_stop": round(projected_loss, 4),
     }
     if intent_id:

@@ -24,6 +24,7 @@ DEFAULTS: dict[str, Any] = {
         "min_stop_fraction": 0.01,         # brain stop bounds
         "max_stop_fraction": 0.05,
         "post_sell_cooldown_min": 30.0,    # freed cash cools before BUYs
+        "bump_to_broker_min": True,        # sub-min sizes bump to broker min
     },
     "equity": {
         "risk_fraction": 0.005,
@@ -35,6 +36,7 @@ DEFAULTS: dict[str, Any] = {
         "max_open_risk_fraction": 0.02,
         "min_stop_fraction": 0.01,
         "max_stop_fraction": 0.05,
+        "bump_to_broker_min": True,
     },
     "options": {
         "risk_fraction": 0.005,

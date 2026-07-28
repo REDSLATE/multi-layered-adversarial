@@ -220,6 +220,7 @@ def _dedupe_and_merge(candidates: list[dict]) -> list[dict]:
                 "pinned": bool(c.get("_pinned") or False),
                 "core": bool(c.get("_core") or False),
                 "scanner": bool(c.get("_scanner") or False),
+                "spread_bps": c.get("spread_bps"),
             }
         else:
             existing = by_symbol[sym]
@@ -243,6 +244,8 @@ def _dedupe_and_merge(candidates: list[dict]) -> list[dict]:
             existing["volume"] = max(existing["volume"], float(c.get("volume") or 0.0))
             if existing["price"] <= 0 and c.get("price"):
                 existing["price"] = float(c["price"])
+            if existing.get("spread_bps") is None and c.get("spread_bps") is not None:
+                existing["spread_bps"] = c["spread_bps"]
     return list(by_symbol.values())
 
 
@@ -606,6 +609,36 @@ async def _publish_and_report(
 # ── crypto refresh ────────────────────────────────────────────────
 
 
+def _apply_spread_filter(
+    rows: list[dict], max_spread_bps: float, min_keep: int = 12,
+) -> tuple[list[dict], list[dict]]:
+    """Drop non-pinned pairs whose live spread exceeds the cap
+    (2026-07-28 operator fix #4: pairs constantly failing spread_ok /
+    WIDE_SPREAD burn intents for nothing). Rows without a spread
+    reading pass — the doctrine spread gate still guards downstream.
+
+    `min_keep` floor: never starve the pulse — if the cap would leave
+    fewer than `min_keep` symbols, refill with the tightest-spread
+    drops (a thin universe of 5 collapsed brain emission entirely)."""
+    kept: list[dict] = []
+    dropped: list[dict] = []
+    for r in rows:
+        sb = r.get("spread_bps")
+        if (not r.get("pinned") and sb is not None
+                and float(sb) > max_spread_bps):
+            r["_drop_reason"] = f"wide_spread_{sb}bps"
+            dropped.append(r)
+        else:
+            kept.append(r)
+    if len(kept) < min_keep and dropped:
+        dropped.sort(key=lambda r: float(r.get("spread_bps") or 0))
+        while len(kept) < min_keep and dropped:
+            refill = dropped.pop(0)
+            refill.pop("_drop_reason", None)
+            kept.append(refill)
+    return kept, dropped
+
+
 async def refresh_crypto_universe() -> dict:
     """Rebuild the crypto universe from Kraken public tickers + pins."""
     at = now_utc()
@@ -664,6 +697,13 @@ async def refresh_crypto_universe() -> dict:
     )
     kept, quarantined = await _filter_by_registry(admitted, "kraken")
     quality_kept, quality_dropped = _apply_quality_filters(kept, lane)
+
+    # Spread cap (operator knob universe_quality.max_spread_bps_crypto,
+    # default 150bps — Kraken alt books run wide; the doctrine spread
+    # gate applies the strict per-trade check downstream).
+    max_spread = float(quality.get("max_spread_bps_crypto") or 150.0)
+    quality_kept, wide_spread = _apply_spread_filter(quality_kept, max_spread)
+    quality_dropped.extend(wide_spread)
 
     # Affordability: ordermin × price must fit the per-order cap.
     try:

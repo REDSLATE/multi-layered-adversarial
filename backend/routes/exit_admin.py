@@ -105,6 +105,33 @@ async def diagnose_crypto(_user: dict = Depends(get_current_user)):  # noqa: B00
     if broker_error:
         findings.append(f"KRAKEN UNREACHABLE: {broker_error}")
 
+    # ── Emission → seat flow (2026-07-28 operator fix #2) ─────────
+    # Barracuda emitting while GTO holds crypto:executor = nothing
+    # routes. Surface the seat holder vs who is actually emitting.
+    flow: dict = {}
+    try:
+        from datetime import datetime, timedelta, timezone  # noqa: WPS433
+        from shared.executor_seat import (  # noqa: WPS433
+            get_seat_holder, seats_with_execute,
+        )
+        seats = seats_with_execute("crypto")
+        holders = {s: await get_seat_holder(s) for s in seats}
+        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        emitters = await db["shared_intents"].distinct(
+            "stack", {"lane": "crypto", "ingest_ts": {"$gte": since},
+                      "audit_only": {"$ne": True}})
+        flow = {"crypto_execute_seats": holders,
+                "emitting_brains_24h": sorted(emitters)}
+        holder_set = {h for h in holders.values() if h}
+        if emitters and holder_set and not (set(emitters) & holder_set):
+            findings.append(
+                f"SEAT MISMATCH: brains emitting crypto intents "
+                f"({sorted(emitters)}) do NOT hold the crypto execute "
+                f"seat ({holders}) — nothing routes. Assign the seat or "
+                "have the seat-holder emit.")
+    except Exception as exc:  # noqa: BLE001
+        flow = {"error": str(exc)[:200]}
+
     plans_by_symbol = {
         p["symbol"]: dict(p) for p in plan_store.load_live("crypto")
     }
@@ -178,6 +205,7 @@ async def diagnose_crypto(_user: dict = Depends(get_current_user)):  # noqa: B00
         "crypto_lane_enabled": policy["crypto"]["enabled"],
         "monitor_running": status.get("running"),
         "last_tick_at": status.get("last_tick_at"),
+        "flow": flow,
         "holdings": holdings,
     }
 

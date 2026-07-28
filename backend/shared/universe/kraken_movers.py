@@ -322,6 +322,18 @@ async def fetch_crypto_movers(
             volume = float(vol_str)
         except (TypeError, ValueError, IndexError):
             volume = 0.0
+        # Live spread from the ticker (2026-07-28 operator fix #4):
+        # `b`/`a` are [price, whole_lot_vol, lot_vol]. Stamped so the
+        # refresher can drop chronically wide-spread pairs BEFORE the
+        # brains burn intents on them.
+        spread_bps = None
+        try:
+            bid = float((row.get("b") or [0])[0])
+            ask = float((row.get("a") or [0])[0])
+            if bid > 0 and ask >= bid:
+                spread_bps = round((ask - bid) / ((ask + bid) / 2.0) * 10_000.0, 2)
+        except (TypeError, ValueError, IndexError):
+            pass
         # kkey may be Kraken's canonical (XXBTZUSD) OR the altname
         # (BTCUSD) depending on how it was queried. Look up meta by
         # matching either.
@@ -341,6 +353,7 @@ async def fetch_crypto_movers(
             "change_pct": round(change_pct, 4),
             "volume": volume,
             "price": last,
+            "spread_bps": spread_bps,
             "_altname": meta["altname"],
         })
 
