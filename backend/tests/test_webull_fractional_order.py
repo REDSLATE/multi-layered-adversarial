@@ -152,6 +152,9 @@ def _adapter_with_instrument(symbol: str, instrument_id: str, last_price: float)
     a._resolve_instrument_id = AsyncMock(  # type: ignore[method-assign]
         return_value=(instrument_id, last_price, True)
     )
+    # 2026-07-28: submit_market_order re-quotes via get_latest_trade —
+    # stub to None so unit tests stay hermetic (cached price is used).
+    a.get_latest_trade = AsyncMock(return_value=None)  # type: ignore[method-assign]
     # 2026-07-22 SELL guard: pre-submit position check. Default the
     # stub to a large long position so BUY tests are unaffected and
     # legacy SELL tests keep passing; guard-specific tests override.

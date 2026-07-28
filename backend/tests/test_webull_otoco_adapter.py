@@ -59,6 +59,9 @@ def _make_adapter(last_price: float = 100.0):
     a._resolve_instrument_id = AsyncMock(  # type: ignore[method-assign]
         return_value=("INSTRUMENT-1", last_price, True),
     )
+    # 2026-07-28: submit path re-quotes via get_latest_trade — stub to
+    # None so tests stay hermetic (cached price is used).
+    a.get_latest_trade = AsyncMock(return_value=None)  # type: ignore[method-assign]
     # Capture the SDK call instead of hitting the broker.
     captured = {}
 

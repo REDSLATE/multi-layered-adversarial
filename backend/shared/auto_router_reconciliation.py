@@ -35,6 +35,9 @@ RECONCILE_BATCH_CAP = 25
 RECONCILE_BOUNDARY_WARN_MIN = 45  # 75% of default 60min lookback
 RECONCILE_MIN_INTERVAL_SEC = 25
 _LAST_RECONCILE_SWEEP_TS: Optional[datetime] = None
+# 2026-07-28: unfilled entry orders are cancelled after this many
+# minutes (LCID stale-limit autopsy). Env-tunable, no redeploy.
+ENTRY_ORDER_TTL_MIN = float(os.environ.get("ENTRY_ORDER_TTL_MIN", "10"))
 
 # Expiration-sweep default. Duplicates the constant in `auto_router.py`
 # so this module doesn't depend on the main file's globals at import
@@ -489,8 +492,84 @@ async def _sweep_submitted_broker_orders() -> dict:
             continue
 
         # ── PARTIAL / WORKING / SUBMITTED / PENDING_CANCEL ─────
-        # Not yet terminal on the broker side; leave alone and poll
-        # again next tick.
+        # 2026-07-28 operator autopsy (LCID $6.88 limit vs $7.71
+        # live): an unfilled entry order must NOT rest all day. A
+        # momentum entry either fills within the TTL or the setup is
+        # gone — a resting limit under a runner only fills when the
+        # trade is already WRONG (pure adverse selection). Cancel at
+        # the broker + terminal-expire the intent (never requeue: re-
+        # chasing a runaway price is the same bad trade).
+        age_min = _minutes_since_iso(
+            intent.get("executed_at") or intent.get("ingest_ts"), now_utc,
+        )
+        if age_min is not None and age_min >= ENTRY_ORDER_TTL_MIN:
+            filled_qty = 0.0
+            try:
+                filled_qty = float(bo.get("filled_qty") or 0.0)
+            except (TypeError, ValueError):
+                pass
+            try:
+                await asyncio.wait_for(
+                    adapter.cancel_order(str(order_id)), timeout=8.0,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "entry-order TTL cancel FAILED intent=%s order=%s: %s",
+                    intent_id, order_id, exc,
+                )
+                counts["errors"] += 1
+                continue
+            if filled_qty <= 0:
+                # Nothing filled — release the full reservation.
+                try:
+                    from shared.capital.ledger import release_capital  # noqa: WPS433
+                    lane_str = (intent.get("lane") or "").lower()
+                    amount = float(
+                        intent.get("final_notional_usd")
+                        or (intent.get("sizing_provenance") or {}).get("final_usd")
+                        or 0.0
+                    )
+                    if amount > 0 and lane_str in ("equity", "crypto"):
+                        await release_capital(
+                            lane=lane_str,
+                            intent_id=intent_id,
+                            amount=amount,
+                            reason="entry_order_ttl_cancel",
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
+            new_state = "filled" if filled_qty > 0 else "expired_unfilled"
+            try:
+                await db[SHARED_INTENTS].update_one(
+                    {"intent_id": intent_id},
+                    {"$set": {
+                        "gate_state": new_state,
+                        "expired_at": _now_iso(),
+                        "reconciled_by": AUTO_ROUTER_EMAIL,
+                        "broker_reason": (
+                            f"entry_order_ttl_cancelled_after_{age_min:.0f}min"
+                            + ("_partial_fill" if filled_qty > 0 else "")
+                        ),
+                        "broker_order.status": "CANCELLED_TTL",
+                        "broker_order.filled_qty": filled_qty,
+                    }},
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "entry-order TTL state update failed intent=%s: %s",
+                    intent_id, exc,
+                )
+            counts["ttl_cancelled"] = counts.get("ttl_cancelled", 0) + 1
+            logger.info(
+                "entry order TTL CANCELLED intent=%s %s %s age=%.1fmin "
+                "filled_qty=%s (partial positions are adopted by the "
+                "exit monitor)",
+                intent_id, lane_name, intent.get("symbol"),
+                age_min, filled_qty,
+            )
+            continue
+
+        # Younger than the TTL — leave alone and poll again next tick.
         counts["no_change"] += 1
 
     return await _finish_sweep(counts)

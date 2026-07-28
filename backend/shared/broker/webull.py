@@ -1045,6 +1045,30 @@ class WebullAdapter(BrokerAdapter):
 
         sym_u = (symbol or "").upper().strip()
 
+        # ── 2026-07-28: ALWAYS re-quote at submit ─────────────────
+        # `_instrument_cache` freezes the price at FIRST resolution —
+        # LCID autopsy: limit priced $6.88 off a stale cached quote
+        # while the live market was $7.71 (+18% runner). A limit born
+        # 11% below market only fills when the trade is already wrong.
+        # `get_latest_trade` runs through the 30s-TTL snapshot cache,
+        # so this costs at most one quote per 30s per symbol. The
+        # frozen cache price is the last resort only.
+        try:
+            fresh = await self.get_latest_trade(sym_u)
+            fresh_px = float((fresh or {}).get("price") or 0.0)
+            if fresh_px > 0:
+                if last_price > 0 and abs(fresh_px - last_price) / last_price > 0.02:
+                    logger.info(
+                        "webull submit re-quote %s: cached %.4f → live %.4f",
+                        sym_u, last_price, fresh_px,
+                    )
+                last_price = fresh_px
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "webull submit re-quote failed %s (using cached %.4f): %s",
+                sym_u, last_price, exc,
+            )
+
         # ── 2026-07-22: SELL pre-check — cash account cannot short ──
         # Webull rejects any SELL exceeding the held long quantity with
         # HTTP 417 OAUTH_OPENAPI_GENERATE_NEW_SHORT_POSITION (observed

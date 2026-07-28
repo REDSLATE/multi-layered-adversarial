@@ -103,6 +103,10 @@ def _build_stub_adapter(monkeypatch):
     async def _fake_instrument(self, symbol):  # noqa: ARG001
         return ("12345", 4.50, False)
     monkeypatch.setattr(WebullAdapter, "_resolve_instrument_id", _fake_instrument)
+
+    async def _fake_quote(self, symbol):  # noqa: ARG001
+        return None  # 2026-07-28: keep the re-quote path hermetic
+    monkeypatch.setattr(WebullAdapter, "get_latest_trade", _fake_quote)
     return adapter
 
 

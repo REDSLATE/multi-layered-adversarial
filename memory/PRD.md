@@ -3816,3 +3816,32 @@ tick; first one after a sell passes the balance check.
   (runtime_flags._id=crypto_sell_cooldown) via _note_crypto_sell —
   delete the doc if preview BUY routing seems mysteriously blocked
   after test runs.
+
+## 2026-07-28 (later 3) — LCID stale-limit autopsy: two root causes fixed
+Operator screenshot: LCID BUY LIMIT $6.88 "Working" all day while
+live $7.71 (+18.6%) — an order that only fills when the trade is
+already wrong (adverse selection).
+### Root causes
+1. `WebullAdapter._instrument_cache` freezes (instrument_id, PRICE,
+   fractionable) at FIRST resolution — every later LIMIT for that
+   symbol was priced off a potentially hours-stale quote.
+2. Reconcile sweep's WORKING branch left unfilled orders resting
+   forever (no TTL).
+### Fixes
+- webull.py submit_market_order: ALWAYS re-quotes via
+  get_latest_trade (30s-TTL snapshot cache) before pricing the
+  LIMIT; frozen cache price is last resort; logs when cached vs
+  live diverge >2%.
+- auto_router_reconciliation: WORKING/PARTIAL orders older than
+  ENTRY_ORDER_TTL_MIN (env, default 10min) are cancelled at broker;
+  unfilled → gate_state=expired_unfilled + capital released (never
+  requeued — re-chasing a runaway price is the same bad trade);
+  partial → cancel remainder, gate_state=filled (exit monitor
+  adopts the position). counts.ttl_cancelled surfaced.
+### Testing notes
+- Preview HAS a live Webull quotes client — hermetic webull adapter
+  unit tests MUST stub get_latest_trade (added to
+  test_webull_fractional_order/_otoco/_non_blocking helpers) or
+  live quotes pollute stubbed prices.
+- 9/9 test_operator_fixes_0728 (incl. 3 TTL sweep cases with scoped
+  mocks), 96 webull/reconcile tests green.

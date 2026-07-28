@@ -123,3 +123,118 @@ async def test_normal_sizes_not_bumped(wired):
     assert plan["approved"] is True
     assert plan["min_notional_bump"] is False
     assert plan["final_notional"] > 5.0
+
+
+# ── entry-order TTL cancel (LCID stale-limit autopsy 2026-07-28) ────
+
+import uuid
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from db import db
+from namespaces import SHARED_INTENTS
+from shared import auto_router as ar
+from shared import auto_router_reconciliation as ar_recon
+
+_TTL_PREFIX = "ttl-test-"
+
+
+@pytest.fixture(autouse=True)
+async def _ttl_cleanup(monkeypatch):
+    monkeypatch.setattr(ar_recon, "RECONCILE_BATCH_CAP", 500)
+    ar_recon._LAST_RECONCILE_SWEEP_TS = None
+    await db[SHARED_INTENTS].delete_many(
+        {"intent_id": {"$regex": f"^{_TTL_PREFIX}"}})
+    yield
+    await db[SHARED_INTENTS].delete_many(
+        {"intent_id": {"$regex": f"^{_TTL_PREFIX}"}})
+    ar_recon._LAST_RECONCILE_SWEEP_TS = None
+
+
+def _ts_minutes_ago(minutes: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+
+
+async def _insert_working(intent_id: str, txid: str, age_min: float) -> None:
+    await db[SHARED_INTENTS].insert_one({
+        "intent_id": intent_id,
+        "lane": "crypto",
+        "symbol": "XBTUSD",
+        "action": "BUY",
+        "stack": "gto",
+        "gate_state": "submitted",
+        "executed": True,
+        "ingest_ts": _ts_minutes_ago(age_min),
+        "executed_at": _ts_minutes_ago(age_min),
+        "broker_order": {"order_id": txid, "broker": "kraken",
+                         "status": "submitted"},
+        "final_notional_usd": 25.0,
+    })
+
+
+def _working_adapter(txid: str, filled_qty: float = 0.0):
+    mock = MagicMock()
+
+    async def _get_order(oid: str):
+        if str(oid) == str(txid):
+            return {"status": "WORKING", "filled_qty": filled_qty,
+                    "txid": txid, "raw": {}}
+        raise RuntimeError(f"out-of-scope txid {oid!r}")
+
+    cancelled: list[str] = []
+
+    async def _cancel(oid: str):
+        cancelled.append(str(oid))
+
+    mock.get_order = _get_order
+    mock.cancel_order = _cancel
+    mock._cancelled = cancelled
+    return mock
+
+
+async def _run_sweep(kraken_mock):
+    with patch(
+        "shared.crypto.broker_adapter.get_kraken_adapter",
+        new=AsyncMock(return_value=kraken_mock),
+    ), patch(
+        "shared.broker_router.get_webull_adapter",
+        new=AsyncMock(return_value=None),
+    ):
+        return await ar._sweep_submitted_broker_orders()
+
+
+async def test_working_order_past_ttl_is_cancelled():
+    intent_id = f"{_TTL_PREFIX}stale-{uuid.uuid4().hex[:8]}"
+    txid = f"TTL-{uuid.uuid4().hex[:6].upper()}"
+    await _insert_working(intent_id, txid, age_min=ar_recon.ENTRY_ORDER_TTL_MIN + 5)
+    mock = _working_adapter(txid)
+    counts = await _run_sweep(mock)
+    assert txid in mock._cancelled
+    assert counts.get("ttl_cancelled", 0) >= 1
+    doc = await db[SHARED_INTENTS].find_one({"intent_id": intent_id})
+    assert doc["gate_state"] == "expired_unfilled"
+    assert "entry_order_ttl_cancelled" in doc["broker_reason"]
+    assert doc["broker_order"]["status"] == "CANCELLED_TTL"
+
+
+async def test_working_order_within_ttl_left_alone():
+    intent_id = f"{_TTL_PREFIX}fresh-{uuid.uuid4().hex[:8]}"
+    txid = f"TTL-{uuid.uuid4().hex[:6].upper()}"
+    await _insert_working(intent_id, txid, age_min=2)
+    mock = _working_adapter(txid)
+    await _run_sweep(mock)
+    assert txid not in mock._cancelled
+    doc = await db[SHARED_INTENTS].find_one({"intent_id": intent_id})
+    assert doc["gate_state"] == "submitted"
+
+
+async def test_partial_fill_past_ttl_cancels_remainder_marks_filled():
+    intent_id = f"{_TTL_PREFIX}partial-{uuid.uuid4().hex[:8]}"
+    txid = f"TTL-{uuid.uuid4().hex[:6].upper()}"
+    await _insert_working(intent_id, txid, age_min=ar_recon.ENTRY_ORDER_TTL_MIN + 5)
+    mock = _working_adapter(txid, filled_qty=0.5)
+    await _run_sweep(mock)
+    assert txid in mock._cancelled
+    doc = await db[SHARED_INTENTS].find_one({"intent_id": intent_id})
+    assert doc["gate_state"] == "filled"
+    assert doc["broker_order"]["filled_qty"] == 0.5
