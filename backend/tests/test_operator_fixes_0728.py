@@ -238,3 +238,79 @@ async def test_partial_fill_past_ttl_cancels_remainder_marks_filled():
     doc = await db[SHARED_INTENTS].find_one({"intent_id": intent_id})
     assert doc["gate_state"] == "filled"
     assert doc["broker_order"]["filled_qty"] == 0.5
+
+
+# ── allowlist-only BUY universe + pending TTL (2026-07-28) ──────────
+
+from shared.risk_sizer import buy_allowlist
+
+
+async def test_buy_allowlist_blocks_off_list_symbol(wired, monkeypatch):
+    async def fake_al():
+        return {"enabled": True, "symbols": ["BTC/USD", "ETH/USD"]}
+    monkeypatch.setattr(buy_allowlist, "get_allowlist", fake_al)
+    plan = await build_position_plan(
+        _crypto_intent(symbol="TREMP/USD"), governor_multiplier=1.0,
+    )
+    assert plan["approved"] is False
+    assert plan["reason"] == "not_in_buy_allowlist"
+
+
+async def test_buy_allowlist_passes_listed_symbol(wired, monkeypatch):
+    async def fake_al():
+        return {"enabled": True, "symbols": ["BTC/USD", "ETH/USD", "SOL/USD"]}
+    monkeypatch.setattr(buy_allowlist, "get_allowlist", fake_al)
+    plan = await build_position_plan(_crypto_intent(), governor_multiplier=1.0)
+    assert plan.get("reason") != "not_in_buy_allowlist"
+    assert plan["approved"] is True
+
+
+async def test_buy_allowlist_disabled_allows_everything(wired, monkeypatch):
+    async def fake_al():
+        return {"enabled": False, "symbols": []}
+    monkeypatch.setattr(buy_allowlist, "get_allowlist", fake_al)
+    plan = await build_position_plan(
+        _crypto_intent(symbol="TREMP/USD"), governor_multiplier=1.0,
+    )
+    assert plan.get("reason") != "not_in_buy_allowlist"
+
+
+async def test_buy_allowlist_never_gates_sells(wired, monkeypatch):
+    async def fake_al():
+        return {"enabled": True, "symbols": ["BTC/USD"]}
+    monkeypatch.setattr(buy_allowlist, "get_allowlist", fake_al)
+    plan = await build_position_plan(
+        _crypto_intent(symbol="TREMP/USD", action="SELL"),
+        governor_multiplier=1.0,
+    )
+    assert plan.get("reason") != "not_in_buy_allowlist"
+
+
+async def test_pending_ttl_expires_stale_unrouted():
+    intent_id = f"{_TTL_PREFIX}pending-{uuid.uuid4().hex[:8]}"
+    await db[SHARED_INTENTS].insert_one({
+        "intent_id": intent_id,
+        "lane": "crypto", "symbol": "TREMP/USD", "action": "SELL",
+        "stack": "barracuda", "gate_state": "pending",
+        "executed": False,
+        "ingest_ts": _ts_minutes_ago(ar_recon.PENDING_INTENT_TTL_MIN + 10),
+    })
+    n = await ar_recon._sweep_stale_pending()
+    assert n >= 1
+    doc = await db[SHARED_INTENTS].find_one({"intent_id": intent_id})
+    assert doc["gate_state"] == "expired_unrouted"
+    assert doc["broker_reason"] == "EXPIRED_PENDING_TTL"
+
+
+async def test_pending_ttl_leaves_fresh_pending_alone():
+    intent_id = f"{_TTL_PREFIX}pendfresh-{uuid.uuid4().hex[:8]}"
+    await db[SHARED_INTENTS].insert_one({
+        "intent_id": intent_id,
+        "lane": "crypto", "symbol": "BTC/USD", "action": "BUY",
+        "stack": "gto", "gate_state": "pending",
+        "executed": False,
+        "ingest_ts": _ts_minutes_ago(2),
+    })
+    await ar_recon._sweep_stale_pending()
+    doc = await db[SHARED_INTENTS].find_one({"intent_id": intent_id})
+    assert doc["gate_state"] == "pending"

@@ -137,6 +137,20 @@ async def build_position_plan(
                 cooldown_remaining_s=round(_rem, 1),
                 last_sell_symbol=_sold,
             )
+        # Allowlist-only BUY universe (2026-07-28 operator directive):
+        # the movers list is watch-only; the crypto lane BUYs only
+        # operator-whitelisted symbols. Fail-open on read errors —
+        # a Mongo hiccup must not decide trades. SELLs never gated.
+        try:
+            from shared.risk_sizer.buy_allowlist import buy_allowed  # noqa: WPS433
+            _allowed, _al = await buy_allowed(intent.get("symbol") or "")
+        except Exception:  # noqa: BLE001
+            _allowed, _al = True, {}
+        if not _allowed:
+            return _reject(
+                "not_in_buy_allowlist",
+                allowlist_size=len(_al.get("symbols") or []),
+            )
 
     # Edge-vs-cost gate: expected edge must EXCEED estimated fees +
     # slippage or the trade is rejected. No edge data → gate skipped.

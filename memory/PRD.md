@@ -3845,3 +3845,23 @@ already wrong (adverse selection).
   live quotes pollute stubbed prices.
 - 9/9 test_operator_fixes_0728 (incl. 3 TTL sweep cases with scoped
   mocks), 96 webull/reconcile tests green.
+
+## 2026-07-28 (later 4) — Pending-intent TTL + allowlist-only BUYs
+- shared/auto_router_reconciliation._sweep_stale_pending (runs via
+  finally in _sweep_expired_unrouted every supervisor tick):
+  gate_state=pending intents older than PENDING_INTENT_TTL_MIN (env,
+  default 30) → expired_unrouted / EXPIRED_PENDING_TTL. Un-clogs the
+  arbiter duplicate-stance guard.
+- shared/risk_sizer/buy_allowlist.py (NEW): allowlist-only crypto
+  BUY gate in sizer (reason not_in_buy_allowlist). Missing doc →
+  ENABLED with majors default (BTC ETH SOL XRP ADA DOGE LTC LINK).
+  SELLs never gated. 30s cache, fail-open on Mongo errors.
+  Managed via GET/PUT /api/admin/universe/crypto-buy-allowlist
+  (accepts BTC / BTC/USD / CRYPTO:BTC-USD forms; refuses enabled+
+  empty). Surfaced in exits diagnose flow.buy_allowlist.
+- NOTE: allowlist defaults ON after redeploy — prod will only BUY
+  the 8 majors until the operator edits/disables the list. Preview
+  runtime_flags doc now has 9 symbols (test PUT, incl AVAX).
+- Tests: 6 new (allowlist gate 4 + pending TTL 2); 51 green across
+  operator-fixes/cooldown/risk-engine/reconcile suites. Both admin
+  endpoints curl-verified live.

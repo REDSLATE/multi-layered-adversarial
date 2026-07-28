@@ -122,6 +122,16 @@ async def diagnose_crypto(_user: dict = Depends(get_current_user)):  # noqa: B00
                       "audit_only": {"$ne": True}})
         flow = {"crypto_execute_seats": holders,
                 "emitting_brains_24h": sorted(emitters)}
+        try:
+            from shared.risk_sizer.buy_allowlist import get_allowlist  # noqa: WPS433
+            al = await get_allowlist()
+            flow["buy_allowlist"] = {
+                "enabled": al.get("enabled"),
+                "size": len(al.get("symbols") or []),
+                "symbols": al.get("symbols"),
+            }
+        except Exception:  # noqa: BLE001
+            pass
         holder_set = {h for h in holders.values() if h}
         if emitters and holder_set and not (set(emitters) & holder_set):
             findings.append(

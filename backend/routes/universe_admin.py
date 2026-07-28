@@ -220,6 +220,47 @@ async def set_quality(
     return {"ok": True, **update}
 
 
+@router.get("/crypto-buy-allowlist")
+async def get_crypto_buy_allowlist(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Allowlist-only BUY universe (2026-07-28). SELLs never gated."""
+    from shared.risk_sizer.buy_allowlist import get_allowlist  # noqa: WPS433
+    return {"ok": True, "allowlist": await get_allowlist()}
+
+
+@router.put("/crypto-buy-allowlist")
+async def put_crypto_buy_allowlist(
+    body: dict,
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Replace the allowlist. Body: {enabled: bool, symbols: [..]}.
+    Symbols accept BTC / BTC/USD / CRYPTO:BTC-USD forms."""
+    from shared.risk_sizer.buy_allowlist import (  # noqa: WPS433
+        FLAG_ID, invalidate_cache,
+    )
+    enabled = bool(body.get("enabled", True))
+    raw = body.get("symbols")
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=422, detail="symbols must be a list")
+    symbols = sorted({_normalize_symbol(s, "crypto") for s in raw})
+    if enabled and not symbols:
+        raise HTTPException(
+            status_code=422,
+            detail="enabled allowlist cannot be empty — that would block "
+                   "ALL crypto BUYs; disable it instead",
+        )
+    doc = {
+        "enabled": enabled,
+        "symbols": symbols,
+        "updated_by": user.get("email"),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db["runtime_flags"].update_one(
+        {"_id": FLAG_ID}, {"$set": doc}, upsert=True,
+    )
+    invalidate_cache()
+    return {"ok": True, "allowlist": doc}
+
+
 @router.post("/refresh")
 async def force_refresh(_user: dict = Depends(get_current_user)):  # noqa: B008
     """Rebuild both lane universes NOW (pins + knobs take effect

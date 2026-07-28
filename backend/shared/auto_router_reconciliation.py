@@ -38,6 +38,9 @@ _LAST_RECONCILE_SWEEP_TS: Optional[datetime] = None
 # 2026-07-28: unfilled entry orders are cancelled after this many
 # minutes (LCID stale-limit autopsy). Env-tunable, no redeploy.
 ENTRY_ORDER_TTL_MIN = float(os.environ.get("ENTRY_ORDER_TTL_MIN", "10"))
+# 2026-07-28: pending (never-routed) intents expire after this many
+# minutes — stale momentum + they clog the arbiter dedupe guard.
+PENDING_INTENT_TTL_MIN = float(os.environ.get("PENDING_INTENT_TTL_MIN", "30"))
 
 # Expiration-sweep default. Duplicates the constant in `auto_router.py`
 # so this module doesn't depend on the main file's globals at import
@@ -138,6 +141,72 @@ async def _sweep_expired_unrouted() -> int:
     except Exception as exc:  # noqa: BLE001
         logger.warning("expired_unrouted sweep failed: %s", exc)
         return 0
+    finally:
+        # Second pass (2026-07-28 operator directive): PENDING-intent
+        # TTL. A momentum intent still unrouted after
+        # PENDING_INTENT_TTL_MIN is stale — it also clogs the
+        # arbiter's duplicate-stance guard (a lingering pending BUY/
+        # SELL blocks every re-emission for that brain+symbol+action,
+        # observed silting the emission path with 23 stuck rows).
+        try:
+            await _sweep_stale_pending()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("stale-pending sweep failed: %s", exc)
+
+
+async def _sweep_stale_pending() -> int:
+    """Terminal-expire `gate_state=pending` intents older than
+    PENDING_INTENT_TTL_MIN (default 30). Never touches submitted /
+    filled / blocked rows. Batch-capped like the main sweep."""
+    cutoff = (
+        datetime.now(timezone.utc)
+        - timedelta(minutes=PENDING_INTENT_TTL_MIN)
+    ).isoformat()
+    ids: list[str] = []
+    cur = (
+        db[SHARED_INTENTS]
+        .find(
+            {
+                "gate_state": "pending",
+                "executed": {"$ne": True},
+                "ingest_ts": {"$lt": cutoff},
+            },
+            {"intent_id": 1, "_id": 0},
+        )
+        .max_time_ms(3000)
+        .limit(500)
+    )
+    async for d in cur:
+        if d.get("intent_id"):
+            ids.append(d["intent_id"])
+    if not ids:
+        return 0
+    result = await asyncio.wait_for(
+        db[SHARED_INTENTS].update_many(
+            {"intent_id": {"$in": ids}, "gate_state": "pending"},
+            {"$set": {
+                "gate_state": "expired_unrouted",
+                "expired_at": _now_iso(),
+                "expired_by": AUTO_ROUTER_EMAIL,
+                "expire_reason": (
+                    f"pending_ttl:{PENDING_INTENT_TTL_MIN:.0f}min"
+                ),
+                "broker_reason": "EXPIRED_PENDING_TTL",
+                "broker_error_bucket": "queue_timeout",
+                "broker_error_detail": (
+                    f"pending_unrouted_past_{PENDING_INTENT_TTL_MIN:.0f}min"
+                ),
+            }},
+        ),
+        timeout=5.0,
+    )
+    stamped = int(result.modified_count or 0)
+    if stamped:
+        logger.info(
+            "pending-TTL sweep expired %d intents older than %.0f min",
+            stamped, PENDING_INTENT_TTL_MIN,
+        )
+    return stamped
 
 
 # ─── Broker reconciliation sweep (2026-07-06) ─────────────────────────
