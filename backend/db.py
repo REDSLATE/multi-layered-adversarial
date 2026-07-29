@@ -83,6 +83,27 @@ client = AsyncIOMotorClient(
 )
 db = client[os.environ["DB_NAME"]]
 
+# ── Worker pool split ─────────────────────────────────────────────
+# Background monitors must NEVER compete with request-serving paths
+# (login, /auth/me, dashboard reads) for pool slots — that is the
+# documented 2026-07-16 starvation mode. `worker_db` is a SEPARATE
+# client with a hard-capped pool: even if every worker socket is
+# stuck on a slow Atlas op, the request-serving `db` pool above is
+# untouched. Short `waitQueueTimeoutMS`/`socketTimeoutMS` so a
+# worker fails fast instead of parking a connection.
+WORKER_MAX_POOL_SIZE = int(os.environ.get("WORKER_MAX_POOL_SIZE", "5"))
+worker_client = AsyncIOMotorClient(
+    mongo_url,
+    retryWrites=True,
+    retryReads=True,
+    maxIdleTimeMS=45_000,
+    maxPoolSize=WORKER_MAX_POOL_SIZE,
+    waitQueueTimeoutMS=8_000,
+    socketTimeoutMS=20_000,
+    appname="risedual-mc-worker",
+)
+worker_db = worker_client[os.environ["DB_NAME"]]
+
 logger = logging.getLogger("risedual.db")
 
 
@@ -498,6 +519,27 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         [("at", 1)],
         name="mc_brain_silences_ttl",
         expireAfterSeconds=7 * 86400,
+    )
+
+    # ── Retention-health snapshots (2026-07-29) ────────────────────
+    # The weekly sampler in `shared/retention.py` writes one row per
+    # swept collection so growth can be diffed against a trailing
+    # baseline. Both `ts` and `ttl_at` are stamped as BSON Dates and
+    # the TTL keys on `ttl_at`. The `mc_brain_silences_ttl` index is
+    # the cautionary tale: it keys on a STRING field, so Mongo's
+    # reaper silently ignored every row and the collection piled up
+    # to 334k documents. This monitor exists to catch that class of
+    # failure; its own TTL must not repeat it.
+    await _safe_create_index(
+        db.retention_health_snapshots,
+        [("collection", 1), ("ts", -1)],
+        name="retention_health_snapshots_coll_ts",
+    )
+    await _safe_create_index(
+        db.retention_health_snapshots,
+        [("ttl_at", 1)],
+        name="retention_health_snapshots_ttl_at_90d",
+        expireAfterSeconds=90 * 86400,
     )
 
     # Per-runtime decision/shadow stores (kept ISOLATED, never cross-read)
