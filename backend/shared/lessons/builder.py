@@ -143,7 +143,7 @@ async def build_lesson(intent_id: str) -> Optional[Lesson]:
             try:
                 bps = (float(fill_price) - float(ref_price)) / float(ref_price) * 10_000
                 # Sign: positive = paid up (BUY bad), negative = got better (BUY good).
-                if (intent.get("action") or "").upper() == "SELL":
+                if (intent.get("action") or "").upper() in {"SELL", "SHORT"}:
                     bps = -bps
                 slippage_bps = round(bps, 2)
             except Exception:  # noqa: BLE001
@@ -181,12 +181,14 @@ async def build_lesson(intent_id: str) -> Optional[Lesson]:
             fp = float(fill_price)
             ep = float(exit_price)
             raw_bps = (ep - fp) / fp * 10_000
-            if (intent.get("action") or "").upper() == "SELL":
-                raw_bps = -raw_bps
-            pnl_bps = round(raw_bps, 2)
+            side_sign = (
+                -1.0
+                if (intent.get("action") or "").upper() in {"SELL", "SHORT"}
+                else 1.0
+            )
+            pnl_bps = round(raw_bps * side_sign, 2)
             if fill_qty:
-                pnl_usd = round((ep - fp) * float(fill_qty) *
-                                (1.0 if (intent.get("action") or "").upper() == "BUY" else -1.0), 4)
+                pnl_usd = round((ep - fp) * float(fill_qty) * side_sign, 4)
         except Exception:  # noqa: BLE001
             pnl_bps = None
 

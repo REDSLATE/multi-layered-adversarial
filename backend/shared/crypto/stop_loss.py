@@ -62,10 +62,9 @@ async def enforce_position(
     if not pos:
         raise HTTPException(status_code=404, detail=f"position {position_id} disappeared mid-evaluate")
 
-    side_mult = -1.0 if pos.get("direction") == "short" else 1.0
     pnl_pct = float(verdict["pnl_pct"])
     cur_notional = float(pos.get("current_notional_usd") or 0.0)
-    pnl_usd = cur_notional * (pnl_pct / 100.0) * side_mult
+    pnl_usd = cur_notional * (pnl_pct / 100.0)
     result = await close(
         position_id=position_id,
         actor=actor,
