@@ -83,6 +83,25 @@ client = AsyncIOMotorClient(
 )
 db = client[os.environ["DB_NAME"]]
 
+# Dedicated background-worker client (2026-07-29, Atlas analysis #4).
+# The documented 2026-07-16 login outage: background sweeps/feeders
+# held all 100 shared-pool sockets on slow collscans and starved the
+# request-serving paths. This second client has a CAPPED pool so a
+# slow worker query can never consume the sockets login needs.
+# Workers opt in via `from db import worker_db`.
+WORKER_DB_MAX_POOL = int(os.environ.get("WORKER_DB_MAX_POOL", "25"))
+worker_client = AsyncIOMotorClient(
+    mongo_url,
+    retryWrites=True,
+    retryReads=True,
+    maxIdleTimeMS=45_000,
+    waitQueueTimeoutMS=8_000,
+    socketTimeoutMS=20_000,
+    maxPoolSize=WORKER_DB_MAX_POOL,
+    appname="risedual-mc-worker",
+)
+worker_db = worker_client[os.environ["DB_NAME"]]
+
 logger = logging.getLogger("risedual.db")
 
 
@@ -156,6 +175,16 @@ async def _safe_create_index(coll, keys, *, deadline_s: float = 6.0, **opts) -> 
         return _INDEX_REPORT[name]
     except OperationFailure as exc:
         elapsed_ms = int((time.monotonic() - started) * 1000)
+        if exc.code == 85:
+            # IndexOptionsConflict: the SAME key pattern already
+            # exists under a different name — functionally present.
+            # Not an error (2026-07-29; was polluting the report).
+            _INDEX_REPORT[name] = {
+                "status": "exists", "collection": coll.name,
+                "elapsed_ms": elapsed_ms,
+                "reason": "exists_under_different_name",
+            }
+            return _INDEX_REPORT[name]
         logger.warning(
             "create_index %s on %s OperationFailure code=%s msg=%s",
             name, coll.name, exc.code, str(exc)[:200],
@@ -202,7 +231,48 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         deadline_s=heavy_deadline_s,
         name="shared_intents_intent_id_idx",
     )
-    # ── Consensus pool indexes (2026-06-24) ───────────────────────
+    # ── Retention-sweep indexes (2026-07-29, Atlas analysis #1) ───
+    # `shared/retention.py::_purge_collection` runs
+    # find({field: {$lt: cutoff}}) hourly on every RULES collection;
+    # without an index each pass is a collscan holding a pool socket
+    # up to 20s — the exact mechanism behind the 2026-07-16 login
+    # starvation. One ascending index per retention timestamp field
+    # converts them to index scans. KEEP IN SYNC with retention.RULES
+    # (tripwire: tests/test_db_index_fault_isolation.py).
+    _RETENTION_FIELDS: list[tuple[str, str]] = [
+        ("mc_shelly", "ts"),
+        ("shared_ohlcv_bars", "ts"),
+        ("mc_brain_silences", "at"),
+        ("shared_gate_results", "ts"),
+        ("shared_brain_conflicts", "detected_at"),
+        ("runtime_token_rejections", "ts"),
+        ("risk_monitor_evaluations", "ts"),
+        ("mc_opinions_compare", "ts"),
+        ("mc_seats", "ts"),
+        ("doctrine_sidecars", "ts"),
+        ("shared_governance_decisions", "ts"),
+        ("paradox_records", "created_at"),
+        ("sovereign_audit_log", "ts"),
+        ("mc_parity_manifests", "recorded_at"),
+        ("paradox_v2_brain_votes", "timestamp"),
+        ("sovereign_state_history", "ts"),
+        ("public_request_log", "ts"),
+        ("shared_adl_receipts", "timestamp"),
+        ("mc_pulses", "started_at"),
+        ("sidecar_checkin_audit", "ts"),
+        ("sovereign_contribution_attempts", "ts"),
+        ("external_signals", "received_at"),
+        ("observation_receipts", "created_at"),
+        ("shared_vrl_scorecards", "window_end"),
+        ("shared_intents", "ingest_ts"),
+        ("executions", "ts"),
+    ]
+    for _coll, _field in _RETENTION_FIELDS:
+        await _safe_create_index(
+            db[_coll], [(_field, 1)],
+            name=f"{_coll}_retention_{_field}_idx",
+        )
+
     # Non-executor brains' opinions land in `intent_consensus_pool`.
     # The seat policy reads it by (lane, symbol, ts) and writes by
     # appending. TTL 900s = 15 min matches the lookup window.

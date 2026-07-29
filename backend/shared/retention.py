@@ -33,7 +33,10 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from db import db
+# 2026-07-29 (Atlas analysis #4): the sweeper was the documented
+# pool-starvation culprit — it now runs on the CAPPED worker pool so
+# its collscans/deletes can never hold the request-serving sockets.
+from db import worker_db as db
 
 logger = logging.getLogger("risedual.retention")
 

@@ -3904,3 +3904,20 @@ silent after redeploy.
   instead of fatal. Full tripwire suite: 429 passed.
 - Deferred per operator: router auto-discovery (c), pymongo/motor
   upgrade, CRA→Vite.
+
+## 2026-07-29 (later 2) — Atlas pain fixes on current driver (#1 + #4)
+- ensure_indexes: 26 retention-sweep timestamp indexes added
+  (_RETENTION_FIELDS block, kept in sync with retention.RULES via
+  tripwire) — hourly purge finds are index scans, not 20s collscans.
+- db.py: NEW `worker_db` (second AsyncIOMotorClient, maxPoolSize
+  env WORKER_DB_MAX_POOL default 25, appname risedual-mc-worker).
+  Retention sweeper now runs on it — workers can never starve the
+  request-serving 100-socket pool (2026-07-16 login outage class).
+- _safe_create_index: OperationFailure code 85 (same keys, different
+  name) now reports "exists" not "error".
+- Verified live: 132 indexes all healthy/zero errors; retention
+  cycle drained 100k stale docs in 11.5s on the worker pool.
+  5 fault-isolation tripwires + full tripwire suite (429) green.
+- Deferred (from same analysis): TTL-index migration (#2), maxTimeMS
+  on hot reads (#3), projection/compound-index audit (#5), pymongo
+  upgrade, Vite.

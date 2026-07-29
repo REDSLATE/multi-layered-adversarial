@@ -35,3 +35,25 @@ async def test_safe_create_index_string_key_report_name():
     assert "probe_ts_idx" in rep
     assert rep["probe_ts_idx"]["status"] in {"created", "exists", "timeout"}
     await db.tripwire_index_probe.drop()
+
+
+def test_every_retention_rule_has_an_index_spec():
+    """2026-07-29 (Atlas analysis #1): every retention.RULES sweep
+    field must have a matching entry in db.ensure_indexes'
+    _RETENTION_FIELDS — otherwise the hourly purge collscans and
+    holds a pool socket (the 2026-07-16 login-starvation mechanism)."""
+    from shared.retention import RULES
+    src = open(DB_PY).read()
+    missing = [
+        (coll, field) for coll, field, _d, _e in RULES
+        if f'("{coll}", "{field}")' not in src
+    ]
+    assert not missing, f"retention fields without index specs: {missing}"
+
+
+def test_retention_uses_capped_worker_pool():
+    """2026-07-29 (Atlas analysis #4): the sweeper must run on the
+    dedicated capped-pool worker client, never the shared client."""
+    import shared.retention as retention
+    from db import worker_db
+    assert retention.db is worker_db
