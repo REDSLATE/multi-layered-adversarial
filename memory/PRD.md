@@ -3957,3 +3957,36 @@ maxTimeMS on hot reads, #5 projection audit, pymongo bump, Vite.
 - Verified live: 26 sampled, pass verdict, rollup shows the check.
   13 tests green (5 new incl. BSON-Date stamp assertion) +
   tripwire suite.
+
+## 2026-07-30 — Full TTL migration (Atlas analysis #2) COMPLETE
+- shared/retention.py: NEW `ttl_stamp(days=None)` helper (BSON Date,
+  now + RETENTION_DAYS). RULES: 15 unconditional collections now carry
+  `_NO_TTL_AT` extra filter ({"ttl_at": {"$exists": False}}) so the
+  hourly sweeper only drains legacy/externally-written rows — stamped
+  rows are reaped natively by Mongo.
+- Writers stamped (21 sites): ingest/seed/opinions/receipt_dispatch
+  (shared_adl_receipts), conflicts (shared_brain_conflicts),
+  polygon_equity + polygon_flatfiles + technicals + finnhub_backfill×2
+  (shared_ohlcv_bars), observation_receipts, openflow
+  (shared_gate_results), position_monitor (risk_monitor_evaluations),
+  intents.py sidecar audit (doctrine_sidecars), vrl (scorecards),
+  traffic (public_request_log), polygon_witness (external_signals),
+  runtime_token_audit, sidecar_checkin, mc_pulse/receipt (mc_pulses),
+  mc_pulse/pulse envelope upsert (mc_seats + mc_opinions_compare),
+  mc_arbiter/arbiter opinion upsert (mc_seats).
+- db.py: `_TTL_AT_COLLS` loop creates {coll}_ttl_at TTL indexes
+  (expireAfterSeconds=0) for all 15.
+- NOT migrated (no in-repo writer — external brains write them):
+  shared_governance_decisions, paradox_records, sovereign_audit_log,
+  sovereign_state_history, sovereign_contribution_attempts,
+  paradox_v2_brain_votes (+ conditional shared_intents/executions).
+  These stay on the app sweeper.
+- Tripwires: 2 NEW tests in test_db_index_fault_isolation.py —
+  sweeper-skip set must equal _TTL_AT_COLLS set; ttl_stamp returns a
+  real datetime. 429+2 tripwires green.
+- Verified live: all 15 TTL indexes present (expireAfterSeconds=0);
+  mc_seats/mc_pulses/ohlcv rows stamping +3d BSON dates; full
+  retention cycle via POST /api/admin/retention/run OK (drained 100k
+  legacy ohlcv rows, zero per-collection errors).
+- Remaining from Atlas analysis: #3 maxTimeMS on hot reads, #5
+  projection audit, pymongo bump, Vite migration.

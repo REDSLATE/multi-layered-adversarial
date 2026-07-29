@@ -43,6 +43,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from db import db
+from shared.retention import ttl_stamp
 from namespaces import (
     RISK_MONITOR_EVALUATIONS,
     SHARED_LIVE_POSITIONS,
@@ -171,7 +172,9 @@ async def _log_evaluation(row: dict) -> None:
     """Append-only evaluation log so the operator can audit every
     decision the monitor made."""
     try:
-        await db[RISK_MONITOR_EVALUATIONS].insert_one(row.copy())
+        await db[RISK_MONITOR_EVALUATIONS].insert_one(
+            {**row, "ttl_at": ttl_stamp()}
+        )
     except Exception as e:  # noqa: BLE001
         logger.warning("position_monitor: eval log write failed: %s", e)
 

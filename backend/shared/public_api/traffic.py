@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from auth import get_current_user
 from db import db
+from shared.retention import ttl_stamp
 from namespaces import PUBLIC_REQUEST_LOG
 
 
@@ -58,6 +59,7 @@ async def public_traffic_middleware(request: Request, call_next):
         "latency_ms": latency_ms,
         "tier": tier,
         "caller_ip": caller_ip,
+        "ttl_at": ttl_stamp(),
     }
     # Fire-and-forget — never break the live request because logging
     # had a hiccup. Schedule the insert without awaiting it.

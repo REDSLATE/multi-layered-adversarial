@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from db import db
+from shared.retention import ttl_stamp
 from namespaces import SHARED_INTENTS, SHARED_POSITIONS
 from mc_arbiter.dawe import (
     compute_effective_weight,
@@ -117,6 +118,7 @@ async def submit_opinion(opinion: ModelOpinion) -> dict:
         # Grader will fill these in later:
         "grade_15m": None,
         "grade_60m": None,
+        "ttl_at": ttl_stamp(),
     }
     await db[MC_SEATS].update_one(
         {"seat_key": opinion.seat_key, "brain": opinion.brain},

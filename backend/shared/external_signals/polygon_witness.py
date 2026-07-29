@@ -272,6 +272,7 @@ async def write_witness_rows(rows: list[ExternalSignal]) -> dict[str, int]:
     errors = 0
     for row in rows:
         doc = row.model_dump()
+        doc["ttl_at"] = ttl_stamp()
         try:
             await db[EXTERNAL_SIGNALS].insert_one(doc)
             inserted += 1

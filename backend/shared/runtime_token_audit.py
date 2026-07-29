@@ -25,10 +25,12 @@ COLLECTION = "runtime_token_rejections"
 async def _async_record(runtime: str, reason: str) -> None:
     try:
         from db import db
+        from shared.retention import ttl_stamp
         await db[COLLECTION].insert_one({
             "runtime": runtime,
             "reason": reason,
             "ts": datetime.now(timezone.utc).isoformat(),
+            "ttl_at": ttl_stamp(),
         })
     except Exception as exc:  # noqa: BLE001
         logger.debug("runtime_token_audit write failed: %s", exc)

@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from auth import get_current_user
 from db import db
+from shared.retention import ttl_stamp
 from namespaces import (
     DISCUSSION_PARTICIPANTS,
     SHARED_INDICATOR_SNAPSHOTS,
@@ -181,6 +182,7 @@ async def _persist_bar(bar: dict) -> None:
         "ts": bar["ts"],
     }
     bar["ingested_at"] = _now_iso()
+    bar["ttl_at"] = ttl_stamp()
     await db[SHARED_OHLCV_BARS].update_one(
         key,
         {"$set": bar},

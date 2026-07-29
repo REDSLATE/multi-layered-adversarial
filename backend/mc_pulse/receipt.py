@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from db import db
+from shared.retention import ttl_stamp
 
 MC_PULSES = "mc_pulses"
 # P1 (2026-02-11): per-silence-row diagnostic log. `mc_pulses` stores
@@ -169,6 +170,7 @@ async def persist_receipt(receipt: PulseReceipt) -> None:
     the pulse loop. The stack-doc mirror is a convenience for the
     dashboard; source of truth is `mc_pulses`."""
     doc = receipt.to_mongo()
+    doc["ttl_at"] = ttl_stamp()
     try:
         await db[MC_PULSES].update_one(
             {"_id": receipt.pulse_id},

@@ -72,6 +72,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from db import db
+from shared.retention import ttl_stamp
 from namespaces import SHARED_OHLCV_BARS
 from shared.feeders.feeder_health import record_feeder_health
 from shared.snapshots.nyse_calendar import is_trading_day
@@ -239,6 +240,7 @@ async def _upsert_bars(bars: list[dict[str, Any]]) -> int:
     feeder's write shape exactly so consumers can't tell them apart."""
     written = 0
     for bar in bars:
+        bar["ttl_at"] = ttl_stamp()
         try:
             await db[SHARED_OHLCV_BARS].update_one(
                 {

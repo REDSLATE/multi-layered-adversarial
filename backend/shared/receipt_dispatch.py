@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 
 from namespaces import SHARED_RECEIPTS
+from shared.retention import ttl_stamp
 
 
 async def dispatch_receipt(
@@ -29,6 +30,7 @@ async def dispatch_receipt(
         "observed": observed,
         "executed": executed,
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "ttl_at": ttl_stamp(),
     }
     await db[SHARED_RECEIPTS].insert_one(doc)
     return doc

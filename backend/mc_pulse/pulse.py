@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from typing import Iterable
 
 from db import db
+from shared.retention import ttl_stamp
 from mc_arbiter.arbiter import MC_SEATS
 from mc_arbiter.seat_key import build_seat_key
 from mc_brains.camino import CaminoBrain, CaminoManifestHint
@@ -356,6 +357,7 @@ async def _upsert_envelopes(
     # whole pulse being 9× overrun).
     for env in envelopes:
         doc = env.to_mongo()
+        doc["ttl_at"] = ttl_stamp()
         try:
             await asyncio.wait_for(
                 db[collection_name].update_one(

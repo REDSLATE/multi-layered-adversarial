@@ -47,6 +47,7 @@ from pydantic import AliasChoices, BaseModel, Field
 
 from auth import get_current_user
 from db import db
+from shared.retention import ttl_stamp
 from namespaces import DISCUSSION_PARTICIPANTS, SHARED_HEARTBEATS, SIDECAR_CHECKINS
 from shared.runtime.platform_survival import RuntimeStamp, policy_hash
 
@@ -372,6 +373,7 @@ async def sidecar_checkin_core(
             "runtime": brain,
             "ts": now_iso,
             "ts_epoch": now.timestamp(),
+            "ttl_at": ttl_stamp(),
             "source_ip": source_ip,
             "verdict": verdict,
             "errors": validation.get("errors", []),

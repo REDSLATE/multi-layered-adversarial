@@ -48,32 +48,42 @@ RETENTION_MAX_BATCHES = int(os.environ.get("RETENTION_MAX_BATCHES", "50"))
 _BOOT_DELAY_SEC = 60.0
 _BATCH_SLEEP_SEC = 0.2
 
+# 2026-07-30 (Atlas analysis #2, full TTL migration): writers for the
+# unconditional-expiry collections below now stamp a BSON-Date
+# `ttl_at` (see `ttl_stamp`), reaped natively by Mongo TTL indexes
+# ({coll}_ttl_at, expireAfterSeconds=0 — see db.ensure_indexes).
+# The sweeper skips stamped rows (`_NO_TTL_AT`) and only drains
+# legacy/externally-written rows without the stamp. Conditional rules
+# (shared_intents, executions) stay sweeper-only — TTL can't express
+# "expire unless executed".
+_NO_TTL_AT = {"ttl_at": {"$exists": False}}
+
 # (collection, ts_field, is_bson_date, extra_filter)
 RULES: list[tuple[str, str, bool, Optional[dict]]] = [
     ("mc_shelly", "ts", False, None),
-    ("shared_ohlcv_bars", "ts", False, None),
+    ("shared_ohlcv_bars", "ts", False, _NO_TTL_AT),
     ("mc_brain_silences", "at", False, None),
-    ("shared_gate_results", "ts", False, None),
-    ("shared_brain_conflicts", "detected_at", False, None),
-    ("runtime_token_rejections", "ts", False, None),
-    ("risk_monitor_evaluations", "ts", False, None),
-    ("mc_opinions_compare", "ts", False, None),
-    ("mc_seats", "ts", False, None),
-    ("doctrine_sidecars", "ts", False, None),
+    ("shared_gate_results", "ts", False, _NO_TTL_AT),
+    ("shared_brain_conflicts", "detected_at", False, _NO_TTL_AT),
+    ("runtime_token_rejections", "ts", False, _NO_TTL_AT),
+    ("risk_monitor_evaluations", "ts", False, _NO_TTL_AT),
+    ("mc_opinions_compare", "ts", False, _NO_TTL_AT),
+    ("mc_seats", "ts", False, _NO_TTL_AT),
+    ("doctrine_sidecars", "ts", False, _NO_TTL_AT),
     ("shared_governance_decisions", "ts", False, None),
     ("paradox_records", "created_at", True, None),
     ("sovereign_audit_log", "ts", False, None),
     ("mc_parity_manifests", "recorded_at", False, None),
     ("paradox_v2_brain_votes", "timestamp", False, None),
     ("sovereign_state_history", "ts", False, None),
-    ("public_request_log", "ts", False, None),
-    ("shared_adl_receipts", "timestamp", False, None),
-    ("mc_pulses", "started_at", False, None),
-    ("sidecar_checkin_audit", "ts", False, None),
+    ("public_request_log", "ts", False, _NO_TTL_AT),
+    ("shared_adl_receipts", "timestamp", False, _NO_TTL_AT),
+    ("mc_pulses", "started_at", False, _NO_TTL_AT),
+    ("sidecar_checkin_audit", "ts", False, _NO_TTL_AT),
     ("sovereign_contribution_attempts", "ts", False, None),
-    ("external_signals", "received_at", False, None),
-    ("observation_receipts", "created_at", False, None),
-    ("shared_vrl_scorecards", "window_end", False, None),
+    ("external_signals", "received_at", False, _NO_TTL_AT),
+    ("observation_receipts", "created_at", False, _NO_TTL_AT),
+    ("shared_vrl_scorecards", "window_end", False, _NO_TTL_AT),
     # Intents: executed ones are the trade record — kept forever.
     ("shared_intents", "ingest_ts", False, {"executed": {"$ne": True}}),
     # Executions: broker-ACCEPTED rows kept forever; failed attempts expire.
@@ -92,6 +102,14 @@ _LAST_ERROR: Optional[str] = None
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def ttl_stamp(days: Optional[int] = None) -> datetime:
+    """BSON-Date `ttl_at` value — Mongo's TTL reaper only honours
+    real Date fields, never .isoformat() strings."""
+    return datetime.now(timezone.utc) + timedelta(
+        days=RETENTION_DAYS if days is None else days
+    )
 
 
 async def _purge_collection(

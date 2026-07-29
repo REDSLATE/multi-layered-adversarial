@@ -273,6 +273,28 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
             name=f"{_coll}_retention_{_field}_idx",
         )
 
+    # ── Mongo-native TTL reaping (2026-07-30, Atlas analysis #2) ──
+    # Writers for these unconditional-expiry collections stamp a
+    # BSON-Date `ttl_at` (shared.retention.ttl_stamp); with
+    # expireAfterSeconds=0 the doc dies exactly at its stamp. Legacy
+    # rows (no ttl_at) keep draining via the app sweeper, whose RULES
+    # skip stamped rows. KEEP IN SYNC with retention._NO_TTL_AT rules
+    # (tripwire: tests/test_db_index_fault_isolation.py).
+    _TTL_AT_COLLS = [
+        "shared_ohlcv_bars", "shared_gate_results",
+        "shared_brain_conflicts", "runtime_token_rejections",
+        "risk_monitor_evaluations", "mc_opinions_compare", "mc_seats",
+        "doctrine_sidecars", "public_request_log", "shared_adl_receipts",
+        "mc_pulses", "sidecar_checkin_audit", "external_signals",
+        "observation_receipts", "shared_vrl_scorecards",
+    ]
+    for _coll in _TTL_AT_COLLS:
+        await _safe_create_index(
+            db[_coll], [("ttl_at", 1)],
+            name=f"{_coll}_ttl_at",
+            expireAfterSeconds=0,
+        )
+
     # Retention-health snapshots (2026-07-29): BSON-Date ttl_at TTL —
     # the sampler's own history self-expires (14d, stamped by writer).
     await _safe_create_index(

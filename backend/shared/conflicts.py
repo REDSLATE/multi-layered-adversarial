@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 
 from auth import get_current_user
 from db import db
+from shared.retention import ttl_stamp
 from namespaces import (
     DISCUSSION_PARTICIPANTS,
     SHARED_CONFLICTS,
@@ -130,6 +131,7 @@ async def detect_conflicts_for_opinion(
                 "conflict_id": str(uuid.uuid4()),
                 "topic": new_opinion["topic"],
                 "detected_at": _now_iso(),
+                "ttl_at": ttl_stamp(),
                 "pair_ids": pair_ids,            # sorted for idempotency lookup
                 "participants": [
                     {

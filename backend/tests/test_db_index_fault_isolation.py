@@ -93,3 +93,29 @@ async def test_mc_shelly_record_writes_datetime_ttl_at():
     assert row is not None
     assert isinstance(row.get("ttl_at"), datetime), type(row.get("ttl_at"))
     await db["mc_shelly"].delete_many({"brain": "tripwire_probe"})
+
+
+# ── full TTL migration (2026-07-30, Atlas analysis #2) ──
+
+def test_ttl_at_colls_match_retention_no_ttl_at_rules():
+    """Every RULES entry the sweeper skips via the ttl_at-exists
+    filter MUST have a matching {coll}_ttl_at TTL index in db.py —
+    and vice versa — or stamped rows silently never expire."""
+    from shared.retention import RULES, _NO_TTL_AT
+    skipped = {c for c, _f, _d, e in RULES if e is _NO_TTL_AT}
+    src = open(DB_PY).read()
+    block = src.split("_TTL_AT_COLLS = [", 1)[1].split("]", 1)[0]
+    indexed = set(re.findall(r'"([a-z_]+)"', block))
+    assert skipped == indexed, (
+        f"sweeper-skipped vs TTL-indexed mismatch: "
+        f"only-rules={skipped - indexed} only-db={indexed - skipped}"
+    )
+
+
+def test_ttl_stamp_returns_bson_date():
+    from datetime import datetime, timedelta, timezone
+    from shared.retention import RETENTION_DAYS, ttl_stamp
+    t = ttl_stamp()
+    assert isinstance(t, datetime)
+    delta = t - datetime.now(timezone.utc)
+    assert timedelta(days=RETENTION_DAYS) - delta < timedelta(minutes=1)

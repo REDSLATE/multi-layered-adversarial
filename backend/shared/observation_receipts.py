@@ -45,6 +45,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from auth import get_current_user
 from db import db
 from namespaces import OBSERVATION_RECEIPTS, RUNTIMES
+from shared.retention import ttl_stamp
 from shared.brain_legend import CANONICAL_BRAINS, canonicalize_stack
 
 
@@ -176,6 +177,7 @@ async def maybe_write_observation_receipt(intent: dict) -> Optional[dict]:
         return None
     receipt = build_observation_receipt(intent)
     receipt["candidate_reason"] = reason
+    receipt["ttl_at"] = ttl_stamp()
     try:
         await db[OBSERVATION_RECEIPTS].insert_one(dict(receipt))
     except Exception as e:  # noqa: BLE001

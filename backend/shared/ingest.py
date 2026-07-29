@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, Request
 from pydantic import BaseModel, Field
 
 from db import db
+from shared.retention import ttl_stamp
 from namespaces import (
     SHARED_RECEIPTS, SHARED_MEMORY, SHARED_CALIBRATORS, SHARED_ARTIFACTS,
     SHARED_HEARTBEATS, SHARED_PROMOTION_ARTIFACTS, SHARED_AUTHORITY_STATE,
@@ -94,6 +95,7 @@ async def ingest_receipt(
         "role_violation": role_violation,
         "authority_state_at_emit": authority_state,
         "timestamp": _now_iso(),
+        "ttl_at": ttl_stamp(),
     }
     await db[SHARED_RECEIPTS].insert_one(doc)
     return {

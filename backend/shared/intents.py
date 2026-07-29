@@ -815,7 +815,10 @@ async def _build_and_persist_doctrine_packet(
     }
     try:
         from namespaces import DOCTRINE_SIDECARS  # noqa: WPS433
-        await db[DOCTRINE_SIDECARS].insert_one(audit_row.copy())
+        from shared.retention import ttl_stamp  # noqa: WPS433
+        await db[DOCTRINE_SIDECARS].insert_one(
+            {**audit_row, "ttl_at": ttl_stamp()}
+        )
     except Exception:  # noqa: BLE001
         pass
 

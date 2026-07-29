@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from auth import get_current_user
 from db import db
+from shared.retention import ttl_stamp
 from namespaces import (
     ADVISORS,
     DISCUSSION_PARTICIPANTS,
@@ -124,6 +125,7 @@ async def _mirror_authority_call_to_receipts(opinion_doc: dict) -> None:
         "symbol": auth_call.get("symbol"),
         "lane": auth_call.get("lane"),
         "timestamp": _now_iso(),
+        "ttl_at": ttl_stamp(),
     }
     await db[SHARED_RECEIPTS].insert_one(receipt)
 

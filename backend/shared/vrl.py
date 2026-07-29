@@ -48,6 +48,7 @@ from pydantic import BaseModel, Field
 
 from auth import get_current_user
 from db import db
+from shared.retention import ttl_stamp
 from namespaces import (
     EXECUTION_RECEIPTS,
     SHARED_GATE_RESULTS,
@@ -268,7 +269,9 @@ async def recompute_scorecards(
         scorecards.append(row)
 
     if scorecards:
-        await db[SHARED_VRL_SCORECARDS].insert_many([dict(r) for r in scorecards])
+        await db[SHARED_VRL_SCORECARDS].insert_many(
+            [{**r, "ttl_at": ttl_stamp()} for r in scorecards]
+        )
 
     return {
         "ok": True,

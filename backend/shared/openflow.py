@@ -40,6 +40,7 @@ from typing import Any, Optional
 
 from db import db
 from namespaces import SHARED_GATE_RESULTS
+from shared.retention import ttl_stamp
 
 logger = logging.getLogger("openflow")
 
@@ -360,6 +361,7 @@ async def openflow_dispatch(
             "intent_id": intent.get("intent_id"),
             "kind": "openflow_dispatched",
             "ts": datetime.now(timezone.utc).isoformat(),
+            "ttl_at": ttl_stamp(),
             "by": actor,
             "phase": "openflow",
             "lane": lane,

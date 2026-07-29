@@ -3,6 +3,8 @@ import uuid
 import random
 from datetime import datetime, timezone, timedelta
 
+from shared.retention import ttl_stamp
+
 from namespaces import (
     SHARED_RECEIPTS, SHARED_MEMORY, SHARED_CALIBRATORS,
     SHARED_FEATURE_BUILDERS, SHARED_ARTIFACTS, SHARED_AUTHORITY_STATE,
@@ -90,6 +92,7 @@ async def seed_all(db) -> None:
                 "role_violation": False,
                 "authority_state_at_emit": DEFAULT_AUTHORITY[rt],
                 "timestamp": _ts(i * 7),
+                "ttl_at": ttl_stamp(),
             })
         await db[SHARED_RECEIPTS].insert_many(bulk)
 

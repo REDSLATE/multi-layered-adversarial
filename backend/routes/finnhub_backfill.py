@@ -42,6 +42,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from auth import get_current_user
 from db import db
+from shared.retention import ttl_stamp
 from namespaces import SHARED_OHLCV_BARS
 from shared.feeders.feeder_health import record_feeder_health
 from shared.feeders.finnhub_equity import (
@@ -90,6 +91,7 @@ async def _persist_bar(bar: dict[str, Any]) -> None:
     }
     bar["ingested_at"] = _now_iso()
     bar["ingested_via"] = "finnhub_backfill"
+    bar["ttl_at"] = ttl_stamp()
     await db[SHARED_OHLCV_BARS].update_one(
         key, {"$set": bar}, upsert=True,
     )
@@ -106,6 +108,7 @@ async def _persist_bars_bulk(bars: list[dict[str, Any]]) -> int:
     for bar in bars:
         bar["ingested_at"] = now_iso
         bar["ingested_via"] = "finnhub_backfill"
+        bar["ttl_at"] = ttl_stamp()
         ops.append(UpdateOne(
             {
                 "source": bar["source"],
