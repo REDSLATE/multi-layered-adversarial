@@ -113,7 +113,10 @@ async def _safe_create_index(coll, keys, *, deadline_s: float = 6.0, **opts) -> 
     Updates `_INDEX_REPORT[name]` with per-index outcome so the
     admin endpoint can return a structured JSON report.
     """
-    name = opts.get("name") or "_".join(f"{k[0]}_{k[1]}" for k in keys)
+    if isinstance(keys, str):
+        name = opts.get("name") or f"{keys}_1"
+    else:
+        name = opts.get("name") or "_".join(f"{k[0]}_{k[1]}" for k in keys)
     started = time.monotonic()
     try:
         await asyncio.wait_for(coll.create_index(keys, **opts), timeout=deadline_s)
@@ -177,6 +180,14 @@ async def _safe_create_index(coll, keys, *, deadline_s: float = 6.0, **opts) -> 
 
 
 async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
+    # ── FAULT-ISOLATION DOCTRINE (2026-07-29 refactor) ────────────
+    # EVERY index in this function goes through `_safe_create_index`,
+    # which never raises. A single bad index spec can therefore never
+    # abort the rest of the run again (2026-07-21 prod incident:
+    # a raw create_index OperationFailure at
+    # `external_signals_dedup_unique` stranded every index after it).
+    # Tripwire: tests/test_db_index_fault_isolation.py rejects any
+    # raw `await db.<coll>.create_index(` reintroduced here.
     # ── CRITICAL FIRST (2026-07-21) ───────────────────────────────
     # `shared_intents.intent_id` is the hot key of the entire routing
     # path (3-6 find_one/update_one per routed intent). It sits FIRST
@@ -195,11 +206,11 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # Non-executor brains' opinions land in `intent_consensus_pool`.
     # The seat policy reads it by (lane, symbol, ts) and writes by
     # appending. TTL 900s = 15 min matches the lookup window.
-    await db.intent_consensus_pool.create_index(
+    await _safe_create_index(db.intent_consensus_pool, 
         [("lane", 1), ("symbol", 1), ("ts", -1)],
         name="consensus_pool_lookup_idx",
     )
-    await db.intent_consensus_pool.create_index(
+    await _safe_create_index(db.intent_consensus_pool, 
         "ts",
         expireAfterSeconds=900,
         name="consensus_pool_ttl_15m",
@@ -210,7 +221,7 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # operator-chosen window (1-168h). The pool itself stays at 15min
     # because it drives the actual boost; the sidecar is observability
     # so it lives 7d to support the full metric window range.
-    await db.intent_consensus_telemetry.create_index(
+    await _safe_create_index(db.intent_consensus_telemetry, 
         "intent_id",
         name="consensus_telemetry_intent_idx",
     )
@@ -226,7 +237,7 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
             )
     except Exception:  # noqa: BLE001
         pass
-    await db.intent_consensus_telemetry.create_index(
+    await _safe_create_index(db.intent_consensus_telemetry, 
         "ts",
         expireAfterSeconds=604800,    # 7 days
         name="consensus_telemetry_ttl_7d",
@@ -244,7 +255,7 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
             )
     except Exception:  # noqa: BLE001
         pass
-    await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
+    await _safe_create_index(db.password_reset_tokens, "expires_at", expireAfterSeconds=0)
 
     # ── login_attempts (brute-force tracker) ──────────────────────
     # Doctrine pin (2026-06-24): two prod hotfixes here.
@@ -270,14 +281,14 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     try:
         # Legacy single-field index — keep around for safe migration;
         # the new compound index supersedes it for the read query.
-        await db.login_attempts.create_index("identifier")
+        await _safe_create_index(db.login_attempts, "identifier")
     except Exception:  # noqa: BLE001
         pass
-    await db.login_attempts.create_index(
+    await _safe_create_index(db.login_attempts, 
         [("identifier", 1), ("success", 1), ("ts", 1)],
         name="login_attempts_lockout_idx",
     )
-    await db.login_attempts.create_index(
+    await _safe_create_index(db.login_attempts, 
         "ts",
         expireAfterSeconds=900,
         name="login_attempts_ttl_15m",
@@ -299,7 +310,7 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # legacy data, the index creation will raise; swallowed safely
     # so startup doesn't crash and we surface the issue via logs.
     try:
-        await db.users.create_index("email", unique=True, name="users_email_unique")
+        await _safe_create_index(db.users, "email", unique=True, name="users_email_unique")
     except Exception as e:  # noqa: BLE001
         # Log but don't crash — a duplicate-email row would block
         # the unique index. We'd rather start up degraded than fail
@@ -310,12 +321,12 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         )
 
     # Shared infrastructure
-    await db.shared_adl_receipts.create_index([("runtime", 1), ("timestamp", -1)])
-    await db.shared_adl_receipts.create_index([("role_violation", 1), ("timestamp", -1)])
-    await db.shared_labeled_memories.create_index([("runtime", 1), ("timestamp", -1)])
-    await db.shared_calibrators.create_index([("runtime", 1), ("name", 1)])
-    await db.shared_feature_builders.create_index("name", unique=True)
-    await db.shared_artifact_inventory.create_index([("runtime", 1), ("artifact", 1)])
+    await _safe_create_index(db.shared_adl_receipts, [("runtime", 1), ("timestamp", -1)])
+    await _safe_create_index(db.shared_adl_receipts, [("role_violation", 1), ("timestamp", -1)])
+    await _safe_create_index(db.shared_labeled_memories, [("runtime", 1), ("timestamp", -1)])
+    await _safe_create_index(db.shared_calibrators, [("runtime", 1), ("name", 1)])
+    await _safe_create_index(db.shared_feature_builders, "name", unique=True)
+    await _safe_create_index(db.shared_artifact_inventory, [("runtime", 1), ("artifact", 1)])
 
     # Shared opinions tape (BrainConsole `/api/shared/opinions` and
     # conflict aggregation) — 2026-07-11 hotfix. Prod symptom: the
@@ -501,43 +512,43 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     )
 
     # Per-runtime decision/shadow stores (kept ISOLATED, never cross-read)
-    await db.alpha_decision_log.create_index([("timestamp", -1)])
-    await db.camaro_shadow_rows.create_index([("timestamp", -1)])
-    await db.chevelle_memory_labels.create_index([("timestamp", -1)])
+    await _safe_create_index(db.alpha_decision_log, [("timestamp", -1)])
+    await _safe_create_index(db.camaro_shadow_rows, [("timestamp", -1)])
+    await _safe_create_index(db.chevelle_memory_labels, [("timestamp", -1)])
 
     # Heartbeats (one row per runtime, upserted)
-    await db.shared_heartbeats.create_index("runtime", unique=True)
+    await _safe_create_index(db.shared_heartbeats, "runtime", unique=True)
 
     # Sidecar check-ins (Portable Survival Layer) — one row per runtime,
     # upserted; carries the latest RuntimeStamp + validation verdict.
-    await db.sidecar_checkins.create_index("runtime", unique=True)
+    await _safe_create_index(db.sidecar_checkins, "runtime", unique=True)
 
     # Authority + promotion
-    await db.shared_authority_state.create_index("runtime", unique=True)
-    await db.shared_promotion_artifacts.create_index([("runtime", 1), ("emitted_at", -1)])
-    await db.shared_promotion_artifacts.create_index("artifact_id", unique=True)
-    await db.shared_promotion_proposals.create_index([("runtime", 1), ("status", 1), ("created_at", -1)])
-    await db.shared_promotion_proposals.create_index("proposal_id", unique=True)
+    await _safe_create_index(db.shared_authority_state, "runtime", unique=True)
+    await _safe_create_index(db.shared_promotion_artifacts, [("runtime", 1), ("emitted_at", -1)])
+    await _safe_create_index(db.shared_promotion_artifacts, "artifact_id", unique=True)
+    await _safe_create_index(db.shared_promotion_proposals, [("runtime", 1), ("status", 1), ("created_at", -1)])
+    await _safe_create_index(db.shared_promotion_proposals, "proposal_id", unique=True)
 
     # Shared technical evidence (OHLCV + indicators)
-    await db.shared_ohlcv_bars.create_index(
+    await _safe_create_index(db.shared_ohlcv_bars, 
         [("source", 1), ("symbol", 1), ("tf", 1), ("ts", -1)],
         unique=True,
     )
-    await db.shared_ohlcv_bars.create_index([("symbol", 1), ("tf", 1), ("ts", -1)])
-    await db.shared_indicator_snapshots.create_index(
+    await _safe_create_index(db.shared_ohlcv_bars, [("symbol", 1), ("tf", 1), ("ts", -1)])
+    await _safe_create_index(db.shared_indicator_snapshots, 
         [("source", 1), ("symbol", 1), ("tf", 1)],
         unique=True,
     )
 
     # Kraken connection — singleton credential doc + append-only audit log
-    await db.kraken_audit_log.create_index([("ts", -1)])
+    await _safe_create_index(db.kraken_audit_log, [("ts", -1)])
 
     # Brain roster — append-only audit log of role assignments
-    await db.roster_audit_log.create_index([("ts", -1)])
+    await _safe_create_index(db.roster_audit_log, [("ts", -1)])
 
     # IBKR connection — singleton credential + append-only audit log
-    await db.ibkr_audit_log.create_index([("ts", -1)])
+    await _safe_create_index(db.ibkr_audit_log, [("ts", -1)])
 
     # ── Paradox v3 intent_watch_queue (2026-02, Step 3 — DORMANT) ──
     # New collection for v3 WAIT_FOR_TRIGGER plans. Scanned by
@@ -545,15 +556,15 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # PARADOX_V3_TRIGGER_WATCHER=1. Indexes here are boot-time so
     # the watcher's first tick is index-backed regardless of when
     # the env flag flips.
-    await db.intent_watch_queue.create_index([("state", 1), ("queued_at", 1)])
-    await db.intent_watch_queue.create_index([("symbol", 1), ("lane", 1), ("state", 1)])
-    await db.intent_watch_queue.create_index([("intent_id", 1)], unique=True)
+    await _safe_create_index(db.intent_watch_queue, [("state", 1), ("queued_at", 1)])
+    await _safe_create_index(db.intent_watch_queue, [("symbol", 1), ("lane", 1), ("state", 1)])
+    await _safe_create_index(db.intent_watch_queue, [("intent_id", 1)], unique=True)
     # TTL safety net — orphan rows older than 30 days auto-prune.
     # The per-plan ttl_seconds expires rows actively via the watcher;
     # this index is the back-stop so abandoned queues don't bloat.
     # Mongo TTL requires a BSON Date field — `queued_at` is stamped
     # via `datetime.now(timezone.utc)` (BSON Date), not ISO string.
-    await db.intent_watch_queue.create_index(
+    await _safe_create_index(db.intent_watch_queue, 
         "queued_at",
         expireAfterSeconds=30 * 86_400,
         name="intent_watch_queue_ttl_30d",
@@ -562,8 +573,8 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # ── Hypothesis engine / Brain Recall — heavy read path on /admin/hypothesis ──
     # These indexes turn the per-role queries from collection scans into
     # bounded lookups. Profile-driven (see /api/hypothesis/_perf for p50/p95/p99).
-    await db.shared_intents.create_index([("stack", 1), ("symbol", 1), ("ingest_ts", -1)])
-    await db.shared_intents.create_index([("stack", 1), ("executed", 1), ("executed_at", -1)])
+    await _safe_create_index(db.shared_intents, [("stack", 1), ("symbol", 1), ("ingest_ts", -1)])
+    await _safe_create_index(db.shared_intents, [("stack", 1), ("executed", 1), ("executed_at", -1)])
     # 2026-06-22 (P0 prod hotfix): `/api/intents` lists are filtered
     # by `stack`/`symbol`/`lane`/`gate_state` (all optional). When the
     # operator clears all filters — which the default Intents page
@@ -575,7 +586,7 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # Preview never reproduced it because preview has ≤1k intents.
     # Solo index on `ingest_ts` is the surgical fix — bounded
     # memory, indexed sort.
-    await db.shared_intents.create_index([("ingest_ts", -1)], name="shared_intents_ingest_ts_idx")
+    await _safe_create_index(db.shared_intents, [("ingest_ts", -1)], name="shared_intents_ingest_ts_idx")
     # 2026-02-25 (P0 prod hotfix — regression of 2026-06-22 hotfix):
     # On 2026-02-23 the default sort changed from `ingest_ts` →
     # `conviction` (= `[(confidence, -1), (ingest_ts, -1)]`). The
@@ -590,11 +601,11 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     #   2. default page (include_disabled_lanes=false, lane $in
     #      [enabled]) — leading-on-lane lets the planner intersect
     #      filter + sort in a single index scan.
-    await db.shared_intents.create_index(
+    await _safe_create_index(db.shared_intents, 
         [("confidence", -1), ("ingest_ts", -1)],
         name="shared_intents_conviction_idx",
     )
-    await db.shared_intents.create_index(
+    await _safe_create_index(db.shared_intents, 
         [("lane", 1), ("confidence", -1), ("ingest_ts", -1)],
         name="shared_intents_lane_conviction_idx",
     )
@@ -610,7 +621,7 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # `admin_brain_input_health` joins per-brain emit stats via
     # `stack_canonical + created_at` — find_one(sort) and aggregate
     # group both run blocking sorts at prod volumes today.
-    await db.shared_intents.create_index(
+    await _safe_create_index(db.shared_intents, 
         [("stack_canonical", 1), ("created_at", -1)],
         name="shared_intents_stack_canonical_created_idx",
     )
@@ -625,7 +636,7 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # Atlas timed out the whole status endpoint. This composite lets the
     # cursor use a covered range scan on ingest_ts within a fixed
     # stack_canonical partition — O(logN + k) instead of full scan.
-    await db.shared_intents.create_index(
+    await _safe_create_index(db.shared_intents, 
         [("stack_canonical", 1), ("ingest_ts", -1)],
         name="shared_intents_stack_canonical_ingest_ts_idx",
     )
@@ -703,7 +714,7 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         deadline_s=heavy_deadline_s,
         name="shared_intents_symbol_ingest_idx",
     )
-    await db.shared_brain_opinions.create_index([("runtime", 1), ("topic", 1), ("posted_at", -1)])
+    await _safe_create_index(db.shared_brain_opinions, [("runtime", 1), ("topic", 1), ("posted_at", -1)])
     # 2026-07-11 doctrine step 4: per-market-event idempotency.
     # Sparse so existing 114k docs without the field don't
     # conflict; sparse+unique means "enforce uniqueness only on
@@ -734,7 +745,7 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         unique=True,
         sparse=True,
     )
-    await db.shared_brain_outcomes.create_index([("opinion_id", 1), ("resolved_at", -1)])
+    await _safe_create_index(db.shared_brain_outcomes, [("opinion_id", 1), ("resolved_at", -1)])
     # 2026-02-28 — MC Shelly noise cleanup companion. On preview the
     # collection had grown to 1.86M rows / 528 MB (data + indexes)
     # because Shelly was writing every intent_ingested and every
@@ -745,7 +756,7 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # is enough for outcome-resolver joins on ~14d bracket windows
     # plus plenty of headroom for operator review.
     try:
-        await db.mc_shelly.create_index(
+        await _safe_create_index(db.mc_shelly, 
             [("ts", 1)],
             name="mc_shelly_ts_ttl_90d",
             expireAfterSeconds=90 * 24 * 3600,
@@ -758,28 +769,28 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # Shelly memory regex search was the worst offender (~25-40ms scan);
     # a TEXT index pivots it to indexed token lookup.
     try:
-        await db.shared_labeled_memories.create_index(
+        await _safe_create_index(db.shared_labeled_memories, 
             [("payload_summary", "text"), ("reason", "text")],
             name="shelly_payload_text_idx",
         )
     except Exception:  # noqa: BLE001 - text index may already exist with different fields
         pass
     # Hypothesis audit-log queries by recency
-    await db.hypothesis_analyses.create_index([("generated_at", -1)])
-    await db.hypothesis_analyses.create_index([("symbol", 1), ("generated_at", -1)])
+    await _safe_create_index(db.hypothesis_analyses, [("generated_at", -1)])
+    await _safe_create_index(db.hypothesis_analyses, [("symbol", 1), ("generated_at", -1)])
     # Executor/Auditor rotation audit logs queried by ts desc
-    await db.shared_executor_rotations.create_index([("ts", -1)])
-    await db.shared_auditor_rotations.create_index([("ts", -1)])
+    await _safe_create_index(db.shared_executor_rotations, [("ts", -1)])
+    await _safe_create_index(db.shared_auditor_rotations, [("ts", -1)])
 
     # ── MC Shelly — Mission Control's labeled memory store ──────────────
     # Operator queries: slice by event_type, position_at_event, brain,
     # symbol, outcome, ts window. These indexes cover those.
-    await db.mc_shelly.create_index([("ts", -1)])
-    await db.mc_shelly.create_index([("event_type", 1), ("ts", -1)])
-    await db.mc_shelly.create_index([("position_at_event", 1), ("ts", -1)])
-    await db.mc_shelly.create_index([("brain", 1), ("ts", -1)])
-    await db.mc_shelly.create_index([("symbol", 1), ("ts", -1)])
-    await db.mc_shelly.create_index([("ref_id", 1)])
+    await _safe_create_index(db.mc_shelly, [("ts", -1)])
+    await _safe_create_index(db.mc_shelly, [("event_type", 1), ("ts", -1)])
+    await _safe_create_index(db.mc_shelly, [("position_at_event", 1), ("ts", -1)])
+    await _safe_create_index(db.mc_shelly, [("brain", 1), ("ts", -1)])
+    await _safe_create_index(db.mc_shelly, [("symbol", 1), ("ts", -1)])
+    await _safe_create_index(db.mc_shelly, [("ref_id", 1)])
 
     # ── sovereign_state_history ──
     # Doctrine pin (2026-05-26): converted from TTL-DELETE to
@@ -814,7 +825,7 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # rest of ensure_indexes. Drop-and-recreate on conflict, mirroring
     # the consensus_telemetry TTL migration pattern above.
     try:
-        await db.external_signals.create_index(
+        await _safe_create_index(db.external_signals, 
             "dedup_key",
             unique=True,
             name="external_signals_dedup_unique",
@@ -823,7 +834,7 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     except OperationFailure:
         try:
             await db.external_signals.drop_index("external_signals_dedup_unique")
-            await db.external_signals.create_index(
+            await _safe_create_index(db.external_signals, 
                 "dedup_key",
                 unique=True,
                 name="external_signals_dedup_unique",
@@ -833,14 +844,14 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
             logger.warning(
                 "external_signals_dedup_unique migration failed: %s", exc,
             )
-    await db.external_signals.create_index(
+    await _safe_create_index(db.external_signals, 
         [("received_at", -1)], name="external_signals_recent_idx",
     )
-    await db.external_signals.create_index(
+    await _safe_create_index(db.external_signals, 
         [("symbol", 1), ("received_at", -1)],
         name="external_signals_symbol_recent_idx",
     )
-    await db.external_signals.create_index(
+    await _safe_create_index(db.external_signals, 
         [("source", 1), ("received_at", -1)],
         name="external_signals_source_recent_idx",
     )
@@ -849,21 +860,21 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # One doc per witness source. Verifier updates after observed
     # outcomes. The webhook only $setOnInsert's a fresh UNTRUSTED
     # row on first sight; never mutates existing rows.
-    await db.external_source_credibility.create_index(
+    await _safe_create_index(db.external_source_credibility, 
         "source", unique=True, name="external_source_credibility_unique",
     )
-    await db.external_source_credibility.create_index(
+    await _safe_create_index(db.external_source_credibility, 
         [("status", 1), ("updated_at", -1)],
         name="external_source_credibility_status_idx",
     )
 
     # ── Manipulation alerts (2026-02-23) ──────────────────────────
     # RoadGuard's witness-cluster detector. Log-only in v1.
-    await db.external_signal_manipulation_alerts.create_index(
+    await _safe_create_index(db.external_signal_manipulation_alerts, 
         [("created_at", -1)],
         name="external_signal_manipulation_alerts_recent_idx",
     )
-    await db.external_signal_manipulation_alerts.create_index(
+    await _safe_create_index(db.external_signal_manipulation_alerts, 
         [("source", 1), ("trigger_type", 1), ("created_at", -1)],
         name="external_signal_manipulation_alerts_lookup_idx",
     )
@@ -882,7 +893,7 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # then iterate the entire cursor. With no indexes, that's a
     # full-collection scan on every poll (10s interval). Compound
     # index makes both filters indexed.
-    await db.doctrine_sidecars.create_index(
+    await _safe_create_index(db.doctrine_sidecars, 
         [("intent_version", 1), ("outcome_join", 1)],
         name="doctrine_sidecars_v3_outcome_idx",
     )
@@ -892,10 +903,10 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # for a DESC sort without reverse-scan, which it does support
     # but adds cost. An explicit DESC index makes it free. Also
     # add a compound (lane, ts) for the lane-filtered variant.
-    await db.pipeline_receipts.create_index(
+    await _safe_create_index(db.pipeline_receipts, 
         [("ts", -1)], name="pipeline_receipts_ts_desc_idx",
     )
-    await db.pipeline_receipts.create_index(
+    await _safe_create_index(db.pipeline_receipts, 
         [("lane", 1), ("ts", -1)],
         name="pipeline_receipts_lane_ts_idx",
     )
@@ -904,14 +915,14 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # (Brain Input Health tile): `find_one({symbol: X},
     # sort=[(computed_at, -1)])`. The existing
     # `source_1_symbol_1_tf_1` index isn't leading-on-symbol+sort.
-    await db.shared_indicator_snapshots.create_index(
+    await _safe_create_index(db.shared_indicator_snapshots, 
         [("symbol", 1), ("computed_at", -1)],
         name="shared_indicator_snapshots_symbol_recent_idx",
     )
 
     # `market_data_key_fetches` Brain Health tile reads
     # `.find().sort(ts, -1).limit(500)`. No prior index.
-    await db.market_data_key_fetches.create_index(
+    await _safe_create_index(db.market_data_key_fetches, 
         [("ts", -1)],
         name="market_data_key_fetches_recent_idx",
     )
@@ -920,18 +931,18 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # Brain Outages tiles. Reads `.find({brain_id, ts$gte}).sort(ts, 1)`.
     # No prior index. Compound (brain_id, ts) covers both filter and
     # sort in one scan.
-    await db.sidecar_checkin_audit.create_index(
+    await _safe_create_index(db.sidecar_checkin_audit, 
         [("brain_id", 1), ("ts", 1)],
         name="sidecar_checkin_audit_brain_ts_idx",
     )
-    await db.sidecar_checkin_audit.create_index(
+    await _safe_create_index(db.sidecar_checkin_audit, 
         [("ts", -1)],
         name="sidecar_checkin_audit_ts_desc_idx",
     )
 
     # `brain_metrics_snapshots` polled by the Brain Metrics tile
     # for the 72h timeseries: `.find({captured_at >= cutoff}).sort(captured_at, 1)`.
-    await db.brain_metrics_snapshots.create_index(
+    await _safe_create_index(db.brain_metrics_snapshots, 
         [("captured_at", 1)],
         name="brain_metrics_snapshots_captured_idx",
     )

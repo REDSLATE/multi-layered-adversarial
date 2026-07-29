@@ -3886,3 +3886,21 @@ silent after redeploy.
   the dominant reason; knobs: post_sell_cooldown_min (risk-sizer
   policy), crypto-buy-allowlist PUT.
 - 19/19 operator-fix tests + 28 regression green.
+
+## 2026-07-29 (later) — Repo hygiene + index fault-isolation refactor
+- Untracked + gitignored 149 webull SDK log files (repo bloat).
+- db.ensure_indexes: all 73 raw `await db.X.create_index(...)` calls
+  mechanically routed through `_safe_create_index` (never raises) —
+  one bad index spec can no longer abort the rest (the 2026-07-21
+  prod-stranding failure mode). Wrapper now names string-key indexes
+  correctly in the report. Chose mechanical transform over full
+  declarative-table transcription: same fault-isolation guarantee,
+  zero risk of silently dropping one of 106 index specs.
+- New tripwire tests/test_db_index_fault_isolation.py (rejects raw
+  create_index reintroduction; probes wrapper report).
+- Verified live vs Atlas: 106 indexes — 104 exists, 2 PRE-EXISTING
+  benign IndexOptionsConflict (code 85: users email + shared_ohlcv
+  bars indexed under legacy auto-names) now logged-and-skipped
+  instead of fatal. Full tripwire suite: 429 passed.
+- Deferred per operator: router auto-discovery (c), pymongo/motor
+  upgrade, CRA→Vite.
