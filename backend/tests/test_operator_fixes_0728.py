@@ -314,3 +314,40 @@ async def test_pending_ttl_leaves_fresh_pending_alone():
     await ar_recon._sweep_stale_pending()
     doc = await db[SHARED_INTENTS].find_one({"intent_id": intent_id})
     assert doc["gate_state"] == "pending"
+
+
+# ── equity quality floor (garbage-ticker gate, 2026-07-28) ──────────
+
+from shared.universe.refresher import _apply_quality_filters
+
+
+def _eq_row(sym, price, volume, **kw):
+    return {"canonical_symbol": sym, "price": price, "volume": volume, **kw}
+
+
+def test_equity_floor_drops_sub_5_dollar_smallcaps():
+    rows = [_eq_row("INLF", 2.40, 9_000_000),
+            _eq_row("AAPL", 210.0, 40_000_000)]
+    kept, dropped = _apply_quality_filters(rows, "equity")
+    assert [r["canonical_symbol"] for r in kept] == ["AAPL"]
+    assert dropped[0]["_drop_reason"] == "quality_filter"
+
+
+def test_equity_floor_drops_thin_dollar_volume():
+    rows = [_eq_row("THIN", 12.0, 50_000),      # $600k traded — thin
+            _eq_row("LIQD", 12.0, 2_000_000)]   # $24M traded
+    kept, _ = _apply_quality_filters(rows, "equity")
+    assert [r["canonical_symbol"] for r in kept] == ["LIQD"]
+
+
+def test_equity_floor_pinned_and_missing_data_exempt():
+    rows = [_eq_row("PINME", 2.0, 100, pinned=True),
+            _eq_row("NODATA", 0.0, 0.0)]
+    kept, dropped = _apply_quality_filters(rows, "equity")
+    assert len(kept) == 2 and not dropped
+
+
+def test_crypto_lane_unaffected_by_equity_floors():
+    rows = [_eq_row("PEPE/USD", 0.00001, 1_000)]
+    kept, dropped = _apply_quality_filters(rows, "crypto")
+    assert len(kept) == 1 and not dropped

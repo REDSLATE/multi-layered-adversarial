@@ -3865,3 +3865,24 @@ already wrong (adverse selection).
 - Tests: 6 new (allowlist gate 4 + pending TTL 2); 51 green across
   operator-fixes/cooldown/risk-engine/reconcile suites. Both admin
   endpoints curl-verified live.
+
+## 2026-07-29 — Equity garbage gate + "Kraken isn't trading" visibility
+Operator: down $25, Webull "still buying garbage tickers"; Kraken
+silent after redeploy.
+### Built
+- Equity universe quality floor (refresher): MIN_PRICE_EQUITY 1.0 →
+  5.0 default; NEW dollar-volume floor MIN_DOLLAR_VOLUME_EQUITY
+  ($3M default, env + knob universe_quality.min_dollar_volume_equity).
+  Pinned/core + missing-data rows exempt; crypto lane unaffected.
+  Verified: equity refresh final=87, dropped=9, no collapse.
+- GET /api/admin/pipeline/crypto_buy_blockers?hours=24 — aggregates
+  crypto intents by action:gate_state, top block reasons (with
+  symbols), and LIVE guard states (post_sell_cooldown remaining,
+  buy_allowlist). Answers "why isn't Kraken trading" from prod data.
+### Notes
+- Kraken silence is plausibly the new guards working as designed
+  (allowlist majors-only while brains emit movers + 30min cooldown
+  chaining after stop-outs). The blockers endpoint on PROD will name
+  the dominant reason; knobs: post_sell_cooldown_min (risk-sizer
+  policy), crypto-buy-allowlist PUT.
+- 19/19 operator-fix tests + 28 regression green.

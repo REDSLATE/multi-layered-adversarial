@@ -115,6 +115,99 @@ async def outcome_health(
     }
 
 
+@router.get("/crypto_buy_blockers")
+async def crypto_buy_blockers(
+    hours: float = Query(24.0, gt=0, le=720),
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """WHY ISN'T KRAKEN TRADING? (2026-07-28 operator report)
+
+    Aggregates the last N hours of crypto intents by gate_state and
+    names the top block reasons, plus the LIVE state of every buy-side
+    guard (allowlist, post-sell cooldown, lane policy)."""
+    since = (
+        datetime.now(timezone.utc) - timedelta(hours=hours)
+    ).isoformat()
+    match = {"lane": "crypto", "ingest_ts": {"$gte": since}}
+
+    by_state: dict = {}
+    async for d in db["shared_intents"].aggregate([
+        {"$match": match},
+        {"$group": {"_id": {"a": "$action", "g": "$gate_state"},
+                    "n": {"$sum": 1}}},
+    ]):
+        key = f"{(d['_id'].get('a') or '?')}:{(d['_id'].get('g') or '?')}"
+        by_state[key] = d["n"]
+
+    block_reasons: list = []
+    async for d in db["shared_intents"].aggregate([
+        {"$match": {**match, "gate_state": {"$in": ["blocked", "rejected",
+                                                    "expired_unrouted"]}}},
+        {"$group": {
+            "_id": {"action": "$action",
+                    "reason": {"$ifNull": ["$risk_reason",
+                                           "$broker_reason"]}},
+            "n": {"$sum": 1},
+            "symbols": {"$addToSet": "$symbol"},
+        }},
+        {"$sort": {"n": -1}},
+        {"$limit": 20},
+    ]):
+        block_reasons.append({
+            "action": d["_id"].get("action"),
+            "reason": d["_id"].get("reason") or "unknown",
+            "count": d["n"],
+            "symbols": sorted(d.get("symbols") or [])[:10],
+        })
+
+    # Live guard states.
+    guards: dict = {}
+    try:
+        from shared.risk_sizer.policy import get_sizer_policy  # noqa: WPS433
+        pol = await get_sizer_policy()
+        cd_min = float(pol["crypto"].get("post_sell_cooldown_min") or 0)
+        from shared.risk_sizer.sell_cooldown import (  # noqa: WPS433
+            cooldown_remaining_s,
+        )
+        rem, sold = await cooldown_remaining_s(cd_min)
+        guards["post_sell_cooldown"] = {
+            "knob_min": cd_min,
+            "active": rem > 0,
+            "remaining_s": round(rem, 1),
+            "armed_by": sold,
+        }
+    except Exception as exc:  # noqa: BLE001
+        guards["post_sell_cooldown"] = {"error": str(exc)[:120]}
+    try:
+        from shared.risk_sizer.buy_allowlist import get_allowlist  # noqa: WPS433
+        al = await get_allowlist()
+        guards["buy_allowlist"] = {
+            "enabled": al.get("enabled"),
+            "symbols": al.get("symbols"),
+        }
+    except Exception as exc:  # noqa: BLE001
+        guards["buy_allowlist"] = {"error": str(exc)[:120]}
+
+    executed = by_state.get("BUY:executed", 0) + by_state.get(
+        "BUY:submitted", 0) + by_state.get("BUY:filled", 0)
+    summary = (
+        f"last {hours:.0f}h: {sum(by_state.values())} crypto intents, "
+        f"{executed} BUYs reached the broker. "
+        + (f"Top blocker: {block_reasons[0]['reason']} "
+           f"×{block_reasons[0]['count']}." if block_reasons
+           else "No blocks recorded.")
+    )
+    return {
+        "ok": True,
+        "window_hours": hours,
+        "summary": summary,
+        "by_action_state": by_state,
+        "block_reasons": block_reasons,
+        "guards": guards,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.get("/forensics/large_losses")
 async def forensics_large_losses(
     min_loss_usd: float = Query(20.0, gt=0),

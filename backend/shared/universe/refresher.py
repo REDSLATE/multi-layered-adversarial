@@ -80,9 +80,15 @@ UNIVERSE_CAP_CRYPTO = int(os.environ.get("UNIVERSE_CAP_CRYPTO", "50"))
 HYSTERESIS_ADMIT = 50   # new members admitted from top N
 HYSTERESIS_RETAIN = 65  # existing members retained while inside top N
 
-MIN_PRICE_EQUITY = 1.0    # avoid penny-stock noise (adopted from Ervin spec 2026-07-15)
+MIN_PRICE_EQUITY = 5.0    # 2026-07-28 operator: sub-$5 small caps were the "garbage tickers" (was 1.0)
 MIN_PRICE_CRYPTO = 0.0    # crypto pairs regularly trade sub-cent; don't gate
 MIN_VOLUME = 0.0
+# 2026-07-28: minimum daily DOLLAR volume for equity admission —
+# thin small caps slip past a share-volume floor. Knob:
+# universe_quality.min_dollar_volume_equity.
+MIN_DOLLAR_VOLUME_EQUITY = float(
+    os.environ.get("MIN_DOLLAR_VOLUME_EQUITY", "3000000")
+)
 
 
 def _log(msg: str, *args) -> None:
@@ -301,6 +307,7 @@ def _apply_hysteresis(
 def _apply_quality_filters(
     rows: list[dict], lane: str,
     min_price_override: Optional[float] = None,
+    min_dollar_volume_override: Optional[float] = None,
 ) -> tuple[list[dict], list[dict]]:
     """Drop rows that don't meet minimum quality. Return (kept, dropped).
 
@@ -314,6 +321,14 @@ def _apply_quality_filters(
         min_price = float(min_price_override)
     else:
         min_price = MIN_PRICE_EQUITY if lane == "equity" else MIN_PRICE_CRYPTO
+    if lane == "equity":
+        min_dvol = (
+            float(min_dollar_volume_override)
+            if min_dollar_volume_override is not None
+            else MIN_DOLLAR_VOLUME_EQUITY
+        )
+    else:
+        min_dvol = 0.0
     kept: list[dict] = []
     dropped: list[dict] = []
     for r in rows:
@@ -325,7 +340,13 @@ def _apply_quality_filters(
         # some pins arrive with price=0 (we didn't probe on merge).
         price_ok = (price >= min_price) if price > 0 else True
         vol_ok = r.get("volume", 0.0) >= MIN_VOLUME
-        if not (price_ok and vol_ok):
+        # Dollar-volume floor (2026-07-28): only when both price and
+        # volume are populated — never drop on missing data.
+        dvol_ok = True
+        vol = r.get("volume") or 0.0
+        if min_dvol > 0 and price > 0 and vol > 0:
+            dvol_ok = price * vol >= min_dvol
+        if not (price_ok and vol_ok and dvol_ok):
             r["_drop_reason"] = "quality_filter"
             dropped.append(r)
             continue
@@ -452,6 +473,7 @@ async def refresh_equity_universe() -> dict:
     kept, quarantined = await _filter_by_registry(admitted, "webull")
     quality_kept, quality_dropped = _apply_quality_filters(
         kept, lane, min_price_override=quality.get("min_price_equity"),
+        min_dollar_volume_override=quality.get("min_dollar_volume_equity"),
     )
     cap = int(quality.get("universe_cap_equity") or UNIVERSE_CAP_EQUITY)
     quality_kept = quality_kept[:max(1, cap)]
