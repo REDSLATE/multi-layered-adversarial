@@ -43,6 +43,10 @@ router = APIRouter(prefix="/admin/healthcheck", tags=["healthcheck"])
 # take more than (count * budget).
 _PER_CHECK_BUDGET_S = 4.0
 
+# Shared pass/warn/fail ordering. Unknown statuses rank as `warn` so a
+# malformed sub-report degrades the roll-up instead of being ignored.
+_STATUS_RANK = {"pass": 0, "warn": 1, "fail": 2}
+
 
 # Indexes the runtime DEPENDS on. If any of these are missing on the
 # live database, downstream queries will time out and trigger 520s.
@@ -312,6 +316,59 @@ async def _check_recent_intents() -> dict:
         }
 
 
+async def _check_retention_health() -> dict:
+    """Roll the per-collection retention growth evaluation into one
+    check. This is the signal that would have surfaced the
+    `mc_brain_silences` pile-up (334k rows under a TTL index keyed on
+    a string field) months before an operator stumbled on it."""
+    started = time.monotonic()
+    try:
+        from shared.retention import evaluate_retention_health  # noqa: WPS433
+        report = await _bounded(evaluate_retention_health(), default=None)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "fail",
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+            "detail": f"{type(exc).__name__}: {str(exc)[:200]}",
+        }
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    if report is None:
+        return {
+            "status": "warn",
+            "elapsed_ms": elapsed_ms,
+            "detail": (
+                f"retention health evaluation timed out at "
+                f"{_PER_CHECK_BUDGET_S}s"
+            ),
+        }
+    rows = report.get("collections") or []
+    worst = max(
+        (_STATUS_RANK.get(r.get("status"), 1) for r in rows), default=0,
+    )
+    offenders = [
+        f"{r.get('collection')}={r.get('count')} "
+        f"({r.get('growth_ratio')}x baseline {r.get('baseline')})"
+        for r in rows if r.get("status") != "pass"
+    ]
+    return {
+        "status": {0: "pass", 1: "warn", 2: "fail"}[worst],
+        "elapsed_ms": elapsed_ms,
+        "collections_checked": len(rows),
+        "growth_factor": report.get("growth_factor"),
+        "min_count": report.get("min_count"),
+        "last_sampled_at": report.get("last_sampled_at"),
+        "offenders": offenders,
+        "collections": rows,
+        "detail": (
+            f"{len(rows)} retention-swept collections sampled; "
+            + (
+                f"ANOMALOUS GROWTH: {', '.join(offenders)}"
+                if offenders else "all within baseline growth budget"
+            )
+        ),
+    }
+
+
 @router.get("/full")
 async def healthcheck_full(_user: dict = Depends(get_current_user)):  # noqa: B008
     """Post-deploy runtime validation. Read-only, ~30s budget total.
@@ -328,10 +385,13 @@ async def healthcheck_full(_user: dict = Depends(get_current_user)):  # noqa: B0
     checks["auto_router_ticking"] = await _check_auto_router_ticking()
     checks["recent_intents"] = await _check_recent_intents()
     checks["direct_execute_state"] = await _check_direct_execute_state()
+    checks["retention_health"] = await _check_retention_health()
 
     # Roll-up. Order matters: fail > warn > pass.
-    rank = {"pass": 0, "warn": 1, "fail": 2}
-    worst = max((rank.get(c.get("status"), 2) for c in checks.values()), default=0)
+    worst = max(
+        (_STATUS_RANK.get(c.get("status"), 2) for c in checks.values()),
+        default=0,
+    )
     overall = {0: "pass", 1: "warn", 2: "fail"}[worst]
 
     failures = [k for k, c in checks.items() if c.get("status") == "fail"]
