@@ -171,7 +171,7 @@ async def _hydrate(doc: dict) -> dict:
 async def _advance_state_if_needed(position_id: str) -> Optional[dict]:
     """Auto-bump proposed → discussing on first stance."""
     doc = await db[SHARED_POSITIONS].find_one(
-        {"position_id": position_id}, {"_id": 0},
+        {"position_id": position_id}, {"_id": 0}, max_time_ms=3000,
     )
     if not doc:
         return None
@@ -244,7 +244,7 @@ async def list_positions(
         q["symbol"] = symbol.upper()
     rows = await db[SHARED_POSITIONS].find(q, {"_id": 0}).sort(
         "updated_at", -1,
-    ).to_list(limit)
+    ).max_time_ms(8000).to_list(limit)
     hydrated = [await _hydrate(r) for r in rows]
     return {"items": hydrated, "count": len(hydrated)}
 
@@ -255,14 +255,14 @@ async def get_position(
     _user: dict = Depends(get_current_user),
 ):
     doc = await db[SHARED_POSITIONS].find_one(
-        {"position_id": position_id}, {"_id": 0},
+        {"position_id": position_id}, {"_id": 0}, max_time_ms=3000,
     )
     if not doc:
         raise HTTPException(status_code=404, detail="position not found")
     out = await _hydrate(doc)
     out["audit"] = await db[SHARED_POSITION_AUDIT].find(
         {"position_id": position_id}, {"_id": 0},
-    ).sort("ts", -1).to_list(50)
+    ).sort("ts", -1).max_time_ms(8000).to_list(50)
     return out
 
 
@@ -308,7 +308,7 @@ async def runtime_list_positions(
 
     rows = await db[SHARED_POSITIONS].find(q, {"_id": 0}).sort(
         "updated_at", -1,
-    ).to_list(limit)
+    ).max_time_ms(8000).to_list(limit)
     hydrated = [await _hydrate(r) for r in rows]
     return {
         "runtime": runtime,
@@ -335,7 +335,7 @@ async def operator_post_stance(
     a brain wrote). Used when a brain's sidecar isn't running but the
     operator wants the position to reflect that brain's posture."""
     doc = await db[SHARED_POSITIONS].find_one(
-        {"position_id": position_id}, {"_id": 0},
+        {"position_id": position_id}, {"_id": 0}, max_time_ms=3000,
     )
     if not doc:
         raise HTTPException(status_code=404, detail="position not found")
@@ -370,7 +370,7 @@ async def runtime_post_stance(
     verify_runtime_token(runtime, x_runtime_token or "")
 
     doc = await db[SHARED_POSITIONS].find_one(
-        {"position_id": position_id}, {"_id": 0},
+        {"position_id": position_id}, {"_id": 0}, max_time_ms=3000,
     )
     if not doc:
         raise HTTPException(status_code=404, detail="position not found")
@@ -419,7 +419,7 @@ async def executor_call(
     placement is gated by the broker exec-toggle, which lives on a
     separate path and stays default-off until Phase 2."""
     doc = await db[SHARED_POSITIONS].find_one(
-        {"position_id": position_id}, {"_id": 0},
+        {"position_id": position_id}, {"_id": 0}, max_time_ms=3000,
     )
     if not doc:
         raise HTTPException(status_code=404, detail="position not found")
@@ -461,7 +461,7 @@ async def executor_call(
         "after_state": new_state,
     })
     refreshed = await db[SHARED_POSITIONS].find_one(
-        {"position_id": position_id}, {"_id": 0},
+        {"position_id": position_id}, {"_id": 0}, max_time_ms=3000,
     )
     return await _hydrate(refreshed)
 
@@ -474,7 +474,7 @@ async def reject_position(
 ):
     """Walk away — no trade thesis. Records and audits."""
     doc = await db[SHARED_POSITIONS].find_one(
-        {"position_id": position_id}, {"_id": 0},
+        {"position_id": position_id}, {"_id": 0}, max_time_ms=3000,
     )
     if not doc:
         raise HTTPException(status_code=404, detail="position not found")
@@ -499,7 +499,7 @@ async def reject_position(
         "notes": body.notes,
     })
     refreshed = await db[SHARED_POSITIONS].find_one(
-        {"position_id": position_id}, {"_id": 0},
+        {"position_id": position_id}, {"_id": 0}, max_time_ms=3000,
     )
     return await _hydrate(refreshed)
 
@@ -518,7 +518,7 @@ async def stale_sweep_preview(_user: dict = Depends(get_current_user)):
     rows = await db[SHARED_POSITIONS].find(
         {"state": {"$in": list(OPEN_STATES)}, "updated_at": {"$lt": cutoff}},
         {"_id": 0},
-    ).sort("updated_at", 1).to_list(100)
+    ).sort("updated_at", 1).max_time_ms(8000).to_list(100)
     return {
         "items": rows,
         "count": len(rows),

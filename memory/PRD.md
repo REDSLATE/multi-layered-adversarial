@@ -3990,3 +3990,32 @@ maxTimeMS on hot reads, #5 projection audit, pymongo bump, Vite.
   legacy ohlcv rows, zero per-collection errors).
 - Remaining from Atlas analysis: #3 maxTimeMS on hot reads, #5
   projection audit, pymongo bump, Vite migration.
+
+## 2026-07-30 (later) — Atlas analysis #3 + #5: maxTimeMS on hot reads
+- Bounded ~45 previously-unbounded reads on the trading hot path so a
+  saturated Atlas can't hold request-pool sockets: mc_arbiter
+  (arbiter.load_dawe, grader.roll_recent_end_of_day),
+  live_positions (all point lookups 3000ms, list/counts/audit 8000ms),
+  positions (same pattern), risk/position_monitor.run_once (5000ms),
+  intent_sweeper (lookups 4000ms, batch scan 15000ms),
+  brain_runtime_metrics (point reads 3000ms, window aggregate 8000ms),
+  exposure_caps (flag reads 3000ms, receipts scans 8000ms),
+  intents.py (indicator-snapshot read on POST path 3000ms + admin
+  scans 8000ms), exits/monitor + exits/forensics (4000/8000ms),
+  opinion_resolver + observation_resolver ticks (8000ms).
+- Budget doctrine: point lookup 3000ms · hot-tick read 4-5000ms ·
+  admin/list scan 8000ms · background sweep batch 15000ms.
+- #5 projections (covered-read wins): exits/monitor `_brain_levels`
+  now projects {target_price, stop_price}; `_entry_price_fallback`
+  projects {filled_avg_price, fill_price, price} — no more full-doc
+  fetches on the exit tick. (Audited other hot reads: already
+  projected — exposure_caps, forensics, brm, sweeper.)
+- Fixed a stray trailing `}` accidentally introduced in intents.py.
+- Tests: 429 tripwires green; full suite 3085 passed / 3 failed —
+  all 3 failures reproduce on the CLEAN tree (env-dependent:
+  test_universe_quality_knobs ×2, test_live_execution_path sweep) —
+  pre-existing, NOT regressions.
+- Verified live: /admin/live-positions, /shared/positions,
+  /admin/runtime/stack/status all 200 in ~0.1s via external URL.
+- Remaining from Atlas analysis: pymongo bump (P2), Vite migration
+  (P2), router auto-discovery refactor (P2).

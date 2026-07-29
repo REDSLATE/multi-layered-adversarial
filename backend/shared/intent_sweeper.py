@@ -163,6 +163,7 @@ async def _has_resolved_experience(db, intent_id: str) -> bool:
             "outcome_15m_bps": 1,
             "outcome_1h_bps": 1,
         },
+        max_time_ms=4000,
     )
     if not doc:
         return False
@@ -177,7 +178,7 @@ async def _learning_capture_exists(db, intent_id: str) -> bool:
     (resolved or not). Used with `learning_capture_required()` to
     enforce the 'still catching up' preservation rule."""
     doc = await db[LEARNING_EXPERIENCES].find_one(
-        {"intent_id": intent_id}, {"_id": 1},
+        {"intent_id": intent_id}, {"_id": 1}, max_time_ms=4000,
     )
     return doc is not None
 
@@ -272,6 +273,7 @@ async def _has_active_capital_reservation(db, intent_id: str) -> bool:
                 },
             },
             {"_id": 1},
+            max_time_ms=4000,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
@@ -367,6 +369,7 @@ async def sweep_stale_intents(
             db[SHARED_INTENTS]
             .find(q, {"_id": 0})
             .sort("ingest_ts", 1)  # oldest first
+            .max_time_ms(15000)
             .limit(batch_limit)
         )
         rows: list[dict] = []
@@ -637,6 +640,7 @@ async def sweep_stale_intents(
             verified = await db[SHARED_INTENTS_ARCHIVE].find_one(
                 {"intent_id": intent_id, "archive_version": ARCHIVE_VERSION},
                 {"_id": 1},
+                max_time_ms=4000,
             )
         except Exception as exc:  # noqa: BLE001
             verified = None

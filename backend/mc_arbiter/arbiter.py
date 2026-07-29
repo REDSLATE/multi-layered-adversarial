@@ -61,6 +61,7 @@ async def load_dawe(brain: str, lane: str) -> DaweState:
     doc = await db[BRM].find_one(
         {"_id": STACK_ID},
         {f"brains.{brain}.dawe.{lane}": 1},
+        max_time_ms=3000,
     )
     subdoc = (
         (((doc or {}).get("brains") or {}).get(brain) or {}).get("dawe", {}).get(lane)

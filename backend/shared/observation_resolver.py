@@ -206,7 +206,7 @@ async def _resolver_tick() -> int:
     cursor = db[OBSERVATION_RECEIPTS].find(
         {"resolved": False},
         {"_id": 0},
-    ).limit(500)
+    ).max_time_ms(8000).limit(500)
     touched = 0
     async for receipt in cursor:
         try:

@@ -224,7 +224,7 @@ async def _tick() -> dict:
             "posted_at": {"$lte": cutoff_iso},
         },
         {"_id": 0},
-    ).limit(500)  # cap per tick
+    ).max_time_ms(8000).limit(500)  # cap per tick
 
     scanned = 0
     graded = 0
@@ -238,6 +238,7 @@ async def _tick() -> dict:
         existing = await db[SHARED_OUTCOMES].find_one(
             {"opinion_id": opinion["opinion_id"]},
             {"_id": 1},
+            max_time_ms=4000,
         )
         if existing:
             skipped_already += 1

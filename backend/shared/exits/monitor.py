@@ -261,6 +261,7 @@ async def _origin_seat(origin: Optional[dict]) -> Optional[str]:
         ex = await db["executions"].find_one(
             {"intent_id": origin["intent_id"], "ok": True},
             {"seats": 1, "seat_holder": 1},
+            max_time_ms=4000,
         )
         return (((ex or {}).get("seats") or {}).get("executor")
                 or (ex or {}).get("seat_holder"))
@@ -278,6 +279,7 @@ async def _origin_intent(symbol: str, lane: str) -> Optional[dict]:
             {"intent_id": 1, "stack": 1, "action": 1, "risk_sizing": 1,
              "evidence": 1, "ingest_ts": 1},
             sort=[("ingest_ts", -1)],
+            max_time_ms=4000,
         )
     except Exception:  # noqa: BLE001
         return None
@@ -294,7 +296,9 @@ async def _brain_levels(symbol: str, lane: str) -> Optional[tuple[float, float]]
                 "ingest_ts": {"$gte": since},
                 "target_price": {"$gt": 0}, "stop_price": {"$gt": 0},
             },
+            {"target_price": 1, "stop_price": 1},
             sort=[("ingest_ts", -1)],
+            max_time_ms=4000,
         )
     except Exception:  # noqa: BLE001
         return None
@@ -313,7 +317,9 @@ async def _entry_price_fallback(symbol: str, lane: str) -> Optional[float]:
     try:
         doc = await db["executions"].find_one(
             {"symbol": symbol, "lane": lane, "ok": True, "ts": {"$gte": since}},
+            {"filled_avg_price": 1, "fill_price": 1, "price": 1},
             sort=[("ts", -1)],
+            max_time_ms=4000,
         )
         if doc:
             for k in ("filled_avg_price", "fill_price", "price"):

@@ -99,7 +99,7 @@ async def open_from_receipt(receipt: dict, intent: Optional[dict] = None) -> Opt
     if not receipt_id or not intent_id:
         return None
     existing = await db[SHARED_LIVE_POSITIONS].find_one(
-        {"receipt_id": receipt_id}, {"_id": 0},
+        {"receipt_id": receipt_id}, {"_id": 0}, max_time_ms=3000,
     )
     if existing:
         return existing
@@ -190,7 +190,7 @@ async def record_management(
     """Record an in-flight adjustment (scale, partial close, stop move).
     Position transitions to `managing` on first call; subsequent
     adjustments stay in `managing`."""
-    pos = await db[SHARED_LIVE_POSITIONS].find_one({"position_id": position_id}, {"_id": 0})
+    pos = await db[SHARED_LIVE_POSITIONS].find_one({"position_id": position_id}, {"_id": 0}, max_time_ms=3000)
     if not pos:
         raise HTTPException(status_code=404, detail=f"position {position_id} not found")
     if pos["state"] == STATE_CLOSED:
@@ -243,7 +243,7 @@ async def record_management(
     except Exception:  # noqa: BLE001
         pass
 
-    return await db[SHARED_LIVE_POSITIONS].find_one({"position_id": position_id}, {"_id": 0})
+    return await db[SHARED_LIVE_POSITIONS].find_one({"position_id": position_id}, {"_id": 0}, max_time_ms=3000)
 
 
 async def close(
@@ -260,7 +260,7 @@ async def close(
     position returns the existing doc without a second outcome broadcast.
     Writes a SHARED_OUTCOMES row so the existing scorecard pipeline picks
     up the result without any extra wiring."""
-    pos = await db[SHARED_LIVE_POSITIONS].find_one({"position_id": position_id}, {"_id": 0})
+    pos = await db[SHARED_LIVE_POSITIONS].find_one({"position_id": position_id}, {"_id": 0}, max_time_ms=3000)
     if not pos:
         raise HTTPException(status_code=404, detail=f"position {position_id} not found")
     if pos["state"] == STATE_CLOSED:
@@ -428,7 +428,7 @@ async def close(
         # block the position close audit trail.
         pass
 
-    return await db[SHARED_LIVE_POSITIONS].find_one({"position_id": position_id}, {"_id": 0})
+    return await db[SHARED_LIVE_POSITIONS].find_one({"position_id": position_id}, {"_id": 0}, max_time_ms=3000)
 
 
 # ──────────────────────── REST surface ────────────────────────
@@ -468,10 +468,13 @@ async def list_live_positions(
     if symbol:
         q["symbol"] = symbol.upper()
     rows = await db[SHARED_LIVE_POSITIONS].find(q, {"_id": 0}) \
-        .sort("opened_at", -1).to_list(limit)
-    open_n = await db[SHARED_LIVE_POSITIONS].count_documents({"state": STATE_OPEN})
-    mng_n = await db[SHARED_LIVE_POSITIONS].count_documents({"state": STATE_MANAGING})
-    cls_n = await db[SHARED_LIVE_POSITIONS].count_documents({"state": STATE_CLOSED})
+        .sort("opened_at", -1).max_time_ms(8000).to_list(limit)
+    open_n = await db[SHARED_LIVE_POSITIONS].count_documents(
+        {"state": STATE_OPEN}, maxTimeMS=8000)
+    mng_n = await db[SHARED_LIVE_POSITIONS].count_documents(
+        {"state": STATE_MANAGING}, maxTimeMS=8000)
+    cls_n = await db[SHARED_LIVE_POSITIONS].count_documents(
+        {"state": STATE_CLOSED}, maxTimeMS=8000)
     return {
         "items": rows,
         "count": len(rows),
@@ -484,12 +487,12 @@ async def get_live_position(
     position_id: str,
     _user: dict = Depends(get_current_user),  # noqa: B008
 ):
-    pos = await db[SHARED_LIVE_POSITIONS].find_one({"position_id": position_id}, {"_id": 0})
+    pos = await db[SHARED_LIVE_POSITIONS].find_one({"position_id": position_id}, {"_id": 0}, max_time_ms=3000)
     if not pos:
         raise HTTPException(status_code=404, detail=f"position {position_id} not found")
     audit = await db[SHARED_LIVE_POSITION_AUDIT].find(
         {"position_id": position_id}, {"_id": 0},
-    ).sort("ts", 1).to_list(200)
+    ).sort("ts", 1).max_time_ms(8000).to_list(200)
     return {"position": pos, "audit": audit}
 
 

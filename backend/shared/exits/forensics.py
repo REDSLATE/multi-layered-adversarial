@@ -75,6 +75,7 @@ async def build_autopsy(outcome: dict) -> dict:
         try:
             execution = await db["executions"].find_one(
                 {"intent_id": trade_id, "ok": True}, _EXEC_PROJ,
+                max_time_ms=4000,
             )
         except Exception:  # noqa: BLE001
             pass
@@ -168,7 +169,7 @@ async def file_forensic_report(
     try:
         plan_id = outcome.get("plan_id")
         existing = await db[FORENSICS].find_one(
-            {"plan_id": plan_id, "kind": kind}, {"_id": 0},
+            {"plan_id": plan_id, "kind": kind}, {"_id": 0}, max_time_ms=4000,
         )
         if existing:
             return existing
@@ -214,7 +215,7 @@ async def large_loss_report(
     }
     rows = await db[EXIT_OUTCOMES].find(q, {"_id": 0}).sort(
         "closed_at", -1,
-    ).limit(200).to_list(200)
+    ).max_time_ms(8000).limit(200).to_list(200)
 
     autopsies = [await build_autopsy(r) for r in rows]
     by_brain: dict[str, dict] = {}

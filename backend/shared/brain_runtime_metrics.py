@@ -116,7 +116,7 @@ async def refresh_windows(brain: str, *, force: bool = False) -> Optional[Dict[s
     # Cheap short-circuit: cached refresh still valid?
     if not force:
         try:
-            existing = await db[COLLECTION].find_one({"_id": brain})
+            existing = await db[COLLECTION].find_one({"_id": brain}, max_time_ms=3000)
             if existing and existing.get("windows_refreshed_at"):
                 try:
                     refreshed = datetime.fromisoformat(
@@ -162,6 +162,7 @@ async def refresh_windows(brain: str, *, force: bool = False) -> Optional[Dict[s
                     },
                 }},
             ],
+            maxTimeMS=8000,
         )
         total_24h = 0
         total_1h = 0
@@ -192,6 +193,7 @@ async def refresh_windows(brain: str, *, force: bool = False) -> Optional[Dict[s
                 {"stack_canonical": brain_c, "ingest_ts": {"$gte": cutoff_24h}},
                 {"_id": 0, "ingest_ts": 1, "symbol": 1, "action": 1},
                 sort=[("ingest_ts", -1)],
+                max_time_ms=4000,
             )
             if latest_doc and latest_doc.get("ingest_ts"):
                 latest_fields = {
@@ -232,7 +234,7 @@ async def refresh_windows(brain: str, *, force: bool = False) -> Optional[Dict[s
         return None
 
     try:
-        return await db[COLLECTION].find_one({"_id": brain})
+        return await db[COLLECTION].find_one({"_id": brain}, max_time_ms=3000)
     except Exception:  # noqa: BLE001
         return None
 
@@ -243,7 +245,7 @@ async def get_metrics(brain: str) -> Optional[Dict[str, Any]]:
     if not brain:
         return None
     try:
-        return await db[COLLECTION].find_one({"_id": brain})
+        return await db[COLLECTION].find_one({"_id": brain}, max_time_ms=3000)
     except Exception as exc:  # noqa: BLE001
         logger.warning("brain_runtime_metrics.get_metrics failed: %s", exc)
         return None
@@ -588,7 +590,9 @@ async def get_stack_status() -> Optional[Dict[str, Any]]:
     lookup is O(1) against the `_id` primary key — no collection
     scan, no aggregate, no time-window filter."""
     try:
-        return await db[COLLECTION].find_one({"_id": _STACK_ID})
+        return await db[COLLECTION].find_one(
+            {"_id": _STACK_ID}, max_time_ms=3000,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "brain_runtime_metrics.get_stack_status failed: %s", exc,

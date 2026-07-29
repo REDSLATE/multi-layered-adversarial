@@ -204,7 +204,7 @@ async def roll_recent_end_of_day() -> dict:
     a bad day doesn't erase weeks of real signal.
     """
     doc = await db[BRM].find_one(
-        {"_id": STACK_ID}, {"brains": 1},
+        {"_id": STACK_ID}, {"brains": 1}, max_time_ms=4000,
     )
     brains = (doc or {}).get("brains") or {}
     rolled = 0

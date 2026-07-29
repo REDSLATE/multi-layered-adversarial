@@ -347,7 +347,7 @@ async def run_once(actor: str = "position_monitor") -> dict:
     started = _now_iso()
     open_positions = await db[SHARED_LIVE_POSITIONS].find(
         {"state": {"$in": ["open", "managing"]}}, {"_id": 0},
-    ).to_list(500)
+    ).max_time_ms(5000).to_list(500)
 
     # Build the equity-price snapshot once per tick (one Webull call).
     equity_prices = await _equity_prices()

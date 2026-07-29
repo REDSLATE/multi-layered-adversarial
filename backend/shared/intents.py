@@ -879,6 +879,7 @@ async def _enrich_regime_fp(symbol: str, supplied_fp: Optional[dict]) -> dict:
         snap = await db[SHARED_INDICATOR_SNAPSHOTS].find_one(
             {"symbol": symbol}, {"_id": 0, "indicators": 1},
             sort=[("captured_at", -1)],
+            max_time_ms=3000,
         )
     except Exception:  # noqa: BLE001
         snap = None
@@ -1882,7 +1883,9 @@ async def honesty_audit(
     if stack:
         q["stack"] = stack
 
-    rows = await db[SHARED_INTENTS].find(q, {"_id": 0}).sort("ingest_ts", -1).to_list(limit)
+    rows = await db[SHARED_INTENTS].find(q, {"_id": 0}).sort(
+        "ingest_ts", -1,
+    ).max_time_ms(8000).to_list(limit)
 
     # Reason tallies.
     by_stack: dict = {}
@@ -1898,7 +1901,7 @@ async def honesty_audit(
     total_q: dict = {"ingest_ts": {"$gte": since}}
     if stack:
         total_q["stack"] = stack
-    total = await db[SHARED_INTENTS].count_documents(total_q)
+    total = await db[SHARED_INTENTS].count_documents(total_q, maxTimeMS=8000)
 
     return {
         "since": since,
@@ -2284,6 +2287,7 @@ async def resurrect_position_model_victims(
             },
             {"_id": 0, "intent_id": 1},
         )
+        .max_time_ms(8000)
         .to_list(limit)
     )
     candidate_ids = list({r["intent_id"] for r in legacy_rows if r.get("intent_id")})
@@ -2295,6 +2299,7 @@ async def resurrect_position_model_victims(
         intent = await db[SHARED_INTENTS].find_one(
             {"intent_id": iid},
             {"_id": 0, "intent_id": 1, "gate_state": 1, "executed": 1},
+            max_time_ms=4000,
         )
         if not intent or intent.get("executed"):
             continue
@@ -2308,6 +2313,7 @@ async def resurrect_position_model_victims(
             {"intent_id": iid},
             {"_id": 0, "gates": 1, "kind": 1, "ts": 1},
             sort=[("ts", -1)],
+            max_time_ms=4000,
         )
         if not latest:
             continue

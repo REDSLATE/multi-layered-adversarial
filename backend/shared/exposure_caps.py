@@ -120,6 +120,7 @@ async def get_daily_spend_reset_at(brain: Optional[str] = None) -> Optional[str]
     doc = await db["runtime_flags"].find_one(
         {"_id": _daily_spend_reset_doc_id(canonical)},
         {"_id": 0, "reset_at": 1},
+        max_time_ms=3000,
     )
     if not doc:
         return None
@@ -150,6 +151,7 @@ async def refresh_cap_overrides_cache() -> dict:
         doc = await db["runtime_flags"].find_one(
             {"_id": _CAPS_FLAG_DOC_ID},
             {"_id": 0},
+            max_time_ms=3000,
         ) or {}
         _CAPS_OVERRIDE_CACHE = doc
         _CAPS_OVERRIDE_TS = _time.time()
@@ -231,7 +233,7 @@ async def daily_spend_usd(window_hours: int = 24) -> float:
     cursor = db["runtime_flags"].find(
         {"_id": {"$regex": f"^{_DAILY_SPEND_RESET_DOC_ID}:"}},
         {"_id": 1, "reset_at": 1},
-    )
+    ).max_time_ms(4000)
     async for d in cursor:
         canonical = d["_id"].split(":", 1)[1]
         ra = d.get("reset_at")
@@ -241,7 +243,7 @@ async def daily_spend_usd(window_hours: int = 24) -> float:
     receipts = db[EXECUTION_RECEIPTS].find(
         {"executed_at": {"$gte": floor}, "side": {"$in": ["BUY", "SELL"]}},
         {"_id": 0, "notional_usd": 1, "side": 1, "executed_at": 1, "stack": 1},
-    )
+    ).max_time_ms(8000)
     total = 0.0
     async for doc in receipts:
         # Per-brain reset check — exclude this fill if its brain has
@@ -275,7 +277,7 @@ async def daily_spend_per_brain(window_hours: int = 24) -> dict[str, float]:
     cursor = db["runtime_flags"].find(
         {"_id": {"$regex": f"^{_DAILY_SPEND_RESET_DOC_ID}:"}},
         {"_id": 1, "reset_at": 1},
-    )
+    ).max_time_ms(4000)
     async for d in cursor:
         canonical = d["_id"].split(":", 1)[1]
         ra = d.get("reset_at")
@@ -285,7 +287,7 @@ async def daily_spend_per_brain(window_hours: int = 24) -> dict[str, float]:
     receipts = db[EXECUTION_RECEIPTS].find(
         {"executed_at": {"$gte": floor}, "side": {"$in": ["BUY", "SELL"]}},
         {"_id": 0, "notional_usd": 1, "executed_at": 1, "stack": 1},
-    )
+    ).max_time_ms(8000)
     out: dict[str, float] = {}
     async for doc in receipts:
         stack = (doc.get("stack") or "").lower() or "unknown"
