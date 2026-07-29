@@ -396,7 +396,7 @@ async def _post_opinion_impl(body: OpinionIn):
     try:
         await db[SHARED_OPINIONS].insert_one(doc)
     except DuplicateKeyError:
-        logger.debug(
+        logging.getLogger("risedual.opinions").debug(
             "opinion dedup: skipped duplicate for runtime=%s topic=%s "
             "bar_close=%s (same market event already recorded)",
             body.runtime, body.topic,

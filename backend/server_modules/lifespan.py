@@ -182,8 +182,6 @@ async def lifespan(app: FastAPI):
         logger.info("system_flags refresher started")
     except Exception as e:  # noqa: BLE001
         logger.warning("system_flags refresher failed to start (non-fatal): %s", e)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("seat_state migration failed (non-fatal): %s", e)
 
     # Unified pipeline flag — REMOVED 2026-06-18. The pipeline is now
     # unconditional (legacy 20-gate chain deleted). Operator kill

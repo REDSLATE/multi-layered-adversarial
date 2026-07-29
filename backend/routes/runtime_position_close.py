@@ -29,6 +29,8 @@ Auth: any brain's X-Runtime-Token. The brain that calls is the brain
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, Header, HTTPException
 
 from db import db

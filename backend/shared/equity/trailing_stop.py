@@ -87,7 +87,6 @@ async def enforce_position(
         raise HTTPException(status_code=404, detail=f"position {position_id} disappeared mid-evaluate")
 
     entry_price = _entry_price_from_position(pos) or 0.0
-    side_mult = -1.0 if pos.get("direction") == "short" else 1.0
     cur_notional = float(pos.get("current_notional_usd") or 0.0)
     # Reconstruct pnl_pct from entry vs current (verdict's pnl is from
     # peak — informative, but trade pnl is from entry).
@@ -98,7 +97,7 @@ async def enforce_position(
             pnl_pct = ((float(current_price) - entry_price) / entry_price) * 100.0
     else:
         pnl_pct = 0.0
-    pnl_usd = cur_notional * (pnl_pct / 100.0) * side_mult
+    pnl_usd = cur_notional * (pnl_pct / 100.0)
     result = await close(
         position_id=position_id,
         actor=actor,
