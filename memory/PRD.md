@@ -3921,3 +3921,23 @@ silent after redeploy.
 - Deferred (from same analysis): TTL-index migration (#2), maxTimeMS
   on hot reads (#3), projection/compound-index audit (#5), pymongo
   upgrade, Vite.
+
+## 2026-07-29 (later 3) — Dead-TTL repair (audit confirmed the trap)
+Audit vs live data: mc_shelly.ts / mc_parity_manifests.recorded_at /
+mc_brain_silences.at are all ISO STRINGS — their TTL indexes were
+SILENT NO-OPS (Mongo reaps BSON Dates only). mc_brain_silences had
+334k rows under a "7d TTL".
+### Fixes (proven ttl_at companion pattern)
+- Writers now stamp BSON-Date ttl_at: mc_shelly.record() (+90d),
+  mc_pulse/receipt.py silence docs (+7d), input_manifest
+  persist (+7d). Legacy rows (no ttl_at) remain on the app sweeper.
+- db.py: dropped dead indexes (mc_shelly_ts_ttl_90d,
+  mc_parity_manifests_ttl, mc_brain_silences_ttl); created
+  {coll}_ttl_at TTLs with expireAfterSeconds=0.
+- Verified live: dead TTLs gone, ttl_at TTLs present, 132 indexes
+  zero errors; 8 fault-isolation tripwires + full suite (429) green.
+- LESSON (memory): NEVER add a Mongo TTL to a field written via
+  .isoformat() — always a BSON-Date companion (ttl_at) stamp.
+### Remaining from Atlas analysis: full #2 (TTL the other ~20
+unconditional collections — needs per-writer ttl_at stamps), #3
+maxTimeMS on hot reads, #5 projection audit, pymongo bump, Vite.

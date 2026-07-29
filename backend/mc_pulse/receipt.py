@@ -13,7 +13,7 @@ Persistence:
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from db import db
@@ -211,10 +211,14 @@ async def persist_receipt(receipt: PulseReceipt) -> None:
     if receipt.brains_silent:
         try:
             silence_docs = []
+            # BSON-Date TTL stamp (2026-07-29): the TTL on the ISO-
+            # string `at` never reaped — Date fields only.
+            _ttl_at = datetime.now(timezone.utc) + timedelta(days=7)
             for bs in receipt.brains_silent:
                 bs_dict = asdict(bs) if hasattr(bs, "__dataclass_fields__") else dict(bs)
                 bs_dict["pulse_id"] = receipt.pulse_id
                 bs_dict["at"] = receipt.completed_at or _now_iso()
+                bs_dict["ttl_at"] = _ttl_at
                 silence_docs.append(bs_dict)
             await db[MC_BRAIN_SILENCES].insert_many(silence_docs, ordered=False)
         except Exception as exc:  # noqa: BLE001

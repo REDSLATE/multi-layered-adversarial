@@ -546,11 +546,20 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         [("brain_id", 1), ("symbol", 1), ("source_bar_close_at", -1)],
         name="mc_parity_manifests_brain_symbol_ts",
     )
+    # 2026-07-29 audit: the old `mc_parity_manifests_ttl` on the ISO-
+    # string `recorded_at` was a SILENT NO-OP (Mongo TTL reaps BSON
+    # Date fields only). Drop it; TTL the BSON-Date `ttl_at` stamp
+    # the writer now sets. Legacy rows (no ttl_at) stay on the app
+    # retention sweeper.
+    try:
+        await db.mc_parity_manifests.drop_index("mc_parity_manifests_ttl")
+    except Exception:  # noqa: BLE001
+        pass
     await _safe_create_index(
         db.mc_parity_manifests,
-        [("recorded_at", 1)],
-        name="mc_parity_manifests_ttl",
-        expireAfterSeconds=7 * 86400,
+        [("ttl_at", 1)],
+        name="mc_parity_manifests_ttl_at",
+        expireAfterSeconds=0,
     )
 
     # ── P1 (2026-02-11): mc_brain_silences diagnostic sidecar ──
@@ -574,11 +583,18 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         [("reason", 1), ("at", -1)],
         name="mc_brain_silences_reason_at",
     )
+    # 2026-07-29 audit: `mc_brain_silences_ttl` on ISO-string `at`
+    # was a SILENT NO-OP (334k rows piled up under a "7d TTL").
+    # Drop; TTL the BSON-Date `ttl_at` stamp instead.
+    try:
+        await db.mc_brain_silences.drop_index("mc_brain_silences_ttl")
+    except Exception:  # noqa: BLE001
+        pass
     await _safe_create_index(
         db.mc_brain_silences,
-        [("at", 1)],
-        name="mc_brain_silences_ttl",
-        expireAfterSeconds=7 * 86400,
+        [("ttl_at", 1)],
+        name="mc_brain_silences_ttl_at",
+        expireAfterSeconds=0,
     )
 
     # Per-runtime decision/shadow stores (kept ISOLATED, never cross-read)
@@ -825,17 +841,20 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
     # long-term training substrate). Chosen conservatively — 90d
     # is enough for outcome-resolver joins on ~14d bracket windows
     # plus plenty of headroom for operator review.
+    # 2026-07-29 audit: `mc_shelly_ts_ttl_90d` on ISO-string `ts`
+    # was a SILENT NO-OP — the app sweeper was the only thing
+    # deleting Shelly rows. Drop; TTL the BSON-Date `ttl_at` stamp
+    # `record()` now sets (90d, matching the original intent).
     try:
-        await _safe_create_index(db.mc_shelly, 
-            [("ts", 1)],
-            name="mc_shelly_ts_ttl_90d",
-            expireAfterSeconds=90 * 24 * 3600,
-        )
+        await db.mc_shelly.drop_index("mc_shelly_ts_ttl_90d")
     except Exception:  # noqa: BLE001
-        # TTL index may exist with different `expireAfterSeconds`.
-        # Mongo doesn't allow mutating TTL in place — operator can
-        # drop and recreate via a maintenance script if needed.
         pass
+    await _safe_create_index(
+        db.mc_shelly,
+        [("ttl_at", 1)],
+        name="mc_shelly_ttl_at",
+        expireAfterSeconds=0,
+    )
     # Shelly memory regex search was the worst offender (~25-40ms scan);
     # a TEXT index pivots it to indexed token lookup.
     try:

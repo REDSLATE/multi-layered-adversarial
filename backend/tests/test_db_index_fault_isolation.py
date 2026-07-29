@@ -57,3 +57,39 @@ def test_retention_uses_capped_worker_pool():
     import shared.retention as retention
     from db import worker_db
     assert retention.db is worker_db
+
+
+# ── dead-TTL repair (2026-07-29 audit): TTL reaps BSON Dates ONLY ──
+
+def test_no_ttl_indexes_on_iso_string_fields():
+    """The three repaired TTLs must target the BSON-Date `ttl_at`
+    stamp with expireAfterSeconds=0 — never the ISO-string ts/at/
+    recorded_at fields (silent no-op reaper)."""
+    src = open(DB_PY).read()
+    for dead in ("mc_shelly_ts_ttl_90d", "mc_parity_manifests_ttl\"",
+                 "mc_brain_silences_ttl\""):
+        assert f'drop_index("{dead.rstrip(chr(34))}")' in src, dead
+    for live in ("mc_shelly_ttl_at", "mc_parity_manifests_ttl_at",
+                 "mc_brain_silences_ttl_at"):
+        assert live in src, live
+
+
+def test_writers_stamp_bson_date_ttl_at():
+    for path in ("/app/backend/shared/mc_shelly.py",
+                 "/app/backend/mc_pulse/receipt.py",
+                 "/app/backend/mc_pulse/input_manifest.py"):
+        src = open(path).read()
+        assert "ttl_at" in src and "timedelta" in src, path
+
+
+async def test_mc_shelly_record_writes_datetime_ttl_at():
+    from datetime import datetime
+    from db import db
+    from shared.mc_shelly import record
+    await record(event_type="order_filled", brain="tripwire_probe",
+                 rationale="ttl_at stamp probe")
+    row = await db["mc_shelly"].find_one(
+        {"brain": "tripwire_probe"}, sort=[("ts", -1)])
+    assert row is not None
+    assert isinstance(row.get("ttl_at"), datetime), type(row.get("ttl_at"))
+    await db["mc_shelly"].delete_many({"brain": "tripwire_probe"})

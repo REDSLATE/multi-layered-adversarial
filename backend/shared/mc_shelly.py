@@ -36,7 +36,7 @@ import asyncio
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -238,6 +238,10 @@ async def record(
         "ref_id": ref_id,
         "gate_name": gate_name,
         "extra": extra or {},
+        # BSON-Date TTL stamp (2026-07-29): the old TTL on the ISO-
+        # string `ts` was a silent no-op — Mongo's reaper only reads
+        # Date fields. Legacy rows (no ttl_at) stay on the app sweeper.
+        "ttl_at": datetime.now(timezone.utc) + timedelta(days=90),
     }
 
     # ── MongoDB (primary store) ──

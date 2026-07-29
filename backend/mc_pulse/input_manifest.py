@@ -55,7 +55,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping, Optional
 
 from db import db
@@ -270,6 +270,9 @@ async def persist_manifest(manifest: InputManifest) -> None:
     """
     try:
         doc = manifest.to_mongo()
+        # BSON-Date TTL stamp (2026-07-29): the TTL on the ISO-string
+        # `recorded_at` never reaped — Date fields only.
+        doc["ttl_at"] = datetime.now(timezone.utc) + timedelta(days=7)
         await db[MANIFEST_COLLECTION].update_one(
             {"parity_key": doc["parity_key"], "path": doc["path"]},
             {"$set": doc, "$setOnInsert": {"first_recorded_at": doc["recorded_at"]}},
