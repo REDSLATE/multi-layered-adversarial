@@ -149,6 +149,13 @@ async def run_cycle() -> dict:
                 stats[coll] = {"error": f"{type(exc).__name__}: {exc}"[:150]}
                 logger.warning("retention: purge %s failed: %s", coll, exc)
         _LAST_ERROR = None
+        # Retention-health snapshot (2026-07-29): O(1) estimated
+        # counts per RULES collection, worker pool, fail-soft.
+        try:
+            from shared.retention_health import record_snapshot  # noqa: WPS433
+            await record_snapshot()
+        except Exception:  # noqa: BLE001
+            pass
     except Exception as exc:  # noqa: BLE001
         _LAST_ERROR = f"{type(exc).__name__}: {exc}"[:200]
         logger.exception("retention cycle failed: %s", exc)

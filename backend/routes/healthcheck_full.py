@@ -312,6 +312,34 @@ async def _check_recent_intents() -> dict:
         }
 
 
+async def _check_retention_health() -> dict[str, Any]:
+    """2026-07-29: catches the mc_brain_silences class of failure —
+    a RULES collection growing unbounded because its TTL/sweep went
+    silently dead. O(1) estimated counts on the worker pool."""
+    started = time.monotonic()
+    try:
+        from shared.retention_health import evaluate  # noqa: WPS433
+        verdict = await _bounded(
+            evaluate(),
+            default={"status": "warn",
+                     "detail": "retention health check timed out"},
+        )
+        return {
+            "status": verdict.get("status", "warn"),
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+            "flagged": verdict.get("flagged", []),
+            "collections_sampled": verdict.get("collections_sampled"),
+            "baseline_ts": verdict.get("baseline_ts"),
+            "detail": verdict.get("detail"),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "fail",
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+            "detail": f"{type(exc).__name__}: {str(exc)[:200]}",
+        }
+
+
 @router.get("/full")
 async def healthcheck_full(_user: dict = Depends(get_current_user)):  # noqa: B008
     """Post-deploy runtime validation. Read-only, ~30s budget total.
@@ -328,6 +356,7 @@ async def healthcheck_full(_user: dict = Depends(get_current_user)):  # noqa: B0
     checks["auto_router_ticking"] = await _check_auto_router_ticking()
     checks["recent_intents"] = await _check_recent_intents()
     checks["direct_execute_state"] = await _check_direct_execute_state()
+    checks["retention_health"] = await _check_retention_health()
 
     # Roll-up. Order matters: fail > warn > pass.
     rank = {"pass": 0, "warn": 1, "fail": 2}

@@ -3941,3 +3941,19 @@ SILENT NO-OPS (Mongo reaps BSON Dates only). mc_brain_silences had
 ### Remaining from Atlas analysis: full #2 (TTL the other ~20
 unconditional collections — needs per-writer ttl_at stamps), #3
 maxTimeMS on hot reads, #5 projection audit, pymongo bump, Vite.
+
+## 2026-07-29 (later 4) — Retention health sampler
+- shared/retention_health.py (NEW): after every hourly retention
+  cycle, samples estimated_document_count() (O(1), never scans) for
+  all 26 RULES collections on the CAPPED worker pool →
+  retention_health_snapshots (BSON-Date ttl_at 14d, per lesson).
+  evaluate() compares vs ~24h baseline; flags growth > factor
+  (RETENTION_GROWTH_FACTOR 2.0) AND > floor (RETENTION_GROWTH_FLOOR
+  5000 docs) — catches "rule exists but went dead" pile-ups.
+- Surfaces: GET /api/admin/retention/health (detail) +
+  retention_health check inside /api/admin/healthcheck/full rollup
+  (bounded by _PER_CHECK_BUDGET_S).
+- Indexes: retention_health_snapshots ttl_at TTL + ts idx.
+- Verified live: 26 sampled, pass verdict, rollup shows the check.
+  13 tests green (5 new incl. BSON-Date stamp assertion) +
+  tripwire suite.

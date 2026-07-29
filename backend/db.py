@@ -273,6 +273,20 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
             name=f"{_coll}_retention_{_field}_idx",
         )
 
+    # Retention-health snapshots (2026-07-29): BSON-Date ttl_at TTL —
+    # the sampler's own history self-expires (14d, stamped by writer).
+    await _safe_create_index(
+        db.retention_health_snapshots,
+        [("ttl_at", 1)],
+        name="retention_health_snapshots_ttl_at",
+        expireAfterSeconds=0,
+    )
+    await _safe_create_index(
+        db.retention_health_snapshots,
+        [("ts", -1)],
+        name="retention_health_snapshots_ts_idx",
+    )
+
     # Non-executor brains' opinions land in `intent_consensus_pool`.
     # The seat policy reads it by (lane, symbol, ts) and writes by
     # appending. TTL 900s = 15 min matches the lookup window.

@@ -24,3 +24,12 @@ async def retention_status(_user: dict = Depends(get_current_user)):  # noqa: B0
 @router.post("/run")
 async def retention_run(_user: dict = Depends(get_current_user)):  # noqa: B008
     return await run_cycle()
+
+
+@router.get("/health")
+async def retention_health(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Per-collection growth verdict (2026-07-29): current O(1)
+    estimated counts vs the ~24h baseline snapshot — flags any RULES
+    collection accumulating rows despite its retention rule."""
+    from shared.retention_health import evaluate  # noqa: WPS433
+    return await evaluate()
