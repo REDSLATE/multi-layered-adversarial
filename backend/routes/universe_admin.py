@@ -18,7 +18,7 @@ the conviction floor knob) and are read fresh at every refresh tick.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -43,14 +43,17 @@ def _normalize_symbol(symbol: str, lane: str) -> str:
                 detail=f"invalid equity symbol {symbol!r} (1-5 letters)",
             )
         return s
-    # crypto: accept BTC, BTC/USD, CRYPTO:BTC-USD → BTC/USD
-    s = s.removeprefix("CRYPTO:")
-    base = s.split("/")[0].split("-")[0]
-    if not _CRYPTO_BASE_RE.match(base):
+    # crypto: accept BTC / BTC/USD / BTC-USD / BTCUSD / CRYPTO:BTC-USD
+    # / Kraken internals (XBT, XXBTZUSD) → BTC/USD. Single normalizer
+    # shared with the BUY allowlist so entries can never drift.
+    from shared.risk_sizer.buy_allowlist import normalize_crypto_symbol  # noqa: WPS433
+    canonical = normalize_crypto_symbol(s)
+    base = canonical.split("/", 1)[0] if canonical else ""
+    if not base or not _CRYPTO_BASE_RE.match(base):
         raise HTTPException(
             status_code=422, detail=f"invalid crypto symbol {symbol!r}",
         )
-    return f"{base}/USD"
+    return canonical
 
 
 @router.get("/watchlist")
@@ -222,9 +225,93 @@ async def set_quality(
 
 @router.get("/crypto-buy-allowlist")
 async def get_crypto_buy_allowlist(_user: dict = Depends(get_current_user)):  # noqa: B008
-    """Allowlist-only BUY universe (2026-07-28). SELLs never gated."""
+    """Allowlist-only BUY universe (2026-07-28). SELLs never gated.
+    Includes the last 10 audit rows (who/when/previous)."""
     from shared.risk_sizer.buy_allowlist import get_allowlist  # noqa: WPS433
-    return {"ok": True, "allowlist": await get_allowlist()}
+    audit = await db["crypto_buy_allowlist_audit"].find(
+        {}, {"_id": 0},
+    ).sort("ts", -1).max_time_ms(4000).to_list(10)
+    return {"ok": True, "allowlist": await get_allowlist(), "audit": audit}
+
+
+@router.get("/crypto-buy-allowlist/held-stats")
+async def crypto_buy_allowlist_held_stats(
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """How many crypto BUYs the allowlist held in the last 1h/24h/7d,
+    plus the most recent held intents (doctrine evidence preserved on
+    the intent doc — this is the review surface for deciding whether
+    an A-quality exception is ever justified)."""
+    from namespaces import SHARED_INTENTS  # noqa: WPS433
+    held_q = {"risk_reason": "risk_sizer:not_in_buy_allowlist"}
+    now = datetime.now(timezone.utc)
+    counts: dict = {}
+    for label, hours in (("1h", 1), ("24h", 24), ("7d", 168)):
+        cutoff = (now - timedelta(hours=hours)).isoformat()
+        counts[label] = await db[SHARED_INTENTS].count_documents(
+            {**held_q, "ingest_ts": {"$gte": cutoff}}, maxTimeMS=8000,
+        )
+    recent_raw = await db[SHARED_INTENTS].find(
+        held_q,
+        {"_id": 0, "intent_id": 1, "symbol": 1, "stack": 1, "action": 1,
+         "confidence": 1, "ingest_ts": 1,
+         "doctrine_packet.base_labels.quality": 1,
+         "doctrine_packet.base_labels.score": 1},
+    ).sort("ingest_ts", -1).max_time_ms(8000).to_list(15)
+    recent = []
+    for r in recent_raw:
+        base = ((r.pop("doctrine_packet", None) or {}).get("base_labels") or {})
+        r["doctrine_quality"] = base.get("quality")
+        r["doctrine_score"] = base.get("score")
+        recent.append(r)
+    return {"ok": True, "held_counts": counts, "recent_held": recent}
+
+
+@router.get("/crypto-buy-allowlist/override")
+async def get_crypto_buy_allowlist_override(
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """A-quality override policy — SHIPPED DISABLED. Read-only view."""
+    from shared.risk_sizer.allowlist_override import get_override_policy  # noqa: WPS433
+    return {"ok": True, "override": await get_override_policy()}
+
+
+@router.put("/crypto-buy-allowlist/override")
+async def put_crypto_buy_allowlist_override(
+    body: dict,
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Update the override policy. Enabling requires an explicit
+    `confirm: "ENABLE_OVERRIDE"` — an override must never happen by
+    accident, and never solely on doctrine score (all checks in
+    shared/risk_sizer/allowlist_override.py must pass)."""
+    from shared.risk_sizer.allowlist_override import (  # noqa: WPS433
+        DEFAULT_POLICY, OVERRIDE_FLAG_ID, get_override_policy,
+        invalidate_cache,
+    )
+    if bool(body.get("enabled")) and body.get("confirm") != "ENABLE_OVERRIDE":
+        raise HTTPException(
+            status_code=422,
+            detail='enabling the override requires confirm="ENABLE_OVERRIDE"',
+        )
+    prev = await get_override_policy()
+    update = {
+        k: body[k] for k in DEFAULT_POLICY if k in body
+    }
+    update["updated_by"] = user.get("email")
+    update["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db["runtime_flags"].update_one(
+        {"_id": OVERRIDE_FLAG_ID}, {"$set": update}, upsert=True,
+    )
+    invalidate_cache()
+    await db["crypto_buy_allowlist_audit"].insert_one({
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "kind": "override_policy",
+        "updated_by": user.get("email"),
+        "previous": prev,
+        "next": {**prev, **update},
+    })
+    return {"ok": True, "override": await get_override_policy()}
 
 
 @router.put("/crypto-buy-allowlist")
@@ -233,9 +320,11 @@ async def put_crypto_buy_allowlist(
     user: dict = Depends(get_current_user),  # noqa: B008
 ):
     """Replace the allowlist. Body: {enabled: bool, symbols: [..]}.
-    Symbols accept BTC / BTC/USD / CRYPTO:BTC-USD forms."""
+    Symbols accept BTC / BTC/USD / BTCUSD / CRYPTO:BTC-USD / Kraken
+    internal pair names — all normalized to BASE/USD. Every change is
+    audited with the previous value."""
     from shared.risk_sizer.buy_allowlist import (  # noqa: WPS433
-        FLAG_ID, invalidate_cache,
+        DEFAULT_ALLOWLIST, FLAG_ID, invalidate_cache,
     )
     enabled = bool(body.get("enabled", True))
     raw = body.get("symbols")
@@ -248,6 +337,9 @@ async def put_crypto_buy_allowlist(
             detail="enabled allowlist cannot be empty — that would block "
                    "ALL crypto BUYs; disable it instead",
         )
+    prev = await db["runtime_flags"].find_one(
+        {"_id": FLAG_ID}, {"_id": 0}, max_time_ms=4000,
+    )
     doc = {
         "enabled": enabled,
         "symbols": symbols,
@@ -258,6 +350,15 @@ async def put_crypto_buy_allowlist(
         {"_id": FLAG_ID}, {"$set": doc}, upsert=True,
     )
     invalidate_cache()
+    # Config audit — kept forever (controls doctrine, no TTL).
+    await db["crypto_buy_allowlist_audit"].insert_one({
+        "ts": doc["updated_at"],
+        "kind": "allowlist",
+        "updated_by": user.get("email"),
+        "previous": prev or {"source": "default", "enabled": True,
+                             "symbols": list(DEFAULT_ALLOWLIST)},
+        "next": {"enabled": enabled, "symbols": symbols},
+    })
     return {"ok": True, "allowlist": doc}
 
 

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Warning, PushPin, ArrowsClockwise } from "@phosphor-icons/react";
+import { BuyAllowlistPanel } from "@/components/BuyAllowlistPanel";
 
 const QUOTES = ["USD", "USDT", "USDC", "EUR", "BTC", "ETH"];
 
@@ -52,6 +53,7 @@ export default function KrakenUniverse() {
 
   return (
     <div data-testid="kraken-universe-page">
+      <BuyAllowlistPanel />
       <div className="flex items-center justify-between mb-3">
         <div>
           <h1 className="text-lg font-mono font-bold text-rd-text uppercase tracking-widest">Kraken Universe</h1>

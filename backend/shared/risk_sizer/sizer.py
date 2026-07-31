@@ -147,10 +147,23 @@ async def build_position_plan(
         except Exception:  # noqa: BLE001
             _allowed, _al = True, {}
         if not _allowed:
-            return _reject(
-                "not_in_buy_allowlist",
-                allowlist_size=len(_al.get("symbols") or []),
-            )
+            # A-quality override scaffold (2026-07-31) — SHIPPED
+            # DISABLED (runtime_flags.crypto_buy_allowlist_override).
+            # When off (default) this is a no-op and the reject below
+            # fires exactly as before. Fail-closed on any error.
+            try:
+                from shared.risk_sizer.allowlist_override import (  # noqa: WPS433
+                    override_applies,
+                )
+                _ov, _ov_receipt = await override_applies(intent)
+            except Exception:  # noqa: BLE001
+                _ov, _ov_receipt = False, {"reason": "override_eval_failed"}
+            if not _ov:
+                return _reject(
+                    "not_in_buy_allowlist",
+                    allowlist_size=len(_al.get("symbols") or []),
+                    override=_ov_receipt.get("reason"),
+                )
 
     # Edge-vs-cost gate: expected edge must EXCEED estimated fees +
     # slippage or the trade is rejected. No edge data → gate skipped.

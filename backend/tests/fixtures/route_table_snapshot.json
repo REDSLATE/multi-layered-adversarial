@@ -2569,6 +2569,27 @@
 "name": "get_crypto_buy_allowlist"
 },
 {
+"path": "/api/admin/universe/crypto-buy-allowlist/held-stats",
+"methods": [
+"GET"
+],
+"name": "crypto_buy_allowlist_held_stats"
+},
+{
+"path": "/api/admin/universe/crypto-buy-allowlist/override",
+"methods": [
+"GET"
+],
+"name": "get_crypto_buy_allowlist_override"
+},
+{
+"path": "/api/admin/universe/crypto-buy-allowlist/override",
+"methods": [
+"PUT"
+],
+"name": "put_crypto_buy_allowlist_override"
+},
+{
 "path": "/api/admin/universe/crypto-buy-allowlist",
 "methods": [
 "PUT"

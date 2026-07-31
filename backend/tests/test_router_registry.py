@@ -11,6 +11,7 @@ These tests pin the two things that can silently break:
 
        cd /app/backend && python -c "
        import json
+       from dotenv import load_dotenv; load_dotenv('.env')
        from fastapi import APIRouter
        from server_modules.router_registry import register_routers
        api = APIRouter(prefix='/api'); register_routers(api)

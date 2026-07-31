@@ -4056,3 +4056,40 @@ maxTimeMS on hot reads, #5 projection audit, pymongo bump, Vite.
   devDependency may be CRA/craco-coupled — confirm Vite compatibility
   BEFORE starting. Env surface is small (only REACT_APP_BACKEND_URL,
   apiBase.js resolves at runtime).
+
+## 2026-07-31 (later) — BUY-allowlist visibility + disabled override scaffold
+Root cause of "passed everything but doesn't execute" (prod report):
+crypto BUY on SOON/USD held by the allowlist-only BUY universe
+(operator's own 2026-07-28 directive) — but the hold was INVISIBLE:
+no UI surface, and the advisory doctrine panel showed 100%.
+Delivered (operator chose "a + prep from d"):
+- shared/risk_sizer/buy_allowlist.py: `normalize_crypto_symbol()` —
+  SOON / SOON/USD / SOON-USD / SOONUSD / CRYPTO:SOON-USD / Kraken
+  internals (XBT, XXBTZUSD, XDG…) all collapse to BASE/USD; used by
+  buy_allowed, get_allowlist and universe_admin._normalize_symbol.
+- routes/universe_admin.py: PUT audits every change (who/when/
+  previous) into crypto_buy_allowlist_audit (kept forever, no TTL);
+  GET returns last 10 audit rows; NEW /held-stats (1h/24h/7d counts +
+  15 most recent held intents w/ doctrine quality); NEW GET/PUT
+  /override (enabling requires confirm="ENABLE_OVERRIDE" else 422).
+- shared/risk_sizer/allowlist_override.py: A-quality override —
+  SHIPPED DISABLED (runtime_flags.crypto_buy_allowlist_override).
+  Never fires on doctrine score alone: quality==A_QUALITY AND
+  score>=0.85 AND bars-on-file AND spread<=50bps AND conf>=0.70, all
+  fail-closed; wired into sizer as no-op while disabled; RoadGuard/
+  caps/sizing still apply regardless.
+- db.py: shared_intents (risk_reason, ingest_ts) index for held-stats.
+- Frontend: BuyAllowlistPanel.jsx on /admin/kraken-universe (chips,
+  add/remove w/ normalization, ENFORCING/DISABLED toggle w/ confirm,
+  held 1h/24h/7d counters, audit line, recent-held table, testids);
+  Intents.jsx shows amber "HELD — NOT_IN_CRYPTO_BUY_ALLOWLIST" badge
+  when risk_reason=risk_sizer:not_in_buy_allowlist (evidence intact).
+- Route snapshot fixture regenerated (505 routes, +3).
+- Tests: tests/test_buy_allowlist_visibility.py (normalizer matrix,
+  override-ships-disabled tripwire, override-refuses-perfect-intent-
+  while-disabled, score-alone-never-qualifies). 447 tripwires green.
+- Verified E2E in preview: PUT normalizes SOONUSD→SOON/USD, audit rows
+  land, held-stats counts, override 422 guard, both UI surfaces
+  screenshot-verified. Synthetic test intent DELETED (preview-only DB;
+  prod Atlas untouched — preview Mongo is localhost, fully isolated).
+- NOTE for operator: prod fix requires REDEPLOY.

@@ -211,13 +211,24 @@ function IntentRow({ intent, expanded, onToggle }) {
           {Number(intent.risk_multiplier).toFixed(3)}
         </td>
         <td className="px-3 py-2">
-          <span
-            className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider"
-            style={{ color: gateColor }}
-          >
-            <GateIcon size={11} weight="bold" />
-            {intent.gate_state}
-          </span>
+          {intent.risk_reason === "risk_sizer:not_in_buy_allowlist" ? (
+            <span
+              className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-amber-500"
+              title="Intentional hold — this symbol is not on the crypto BUY allowlist (Kraken Universe page → BUY Allowlist panel). Doctrine evidence is preserved on the intent. Not a pipeline failure."
+              data-testid={`intent-held-allowlist-${intent.intent_id}`}
+            >
+              <GateIcon size={11} weight="bold" />
+              HELD — NOT_IN_CRYPTO_BUY_ALLOWLIST
+            </span>
+          ) : (
+            <span
+              className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider"
+              style={{ color: gateColor }}
+            >
+              <GateIcon size={11} weight="bold" />
+              {intent.gate_state}
+            </span>
+          )}
         </td>
         <td className="px-3 py-2 text-right">
           <div className="flex items-center justify-end gap-2">

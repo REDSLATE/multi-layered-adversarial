@@ -295,6 +295,14 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
             expireAfterSeconds=0,
         )
 
+    # BUY-allowlist held-stats (2026-07-31): the visibility panel
+    # counts intents with risk_reason=risk_sizer:not_in_buy_allowlist
+    # over 1h/24h/7d windows — index keeps it off collscans.
+    await _safe_create_index(
+        db.shared_intents, [("risk_reason", 1), ("ingest_ts", -1)],
+        name="shared_intents_risk_reason_ingest_ts",
+    )
+
     # Retention-health snapshots (2026-07-29): BSON-Date ttl_at TTL —
     # the sampler's own history self-expires (14d, stamped by writer).
     await _safe_create_index(

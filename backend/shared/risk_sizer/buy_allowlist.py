@@ -25,6 +25,33 @@ DEFAULT_ALLOWLIST = [
 _CACHE_TTL_S = 30.0
 _cache: dict = {"at": 0.0, "doc": None}
 
+# Kraken internal base-asset codes → canonical tickers, so
+# "SOON/USD", "SOONUSD" and Kraken's pair name can never drift into
+# distinct allowlist entries.
+_KRAKEN_BASE_ALIASES = {
+    "XBT": "BTC", "XXBT": "BTC", "XETH": "ETH", "XDG": "DOGE",
+    "XXDG": "DOGE", "XXRP": "XRP", "XLTC": "LTC", "XXLM": "XLM",
+    "XXMR": "XMR", "XZEC": "ZEC", "XETC": "ETC", "XREP": "REP",
+}
+_QUOTE_SUFFIXES = ("ZUSD", "USDT", "USDC", "USD")
+
+
+def normalize_crypto_symbol(symbol: str) -> str:
+    """Canonicalize any crypto symbol form to BASE/USD.
+    Accepts: SOON, SOON/USD, SOON-USD, SOONUSD, CRYPTO:SOON-USD,
+    Kraken internals (XBT, XXBTZUSD, …). Empty/garbage → ""."""
+    s = (symbol or "").strip().upper().removeprefix("CRYPTO:")
+    if "/" in s or "-" in s:
+        base = s.replace("-", "/").split("/", 1)[0]
+    else:
+        base = s
+        for suf in _QUOTE_SUFFIXES:
+            if base.endswith(suf) and len(base) > len(suf):
+                base = base[: -len(suf)]
+                break
+    base = _KRAKEN_BASE_ALIASES.get(base, base)
+    return f"{base}/USD" if base else ""
+
 
 def invalidate_cache() -> None:
     _cache.update(at=0.0, doc=None)
@@ -45,8 +72,8 @@ async def get_allowlist() -> dict:
                "source": "default"}
     doc.setdefault("enabled", True)
     doc["symbols"] = sorted({
-        str(s).upper() for s in (doc.get("symbols") or [])
-    })
+        normalize_crypto_symbol(s) for s in (doc.get("symbols") or [])
+    } - {""})
     _cache.update(at=now, doc=doc)
     return doc
 
@@ -56,4 +83,4 @@ async def buy_allowed(symbol: str) -> tuple[bool, dict]:
     al = await get_allowlist()
     if not al.get("enabled"):
         return True, al
-    return (symbol or "").upper() in set(al["symbols"]), al
+    return normalize_crypto_symbol(symbol) in set(al["symbols"]), al
