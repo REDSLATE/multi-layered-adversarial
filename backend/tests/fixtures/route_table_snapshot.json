@@ -1,0 +1,3516 @@
+[
+{
+"path": "/api/auth/login",
+"methods": [
+"POST"
+],
+"name": "login"
+},
+{
+"path": "/api/auth/me",
+"methods": [
+"GET"
+],
+"name": "me"
+},
+{
+"path": "/api/auth/logout",
+"methods": [
+"POST"
+],
+"name": "logout"
+},
+{
+"path": "/api/auth/refresh",
+"methods": [
+"POST"
+],
+"name": "refresh"
+},
+{
+"path": "/api/shared/receipts",
+"methods": [
+"GET"
+],
+"name": "receipts"
+},
+{
+"path": "/api/shared/memory-labels",
+"methods": [
+"GET"
+],
+"name": "memory_labels"
+},
+{
+"path": "/api/shared/calibrators",
+"methods": [
+"GET"
+],
+"name": "calibrators"
+},
+{
+"path": "/api/shared/feature-builders",
+"methods": [
+"GET"
+],
+"name": "feature_builders"
+},
+{
+"path": "/api/shared/artifacts",
+"methods": [
+"GET"
+],
+"name": "artifacts"
+},
+{
+"path": "/api/shared/overview",
+"methods": [
+"GET"
+],
+"name": "overview"
+},
+{
+"path": "/api/shared/role-violations",
+"methods": [
+"GET"
+],
+"name": "role_violations"
+},
+{
+"path": "/api/shared/recent-ingests",
+"methods": [
+"GET"
+],
+"name": "recent_ingests"
+},
+{
+"path": "/api/ingest/receipts",
+"methods": [
+"POST"
+],
+"name": "ingest_receipt"
+},
+{
+"path": "/api/ingest/memory-labels",
+"methods": [
+"POST"
+],
+"name": "ingest_memory_label"
+},
+{
+"path": "/api/ingest/calibrators",
+"methods": [
+"POST"
+],
+"name": "ingest_calibrator"
+},
+{
+"path": "/api/ingest/artifacts",
+"methods": [
+"POST"
+],
+"name": "ingest_artifact"
+},
+{
+"path": "/api/ingest/heartbeat",
+"methods": [
+"POST"
+],
+"name": "ingest_heartbeat"
+},
+{
+"path": "/api/ingest/promotion-artifact",
+"methods": [
+"POST"
+],
+"name": "ingest_promotion_artifact"
+},
+{
+"path": "/api/ingest/opinion",
+"methods": [
+"POST"
+],
+"name": "post_opinion"
+},
+{
+"path": "/api/admin/runtime-discussion/opinion",
+"methods": [
+"POST"
+],
+"name": "admin_post_opinion"
+},
+{
+"path": "/api/shared/opinions",
+"methods": [
+"GET"
+],
+"name": "list_opinions"
+},
+{
+"path": "/api/shared/opinions/{opinion_id}",
+"methods": [
+"GET"
+],
+"name": "get_opinion_thread"
+},
+{
+"path": "/api/shared/roles-manifest",
+"methods": [
+"GET"
+],
+"name": "roles_manifest"
+},
+{
+"path": "/api/runtime-discussion/opinions",
+"methods": [
+"GET"
+],
+"name": "runtime_list_opinions"
+},
+{
+"path": "/api/runtime-discussion/roles-manifest",
+"methods": [
+"GET"
+],
+"name": "runtime_roles_manifest"
+},
+{
+"path": "/api/ingest/outcome",
+"methods": [
+"POST"
+],
+"name": "post_outcome"
+},
+{
+"path": "/api/admin/outcome",
+"methods": [
+"POST"
+],
+"name": "post_outcome_admin"
+},
+{
+"path": "/api/shared/scorecard",
+"methods": [
+"GET"
+],
+"name": "operator_scorecard"
+},
+{
+"path": "/api/runtime-discussion/scorecard",
+"methods": [
+"GET"
+],
+"name": "runtime_scorecard"
+},
+{
+"path": "/api/shared/conflicts",
+"methods": [
+"GET"
+],
+"name": "list_conflicts"
+},
+{
+"path": "/api/shared/conflicts/pair-scorecard",
+"methods": [
+"GET"
+],
+"name": "pair_scorecard"
+},
+{
+"path": "/api/shared/conflicts/matrix",
+"methods": [
+"GET"
+],
+"name": "conflicts_matrix"
+},
+{
+"path": "/api/shared/conflicts/{conflict_id}",
+"methods": [
+"GET"
+],
+"name": "get_conflict"
+},
+{
+"path": "/api/admin/conflicts/stale",
+"methods": [
+"GET"
+],
+"name": "list_stale_conflicts"
+},
+{
+"path": "/api/admin/conflicts/{conflict_id}/resolve",
+"methods": [
+"POST"
+],
+"name": "resolve_conflict"
+},
+{
+"path": "/api/shared/positions",
+"methods": [
+"POST"
+],
+"name": "propose_position"
+},
+{
+"path": "/api/shared/positions",
+"methods": [
+"GET"
+],
+"name": "list_positions"
+},
+{
+"path": "/api/shared/positions/{position_id}",
+"methods": [
+"GET"
+],
+"name": "get_position"
+},
+{
+"path": "/api/runtime-discussion/positions",
+"methods": [
+"GET"
+],
+"name": "runtime_list_positions"
+},
+{
+"path": "/api/admin/positions/{position_id}/stance",
+"methods": [
+"POST"
+],
+"name": "operator_post_stance"
+},
+{
+"path": "/api/runtime-discussion/positions/{position_id}/stance",
+"methods": [
+"POST"
+],
+"name": "runtime_post_stance"
+},
+{
+"path": "/api/admin/positions/{position_id}/executor-call",
+"methods": [
+"POST"
+],
+"name": "executor_call"
+},
+{
+"path": "/api/admin/positions/{position_id}/reject",
+"methods": [
+"POST"
+],
+"name": "reject_position"
+},
+{
+"path": "/api/shared/positions/stale-sweep",
+"methods": [
+"GET"
+],
+"name": "stale_sweep_preview"
+},
+{
+"path": "/api/public/signals",
+"methods": [
+"GET"
+],
+"name": "list_public_signals"
+},
+{
+"path": "/api/public/signals/{signal_id}",
+"methods": [
+"GET"
+],
+"name": "get_public_signal"
+},
+{
+"path": "/api/public/digest",
+"methods": [
+"GET"
+],
+"name": "get_public_digest"
+},
+{
+"path": "/api/public/digest/narrative",
+"methods": [
+"GET"
+],
+"name": "get_digest_narrative"
+},
+{
+"path": "/api/public/scanner/presets",
+"methods": [
+"GET"
+],
+"name": "list_presets"
+},
+{
+"path": "/api/public/scanner/scan",
+"methods": [
+"GET"
+],
+"name": "scan"
+},
+{
+"path": "/api/public/agent-activity/feed",
+"methods": [
+"GET"
+],
+"name": "get_agent_activity"
+},
+{
+"path": "/api/public/models-mind/{symbol:path}",
+"methods": [
+"GET"
+],
+"name": "get_models_mind"
+},
+{
+"path": "/api/public/heatmap",
+"methods": [
+"GET"
+],
+"name": "get_heatmap"
+},
+{
+"path": "/api/public/sectors",
+"methods": [
+"GET"
+],
+"name": "get_sectors"
+},
+{
+"path": "/api/public/bars",
+"methods": [
+"GET"
+],
+"name": "list_covered_symbols"
+},
+{
+"path": "/api/public/bars/{symbol:path}",
+"methods": [
+"GET"
+],
+"name": "get_bars"
+},
+{
+"path": "/api/admin/public-traffic",
+"methods": [
+"GET"
+],
+"name": "list_public_traffic"
+},
+{
+"path": "/api/admin/public-traffic/summary",
+"methods": [
+"GET"
+],
+"name": "public_traffic_summary"
+},
+{
+"path": "/api/admin/public-traffic/limits",
+"methods": [
+"GET"
+],
+"name": "public_traffic_limits"
+},
+{
+"path": "/api/admin/public-traffic",
+"methods": [
+"DELETE"
+],
+"name": "clear_public_traffic"
+},
+{
+"path": "/api/admin/roster/seat-performance",
+"methods": [
+"GET"
+],
+"name": "seat_performance"
+},
+{
+"path": "/api/ingest/ohlcv",
+"methods": [
+"POST"
+],
+"name": "post_bar"
+},
+{
+"path": "/api/ingest/ohlcv/batch",
+"methods": [
+"POST"
+],
+"name": "post_bars_batch"
+},
+{
+"path": "/api/shared/technical/symbols",
+"methods": [
+"GET"
+],
+"name": "list_symbols"
+},
+{
+"path": "/api/admin/patterns/scan",
+"methods": [
+"GET"
+],
+"name": "patterns_scan"
+},
+{
+"path": "/api/shared/technical/feeders",
+"methods": [
+"GET"
+],
+"name": "list_feeders"
+},
+{
+"path": "/api/shared/technical/{symbol:path}",
+"methods": [
+"GET"
+],
+"name": "get_technical"
+},
+{
+"path": "/api/runtime-discussion/technical/{symbol:path}",
+"methods": [
+"GET"
+],
+"name": "runtime_get_technical"
+},
+{
+"path": "/api/admin/kraken/connect",
+"methods": [
+"POST"
+],
+"name": "connect"
+},
+{
+"path": "/api/admin/kraken/status",
+"methods": [
+"GET"
+],
+"name": "status"
+},
+{
+"path": "/api/admin/kraken/reprobe",
+"methods": [
+"POST"
+],
+"name": "reprobe"
+},
+{
+"path": "/api/admin/kraken/test",
+"methods": [
+"POST"
+],
+"name": "test"
+},
+{
+"path": "/api/admin/kraken/poll",
+"methods": [
+"POST"
+],
+"name": "manual_poll"
+},
+{
+"path": "/api/admin/kraken/disconnect",
+"methods": [
+"DELETE"
+],
+"name": "disconnect"
+},
+{
+"path": "/api/admin/kraken/execution",
+"methods": [
+"POST"
+],
+"name": "toggle_execution"
+},
+{
+"path": "/api/admin/kraken/audit",
+"methods": [
+"GET"
+],
+"name": "audit_log"
+},
+{
+"path": "/api/admin/ibkr/connect",
+"methods": [
+"POST"
+],
+"name": "connect"
+},
+{
+"path": "/api/admin/ibkr/status",
+"methods": [
+"GET"
+],
+"name": "status"
+},
+{
+"path": "/api/admin/ibkr/test",
+"methods": [
+"POST"
+],
+"name": "test_"
+},
+{
+"path": "/api/admin/ibkr/tickle",
+"methods": [
+"POST"
+],
+"name": "tickle"
+},
+{
+"path": "/api/admin/ibkr/accounts",
+"methods": [
+"GET"
+],
+"name": "accounts"
+},
+{
+"path": "/api/admin/ibkr/positions",
+"methods": [
+"GET"
+],
+"name": "positions"
+},
+{
+"path": "/api/admin/ibkr/disconnect",
+"methods": [
+"DELETE"
+],
+"name": "disconnect"
+},
+{
+"path": "/api/admin/ibkr/execution",
+"methods": [
+"POST"
+],
+"name": "toggle_execution"
+},
+{
+"path": "/api/admin/ibkr/audit",
+"methods": [
+"GET"
+],
+"name": "audit_log"
+},
+{
+"path": "/api/admin/public/connect",
+"methods": [
+"POST"
+],
+"name": "connect"
+},
+{
+"path": "/api/admin/public/status",
+"methods": [
+"GET"
+],
+"name": "status"
+},
+{
+"path": "/api/admin/public/test",
+"methods": [
+"POST"
+],
+"name": "test_"
+},
+{
+"path": "/api/admin/public/refresh-token",
+"methods": [
+"POST"
+],
+"name": "refresh_token"
+},
+{
+"path": "/api/admin/public/accounts",
+"methods": [
+"GET"
+],
+"name": "accounts"
+},
+{
+"path": "/api/admin/public/portfolio",
+"methods": [
+"GET"
+],
+"name": "portfolio"
+},
+{
+"path": "/api/admin/public/disconnect",
+"methods": [
+"DELETE"
+],
+"name": "disconnect"
+},
+{
+"path": "/api/admin/public/execution",
+"methods": [
+"POST"
+],
+"name": "toggle_execution"
+},
+{
+"path": "/api/admin/public/audit",
+"methods": [
+"GET"
+],
+"name": "audit_log"
+},
+{
+"path": "/api/admin/roster",
+"methods": [
+"GET"
+],
+"name": "get_current"
+},
+{
+"path": "/api/admin/roster/assign",
+"methods": [
+"POST"
+],
+"name": "assign"
+},
+{
+"path": "/api/admin/roster/swap",
+"methods": [
+"POST"
+],
+"name": "swap"
+},
+{
+"path": "/api/admin/roster/reset",
+"methods": [
+"POST"
+],
+"name": "reset_defaults"
+},
+{
+"path": "/api/admin/roster/audit",
+"methods": [
+"GET"
+],
+"name": "audit_log"
+},
+{
+"path": "/api/admin/roster/eligibility",
+"methods": [
+"GET"
+],
+"name": "get_eligibility_matrix"
+},
+{
+"path": "/api/admin/roster/eligibility",
+"methods": [
+"POST"
+],
+"name": "set_eligibility_cell"
+},
+{
+"path": "/api/admin/roster/eligibility/reset",
+"methods": [
+"POST"
+],
+"name": "reset_eligibility"
+},
+{
+"path": "/api/admin/roster/tenure",
+"methods": [
+"GET"
+],
+"name": "tenure"
+},
+{
+"path": "/api/doctrine",
+"methods": [
+"GET"
+],
+"name": "list_doctrine"
+},
+{
+"path": "/api/doctrine/{name}",
+"methods": [
+"GET"
+],
+"name": "get_doctrine"
+},
+{
+"path": "/api/intents",
+"methods": [
+"POST"
+],
+"name": "post_intent"
+},
+{
+"path": "/api/intents/crypto",
+"methods": [
+"POST"
+],
+"name": "post_intent_crypto"
+},
+{
+"path": "/api/intents/equity",
+"methods": [
+"POST"
+],
+"name": "post_intent_equity"
+},
+{
+"path": "/api/intents",
+"methods": [
+"GET"
+],
+"name": "list_intents"
+},
+{
+"path": "/api/admin/intents/honesty",
+"methods": [
+"GET"
+],
+"name": "honesty_audit"
+},
+{
+"path": "/api/admin/intents",
+"methods": [
+"POST"
+],
+"name": "admin_post_intent"
+},
+{
+"path": "/api/admin/intents/crypto",
+"methods": [
+"POST"
+],
+"name": "admin_post_intent_crypto"
+},
+{
+"path": "/api/admin/intents/equity",
+"methods": [
+"POST"
+],
+"name": "admin_post_intent_equity"
+},
+{
+"path": "/api/admin/intents/doctrine-sidecars",
+"methods": [
+"GET"
+],
+"name": "list_doctrine_sidecars"
+},
+{
+"path": "/api/admin/intents/resurrect-position-model-victims",
+"methods": [
+"POST"
+],
+"name": "resurrect_position_model_victims"
+},
+{
+"path": "/api/mc/arbiter/opinion",
+"methods": [
+"POST"
+],
+"name": "post_opinion"
+},
+{
+"path": "/api/mc/arbiter/arbitrate/{seat_key:path}",
+"methods": [
+"POST"
+],
+"name": "post_arbitrate"
+},
+{
+"path": "/api/mc/arbiter/seat/{seat_key:path}",
+"methods": [
+"GET"
+],
+"name": "get_seat"
+},
+{
+"path": "/api/mc/arbiter/state",
+"methods": [
+"GET"
+],
+"name": "get_state"
+},
+{
+"path": "/api/mc/arbiter/runtime-mode",
+"methods": [
+"POST"
+],
+"name": "post_runtime_mode"
+},
+{
+"path": "/api/mc/arbiter/grader/run",
+"methods": [
+"POST"
+],
+"name": "post_grader_run"
+},
+{
+"path": "/api/mc/parity/{brain_id}",
+"methods": [
+"GET"
+],
+"name": "parity_report_deprecated"
+},
+{
+"path": "/api/mc/pulse-health/ticks",
+"methods": [
+"GET"
+],
+"name": "get_recent_ticks"
+},
+{
+"path": "/api/mc/pulse-health/{brain_id}",
+"methods": [
+"GET"
+],
+"name": "pulse_health"
+},
+{
+"path": "/api/mc/pulse-health/{brain_id}/history",
+"methods": [
+"GET"
+],
+"name": "pulse_health_history"
+},
+{
+"path": "/api/mc/pulse-health/{brain_id}/by-regime",
+"methods": [
+"GET"
+],
+"name": "pulse_health_by_regime"
+},
+{
+"path": "/api/mc/pulse-health/e2e-trace",
+"methods": [
+"POST"
+],
+"name": "post_e2e_trace"
+},
+{
+"path": "/api/executor",
+"methods": [
+"GET"
+],
+"name": "get_executor_state"
+},
+{
+"path": "/api/executor/rotate",
+"methods": [
+"POST"
+],
+"name": "rotate_executor"
+},
+{
+"path": "/api/executor/audit",
+"methods": [
+"GET"
+],
+"name": "executor_audit"
+},
+{
+"path": "/api/auditor",
+"methods": [
+"GET"
+],
+"name": "get_auditor_state"
+},
+{
+"path": "/api/auditor/rotate",
+"methods": [
+"POST"
+],
+"name": "rotate_auditor"
+},
+{
+"path": "/api/auditor/audit",
+"methods": [
+"GET"
+],
+"name": "auditor_audit"
+},
+{
+"path": "/api/admin/positions/{position_id}/nudge-seat",
+"methods": [
+"POST"
+],
+"name": "nudge_seat"
+},
+{
+"path": "/api/admin/positions/{position_id}/nudges",
+"methods": [
+"GET"
+],
+"name": "list_nudges_for_position"
+},
+{
+"path": "/api/runtime-discussion/seat-nudges",
+"methods": [
+"GET"
+],
+"name": "list_nudges_for_brain"
+},
+{
+"path": "/api/admin/hot-brain-router/dry-run",
+"methods": [
+"GET"
+],
+"name": "hot_brain_router_dry_run"
+},
+{
+"path": "/api/admin/spread-quality/breakdown",
+"methods": [
+"GET"
+],
+"name": "spread_quality_breakdown"
+},
+{
+"path": "/api/admin/webull/connect",
+"methods": [
+"POST"
+],
+"name": "connect"
+},
+{
+"path": "/api/admin/webull/status",
+"methods": [
+"GET"
+],
+"name": "status"
+},
+{
+"path": "/api/admin/webull/probe",
+"methods": [
+"POST"
+],
+"name": "reprobe"
+},
+{
+"path": "/api/admin/webull/disconnect",
+"methods": [
+"DELETE"
+],
+"name": "disconnect"
+},
+{
+"path": "/api/admin/webull/reauth",
+"methods": [
+"POST"
+],
+"name": "reauth"
+},
+{
+"path": "/api/admin/intent-clearance-funnel",
+"methods": [
+"GET"
+],
+"name": "intent_clearance_funnel"
+},
+{
+"path": "/api/admin/seats/reverse-sync-from-registry",
+"methods": [
+"POST"
+],
+"name": "reverse_sync_from_registry"
+},
+{
+"path": "/api/admin/kraken/pair-floors",
+"methods": [
+"GET"
+],
+"name": "list_pair_floors"
+},
+{
+"path": "/api/admin/kraken/pair-floors/{pair:path}",
+"methods": [
+"GET"
+],
+"name": "get_pair_floor"
+},
+{
+"path": "/api/admin/kraken/pair-floors",
+"methods": [
+"PUT"
+],
+"name": "upsert_pair_floors"
+},
+{
+"path": "/api/admin/kraken/pair-floors/{pair:path}",
+"methods": [
+"DELETE"
+],
+"name": "delete_pair_floor"
+},
+{
+"path": "/api/admin/kraken/pair-floors/auto-seed",
+"methods": [
+"POST"
+],
+"name": "auto_seed_pair_floors"
+},
+{
+"path": "/api/admin/system-flags",
+"methods": [
+"GET"
+],
+"name": "get_flags"
+},
+{
+"path": "/api/admin/system-flags/paradox-v3-brains",
+"methods": [
+"POST"
+],
+"name": "post_paradox_v3_brains"
+},
+{
+"path": "/api/admin/system-flags/trigger-watcher",
+"methods": [
+"POST"
+],
+"name": "post_trigger_watcher"
+},
+{
+"path": "/api/admin/system-flags/trigger-refire",
+"methods": [
+"POST"
+],
+"name": "post_trigger_refire"
+},
+{
+"path": "/api/admin/system-flags/changes",
+"methods": [
+"GET"
+],
+"name": "get_changes"
+},
+{
+"path": "/api/admin/brain-legend",
+"methods": [
+"GET"
+],
+"name": "admin_brain_legend"
+},
+{
+"path": "/api/admin/execution-lifecycle/funnel",
+"methods": [
+"GET"
+],
+"name": "execution_lifecycle_funnel"
+},
+{
+"path": "/api/admin/brain-input-health",
+"methods": [
+"GET"
+],
+"name": "admin_brain_input_health"
+},
+{
+"path": "/api/admin/external-signals",
+"methods": [
+"GET"
+],
+"name": "list_external_signals"
+},
+{
+"path": "/api/admin/external-signals/credibility",
+"methods": [
+"GET"
+],
+"name": "list_source_credibility"
+},
+{
+"path": "/api/admin/external-signals/seat-context",
+"methods": [
+"GET"
+],
+"name": "seat_context"
+},
+{
+"path": "/api/admin/feature-coverage-report",
+"methods": [
+"GET"
+],
+"name": "feature_coverage_report"
+},
+{
+"path": "/api/admin/capital/headroom",
+"methods": [
+"GET"
+],
+"name": "get_headroom"
+},
+{
+"path": "/api/admin/capital/headroom/{lane}",
+"methods": [
+"GET"
+],
+"name": "get_lane_headroom_endpoint"
+},
+{
+"path": "/api/admin/capital/reservations/{lane}",
+"methods": [
+"GET"
+],
+"name": "get_reservations_endpoint"
+},
+{
+"path": "/api/admin/fingerprints/latest",
+"methods": [
+"GET"
+],
+"name": "get_latest_fingerprints"
+},
+{
+"path": "/api/admin/fingerprints/window/{brain}/{lane}",
+"methods": [
+"GET"
+],
+"name": "get_window_fingerprint"
+},
+{
+"path": "/api/admin/fingerprints/run-now",
+"methods": [
+"POST"
+],
+"name": "trigger_fingerprint_now"
+},
+{
+"path": "/api/admin/fingerprints/diff",
+"methods": [
+"GET"
+],
+"name": "get_fingerprint_diff"
+},
+{
+"path": "/api/admin/webull-caps/status",
+"methods": [
+"GET"
+],
+"name": "status"
+},
+{
+"path": "/api/admin/webull-caps/set-floor",
+"methods": [
+"POST"
+],
+"name": "set_floor"
+},
+{
+"path": "/api/admin/webull-caps/clear",
+"methods": [
+"POST"
+],
+"name": "clear"
+},
+{
+"path": "/api/admin/webull-caps/set-pct",
+"methods": [
+"POST"
+],
+"name": "set_pct"
+},
+{
+"path": "/api/admin/webull-caps/clear-pct",
+"methods": [
+"POST"
+],
+"name": "clear_pct"
+},
+{
+"path": "/api/admin/exposure-caps/status",
+"methods": [
+"GET"
+],
+"name": "status"
+},
+{
+"path": "/api/admin/exposure-caps/set",
+"methods": [
+"POST"
+],
+"name": "set_caps"
+},
+{
+"path": "/api/admin/exposure-caps/clear",
+"methods": [
+"POST"
+],
+"name": "clear_caps"
+},
+{
+"path": "/api/admin/exposure-caps/reset-daily-spend",
+"methods": [
+"POST"
+],
+"name": "reset_daily_spend"
+},
+{
+"path": "/api/admin/equity-extended-hours",
+"methods": [
+"GET"
+],
+"name": "get_state"
+},
+{
+"path": "/api/admin/equity-extended-hours",
+"methods": [
+"POST"
+],
+"name": "set_state"
+},
+{
+"path": "/api/admin/brain-tuning",
+"methods": [
+"GET"
+],
+"name": "get_state"
+},
+{
+"path": "/api/admin/brain-tuning",
+"methods": [
+"POST"
+],
+"name": "set_state"
+},
+{
+"path": "/api/admin/pipeline/recent-blocker-histogram",
+"methods": [
+"GET"
+],
+"name": "recent_blocker_histogram"
+},
+{
+"path": "/api/admin/server-time",
+"methods": [
+"GET"
+],
+"name": "server_time"
+},
+{
+"path": "/api/admin/db/ensure-indexes",
+"methods": [
+"POST"
+],
+"name": "ensure_indexes_now"
+},
+{
+"path": "/api/admin/healthcheck/full",
+"methods": [
+"GET"
+],
+"name": "healthcheck_full"
+},
+{
+"path": "/api/admin/pipeline-doctor",
+"methods": [
+"GET"
+],
+"name": "pipeline_doctor"
+},
+{
+"path": "/api/admin/kill-map",
+"methods": [
+"GET"
+],
+"name": "kill_map"
+},
+{
+"path": "/api/admin/intent-trace/{intent_id}",
+"methods": [
+"GET"
+],
+"name": "intent_trace"
+},
+{
+"path": "/api/admin/alt-data/quiver/status",
+"methods": [
+"GET"
+],
+"name": "quiver_status"
+},
+{
+"path": "/api/admin/alt-data/quiver/sync",
+"methods": [
+"POST"
+],
+"name": "quiver_sync"
+},
+{
+"path": "/api/admin/alt-data/quiver/insider/latest",
+"methods": [
+"GET"
+],
+"name": "get_latest_insider"
+},
+{
+"path": "/api/admin/alt-data/quiver/congress/latest",
+"methods": [
+"GET"
+],
+"name": "get_latest_congress"
+},
+{
+"path": "/api/admin/alt-data/quiver/patents/{ticker}",
+"methods": [
+"GET"
+],
+"name": "get_patents_for_ticker"
+},
+{
+"path": "/api/admin/live-positions",
+"methods": [
+"GET"
+],
+"name": "list_live_positions"
+},
+{
+"path": "/api/admin/live-positions/{position_id}",
+"methods": [
+"GET"
+],
+"name": "get_live_position"
+},
+{
+"path": "/api/admin/live-positions/{position_id}/manage",
+"methods": [
+"POST"
+],
+"name": "manage_endpoint"
+},
+{
+"path": "/api/admin/live-positions/{position_id}/close",
+"methods": [
+"POST"
+],
+"name": "close_endpoint"
+},
+{
+"path": "/api/admin/brain-lane-policy",
+"methods": [
+"GET"
+],
+"name": "list_policy"
+},
+{
+"path": "/api/admin/brain-lane-policy",
+"methods": [
+"POST"
+],
+"name": "set_policy"
+},
+{
+"path": "/api/admin/brain-lane-policy/{brain}/{lane}",
+"methods": [
+"DELETE"
+],
+"name": "clear_policy"
+},
+{
+"path": "/api/admin/redeye/bridge/emit",
+"methods": [
+"POST"
+],
+"name": "emit_endpoint"
+},
+{
+"path": "/api/admin/redeye/bridge/authority",
+"methods": [
+"GET"
+],
+"name": "get_authority"
+},
+{
+"path": "/api/admin/hellcat/bridge/emit",
+"methods": [
+"POST"
+],
+"name": "emit_endpoint"
+},
+{
+"path": "/api/admin/hellcat/bridge/authority",
+"methods": [
+"GET"
+],
+"name": "get_authority"
+},
+{
+"path": "/api/admin/camino/equity-bridge/emit",
+"methods": [
+"POST"
+],
+"name": "emit_endpoint"
+},
+{
+"path": "/api/admin/camino/equity-bridge/authority",
+"methods": [
+"GET"
+],
+"name": "get_authority_endpoint"
+},
+{
+"path": "/api/admin/barracuda/equity-bridge/emit",
+"methods": [
+"POST"
+],
+"name": "emit_endpoint"
+},
+{
+"path": "/api/admin/barracuda/equity-bridge/authority",
+"methods": [
+"GET"
+],
+"name": "get_authority_endpoint"
+},
+{
+"path": "/api/admin/hellcat/equity-bridge/emit",
+"methods": [
+"POST"
+],
+"name": "emit_endpoint"
+},
+{
+"path": "/api/admin/hellcat/equity-bridge/authority",
+"methods": [
+"GET"
+],
+"name": "get_authority_endpoint"
+},
+{
+"path": "/api/admin/gto/equity-bridge/emit",
+"methods": [
+"POST"
+],
+"name": "emit_endpoint"
+},
+{
+"path": "/api/admin/gto/equity-bridge/authority",
+"methods": [
+"GET"
+],
+"name": "get_authority_endpoint"
+},
+{
+"path": "/api/admin/camino/crypto-bridge/emit",
+"methods": [
+"POST"
+],
+"name": "emit_endpoint"
+},
+{
+"path": "/api/admin/camino/crypto-bridge/authority",
+"methods": [
+"GET"
+],
+"name": "get_authority_endpoint"
+},
+{
+"path": "/api/admin/barracuda/crypto-bridge/emit",
+"methods": [
+"POST"
+],
+"name": "emit_endpoint"
+},
+{
+"path": "/api/admin/barracuda/crypto-bridge/authority",
+"methods": [
+"GET"
+],
+"name": "get_authority_endpoint"
+},
+{
+"path": "/api/admin/risk/take-profit/evaluate",
+"methods": [
+"POST"
+],
+"name": "evaluate_take_profit"
+},
+{
+"path": "/api/admin/risk/stop-loss/evaluate",
+"methods": [
+"POST"
+],
+"name": "evaluate_stop_loss"
+},
+{
+"path": "/api/admin/risk/trailing-stop/evaluate",
+"methods": [
+"POST"
+],
+"name": "evaluate_trailing_stop"
+},
+{
+"path": "/api/admin/risk/max-hold-time/evaluate",
+"methods": [
+"POST"
+],
+"name": "evaluate_max_hold_time"
+},
+{
+"path": "/api/admin/risk/equity/take-profit/check/{position_id}",
+"methods": [
+"POST"
+],
+"name": "equity_tp_check"
+},
+{
+"path": "/api/admin/risk/equity/take-profit/enforce/{position_id}",
+"methods": [
+"POST"
+],
+"name": "equity_tp_enforce_ep"
+},
+{
+"path": "/api/admin/risk/equity/stop-loss/check/{position_id}",
+"methods": [
+"POST"
+],
+"name": "equity_sl_check"
+},
+{
+"path": "/api/admin/risk/equity/stop-loss/enforce/{position_id}",
+"methods": [
+"POST"
+],
+"name": "equity_sl_enforce_ep"
+},
+{
+"path": "/api/admin/risk/equity/trailing-stop/check/{position_id}",
+"methods": [
+"POST"
+],
+"name": "equity_ts_check"
+},
+{
+"path": "/api/admin/risk/equity/trailing-stop/enforce/{position_id}",
+"methods": [
+"POST"
+],
+"name": "equity_ts_enforce_ep"
+},
+{
+"path": "/api/admin/risk/equity/max-hold-time/check/{position_id}",
+"methods": [
+"POST"
+],
+"name": "equity_mht_check"
+},
+{
+"path": "/api/admin/risk/equity/max-hold-time/enforce/{position_id}",
+"methods": [
+"POST"
+],
+"name": "equity_mht_enforce_ep"
+},
+{
+"path": "/api/admin/risk/crypto/take-profit/check/{position_id}",
+"methods": [
+"POST"
+],
+"name": "crypto_tp_check"
+},
+{
+"path": "/api/admin/risk/crypto/take-profit/enforce/{position_id}",
+"methods": [
+"POST"
+],
+"name": "crypto_tp_enforce_ep"
+},
+{
+"path": "/api/admin/risk/crypto/stop-loss/check/{position_id}",
+"methods": [
+"POST"
+],
+"name": "crypto_sl_check"
+},
+{
+"path": "/api/admin/risk/crypto/stop-loss/enforce/{position_id}",
+"methods": [
+"POST"
+],
+"name": "crypto_sl_enforce_ep"
+},
+{
+"path": "/api/admin/risk/crypto/trailing-stop/check/{position_id}",
+"methods": [
+"POST"
+],
+"name": "crypto_ts_check"
+},
+{
+"path": "/api/admin/risk/crypto/trailing-stop/enforce/{position_id}",
+"methods": [
+"POST"
+],
+"name": "crypto_ts_enforce_ep"
+},
+{
+"path": "/api/admin/risk/crypto/max-hold-time/check/{position_id}",
+"methods": [
+"POST"
+],
+"name": "crypto_mht_check"
+},
+{
+"path": "/api/admin/risk/crypto/max-hold-time/enforce/{position_id}",
+"methods": [
+"POST"
+],
+"name": "crypto_mht_enforce_ep"
+},
+{
+"path": "/api/admin/risk/monitor/status",
+"methods": [
+"GET"
+],
+"name": "monitor_status"
+},
+{
+"path": "/api/admin/risk/monitor/run-once",
+"methods": [
+"POST"
+],
+"name": "monitor_run_once"
+},
+{
+"path": "/api/admin/risk/monitor/recent-evaluations",
+"methods": [
+"GET"
+],
+"name": "monitor_recent_evaluations"
+},
+{
+"path": "/api/admin/vrl/verifications",
+"methods": [
+"GET"
+],
+"name": "list_verifications"
+},
+{
+"path": "/api/admin/vrl/verify",
+"methods": [
+"POST"
+],
+"name": "verify_endpoint"
+},
+{
+"path": "/api/admin/vrl/scorecards",
+"methods": [
+"GET"
+],
+"name": "list_scorecards"
+},
+{
+"path": "/api/admin/vrl/scorecards/recompute",
+"methods": [
+"POST"
+],
+"name": "recompute_endpoint"
+},
+{
+"path": "/api/admin/vrl/scheduler/status",
+"methods": [
+"GET"
+],
+"name": "scheduler_status"
+},
+{
+"path": "/api/mc/shelly/",
+"methods": [
+"GET"
+],
+"name": "list_events"
+},
+{
+"path": "/api/mc/shelly/stats",
+"methods": [
+"GET"
+],
+"name": "stats"
+},
+{
+"path": "/api/mc/shelly/export.jsonl",
+"methods": [
+"GET"
+],
+"name": "export_jsonl"
+},
+{
+"path": "/api/mc/shelly/backfill",
+"methods": [
+"POST"
+],
+"name": "run_backfill"
+},
+{
+"path": "/api/patches/install.sh",
+"methods": [
+"GET"
+],
+"name": "installer_script"
+},
+{
+"path": "/api/patches",
+"methods": [
+"GET"
+],
+"name": "list_patches"
+},
+{
+"path": "/api/patches/{name}/manifest",
+"methods": [
+"GET"
+],
+"name": "patch_manifest"
+},
+{
+"path": "/api/patches/{name}/file/{filepath:path}",
+"methods": [
+"GET"
+],
+"name": "patch_file"
+},
+{
+"path": "/api/runtime/survival/policy-hash",
+"methods": [
+"GET"
+],
+"name": "get_policy_hash"
+},
+{
+"path": "/api/runtime/survival/snapshot-contract",
+"methods": [
+"GET"
+],
+"name": "get_snapshot_contract"
+},
+{
+"path": "/api/runtime/survival/validate-stamp",
+"methods": [
+"POST"
+],
+"name": "validate_stamp"
+},
+{
+"path": "/api/runtime/survival/canonical-gate",
+"methods": [
+"POST"
+],
+"name": "canonical_gate"
+},
+{
+"path": "/api/runtime/survival/verify-receipt",
+"methods": [
+"POST"
+],
+"name": "verify_receipt"
+},
+{
+"path": "/api/admin/runtime/sidecar-checkin/{brain}",
+"methods": [
+"POST"
+],
+"name": "post_sidecar_checkin"
+},
+{
+"path": "/api/admin/runtime/sidecar-checkin",
+"methods": [
+"GET"
+],
+"name": "list_sidecar_checkins"
+},
+{
+"path": "/api/admin/runtime/sidecar-checkin/{brain}",
+"methods": [
+"GET"
+],
+"name": "get_sidecar_checkin"
+},
+{
+"path": "/api/admin/runtime/sidecar-checkin/{brain}/audit",
+"methods": [
+"GET"
+],
+"name": "get_sidecar_checkin_audit"
+},
+{
+"path": "/api/admin/runtime/sidecar-checkin/{brain}/imposter-scan",
+"methods": [
+"GET"
+],
+"name": "get_sidecar_checkin_imposter_scan"
+},
+{
+"path": "/api/admin/calibration/confidence-floor-sweep",
+"methods": [
+"GET"
+],
+"name": "confidence_floor_sweep"
+},
+{
+"path": "/api/admin/intents/snapshot-completeness",
+"methods": [
+"GET"
+],
+"name": "snapshot_completeness"
+},
+{
+"path": "/api/admin/memory-kernel/submit",
+"methods": [
+"POST"
+],
+"name": "submit_memory"
+},
+{
+"path": "/api/admin/memory-kernel/route",
+"methods": [
+"POST"
+],
+"name": "route_memory"
+},
+{
+"path": "/api/admin/memory-kernel/trainable/fetch-lock",
+"methods": [
+"POST"
+],
+"name": "fetch_trainable"
+},
+{
+"path": "/api/admin/memory-kernel/trainable/confirm",
+"methods": [
+"POST"
+],
+"name": "confirm_training"
+},
+{
+"path": "/api/admin/memory-kernel/health",
+"methods": [
+"GET"
+],
+"name": "health"
+},
+{
+"path": "/api/admin/memory-kernel/quarantine/{memory_id}/promote-to-so",
+"methods": [
+"POST"
+],
+"name": "promote_uv_to_so"
+},
+{
+"path": "/api/admin/memory-kernel/quarantine/promote-batch-to-so",
+"methods": [
+"POST"
+],
+"name": "promote_uv_batch_to_so"
+},
+{
+"path": "/api/admin/memory-kernel/reclassifications/recent",
+"methods": [
+"GET"
+],
+"name": "list_recent_reclassifications"
+},
+{
+"path": "/api/admin/broker/freeze",
+"methods": [
+"GET"
+],
+"name": "freeze_state"
+},
+{
+"path": "/api/admin/broker/freeze",
+"methods": [
+"POST"
+],
+"name": "freeze_set"
+},
+{
+"path": "/api/admin/broker/thaw",
+"methods": [
+"POST"
+],
+"name": "thaw_set"
+},
+{
+"path": "/api/admin/broker/freeze/history",
+"methods": [
+"GET"
+],
+"name": "freeze_history"
+},
+{
+"path": "/api/admin/broker/reconcile",
+"methods": [
+"POST"
+],
+"name": "run_reconcile"
+},
+{
+"path": "/api/admin/broker/reconcile/summary",
+"methods": [
+"GET"
+],
+"name": "reconcile_summary"
+},
+{
+"path": "/api/admin/broker/reconcile/unverified",
+"methods": [
+"GET"
+],
+"name": "list_unverified"
+},
+{
+"path": "/api/admin/broker/legacy-positions",
+"methods": [
+"GET"
+],
+"name": "legacy_positions"
+},
+{
+"path": "/api/admin/feeders/health-audit",
+"methods": [
+"GET"
+],
+"name": "feeder_health_audit"
+},
+{
+"path": "/api/admin/patterns/universe",
+"methods": [
+"GET"
+],
+"name": "universe_list"
+},
+{
+"path": "/api/admin/patterns/universe-public",
+"methods": [
+"GET"
+],
+"name": "universe_public"
+},
+{
+"path": "/api/admin/patterns/universe",
+"methods": [
+"POST"
+],
+"name": "universe_add"
+},
+{
+"path": "/api/admin/patterns/universe/{symbol}",
+"methods": [
+"DELETE"
+],
+"name": "universe_remove"
+},
+{
+"path": "/api/admin/symbol-metadata",
+"methods": [
+"GET"
+],
+"name": "symbol_metadata_list"
+},
+{
+"path": "/api/admin/alt-data/filings",
+"methods": [
+"GET"
+],
+"name": "filings_list"
+},
+{
+"path": "/api/admin/alt-data/macro",
+"methods": [
+"GET"
+],
+"name": "macro_list"
+},
+{
+"path": "/api/admin/keys/market-data",
+"methods": [
+"GET"
+],
+"name": "get_market_data_keys"
+},
+{
+"path": "/api/admin/keys/market-data/manifest",
+"methods": [
+"GET"
+],
+"name": "get_market_data_manifest"
+},
+{
+"path": "/api/admin/keys/market-data/audit",
+"methods": [
+"GET"
+],
+"name": "get_market_data_audit"
+},
+{
+"path": "/api/admin/brain-outages",
+"methods": [
+"GET"
+],
+"name": "list_brain_outages"
+},
+{
+"path": "/api/admin/market-data/snapshot/{symbol}",
+"methods": [
+"GET"
+],
+"name": "get_market_snapshot"
+},
+{
+"path": "/api/admin/market-data/snapshot",
+"methods": [
+"GET"
+],
+"name": "get_market_snapshot_batch"
+},
+{
+"path": "/api/admin/market-data/snapshot/cache/reset-news",
+"methods": [
+"POST"
+],
+"name": "reset_news_cache_route"
+},
+{
+"path": "/api/admin/market-data/daily-snapshots/labels",
+"methods": [
+"GET"
+],
+"name": "list_today_labels"
+},
+{
+"path": "/api/admin/market-data/daily-snapshots/",
+"methods": [
+"GET"
+],
+"name": "get_snapshot_by_label"
+},
+{
+"path": "/api/admin/market-data/daily-snapshots",
+"methods": [
+"GET"
+],
+"name": "get_snapshot_by_label"
+},
+{
+"path": "/api/admin/market-data/daily-snapshots/symbol/{symbol}",
+"methods": [
+"GET"
+],
+"name": "get_symbol_today"
+},
+{
+"path": "/api/admin/market-data/daily-snapshots/history/{symbol}",
+"methods": [
+"GET"
+],
+"name": "get_symbol_history"
+},
+{
+"path": "/api/admin/market-data/daily-snapshots/capture",
+"methods": [
+"POST"
+],
+"name": "operator_capture"
+},
+{
+"path": "/api/admin/feeders/finnhub/backfill/symbol",
+"methods": [
+"POST"
+],
+"name": "backfill_symbol"
+},
+{
+"path": "/api/admin/feeders/finnhub/backfill/universe",
+"methods": [
+"POST"
+],
+"name": "backfill_universe"
+},
+{
+"path": "/api/admin/feeders/finnhub/backfill/universe/{job_id}",
+"methods": [
+"GET"
+],
+"name": "get_backfill_status"
+},
+{
+"path": "/api/admin/feeders/finnhub/backfill/universe/{job_id}/cancel",
+"methods": [
+"POST"
+],
+"name": "cancel_backfill"
+},
+{
+"path": "/api/admin/runtime/roster",
+"methods": [
+"GET"
+],
+"name": "get_brain_roster"
+},
+{
+"path": "/api/admin/runtime/stack/status",
+"methods": [
+"GET"
+],
+"name": "get_stack_status"
+},
+{
+"path": "/api/admin/runtime/{brain}/status",
+"methods": [
+"GET"
+],
+"name": "get_brain_status"
+},
+{
+"path": "/api/admin/runtime/{brain}/universe",
+"methods": [
+"GET"
+],
+"name": "get_brain_universe"
+},
+{
+"path": "/api/runtime/shelly/memories",
+"methods": [
+"POST"
+],
+"name": "runtime_ingest_memories"
+},
+{
+"path": "/api/admin/shelly/memories",
+"methods": [
+"POST"
+],
+"name": "admin_ingest_memories"
+},
+{
+"path": "/api/admin/brain-memories/summary",
+"methods": [
+"GET"
+],
+"name": "memories_summary"
+},
+{
+"path": "/api/admin/brain-memories/ingest-audit",
+"methods": [
+"GET"
+],
+"name": "memories_ingest_audit"
+},
+{
+"path": "/api/runtime/broker-status",
+"methods": [
+"GET"
+],
+"name": "broker_status_all"
+},
+{
+"path": "/api/runtime/broker-status/{lane}",
+"methods": [
+"GET"
+],
+"name": "broker_status_lane"
+},
+{
+"path": "/api/runtime/positions/close",
+"methods": [
+"POST"
+],
+"name": "close_position"
+},
+{
+"path": "/api/runtime/quarantined-memory-ids",
+"methods": [
+"GET"
+],
+"name": "quarantined_memory_ids"
+},
+{
+"path": "/api/runtime/memories",
+"methods": [
+"GET"
+],
+"name": "cross_brain_memories"
+},
+{
+"path": "/api/admin/llm/ledger",
+"methods": [
+"GET"
+],
+"name": "list_ledger"
+},
+{
+"path": "/api/admin/llm/ledger/{call_id}",
+"methods": [
+"GET"
+],
+"name": "get_ledger_row"
+},
+{
+"path": "/api/admin/llm/ledger/{call_id}/grade",
+"methods": [
+"POST"
+],
+"name": "grade_ledger_row"
+},
+{
+"path": "/api/ai/run",
+"methods": [
+"POST"
+],
+"name": "ai_run"
+},
+{
+"path": "/api/admin/rise-ai/threads",
+"methods": [
+"GET"
+],
+"name": "list_threads"
+},
+{
+"path": "/api/admin/rise-ai/threads",
+"methods": [
+"POST"
+],
+"name": "create_thread"
+},
+{
+"path": "/api/admin/rise-ai/threads/{thread_id}",
+"methods": [
+"GET"
+],
+"name": "get_thread"
+},
+{
+"path": "/api/admin/rise-ai/threads/{thread_id}",
+"methods": [
+"PATCH"
+],
+"name": "patch_thread"
+},
+{
+"path": "/api/admin/rise-ai/threads/{thread_id}/resume",
+"methods": [
+"POST"
+],
+"name": "resume_thread"
+},
+{
+"path": "/api/admin/brain/emission-diagnose",
+"methods": [
+"GET"
+],
+"name": "diagnose_all"
+},
+{
+"path": "/api/admin/brain/emission-diagnose/{brain}",
+"methods": [
+"GET"
+],
+"name": "diagnose_one"
+},
+{
+"path": "/api/admin/seat-registry/diagnose",
+"methods": [
+"GET"
+],
+"name": "diagnose"
+},
+{
+"path": "/api/admin/rise-ai/auto-grade",
+"methods": [
+"POST"
+],
+"name": "trigger_auto_grade"
+},
+{
+"path": "/api/admin/rise-ai/grading-stats",
+"methods": [
+"GET"
+],
+"name": "grading_stats"
+},
+{
+"path": "/api/admin/rise-ai/learning-loop/status",
+"methods": [
+"GET"
+],
+"name": "learning_loop_status_endpoint"
+},
+{
+"path": "/api/admin/rise-ai/learning-loop/harvest-now",
+"methods": [
+"POST"
+],
+"name": "trigger_harvest_now"
+},
+{
+"path": "/api/admin/brain/doctrine-hint",
+"methods": [
+"GET"
+],
+"name": "doctrine_hint"
+},
+{
+"path": "/api/admin/execution/lane-toggles",
+"methods": [
+"GET"
+],
+"name": "list_lane_toggles"
+},
+{
+"path": "/api/admin/execution/lane-toggles",
+"methods": [
+"POST"
+],
+"name": "set_lane_toggles"
+},
+{
+"path": "/api/admin/execution/lane-toggles/history",
+"methods": [
+"GET"
+],
+"name": "toggle_history"
+},
+{
+"path": "/api/admin/observation-receipts",
+"methods": [
+"GET"
+],
+"name": "list_observation_receipts"
+},
+{
+"path": "/api/admin/observation-receipts/counts",
+"methods": [
+"GET"
+],
+"name": "observation_counts"
+},
+{
+"path": "/api/admin/learning-ladder",
+"methods": [
+"GET"
+],
+"name": "list_ladder"
+},
+{
+"path": "/api/admin/learning-ladder/promote",
+"methods": [
+"POST"
+],
+"name": "promote_stage"
+},
+{
+"path": "/api/admin/learning-ladder/demote",
+"methods": [
+"POST"
+],
+"name": "demote_stage"
+},
+{
+"path": "/api/admin/learning-ladder/set",
+"methods": [
+"POST"
+],
+"name": "set_stage_route"
+},
+{
+"path": "/api/admin/learning-ladder/history",
+"methods": [
+"GET"
+],
+"name": "ladder_history"
+},
+{
+"path": "/api/admin/auto-router/status",
+"methods": [
+"GET"
+],
+"name": "auto_router_status"
+},
+{
+"path": "/api/admin/auto-router/pick-probe",
+"methods": [
+"GET"
+],
+"name": "auto_router_pick_probe"
+},
+{
+"path": "/api/admin/auto-router/force-tick",
+"methods": [
+"POST"
+],
+"name": "auto_router_force_tick"
+},
+{
+"path": "/api/admin/auto-router/start",
+"methods": [
+"POST"
+],
+"name": "auto_router_start"
+},
+{
+"path": "/api/admin/auto-router/stop",
+"methods": [
+"POST"
+],
+"name": "auto_router_stop"
+},
+{
+"path": "/api/admin/auto-router/conviction-floor",
+"methods": [
+"GET"
+],
+"name": "get_conviction_floor_state"
+},
+{
+"path": "/api/admin/auto-router/conviction-floor",
+"methods": [
+"POST"
+],
+"name": "set_conviction_floor"
+},
+{
+"path": "/api/admin/auto-router/conviction-floor/history",
+"methods": [
+"GET"
+],
+"name": "conviction_floor_history"
+},
+{
+"path": "/api/admin/retention/status",
+"methods": [
+"GET"
+],
+"name": "retention_status"
+},
+{
+"path": "/api/admin/retention/run",
+"methods": [
+"POST"
+],
+"name": "retention_run"
+},
+{
+"path": "/api/admin/retention/health",
+"methods": [
+"GET"
+],
+"name": "retention_health"
+},
+{
+"path": "/api/admin/gate-failure-digest",
+"methods": [
+"GET"
+],
+"name": "gate_failure_digest"
+},
+{
+"path": "/api/admin/gate-failure-digest/intents",
+"methods": [
+"GET"
+],
+"name": "gate_failure_intents"
+},
+{
+"path": "/api/admin/kraken-pairs",
+"methods": [
+"GET"
+],
+"name": "list_pairs"
+},
+{
+"path": "/api/admin/kraken-pairs",
+"methods": [
+"POST"
+],
+"name": "add_pair"
+},
+{
+"path": "/api/admin/kraken-pairs/{base}",
+"methods": [
+"DELETE"
+],
+"name": "remove_pair"
+},
+{
+"path": "/api/admin/universe/watchlist",
+"methods": [
+"GET"
+],
+"name": "get_watchlist"
+},
+{
+"path": "/api/admin/universe/watchlist",
+"methods": [
+"POST"
+],
+"name": "add_pin"
+},
+{
+"path": "/api/admin/universe/watchlist/{lane}/{symbol}",
+"methods": [
+"DELETE"
+],
+"name": "remove_pin"
+},
+{
+"path": "/api/admin/universe/quality",
+"methods": [
+"POST"
+],
+"name": "set_quality"
+},
+{
+"path": "/api/admin/universe/crypto-buy-allowlist",
+"methods": [
+"GET"
+],
+"name": "get_crypto_buy_allowlist"
+},
+{
+"path": "/api/admin/universe/crypto-buy-allowlist",
+"methods": [
+"PUT"
+],
+"name": "put_crypto_buy_allowlist"
+},
+{
+"path": "/api/admin/universe/refresh",
+"methods": [
+"POST"
+],
+"name": "force_refresh"
+},
+{
+"path": "/api/admin/exits",
+"methods": [
+"GET"
+],
+"name": "exits_overview"
+},
+{
+"path": "/api/admin/exits/policy",
+"methods": [
+"POST"
+],
+"name": "update_policy"
+},
+{
+"path": "/api/admin/exits/diagnose",
+"methods": [
+"GET"
+],
+"name": "diagnose_crypto"
+},
+{
+"path": "/api/admin/exits/close-now",
+"methods": [
+"POST"
+],
+"name": "close_now"
+},
+{
+"path": "/api/admin/exits/run-once",
+"methods": [
+"POST"
+],
+"name": "run_once"
+},
+{
+"path": "/api/admin/expectancy",
+"methods": [
+"GET"
+],
+"name": "expectancy_overview"
+},
+{
+"path": "/api/admin/expectancy/config",
+"methods": [
+"GET"
+],
+"name": "expectancy_config"
+},
+{
+"path": "/api/admin/expectancy/config",
+"methods": [
+"POST"
+],
+"name": "update_expectancy_config"
+},
+{
+"path": "/api/admin/hotpath/outbox",
+"methods": [
+"GET"
+],
+"name": "outbox_status"
+},
+{
+"path": "/api/admin/hotpath/outbox/drain",
+"methods": [
+"POST"
+],
+"name": "outbox_drain"
+},
+{
+"path": "/api/admin/hotpath/outbox/retry-dead",
+"methods": [
+"POST"
+],
+"name": "outbox_retry_dead"
+},
+{
+"path": "/api/admin/hotpath/policy",
+"methods": [
+"GET"
+],
+"name": "policy_snapshot_status"
+},
+{
+"path": "/api/admin/hotpath/policy/refresh",
+"methods": [
+"POST"
+],
+"name": "policy_snapshot_refresh"
+},
+{
+"path": "/api/admin/hotpath/queue",
+"methods": [
+"GET"
+],
+"name": "intent_queue_status"
+},
+{
+"path": "/api/admin/gain-goals",
+"methods": [
+"GET"
+],
+"name": "gain_goal_status"
+},
+{
+"path": "/api/admin/gain-goals/config",
+"methods": [
+"POST"
+],
+"name": "set_gain_goal_config"
+},
+{
+"path": "/api/admin/gain-goals/ack",
+"methods": [
+"POST"
+],
+"name": "ack_breach"
+},
+{
+"path": "/api/admin/gain-goals/evaluate",
+"methods": [
+"POST"
+],
+"name": "force_evaluate"
+},
+{
+"path": "/api/admin/risk-sizer",
+"methods": [
+"GET"
+],
+"name": "risk_sizer_status"
+},
+{
+"path": "/api/admin/risk-sizer/policy",
+"methods": [
+"POST"
+],
+"name": "set_sizer_policy"
+},
+{
+"path": "/api/admin/options/status",
+"methods": [
+"GET"
+],
+"name": "options_status"
+},
+{
+"path": "/api/admin/options/resolve",
+"methods": [
+"GET"
+],
+"name": "options_resolve"
+},
+{
+"path": "/api/admin/pipeline/counters",
+"methods": [
+"GET"
+],
+"name": "pipeline_counters"
+},
+{
+"path": "/api/admin/pipeline/outcome_health",
+"methods": [
+"GET"
+],
+"name": "outcome_health"
+},
+{
+"path": "/api/admin/pipeline/crypto_buy_blockers",
+"methods": [
+"GET"
+],
+"name": "crypto_buy_blockers"
+},
+{
+"path": "/api/admin/pipeline/forensics/large_losses",
+"methods": [
+"GET"
+],
+"name": "forensics_large_losses"
+},
+{
+"path": "/api/admin/pipeline/forensics/filed",
+"methods": [
+"GET"
+],
+"name": "forensics_filed"
+},
+{
+"path": "/api/admin/scanner",
+"methods": [
+"GET"
+],
+"name": "scanner_overview"
+},
+{
+"path": "/api/admin/scanner/scan-now",
+"methods": [
+"POST"
+],
+"name": "scanner_scan_now"
+},
+{
+"path": "/api/admin/scanner/policy",
+"methods": [
+"POST"
+],
+"name": "scanner_policy"
+},
+{
+"path": "/api/admin/risk/budget",
+"methods": [
+"GET"
+],
+"name": "budget_status"
+},
+{
+"path": "/api/admin/risk/budget/reset",
+"methods": [
+"POST"
+],
+"name": "reset_spend"
+},
+{
+"path": "/api/admin/risk/budget/cap",
+"methods": [
+"POST"
+],
+"name": "set_cap"
+},
+{
+"path": "/api/admin/opportunity-policy",
+"methods": [
+"GET"
+],
+"name": "policy_overview"
+},
+{
+"path": "/api/admin/opportunity-policy",
+"methods": [
+"POST"
+],
+"name": "update_policy"
+},
+{
+"path": "/api/admin/kraken-universe",
+"methods": [
+"GET"
+],
+"name": "kraken_universe"
+},
+{
+"path": "/api/admin/intents/purge-stale",
+"methods": [
+"POST"
+],
+"name": "purge_stale"
+},
+{
+"path": "/api/admin/intents/sweeper/status",
+"methods": [
+"GET"
+],
+"name": "sweeper_status"
+},
+{
+"path": "/api/admin/counterfactuals/stats",
+"methods": [
+"GET"
+],
+"name": "counterfactual_stats"
+},
+{
+"path": "/api/admin/counterfactuals/resolve",
+"methods": [
+"POST"
+],
+"name": "counterfactual_resolve_now"
+},
+{
+"path": "/api/admin/broker-fills/recent",
+"methods": [
+"GET"
+],
+"name": "recent_fills"
+},
+{
+"path": "/api/admin/broker-fills/pending/{symbol}",
+"methods": [
+"GET"
+],
+"name": "pending_for_symbol"
+},
+{
+"path": "/api/admin/broker-fills/summary",
+"methods": [
+"GET"
+],
+"name": "summary"
+},
+{
+"path": "/api/admin/broker-fills/in-flight",
+"methods": [
+"GET"
+],
+"name": "in_flight"
+},
+{
+"path": "/api/admin/runtime/{brain}/intent-summary",
+"methods": [
+"GET"
+],
+"name": "intent_summary"
+},
+{
+"path": "/api/mc-connection/stream",
+"methods": [
+"GET"
+],
+"name": "mc_connection_stream"
+},
+{
+"path": "/api/admin/position-misreads/recent",
+"methods": [
+"GET"
+],
+"name": "position_misreads_recent"
+},
+{
+"path": "/api/admin/position-misreads/summary-24h",
+"methods": [
+"GET"
+],
+"name": "position_misreads_summary_24h"
+},
+{
+"path": "/api/admin/position-misreads/enforcement",
+"methods": [
+"GET"
+],
+"name": "get_enforcement"
+},
+{
+"path": "/api/admin/position-misreads/enforcement",
+"methods": [
+"POST"
+],
+"name": "set_enforcement"
+},
+{
+"path": "/api/admin/coordinator/status",
+"methods": [
+"GET"
+],
+"name": "status"
+},
+{
+"path": "/api/admin/coordinator/enable/{agent}",
+"methods": [
+"POST"
+],
+"name": "enable"
+},
+{
+"path": "/api/admin/coordinator/disable/{agent}",
+"methods": [
+"POST"
+],
+"name": "disable"
+},
+{
+"path": "/api/admin/coordinator/run/{agent}",
+"methods": [
+"POST"
+],
+"name": "run_one"
+},
+{
+"path": "/api/admin/coordinator/run-cycle",
+"methods": [
+"POST"
+],
+"name": "run_full_cycle"
+},
+{
+"path": "/api/admin/coordinator/cycle-seconds/{seconds}",
+"methods": [
+"POST"
+],
+"name": "set_cycle_seconds"
+},
+{
+"path": "/api/admin/runtime-bundles",
+"methods": [
+"GET"
+],
+"name": "list_bundles"
+},
+{
+"path": "/api/admin/runtime-bundles/{filename}",
+"methods": [
+"GET"
+],
+"name": "download_bundle"
+},
+{
+"path": "/api/public/news",
+"methods": [
+"GET"
+],
+"name": "get_news"
+},
+{
+"path": "/api/public/news/refresh",
+"methods": [
+"POST"
+],
+"name": "post_refresh"
+},
+{
+"path": "/api/public/dark-pool",
+"methods": [
+"GET"
+],
+"name": "get_darkpool"
+},
+{
+"path": "/api/public/dark-pool/refresh",
+"methods": [
+"POST"
+],
+"name": "post_refresh"
+},
+{
+"path": "/api/brain/context/dark-pool",
+"methods": [
+"GET"
+],
+"name": "brain_darkpool_context"
+},
+{
+"path": "/api/admin/diagnostics",
+"methods": [
+"GET"
+],
+"name": "diagnostics"
+},
+{
+"path": "/api/admin/doctrine/overlays",
+"methods": [
+"GET"
+],
+"name": "list_overlays"
+},
+{
+"path": "/api/admin/doctrine/overlays",
+"methods": [
+"POST"
+],
+"name": "register_overlay"
+},
+{
+"path": "/api/admin/doctrine/overlays/{overlay_id}",
+"methods": [
+"DELETE"
+],
+"name": "remove_overlay"
+},
+{
+"path": "/api/admin/doctrine/profile/{stack}",
+"methods": [
+"GET"
+],
+"name": "runtime_profile"
+},
+{
+"path": "/api/admin/doctrine/preset/{preset_id}",
+"methods": [
+"POST"
+],
+"name": "install_preset"
+},
+{
+"path": "/api/admin/doctrine/scorecard",
+"methods": [
+"GET"
+],
+"name": "doctrine_scorecard"
+},
+{
+"path": "/api/admin/doctrine/seat-occupancy",
+"methods": [
+"GET"
+],
+"name": "seat_occupancy_view"
+},
+{
+"path": "/api/admin/doctrine/retirement-candidates",
+"methods": [
+"GET"
+],
+"name": "retirement_candidates"
+},
+{
+"path": "/api/admin/brackets/distribution",
+"methods": [
+"GET"
+],
+"name": "bracket_distribution"
+},
+{
+"path": "/api/admin/trader/brain-accuracy",
+"methods": [
+"GET"
+],
+"name": "get_brain_accuracy"
+},
+{
+"path": "/api/admin/trader/dissent",
+"methods": [
+"GET"
+],
+"name": "get_dissent"
+},
+{
+"path": "/api/admin/trader/status",
+"methods": [
+"GET"
+],
+"name": "get_trader_status"
+},
+{
+"path": "/api/admin/trader/receipts",
+"methods": [
+"GET"
+],
+"name": "get_trader_receipts"
+},
+{
+"path": "/api/admin/quantum/doctrine",
+"methods": [
+"GET"
+],
+"name": "doctrine"
+},
+{
+"path": "/api/admin/quantum/preview",
+"methods": [
+"POST"
+],
+"name": "preview"
+},
+{
+"path": "/api/admin/quantum/recent",
+"methods": [
+"GET"
+],
+"name": "recent_verdicts"
+},
+{
+"path": "/api/config/stack-personalities",
+"methods": [
+"GET"
+],
+"name": "list_stack_personalities"
+},
+{
+"path": "/api/config/stack-personalities/{stack}",
+"methods": [
+"GET"
+],
+"name": "get_one_personality"
+},
+{
+"path": "/api/admin/flags",
+"methods": [
+"GET"
+],
+"name": "list_flags"
+},
+{
+"path": "/api/runtime/alpha/status",
+"methods": [
+"GET"
+],
+"name": "status"
+},
+{
+"path": "/api/runtime/alpha/decisions",
+"methods": [
+"GET"
+],
+"name": "decisions"
+},
+{
+"path": "/api/runtime/camaro/status",
+"methods": [
+"GET"
+],
+"name": "status"
+},
+{
+"path": "/api/runtime/camaro/shadow-rows",
+"methods": [
+"GET"
+],
+"name": "shadow_rows"
+},
+{
+"path": "/api/runtime/chevelle/status",
+"methods": [
+"GET"
+],
+"name": "status"
+},
+{
+"path": "/api/runtime/chevelle/memory-labels",
+"methods": [
+"GET"
+],
+"name": "memory_labels"
+},
+{
+"path": "/api/admin/storage-rollup/preview",
+"methods": [
+"GET"
+],
+"name": "preview"
+},
+{
+"path": "/api/admin/storage-rollup/run",
+"methods": [
+"POST"
+],
+"name": "run"
+},
+{
+"path": "/api/admin/storage-rollup/purge-preview",
+"methods": [
+"GET"
+],
+"name": "purge_preview"
+},
+{
+"path": "/api/admin/storage-rollup/purge",
+"methods": [
+"POST"
+],
+"name": "purge"
+},
+{
+"path": "/api/admin/storage-rollup/stats",
+"methods": [
+"GET"
+],
+"name": "stats"
+},
+{
+"path": "/api/admin/trading/status",
+"methods": [
+"GET"
+],
+"name": "status"
+},
+{
+"path": "/api/admin/trading/toggle",
+"methods": [
+"POST"
+],
+"name": "toggle"
+},
+{
+"path": "/api/admin/trading/audit",
+"methods": [
+"GET"
+],
+"name": "audit_log"
+},
+{
+"path": "/api/admin/trading/arm/status",
+"methods": [
+"GET"
+],
+"name": "arm_status"
+},
+{
+"path": "/api/admin/trading/arm",
+"methods": [
+"POST"
+],
+"name": "arm"
+},
+{
+"path": "/api/admin/trading/lane",
+"methods": [
+"POST"
+],
+"name": "toggle_lane"
+},
+{
+"path": "/api/admin/learning/stats",
+"methods": [
+"GET"
+],
+"name": "learning_stats"
+},
+{
+"path": "/api/admin/learning/experiences",
+"methods": [
+"GET"
+],
+"name": "list_experiences"
+},
+{
+"path": "/api/admin/learning/resolve",
+"methods": [
+"POST"
+],
+"name": "kick_resolver"
+},
+{
+"path": "/api/admin/learning/analyze",
+"methods": [
+"POST"
+],
+"name": "kick_analyzer"
+},
+{
+"path": "/api/admin/learning/buckets",
+"methods": [
+"GET"
+],
+"name": "list_buckets"
+},
+{
+"path": "/api/admin/learning/lessons",
+"methods": [
+"GET"
+],
+"name": "list_lessons"
+},
+{
+"path": "/api/admin/learning/lessons/{lesson_id}/approve",
+"methods": [
+"POST"
+],
+"name": "approve_lesson"
+},
+{
+"path": "/api/admin/learning/lessons/{lesson_id}/reject",
+"methods": [
+"POST"
+],
+"name": "reject_lesson"
+},
+{
+"path": "/api/admin/alpha-vantage/quota",
+"methods": [
+"GET"
+],
+"name": "av_quota"
+},
+{
+"path": "/api/admin/alpha-vantage/cache",
+"methods": [
+"GET"
+],
+"name": "av_cache_list"
+},
+{
+"path": "/api/admin/alpha-vantage/fetch",
+"methods": [
+"POST"
+],
+"name": "av_fetch"
+},
+{
+"path": "/api/admin/broker/lanes",
+"methods": [
+"GET"
+],
+"name": "list_lane_toggles"
+},
+{
+"path": "/api/admin/broker/lanes/{lane}/toggle",
+"methods": [
+"POST"
+],
+"name": "toggle_lane"
+},
+{
+"path": "/api/admin/broker/lanes/audit",
+"methods": [
+"GET"
+],
+"name": "lane_audit_log"
+},
+{
+"path": "/api/admin/symbol-registry/",
+"methods": [
+"GET"
+],
+"name": "list_registry"
+},
+{
+"path": "/api/admin/universe/live",
+"methods": [
+"GET"
+],
+"name": "get_live_universe"
+},
+{
+"path": "/api/admin/universe/refresh-reports",
+"methods": [
+"GET"
+],
+"name": "get_refresh_reports"
+},
+{
+"path": "/api/admin/universe/refresh",
+"methods": [
+"POST"
+],
+"name": "trigger_refresh"
+},
+{
+"path": "/api/admin/intents/origins",
+"methods": [
+"GET"
+],
+"name": "list_intent_origins"
+},
+{
+"path": "/api/admin/intents/by-origin",
+"methods": [
+"GET"
+],
+"name": "intents_by_origin"
+},
+{
+"path": "/api/admin/webull/entitlements",
+"methods": [
+"GET"
+],
+"name": "get_entitlements"
+},
+{
+"path": "/api/admin/webull/snapshot/{symbol}",
+"methods": [
+"GET"
+],
+"name": "get_symbol_snapshot"
+},
+{
+"path": "/api/admin/webull/otoco/test",
+"methods": [
+"POST"
+],
+"name": "webull_otoco_test"
+},
+{
+"path": "/api/admin/webull/otoco/live",
+"methods": [
+"GET"
+],
+"name": "webull_otoco_live"
+},
+{
+"path": "/api/admin/broker-selection",
+"methods": [
+"GET"
+],
+"name": "read_selection"
+},
+{
+"path": "/api/admin/broker-selection",
+"methods": [
+"PUT"
+],
+"name": "update_selection"
+},
+{
+"path": "/api/admin/doctrine-reference",
+"methods": [
+"GET"
+],
+"name": "doctrine_reference"
+},
+{
+"path": "/api/admin/doctrine-reference/index",
+"methods": [
+"GET"
+],
+"name": "doctrine_index"
+},
+{
+"path": "/api/admin/doctrine-reference/{strategy_id}",
+"methods": [
+"GET"
+],
+"name": "doctrine_card"
+},
+{
+"path": "/api/admin/outcome-join/health",
+"methods": [
+"GET"
+],
+"name": "health"
+},
+{
+"path": "/api/admin/outcome-join/backfill",
+"methods": [
+"POST"
+],
+"name": "backfill"
+},
+{
+"path": "/api/admin/safety-gates/audit",
+"methods": [
+"GET"
+],
+"name": "audit"
+},
+{
+"path": "/api/admin/intents/purge-non-executable",
+"methods": [
+"POST"
+],
+"name": "purge_non_executable_intents"
+}
+]

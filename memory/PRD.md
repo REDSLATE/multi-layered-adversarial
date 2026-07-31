@@ -4019,3 +4019,40 @@ maxTimeMS on hot reads, #5 projection audit, pymongo bump, Vite.
   /admin/runtime/stack/status all 200 in ~0.1s via external URL.
 - Remaining from Atlas analysis: pymongo bump (P2), Vite migration
   (P2), router auto-discovery refactor (P2).
+
+## 2026-07-31 — pymongo/motor bump (#1) + router-registry refactor (#2)
+### pymongo/motor bump
+- motor 3.3.1→3.7.1, pymongo 4.5.0→4.17.0 (requirements.txt pinned).
+  No mongomock/chromadb anywhere in the tree (stale citations) — zero
+  peer-dep constraints. Full suite 3084+ passed post-bump.
+- Fixed a latent flaky test exposed during verification:
+  test_p0_pulse_arbiter_intent_smoke polled /api/intents with the
+  DEFAULT sort ("conviction") — once 100+ rows with confidence ≥0.75
+  exist in the window, fresh intents (e.g. 0.44) NEVER surface in the
+  top-100 view → false "pipeline broken" failure. Test now polls
+  sort=newest. (Pipeline itself verified emitting — 16 mc_arbiter
+  intents landed during LIVE windows.)
+### Router-registry refactor (346 → 213 lines)
+- server_modules/router_registry.py: ~150 imports + ~150 explicit
+  include calls replaced by ordered `ROUTER_SPECS` manifest of 139
+  "module:attr" strings (supports list specs — EQUITY_ROUTERS /
+  CRYPTO_ROUTERS) + `_resolve` loop. ORDER PRESERVED exactly (FastAPI
+  first-match-wins).
+- Convention discovery: any routes/ module exposing `router` not in
+  the manifest (nor SKIP_DISCOVERY) auto-registers at the END with a
+  WARNING — forgotten wiring degrades to a log line, never silent 404.
+- Tripwires (tests/test_router_registry.py): (1) full route table —
+  502 routes — must match tests/fixtures/route_table_snapshot.json
+  IN ORDER (fixture captured from the pre-refactor registry; regen
+  command in docstring); (2) all specs resolve uniquely to APIRouters;
+  (3) zero unlisted routes/ modules. Updated test_brain_outages
+  wiring tripwire to check the manifest entry.
+- Verified: 432 tripwires green; full suite 3088 passed / 3 known
+  pre-existing env failures; live curls 200 (/api/health, /api/intents,
+  /api/admin/retention/health, /api/admin/brain-outages, /shared/opinions).
+### Remaining
+- CRA→Vite migration (#3): DEDICATED SESSION. Pre-check first:
+  frontend runs through craco; `@emergentbase/visual-edits`
+  devDependency may be CRA/craco-coupled — confirm Vite compatibility
+  BEFORE starting. Env surface is small (only REACT_APP_BACKEND_URL,
+  apiBase.js resolves at runtime).

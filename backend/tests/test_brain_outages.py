@@ -25,10 +25,10 @@ def test_brain_outages_router_is_wired():
     # server-module extraction. Check the current wiring point.
     with open("/app/backend/server_modules/router_registry.py") as f:
         src = f.read()
-    assert "brain_outages_router" in src, (
-        "brain-outages admin route is not included in "
-        "server_modules/router_registry.py — operators have no way "
-        "to see recurrence patterns"
+    assert "routes.brain_outages:router" in src, (
+        "brain-outages admin route is not listed in the "
+        "server_modules/router_registry.py ROUTER_SPECS manifest — "
+        "operators have no way to see recurrence patterns"
     )
 
 

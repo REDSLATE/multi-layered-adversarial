@@ -1,345 +1,213 @@
-"""Central registration of all API routers.
+"""Central registration of all API routers — manifest + discovery.
 
-Extracted from `server.py` on 2026-06-18. Behavior is 1:1: every router
-that was previously included via `api_router.include_router(...)` at
-module load time is now included by `register_routers(api_router)`,
-called once during app construction.
+Refactored 2026-07-31 (was ~150 import lines + ~150 include calls).
+Behavior is 1:1 with the previous explicit version — proven by the
+route-table snapshot tripwire (tests/test_router_registry.py against
+tests/fixtures/route_table_snapshot.json).
 
-Call order matches the original server.py exactly — do not reorder
-without understanding the consequences. FastAPI's first-match wins
-on path conflicts, so the order here defines which router serves a
-given route when two routers register overlapping prefixes (the
-original file relied on the order documented below).
+ORDER MATTERS: FastAPI is first-match-wins on overlapping paths, so
+`ROUTER_SPECS` order defines which router serves a conflicting route.
+The manifest preserves the original server.py order exactly — do not
+reorder without understanding the consequences.
+
+Adding a new router:
+  1. Create the module with a module-level `router = APIRouter(...)`.
+  2. Add ONE line to `ROUTER_SPECS` ("pkg.module:attr") — position it
+     deliberately if its paths can overlap an existing router.
+  3. Regenerate the snapshot fixture (command in the tripwire test).
+
+Safety net: any `routes/` module exposing an `APIRouter` named
+`router` that is NOT listed here (and not in `SKIP_DISCOVERY`) is
+auto-registered at the END with a WARNING — a forgotten wiring line
+degrades to a log complaint instead of silent 404s. The tripwire
+keeps this path empty in CI.
 """
 from __future__ import annotations
 
+import importlib
+import logging
+import pkgutil
+
 from fastapi import APIRouter
 
-from auth import router as auth_router
-from shared.routes import router as shared_router
-from shared.ingest import router as ingest_router
-from shared.opinions import router as opinions_router
-from shared.outcomes import router as outcomes_router
-from shared.conflicts import router as conflicts_router
-from shared.technicals import router as technicals_router
-from shared.crypto.routes import router as kraken_router
-from shared.ibkr import router as ibkr_router
-from shared.public import router as public_router
-from shared.positions import router as positions_router
-from shared.public_api import router as public_api_router
-from shared.public_api.traffic import router as public_traffic_router
-from shared.seat_performance import router as seat_performance_router
-from shared.roster import router as roster_router
-from shared.diagnostics import router as diagnostics_router
-from shared.doctrine import (
-    router as doctrine_legacy_router,
-    scorecard_router as doctrine_scorecard_router,
-    auto_retire_router as doctrine_auto_retire_router,
-)
-from shared.flags import router as flags_router
-from shared.intents import router as intents_router
-from mc_arbiter.routes import router as mc_arbiter_router
-from mc_pulse.parity_routes import router as mc_parity_router
-from mc_pulse.pulse_health_routes import router as mc_pulse_health_router
-from shared.executor_seat import router as executor_router
-from shared.auditor_seat import router as auditor_router
-from shared.seat_nudges import router as seat_nudges_router
-from shared.doctrine_routes import router as doctrine_router
-from shared.live_positions import router as live_positions_router
-from shared.brain_lane_policy import router as brain_lane_policy_router
-from shared.redeye_crypto_intent_bridge import router as redeye_bridge_router
-from shared.chevelle_crypto_intent_bridge import router as chevelle_bridge_router
-from shared.equity_intent_bridges import EQUITY_ROUTERS
-from shared.crypto_intent_bridges import CRYPTO_ROUTERS
-from shared.risk.routes import router as risk_router
-from shared.vrl import router as vrl_router
-from shared.quantum_routes import router as quantum_router
-from shared.personalities_routes import router as personalities_router
-from shared.mc_shelly import router as mc_shelly_router
-from shared.patches import router as patches_router
-from shared.runtime.routes import router as platform_survival_router
-from shared.runtime.sidecar_checkin import router as sidecar_checkin_router
-from shared.calibration.confidence_floor_sweep import (
-    router as confidence_floor_sweep_router,
-)
-from shared.calibration.snapshot_completeness import (
-    router as snapshot_completeness_router,
-)
-from shared.lane_execution import router as lane_execution_router
-from shared.coordinator.routes import router as coordinator_router
-from shared.runtime_bundles import router as runtime_bundles_router
-from shared.public_api.news import router as public_news_router
-from shared.public_api.dark_pool import router as public_darkpool_router
-from shared.observation_receipts import router as observation_receipts_router
-from shared.learning_ladder import router as learning_ladder_router
+logger = logging.getLogger("risedual.router_registry")
 
-from routes.memory_kernel_routes import router as memory_kernel_router
-from routes.broker_freeze_routes import router as broker_freeze_router
-from routes.broker_reconcile_routes import router as broker_reconcile_router
-from routes.data_stack_admin import router as data_stack_admin_router
-from routes.market_data_keys import router as market_data_keys_router
-from routes.brain_outages import router as brain_outages_router
-from routes.market_data_snapshot import router as market_data_snapshot_router
-from routes.brain_runtime import router as brain_runtime_router
-from routes.daily_snapshots import router as daily_snapshots_router
-from routes.brain_memory_ingest import router as brain_memory_ingest_router
-from routes.llm_ledger_routes import router as llm_ledger_router
-from routes.ai_run_routes import router as ai_run_router
-from routes.rise_ai_threads_routes import router as rise_ai_threads_router
-from routes.brain_emission_diagnose import router as brain_emission_diagnose_router
-from routes.seat_registry_diagnose import router as seat_registry_diagnose_router
-from routes.rise_ai_admin import router as rise_ai_admin_router
-from routes.brain_doctrine_hint import router as brain_doctrine_hint_router
-from routes.storage_rollup import router as storage_rollup_router
-from routes.trading_controls import router as trading_controls_router
-from routes.admin_learning import router as admin_learning_router
-from routes.alpha_vantage_admin import router as alpha_vantage_admin_router
-from routes.broker_lane_admin import router as broker_lane_admin_router
-from routes.symbol_registry_admin import router as symbol_registry_admin_router
-from routes.live_universe_admin import router as live_universe_admin_router
-from routes.auto_router_admin import router as auto_router_admin_router
-from routes.retention_admin import router as retention_admin_router
-from routes.gate_failure_digest import router as gate_failure_digest_router
-from routes.kraken_pair_admin import router as kraken_pair_admin_router
-from routes.universe_admin import router as universe_admin_router
-from routes.exit_admin import router as exit_admin_router
-from routes.expectancy_admin import router as expectancy_admin_router
-from routes.hotpath_admin import router as hotpath_admin_router
-from routes.gain_goal_admin import router as gain_goal_admin_router
-from routes.risk_sizer_admin import router as risk_sizer_admin_router
-from routes.options_admin import router as options_admin_router
-from routes.pipeline_admin import router as pipeline_admin_router
-from routes.scanner_admin import router as scanner_admin_router
-from routes.risk_budget_admin import router as risk_budget_admin_router
-from routes.opportunity_admin import router as opportunity_admin_router
-from routes.kraken_universe_admin import router as kraken_universe_admin_router
-from routes.intent_sweeper_admin import router as intent_sweeper_admin_router
-from routes.counterfactuals_admin import router as counterfactuals_admin_router
-from routes.broker_fills_admin import router as broker_fills_admin_router
-from routes.intent_summary import router as intent_summary_router
-from routes.mc_connection_stream import router as mc_connection_stream_router
-from routes.position_misread_admin import router as position_misread_admin_router
-from routes.intent_origin import router as intent_origin_router
-from routes.webull_admin import router as webull_admin_router
-from routes.admin_hot_brain_router import (
-    router as admin_hot_brain_router,
+# "module.path:attr" — attr is an APIRouter, or a list/tuple of them
+# (e.g. the intent-bridge factories). Order preserved from the
+# pre-refactor explicit include calls.
+ROUTER_SPECS: tuple[str, ...] = (
+    "auth:router",
+    "shared.routes:router",
+    "shared.ingest:router",
+    "shared.opinions:router",
+    "shared.outcomes:router",
+    "shared.conflicts:router",
+    "shared.positions:router",
+    "shared.public_api:router",
+    "shared.public_api.traffic:router",
+    "shared.seat_performance:router",
+    "shared.technicals:router",
+    "shared.crypto.routes:router",
+    "shared.ibkr:router",
+    "shared.public:router",
+    "shared.roster:router",
+    "shared.doctrine:router",
+    "shared.intents:router",
+    "mc_arbiter.routes:router",
+    "mc_pulse.parity_routes:router",
+    "mc_pulse.pulse_health_routes:router",
+    "shared.executor_seat:router",
+    "shared.auditor_seat:router",
+    "shared.seat_nudges:router",
+    "routes.admin_hot_brain_router:router",
+    "routes.admin_spread_quality:router",
+    "routes.webull_credentials:router",
+    "routes.intent_clearance_funnel:router",
+    "routes.seats_reverse_sync:router",
+    "routes.kraken_pair_floors:router",
+    "routes.admin_system_flags:router",
+    "routes.admin_brain_legend:router",
+    "routes.admin_execution_lifecycle_funnel:router",
+    "routes.admin_brain_input_health:router",
+    "routes.admin_external_signals:router",
+    "routes.admin_feature_coverage:router",
+    "routes.admin_capital_ledger:router",
+    "routes.admin_session_fingerprint:router",
+    "routes.webull_caps_admin:router",
+    "routes.exposure_caps_admin:router",
+    "routes.equity_extended_hours_admin:router",
+    "routes.brain_tuning_admin:router",
+    "routes.pipeline_blocker_histogram:router",
+    "routes.server_time_admin:router",
+    "routes.db_admin:router",
+    "routes.healthcheck_full:router",
+    "routes.pipeline_doctor:router",
+    "routes.kill_map:router",
+    "routes.intent_trace:router",
+    "routes.admin_quiver:router",
+    "shared.live_positions:router",
+    "shared.brain_lane_policy:router",
+    "shared.redeye_crypto_intent_bridge:router",
+    "shared.chevelle_crypto_intent_bridge:router",
+    "shared.equity_intent_bridges:EQUITY_ROUTERS",
+    "shared.crypto_intent_bridges:CRYPTO_ROUTERS",
+    "shared.risk.routes:router",
+    "shared.vrl:router",
+    "shared.mc_shelly:router",
+    "shared.patches:router",
+    "shared.runtime.routes:router",
+    "shared.runtime.sidecar_checkin:router",
+    "shared.calibration.confidence_floor_sweep:router",
+    "shared.calibration.snapshot_completeness:router",
+    "routes.memory_kernel_routes:router",
+    "routes.broker_freeze_routes:router",
+    "routes.broker_reconcile_routes:router",
+    "routes.data_stack_admin:router",
+    "routes.market_data_keys:router",
+    "routes.brain_outages:router",
+    "routes.market_data_snapshot:router",
+    "routes.daily_snapshots:router",
+    "routes.finnhub_backfill:router",
+    "routes.brain_runtime:router",
+    "routes.brain_memory_ingest:router",
+    "routes.runtime_broker_status:router",
+    "routes.runtime_position_close:router",
+    "routes.runtime_cross_brain_memories:router",
+    "routes.llm_ledger_routes:router",
+    "routes.ai_run_routes:router",
+    "routes.rise_ai_threads_routes:router",
+    "routes.brain_emission_diagnose:router",
+    "routes.seat_registry_diagnose:router",
+    "routes.rise_ai_admin:router",
+    "routes.brain_doctrine_hint:router",
+    "shared.lane_execution:router",
+    "shared.observation_receipts:router",
+    "shared.learning_ladder:router",
+    "routes.auto_router_admin:router",
+    "routes.retention_admin:router",
+    "routes.gate_failure_digest:router",
+    "routes.kraken_pair_admin:router",
+    "routes.universe_admin:router",
+    "routes.exit_admin:router",
+    "routes.expectancy_admin:router",
+    "routes.hotpath_admin:router",
+    "routes.gain_goal_admin:router",
+    "routes.risk_sizer_admin:router",
+    "routes.options_admin:router",
+    "routes.pipeline_admin:router",
+    "routes.scanner_admin:router",
+    "routes.risk_budget_admin:router",
+    "routes.opportunity_admin:router",
+    "routes.kraken_universe_admin:router",
+    "routes.intent_sweeper_admin:router",
+    "routes.counterfactuals_admin:router",
+    "routes.broker_fills_admin:router",
+    "routes.intent_summary:router",
+    "routes.mc_connection_stream:router",
+    "routes.position_misread_admin:router",
+    "shared.coordinator.routes:router",
+    "shared.runtime_bundles:router",
+    "shared.public_api.news:router",
+    "shared.public_api.dark_pool:router",
+    "shared.diagnostics:router",
+    "shared.doctrine_routes:router",
+    "shared.doctrine:scorecard_router",
+    "shared.doctrine:auto_retire_router",
+    "routes.admin_brackets:router",
+    "routes.trader_stats:router",
+    "shared.quantum_routes:router",
+    "shared.personalities_routes:router",
+    "shared.flags:router",
+    "runtimes.alpha.routes:router",
+    "runtimes.camaro.routes:router",
+    "runtimes.chevelle.routes:router",
+    "routes.storage_rollup:router",
+    "routes.trading_controls:router",
+    "routes.admin_learning:router",
+    "routes.alpha_vantage_admin:router",
+    "routes.broker_lane_admin:router",
+    "routes.symbol_registry_admin:router",
+    "routes.live_universe_admin:router",
+    "routes.intent_origin:router",
+    "routes.webull_admin:router",
+    "routes.broker_selection:router",
+    "routes.strategy_reference:router",
+    "routes.outcome_join_admin:router",
+    "routes.safety_gates_audit:router",
+    "routes.intents_purge_admin:router",
 )
-from routes.admin_spread_quality import (
-    router as admin_spread_quality_router,
-)
-# admin_brain_metrics retired 2026-02-28 — route was orphaned (no
-# frontend consumer) and broken (references PIPELINE_RECEIPTS_COLL
-# which was deleted in the 2026-02-27 architectural reduction).
-# Live-path metrics now live at /api/admin/intent-clearance-funnel.
-from routes.webull_credentials import router as webull_credentials_router  # 2026-02-17 operator-input flow
-from routes.intent_clearance_funnel import router as intent_clearance_funnel_router  # 2026-02-17 monday tuning tile
-from routes.seats_reverse_sync import router as seats_reverse_sync_router  # 2026-02-17 recovery tool
-from routes.kraken_pair_floors import router as kraken_pair_floors_router  # 2026-02-17 min_notional dam fix
-from routes.admin_system_flags import router as admin_system_flags_router
-from routes.admin_brain_legend import router as admin_brain_legend_router  # 2026-02-23
-from routes.admin_execution_lifecycle_funnel import router as admin_execution_lifecycle_funnel_router  # 2026-02-23 P3
-# admin_native_runtime_status removed 2026-07-19 — the native-runtime
-# subsystem was never enabled; only the dead NativeBrainRuntimeTile read it.
-from routes.admin_brain_input_health import router as admin_brain_input_health_router  # 2026-02-23 instrument quality
-from routes.admin_external_signals import router as admin_external_signals_router  # 2026-02-23 witness-council read-only panel
-from routes.admin_feature_coverage import router as admin_feature_coverage_router  # 2026-02-19 doctrine-input coverage health
-from routes.admin_capital_ledger import router as admin_capital_ledger_router  # 2026-02-20 per-lane capital cap ledger
-from routes.admin_session_fingerprint import router as admin_session_fingerprint_router  # 2026-02-20 distribution snapshot job
-from routes.webull_caps_admin import router as webull_caps_admin_router
-from routes.exposure_caps_admin import router as exposure_caps_admin_router
-from routes.equity_extended_hours_admin import router as equity_extended_hours_admin_router
-from routes.brain_tuning_admin import router as brain_tuning_admin_router
-from routes.pipeline_blocker_histogram import router as pipeline_blocker_histogram_router
-from routes.server_time_admin import router as server_time_admin_router
-from routes.db_admin import router as db_admin_router
-from routes.healthcheck_full import router as healthcheck_full_router
-from routes.pipeline_doctor import router as pipeline_doctor_router
-from routes.kill_map import router as kill_map_router
-from routes.intent_trace import router as intent_trace_router
-from routes.admin_quiver import router as admin_quiver_router
-from routes.broker_selection import router as broker_selection_router
-from routes.strategy_reference import router as strategy_reference_router
-from routes.outcome_join_admin import router as outcome_join_admin_router
-from routes.safety_gates_audit import router as safety_gates_audit_router
-from routes.finnhub_backfill import router as finnhub_backfill_router
-from routes.runtime_broker_status import router as runtime_broker_status_router
-from routes.runtime_position_close import router as runtime_position_close_router
-from routes.runtime_cross_brain_memories import (
-    router as cross_brain_memories_router,
-)
-from routes.admin_brackets import router as admin_brackets_router
-from routes.trader_stats import router as trader_stats_router  # 2026-07-13 per-brain fires + dissent
 
-from runtimes.alpha.routes import router as alpha_router
-from runtimes.camaro.routes import router as camaro_router
-from runtimes.chevelle.routes import router as chevelle_router
+# `routes/` modules intentionally NOT auto-registered. Add a module
+# name here (without the `routes.` prefix) to park it unwired.
+SKIP_DISCOVERY: frozenset[str] = frozenset()
+
+
+def _resolve(spec: str):
+    mod_path, attr = spec.split(":")
+    return getattr(importlib.import_module(mod_path), attr)
 
 
 def register_routers(api_router: APIRouter) -> None:
-    """Attach every sub-router to the parent `api_router`.
+    """Attach every sub-router to the parent `api_router` in
+    manifest order, then sweep `routes/` for unlisted modules."""
+    for spec in ROUTER_SPECS:
+        obj = _resolve(spec)
+        for r in (obj if isinstance(obj, (list, tuple)) else (obj,)):
+            api_router.include_router(r)
 
-    Order matches the original `server.py` 1:1. Adding a new router:
-    drop the import above and add the `include_router(...)` call at
-    the end of this function — same convention the old file used.
-    """
-    api_router.include_router(auth_router)
-    api_router.include_router(shared_router)
-    api_router.include_router(ingest_router)
-    api_router.include_router(opinions_router)
-    api_router.include_router(outcomes_router)
-    api_router.include_router(conflicts_router)
-    api_router.include_router(positions_router)
-    api_router.include_router(public_api_router)
-    api_router.include_router(public_traffic_router)
-    api_router.include_router(seat_performance_router)
-    api_router.include_router(technicals_router)
-    api_router.include_router(kraken_router)
-    api_router.include_router(ibkr_router)
-    api_router.include_router(public_router)
-    api_router.include_router(roster_router)
-    # `doctrine_router` here is the shared.doctrine umbrella router
-    # (NOT shared.doctrine_routes — that's a different file). The
-    # original server.py imported both and shadowed the name; we
-    # keep them as `doctrine_legacy_router` and `doctrine_router`
-    # below to avoid the name collision while preserving order.
-    api_router.include_router(doctrine_legacy_router)
-    api_router.include_router(intents_router)
-    api_router.include_router(mc_arbiter_router)
-    api_router.include_router(mc_parity_router)
-    api_router.include_router(mc_pulse_health_router)
-    api_router.include_router(executor_router)
-    api_router.include_router(auditor_router)
-    api_router.include_router(seat_nudges_router)
-    api_router.include_router(admin_hot_brain_router)
-    api_router.include_router(admin_spread_quality_router)
-    api_router.include_router(webull_credentials_router)  # 2026-02-17 operator-input Webull connect
-    api_router.include_router(intent_clearance_funnel_router)  # 2026-02-17 monday tuning tile
-    api_router.include_router(seats_reverse_sync_router)  # 2026-02-17 recovery tool
-    api_router.include_router(kraken_pair_floors_router)  # 2026-02-17 min_notional dam fix
-    api_router.include_router(admin_system_flags_router)
-    api_router.include_router(admin_brain_legend_router)  # 2026-02-23 dual-field migration
-    api_router.include_router(admin_execution_lifecycle_funnel_router)  # 2026-02-23 P3 lifecycle funnel
-    # native-runtime status route removed 2026-07-19
-    api_router.include_router(admin_brain_input_health_router)  # 2026-02-23 instrument quality
-    api_router.include_router(admin_external_signals_router)  # 2026-02-23 witness-council read-only panel
-    api_router.include_router(admin_feature_coverage_router)  # 2026-02-19 doctrine-input coverage health
-    api_router.include_router(admin_capital_ledger_router)  # 2026-02-20 per-lane capital cap ledger
-    api_router.include_router(admin_session_fingerprint_router)  # 2026-02-20 distribution snapshot job
-    api_router.include_router(webull_caps_admin_router)
-    api_router.include_router(exposure_caps_admin_router)
-    api_router.include_router(equity_extended_hours_admin_router)
-    api_router.include_router(brain_tuning_admin_router)
-    api_router.include_router(pipeline_blocker_histogram_router)
-    api_router.include_router(server_time_admin_router)
-    api_router.include_router(db_admin_router)
-    api_router.include_router(healthcheck_full_router)
-    api_router.include_router(pipeline_doctor_router)
-    api_router.include_router(kill_map_router)
-    api_router.include_router(intent_trace_router)
-    api_router.include_router(admin_quiver_router)
-    api_router.include_router(live_positions_router)
-    api_router.include_router(brain_lane_policy_router)
-    api_router.include_router(redeye_bridge_router)
-    api_router.include_router(chevelle_bridge_router)
-    # Equity bridges for all four brains (camino, barracuda, hellcat, gto).
-    # Generated via `shared.intent_bridge_factory.make_intent_bridge`.
-    for _eq_router in EQUITY_ROUTERS:
-        api_router.include_router(_eq_router)
-    # Crypto bridges for camino + barracuda (GTO + Hellcat already
-    # have legacy crypto bridges above). Same factory, lane=crypto.
-    for _cr_router in CRYPTO_ROUTERS:
-        api_router.include_router(_cr_router)
-    api_router.include_router(risk_router)
-    api_router.include_router(vrl_router)
-    api_router.include_router(mc_shelly_router)
-    api_router.include_router(patches_router)
-    api_router.include_router(platform_survival_router)
-    api_router.include_router(sidecar_checkin_router)
-    api_router.include_router(confidence_floor_sweep_router)
-    api_router.include_router(snapshot_completeness_router)
-    api_router.include_router(memory_kernel_router)
-    api_router.include_router(broker_freeze_router)
-    api_router.include_router(broker_reconcile_router)
-    api_router.include_router(data_stack_admin_router)
-    api_router.include_router(market_data_keys_router)
-    api_router.include_router(brain_outages_router)
-    api_router.include_router(market_data_snapshot_router)
-    api_router.include_router(daily_snapshots_router)
-    api_router.include_router(finnhub_backfill_router)
-    api_router.include_router(brain_runtime_router)
-    api_router.include_router(brain_memory_ingest_router)
-    api_router.include_router(runtime_broker_status_router)
-    api_router.include_router(runtime_position_close_router)
-    api_router.include_router(cross_brain_memories_router)
-    api_router.include_router(llm_ledger_router)
-    api_router.include_router(ai_run_router)
-    api_router.include_router(rise_ai_threads_router)
-    api_router.include_router(brain_emission_diagnose_router)
-    api_router.include_router(seat_registry_diagnose_router)
-    api_router.include_router(rise_ai_admin_router)
-    api_router.include_router(brain_doctrine_hint_router)
-    api_router.include_router(lane_execution_router)
-    api_router.include_router(observation_receipts_router)
-    api_router.include_router(learning_ladder_router)
-    api_router.include_router(auto_router_admin_router)
-    api_router.include_router(retention_admin_router)
-    api_router.include_router(gate_failure_digest_router)
-    api_router.include_router(kraken_pair_admin_router)
-    api_router.include_router(universe_admin_router)
-    api_router.include_router(exit_admin_router)
-    api_router.include_router(expectancy_admin_router)
-    api_router.include_router(hotpath_admin_router)
-    api_router.include_router(gain_goal_admin_router)
-    api_router.include_router(risk_sizer_admin_router)
-    api_router.include_router(options_admin_router)
-    api_router.include_router(pipeline_admin_router)
-    api_router.include_router(scanner_admin_router)
-    api_router.include_router(risk_budget_admin_router)
-    api_router.include_router(opportunity_admin_router)
-    api_router.include_router(kraken_universe_admin_router)
-    api_router.include_router(intent_sweeper_admin_router)
-    api_router.include_router(counterfactuals_admin_router)
-    api_router.include_router(broker_fills_admin_router)
-    api_router.include_router(intent_summary_router)
-    api_router.include_router(mc_connection_stream_router)
-    api_router.include_router(position_misread_admin_router)
-
-    api_router.include_router(coordinator_router)
-    api_router.include_router(runtime_bundles_router)
-    api_router.include_router(public_news_router)
-    api_router.include_router(public_darkpool_router)
-    api_router.include_router(diagnostics_router)
-    api_router.include_router(doctrine_router)
-    api_router.include_router(doctrine_scorecard_router)
-    api_router.include_router(doctrine_auto_retire_router)
-    api_router.include_router(admin_brackets_router)
-    api_router.include_router(trader_stats_router)  # 2026-07-13 per-brain fires + dissent (Brain Personalities + Operator Control)
-    api_router.include_router(quantum_router)
-    api_router.include_router(personalities_router)
-    api_router.include_router(flags_router)
-    api_router.include_router(alpha_router)
-    api_router.include_router(camaro_router)
-    api_router.include_router(chevelle_router)
-    api_router.include_router(storage_rollup_router)
-    api_router.include_router(trading_controls_router)
-    api_router.include_router(admin_learning_router)
-    api_router.include_router(alpha_vantage_admin_router)
-    api_router.include_router(broker_lane_admin_router)
-    api_router.include_router(symbol_registry_admin_router)
-    api_router.include_router(live_universe_admin_router)
-    api_router.include_router(intent_origin_router)
-    api_router.include_router(webull_admin_router)
-    api_router.include_router(broker_selection_router)
-    api_router.include_router(strategy_reference_router)
-    api_router.include_router(outcome_join_admin_router)
-    api_router.include_router(safety_gates_audit_router)
-    # Research Layer — read-only Strategy Lab. NEVER routes orders;
-    # only enriches intents with evidence the brain can opine on.
-    # Verifier — Lessons, Brain Report Cards, and the Setup Memory
-    # confidence-adjuster kill switch. All read-only or admin-only.
-    # Intents purge — admin-only cleanup for non-executable HOLD/WATCH
-    # intents. Dry-run by default; refuses to touch executed history.
-    from routes.intents_purge_admin import router as intents_purge_router
-    api_router.include_router(intents_purge_router)
-    # layer's 50-bar warmup floor. Separate endpoint from /status so
-    # /status stays Atlas-free.
+    # Convention discovery — appended at the END so a forgotten
+    # manifest line can never shadow an existing route.
+    listed = {s.split(":", 1)[0] for s in ROUTER_SPECS}
+    import routes as routes_pkg  # noqa: WPS433
+    for info in sorted(pkgutil.iter_modules(routes_pkg.__path__), key=lambda i: i.name):
+        mod_path = f"routes.{info.name}"
+        if mod_path in listed or info.name in SKIP_DISCOVERY:
+            continue
+        r = getattr(importlib.import_module(mod_path), "router", None)
+        if isinstance(r, APIRouter):
+            logger.warning(
+                "router_registry: auto-discovered unlisted %s — appended "
+                "at end; add it to ROUTER_SPECS to pin its order",
+                mod_path,
+            )
+            api_router.include_router(r)

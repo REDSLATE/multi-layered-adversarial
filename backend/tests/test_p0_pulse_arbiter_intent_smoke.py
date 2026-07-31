@@ -332,8 +332,12 @@ class TestE2EPulseToIntent:
     """
 
     def _list_arbiter_intents(self, auth_headers):
+        # sort=newest: the default "conviction" sort hides fresh
+        # intents once 100+ higher-confidence rows exist in the
+        # retention window (observed 2026-07-31: top-100 floor 0.75,
+        # fresh SELLs at 0.44 → invisible forever → false failure).
         r = requests.get(
-            f"{BASE_URL}/api/intents?limit=100&include_disabled_lanes=true",
+            f"{BASE_URL}/api/intents?limit=100&include_disabled_lanes=true&sort=newest",
             headers=auth_headers, timeout=20,
         )
         if r.status_code != 200:
