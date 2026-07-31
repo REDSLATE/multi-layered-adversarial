@@ -2846,3 +2846,129 @@ Only layer 1 produces unstamped pending intents. Prod tile shows it ON.
 Redeploy prod, then either screenshot the Kill Map verdict (now self-diagnosing) or
 open `/api/admin/auto-router/pick-probe`.
 
+---
+
+## 2026-07-31 — Iteration 31: Entry Timing Gate — parabolic detection promoted from advisory size-nudge to HARD veto
+
+### Operator directive
+> "Stop buying after momentum is done."
+
+The parabolic classifier has been stamping `parabolic_phase` / `velocity_5m` /
+`vwap_distance_pct` on every equity snapshot since 2026-06-11, but the only thing
+consuming it was an ADVISORY score-delta in `doctrine/base_labels.py`
+(accumulation +0.05, parabolic −0.10..−0.30, topping −0.25, fade −0.25). A score
+nudge shrinks an order; it does not refuse one. Net effect: the system kept buying
+tops, just in miniature — and the intent that was emitted at $5.00 could still
+submit minutes later at $5.40 because nothing re-checked the price at submit time.
+
+### What shipped
+**New stage — `_gate_entry_timing` (`shared/auto_router_stages.py`).** The gate
+chain in `shared/auto_router.py::_route_one` is now:
+
+    Brain → Master switch → Seat/Doctrine → Risk → **Entry Timing** → Broker → Finalize
+
+Same stage contract as every other stage: return `None` to continue, a verdict dict
+to short-circuit. Scope and safety:
+- **BUY on the equity lane only.** SELL / COVER / SHORT and every non-equity lane
+  pass through untouched — refusing to exit a topping stock is the opposite of the
+  intent here.
+- **Fails OPEN on every missing input**: no `parabolic_phase` (bars too thin for the
+  classifier), no fresh price, or an evaluation exception → pass. Missing data never
+  hard-blocks a trade.
+- **No wall-clock age limit.** The router ticks ~30s and reconciliation skips
+  <30s submits, so a sub-tick age gate would reject nearly everything. Staleness is
+  measured as PRICE EXTENSION SINCE EMIT, not seconds.
+
+**Hard thresholds (`shared/entry_timing.py`, new pure module).**
+- `parabolic_phase ∈ {parabolic, topping, fade}` → block.
+- `velocity_5m` above the per-universe-class ceiling → block.
+- `vwap_distance_pct` above the per-universe-class ceiling → block.
+- Fresh-price extension above the emit-time snapshot price beyond the ceiling → block.
+
+Thresholds are selected via the existing
+`doctrine/universe_classifier.py::classify_universe` so small-cap momentum names are
+strictest, large-cap/ETF looser, and crypto carries its own profile. Every value is
+env-overridable PER CLASS: `ENTRY_TIMING_MAX_VELOCITY_5M_PCT_<CLASS>`,
+`ENTRY_TIMING_MAX_VWAP_DIST_PCT_<CLASS>`, `ENTRY_TIMING_MAX_EXTENSION_PCT_<CLASS>`
+(`<CLASS>` ∈ SMALL_CAP_MOMENTUM / LARGE_CAP / ETF / CRYPTO / UNKNOWN).
+
+**Fresh-price revalidation at submit.** Immediately before the broker stage the gate
+resolves the CURRENT price from the existing Webull quotes client
+(`shared.market_data.webull_quotes.get_quotes_client().equity_snapshot`) — the same
+source `broker/webull.py::_resolve_instrument_id` and the snapshot enricher already
+read. No new data source. Extension is recomputed against `snapshot.price` and the
+price the decision was made on is stamped on the intent
+(`entry_timing_market_price`).
+
+### Reason codes (`broker_error_bucket="entry_timing"`)
+| code | fires when |
+|---|---|
+| `PARABOLIC_CHASE_RISK` | phase = parabolic |
+| `LATE_MOMENTUM_ENTRY` | phase = topping |
+| `ENTRY_WINDOW_EXPIRED` | phase = fade |
+| `MISSED_ENTRY_CHASE_RISK` | `velocity_5m` over class ceiling |
+| `TOO_FAR_ABOVE_VWAP` | `vwap_distance_pct` over class ceiling |
+| `MOVE_ALREADY_EXTENDED` | fresh price ran past emit price (intent still young) |
+| `STALE_BUY_INTENT` | same, on an intent that has been sitting a while |
+
+A block writes exactly ONE `executions.record(...)` row
+(`broker_status="blocked_by_entry_timing"`, `ok=False`) and one
+`shared_intents.update_one` stamp — `gate_state="blocked"`, `broker_reason=<code>`,
+`broker_error_bucket="entry_timing"`, `broker_error_detail=<phase/extension detail>`
+— identical in shape to the market-closed pre-flight gate. Any capital the risk
+stage reserved is released; the broker is never called.
+
+### Env flags — BOTH DEFAULT TO A SAFE SHADOW POSTURE
+- **`ENTRY_TIMING_GATE_ENABLED` (default OFF).** With the flag off the stage still
+  evaluates and stamps `entry_timing_shadow` (`would_block`, reason, detail,
+  thresholds, market price) but NEVER blocks. Merging this changes no runtime
+  behaviour — measure the would-block hit rate on prod first, then arm.
+- **`PARABOLIC_SCORE_DELTA_ENABLED` (defaults to the INVERSE of
+  `ENTRY_TIMING_GATE_ENABLED`).** Arming the gate automatically demotes the legacy
+  advisory score deltas in `doctrine/base_labels.py` to labels-only, so the two
+  systems are never both half-managing the same risk. Set it explicitly to override
+  either way. Both flags read at CALL time — no redeploy to flip.
+
+### base_labels demotion
+`PARABOLIC_LATE_ENTRY_RISK`, `TOPPING_DISTRIBUTION_STARTED`,
+`FADE_LOWER_HIGHS_LOWER_LOWS`, `ACCUMULATION_HEALTHY_EXPANSION` and their `reasons`
+are ALWAYS emitted — they are the observability trail. Only the `score +=/-=`
+mutations are gated, because once the gate owns the "too late" veto those deltas are
+double-counting that dilutes the doctrine quality score.
+
+### Learning capture — UNCHANGED, and the point of the design
+`capture_experience(...)` for executed orders is untouched. A late entry blocked by
+this gate is a blocked directional intent with `gate_state="blocked"`, which is
+exactly the `shared/counterfactuals` predicate: it still distils into ONE
+`counterfactual_signals` row and still gets resolved MISSED_WIN / CORRECT_BLOCK /
+UNDETERMINED on the reconcile sweep. That verdict stream is what validates or
+falsifies the thresholds above — it replaces the old "learn by trading it small"
+rationale WITHOUT risking capital to learn.
+
+### Tests
+- `backend/tests/test_entry_timing_gate.py` (new, 32 tests): allowed early
+  reclaim/accumulation; parabolic/topping/fade hard-block; extension-beyond-emit
+  block; per-class threshold differences + env overrides; SELL/COVER/SHORT and
+  crypto never blocked; fail-open on missing phase/price/exception; gate OFF never
+  blocks; counterfactual row still written; base_labels demotion.
+- `backend/tests/test_live_execution_path.py`: entry-timing block → broker NEVER
+  called, exactly one executions row, intent stamped
+  `broker_error_bucket="entry_timing"`; shadow default still reaches the broker; and
+  a `@pytest.mark.tripwire` pin that `_gate_entry_timing` sits between `_gate_risk`
+  and `_route_and_submit`.
+- Also fixed in that file: `_apply_patches` now re-anchors
+  `shared.broker_router` / `shared.market_hours` / `shared.kraken_pair_floors` /
+  `shared.auto_router_stages` onto the `shared` package before patching. The
+  string-form patches resolve through `sys.modules` while the stages resolve through
+  the parent-package attribute, so after an earlier `patch.dict(sys.modules, ...)`
+  unwind the patches silently missed and tests hit the REAL broker/market clock.
+- `pytest -m tripwire -q`: 405 passed / 30 skipped before → 416 passed / 30 skipped
+  after.
+
+### Rollout
+1. Merge (no behaviour change — gate is in shadow).
+2. Watch `entry_timing_shadow.would_block` on prod intents for a session or two;
+   tune `ENTRY_TIMING_MAX_*_<CLASS>` per universe class.
+3. Set `ENTRY_TIMING_GATE_ENABLED=true` — this also demotes the base_labels deltas.
+4. Grade the gate on the `counterfactual_signals` MISSED_WIN vs CORRECT_BLOCK split
+   for `broker_error_bucket="entry_timing"`.

@@ -52,6 +52,7 @@ either intentional (with the test updated) or reverted.
 """
 from __future__ import annotations
 
+import importlib
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -262,6 +263,22 @@ def _apply_patches(s, *, broker_result=None, broker_raises=None, floor_result=No
     # fire. We patch BOTH surfaces so whichever path `_route_one`
     # uses lands on the mock.
     import shared as _shared_pkg  # noqa: WPS433
+
+    # 2026-07-31 — same class of bug, other direction. Any earlier
+    # `patch.dict(sys.modules, ...)` that unwinds while a submodule was
+    # imported INSIDE the block drops that submodule from sys.modules;
+    # the re-import then rebinds sys.modules but leaves the `shared`
+    # package attribute pointing at the previous module object. The
+    # string-form patches below resolve through sys.modules while
+    # `_route_and_submit`'s `from shared.broker_router import ...`
+    # resolves through the parent attribute → the patch silently misses
+    # and the test hits the REAL broker / market-hours clock. Re-anchor
+    # both surfaces before patching.
+    for _mod_name in ("broker_router", "market_hours", "kraken_pair_floors",
+                      "auto_router_stages"):
+        importlib.import_module(f"shared.{_mod_name}")
+        setattr(_shared_pkg, _mod_name, sys.modules[f"shared.{_mod_name}"])
+
     stack.enter_context(
         patch.object(_shared_pkg, "seat", s["seat_mod"], create=True),
     )
@@ -1684,3 +1701,130 @@ async def test_reconcile_rate_limits_back_to_back_calls():
     assert c2["skipped_rate_limited"] == 1
     # Adapter was called only once total (first sweep only).
     assert fake.adapter.get_order.await_count == 1
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ENTRY TIMING GATE (2026-07-31) — hard late-entry veto between Risk
+# and Broker. Full behaviour matrix lives in
+# `tests/test_entry_timing_gate.py`; what's pinned HERE is the
+# end-to-end contract through `_route_one` plus the position of the
+# stage in the chain.
+# ═══════════════════════════════════════════════════════════════════
+
+def _parabolic_intent(**overrides):
+    return _intent(
+        intent_id="test-intent-entry-timing",
+        symbol="HOTH",
+        snapshot={
+            "symbol": "HOTH",
+            "price": 5.00,
+            "market_cap_band": "small",
+            "parabolic_phase": "parabolic",
+            "velocity_5m": 14.0,
+            "vwap_distance_pct": 9.5,
+        },
+        **overrides,
+    )
+
+
+@pytest.mark.asyncio
+async def test_entry_timing_block_skips_broker_and_writes_one_row(
+    route_one_scaffold, monkeypatch,
+):
+    """A late (parabolic) BUY must die between Risk and Broker:
+    broker NEVER called, exactly one `executions` row, intent stamped
+    `gate_state=blocked` with `broker_error_bucket=entry_timing`."""
+    from shared import auto_router_stages as stages
+
+    s = route_one_scaffold
+    s["seat_mod"].decide = AsyncMock(return_value=_seat_fire())
+    s["risk_mod"].check = AsyncMock(return_value=_RiskOK())
+    monkeypatch.setenv("ENTRY_TIMING_GATE_ENABLED", "true")
+
+    async def _fresh(symbol, lane):  # noqa: ARG001
+        return 5.00
+
+    monkeypatch.setattr(stages, "_fetch_fresh_price", _fresh)
+
+    with _apply_patches(s):
+        r = await s["ar"]._route_one(_parabolic_intent())
+
+    assert r["verdict"] == "blocked"
+    assert r["reason"] == "PARABOLIC_CHASE_RISK"
+    assert r["broker_error_bucket"] == "entry_timing"
+
+    # Broker was never reached.
+    assert len(s["broker_calls"]) == 0
+
+    # Exactly one terminal gate_state stamp, and it's the gate's.
+    stamps = [d["update"]["$set"] for d in s["updated_docs"]
+              if "gate_state" in d["update"].get("$set", {})]
+    assert len(stamps) == 1
+    assert stamps[0]["gate_state"] == "blocked"
+    assert stamps[0]["broker_reason"] == "PARABOLIC_CHASE_RISK"
+    assert stamps[0]["broker_error_bucket"] == "entry_timing"
+    assert stamps[0]["entry_timing_market_price"] == 5.00
+
+    # Exactly one executions row for the attempt, ok=False.
+    s["executions_mod"].record.assert_awaited_once()
+    kwargs = s["executions_mod"].record.await_args.kwargs
+    assert kwargs["ok"] is False
+    assert kwargs["broker_status"] == "blocked_by_entry_timing"
+
+
+@pytest.mark.asyncio
+async def test_entry_timing_shadow_default_still_reaches_broker(
+    route_one_scaffold, monkeypatch,
+):
+    """Shipped default is SHADOW (`ENTRY_TIMING_GATE_ENABLED` unset):
+    the same parabolic BUY still executes, so merging the gate changes
+    no runtime behaviour until the operator arms it."""
+    from shared import auto_router_stages as stages
+
+    s = route_one_scaffold
+    s["seat_mod"].decide = AsyncMock(return_value=_seat_fire())
+    s["risk_mod"].check = AsyncMock(return_value=_RiskOK())
+    monkeypatch.delenv("ENTRY_TIMING_GATE_ENABLED", raising=False)
+
+    async def _fresh(symbol, lane):  # noqa: ARG001
+        return 5.00
+
+    monkeypatch.setattr(stages, "_fetch_fresh_price", _fresh)
+
+    with _apply_patches(s):
+        r = await s["ar"]._route_one(_parabolic_intent())
+
+    assert r["verdict"] == "executed", r
+    assert len(s["broker_calls"]) == 1
+    shadow = [d["update"]["$set"] for d in s["updated_docs"]
+              if "entry_timing_shadow" in d["update"].get("$set", {})]
+    assert len(shadow) == 1
+    assert shadow[0]["entry_timing_shadow"]["would_block"] is True
+
+
+@pytest.mark.tripwire
+def test_entry_timing_gate_sits_between_risk_and_broker():
+    """DOCTRINE PIN (2026-07-31): the gate chain order is
+
+        master switch → seat → risk → ENTRY TIMING → broker
+
+    `_gate_entry_timing` must run AFTER risk approval (so a blocked
+    intent has already been sized and audited) and BEFORE
+    `_route_and_submit` (so the fresh-price revalidation is the last
+    word before the broker). Moving it breaks the doctrine — update
+    this test only with an intentional, documented change."""
+    import inspect
+
+    from shared import auto_router as ar
+
+    src = inspect.getsource(ar._route_one)
+    chain = src[src.index("for stage in ("):]
+    chain = chain[:chain.index("):")]
+    order = []
+    for name in ("_gate_master_switch", "_gate_seat", "_gate_risk",
+                 "_gate_entry_timing", "_route_and_submit"):
+        order.append((chain.index(name), name))
+    assert [n for _i, n in sorted(order)] == [
+        "_gate_master_switch", "_gate_seat", "_gate_risk",
+        "_gate_entry_timing", "_route_and_submit",
+    ]
