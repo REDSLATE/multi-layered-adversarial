@@ -224,9 +224,10 @@ _LAST_STAGE_TRACE: dict = {}
 async def _route_one(intent: dict) -> dict:
     """Orchestrator (2026-02-11, P6b-finish).
 
-        Brain → [Master switch] → [Seat] → [Risk] → [Broker] → [Finalize]
+        Brain → [Master switch] → [Seat] → [Risk] → [Entry Timing]
+              → [Broker] → [Finalize]
 
-    The body has been flattened into 5 stage functions living in
+    The body has been flattened into stage functions living in
     `shared/auto_router_stages.py`. Each stage receives a shared
     `RouteContext` (see `auto_router_helpers.py`) and either returns
     None (continue) or a verdict dict (short-circuit).
@@ -238,10 +239,17 @@ async def _route_one(intent: dict) -> dict:
         terminal broker rejects release the reservation.
       * Broker taxonomy: deterministic errors terminate on first
         try; transient errors get AUTO_ROUTER_MAX_BROKER_RETRIES.
+
+    2026-07-31: `_gate_entry_timing` inserted between Risk and
+    Broker — the hard "don't buy after the momentum is done" veto,
+    including a fresh-price revalidation at submit. Position in the
+    chain is pinned by a tripwire test
+    (`tests/test_live_execution_path.py`).
     """
     from shared.auto_router_helpers import RouteContext
     from shared.auto_router_stages import (
         _finalize_gate_state,
+        _gate_entry_timing,
         _gate_master_switch,
         _gate_risk,
         _gate_seat,
@@ -267,6 +275,7 @@ async def _route_one(intent: dict) -> dict:
         _gate_master_switch,
         _gate_seat,
         _gate_risk,
+        _gate_entry_timing,
         _route_and_submit,
     ):
         name = stage.__name__

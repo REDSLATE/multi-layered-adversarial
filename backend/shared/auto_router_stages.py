@@ -654,6 +654,238 @@ async def _gate_risk(ctx: RouteContext) -> Optional[dict]:
     return None
 
 
+# ──────────────────── Stage 3.5 — Entry Timing ────────────────────
+# Doctrine (2026-07-31, operator directive): "stop buying after the
+# momentum is done". Parabolic/late-entry detection used to be an
+# advisory score-nudge in `doctrine/base_labels.py`, which still
+# shipped the order — just smaller. It is now a HARD veto sitting
+# between Risk approval and broker submission, plus a fresh-price
+# revalidation so a stale intent can't execute after the move ran.
+#
+# Blocked intents still flow into the learning system: the
+# `counterfactual_signals` distillation (shared/counterfactuals) picks
+# up every blocked directional intent and resolves MISSED_WIN /
+# CORRECT_BLOCK, which is how these thresholds get validated.
+
+async def _fetch_fresh_price(symbol: str, lane: str) -> Optional[float]:
+    """Resolve the CURRENT market price at submit time.
+
+    Reuses the existing Webull quotes client — the same source
+    `broker/webull.py::_resolve_instrument_id` reads its `last_price`
+    from and the same one the equity snapshot enricher uses. No new
+    data source. Returns None on any failure (fail-open).
+    """
+    sym = (symbol or "").upper().strip()
+    if not sym or (lane or "").lower() != "equity":
+        return None
+    try:
+        import asyncio  # noqa: WPS433
+
+        from shared.market_data.webull_quotes import (  # noqa: WPS433
+            get_quotes_client,
+        )
+        client = get_quotes_client()
+        loop = asyncio.get_running_loop()
+        snap = await loop.run_in_executor(None, client.equity_snapshot, sym)
+        snap = snap or {}
+        price = float(snap.get("price") or snap.get("ask") or 0.0)
+        return price if price > 0 else None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "entry_timing: fresh price lookup failed sym=%s: %r", sym, exc,
+        )
+        return None
+
+
+def _intent_age_sec(intent: dict) -> Optional[float]:
+    raw = intent.get("ingest_ts") or intent.get("created_at")
+    if not raw:
+        return None
+    try:
+        emitted = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if emitted.tzinfo is None:
+        emitted = emitted.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - emitted).total_seconds()
+
+
+async def _gate_entry_timing(ctx: RouteContext) -> Optional[dict]:
+    """Hard entry-timing veto — BUY intents on the equity lane only.
+
+    Contract: return None to continue, or a verdict dict to
+    short-circuit (same as every other stage).
+
+    Scope + safety:
+      * BUY only. SELL / COVER / SHORT and non-equity lanes pass
+        through untouched — this gate is about chasing a long after
+        the move already ran.
+      * Fails OPEN on every missing input (no `parabolic_phase`
+        because bars were too thin, no fresh price, evaluation
+        exception). Missing data never hard-blocks.
+      * `ENTRY_TIMING_GATE_ENABLED` defaults OFF → shadow posture:
+        the stage still evaluates and stamps `entry_timing_shadow`
+        with what it WOULD have done, but never blocks.
+    """
+    from shared import entry_timing  # noqa: WPS433
+
+    if ctx.action_upper != "BUY" or ctx.lane != "equity":
+        return None
+
+    try:
+        snapshot = ctx.intent.get("snapshot") or {}
+        if not isinstance(snapshot, dict):
+            snapshot = {}
+        symbol = str(ctx.intent.get("symbol") or "")
+        universe_class = entry_timing.universe_class_for(
+            snapshot, ctx.lane, symbol,
+        )
+        thresholds = entry_timing.thresholds_for(universe_class)
+        emit_price = snapshot.get("price")
+        # Only pay for a quote when the snapshot actually carries a
+        # phase — otherwise the evaluation fails open anyway.
+        phase = str(snapshot.get("parabolic_phase") or "").strip().lower()
+        fresh_price = (
+            await _fetch_fresh_price(symbol, ctx.lane)
+            if phase not in ("", "unknown", "none") else None
+        )
+        verdict = entry_timing.evaluate_entry_timing(
+            snapshot=snapshot,
+            thresholds=thresholds,
+            fresh_price=fresh_price,
+            emit_price=emit_price,
+            intent_age_sec=_intent_age_sec(ctx.intent),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "entry_timing: evaluation failed intent=%s — failing OPEN: %r",
+            ctx.intent_id, exc,
+        )
+        return None
+
+    enabled = entry_timing.gate_enabled()
+    eval_stamp = {
+        "enabled": enabled,
+        "would_block": bool(verdict["block"]),
+        "reason": verdict["reason"],
+        "detail": str(verdict["detail"])[:500],
+        "fail_open": verdict["fail_open"],
+        "universe_class": verdict["universe_class"],
+        "parabolic_phase": verdict["parabolic_phase"],
+        "velocity_5m": verdict["velocity_5m"],
+        "vwap_distance_pct": verdict["vwap_distance_pct"],
+        "extension_pct": verdict["extension_pct"],
+        "market_price": verdict["market_price"],
+        "emit_price": verdict["emit_price"],
+        "thresholds": verdict["thresholds"],
+        "ts": _now_iso(),
+    }
+
+    if not verdict["block"] or not enabled:
+        # Shadow / pass path: record the evaluation (including the
+        # fresh market price the decision was made on) but never
+        # touch `gate_state`. Nothing to record when the snapshot
+        # carried no phase at all — that's the no-op fail-open.
+        if verdict["parabolic_phase"] is None:
+            return None
+        if verdict["block"]:
+            logger.warning(
+                "entry_timing SHADOW would-block intent=%s symbol=%s "
+                "reason=%s detail=%s",
+                ctx.intent_id, symbol, verdict["reason"], verdict["detail"],
+            )
+        try:
+            await _db()[SHARED_INTENTS].update_one(
+                {"intent_id": ctx.intent_id},
+                {"$set": {
+                    "entry_timing_shadow": eval_stamp,
+                    "entry_timing_market_price": verdict["market_price"],
+                }},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
+    # ── Hard block ─────────────────────────────────────────────────
+    from shared import executions  # noqa: WPS433
+
+    sd = ctx.sd
+    rc = ctx.rc
+    reason_code = verdict["reason"]
+    detail = str(verdict["detail"])[:500]
+    logger.warning(
+        "entry_timing BLOCK intent=%s symbol=%s reason=%s detail=%s",
+        ctx.intent_id, symbol, reason_code, detail,
+    )
+    await executions.record(
+        intent=ctx.intent,
+        seat_verdict=sd.verdict,
+        seat_holder=sd.executor,
+        seat_reason=sd.reason,
+        strategist=sd.strategist,
+        governor=sd.governor,
+        executor=sd.executor,
+        auditor=sd.auditor,
+        angels=sd.angels,
+        risk_multiplier=sd.risk_multiplier,
+        risk_ok=getattr(rc, "ok", True),
+        risk_reason=getattr(rc, "reason", None),
+        notional_usd=ctx.final_notional,
+        broker_status="blocked_by_entry_timing",
+        exception_type="EntryTimingBlocked",
+        exception_msg=f"{reason_code}: {detail}",
+        ok=False,
+    )
+    block_stamp = {
+        "gate_state": "blocked",
+        "last_submit_ts": _now_iso(),
+        "last_submit_by": _auto_router_email(),
+        "broker_reason": reason_code,
+        "broker_error_bucket": entry_timing.BLOCKED_BUCKET,
+        "broker_error_detail": detail,
+        "notional_source": ctx.notional_source,
+        "entry_timing_block": eval_stamp,
+        "entry_timing_market_price": verdict["market_price"],
+    }
+    try:
+        await _db()[SHARED_INTENTS].update_one(
+            {"intent_id": ctx.intent_id}, {"$set": block_stamp},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    # Mirror onto the in-memory doc so the counterfactual distiller
+    # sees a blocked directional intent whichever copy it reads.
+    ctx.intent.update(block_stamp)
+
+    # Release any capital the risk stage reserved — this intent is
+    # terminal and will never reach the broker.
+    if ctx.ledger_reserved:
+        try:
+            from shared.capital.ledger import release_capital  # noqa: WPS433
+            await release_capital(
+                lane=ctx.ledger_lane,
+                intent_id=ctx.intent_id,
+                amount=ctx.ledger_reserve_amount,
+                reason="entry_timing_blocked",
+            )
+            ctx.ledger_reserved = False
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "entry_timing: release_capital failed intent=%s",
+                ctx.intent_id,
+            )
+
+    return {
+        "verdict": "blocked",
+        "reason": reason_code,
+        "intent_id": ctx.intent_id,
+        "broker_error_bucket": entry_timing.BLOCKED_BUCKET,
+        "detail": detail,
+        "universe_class": verdict["universe_class"],
+        "market_price": verdict["market_price"],
+    }
+
+
 # ─────────────────────────── Stage 4 ───────────────────────────
 async def _route_and_submit(ctx: RouteContext) -> Optional[dict]:
     """Broker call + broker-error taxonomy handling.

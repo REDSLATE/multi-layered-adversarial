@@ -16,6 +16,17 @@ Doctrine (2026-02-17, rev2 — source-aligned):
     clamps at 1.0; tier upgrades just put more daylight between A and
     B/C setups so the Patent J ladder has signal to grade against.
 
+    Parabolic-phase enforcement (2026-07-31): the `parabolic_phase`
+    score deltas below are DEMOTED to labels-only. Phase enforcement
+    now lives in the hard Entry Timing Gate
+    (`shared/auto_router_stages.py::_gate_entry_timing`), which vetoes
+    late entries between Risk approval and broker submission. Keeping
+    the score mutations here as well would double-count the same risk
+    and dilute the quality score with a signal the gate already
+    enforces. Controlled by `PARABOLIC_SCORE_DELTA_ENABLED`, which
+    defaults to the INVERSE of `ENTRY_TIMING_GATE_ENABLED` so the two
+    systems are never both half-managing the same risk.
+
     The four brains consume these labels through their own
     `doctrine_interpreter.py` modules to produce role-flavored
     sidecars. Output is a `DoctrineLabels` packet that any intent /
@@ -23,6 +34,7 @@ Doctrine (2026-02-17, rev2 — source-aligned):
 """
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List
 
@@ -41,6 +53,28 @@ class DoctrineLabels:
 
 def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, x))
+
+
+def _env_bool(key: str, default: bool) -> bool:
+    raw = os.environ.get(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def parabolic_score_deltas_enabled() -> bool:
+    """Whether the legacy advisory `parabolic_phase` score deltas still
+    mutate the quality score.
+
+    Default: the deltas stay ON only while the Entry Timing Gate is
+    OFF. Arming `ENTRY_TIMING_GATE_ENABLED` hands phase enforcement to
+    the gate and demotes these deltas to labels-only. Set
+    `PARABOLIC_SCORE_DELTA_ENABLED` explicitly to override either way.
+
+    Read at CALL time so an operator env flip needs no redeploy.
+    """
+    gate_on = _env_bool("ENTRY_TIMING_GATE_ENABLED", False)
+    return _env_bool("PARABOLIC_SCORE_DELTA_ENABLED", not gate_on)
 
 
 # Source: 2025 Small Account Tool Kit pp. 1-3; Technical Analysis v3
@@ -217,33 +251,41 @@ def build_doctrine_labels(snapshot: Dict[str, Any]) -> DoctrineLabels:
         labels.append("MARKET_WEAK_REDUCE_RISK")
         reasons.append("weak_market_regime")
 
-    # ── parabolic-phase adaptive sizing (2026-06-11 operator directive) ──
-    # Reads the parabolic_phase classifier output. We intentionally do NOT
-    # add a hard block on any phase — sizing scales continuously via
-    # score deltas so the brain still ships intents on parabolic moves,
-    # just at smaller size with tighter stops. Quality over quantity.
+    # ── parabolic-phase labels (2026-06-11; demoted 2026-07-31) ──
+    # Reads the parabolic_phase classifier output. The LABELS and
+    # REASONS are always emitted — they're the observability trail the
+    # operator + counterfactual bucket analyzer key on.
+    #
+    # The SCORE deltas are the legacy advisory-sizing mechanism: they
+    # shrank the order instead of refusing it, so the system kept
+    # buying tops in miniature. The hard veto now lives in the Entry
+    # Timing Gate, so by default (`ENTRY_TIMING_GATE_ENABLED=true`)
+    # these deltas are zeroed and the quality score is no longer
+    # diluted by a signal another layer already enforces.
     parabolic_phase = str(snapshot.get("parabolic_phase", "")).lower()
     velocity_5m = float(snapshot.get("velocity_5m", 0.0))
+    score_deltas_on = parabolic_score_deltas_enabled()
     if parabolic_phase == "accumulation":
-        score += 0.05
+        if score_deltas_on:
+            score += 0.05
         labels.append("ACCUMULATION_HEALTHY_EXPANSION")
     elif parabolic_phase == "parabolic":
-        # Continuous scale-down: at +8% velocity → -0.10, at +20% → -0.30
-        # Linear clamp keeps the brain emitting but at progressively
-        # smaller size as the move extends past the fade-risk threshold.
-        v = max(0.0, velocity_5m - 8.0)  # excess above threshold
-        penalty = min(0.30, 0.10 + (v / 12.0) * 0.20)
-        score -= penalty
+        if score_deltas_on:
+            # Legacy continuous scale-down: at +8% velocity → -0.10,
+            # at +20% → -0.30.
+            v = max(0.0, velocity_5m - 8.0)  # excess above threshold
+            score -= min(0.30, 0.10 + (v / 12.0) * 0.20)
         labels.append("PARABOLIC_LATE_ENTRY_RISK")
         reasons.append(f"parabolic_5m_velocity_{velocity_5m:.1f}pct")
     elif parabolic_phase == "topping":
         # Two-red-bar confirmation already happened in the classifier.
-        # Score is hit hard — brains drop BUY confidence, raise SELL.
-        score -= 0.25
+        if score_deltas_on:
+            score -= 0.25
         labels.append("TOPPING_DISTRIBUTION_STARTED")
         reasons.append("topping_two_red_after_run")
     elif parabolic_phase == "fade":
-        score -= 0.25
+        if score_deltas_on:
+            score -= 0.25
         labels.append("FADE_LOWER_HIGHS_LOWER_LOWS")
         reasons.append("fade_off_session_peak")
 
