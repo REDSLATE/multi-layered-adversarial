@@ -117,6 +117,12 @@ async def create_trigger(intent: dict, reason: str, receipt: dict) -> None:
         {"_id": 1}, max_time_ms=3000,
     )
     if existing:
+        # Repeated blocks refresh the peak and count as prevented
+        # duplicates (surfaced in the prod-watch stats).
+        upd: dict = {"$inc": {"duplicate_blocks_prevented": 1}}
+        if block_price:
+            upd["$max"] = {"peak_price": block_price}
+        await db[TRIGGERS].update_one({"_id": existing["_id"]}, upd)
         return
     await db[TRIGGERS].insert_one({
         "trigger_id": str(uuid.uuid4()),

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -357,7 +358,67 @@ async def entry_timing_stats(_user: dict = Depends(get_current_user)):  # noqa: 
             "chase_avoided_avg_pct": avoided_pct,
             "missed_by_waiting_avg_pct": missed_pct,
         }
-    return {"ok": True, "windows": out}
+        # ── Prod Deploy Watch additions (2026-08-01) ──
+        from shared.risk_sizer.rearm_report import (  # noqa: WPS433
+            child_outcome_counts,
+        )
+        organic_q = {"action": "BUY", "ingest_ts": {"$gte": cut},
+                     "intent_id": {"$not": {
+                         "$regex": "^(validate-|rearmval|expireval)"}}}
+        out[label]["organic_buy_intents"] = await db[
+            SHARED_INTENTS].count_documents(organic_q, maxTimeMS=8000)
+        srcs: dict = {}
+        async for r in db[SHARED_INTENTS].aggregate([
+            {"$match": {"ingest_ts": {"$gte": cut},
+                        "entry_timing_receipt": {"$exists": True}}},
+            {"$group": {"_id":
+                "$entry_timing_receipt.confirmation_source",
+                "n": {"$sum": 1}}},
+        ], maxTimeMS=8000):
+            srcs[r["_id"] or "missing"] = r["n"]
+        out[label]["confirmation_sources"] = srcs
+        by_class: dict = {}
+        async for r in db[SHARED_INTENTS].aggregate([
+            {"$match": {"risk_reason": {"$regex": "^entry_timing:"},
+                        "ingest_ts": {"$gte": cut}}},
+            {"$group": {"_id": "$entry_timing_receipt.universe_class",
+                        "n": {"$sum": 1}}},
+        ], maxTimeMS=8000):
+            by_class[r["_id"] or "unknown"] = r["n"]
+        out[label]["blocks_by_class"] = by_class
+        out[label]["rearm_children"] = await child_outcome_counts(db, cut)
+        dup = 0
+        async for r in db["entry_rearm_triggers"].aggregate([
+            {"$match": {"created_at": {"$gte": cut}}},
+            {"$group": {"_id": None, "n": {"$sum": {"$ifNull": [
+                "$duplicate_blocks_prevented", 0]}}}},
+        ], maxTimeMS=8000):
+            dup = r["n"]
+        out[label]["duplicate_suppressions"] = dup
+    from shared.risk_sizer.rearm_report import first_organic_rearm  # noqa: WPS433
+    return {"ok": True, "windows": out,
+            "first_prod_rearm": await first_organic_rearm(db)}
+
+
+@router.get("/entry-timing/rearm-timeline")
+async def entry_timing_rearm_timeline(
+    trigger_id: Optional[str] = None,
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """The single linked timeline for the first (or a specific)
+    organic re-arm: original intent → block → watch → re-arm → child
+    → second gate chain → queue proof → broker → fills."""
+    from shared.risk_sizer.rearm_report import build_rearm_timeline  # noqa: WPS433
+    return await build_rearm_timeline(db, trigger_id)
+
+
+@router.get("/entry-timing/health")
+async def entry_timing_health(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Deployment guards for the three 2026-08-01 P0 fixes:
+    confirmation derivation, child-in-local-queue, freeze/thaw
+    roadguard consistency."""
+    from shared.risk_sizer.rearm_report import health_checks  # noqa: WPS433
+    return await health_checks(db)
 
 
 @router.get("/crypto-buy-allowlist")

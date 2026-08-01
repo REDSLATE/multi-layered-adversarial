@@ -13,7 +13,9 @@ from shared.universe.refresher import (
 )
 
 
-def _row(sym, *, pinned=False, price=10.0, volume=1000.0, chg=1.0):
+def _row(sym, *, pinned=False, price=10.0, volume=1_000_000.0, chg=1.0):
+    # volume default clears the 2026-07-28 $3M dollar-volume floor
+    # at the fixture prices — these tests pin the PRICE floor knob.
     return {
         "canonical_symbol": sym,
         "pinned": pinned,
@@ -83,7 +85,9 @@ def test_min_price_override_exempts_pins():
 
 
 def test_min_price_override_none_uses_default_dollar_floor():
-    rows = [_row("SUB", price=0.5), _row("OK", price=1.5)]
+    # default equity floor is $5 since 2026-07-28 ("garbage tickers")
+    rows = [_row("SUB", price=3.0, volume=8_000_000.0),
+            _row("OK", price=6.0, volume=8_000_000.0)]
     kept, _ = _apply_quality_filters(rows, "equity", min_price_override=None)
     assert [r["canonical_symbol"] for r in kept] == ["OK"]
 

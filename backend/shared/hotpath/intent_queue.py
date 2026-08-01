@@ -275,6 +275,22 @@ def is_executed(intent_id: str) -> bool:
     return bool(e and e["executed"])
 
 
+def has(intent_id: str) -> bool:
+    """Membership check (memory first, SQLite fallback) — used by the
+    P0 deployment health check: a REARMED child that exists in Mongo
+    but not here would never be routed (2026-08-01)."""
+    _load_cache()
+    if intent_id in _cache:
+        return True
+    try:
+        row = _conn().execute(
+            "SELECT 1 FROM intent_queue WHERE intent_id = ?", (intent_id,),
+        ).fetchone()
+        return row is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _maybe_prune() -> None:
     global _last_prune_at  # noqa: PLW0603
     now = time.monotonic()
