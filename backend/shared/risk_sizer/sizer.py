@@ -109,11 +109,14 @@ async def build_position_plan(
         _ps = policy_snapshot.get()
         if not skip_roadguard and (
             not _ps.get("master_switch_enabled", True)
-            or _ps.get("broker_freeze_reason")
+            or _ps.get("broker_frozen")
         ):
             return _reject(
                 "roadguard_hard_block",
-                roadguard_reason=_ps.get("broker_freeze_reason") or "master_switch_off",
+                roadguard_reason=(
+                    _ps.get("broker_freeze_reason") if _ps.get("broker_frozen")
+                    else "master_switch_off"
+                ),
             )
     except Exception:  # noqa: BLE001
         pass  # router master-switch gate still enforces upstream

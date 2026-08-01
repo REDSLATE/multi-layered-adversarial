@@ -235,6 +235,8 @@ async def _emit_child_intent(trigger: dict, receipt: dict) -> Optional[str]:
         "broker_error_bucket", "broker_order", "last_submit_ts",
         "entry_timing_decision", "entry_timing_reason",
         "entry_timing_receipt", "expired_reason", "expired_at", "ttl_at",
+        "route_timeouts", "last_route_timeout_at", "executed_at",
+        "execution", "execution_receipt_id",
     ):
         child.pop(stale, None)
     child.update({
@@ -253,6 +255,15 @@ async def _emit_child_intent(trigger: dict, receipt: dict) -> Optional[str]:
         "stop_price": receipt["new_invalidation_price"],
     })
     await db[SHARED_INTENTS].insert_one(child)
+    # Mirror into the LOCAL durable intent queue — the auto-router
+    # picks from it per-tick (Atlas is only an error fallback), so a
+    # Mongo-only insert would never be routed (2026-08-01 finding).
+    try:
+        from shared.hotpath import intent_queue  # noqa: WPS433
+        intent_queue.enqueue_safe(child)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("entry_rearm: child enqueue failed %s: %s",
+                       rearm_attempt_id[:8], exc)
     return rearm_attempt_id
 
 

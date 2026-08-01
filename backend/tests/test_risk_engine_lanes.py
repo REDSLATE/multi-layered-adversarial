@@ -95,13 +95,24 @@ async def test_roadguard_forces_notional_to_zero(wired):
 
     wired.setattr(
         "shared.hotpath.policy_snapshot.get",
-        lambda: {"master_switch_enabled": True,
+        lambda: {"master_switch_enabled": True, "broker_frozen": True,
                  "broker_freeze_reason": "operator_freeze"},
     )
     plan2 = await build_position_plan(
         _eq_intent(stop_price=196.0), governor_multiplier=1.0)
     assert plan2["approved"] is False
     assert plan2["final_notional"] == 0.0
+
+    # 2026-08-01 fix: a THAWED freeze (frozen=False) with a lingering
+    # reason string must NOT roadguard-block sizing.
+    wired.setattr(
+        "shared.hotpath.policy_snapshot.get",
+        lambda: {"master_switch_enabled": True, "broker_frozen": False,
+                 "broker_freeze_reason": "tripwire_assert_check"},
+    )
+    plan3 = await build_position_plan(
+        _eq_intent(stop_price=196.0), governor_multiplier=1.0)
+    assert plan3.get("reason") != "roadguard_hard_block"
 
 
 # ── Cases 1-2 on equity: edge gate is lane-agnostic ──────────────────

@@ -132,6 +132,23 @@ def evaluate(intent: dict, bars: list[dict], profiles: dict) -> dict:
 
     snapshot = intent.get("snapshot") or {}
     confirmation_price = _f(snapshot.get("price")) or _f(intent.get("price"))
+    confirmation_source = "snapshot_price" if confirmation_price else None
+    if not confirmation_price:
+        # Organic intents carry no `price` key — the ingest-time
+        # enrichment freezes bid/ask instead. The mid IS the frozen
+        # emit-time price (2026-08-01 validation finding).
+        bid, ask = _f(snapshot.get("bid")), _f(snapshot.get("ask"))
+        if bid and ask and ask >= bid:
+            confirmation_price = (bid + ask) / 2.0
+            confirmation_source = "snapshot_bid_ask_mid"
+    if not confirmation_price and bars:
+        # Last resort: close of the bar at/just before confirmation
+        # time (equity snapshots may lack quotes entirely).
+        ingest = str(intent.get("ingest_ts") or "")
+        prior = [b for b in bars if str(b.get("ts") or "") <= ingest]
+        if prior:
+            confirmation_price = _f(prior[-1].get("c"))
+            confirmation_source = "bar_at_confirmation"
     fresh_price = _f(bars[-1].get("c")) if bars else None
 
     uc = classify_universe({**snapshot, "lane": intent.get("lane"),
@@ -144,6 +161,7 @@ def evaluate(intent: dict, bars: list[dict], profiles: dict) -> dict:
         "universe_class": getattr(uc, "name", str(uc)),
         "profile": profile_name,
         "confirmation_price": confirmation_price,
+        "confirmation_source": confirmation_source,
         "confirmation_time": intent.get("ingest_ts"),
         "current_price": fresh_price,
     }

@@ -125,3 +125,51 @@ async def test_non_buy_and_non_timing_blocks_never_create_triggers(monkeypatch):
 def test_watcher_wired_into_lifespan():
     src = open("/app/backend/server_modules/lifespan.py").read()
     assert "entry_rearm" in src and "watcher_loop" in src
+
+
+@pytest.mark.asyncio
+async def test_child_intent_is_enqueued_locally(monkeypatch):
+    """2026-08-01 validation finding: the router picks from the LOCAL
+    intent queue — a Mongo-only child insert is never routed."""
+    from shared.risk_sizer import entry_rearm as mod
+
+    inserted, enqueued = [], []
+
+    class _Intents:
+        async def find_one(self, *a, **k):
+            return {"intent_id": "orig-1", "action": "BUY",
+                    "symbol": "X/USD", "lane": "crypto",
+                    "snapshot": {"bid": 1.0, "ask": 1.02},
+                    "gate_state": "blocked", "executed": False,
+                    "route_timeouts": 3, "risk_reason": "old"}
+        async def insert_one(self, doc):
+            inserted.append(doc)
+
+    class _FakeDB(dict):
+        def __getitem__(self, k):
+            return _Intents()
+
+    import db as dbmod
+    monkeypatch.setattr(dbmod, "db", _FakeDB(), raising=False)
+    from shared.hotpath import intent_queue
+    monkeypatch.setattr(intent_queue, "enqueue_safe",
+                        lambda doc: enqueued.append(doc))
+
+    trigger = {"trigger_id": "trig-1", "original_intent_id": "orig-1"}
+    receipt = {"new_confirmation_price": 1.05,
+               "new_invalidation_price": 0.98}
+    child_id = await mod._emit_child_intent(trigger, receipt)
+
+    assert child_id
+    assert len(inserted) == 1 and len(enqueued) == 1
+    child = inserted[0]
+    assert child["intent_id"] == child_id != "orig-1"
+    assert child["gate_state"] == "pending" and child["executed"] is False
+    assert child["rearm_of"] == "orig-1"
+    assert child["trigger_id"] == "trig-1"
+    assert child["snapshot"]["price"] == 1.05
+    assert child["stop_price"] == 0.98
+    # stale routing state must not ride along
+    for k in ("route_timeouts", "risk_reason"):
+        assert k not in child
+    assert enqueued[0]["intent_id"] == child_id

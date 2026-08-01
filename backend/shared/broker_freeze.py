@@ -122,6 +122,7 @@ async def thaw(actor: str, reason: Optional[str] = None) -> dict:
         {
             "$set": {
                 "frozen": False,
+                "reason": None,
                 "thawed_at": now,
                 "thawed_by": actor,
                 "thaw_reason": reason,

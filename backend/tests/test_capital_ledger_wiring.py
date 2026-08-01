@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -103,6 +104,18 @@ def _make_risk_ok(notional):
     )
 
 
+@pytest.fixture(autouse=True)
+def _timing_gate_open(monkeypatch):
+    """Entry Timing Gate (2026-08-01) is fail-closed on missing timing
+    data; these synthetic intents carry no snapshot/ingest_ts — stub
+    it open like the other gates (ledger wiring is the subject)."""
+    monkeypatch.setattr(
+        "shared.risk_sizer.entry_timing.check_buy_entry",
+        AsyncMock(return_value={"allowed": True, "reason": "entry_window_open",
+                                "decision": "BUY", "receipt": {}}),
+    )
+
+
 async def _insert_intent(intent_id: str, lane: str, action: str, notional: float):
     """Insert a base intent doc the executor path expects to update."""
     doc = {
@@ -114,6 +127,10 @@ async def _insert_intent(intent_id: str, lane: str, action: str, notional: float
         "stack_canonical": "camino",
         "requested_notional_usd": notional,
         "gate_state": "queued",
+        # 2026-07-22 opportunity doctrine: authority window + action
+        # tiers need a fresh ingest_ts and a conviction above `enter`.
+        "ingest_ts": datetime.now(timezone.utc).isoformat(),
+        "confidence": 0.6,
     }
     await db[SHARED_INTENTS].insert_one(doc)
     return doc

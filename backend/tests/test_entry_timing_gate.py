@@ -128,3 +128,51 @@ async def test_disabled_config_allows(monkeypatch):
     monkeypatch.setattr(mod, "get_config", _off)
     v = await mod.check_buy_entry(_intent(8.42))
     assert v["allowed"] and v["reason"] == "gate_disabled"
+
+
+# ── 2026-08-01 validation findings: confirmation-price derivation ──
+# Organic intents (arbiter → ingest enrichment) carry NO snapshot.price
+# — only bid/ask. The gate must derive the frozen confirmation from
+# the snapshot mid, or the bar at/before ingest, before failing closed.
+
+def test_confirmation_derived_from_snapshot_bid_ask_mid():
+    bars = _tape([8.40] * 20 + [8.42, 8.45])
+    intent = _intent(None)
+    intent["snapshot"] = {"bid": 8.41, "ask": 8.43,
+                          "market_cap_band": "small"}
+    v = evaluate(intent, bars, DEFAULT_PROFILES)
+    assert v["allowed"], v
+    assert v["receipt"]["confirmation_source"] == "snapshot_bid_ask_mid"
+    assert abs(v["receipt"]["confirmation_price"] - 8.42) < 1e-9
+
+
+def test_confirmation_derived_from_bar_at_ingest():
+    # no price, no quotes → close of last bar at/before ingest_ts
+    bars = _tape([8.40] * 20 + [8.42, 8.45])
+    intent = _intent(None)
+    intent["snapshot"] = {"market_cap_band": "small"}
+    intent["ingest_ts"] = bars[-2]["ts"]
+    v = evaluate(intent, bars, DEFAULT_PROFILES)
+    assert v["allowed"], v
+    assert v["receipt"]["confirmation_source"] == "bar_at_confirmation"
+    assert v["receipt"]["confirmation_price"] == 8.42
+
+
+def test_derived_mid_still_blocks_a_chase():
+    # stale quotes 48% below the tape top → chase still blocked
+    bars = _tape([8.4, 8.6, 9.1, 9.8, 10.5, 11.2, 11.9, 12.3, 12.4,
+                  12.45, 12.47, 12.47])
+    intent = _intent(None)
+    intent["snapshot"] = {"bid": 8.41, "ask": 8.43,
+                          "market_cap_band": "small"}
+    v = evaluate(intent, bars, DEFAULT_PROFILES)
+    assert not v["allowed"]
+    assert v["reason"] == "MISSED_ENTRY_CHASE_RISK"
+
+
+def test_truly_no_data_still_fails_closed():
+    intent = _intent(None)
+    intent["snapshot"] = {}
+    v = evaluate(intent, [], DEFAULT_PROFILES)
+    assert not v["allowed"]
+    assert v["reason"] == "NO_TIMING_DATA"
