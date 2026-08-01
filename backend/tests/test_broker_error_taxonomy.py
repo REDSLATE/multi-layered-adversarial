@@ -37,6 +37,19 @@ sys.path.insert(0, "/app")
 sys.path.insert(0, "/app/backend")
 
 
+@pytest.fixture(autouse=True)
+def _stub_entry_timing_gate(monkeypatch):
+    """2026-08-01 Entry Timing Gate fails CLOSED without snapshot/
+    bars, which these synthetic intents lack. Stub to allow — the
+    gate has its own test file (test_entry_timing_gate.py)."""
+    import shared.risk_sizer.entry_timing  # noqa: F401,WPS433
+    monkeypatch.setattr(
+        "shared.risk_sizer.entry_timing.check_buy_entry",
+        AsyncMock(return_value={"allowed": True, "reason": "test_stub",
+                                "decision": "BUY", "receipt": {}}),
+    )
+
+
 # ─── Real-world exception message samples ───────────────────────────
 # Verbatim strings pulled from `/var/log/supervisor/backend.err.log`
 # during the 2026-02-17 investigation. Do NOT change unless the

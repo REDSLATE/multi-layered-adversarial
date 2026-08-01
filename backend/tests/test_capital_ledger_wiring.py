@@ -16,6 +16,19 @@ import pytest
 
 sys.path.insert(0, "/app/backend")
 
+
+@pytest.fixture(autouse=True)
+def _stub_entry_timing_gate(monkeypatch):
+    """2026-08-01 Entry Timing Gate fails CLOSED without snapshot/
+    bars, which these synthetic intents lack. Stub to allow — the
+    gate has its own test file (test_entry_timing_gate.py)."""
+    import shared.risk_sizer.entry_timing  # noqa: F401,WPS433
+    monkeypatch.setattr(
+        "shared.risk_sizer.entry_timing.check_buy_entry",
+        AsyncMock(return_value={"allowed": True, "reason": "test_stub",
+                                "decision": "BUY", "receipt": {}}),
+    )
+
 from db import db
 from namespaces import CAPITAL_LEDGER, SHARED_INTENTS
 from shared import auto_router

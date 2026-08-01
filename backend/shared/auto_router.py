@@ -242,6 +242,7 @@ async def _route_one(intent: dict) -> dict:
     from shared.auto_router_helpers import RouteContext
     from shared.auto_router_stages import (
         _finalize_gate_state,
+        _gate_entry_timing,
         _gate_master_switch,
         _gate_risk,
         _gate_seat,
@@ -267,6 +268,7 @@ async def _route_one(intent: dict) -> dict:
         _gate_master_switch,
         _gate_seat,
         _gate_risk,
+        _gate_entry_timing,
         _route_and_submit,
     ):
         name = stage.__name__

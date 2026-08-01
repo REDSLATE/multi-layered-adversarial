@@ -4093,3 +4093,48 @@ Delivered (operator chose "a + prep from d"):
   screenshot-verified. Synthetic test intent DELETED (preview-only DB;
   prod Atlas untouched — preview Mongo is localhost, fully isolated).
 - NOTE for operator: prod fix requires REDEPLOY.
+
+## 2026-08-01 — Entry Timing Gate (hard block on late momentum BUYs)
+Context: months of losses (-61% vs DJI +75%); operator diagnosis
+"buys when the momentum is over" + full 8-item spec; second review
+correctly mapped most items to EXISTING machinery. Built only the
+missing piece: one hard gate.
+- Reused (not rebuilt): frozen emit-time snapshot on intent
+  (= confirmation price), shared/doctrine/universe_classifier.
+  classify_universe, shared/snapshot_enrich/parabolic_phase.
+  classify_parabolic_phase (velocity_5m, vwap_distance_pct, phase
+  accumulation|parabolic|topping|fade — was advisory-only before).
+- NEW shared/risk_sizer/entry_timing.py: compares FRESH gate-time
+  price (latest 1m/5m bar) vs FROZEN confirmation price; blocks
+  MISSED_ENTRY_CHASE_RISK / PARABOLIC_CHASE_RISK /
+  LATE_MOMENTUM_ENTRY / TOO_FAR_ABOVE_VWAP / MOVE_ALREADY_EXTENDED /
+  NO_TIMING_DATA (fail-closed: never buy blind). Per-universe-class
+  profiles (large_cap 2% ext cap, etf 1.5%, small_cap_momentum 8%,
+  crypto 4%; parabolic phases blocked for small-cap/crypto),
+  live-tunable via runtime_flags.entry_timing. NO wall-clock age gate
+  (router ticks ~30s; 20s wall would reject everything) — extension
+  IS the staleness signal; intent_age_seconds on receipt only.
+- Wired as router stage between _gate_risk and _route_and_submit
+  (auto_router.py). BUY-only — exits NEVER gated. Fail-OPEN on gate
+  code errors, fail-CLOSED on missing data. Stamps intent
+  (entry_timing_decision/reason/receipt + risk_reason=entry_timing:*,
+  broker_reason=ENTRY_TIMING_REJECTED) + executions row.
+- Admin: GET/PUT /api/admin/universe/entry-timing (disable requires
+  confirm="DISABLE_GATE"; changes audited). Gate ships ENABLED.
+- Frontend: Intents.jsx amber "MISSED ENTRY — <reason>" badge with
+  receipt message tooltip (confirmation price vs current, phase).
+- Tests: tests/test_entry_timing_gate.py — 8 replay scenarios incl.
+  JDZG shape ($8.42 confirm → $12.47 chase blocked), large-cap vs
+  small-cap profiles, fade phase, fail-closed, exits-never-gated +
+  stage-order tripwire. Stubbed the gate (allow) in 5 router test
+  files whose synthetic intents lack snapshots. Route snapshot 507.
+- Verified: 455 tripwires green; full suite 3,110 passed w/ only the
+  3 known pre-existing env failures; admin endpoints E2E (tune 7.5%
+  → live, 422 confirm guard); live-bars smoke (BTC vs $1 confirmation
+  → MISSED_ENTRY_CHASE_RISK, phase=topping); Intents page renders.
+- EXPECT: fire count will DROP (that's the point) — validate via
+  kill-map that the drop concentrates in extended entries.
+- Paradox v3 WAIT_FOR_TRIGGER machinery (wait-for-pullback/re-entry)
+  exists but stays DORMANT (PARADOX_V3_* env flags) — separate
+  activation decision AFTER observing the gate.
+- PROD NEEDS REDEPLOY.

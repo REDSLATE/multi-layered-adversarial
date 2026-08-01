@@ -2562,6 +2562,27 @@
 "name": "set_quality"
 },
 {
+"path": "/api/admin/universe/entry-timing",
+"methods": [
+"GET"
+],
+"name": "get_entry_timing"
+},
+{
+"path": "/api/admin/universe/entry-timing",
+"methods": [
+"PUT"
+],
+"name": "put_entry_timing"
+},
+{
+"path": "/api/admin/universe/entry-timing/stats",
+"methods": [
+"GET"
+],
+"name": "entry_timing_stats"
+},
+{
 "path": "/api/admin/universe/crypto-buy-allowlist",
 "methods": [
 "GET"

@@ -296,6 +296,18 @@ def _apply_patches(s, *, broker_result=None, broker_raises=None, floor_result=No
     stack.enter_context(patch(
         "shared.kraken_pair_floors.apply_floor", fake_apply_floor, create=True,
     ))
+    # 2026-08-01 — Entry Timing Gate added between _gate_risk and
+    # _route_and_submit. It fails CLOSED on missing timing data, and
+    # these synthetic intents have no snapshot/bars — stub it to
+    # "allow" (the gate has its own dedicated test file:
+    # test_entry_timing_gate.py).
+    stack.enter_context(patch(
+        "shared.risk_sizer.entry_timing.check_buy_entry",
+        new=AsyncMock(return_value={"allowed": True,
+                                    "reason": "test_stub",
+                                    "decision": "BUY", "receipt": {}}),
+        create=True,
+    ))
     # 2026-07-06 — equity market-closed pre-flight gate added.
     # These tests exercise the sunny-day pipeline and assume the
     # market is open. Patch the RTH gate and the extended-hours flag

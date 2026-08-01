@@ -184,6 +184,15 @@ def _wire_common_patches(monkeypatch, *, sizing_route="observe"):
         "routes.equity_extended_hours_admin.get_equity_extended_hours_enabled",
         AsyncMock(return_value=False),
     )
+    # 2026-08-01 Entry Timing Gate — fails CLOSED without snapshot/
+    # bars, which these synthetic intents lack. Stub to allow (gate
+    # has its own dedicated test file: test_entry_timing_gate.py).
+    import shared.risk_sizer.entry_timing  # noqa: F401,WPS433
+    monkeypatch.setattr(
+        "shared.risk_sizer.entry_timing.check_buy_entry",
+        AsyncMock(return_value={"allowed": True, "reason": "test_stub",
+                                "decision": "BUY", "receipt": {}}),
+    )
 
 
 def _capture_broker(monkeypatch):

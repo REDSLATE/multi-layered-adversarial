@@ -220,6 +220,18 @@ function IntentRow({ intent, expanded, onToggle }) {
               <GateIcon size={11} weight="bold" />
               HELD — NOT_IN_CRYPTO_BUY_ALLOWLIST
             </span>
+          ) : String(intent.risk_reason || "").startsWith("entry_timing:") ? (
+            <span
+              className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-amber-500"
+              title={
+                intent.entry_timing_receipt?.message ||
+                "Entry Timing Gate — the directional signal may still be bullish, but the safe entry window has passed. Waiting for a new base or pullback. Not a pipeline failure."
+              }
+              data-testid={`intent-missed-entry-${intent.intent_id}`}
+            >
+              <GateIcon size={11} weight="bold" />
+              {intent.entry_timing_decision === "MISSED_ENTRY" ? "MISSED ENTRY" : "HELD"} — {String(intent.risk_reason).slice(13)}
+            </span>
           ) : (
             <span
               className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider"

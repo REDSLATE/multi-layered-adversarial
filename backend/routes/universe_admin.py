@@ -223,6 +223,143 @@ async def set_quality(
     return {"ok": True, **update}
 
 
+@router.get("/entry-timing")
+async def get_entry_timing(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Entry Timing Gate config — per-universe-class thresholds."""
+    from shared.risk_sizer.entry_timing import get_config  # noqa: WPS433
+    return {"ok": True, "entry_timing": await get_config()}
+
+
+@router.put("/entry-timing")
+async def put_entry_timing(
+    body: dict,
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Update gate config. Body: {enabled?: bool, profiles?: {class:
+    {threshold overrides}}}. Disabling requires confirm="DISABLE_GATE"
+    — turning off chase protection must never happen by accident."""
+    from shared.risk_sizer.entry_timing import (  # noqa: WPS433
+        DEFAULT_PROFILES, FLAG_ID as ET_FLAG_ID, get_config,
+        invalidate_cache as et_invalidate,
+    )
+    if body.get("enabled") is False and body.get("confirm") != "DISABLE_GATE":
+        raise HTTPException(
+            status_code=422,
+            detail='disabling the entry-timing gate requires '
+                   'confirm="DISABLE_GATE"',
+        )
+    prev = await get_config()
+    update: dict = {}
+    if "enabled" in body:
+        update["enabled"] = bool(body["enabled"])
+    if isinstance(body.get("profiles"), dict):
+        clean = {}
+        for name, over in body["profiles"].items():
+            if name in DEFAULT_PROFILES and isinstance(over, dict):
+                clean[name] = {
+                    k: over[k] for k in DEFAULT_PROFILES[name] if k in over
+                }
+        update["profiles"] = clean
+    if not update:
+        raise HTTPException(status_code=422, detail="nothing to update")
+    update["updated_by"] = user.get("email")
+    update["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db["runtime_flags"].update_one(
+        {"_id": ET_FLAG_ID}, {"$set": update}, upsert=True,
+    )
+    et_invalidate()
+    await db["crypto_buy_allowlist_audit"].insert_one({
+        "ts": update["updated_at"],
+        "kind": "entry_timing",
+        "updated_by": user.get("email"),
+        "previous": prev,
+        "next": {**prev, **{k: v for k, v in update.items()
+                            if k in ("enabled", "profiles")}},
+    })
+    return {"ok": True, "entry_timing": await get_config()}
+
+
+@router.get("/entry-timing/stats")
+async def entry_timing_stats(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Timing tile: blocked-vs-fired outcomes over 24h/7d — tells
+    the operator whether the caps protect the account or merely
+    suppress opportunity."""
+    from namespaces import SHARED_INTENTS  # noqa: WPS433
+    now = datetime.now(timezone.utc)
+    out: dict = {}
+    for label, hours in (("24h", 24), ("7d", 168)):
+        cut = (now - timedelta(hours=hours)).isoformat()
+        fired = await db[SHARED_INTENTS].count_documents(
+            {"action": "BUY", "executed": True, "ingest_ts": {"$gte": cut}},
+            maxTimeMS=8000)
+        blocked = await db[SHARED_INTENTS].count_documents(
+            {"risk_reason": {"$regex": "^entry_timing:"},
+             "ingest_ts": {"$gte": cut}}, maxTimeMS=8000)
+        trig_q = {"created_at": {"$gte": cut}}
+        trig: dict = {}
+        for state in ("WATCHING", "REARMED", "EXPIRED", "INVALIDATED"):
+            trig[state.lower()] = await db["entry_rearm_triggers"].count_documents(
+                {**trig_q, "state": state}, maxTimeMS=8000)
+        rearm_filled = await db[SHARED_INTENTS].count_documents(
+            {"rearm_of": {"$exists": True}, "executed": True,
+             "ingest_ts": {"$gte": cut}}, maxTimeMS=8000)
+        # avg extension at actual fill (chase level that still fires)
+        ext_pipe = [
+            {"$match": {"action": "BUY", "executed": True,
+                        "ingest_ts": {"$gte": cut},
+                        "entry_timing_receipt.extension_from_confirmation_pct":
+                            {"$exists": True}}},
+            {"$group": {"_id": None, "avg": {"$avg":
+                "$entry_timing_receipt.extension_from_confirmation_pct"},
+                "n": {"$sum": 1}}},
+        ]
+        avg_ext = None
+        async for r in db[SHARED_INTENTS].aggregate(ext_pipe, maxTimeMS=8000):
+            avg_ext = round(r["avg"], 3) if r["n"] else None
+        # entry improvement from waiting: block price vs re-entry price
+        imp_pipe = [
+            {"$match": {**trig_q, "state": "REARMED",
+                        "block_price": {"$gt": 0},
+                        "new_confirmation_price": {"$gt": 0}}},
+            {"$project": {"imp": {"$multiply": [100, {"$divide": [
+                {"$subtract": ["$block_price", "$new_confirmation_price"]},
+                "$block_price"]}]}}},
+            {"$group": {"_id": None, "avg": {"$avg": "$imp"}, "n": {"$sum": 1}}},
+        ]
+        avg_improvement = None
+        async for r in db["entry_rearm_triggers"].aggregate(imp_pipe, maxTimeMS=8000):
+            avg_improvement = round(r["avg"], 3) if r["n"] else None
+        # chase avoided (% price gave back after we refused to chase):
+        # blocked → later invalidated/faded; vs missed by waiting
+        # (% price kept running on EXPIRED no-pullback triggers)
+        moved_pipe = lambda state, invert: [  # noqa: E731
+            {"$match": {**trig_q, "state": state, "block_price": {"$gt": 0},
+                        "last_price": {"$gt": 0}}},
+            {"$project": {"pct": {"$multiply": [100 * invert, {"$divide": [
+                {"$subtract": ["$last_price", "$block_price"]},
+                "$block_price"]}]}}},
+            {"$group": {"_id": None, "avg": {"$avg": "$pct"}, "n": {"$sum": 1}}},
+        ]
+        avoided_pct = missed_pct = None
+        async for r in db["entry_rearm_triggers"].aggregate(
+                moved_pipe("INVALIDATED", -1), maxTimeMS=8000):
+            avoided_pct = round(r["avg"], 3) if r["n"] else None
+        async for r in db["entry_rearm_triggers"].aggregate(
+                moved_pipe("EXPIRED", 1), maxTimeMS=8000):
+            missed_pct = round(r["avg"], 3) if r["n"] else None
+        out[label] = {
+            "entries_fired": fired,
+            "late_entries_blocked": blocked,
+            "triggers": trig,
+            "rearmed_filled": rearm_filled,
+            "avg_extension_at_fill_pct": avg_ext,
+            "avg_reentry_improvement_pct": avg_improvement,
+            "chase_avoided_avg_pct": avoided_pct,
+            "missed_by_waiting_avg_pct": missed_pct,
+        }
+    return {"ok": True, "windows": out}
+
+
 @router.get("/crypto-buy-allowlist")
 async def get_crypto_buy_allowlist(_user: dict = Depends(get_current_user)):  # noqa: B008
     """Allowlist-only BUY universe (2026-07-28). SELLs never gated.

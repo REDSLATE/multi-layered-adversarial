@@ -303,6 +303,17 @@ async def ensure_indexes(*, heavy_deadline_s: float = 6.0) -> None:
         name="shared_intents_risk_reason_ingest_ts",
     )
 
+    # Entry re-arm triggers (2026-08-01): watcher scans WATCHING rows
+    # each tick; ttl_at reaps terminal rows after 7d.
+    await _safe_create_index(
+        db.entry_rearm_triggers, [("state", 1), ("symbol", 1)],
+        name="entry_rearm_triggers_state_symbol",
+    )
+    await _safe_create_index(
+        db.entry_rearm_triggers, [("ttl_at", 1)],
+        name="entry_rearm_triggers_ttl_at", expireAfterSeconds=0,
+    )
+
     # Retention-health snapshots (2026-07-29): BSON-Date ttl_at TTL —
     # the sampler's own history self-expires (14d, stamped by writer).
     await _safe_create_index(

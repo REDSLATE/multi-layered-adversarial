@@ -904,6 +904,82 @@ async def _gate_risk(ctx: RouteContext) -> Optional[dict]:
 
 
 # ─────────────────────────── Stage 4 ───────────────────────────
+# ─────────────────────────── Stage 3.5 ───────────────────────────
+async def _gate_entry_timing(ctx: RouteContext) -> Optional[dict]:
+    """Entry Timing Gate (2026-08-01 operator doctrine): the signal
+    says direction — this gate decides whether the price is still
+    safe to BUY. Compares the FRESH gate-time price against the
+    confirmation price FROZEN on the intent snapshot at ingest and
+    blocks late chases (per-universe-class thresholds, live-tunable
+    via runtime_flags.entry_timing). BUY-only — exits never gated.
+    Fail-OPEN on gate errors (never strand exits/entries on a bug),
+    fail-CLOSED on missing timing data (never buy blind)."""
+    if ctx.action_upper != "BUY":
+        return None
+    try:
+        from shared.risk_sizer.entry_timing import check_buy_entry  # noqa: WPS433
+        verdict = await check_buy_entry(ctx.intent)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("entry_timing gate errored (fail-open): %s", exc)
+        return None
+    receipt = verdict.get("receipt") or {}
+    try:
+        await _db()[SHARED_INTENTS].update_one(
+            {"intent_id": ctx.intent_id},
+            {"$set": {
+                "entry_timing_decision": verdict.get("decision"),
+                "entry_timing_reason": verdict.get("reason"),
+                "entry_timing_receipt": receipt,
+            }},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    if verdict["allowed"]:
+        return None
+    reason = verdict["reason"]
+    # WAIT_FOR_PULLBACK re-arm — only timing/extension blocks qualify
+    # (never NO_TIMING_DATA / risk / allowlist / broker rejections)
+    try:
+        from shared.risk_sizer.entry_rearm import create_trigger  # noqa: WPS433
+        await create_trigger(ctx.intent, reason, receipt)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("entry_rearm trigger create failed: %s", exc)
+    sd = ctx.sd
+    try:
+        from shared import executions  # noqa: WPS433
+        await executions.record(
+            intent=ctx.intent, seat_verdict=sd.verdict,
+            seat_holder=sd.executor, seat_reason=sd.reason,
+            strategist=sd.strategist, governor=sd.governor,
+            executor=sd.executor, auditor=sd.auditor,
+            risk_multiplier=sd.risk_multiplier,
+            risk_ok=False, risk_reason=f"entry_timing:{reason}",
+            notional_usd=0.0, ok=False,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        await _db()[SHARED_INTENTS].update_one(
+            {"intent_id": ctx.intent_id},
+            {"$set": {
+                "gate_state": "blocked",
+                "risk_reason": f"entry_timing:{reason}",
+                "broker_reason": "ENTRY_TIMING_REJECTED",
+                "broker_error_bucket": "entry_timing",
+                "last_submit_ts": _now_iso(),
+            }},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    logger.info(
+        "entry_timing: HELD %s %s — %s (%s)",
+        ctx.intent.get("symbol"), ctx.intent_id[:8], reason,
+        receipt.get("message", ""),
+    )
+    return {"verdict": "blocked", "reason": f"entry_timing:{reason}",
+            "intent_id": ctx.intent_id}
+
+
 async def _route_and_submit(ctx: RouteContext) -> Optional[dict]:
     """Broker call + broker-error taxonomy handling.
 

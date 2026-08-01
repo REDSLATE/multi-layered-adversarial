@@ -867,6 +867,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("universe_refresher start failed: %s", e)
 
+    # ── Entry re-arm watcher (2026-08-01) ────────────────────────
+    # Recovers the RIGHT moment after the Entry Timing Gate blocks
+    # the wrong one: watches timing-blocked BUY setups for a
+    # pullback + reacceleration, then emits a lineage-linked child
+    # intent through the full gate chain. Fail-soft.
+    try:
+        from shared.risk_sizer.entry_rearm import watcher_loop
+        app.state.entry_rearm_task = asyncio.create_task(watcher_loop())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("entry_rearm watcher start failed: %s", e)
+
     yield
     await stop_poller()
     await stop_tickler()

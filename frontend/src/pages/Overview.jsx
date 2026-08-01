@@ -23,6 +23,7 @@ import TradeTape from "@/components/TradeTape";
 import BrainPersonalities from "@/components/BrainPersonalities";
 import OperatorControl from "@/components/OperatorControl";
 import KillMapTile from "@/components/KillMapTile";
+import EntryTimingTile from "@/components/EntryTimingTile";
 
 export default function Overview() {
   const [overview, setOverview] = useState(null);
@@ -279,6 +280,10 @@ export default function Overview() {
               → broker. */}
           <PanelErrorBoundary panelName="Kill Map" testid="panel-error-kill-map">
             <KillMapTile />
+          </PanelErrorBoundary>
+
+          <PanelErrorBoundary panelName="Entry Timing" testid="panel-error-entry-timing">
+            <EntryTimingTile />
           </PanelErrorBoundary>
 
           <div
