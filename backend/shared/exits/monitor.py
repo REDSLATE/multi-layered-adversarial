@@ -424,7 +424,17 @@ async def _adopt(lane: str, pos: dict, policy: dict) -> dict:
     brain = await _brain_levels(symbol, lane) if lane != "options" else None
     origin = await _origin_intent(symbol, lane)
     lane_p = policy[lane]
-    if brain and brain[1] < entry < brain[0]:
+    momentum_origin = ((origin or {}).get("stack") or "").lower() == "momentum"
+    if momentum_origin and lane != "options":
+        # Momentum controller doctrine (2026-08-01): exits anchored on
+        # broker cost basis, +tp%/-sl% from the scanner knobs — never
+        # from signal/confirmation price.
+        from momentum.momentum_scanner import get_momentum_exit_pcts  # noqa: WPS433
+        tp, sl = await get_momentum_exit_pcts()
+        stop = entry * (1.0 - sl / 100.0)
+        target = entry * (1.0 + tp / 100.0)
+        source = "momentum_policy"
+    elif brain and brain[1] < entry < brain[0]:
         target, stop, source = brain[0], brain[1], "brain"
     elif lane == "options":
         # PREMIUM-based levels: sl/tp are percentages of the entry

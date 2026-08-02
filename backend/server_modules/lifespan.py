@@ -878,6 +878,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("entry_rearm watcher start failed: %s", e)
 
+    # ── Momentum entry scanner (2026-08-01, operator package) ────
+    # 5th signal source: emits BUY intents into the normal pipeline
+    # when momentum transitions positive. Disabled by default —
+    # armed via /api/admin/momentum-scanner. Fail-soft.
+    try:
+        from momentum.momentum_scanner import scanner_loop
+        app.state.momentum_scanner_task = asyncio.create_task(scanner_loop())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("momentum scanner start failed: %s", e)
+
     yield
     await stop_poller()
     await stop_tickler()

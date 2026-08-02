@@ -128,6 +128,7 @@ ROUTER_SPECS: tuple[str, ...] = (
     "routes.gate_failure_digest:router",
     "routes.kraken_pair_admin:router",
     "routes.universe_admin:router",
+    "routes.momentum_scanner_routes:router",
     "routes.exit_admin:router",
     "routes.expectancy_admin:router",
     "routes.hotpath_admin:router",

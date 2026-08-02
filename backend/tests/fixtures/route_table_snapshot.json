@@ -2583,6 +2583,20 @@
 "name": "entry_timing_stats"
 },
 {
+"path": "/api/admin/universe/entry-timing/rearm-timeline",
+"methods": [
+"GET"
+],
+"name": "entry_timing_rearm_timeline"
+},
+{
+"path": "/api/admin/universe/entry-timing/health",
+"methods": [
+"GET"
+],
+"name": "entry_timing_health"
+},
+{
 "path": "/api/admin/universe/crypto-buy-allowlist",
 "methods": [
 "GET"
@@ -2623,6 +2637,20 @@
 "POST"
 ],
 "name": "force_refresh"
+},
+{
+"path": "/api/admin/momentum-scanner",
+"methods": [
+"GET"
+],
+"name": "scanner_status"
+},
+{
+"path": "/api/admin/momentum-scanner",
+"methods": [
+"POST"
+],
+"name": "scanner_update"
 },
 {
 "path": "/api/admin/exits",

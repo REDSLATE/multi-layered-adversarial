@@ -24,6 +24,7 @@ import BrainPersonalities from "@/components/BrainPersonalities";
 import OperatorControl from "@/components/OperatorControl";
 import KillMapTile from "@/components/KillMapTile";
 import EntryTimingTile from "@/components/EntryTimingTile";
+import MomentumScannerTile from "@/components/MomentumScannerTile";
 
 export default function Overview() {
   const [overview, setOverview] = useState(null);
@@ -284,6 +285,10 @@ export default function Overview() {
 
           <PanelErrorBoundary panelName="Entry Timing" testid="panel-error-entry-timing">
             <EntryTimingTile />
+          </PanelErrorBoundary>
+
+          <PanelErrorBoundary panelName="Momentum Scanner" testid="panel-error-momentum-scanner">
+            <MomentumScannerTile />
           </PanelErrorBoundary>
 
           <div
