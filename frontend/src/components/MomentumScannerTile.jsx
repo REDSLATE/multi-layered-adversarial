@@ -76,6 +76,7 @@ export const MomentumScannerTile = () => {
               {candidates.map((c) => (
                 <div key={c.symbol} className="flex gap-2 text-[10px] font-mono">
                   <span className="w-24 shrink-0 text-rd-text">{c.symbol}</span>
+                  <span className="w-10 shrink-0 text-rd-dim uppercase">{c.lane || ""}</span>
                   <span className={c.allowed ? "text-rd-success" : "text-rd-dim"}>
                     {c.allowed ? "ENTRY" : c.reason}
                   </span>
@@ -93,7 +94,7 @@ export const MomentumScannerTile = () => {
           )}
           <div className="text-[9px] font-mono text-rd-dim" data-testid="ms-footer">
             last scan {st?.last_run ? st.last_run.slice(11, 19) + "Z" : "never"} · every{" "}
-            {cfg?.interval_sec}s · exits +{cfg?.tp_pct}% / −{cfg?.sl_pct}% from broker basis ·
+            {cfg?.interval_sec}s · lanes {(cfg?.lanes || []).join("+")} · exits +{cfg?.tp_pct}% / −{cfg?.sl_pct}% from broker basis ·
             entries pass all gates
           </div>
         </>

@@ -30,12 +30,14 @@ DEFAULTS: dict[str, Any] = {
     "interval_sec": 60,
     "cooldown_min": 30,
     "max_emit_per_cycle": 2,
-    "lanes": ["crypto"],
+    "lanes": ["crypto", "equity"],
     "tp_pct": 5.0,
     "sl_pct": 3.0,
     "min_score": 0.60,
     "min_score_delta": 0.08,
 }
+
+EQUITY_SCAN_CAP = 30  # top live_universe movers per cycle
 
 
 def _now() -> datetime:
@@ -153,87 +155,118 @@ async def _already_engaged(db, symbol: str, cooldown_min: float) -> Optional[str
     return None
 
 
-async def scan_once() -> dict:
-    """One scanner pass over the crypto BUY allowlist."""
-    from db import db  # noqa: WPS433
-    from shared.risk_sizer.buy_allowlist import get_allowlist  # noqa: WPS433
-    from shared.risk_sizer.entry_timing import _load_bars  # noqa: WPS433
-    from shared.market_data.crypto_snapshot_enrichment import (  # noqa: WPS433
-        enrich_crypto_snapshot,
+async def _lane_symbols(lane: str) -> list[str]:
+    """Crypto: the BUY allowlist (risk doctrine). Equity: live_universe
+    movers — there is no equity allowlist; the scanner's own quality
+    gates + seat/risk/entry-timing stand between signal and order."""
+    if lane == "crypto":
+        from shared.risk_sizer.buy_allowlist import get_allowlist  # noqa: WPS433
+        allow = await get_allowlist()
+        return sorted(allow.get("symbols") or [])
+    from shared.universe.live_universe import read_all_universes  # noqa: WPS433
+    docs = await read_all_universes()
+    doc = (docs or {}).get("equity") or {}
+    syms = {(s.get("canonical_symbol") or "").upper().strip()
+            for s in (doc.get("symbols") or []) if s.get("tradable", True)}
+    return sorted(x for x in syms if x)[:EQUITY_SCAN_CAP]
+
+
+async def _lane_quote(lane: str, symbol: str) -> tuple[float, float, int]:
+    """(bid, ask, quote_age_ms) — fail-soft zeros on missing quotes."""
+    if lane == "crypto":
+        from shared.market_data.crypto_snapshot_enrichment import (  # noqa: WPS433
+            enrich_crypto_snapshot,
+        )
+        quote, diag = await enrich_crypto_snapshot({}, symbol=symbol)
+        ladder = (diag or {}).get("ladder") or []
+        age = int(ladder[0].get("age_ms") or 0) if ladder else 0
+        return (float(quote.get("bid") or 0),
+                float(quote.get("ask") or 0), age)
+    from shared.snapshot_enrich.equity_doctrine import (  # noqa: WPS433
+        enrich_equity_doctrine_snapshot,
     )
+    snap = await enrich_equity_doctrine_snapshot(symbol, {})
+    if (snap or {}).get("enrichment_status") != "live":
+        return 0.0, 0.0, 0
+    return float(snap.get("bid") or 0), float(snap.get("ask") or 0), 0
+
+
+async def scan_once() -> dict:
+    """One scanner pass over the enabled lanes."""
+    from db import db  # noqa: WPS433
+    from shared.risk_sizer.entry_timing import _load_bars  # noqa: WPS433
+    from shared.market_hours import is_equity_rth  # noqa: WPS433
 
     cfg = await get_config()
     policy = EntryPolicy(
         min_score=D(str(cfg["min_score"])),
         min_score_delta=D(str(cfg["min_score_delta"])),
     )
-    allow = await get_allowlist()
-    symbols = sorted(allow.get("symbols") or [])
     stats = {"evaluated": 0, "emitted": 0, "skipped": 0,
              "rejections": {}, "candidates": []}
 
-    for sym in symbols:
-        skip = await _already_engaged(db, sym, float(cfg["cooldown_min"]))
-        if skip:
-            stats["skipped"] += 1
-            stats["rejections"][skip] = stats["rejections"].get(skip, 0) + 1
+    def _rej(reason: str) -> None:
+        stats["rejections"][reason] = stats["rejections"].get(reason, 0) + 1
+
+    for lane in [l for l in (cfg.get("lanes") or [])
+                 if l in ("crypto", "equity")]:
+        if lane == "equity" and not is_equity_rth():
+            _rej("equity_market_closed")
             continue
-        bars = await _load_bars(sym)
-        quote, diag = await enrich_crypto_snapshot({}, symbol=sym)
-        ladder = (diag or {}).get("ladder") or []
-        age_ms = int(ladder[0].get("age_ms") or 0) if ladder else 0
-        snap = build_snapshot(
-            sym, bars,
-            bid=float(quote.get("bid") or 0),
-            ask=float(quote.get("ask") or 0),
-            quote_age_ms=age_ms,
-            min_score=float(cfg["min_score"]))
-        if snap is None:
-            stats["rejections"]["no_tape"] = (
-                stats["rejections"].get("no_tape", 0) + 1)
-            continue
-        stats["evaluated"] += 1
-        decision = valid_momentum_entry(snap, policy)
-        stats["candidates"].append({
-            "symbol": sym, "allowed": decision.allowed,
-            "reason": decision.reason,
-            "score": float(snap.current_score),
-            "prev_score": float(snap.previous_score),
-            "last_price": float(snap.last_price),
-        })
-        if not decision.allowed:
-            stats["rejections"][decision.reason] = (
-                stats["rejections"].get(decision.reason, 0) + 1)
-            continue
-        if stats["emitted"] >= int(cfg["max_emit_per_cycle"]):
-            stats["rejections"]["cycle_emit_cap"] = (
-                stats["rejections"].get("cycle_emit_cap", 0) + 1)
-            continue
-        try:
-            from shared.intents import (  # noqa: WPS433
-                IntentIn, submit_intent_in_process,
-            )
-            body = IntentIn(
-                stack="momentum", action="BUY", symbol=sym, lane="crypto",
-                confidence=round(min(0.95, float(snap.current_score)), 4),
-                rationale=(
-                    "momentum scanner: score "
-                    f"{snap.previous_score}->{snap.current_score} · "
-                    f"rvol {snap.relative_volume} · above vwap/ema9 · "
-                    f"conf {snap.confirmation_price}"),
-                doctrine_snapshot={
-                    "bid": float(quote.get("bid") or 0),
-                    "ask": float(quote.get("ask") or 0),
-                },
-            )
-            res = await submit_intent_in_process(body)
-            stats["emitted"] += 1
-            logger.info("momentum_scanner: EMITTED %s intent=%s",
-                        sym, (res or {}).get("intent_id"))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("momentum_scanner: emit failed %s: %s", sym, exc)
-            stats["rejections"]["emit_error"] = (
-                stats["rejections"].get("emit_error", 0) + 1)
+        for sym in await _lane_symbols(lane):
+            skip = await _already_engaged(db, sym, float(cfg["cooldown_min"]))
+            if skip:
+                stats["skipped"] += 1
+                _rej(skip)
+                continue
+            bars = await _load_bars(sym)
+            bid, ask, age_ms = await _lane_quote(lane, sym)
+            if lane == "equity" and (bid <= 0 or ask <= 0):
+                _rej("no_quote")  # equity fails closed on missing quotes
+                continue
+            snap = build_snapshot(
+                sym, bars, bid=bid, ask=ask, quote_age_ms=age_ms,
+                lane=lane, min_score=float(cfg["min_score"]))
+            if snap is None:
+                _rej("no_tape")
+                continue
+            stats["evaluated"] += 1
+            decision = valid_momentum_entry(snap, policy)
+            stats["candidates"].append({
+                "symbol": sym, "lane": lane, "allowed": decision.allowed,
+                "reason": decision.reason,
+                "score": float(snap.current_score),
+                "prev_score": float(snap.previous_score),
+                "last_price": float(snap.last_price),
+            })
+            if not decision.allowed:
+                _rej(decision.reason)
+                continue
+            if stats["emitted"] >= int(cfg["max_emit_per_cycle"]):
+                _rej("cycle_emit_cap")
+                continue
+            try:
+                from shared.intents import (  # noqa: WPS433
+                    IntentIn, submit_intent_in_process,
+                )
+                body = IntentIn(
+                    stack="momentum", action="BUY", symbol=sym, lane=lane,
+                    confidence=round(min(0.95, float(snap.current_score)), 4),
+                    rationale=(
+                        f"momentum scanner [{lane}]: score "
+                        f"{snap.previous_score}->{snap.current_score} · "
+                        f"rvol {snap.relative_volume} · above vwap/ema9 · "
+                        f"conf {snap.confirmation_price}"),
+                    doctrine_snapshot={"bid": bid, "ask": ask},
+                )
+                res = await submit_intent_in_process(body)
+                stats["emitted"] += 1
+                logger.info("momentum_scanner: EMITTED %s %s intent=%s",
+                            lane, sym, (res or {}).get("intent_id"))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("momentum_scanner: emit failed %s: %s",
+                               sym, exc)
+                _rej("emit_error")
 
     await db["runtime_flags"].update_one(
         {"_id": STATE_ID},

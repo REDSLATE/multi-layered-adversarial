@@ -1,7 +1,7 @@
 """Momentum scanner admin — status, knobs, arm/disarm (2026-08-01)."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -18,6 +18,7 @@ class ScannerKnobs(BaseModel):
     interval_sec: Optional[int] = Field(default=None, ge=15, le=900)
     cooldown_min: Optional[float] = Field(default=None, ge=1, le=1440)
     max_emit_per_cycle: Optional[int] = Field(default=None, ge=0, le=10)
+    lanes: Optional[List[Literal["crypto", "equity"]]] = None
     tp_pct: Optional[float] = Field(default=None, ge=0.5, le=50)
     sl_pct: Optional[float] = Field(default=None, ge=0.5, le=50)
     min_score: Optional[float] = Field(default=None, ge=0, le=1)

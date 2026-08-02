@@ -92,6 +92,30 @@ def test_build_snapshot_thin_tape_none():
 def test_defaults_ship_disarmed():
     assert DEFAULTS["enabled"] is False
     assert DEFAULTS["tp_pct"] == 5.0 and DEFAULTS["sl_pct"] == 3.0
+    assert DEFAULTS["lanes"] == ["crypto", "equity"]
+
+
+def test_equity_spread_cap_tighter_than_crypto():
+    # 100 bps spread: fine for crypto (250 cap), rejected for equity (75)
+    closes = [10.0] * 11 + [10.02, 10.08, 10.20]
+    vols = [50_000.0] * 12 + [80_000.0, 120_000.0]
+    bars = _bars(closes, vols)
+    eq = build_snapshot("NVDA", bars, bid=10.15, ask=10.25,
+                        quote_age_ms=200, lane="equity")
+    cr = build_snapshot("SOL/USD", bars, bid=10.15, ask=10.25,
+                        quote_age_ms=200, lane="crypto")
+    assert not valid_momentum_entry(eq, EntryPolicy()).allowed
+    assert valid_momentum_entry(
+        eq, EntryPolicy()).reason == "spread_too_wide"
+    assert valid_momentum_entry(cr, EntryPolicy()).reason != "spread_too_wide"
+
+
+def test_equity_lane_wiring_present():
+    src = open("/app/backend/momentum/momentum_scanner.py").read()
+    assert "is_equity_rth" in src
+    assert "equity_market_closed" in src
+    assert "read_all_universes" in src
+    assert 'no_quote' in src  # equity fails closed on missing quotes
 
 
 def test_momentum_is_a_valid_intent_stack():
