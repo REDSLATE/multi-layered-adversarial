@@ -400,6 +400,53 @@ async def entry_timing_stats(_user: dict = Depends(get_current_user)):  # noqa: 
             "first_prod_rearm": await first_organic_rearm(db)}
 
 
+@router.get("/buy-eligibility")
+async def buy_eligibility_get(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Hybrid BUY eligibility knobs (2026-08-03) + live probe support."""
+    from shared.risk_sizer.buy_eligibility import get_eligibility_config  # noqa: WPS433
+    return {"ok": True, "config": await get_eligibility_config()}
+
+
+@router.get("/buy-eligibility/probe")
+async def buy_eligibility_probe(
+    symbol: str,
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Dry-run a symbol through the eligibility rules (no side effects)."""
+    from shared.risk_sizer.buy_eligibility import evaluate_buy_eligibility  # noqa: WPS433
+    allowed, receipt = await evaluate_buy_eligibility(symbol)
+    return {"ok": True, "allowed": allowed, "receipt": receipt}
+
+
+class EligibilityKnobs(BaseModel):
+    mode: Optional[str] = None
+    min_dollar_vol_24h: Optional[float] = Field(default=None, ge=0)
+    max_spread_bps: Optional[float] = Field(default=None, ge=1, le=1000)
+    max_notional_offlist_usd: Optional[float] = Field(default=None, ge=1)
+    max_pct_of_24h_vol: Optional[float] = Field(default=None, ge=0.01, le=10)
+    denylist: Optional[list[str]] = None
+
+
+@router.post("/buy-eligibility")
+async def buy_eligibility_update(
+    body: EligibilityKnobs,
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    from shared.risk_sizer.buy_eligibility import (  # noqa: WPS433
+        FLAG_ID as ELIG_FLAG, get_eligibility_config, reset_for_tests,
+    )
+    changes = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "mode" in changes and changes["mode"] not in ("static", "dynamic", "hybrid"):
+        raise HTTPException(422, "mode must be static | dynamic | hybrid")
+    if changes:
+        changes["updated_at"] = datetime.now(timezone.utc).isoformat()
+        changes["updated_by"] = user.get("email") or "operator"
+        await db["runtime_flags"].update_one(
+            {"_id": ELIG_FLAG}, {"$set": changes}, upsert=True)
+        reset_for_tests()
+    return {"ok": True, "config": await get_eligibility_config()}
+
+
 @router.get("/entry-timing/rearm-timeline")
 async def entry_timing_rearm_timeline(
     trigger_id: Optional[str] = None,

@@ -124,6 +124,7 @@ async def build_position_plan(
     # Post-sell cooldown (2026-07-28 operator directive): freed cash
     # must cool before the crypto lane BUYs again — stops the instant
     # redeploy of sale proceeds into fresh 24h-mover intents.
+    _elig_cap: float | None = None
     if lane == "crypto" and (intent.get("action") or "").upper() == "BUY":
         try:
             from shared.risk_sizer.sell_cooldown import (  # noqa: WPS433
@@ -140,13 +141,19 @@ async def build_position_plan(
                 cooldown_remaining_s=round(_rem, 1),
                 last_sell_symbol=_sold,
             )
-        # Allowlist-only BUY universe (2026-07-28 operator directive):
-        # the movers list is watch-only; the crypto lane BUYs only
-        # operator-whitelisted symbols. Fail-open on read errors —
-        # a Mongo hiccup must not decide trades. SELLs never gated.
+        # BUY eligibility (2026-08-03): hybrid pins+denylist+liquidity
+        # RULES replace the static allowlist ("the list was standing
+        # in for rules"). static mode = legacy behavior. Fail-open on
+        # errors — a Mongo hiccup must not decide trades. SELLs never
+        # gated. Rule-admitted (off-pin) symbols carry a notional cap.
         try:
-            from shared.risk_sizer.buy_allowlist import buy_allowed  # noqa: WPS433
-            _allowed, _al = await buy_allowed(intent.get("symbol") or "")
+            from shared.risk_sizer.buy_eligibility import (  # noqa: WPS433
+                evaluate_buy_eligibility,
+            )
+            _allowed, _al = await evaluate_buy_eligibility(
+                intent.get("symbol") or "")
+            if _allowed and _al.get("notional_cap_usd") is not None:
+                _elig_cap = float(_al["notional_cap_usd"])
         except Exception:  # noqa: BLE001
             _allowed, _al = True, {}
         if not _allowed:
@@ -163,8 +170,10 @@ async def build_position_plan(
                 _ov, _ov_receipt = False, {"reason": "override_eval_failed"}
             if not _ov:
                 return _reject(
-                    "not_in_buy_allowlist",
-                    allowlist_size=len(_al.get("symbols") or []),
+                    _al.get("reason") or "not_in_buy_allowlist",
+                    eligibility_mode=_al.get("mode"),
+                    eligibility_receipt={k: v for k, v in _al.items()
+                                         if k not in ("mode",)},
                     override=_ov_receipt.get("reason"),
                 )
 
@@ -243,8 +252,15 @@ async def build_position_plan(
     allocation_cap = equity * float(lane_pol["max_position_fraction"])
     spendable = available * (1.0 - float(lane_pol["reserve_fraction"]))
     final_notional = math.floor(min(risk_based, allocation_cap, spendable) * 100) / 100.0
+    if _elig_cap is not None:
+        # rules-admitted off-pin symbol: liquidity-scaled hard cap
+        final_notional = min(final_notional, math.floor(_elig_cap * 100) / 100.0)
 
     min_notional = float(lane_pol["minimum_order_notional"])
+    if _elig_cap is not None and _elig_cap < min_notional:
+        return _reject("eligibility_cap_below_broker_min",
+                       eligibility_cap_usd=round(_elig_cap, 2),
+                       broker_min_notional=min_notional)
     min_notional_bump = False
     if final_notional < min_notional:
         # 2026-07-28 operator fix #3: Governor RISK_DOWN multipliers

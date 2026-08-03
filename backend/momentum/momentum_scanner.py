@@ -160,14 +160,21 @@ async def _already_engaged(db, symbol: str, cooldown_min: float) -> Optional[str
 
 
 async def _lane_symbols(lane: str) -> list[str]:
-    """Crypto: the BUY allowlist (risk doctrine). Equity: live_universe
-    movers — there is no equity allowlist; the scanner's own quality
-    gates + seat/risk/entry-timing stand between signal and order."""
+    """Crypto: operator pins + top live_universe movers (2026-08-03:
+    dynamic eligibility replaced the static allowlist, so the scanner
+    watches the full mover set — the risk gate's liquidity rules and
+    notional caps decide what may actually trade). Equity: live_universe
+    movers; no equity allowlist."""
+    from shared.universe.live_universe import read_all_universes  # noqa: WPS433
     if lane == "crypto":
         from shared.risk_sizer.buy_allowlist import get_allowlist  # noqa: WPS433
         allow = await get_allowlist()
-        return sorted(allow.get("symbols") or [])
-    from shared.universe.live_universe import read_all_universes  # noqa: WPS433
+        pins = set(allow.get("symbols") or [])
+        docs = await read_all_universes()
+        doc = (docs or {}).get("crypto") or {}
+        movers = {(s.get("canonical_symbol") or "").upper().strip()
+                  for s in (doc.get("symbols") or []) if s.get("tradable", True)}
+        return sorted(x for x in (pins | movers) if x)[:CRYPTO_SCAN_CAP]
     docs = await read_all_universes()
     doc = (docs or {}).get("equity") or {}
     syms = {(s.get("canonical_symbol") or "").upper().strip()
