@@ -71,3 +71,19 @@ Mon: observe live (momentum equity lane, re-arm prod proof).
 Then: Account Guardian → Tape Quality Gate → AdaptiveKernel → Sell-Point Watcher →
 OpportunityEngine (parallel) → CapitalPressure → fingerprint dedup → Failed-open latch →
 Replay Gauntlet. Re-order freely per operator priority; each unit stands alone.
+
+## Addendum (2026-08-02): Candlestick confirmation vocabulary (operator cheat-sheets)
+Small module `shared/market_data/candles.py` — pure OHLC classifiers, receipt-friendly:
+engulfing (bull/bear), morning_star, evening_star, three_white_soldiers,
+three_black_crows, doji_family (indecision flag), marubozu (conviction flag),
+shooting_star, hanging_man, gravestone_doji.
+SKIP (low incremental edge, agreed): harami, kicker, tweezers, piercing, dark cloud.
+Wiring (all observe-first, knob-gated):
+1. entry_rearm reaccel test: strong confirm (engulfing/morning_star/soldiers) vs
+   weak (doji/spinning_top → keep waiting) — replaces bare green-bar check.
+2. Sell-Point Watcher: candle confirm at structure peaks (shooting_star/gravestone/
+   bear engulfing/evening_star at double-top 2nd peak or H&S head) upgrades
+   tighten→exit; three_black_crows = standalone tighten trigger on held winners.
+3. Momentum scanner transition-bar quality flag (marubozu/engulfing=conviction,
+   spinning_top=fakeout candidate → skip or halve confidence).
+4. entry_timing receipt field `topping_candle_at_submit` (observe-only).
