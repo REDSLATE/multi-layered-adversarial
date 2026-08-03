@@ -69,7 +69,11 @@ def momentum_score(closes: list[float], vols: list[float]) -> Optional[float]:
     window_ret = (closes[-1] - closes[-7]) / closes[-7]
     bar_ret = (closes[-1] - closes[-2]) / closes[-2]
     rvol = relative_volume(vols)
-    x = window_ret * 6.0 + bar_ret * 15.0 + 0.05 * (rvol - 1.0)
+    # Volume only confirms momentum on advancing bars — a red bar with
+    # a volume spike is distribution, not ignition (ICNT 2026-08-03).
+    # Kicker capped at 3x so rvol can never carry the score alone.
+    vol_kick = 0.05 * (min(rvol, 3.0) - 1.0) if bar_ret > 0 else 0.0
+    x = window_ret * 6.0 + bar_ret * 15.0 + vol_kick
     return round(0.5 + 0.5 * math.tanh(x), 4)
 
 

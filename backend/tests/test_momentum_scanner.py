@@ -132,3 +132,21 @@ def test_wiring_present():
     assert "momentum_scanner_task" in life
     mon = open("/app/backend/shared/exits/monitor.py").read()
     assert "momentum_policy" in mon and "get_momentum_exit_pcts" in mon
+
+
+def test_red_bar_volume_spike_never_scores_as_momentum():
+    """ICNT 2026-08-03 replay finding: a falling bar with 15x volume
+    (distribution) must not cross the momentum threshold."""
+    closes = [10.0] * 12 + [10.02, 9.90]      # last bar red -1.2%
+    vols = [10_000.0] * 13 + [150_000.0]      # 15x spike on the red bar
+    s = momentum_score(closes, vols)
+    assert s is not None and s < 0.50
+
+
+def test_volume_kicker_capped_on_green_bars():
+    # same 15x spike on a modest green bar: kicker capped at 4x,
+    # cannot carry the score past threshold alone
+    closes = [10.0] * 12 + [10.0, 10.03]
+    vols = [10_000.0] * 13 + [150_000.0]
+    s = momentum_score(closes, vols)
+    assert s is not None and s < 0.60
