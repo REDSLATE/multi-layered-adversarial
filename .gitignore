@@ -372,3 +372,6 @@ backend/webull_data_sdk.log*
 backend/webull_trade_sdk.log*
 frontend/node_modules/.cache/default-development/86.pack
 frontend/node_modules/.cache/default-development/88.pack
+.env
+.env.*
+*.env
