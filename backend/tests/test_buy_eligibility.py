@@ -49,17 +49,27 @@ async def test_static_mode_defers_to_legacy_allowlist(monkeypatch):
         return sym == "BTC/USD", {"symbols": ["BTC/USD"]}
     monkeypatch.setattr(al, "buy_allowed", _buy_allowed)
     ok, r = await elig.evaluate_buy_eligibility("BTC/USD")
-    assert ok and r["reason"] == "allowlist_static" and r["notional_cap_usd"] is None
+    assert ok and r["reason"] == "allowlist_static" and r["notional_cap_usd"] == 5.0
     ok2, r2 = await elig.evaluate_buy_eligibility("ICNT/USD")
     assert not ok2 and r2["reason"] == "not_in_buy_allowlist"
+    assert r2["notional_cap_usd"] is None
 
 
 @pytest.mark.asyncio
-async def test_hybrid_pin_always_allowed_uncapped(monkeypatch):
+async def test_hybrid_pin_allowed_with_per_trade_cap(monkeypatch):
+    # 2026-08-03 operator: $5/trade applies to ALL crypto BUYs, pins too
     _cfg(monkeypatch)
     _pins(monkeypatch, ["BTC/USD"])
     ok, r = await elig.evaluate_buy_eligibility("BTC/USD")
-    assert ok and r["reason"] == "operator_pin" and r["notional_cap_usd"] is None
+    assert ok and r["reason"] == "operator_pin" and r["notional_cap_usd"] == 5.0
+
+
+@pytest.mark.asyncio
+async def test_cap_knob_adjustable_reflects_on_pins(monkeypatch):
+    _cfg(monkeypatch, max_notional_usd=12.5)
+    _pins(monkeypatch, ["BTC/USD"])
+    ok, r = await elig.evaluate_buy_eligibility("BTC/USD")
+    assert ok and r["notional_cap_usd"] == 12.5
 
 
 @pytest.mark.asyncio
@@ -74,20 +84,19 @@ async def test_denylist_blocks_even_liquid_symbols(monkeypatch):
 @pytest.mark.asyncio
 async def test_rules_admit_icnt_class_with_notional_cap(monkeypatch):
     # ICNT-like: $1.2M day volume, 30bps spread → admitted, capped at
-    # min($50, 0.5% of $1.2M=$6000) = $50
+    # min($5, 0.5% of $1.2M=$6000) = $5
     _cfg(monkeypatch)
     _pins(monkeypatch, [])
     _metrics(monkeypatch, 1_200_000, 30.0)
     ok, r = await elig.evaluate_buy_eligibility("ICNT/USD")
     assert ok and r["reason"] == "rules_admitted"
-    assert r["notional_cap_usd"] == 50.0
+    assert r["notional_cap_usd"] == 5.0
 
 
 @pytest.mark.asyncio
 async def test_pct_of_volume_cap_binds_on_thin_symbols(monkeypatch):
-    # $1M day volume exactly at floor: 0.5% = $5000 > $50 → $50 binds;
-    # but with a tiny $2k symbol below floor → rejected outright
-    _cfg(monkeypatch, max_notional_offlist_usd=100.0)
+    # raised knob $100 with $1M day volume: 0.5% = $5000 → $100 binds
+    _cfg(monkeypatch, max_notional_usd=100.0)
     _pins(monkeypatch, [])
     _metrics(monkeypatch, 1_000_000, 10.0)
     ok, r = await elig.evaluate_buy_eligibility("THIN/USD")

@@ -145,7 +145,8 @@ async def build_position_plan(
         # RULES replace the static allowlist ("the list was standing
         # in for rules"). static mode = legacy behavior. Fail-open on
         # errors — a Mongo hiccup must not decide trades. SELLs never
-        # gated. Rule-admitted (off-pin) symbols carry a notional cap.
+        # gated. EVERY allowed BUY carries the per-trade notional cap
+        # ($5 default, 2026-08-03 operator directive — pins included).
         try:
             from shared.risk_sizer.buy_eligibility import (  # noqa: WPS433
                 evaluate_buy_eligibility,
@@ -252,9 +253,12 @@ async def build_position_plan(
     allocation_cap = equity * float(lane_pol["max_position_fraction"])
     spendable = available * (1.0 - float(lane_pol["reserve_fraction"]))
     final_notional = math.floor(min(risk_based, allocation_cap, spendable) * 100) / 100.0
+    _elig_cap_applied = False
     if _elig_cap is not None:
-        # rules-admitted off-pin symbol: liquidity-scaled hard cap
-        final_notional = min(final_notional, math.floor(_elig_cap * 100) / 100.0)
+        # $5/trade doctrine (2026-08-03): every crypto BUY is capped
+        _capped = math.floor(_elig_cap * 100) / 100.0
+        _elig_cap_applied = _capped < final_notional
+        final_notional = min(final_notional, _capped)
 
     min_notional = float(lane_pol["minimum_order_notional"])
     if _elig_cap is not None and _elig_cap < min_notional:
@@ -329,6 +333,8 @@ async def build_position_plan(
         "gross_notional": round(risk_based, 2),
         "final_notional": final_notional,
         "min_notional_bump": min_notional_bump,
+        "eligibility_cap_usd": round(_elig_cap, 2) if _elig_cap is not None else None,
+        "eligibility_cap_applied": _elig_cap_applied,
         "projected_loss_at_stop": round(projected_loss, 4),
     }
     if intent_id:

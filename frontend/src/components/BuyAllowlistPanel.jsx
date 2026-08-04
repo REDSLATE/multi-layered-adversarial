@@ -21,20 +21,43 @@ export const BuyAllowlistPanel = () => {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [elig, setElig] = useState(null);
+  const [eligBusy, setEligBusy] = useState(false);
+  const [eligMsg, setEligMsg] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const [{ data: a }, { data: h }] = await Promise.all([
+      const [{ data: a }, { data: h }, { data: e }] = await Promise.all([
         api.get("/admin/universe/crypto-buy-allowlist"),
         api.get("/admin/universe/crypto-buy-allowlist/held-stats"),
+        api.get("/admin/universe/buy-eligibility"),
       ]);
       setAl(a.allowlist);
       setAudit(a.audit || []);
       setHeld(h);
+      setElig(e.config);
     } catch (e) {
       setMsg({ ok: false, text: e?.response?.data?.detail || String(e) });
     }
   }, []);
+
+  const saveElig = async () => {
+    if (!elig) return;
+    setEligBusy(true); setEligMsg(null);
+    try {
+      const { data } = await api.post("/admin/universe/buy-eligibility", {
+        mode: elig.mode,
+        min_dollar_vol_24h: Number(elig.min_dollar_vol_24h),
+        max_spread_bps: Number(elig.max_spread_bps),
+        max_notional_usd: Number(elig.max_notional_usd),
+        max_pct_of_24h_vol: Number(elig.max_pct_of_24h_vol),
+      });
+      setElig(data.config);
+      setEligMsg({ ok: true, text: `saved · max $${Number(data.config.max_notional_usd).toFixed(2)} / trade on every crypto BUY` });
+    } catch (e) {
+      setEligMsg({ ok: false, text: e?.response?.data?.detail || String(e) });
+    } finally { setEligBusy(false); }
+  };
 
   useEffect(() => { load(); }, [load]);
 
@@ -154,6 +177,79 @@ export const BuyAllowlistPanel = () => {
           <Plus size={10} weight="bold" /> add
         </button>
       </div>
+
+      {elig && (
+        <div className="border-t border-rd-border pt-2 mb-2" data-testid="buy-eligibility-section">
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-rd-text">
+              Dynamic Eligibility
+            </span>
+            <span
+              className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border border-rd-success text-rd-success"
+              data-testid="buy-eligibility-mode-badge"
+            >
+              {elig.mode}
+            </span>
+            <span className="px-2 py-0.5 text-[10px] font-mono border border-amber-500 text-amber-500" data-testid="buy-eligibility-cap-badge">
+              MAX ${Number(elig.max_notional_usd).toFixed(2)} / TRADE — ALL BUYS
+            </span>
+          </div>
+          <div className="text-[10px] font-mono text-rd-dim mb-2">
+            Off-pin coins pass on liquidity rules; every crypto BUY (pins included) is size-capped per trade.
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-0.5">
+              <span className="text-[9px] font-mono uppercase tracking-widest text-rd-dim">mode</span>
+              <select
+                value={elig.mode}
+                onChange={(e) => setElig({ ...elig, mode: e.target.value })}
+                className="bg-rd-bg border border-rd-border px-2 py-1 text-xs font-mono text-rd-text focus:outline-none focus:border-rd-text"
+                data-testid="buy-eligibility-mode-select"
+              >
+                <option value="hybrid">hybrid</option>
+                <option value="dynamic">dynamic</option>
+                <option value="static">static</option>
+              </select>
+            </label>
+            {[
+              ["max_notional_usd", "max $ / trade", "buy-eligibility-max-notional"],
+              ["min_dollar_vol_24h", "min 24h $ vol", "buy-eligibility-min-dvol"],
+              ["max_spread_bps", "max spread bps", "buy-eligibility-max-spread"],
+              ["max_pct_of_24h_vol", "% of 24h vol", "buy-eligibility-max-pct"],
+            ].map(([key, label, tid]) => (
+              <label key={key} className="flex flex-col gap-0.5">
+                <span className="text-[9px] font-mono uppercase tracking-widest text-rd-dim">{label}</span>
+                <input
+                  type="number"
+                  step="any"
+                  value={elig[key] ?? ""}
+                  onChange={(e) => setElig({ ...elig, [key]: e.target.value })}
+                  className={`w-24 bg-rd-bg border px-2 py-1 text-xs font-mono text-rd-text focus:outline-none focus:border-rd-text ${
+                    key === "max_notional_usd" ? "border-amber-500" : "border-rd-border"
+                  }`}
+                  data-testid={tid}
+                />
+              </label>
+            ))}
+            <button
+              onClick={saveElig}
+              disabled={eligBusy}
+              className="px-3 py-1 text-[10px] font-mono uppercase tracking-wider border border-rd-success text-rd-success hover:bg-rd-success/10 transition-colors disabled:opacity-40"
+              data-testid="buy-eligibility-save-btn"
+            >
+              {eligBusy ? "saving…" : "save"}
+            </button>
+          </div>
+          {eligMsg && (
+            <div
+              className={`mt-1.5 text-[10px] font-mono flex items-center gap-1 ${eligMsg.ok ? "text-rd-success" : "text-red-500"}`}
+              data-testid="buy-eligibility-msg"
+            >
+              {!eligMsg.ok && <Warning size={10} weight="bold" />} {eligMsg.text}
+            </div>
+          )}
+        </div>
+      )}
 
       {lastChange && (
         <div className="text-[10px] font-mono text-rd-dim mb-2" data-testid="buy-allowlist-audit-line">

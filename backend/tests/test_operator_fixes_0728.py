@@ -118,11 +118,18 @@ async def test_bump_disabled_knob_rejects(wired):
         POLICY["crypto"]["bump_to_broker_min"] = True
 
 
-async def test_normal_sizes_not_bumped(wired):
+async def test_normal_sizes_not_bumped(wired, monkeypatch):
+    # 2026-08-03 doctrine: every crypto BUY carries the $5/trade cap —
+    # sizing math above the cap gets clamped TO it, never bumped
+    from shared.risk_sizer import buy_eligibility as elig
+    async def fake_elig(sym):
+        return True, {"notional_cap_usd": 5.0, "reason": "operator_pin"}
+    monkeypatch.setattr(elig, "evaluate_buy_eligibility", fake_elig)
     plan = await build_position_plan(_crypto_intent(), governor_multiplier=1.0)
     assert plan["approved"] is True
     assert plan["min_notional_bump"] is False
-    assert plan["final_notional"] > 5.0
+    assert plan["final_notional"] == 5.0
+    assert plan["eligibility_cap_applied"] is True
 
 
 # ── entry-order TTL cancel (LCID stale-limit autopsy 2026-07-28) ────
@@ -246,6 +253,13 @@ from shared.risk_sizer import buy_allowlist
 
 
 async def test_buy_allowlist_blocks_off_list_symbol(wired, monkeypatch):
+    # static mode = legacy allowlist behavior (hybrid would judge the
+    # off-list symbol by liquidity rules instead)
+    from shared.risk_sizer import buy_eligibility as elig
+    elig.reset_for_tests()
+    async def fake_cfg():
+        return {**elig.DEFAULTS, "mode": "static"}
+    monkeypatch.setattr(elig, "get_eligibility_config", fake_cfg)
     async def fake_al():
         return {"enabled": True, "symbols": ["BTC/USD", "ETH/USD"]}
     monkeypatch.setattr(buy_allowlist, "get_allowlist", fake_al)

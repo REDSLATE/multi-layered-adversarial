@@ -52,6 +52,18 @@ def wired(monkeypatch):
         "shared.hotpath.policy_snapshot.get",
         lambda: {"master_switch_enabled": True, "broker_freeze_reason": None},
     )
+
+    # pure sizing-math tests: neutralize the BUY eligibility gate
+    # (it has its own suite; the $5/trade cap would mask the math here)
+    async def fake_elig(sym):
+        return True, {"notional_cap_usd": None, "reason": "test_bypass"}
+    monkeypatch.setattr(
+        "shared.risk_sizer.buy_eligibility.evaluate_buy_eligibility", fake_elig)
+
+    async def fake_cooldown(mins):
+        return 0.0, None
+    monkeypatch.setattr(
+        "shared.risk_sizer.sell_cooldown.cooldown_remaining_s", fake_cooldown)
     yield monkeypatch
     balance.reset_for_tests()
     open_risk.reset_for_tests()

@@ -11,7 +11,10 @@ Modes (knob `runtime_flags._id=buy_eligibility`):
             (DEFAULT, operator-approved "Balanced" thresholds)
 
 Rules (all knobs): min 24h dollar volume $1M · spread ≤ 50bps ·
-off-pin notional cap $50 · order ≤ 0.5% of 24h volume.
+per-trade notional cap $5 (2026-08-03 operator: "keep it low, like $5
+per trade") applied to EVERY crypto BUY — pins, static mode, and
+rule-admitted symbols alike; rule-admitted symbols additionally capped
+at ≤ 0.5% of 24h volume. Adjustable knob, not hardcoded.
 SELLs / exits are NEVER gated here (BUY-path only, enforced by caller).
 Fail-closed on missing quotes in dynamic paths; fail-open only on
 Mongo read errors (a DB hiccup must not decide trades — same doctrine
@@ -30,7 +33,7 @@ DEFAULTS: dict[str, Any] = {
     "mode": "hybrid",
     "min_dollar_vol_24h": 1_000_000.0,
     "max_spread_bps": 50.0,
-    "max_notional_offlist_usd": 50.0,
+    "max_notional_usd": 5.0,
     "max_pct_of_24h_vol": 0.5,
     "denylist": [],
 }
@@ -95,19 +98,23 @@ async def _spread_bps(symbol: str) -> Optional[float]:
 
 
 async def evaluate_buy_eligibility(symbol: str) -> tuple[bool, dict]:
-    """(allowed, receipt). receipt.notional_cap_usd is a float for
-    rule-admitted (off-pin) symbols, None for pins/static mode."""
+    """(allowed, receipt). receipt.notional_cap_usd is set on EVERY
+    allowed BUY (2026-08-03: $5/trade default, pins included)."""
     from shared.risk_sizer.buy_allowlist import (  # noqa: WPS433
         buy_allowed, get_allowlist, normalize_crypto_symbol,
     )
     sym = normalize_crypto_symbol(symbol)
     cfg = await get_eligibility_config()
     mode = str(cfg.get("mode") or "hybrid").lower()
+    cap_all = round(float(cfg.get("max_notional_usd") or
+                          DEFAULTS["max_notional_usd"]), 2)
     base: dict = {"mode": mode, "symbol": sym, "notional_cap_usd": None}
 
     if mode == "static":
         allowed, al = await buy_allowed(sym)
-        return allowed, {**base, "reason":
+        return allowed, {**base,
+                         "notional_cap_usd": cap_all if allowed else None,
+                         "reason":
                          "allowlist_static" if allowed else "not_in_buy_allowlist",
                          "allowlist_size": len(al.get("symbols") or [])}
 
@@ -119,7 +126,8 @@ async def evaluate_buy_eligibility(symbol: str) -> tuple[bool, dict]:
         try:
             al = await get_allowlist()
             if sym in set(al.get("symbols") or []):
-                return True, {**base, "reason": "operator_pin"}
+                return True, {**base, "reason": "operator_pin",
+                              "notional_cap_usd": cap_all}
         except Exception:  # noqa: BLE001
             pass  # pins unreadable → fall through to rules (fail-open on Mongo)
 
@@ -151,7 +159,7 @@ async def evaluate_buy_eligibility(symbol: str) -> tuple[bool, dict]:
         _sym_cache[sym] = (now, rec)
         return False, {**base, **{k: v for k, v in rec.items() if k != "_allowed"}}
 
-    cap = min(float(cfg["max_notional_offlist_usd"]),
+    cap = min(cap_all,
               float(cfg["max_pct_of_24h_vol"]) / 100.0 * dvol)
     rec = {"reason": "rules_admitted", "dollar_vol_24h": round(dvol),
            "spread_bps": round(spread, 1),

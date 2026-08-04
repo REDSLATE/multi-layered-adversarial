@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from auth import get_current_user
 from db import db
@@ -422,7 +423,7 @@ class EligibilityKnobs(BaseModel):
     mode: Optional[str] = None
     min_dollar_vol_24h: Optional[float] = Field(default=None, ge=0)
     max_spread_bps: Optional[float] = Field(default=None, ge=1, le=1000)
-    max_notional_offlist_usd: Optional[float] = Field(default=None, ge=1)
+    max_notional_usd: Optional[float] = Field(default=None, ge=1)
     max_pct_of_24h_vol: Optional[float] = Field(default=None, ge=0.01, le=10)
     denylist: Optional[list[str]] = None
 
