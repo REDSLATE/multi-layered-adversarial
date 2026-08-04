@@ -6,6 +6,7 @@ import ConvictionFloorKnob from "@/components/ConvictionFloorKnob";
 import GateFailureDigest from "@/components/GateFailureDigest";
 import KrakenPairEditor from "@/components/KrakenPairEditor";
 import WatchlistPanel from "@/components/WatchlistPanel";
+import TapeQualityPanel from "@/components/TapeQualityPanel";
 import ExitMonitorPanel from "@/components/ExitMonitorPanel";
 import ExpectancyPanel from "@/components/ExpectancyPanel";
 import GainGoalPanel from "@/components/GainGoalPanel";
@@ -682,6 +683,7 @@ export default function OperatorControl() {
       <GateFailureDigest />
       <KrakenPairEditor />
       <WatchlistPanel />
+      <TapeQualityPanel />
       <ExitMonitorPanel />
       <ScannerPanel />
       <GainGoalPanel />

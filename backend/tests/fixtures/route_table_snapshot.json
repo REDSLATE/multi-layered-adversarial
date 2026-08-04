@@ -2709,6 +2709,20 @@
 "name": "alerts_ack"
 },
 {
+"path": "/api/admin/tape-quality",
+"methods": [
+"GET"
+],
+"name": "tape_quality_get"
+},
+{
+"path": "/api/admin/tape-quality",
+"methods": [
+"POST"
+],
+"name": "tape_quality_update"
+},
+{
 "path": "/api/admin/exits",
 "methods": [
 "GET"

@@ -15,10 +15,21 @@ export const MissedEntryTile = () => {
   const [data, setData] = useState(null);
   const [alerts, setAlerts] = useState(null);
   const [acking, setAcking] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState(null);
 
   const load = () => {
     api.get("/admin/missed-entries?hours=168").then(({ data: d }) => setData(d)).catch(() => {});
     api.get("/admin/alerts?hours=168").then(({ data: a }) => setAlerts(a)).catch(() => {});
+  };
+
+  const loadHistory = () =>
+    api.get("/admin/alerts?hours=720&include_acked=true").then(({ data: h }) => setHistory(h)).catch(() => {});
+
+  const toggleHistory = () => {
+    const next = !showHistory;
+    setShowHistory(next);
+    if (next && !history) loadHistory();
   };
 
   const ack = async (payload) => {
@@ -26,6 +37,7 @@ export const MissedEntryTile = () => {
     try {
       await api.post("/admin/alerts/ack", payload);
       load();
+      if (showHistory) loadHistory();
     } finally {
       setAcking(false);
     }
@@ -52,8 +64,53 @@ export const MissedEntryTile = () => {
             Missed Entry Ledger
           </span>
         </div>
-        <span className="text-[9px] font-mono uppercase text-rd-dim">7d · observe-only</span>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={toggleHistory}
+            className={`px-2 py-0.5 text-[9px] font-mono uppercase tracking-wider border transition-colors ${
+              showHistory ? "border-rd-text text-rd-text" : "border-rd-border text-rd-dim hover:text-rd-muted"
+            }`}
+            data-testid="missed-entry-history-toggle"
+          >
+            history
+          </button>
+          <span className="text-[9px] font-mono uppercase text-rd-dim">7d · observe-only</span>
+        </div>
       </div>
+      {showHistory && (
+        <div className="border border-rd-border p-2 mb-2" data-testid="missed-entry-history">
+          <div className="text-[9px] font-mono uppercase tracking-widest text-rd-dim mb-1">
+            alert history · 30d
+          </div>
+          {!history ? (
+            <div className="text-[10px] font-mono text-rd-dim">loading…</div>
+          ) : (history.alerts || []).length === 0 ? (
+            <div className="text-[10px] font-mono text-rd-dim" data-testid="missed-entry-history-empty">
+              no alerts in the last 30 days
+            </div>
+          ) : (
+            (history.alerts || []).map((a) => (
+              <div
+                key={a._id}
+                className="flex items-center gap-2 text-[10px] font-mono py-0.5"
+                data-testid={`missed-entry-history-${a._id}`}
+              >
+                <span className={`px-1 border text-[8px] uppercase ${
+                  a.acknowledged ? "border-rd-border text-rd-dim" : "border-red-500 text-red-500"
+                }`}>
+                  {a.acknowledged ? "acked" : "open"}
+                </span>
+                <span className="text-rd-dim shrink-0">{String(a.created_at || "").slice(0, 10)}</span>
+                <span className="flex-1 truncate text-rd-muted" title={a.message}>{a.message}</span>
+                {a.acknowledged && a.acked_by && (
+                  <span className="text-rd-dim shrink-0">by {a.acked_by.split("@")[0]}</span>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
       {liveAlerts.length > 0 && (
         <div className="border border-red-500 bg-red-500/10 p-2 mb-2" data-testid="missed-entry-alerts">
           <div className="flex items-center justify-between mb-1">

@@ -131,6 +131,7 @@ ROUTER_SPECS: tuple[str, ...] = (
     "routes.momentum_scanner_routes:router",
     "routes.missed_entries_admin:router",
     "routes.operator_alerts:router",
+    "routes.tape_quality_admin:router",
     "routes.exit_admin:router",
     "routes.expectancy_admin:router",
     "routes.hotpath_admin:router",
