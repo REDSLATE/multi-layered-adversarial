@@ -23,6 +23,9 @@ class ScannerKnobs(BaseModel):
     sl_pct: Optional[float] = Field(default=None, ge=0.5, le=50)
     min_score: Optional[float] = Field(default=None, ge=0, le=1)
     min_score_delta: Optional[float] = Field(default=None, ge=0, le=1)
+    ignition_enabled: Optional[bool] = None
+    ignition_top_n: Optional[int] = Field(default=None, ge=1, le=20)
+    ignition_min_vol_usd_min: Optional[float] = Field(default=None, ge=100)
 
 
 @router.get("")

@@ -35,9 +35,13 @@ DEFAULTS: dict[str, Any] = {
     "sl_pct": 3.0,
     "min_score": 0.60,
     "min_score_delta": 0.08,
+    "ignition_enabled": True,
+    "ignition_top_n": 5,
+    "ignition_min_vol_usd_min": 10_000.0,
 }
 
 EQUITY_SCAN_CAP = 30  # top live_universe movers per cycle
+CRYPTO_SCAN_CAP = 30  # pins + top crypto movers per cycle
 
 
 def _now() -> datetime:
@@ -143,6 +147,41 @@ def build_snapshot(
 
 # ── cycle ─────────────────────────────────────────────────────────
 
+async def _ignition_additions(scan_list, cfg, stats) -> list[tuple[str, str]]:
+    """Full-exchange ignition sweep (2026-08-04): symbols OUTSIDE the
+    universe whose 24h dollar volume is spiking right now. Fail-soft —
+    a sweep failure must never stall the universe scan."""
+    try:
+        from momentum.ignition_watch import sweep  # noqa: WPS433
+        cands = await sweep(
+            top_n=int(cfg.get("ignition_top_n") or 5),
+            min_vol_usd_min=float(cfg.get("ignition_min_vol_usd_min")
+                                  or 10_000.0))
+        stats["ignition"] = cands
+        known = {s for s, _ in scan_list}
+        fresh = [c["symbol"] for c in cands if c["symbol"] not in known]
+        if fresh:
+            from shared.crypto.kraken_pair_sync import auto_map_symbols  # noqa: WPS433
+            await auto_map_symbols(fresh)
+        return [(s, "ignition") for s in fresh]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ignition sweep failed: %s", exc)
+        return []
+
+
+async def _ignition_backfill_bars(symbol: str) -> list[dict]:
+    """Ignition candidates live outside the feeder universe → no
+    stored bars. One-shot 1m backfill so the tape math can run."""
+    try:
+        from shared.feeders.kraken_ohlc import _fetch_and_persist_one  # noqa: WPS433
+        from shared.risk_sizer.entry_timing import _load_bars  # noqa: WPS433
+        await _fetch_and_persist_one(symbol, 2.0 / 24.0, tf="1m")
+        return await _load_bars(symbol)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ignition bar backfill failed %s: %s", symbol, exc)
+        return []
+
+
 async def _already_engaged(db, symbol: str, cooldown_min: float) -> Optional[str]:
     """Skip reason if we hold the symbol or emitted recently."""
     plan = await db["shared_exit_plans"].find_one(
@@ -224,13 +263,18 @@ async def scan_once() -> dict:
         if lane == "equity" and not is_equity_rth():
             _rej("equity_market_closed")
             continue
-        for sym in await _lane_symbols(lane):
+        scan_list = [(s, "universe") for s in await _lane_symbols(lane)]
+        if lane == "crypto" and cfg.get("ignition_enabled", True):
+            scan_list += await _ignition_additions(scan_list, cfg, stats)
+        for sym, origin in scan_list:
             skip = await _already_engaged(db, sym, float(cfg["cooldown_min"]))
             if skip:
                 stats["skipped"] += 1
                 _rej(skip)
                 continue
             bars = await _load_bars(sym)
+            if origin == "ignition" and len(bars) < 15:
+                bars = await _ignition_backfill_bars(sym)
             bid, ask, age_ms = await _lane_quote(lane, sym)
             if lane == "equity" and (bid <= 0 or ask <= 0):
                 _rej("no_quote")  # equity fails closed on missing quotes
@@ -245,7 +289,7 @@ async def scan_once() -> dict:
             decision = valid_momentum_entry(snap, policy)
             stats["candidates"].append({
                 "symbol": sym, "lane": lane, "allowed": decision.allowed,
-                "reason": decision.reason,
+                "reason": decision.reason, "origin": origin,
                 "score": float(snap.current_score),
                 "prev_score": float(snap.previous_score),
                 "last_price": float(snap.last_price),
@@ -284,7 +328,8 @@ async def scan_once() -> dict:
         {"$set": {"last_run": _now().isoformat(), **{
             k: stats[k] for k in ("evaluated", "emitted", "skipped",
                                   "rejections")},
-            "candidates": stats["candidates"][:20]}},
+            "candidates": stats["candidates"][:20],
+            "ignition": stats.get("ignition", [])}},
         upsert=True)
     return stats
 

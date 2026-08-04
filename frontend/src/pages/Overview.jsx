@@ -25,6 +25,7 @@ import OperatorControl from "@/components/OperatorControl";
 import KillMapTile from "@/components/KillMapTile";
 import EntryTimingTile from "@/components/EntryTimingTile";
 import MomentumScannerTile from "@/components/MomentumScannerTile";
+import MissedEntryTile from "@/components/MissedEntryTile";
 
 export default function Overview() {
   const [overview, setOverview] = useState(null);
@@ -289,6 +290,10 @@ export default function Overview() {
 
           <PanelErrorBoundary panelName="Momentum Scanner" testid="panel-error-momentum-scanner">
             <MomentumScannerTile />
+          </PanelErrorBoundary>
+
+          <PanelErrorBoundary panelName="Missed Entry Ledger" testid="panel-error-missed-entry">
+            <MissedEntryTile />
           </PanelErrorBoundary>
 
           <div

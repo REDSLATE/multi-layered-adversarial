@@ -2583,6 +2583,27 @@
 "name": "entry_timing_stats"
 },
 {
+"path": "/api/admin/universe/buy-eligibility",
+"methods": [
+"GET"
+],
+"name": "buy_eligibility_get"
+},
+{
+"path": "/api/admin/universe/buy-eligibility/probe",
+"methods": [
+"GET"
+],
+"name": "buy_eligibility_probe"
+},
+{
+"path": "/api/admin/universe/buy-eligibility",
+"methods": [
+"POST"
+],
+"name": "buy_eligibility_update"
+},
+{
 "path": "/api/admin/universe/entry-timing/rearm-timeline",
 "methods": [
 "GET"
@@ -2651,6 +2672,27 @@
 "POST"
 ],
 "name": "scanner_update"
+},
+{
+"path": "/api/admin/missed-entries",
+"methods": [
+"GET"
+],
+"name": "missed_entries_get"
+},
+{
+"path": "/api/admin/missed-entries",
+"methods": [
+"POST"
+],
+"name": "missed_entries_update"
+},
+{
+"path": "/api/admin/missed-entries/run-once",
+"methods": [
+"POST"
+],
+"name": "missed_entries_run_once"
 },
 {
 "path": "/api/admin/exits",

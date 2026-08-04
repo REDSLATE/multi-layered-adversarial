@@ -888,6 +888,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("momentum scanner start failed: %s", e)
 
+    # ── Missed-entry ledger (2026-08-04): counterfactual outcomes
+    # for blocked BUYs — evidence base for gate tuning. Observe-only.
+    try:
+        from shared.risk_sizer.missed_entries import worker_loop as _me_loop
+        app.state.missed_entries_task = asyncio.create_task(_me_loop())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("missed-entry ledger start failed: %s", e)
+
     yield
     await stop_poller()
     await stop_tickler()

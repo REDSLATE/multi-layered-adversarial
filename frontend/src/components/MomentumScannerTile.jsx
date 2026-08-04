@@ -74,9 +74,17 @@ export const MomentumScannerTile = () => {
           {candidates.length > 0 && (
             <div className="mb-2 space-y-0.5" data-testid="ms-candidates">
               {candidates.map((c) => (
-                <div key={c.symbol} className="flex gap-2 text-[10px] font-mono">
+                <div key={c.symbol} className="flex gap-2 text-[10px] font-mono items-center">
                   <span className="w-24 shrink-0 text-rd-text">{c.symbol}</span>
                   <span className="w-10 shrink-0 text-rd-dim uppercase">{c.lane || ""}</span>
+                  {c.origin === "ignition" && (
+                    <span
+                      className="px-1 border border-amber-500 text-amber-500 text-[8px] font-bold uppercase tracking-wider"
+                      data-testid={`ms-ignition-badge-${c.symbol.replace("/", "-")}`}
+                    >
+                      ign
+                    </span>
+                  )}
                   <span className={c.allowed ? "text-rd-success" : "text-rd-dim"}>
                     {c.allowed ? "ENTRY" : c.reason}
                   </span>
@@ -87,6 +95,14 @@ export const MomentumScannerTile = () => {
               ))}
             </div>
           )}
+          {(st?.ignition || []).length > 0 && (
+            <div className="text-[9px] font-mono text-amber-500 mb-1" data-testid="ms-ignition-sweep">
+              ignition sweep:{" "}
+              {(st.ignition || [])
+                .map((i) => `${i.symbol} $${Math.round((i.vol_rate_usd_min || 0) / 1000)}k/min +${i.price_change_pct}%`)
+                .join(" · ")}
+            </div>
+          )}
           {rejections.length > 0 && (
             <div className="text-[9px] font-mono text-rd-dim mb-1" data-testid="ms-rejections">
               blocks: {rejections.map(([k, v]) => `${k}:${v}`).join(" · ")}
@@ -95,7 +111,7 @@ export const MomentumScannerTile = () => {
           <div className="text-[9px] font-mono text-rd-dim" data-testid="ms-footer">
             last scan {st?.last_run ? st.last_run.slice(11, 19) + "Z" : "never"} · every{" "}
             {cfg?.interval_sec}s · lanes {(cfg?.lanes || []).join("+")} · exits +{cfg?.tp_pct}% / −{cfg?.sl_pct}% from broker basis ·
-            entries pass all gates
+            entries pass all gates · ignition {cfg?.ignition_enabled ? "ON" : "off"}
           </div>
         </>
       )}
