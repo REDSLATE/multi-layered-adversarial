@@ -225,10 +225,39 @@ async def run_cycle() -> dict:
                       "sl_pct": sl_pct, "bars_used": len(bars),
                       **verdict}}, upsert=True)
         stats["evaluated"] += 1
+        if verdict["outcome"] == "tp_hit":
+            await _emit_costly_miss_alert(db, base, verdict, tp_pct)
+            stats["alerts"] = stats.get("alerts", 0) + 1
         logger.info("missed_entries: %s %s → %s (peak %+.2f%% end %+.2f%%)",
                     intent.get("symbol"), reason, verdict["outcome"],
                     verdict["peak_pct"], verdict["end_pct"])
     return stats
+
+
+async def _emit_costly_miss_alert(db, base: dict, verdict: dict,
+                                  tp_pct: float) -> None:
+    """Miss Alert (2026-08-04, operator option A: in-app): a blocked
+    BUY that would have hit take-profit is a costly gate decision the
+    operator must see same-day. Idempotent by _id."""
+    try:
+        await db["operator_alerts"].update_one(
+            {"_id": f"alert-miss-{base['intent_id']}"},
+            {"$setOnInsert": {
+                "kind": "costly_miss", "severity": "warn",
+                "symbol": base.get("symbol"), "lane": base.get("lane"),
+                "block_reason": base.get("block_reason"),
+                "intent_id": base.get("intent_id"),
+                "peak_pct": verdict["peak_pct"],
+                "end_pct": verdict["end_pct"], "tp_pct": tp_pct,
+                "message": (f"{base.get('symbol')} would have hit "
+                            f"+{tp_pct:g}% TP (peak "
+                            f"{verdict['peak_pct']:+.2f}%) — blocked by "
+                            f"{base.get('block_reason')}"),
+                "created_at": _now().isoformat(),
+                "acknowledged": False,
+            }}, upsert=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("costly-miss alert write failed: %s", exc)
 
 
 async def ledger_stats(db, hours: int = 168) -> dict:

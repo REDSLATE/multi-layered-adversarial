@@ -225,4 +225,25 @@ async def check_buy_entry(intent: dict) -> dict:
         return {"allowed": True, "reason": "gate_disabled",
                 "decision": "BUY", "receipt": {}}
     bars = await _load_bars((intent.get("symbol") or "").upper())
-    return evaluate(intent, bars, cfg["profiles"])
+    # Tape Quality Gate (2026-08-04): stale/gappy bars distort the
+    # extension math — fail CLOSED, same doctrine as NO_TIMING_DATA.
+    # BAD_TAPE_QUALITY is NOT in REARMABLE_REASONS (a data fault must
+    # not open a re-arm window). Fail-open on gate errors only.
+    tq = None
+    if bars:
+        try:
+            from shared.market_data.tape_quality import assess_with_config  # noqa: WPS433
+            tq = await assess_with_config(bars)
+        except Exception:  # noqa: BLE001
+            tq = None
+        if tq is not None and not tq["ok"]:
+            return {"allowed": False, "reason": "BAD_TAPE_QUALITY",
+                    "decision": "REJECT",
+                    "receipt": {"tape_quality": tq,
+                                "message": (f"tape {tq['reason']} — "
+                                            "refusing blind entry.")}}
+    verdict = evaluate(intent, bars, cfg["profiles"])
+    if tq is not None:
+        verdict.setdefault("receipt", {})["tape_quality"] = {
+            "reason": tq["reason"], **(tq.get("fingerprint") or {})}
+    return verdict

@@ -13,9 +13,23 @@ const OUTCOME_STYLE = {
  *  Evidence for tuning gates instead of tuning blind. Observe-only. */
 export const MissedEntryTile = () => {
   const [data, setData] = useState(null);
+  const [alerts, setAlerts] = useState(null);
+  const [acking, setAcking] = useState(false);
 
-  const load = () =>
+  const load = () => {
     api.get("/admin/missed-entries?hours=168").then(({ data: d }) => setData(d)).catch(() => {});
+    api.get("/admin/alerts?hours=168").then(({ data: a }) => setAlerts(a)).catch(() => {});
+  };
+
+  const ack = async (payload) => {
+    setAcking(true);
+    try {
+      await api.post("/admin/alerts/ack", payload);
+      load();
+    } finally {
+      setAcking(false);
+    }
+  };
 
   useEffect(() => {
     load();
@@ -27,6 +41,7 @@ export const MissedEntryTile = () => {
   const recent = (data?.recent || []).filter((r) => r.outcome !== "no_data").slice(0, 6);
   const total = reasons.reduce((a, [, v]) => a + v.n, 0);
   const wouldTp = reasons.reduce((a, [, v]) => a + v.would_tp, 0);
+  const liveAlerts = (alerts?.alerts || []).slice(0, 4);
 
   return (
     <div className="border border-rd-border bg-rd-panel p-3" data-testid="missed-entry-tile">
@@ -39,6 +54,36 @@ export const MissedEntryTile = () => {
         </div>
         <span className="text-[9px] font-mono uppercase text-rd-dim">7d · observe-only</span>
       </div>
+      {liveAlerts.length > 0 && (
+        <div className="border border-red-500 bg-red-500/10 p-2 mb-2" data-testid="missed-entry-alerts">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-red-500 animate-pulse">
+              Costly Miss · {alerts?.unacked_total ?? liveAlerts.length} unacked
+            </span>
+            <button
+              onClick={() => ack({ all: true })}
+              disabled={acking}
+              className="px-2 py-0.5 text-[9px] font-mono uppercase border border-red-500 text-red-500 hover:bg-red-500/20 transition-colors disabled:opacity-40"
+              data-testid="missed-entry-ack-all"
+            >
+              ack all
+            </button>
+          </div>
+          {liveAlerts.map((a) => (
+            <div key={a._id} className="flex items-center gap-2 text-[10px] font-mono text-rd-text py-0.5" data-testid={`missed-entry-alert-${a._id}`}>
+              <span className="flex-1 truncate" title={a.message}>{a.message}</span>
+              <button
+                onClick={() => ack({ alert_id: a._id })}
+                disabled={acking}
+                className="text-rd-dim hover:text-red-500 text-[9px] uppercase transition-colors"
+                data-testid={`missed-entry-ack-${a._id}`}
+              >
+                ack
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {!data ? (
         <div className="text-[10px] font-mono text-rd-dim">loading…</div>
       ) : total === 0 ? (

@@ -182,6 +182,19 @@ async def _ignition_backfill_bars(symbol: str) -> list[dict]:
         return []
 
 
+async def _tape_ok(bars: list[dict]):
+    """Tape Quality Gate (2026-08-04): stale/gappy bars must never be
+    scored. Returns the granular reject reason or None when clean.
+    Fail-open on gate errors — a gate bug must not silence the scanner."""
+    try:
+        from shared.market_data.tape_quality import assess_with_config  # noqa: WPS433
+        tq = await assess_with_config(bars)
+        return None if tq["ok"] else tq["reason"]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("tape quality gate errored (fail-open): %s", exc)
+        return None
+
+
 async def _already_engaged(db, symbol: str, cooldown_min: float) -> Optional[str]:
     """Skip reason if we hold the symbol or emitted recently."""
     plan = await db["shared_exit_plans"].find_one(
@@ -275,6 +288,10 @@ async def scan_once() -> dict:
             bars = await _load_bars(sym)
             if origin == "ignition" and len(bars) < 15:
                 bars = await _ignition_backfill_bars(sym)
+            tq = await _tape_ok(bars)
+            if tq is not None:
+                _rej(tq)
+                continue
             bid, ask, age_ms = await _lane_quote(lane, sym)
             if lane == "equity" and (bid <= 0 or ask <= 0):
                 _rej("no_quote")  # equity fails closed on missing quotes

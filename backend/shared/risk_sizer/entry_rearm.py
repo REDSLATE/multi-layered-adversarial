@@ -297,6 +297,24 @@ async def _tick() -> int:
             bars = await _load_bars(trig["symbol"])
             if not bars:
                 continue
+            # Tape Quality Gate (2026-08-04): never advance the re-arm
+            # state machine on stale/gappy bars — skip WITH a receipt
+            # so the tile shows why the watcher is waiting.
+            try:
+                from shared.market_data.tape_quality import (  # noqa: WPS433
+                    assess_with_config,
+                )
+                tq = await assess_with_config(bars)
+            except Exception:  # noqa: BLE001
+                tq = {"ok": True}
+            if not tq["ok"]:
+                await db[TRIGGERS].update_one(
+                    {"trigger_id": trig["trigger_id"]},
+                    {"$set": {"last_check": {
+                        "why": tq["reason"],
+                        "tape_quality": tq.get("fingerprint"),
+                        "ts": _now_iso()}}})
+                continue
             price = float(bars[-1].get("c") or 0)
             high = float(bars[-1].get("h") or 0)
             peak = max(float(trig.get("peak_price") or 0), high)

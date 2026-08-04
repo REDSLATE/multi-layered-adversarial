@@ -2695,6 +2695,20 @@
 "name": "missed_entries_run_once"
 },
 {
+"path": "/api/admin/alerts",
+"methods": [
+"GET"
+],
+"name": "alerts_get"
+},
+{
+"path": "/api/admin/alerts/ack",
+"methods": [
+"POST"
+],
+"name": "alerts_ack"
+},
+{
 "path": "/api/admin/exits",
 "methods": [
 "GET"
