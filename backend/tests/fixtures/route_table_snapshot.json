@@ -2744,6 +2744,48 @@
 "name": "sell_point_run_once"
 },
 {
+"path": "/api/admin/entry-mode",
+"methods": [
+"GET"
+],
+"name": "entry_mode_get"
+},
+{
+"path": "/api/admin/entry-mode",
+"methods": [
+"POST"
+],
+"name": "entry_mode_update"
+},
+{
+"path": "/api/admin/entry-mode/promotion-gate",
+"methods": [
+"GET"
+],
+"name": "promotion_gate_get"
+},
+{
+"path": "/api/admin/forensics/closed-trades",
+"methods": [
+"GET"
+],
+"name": "closed_trades"
+},
+{
+"path": "/api/admin/forensics/entry-latency",
+"methods": [
+"GET"
+],
+"name": "entry_latency"
+},
+{
+"path": "/api/admin/forensics/broker-actuals",
+"methods": [
+"POST"
+],
+"name": "broker_actuals"
+},
+{
 "path": "/api/admin/exits",
 "methods": [
 "GET"

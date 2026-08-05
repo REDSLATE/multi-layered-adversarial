@@ -8,6 +8,8 @@ import KrakenPairEditor from "@/components/KrakenPairEditor";
 import WatchlistPanel from "@/components/WatchlistPanel";
 import TapeQualityPanel from "@/components/TapeQualityPanel";
 import SellPointPanel from "@/components/SellPointPanel";
+import EntryModePanel from "@/components/EntryModePanel";
+import ForensicsPanel from "@/components/ForensicsPanel";
 import ExitMonitorPanel from "@/components/ExitMonitorPanel";
 import ExpectancyPanel from "@/components/ExpectancyPanel";
 import GainGoalPanel from "@/components/GainGoalPanel";
@@ -287,6 +289,7 @@ export default function OperatorControl() {
 
   return (
     <Card className="mb-6" testid="operator-control-tile" accentColor={loopClosed ? "#10B981" : "#EF4444"}>
+      <EntryModePanel />
       <div className="flex items-start justify-between gap-3 mb-4">
         <div>
           <div className="flex items-center gap-2">
@@ -687,6 +690,7 @@ export default function OperatorControl() {
       <TapeQualityPanel />
       <ExitMonitorPanel />
       <SellPointPanel />
+      <ForensicsPanel />
       <ScannerPanel />
       <GainGoalPanel />
       <OptionsPanel />

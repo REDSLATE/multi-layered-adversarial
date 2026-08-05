@@ -133,6 +133,8 @@ ROUTER_SPECS: tuple[str, ...] = (
     "routes.operator_alerts:router",
     "routes.tape_quality_admin:router",
     "routes.sell_point_admin:router",
+    "routes.execution_mode_admin:router",
+    "routes.forensics_admin:router",
     "routes.exit_admin:router",
     "routes.expectancy_admin:router",
     "routes.hotpath_admin:router",

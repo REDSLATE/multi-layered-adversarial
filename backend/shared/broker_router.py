@@ -428,6 +428,17 @@ async def route_order(
             asset.lane, exc,
         )
 
+    # 1c. Entry-mode governor (2026-08-05 operator directive): stop
+    #     paying tuition while diagnosing why it loses. exit_only
+    #     (DEFAULT, fail-closed) blocks every new automated entry;
+    #     the block is recorded as a shadow fill so forward
+    #     expectancy keeps accruing. SELLs/exits are never touched.
+    if (intent.get("action") or "").upper() in ("BUY", "SHORT"):
+        from shared.execution_mode import gate_new_entry  # noqa: WPS433
+        allowed, why = await gate_new_entry(intent, notional_usd)
+        if not allowed:
+            raise BrokerRouteBlocked(why)
+
     # 2. Pick broker by lane — unless the intent carries an operator
     #    override (e.g. `broker_override="webull"`). The override is
     #    only honored for brokers in `ROUTE_OVERRIDE_BROKERS`; anything

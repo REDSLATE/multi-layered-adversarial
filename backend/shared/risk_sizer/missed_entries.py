@@ -170,10 +170,14 @@ async def run_cycle() -> dict:
 
     rows = await db[SHARED_INTENTS].find(
         {"action": "BUY", "gate_state": "blocked",
-         "risk_reason": {"$regex": "^(entry_timing|risk_sizer):"},
+         "$or": [
+             {"risk_reason": {"$regex": "^(entry_timing|risk_sizer):"}},
+             {"broker_reason": {"$regex": "exit_only_mode"}},
+         ],
          "ingest_ts": {"$gte": oldest, "$lte": newest}},
         {"_id": 0, "intent_id": 1, "symbol": 1, "lane": 1, "stack": 1,
-         "risk_reason": 1, "ingest_ts": 1, "last_submit_ts": 1,
+         "risk_reason": 1, "broker_reason": 1, "ingest_ts": 1,
+         "last_submit_ts": 1,
          "price_at_signal": 1, "snapshot": 1, "entry_timing_receipt": 1},
     ).sort("ingest_ts", -1).max_time_ms(8000).to_list(200)
 
@@ -181,8 +185,16 @@ async def run_cycle() -> dict:
         if stats["evaluated"] + stats["no_data"] >= max_eval:
             break
         reason = intent.get("risk_reason") or ""
+        if not in_scope(reason):
+            # exit-only shadow entries (2026-08-05): fully-gated BUYs
+            # blocked at the broker router — the forward-recorded
+            # signals the promotion gate scores.
+            if "exit_only_mode" in (intent.get("broker_reason") or ""):
+                reason = "execution:exit_only_mode"
+            else:
+                continue
         intent_id = intent.get("intent_id") or ""
-        if not intent_id or not in_scope(reason):
+        if not intent_id:
             continue
         stats["scanned"] += 1
         doc_id = f"missed:{intent_id}"

@@ -333,6 +333,23 @@ async def scan_once() -> dict:
                 )
                 res = await submit_intent_in_process(body)
                 stats["emitted"] += 1
+                iid = (res or {}).get("intent_id")
+                if iid:
+                    try:
+                        # latency forensics (2026-08-05): stamp the
+                        # triggering bar + detection time so signal→
+                        # fill delay is measurable end-to-end.
+                        await db["shared_intents"].update_one(
+                            {"intent_id": iid},
+                            {"$set": {
+                                "signal_bar_ts": bars[-1].get("ts"),
+                                "signal_price": float(
+                                    snap.confirmation_price
+                                    or bars[-1].get("c") or 0) or None,
+                                "signal_detected_at": _now().isoformat(),
+                            }})
+                    except Exception:  # noqa: BLE001
+                        pass
                 logger.info("momentum_scanner: EMITTED %s %s intent=%s",
                             lane, sym, (res or {}).get("intent_id"))
             except Exception as exc:  # noqa: BLE001
