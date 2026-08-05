@@ -2723,6 +2723,27 @@
 "name": "tape_quality_update"
 },
 {
+"path": "/api/admin/sell-point",
+"methods": [
+"GET"
+],
+"name": "sell_point_get"
+},
+{
+"path": "/api/admin/sell-point",
+"methods": [
+"POST"
+],
+"name": "sell_point_update"
+},
+{
+"path": "/api/admin/sell-point/run-once",
+"methods": [
+"POST"
+],
+"name": "sell_point_run_once"
+},
+{
 "path": "/api/admin/exits",
 "methods": [
 "GET"

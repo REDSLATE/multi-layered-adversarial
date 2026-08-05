@@ -896,6 +896,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("missed-entry ledger start failed: %s", e)
 
+    # ── Sell-Point Watcher (2026-08-04, v3.5 plan item 5): bearish
+    # structures on HELD tickers. Ships in OBSERVE mode. Fail-soft.
+    try:
+        from shared.exits.pattern_watch import worker_loop as _spw_loop
+        app.state.sell_point_task = asyncio.create_task(_spw_loop())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("sell-point watcher start failed: %s", e)
+
     yield
     await stop_poller()
     await stop_tickler()

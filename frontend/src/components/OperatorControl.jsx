@@ -7,6 +7,7 @@ import GateFailureDigest from "@/components/GateFailureDigest";
 import KrakenPairEditor from "@/components/KrakenPairEditor";
 import WatchlistPanel from "@/components/WatchlistPanel";
 import TapeQualityPanel from "@/components/TapeQualityPanel";
+import SellPointPanel from "@/components/SellPointPanel";
 import ExitMonitorPanel from "@/components/ExitMonitorPanel";
 import ExpectancyPanel from "@/components/ExpectancyPanel";
 import GainGoalPanel from "@/components/GainGoalPanel";
@@ -685,6 +686,7 @@ export default function OperatorControl() {
       <WatchlistPanel />
       <TapeQualityPanel />
       <ExitMonitorPanel />
+      <SellPointPanel />
       <ScannerPanel />
       <GainGoalPanel />
       <OptionsPanel />
