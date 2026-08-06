@@ -26,6 +26,9 @@ class ScannerKnobs(BaseModel):
     ignition_enabled: Optional[bool] = None
     ignition_top_n: Optional[int] = Field(default=None, ge=1, le=20)
     ignition_min_vol_usd_min: Optional[float] = Field(default=None, ge=100)
+    realtime_enabled: Optional[bool] = None
+    thrust_bps: Optional[float] = Field(default=None, ge=5, le=1000)
+    max_ws_symbols: Optional[int] = Field(default=None, ge=5, le=200)
 
 
 @router.get("")
@@ -36,7 +39,13 @@ async def scanner_status(_user: dict = Depends(get_current_user)):  # noqa: B008
         {"_id": STATE_ID}, {"_id": 0}, max_time_ms=3000) or {}
     n_emitted = await db["shared_intents"].count_documents(
         {"stack": "momentum"}, maxTimeMS=5000)
+    try:
+        from shared.market_data.kraken_ws import status as ws_status  # noqa: WPS433
+        realtime = ws_status()
+    except Exception:  # noqa: BLE001
+        realtime = None
     return {"ok": True, "config": cfg, "state": state,
+            "realtime": realtime,
             "total_momentum_intents": n_emitted, "flag_id": FLAG_ID}
 
 

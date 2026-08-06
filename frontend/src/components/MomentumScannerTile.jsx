@@ -108,6 +108,16 @@ export const MomentumScannerTile = () => {
               blocks: {rejections.map(([k, v]) => `${k}:${v}`).join(" · ")}
             </div>
           )}
+          {data?.realtime && (
+            <div className="text-[9px] font-mono mb-1" data-testid="ms-realtime-status">
+              <span className={data.realtime.connected ? "text-rd-success" : "text-red-500"}>
+                realtime WS {data.realtime.connected ? "LIVE" : "down"}
+              </span>
+              <span className="text-rd-dim">
+                {" "}· {data.realtime.symbols} syms · {data.realtime.ticks} ticks · {data.realtime.hot_triggers} thrust evals
+              </span>
+            </div>
+          )}
           <div className="text-[9px] font-mono text-rd-dim" data-testid="ms-footer">
             last scan {st?.last_run ? st.last_run.slice(11, 19) + "Z" : "never"} · every{" "}
             {cfg?.interval_sec}s · lanes {(cfg?.lanes || []).join("+")} · exits +{cfg?.tp_pct}% / −{cfg?.sl_pct}% from broker basis ·

@@ -38,6 +38,9 @@ DEFAULTS: dict[str, Any] = {
     "ignition_enabled": True,
     "ignition_top_n": 5,
     "ignition_min_vol_usd_min": 10_000.0,
+    "realtime_enabled": True,
+    "thrust_bps": 50.0,
+    "max_ws_symbols": 60,
 }
 
 EQUITY_SCAN_CAP = 30  # top live_universe movers per cycle
@@ -195,6 +198,19 @@ async def _tape_ok(bars: list[dict]):
         return None
 
 
+def _with_partial_bar(symbol: str, bars: list[dict]) -> list[dict]:
+    """Append the FORMING 1m bar from the WS stream so momentum math
+    sees the move now, not after bar close (2026-08-05 realtime)."""
+    try:
+        from shared.market_data.kraken_ws import current_partial_bar  # noqa: WPS433
+        pb = current_partial_bar(symbol)
+        if pb and (not bars or str(pb["ts"]) > str(bars[-1].get("ts") or "")):
+            return bars + [pb]
+    except Exception:  # noqa: BLE001
+        pass
+    return bars
+
+
 async def _already_engaged(db, symbol: str, cooldown_min: float) -> Optional[str]:
     """Skip reason if we hold the symbol or emitted recently."""
     plan = await db["shared_exit_plans"].find_one(
@@ -237,6 +253,13 @@ async def _lane_symbols(lane: str) -> list[str]:
 async def _lane_quote(lane: str, symbol: str) -> tuple[float, float, int]:
     """(bid, ask, quote_age_ms) — fail-soft zeros on missing quotes."""
     if lane == "crypto":
+        try:
+            from shared.market_data.kraken_ws import get_live_quote  # noqa: WPS433
+            lq = get_live_quote(symbol)
+            if lq and lq["bid"] > 0 and lq["ask"] > 0:
+                return lq["bid"], lq["ask"], int(lq["age_ms"])
+        except Exception:  # noqa: BLE001
+            pass
         from shared.market_data.crypto_snapshot_enrichment import (  # noqa: WPS433
             enrich_crypto_snapshot,
         )
@@ -254,7 +277,7 @@ async def _lane_quote(lane: str, symbol: str) -> tuple[float, float, int]:
     return float(snap.get("bid") or 0), float(snap.get("ask") or 0), 0
 
 
-async def scan_once() -> dict:
+async def scan_once(only_symbols: Optional[set] = None) -> dict:
     """One scanner pass over the enabled lanes."""
     from db import db  # noqa: WPS433
     from shared.risk_sizer.entry_timing import _load_bars  # noqa: WPS433
@@ -277,8 +300,17 @@ async def scan_once() -> dict:
             _rej("equity_market_closed")
             continue
         scan_list = [(s, "universe") for s in await _lane_symbols(lane)]
-        if lane == "crypto" and cfg.get("ignition_enabled", True):
+        if (lane == "crypto" and only_symbols is None
+                and cfg.get("ignition_enabled", True)):
             scan_list += await _ignition_additions(scan_list, cfg, stats)
+        if only_symbols is not None:
+            # realtime hot path: evaluate ONLY the thrusting symbols
+            keep = [(s, o) for s, o in scan_list if s in only_symbols]
+            known = {s for s, _ in keep}
+            if lane == "crypto":
+                keep += [(s, "realtime") for s in sorted(only_symbols)
+                         if s not in known]
+            scan_list = keep
         for sym, origin in scan_list:
             skip = await _already_engaged(db, sym, float(cfg["cooldown_min"]))
             if skip:
@@ -288,6 +320,8 @@ async def scan_once() -> dict:
             bars = await _load_bars(sym)
             if origin == "ignition" and len(bars) < 15:
                 bars = await _ignition_backfill_bars(sym)
+            if lane == "crypto" and cfg.get("realtime_enabled", True):
+                bars = _with_partial_bar(sym, bars)
             tq = await _tape_ok(bars)
             if tq is not None:
                 _rej(tq)
@@ -370,12 +404,34 @@ async def scan_once() -> dict:
 
 async def scanner_loop() -> None:
     logger.info("momentum scanner started (disabled until armed)")
+    loop = asyncio.get_event_loop()
     while True:
         try:
             cfg = await get_config()
             if cfg.get("enabled"):
                 await scan_once()
-            await asyncio.sleep(max(15, int(cfg.get("interval_sec", 60))))
+            interval = max(15, int(cfg.get("interval_sec", 60)))
+            deadline = loop.time() + interval
+            # realtime hot path (2026-08-05): a thrust tick wakes the
+            # scanner instantly instead of waiting out the interval
+            while True:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+                try:
+                    from shared.market_data.kraken_ws import (  # noqa: WPS433
+                        hot_event, take_hot_symbols,
+                    )
+                    await asyncio.wait_for(hot_event().wait(),
+                                           timeout=remaining)
+                    hot_event().clear()
+                    hot = take_hot_symbols()
+                    if hot and cfg.get("enabled"):
+                        logger.info("momentum_scanner: realtime thrust "
+                                    "eval %s", sorted(hot))
+                        await scan_once(only_symbols=hot)
+                except asyncio.TimeoutError:
+                    break
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001

@@ -93,6 +93,17 @@ async def _ticker_with_ladder(symbol: str) -> tuple[Optional[dict], str, float]:
     """(data, source, age_ms) — fresh cache → live → stale cache →
     (None, NO_DATA)."""
     now = time.monotonic()
+    # WS_LIVE (2026-08-05): sub-second stream quote outranks the whole
+    # REST ladder; falls through when the stream is quiet/degraded.
+    try:
+        from shared.market_data.kraken_ws import get_live_quote  # noqa: WPS433
+        lq = get_live_quote(symbol, max_age_s=2.5)
+        if lq and lq.get("bid") and lq.get("ask") and lq.get("volume_24h_usd"):
+            return ({"bid": lq["bid"], "ask": lq["ask"],
+                     "volume_24h_usd": lq["volume_24h_usd"]},
+                    "WS_LIVE", lq["age_ms"])
+    except Exception:  # noqa: BLE001
+        pass
     cached = _ticker_cache.get(symbol)
     if cached:
         age_s = now - cached["at"]

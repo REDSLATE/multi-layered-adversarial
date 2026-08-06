@@ -904,6 +904,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("sell-point watcher start failed: %s", e)
 
+    # ── Kraken WS real-time layer (2026-08-05): live quotes, forming
+    # bars, thrust-triggered instant evaluation. Fail-soft to REST.
+    try:
+        from shared.market_data.kraken_ws import stream_loop as _kws_loop
+        app.state.kraken_ws_task = asyncio.create_task(_kws_loop())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("kraken_ws start failed: %s", e)
+
     yield
     await stop_poller()
     await stop_tickler()
