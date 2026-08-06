@@ -97,7 +97,7 @@ async def test_exit_policy_includes_options_lane(monkeypatch):
     monkeypatch.setattr(exit_policy, "db", _Fail())
     pol = await exit_policy.get_policy()
     o = pol["options"]
-    assert o["enabled"] is False           # safe rollout default
+    assert o["enabled"] is True            # 2026-08: exits always-on default
     assert o["sl_pct"] == 50.0
     assert o["tp_pct"] == 100.0
     assert o["close_before_expiry_days"] == 1.0

@@ -52,5 +52,5 @@ async def test_outage_before_first_load_still_falls_back_to_defaults():
     ep._LAST_GOOD = None
     with patch.object(ep, "db", _DB()):
         p = await ep.get_policy()
-        assert p["crypto"]["enabled"] is False  # safe default pre-first-load
+        assert p["crypto"]["enabled"] is True  # 2026-08 always-on default pre-first-load
     ep._LAST_GOOD = None

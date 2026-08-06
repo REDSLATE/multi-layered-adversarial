@@ -39,6 +39,24 @@ async def entry_latency(
     return {"ok": True, **await entry_latency_report(db, n)}
 
 
+@router.get("/broker-report")
+async def broker_report_route(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Webull-sourced forensics — reconstructs round trips from the
+    broker's own fill history. Works even when the internal receipts
+    database is empty (2026-08: it always was)."""
+    from shared.forensics.broker_forensics import broker_report  # noqa: WPS433
+    report = await broker_report(db, start=start, end=end)
+    if report.get("ok"):
+        await db["forensic_reports"].update_one(
+            {"_id": f"broker-webull-{report['generated_at'][:10]}"},
+            {"$set": report}, upsert=True)
+    return report
+
+
 class BrokerActuals(BaseModel):
     months: Dict[str, float]  # {"2026-06": -28.01, ...}
 

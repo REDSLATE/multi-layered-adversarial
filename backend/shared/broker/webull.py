@@ -119,6 +119,70 @@ def _position_row_is_option(row: dict) -> bool:
                 and _first_field(row, *_OPT_EXPIRE_KEYS))
 
 
+def _history_fee(merged: dict) -> float:
+    """fees can be [], [{amount}...]; commission can be {} or {amount}."""
+    total = 0.0
+    fees = merged.get("fees")
+    if isinstance(fees, list):
+        for f in fees:
+            try:
+                total += float((f or {}).get("amount") or (f or {}).get("fee") or 0)
+            except (TypeError, ValueError, AttributeError):
+                continue
+    comm = merged.get("commission")
+    if isinstance(comm, dict):
+        try:
+            total += float(comm.get("amount") or 0)
+        except (TypeError, ValueError):
+            pass
+    return total
+
+
+def _normalize_history_order(order: dict) -> list[dict]:
+    """Flatten one v2 order-history row (legs live under `orders`)
+    into filled-fill dicts. Non-FILLED orders are skipped."""
+    legs = (order.get("orders") if isinstance(order.get("orders"), list)
+            else order.get("items") if isinstance(order.get("items"), list)
+            else [order])
+    out = []
+    for leg in legs:
+        merged = {**order, **(leg if isinstance(leg, dict) else {})}
+        status = str(_first_field(
+            merged, "order_status", "status", "orderStatus") or "").upper()
+        if status not in ("FILLED", "PARTIAL_FILLED", "PARTIALLY_FILLED"):
+            continue
+        try:
+            qty = float(_first_field(
+                merged, "filled_quantity", "filled_qty", "filledQty",
+                "total_filled_qty") or 0)
+            price = float(_first_field(
+                merged, "filled_price", "avg_filled_price", "avgFilledPrice",
+                "average_price") or 0)
+        except (TypeError, ValueError):
+            continue
+        if qty <= 0 or price <= 0:
+            continue
+        out.append({
+            "order_id": _first_field(merged, "order_id", "combo_order_id", "id"),
+            "client_order_id": _first_field(
+                merged, "client_order_id", "clientOrderId"),
+            "symbol": str(_first_field(
+                merged, "symbol", "ticker", "instrument_symbol") or "").upper(),
+            "side": str(_first_field(merged, "side", "action") or "").upper(),
+            "qty": qty,
+            "price": price,
+            "notional": round(qty * price, 4),
+            "fee": _history_fee(merged),
+            "filled_at": _first_field(
+                merged, "filled_time_at", "place_time_at",
+                "filled_time", "place_time"),
+            "order_type": _first_field(merged, "order_type", "orderType"),
+            "instrument_type": _first_field(merged, "instrument_type"),
+            "status": status,
+        })
+    return out
+
+
 def _norm_side(s: str) -> str:
     s = (s or "BUY").upper()
     if s not in {"BUY", "SELL"}:
@@ -697,16 +761,62 @@ class WebullAdapter(BrokerAdapter):
         self,
         start: Optional[str] = None,
         end: Optional[str] = None,
-        page_size: int = 200,
-        max_pages: int = 5,
+        page_size: int = 100,
+        max_pages: int = 20,
     ) -> list[dict]:
-        """Broker-fills poller expects every adapter to expose
-        `list_history()`. Webull's SDK doesn't have a matching
-        transaction-history endpoint wired up yet — return an
-        empty list so `broker_fills` doesn't AttributeError every
-        tick. The reconcile path already handles zero-fills
-        correctly. 2026-07-16 fix per Emergent Support triage."""
-        return []
+        """Filled-order history via the SDK's v2 order_history endpoint
+        (2026-08 broker-forensics directive — the previous stub returned
+        [] because the endpoint was 'not wired up yet', which left the
+        forensics chain blind to broker truth).
+
+        start/end: 'yyyy-MM-dd'. When start is given without end,
+        end defaults to today (Webull otherwise silently falls back
+        to 'last 7 days' and returns nothing for old ranges).
+        Returns normalized fill rows for FILLED orders only."""
+        if start and not end:
+            end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        account_id = await self._resolve_account_id()
+        rows: list[dict] = []
+        last_client_order_id = None
+        last_order_id = None
+        for page in range(max_pages):
+            if page:
+                await asyncio.sleep(1.5)  # Webull 429s on rapid paging
+            try:
+                res = await self._sdk_call(
+                    self._trade().order_v2.get_order_history,
+                    account_id,
+                    page_size=page_size,
+                    start_date=start,
+                    end_date=end,
+                    last_client_order_id=last_client_order_id,
+                    last_order_id=last_order_id,
+                )
+                data = res.json() if hasattr(res, "json") else res
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("webull order history fetch failed: %s", exc)
+                break
+            if isinstance(data, dict):
+                orders = (data.get("data") or data.get("orders")
+                          or data.get("items") or data.get("order_list") or [])
+            elif isinstance(data, list):
+                orders = data
+            else:
+                orders = []
+            if not orders:
+                break
+            for order in orders:
+                rows.extend(_normalize_history_order(order))
+                last_client_order_id = _first_field(
+                    order, "client_order_id", "clientOrderId") or last_client_order_id
+                inner = (order.get("orders") or [{}])[0] if isinstance(
+                    order.get("orders"), list) else order
+                last_order_id = _first_field(
+                    inner, "order_id", "orderId",
+                ) or _first_field(order, "combo_order_id", "id") or last_order_id
+            if len(orders) < page_size:
+                break
+        return rows
 
     @staticmethod
     def _extended_hours_branch(

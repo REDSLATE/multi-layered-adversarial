@@ -71,10 +71,10 @@ def test_kraken_cash_and_staking_assets_excluded():
 
 def test_lane_defaults_match_operator_spec():
     assert DEFAULTS["equity"] == {
-        "enabled": False, "sl_pct": 3.0, "tp_pct": 6.0, "max_hold_h": 24.0,
+        "enabled": True, "sl_pct": 3.0, "tp_pct": 6.0, "max_hold_h": 24.0,
     }
     assert DEFAULTS["crypto"] == {
-        "enabled": False, "sl_pct": 3.0, "tp_pct": 8.0, "max_hold_h": 48.0,
+        "enabled": True, "sl_pct": 3.0, "tp_pct": 8.0, "max_hold_h": 48.0,
     }
 
 

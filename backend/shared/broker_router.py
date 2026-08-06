@@ -439,6 +439,27 @@ async def route_order(
         if not allowed:
             raise BrokerRouteBlocked(why)
 
+        # 1d. No exit plan, no entry (2026-08 forensics directive):
+        #     47 production entries filled while the exit lane was
+        #     disabled — nothing ever managed them and they bled out.
+        #     An automated entry is refused outright when the exit
+        #     monitor won't adopt the resulting position.
+        try:
+            from shared.exits.policy import get_policy  # noqa: WPS433
+            exit_pol = (await get_policy()).get(asset.lane)
+        except Exception as exc:  # noqa: BLE001
+            exit_pol = None
+            logger.warning(
+                "exit-policy lookup failed lane=%s err=%s — failing open",
+                asset.lane, exc,
+            )
+        if exit_pol is not None and not exit_pol.get("enabled"):
+            raise BrokerRouteBlocked(
+                f"entry refused: exit lane {asset.lane!r} is disabled — "
+                "no automated entry without exit management (enable the "
+                "lane in Exit Policy first)"
+            )
+
     # 2. Pick broker by lane — unless the intent carries an operator
     #    override (e.g. `broker_override="webull"`). The override is
     #    only honored for brokers in `ROUTE_OVERRIDE_BROKERS`; anything

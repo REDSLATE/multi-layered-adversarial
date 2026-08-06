@@ -13,13 +13,18 @@ from db import db
 
 POLICY_FLAG_ID = "exit_policy"
 
+# 2026-08 forensics finding: lanes shipped enabled=False, so the exit
+# monitor skipped every broker position forever — 47 filled entries had
+# no stop/target/max-hold and bled out unmanaged. Exits are now ON by
+# default ("never an unbounded position" is the doctrine, the default
+# must match it). An operator can still explicitly disable a lane.
 DEFAULTS: dict[str, Any] = {
-    "equity": {"enabled": False, "sl_pct": 3.0, "tp_pct": 6.0, "max_hold_h": 24.0},
-    "crypto": {"enabled": False, "sl_pct": 3.0, "tp_pct": 8.0, "max_hold_h": 48.0},
+    "equity": {"enabled": True, "sl_pct": 3.0, "tp_pct": 6.0, "max_hold_h": 24.0},
+    "crypto": {"enabled": True, "sl_pct": 3.0, "tp_pct": 8.0, "max_hold_h": 48.0},
     # Options: sl/tp are PREMIUM percentages (sl 50 = exit at −50%
     # premium). close_before_expiry_days forces closure ahead of
     # expiration regardless of P&L (assignment/expiry risk).
-    "options": {"enabled": False, "sl_pct": 50.0, "tp_pct": 100.0,
+    "options": {"enabled": True, "sl_pct": 50.0, "tp_pct": 100.0,
                 "max_hold_h": 120.0, "close_before_expiry_days": 1.0},
     "escalate_after_s": 120.0,
 }
