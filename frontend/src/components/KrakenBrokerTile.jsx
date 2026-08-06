@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import KrakenConnect from "@/components/KrakenConnect";
 import {
   Plug, ArrowsClockwise, Pulse, ShieldCheck, Warning, Lightning,
+  MagnifyingGlass,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
@@ -87,6 +88,20 @@ function KrakenBrokerTileInner() {
   const [status, setStatus] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [eqProbe, setEqProbe] = useState(null);
+
+  const runEquitiesProbe = async () => {
+    setBusy(true);
+    setEqProbe({ running: true });
+    try {
+      const { data } = await api.get("/admin/kraken/equities-probe");
+      setEqProbe(data);
+    } catch (e) {
+      setEqProbe({ ok: false, error: e?.response?.data?.detail || e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -211,6 +226,16 @@ function KrakenBrokerTileInner() {
           <Button
             type="button"
             size="sm"
+            variant="outline"
+            onClick={runEquitiesProbe}
+            disabled={busy}
+            data-testid="kraken-equities-probe-btn"
+          >
+            <MagnifyingGlass size={10} weight="bold" className="mr-1" /> equities probe
+          </Button>
+          <Button
+            type="button"
+            size="sm"
             variant={execEnabled ? "destructive" : "default"}
             onClick={toggleExecution}
             disabled={busy}
@@ -267,6 +292,27 @@ function KrakenBrokerTileInner() {
           </span>
         )}
       </div>
+
+      {eqProbe && (
+        <div className="px-4 py-2 bg-rd-bg2 border-t border-rd-border text-[10px] font-mono" data-testid="kraken-equities-probe-result">
+          {eqProbe.running ? (
+            <span className="text-rd-dim">probing Kraken traditional-equity capability (read-only, validate-only)…</span>
+          ) : eqProbe.error ? (
+            <span className="text-rd-danger">equities probe: {eqProbe.error}</span>
+          ) : (
+            <>
+              <div className="text-rd-text font-bold uppercase tracking-widest mb-1">
+                equities probe · {(eqProbe.verdict || "").split(" — ")[0]}
+              </div>
+              <div className="text-rd-dim leading-relaxed">{(eqProbe.verdict || "").split(" — ")[1]}</div>
+              <div className="text-rd-dim mt-1">
+                instruments: {eqProbe.capabilities?.equity_instruments?.n_discovered ?? "—"} ·
+                {" "}dry-run: {Object.entries(eqProbe.capabilities?.equity_order_dryrun?.attempts || {}).map(([k, v]) => `${k}=${v.status}`).join(" · ") || "—"}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {!execEnabled && (
         <div className="px-4 py-2 bg-rd-bg2 border-t border-rd-border text-[10px] font-mono text-rd-warning flex items-baseline gap-2">

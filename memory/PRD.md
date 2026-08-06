@@ -4233,3 +4233,35 @@ missing piece: one hard gate.
   exists but stays DORMANT (PARADOX_V3_* env flags) — separate
   activation decision AFTER observing the gate.
 - PROD NEEDS REDEPLOY.
+
+## 2026-08-06 — Root cause of losses found + exits always-on + broker forensics + Kraken equities probe
+- ROOT CAUSE (confirmed from prod screenshots + code): exit_policy DEFAULTS
+  shipped enabled=False for every lane → exit monitor skipped all lanes
+  forever → 47 filled entries had NO stop/target/max-hold → positions
+  bled unmanaged (Webull monthly P&L -28.01/-157.29/-34.09).
+- FIX 1: shared/exits/policy.py DEFAULTS now enabled=True (all lanes).
+  Stored operator overrides still win (preview crypto has stored False).
+- FIX 2: broker_router.py 1d guard — "no exit plan, no entry": automated
+  BUY/SHORT refused when the target lane's exit policy is disabled.
+- FIX 3: Broker-Sourced Forensics (Webull) — webull.py list_history()
+  now real (order_v2.get_order_history, paginated, 429-safe, legs under
+  `orders`, ISO filled_time_at); shared/forensics/broker_forensics.py
+  FIFO round-trip builder + verdicts (winner/execution_cost/
+  unmanaged_hold/bad_selection); GET /api/admin/forensics/broker-report.
+  UI: ForensicsPanel.jsx "Broker Forensics · Webull" section.
+  LIVE RESULT (preview, real Webull): 37 round trips, -$42.86, 16.2% win
+  rate, median hold 47h, dominant mechanism = unmanaged_hold (21 trades,
+  -$40.23). 15 open lots still at broker (entries fired Aug 3-5 in prod!).
+- Kraken equities probe (read-only, unified-broker study):
+  shared/crypto/equities_probe.py + GET /api/admin/kraken/equities-probe
+  + button in KrakenBrokerTile ("equities probe"). Public catalog result:
+  1,430 pairs, ZERO equities — traditional stocks NOT in spot API catalog;
+  private validate-only dry-run must be run in PROD (keys live there).
+- Tests updated (defaults now True): test_exit_monitor, test_options_exits,
+  test_exit_policy_last_known_good — 21/21 pass. Pre-existing failures in
+  test_broker_router_* (fail on exit_only gate, predate this session).
+- PENDING USER DECISION (time-critical before 9:30 ET open): who acts on
+  the 15 open Webull lots — a) redeploy prod (disable preview equity lane),
+  b) let preview act, c) hold all + manual close, d) adjust knobs first.
+  Positions >3% under entry WILL market-sell at open once armed.
+- PROD NEEDS REDEPLOY for all of the above.

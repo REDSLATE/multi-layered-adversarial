@@ -345,6 +345,18 @@ async def reprobe(user: dict = Depends(get_current_user)):
     return _public_status(doc)
 
 
+@router.get("/equities-probe")
+async def equities_probe(_user: dict = Depends(get_current_user)):
+    """READ-ONLY Kraken traditional-equities capability probe — the
+    prerequisite study for a Webull→Kraken unified-broker migration.
+    Uses validate=true dry-runs; never places an order."""
+    from shared.crypto.equities_probe import run_equities_probe  # noqa: WPS433
+    report = await run_equities_probe()
+    await db["forensic_reports"].update_one(
+        {"_id": "kraken-equities-probe"}, {"$set": report}, upsert=True)
+    return report
+
+
 @router.post("/test")
 async def test(user: dict = Depends(get_current_user)):
     """Cheap private call to confirm keys are still alive."""
