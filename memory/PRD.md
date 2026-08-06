@@ -4265,3 +4265,8 @@ missing piece: one hard gate.
   b) let preview act, c) hold all + manual close, d) adjust knobs first.
   Positions >3% under entry WILL market-sell at open once armed.
 - PROD NEEDS REDEPLOY for all of the above.
+- 2026-08-06 DECISION (user chose c — HOLD): preview stored overrides set
+  equity/options/crypto enabled=False; nothing auto-sells anywhere. Code
+  DEFAULTS remain True, so a PROD REDEPLOY will ARM exits there unless the
+  operator flips lanes off in prod's Exit Policy panel. User will review/
+  close the 15 open Webull lots manually, then arm when ready.
