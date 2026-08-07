@@ -32,7 +32,20 @@ DEFAULT_SL_PCT = 0.03
 DEFAULT_HOLD_S = 24 * 3600
 
 _state: dict[str, Any] = {"running": False, "task": None, "last_run": None,
-                          "resolved_total": 0, "errors": 0}
+                          "resolved_total": 0, "errors": 0,
+                          "resolved_last_cycle": 0, "hydrated_on_boot": 0,
+                          "exit_linkage_miss_count": 0}
+
+
+def _candidate_filter(lookback_iso: str) -> dict:
+    return {"action": {"$in": ["BUY", "SHORT"]},
+            "signal_price": {"$gt": 0},
+            "signal_detected_at": {"$gte": lookback_iso},
+            "outcome_resolved": {"$ne": True},
+            "$or": [{"executed": True},
+                    {"blocked_by.0": {"$exists": True}},
+                    {"would_have_traded_without_gates": True},
+                    {"broker_reason": {"$nin": [None, ""]}}]}
 
 
 def _dt(v) -> Optional[datetime]:
@@ -128,6 +141,9 @@ async def _build_execution(intent: dict) -> ExecutionSnapshot:
         outcome = await db["shared_exit_outcomes"].find_one(
             {"$or": [{"trade_id": sid}, {"origin_intent_id": sid}]},
             {"exit_price": 1, "closed_at": 1})
+        if outcome is None:
+            # schema drift OR position never closed — both must be visible
+            _state["exit_linkage_miss_count"] += 1
         if outcome:
             exit_price = outcome.get("exit_price")
             exit_time = _dt(outcome.get("closed_at"))
@@ -156,14 +172,7 @@ async def resolve_batch(limit: int = BATCH) -> dict:
     attr_engine = ExecutionAttributionEngine()
     lookback = (now - timedelta(days=7)).isoformat()
     candidates = await db["shared_intents"].find(
-        {"action": {"$in": ["BUY", "SHORT"]},
-         "signal_price": {"$gt": 0},
-         "signal_detected_at": {"$gte": lookback},
-         "outcome_resolved": {"$ne": True},
-         "$or": [{"executed": True},
-                 {"blocked_by.0": {"$exists": True}},
-                 {"would_have_traded_without_gates": True},
-                 {"broker_reason": {"$nin": [None, ""]}}]},
+        _candidate_filter(lookback),
         {"doctrine_packet": 0, "evidence": 0, "snapshot": 0, "weights": 0,
          "spread_enrichment_diagnostics": 0},
     ).sort("signal_detected_at", 1).limit(500).to_list(500)
@@ -235,6 +244,7 @@ async def resolve_batch(limit: int = BATCH) -> dict:
             break
     _state["last_run"] = now.isoformat()
     _state["resolved_total"] += resolved
+    _state["resolved_last_cycle"] = resolved
     return {"resolved": resolved, "skipped": skipped,
             "candidates": len(candidates)}
 
@@ -253,6 +263,7 @@ async def _hydrate_from_mirror() -> None:
         except Exception:  # noqa: BLE001
             continue
     if rows:
+        _state["hydrated_on_boot"] = len(rows)
         logger.info("outcome store hydrated from mongo mirror rows=%s", len(rows))
 
 
@@ -293,3 +304,16 @@ def start_if_enabled() -> None:
 def get_status() -> dict:
     return {**{k: v for k, v in _state.items() if k != "task"},
             "store": store.counts()}
+
+
+async def get_status_async() -> dict:
+    """Status + the durable-queue health counter (Mongo count)."""
+    status = get_status()
+    lookback = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    try:
+        status["eligible_unresolved"] = await db["shared_intents"].count_documents(
+            _candidate_filter(lookback), maxTimeMS=8000)
+    except Exception as exc:  # noqa: BLE001
+        status["eligible_unresolved"] = None
+        logger.warning("eligible_unresolved count failed: %s", exc)
+    return status

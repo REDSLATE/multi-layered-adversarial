@@ -8,14 +8,19 @@ const pct = (v) => (v == null ? "—" : `${(Number(v) * 100).toFixed(2)}%`);
  *  whether the pipeline executed it well? (triple-barrier engine) */
 export const OutcomeEnginePanel = () => {
   const [rollup, setRollup] = useState(null);
+  const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const run = async () => {
     setBusy(true);
     try {
       await api.post("/admin/outcomes/resolve?limit=200");
-      const { data } = await api.get("/admin/outcomes/rollup");
+      const [{ data }, { data: st }] = await Promise.all([
+        api.get("/admin/outcomes/rollup"),
+        api.get("/admin/outcomes/status"),
+      ]);
       setRollup(data);
+      setStatus(st);
     } catch (e) {
       setRollup({ error: e?.response?.data?.detail || e.message });
     } finally { setBusy(false); }
@@ -51,6 +56,16 @@ export const OutcomeEnginePanel = () => {
           <div className="text-[10px] font-mono text-rd-muted mb-1.5" data-testid="outcome-engine-total">
             {rollup.total} signals resolved
           </div>
+          {status && (
+            <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] font-mono mb-2" data-testid="outcome-engine-counters">
+              <span className="text-rd-dim">queue: <span className="text-rd-text">{status.eligible_unresolved ?? "—"}</span> eligible unresolved</span>
+              <span className="text-rd-dim">last cycle: <span className="text-rd-text">{status.resolved_last_cycle}</span> resolved</span>
+              <span className="text-rd-dim">hydrated on boot: <span className="text-rd-text">{status.hydrated_on_boot}</span></span>
+              <span className={status.exit_linkage_miss_count > 0 ? "text-amber-500" : "text-rd-dim"}>
+                exit-linkage misses: <span className={status.exit_linkage_miss_count > 0 ? "text-amber-500 font-bold" : "text-rd-text"}>{status.exit_linkage_miss_count}</span>
+              </span>
+            </div>
+          )}
           {(rollup.by_attribution || []).length > 0 && (
             <div className="space-y-0.5 mb-2" data-testid="outcome-engine-attributions">
               {rollup.by_attribution.map((a) => (

@@ -4299,3 +4299,11 @@ missing piece: one hard gate.
   end-to-end (HMSTR/USD → GOOD_SIGNAL_GATE_REJECTED), endpoints curl-verified,
   panel screenshot-verified. Preview candidates defer until 48h windows
   elapse (correct). PROD NEEDS REDEPLOY.
+- 2026-08-07 addendum: 4 operational counters added per operator review —
+  eligible_unresolved (Mongo count of candidate filter), resolved_last_cycle,
+  hydrated_on_boot, exit_linkage_miss_count (nonzero = schema drift OR
+  never-closed position). Exposed in GET /api/admin/outcomes/status +
+  counter strip in OutcomeEnginePanel. Verified live: eligible_unresolved=7.
+  Durable-queue proof point: preview's 7 crypto candidates auto-resolve as
+  48h windows mature (~11-20h out). Kernel feedback loop = next step after
+  first prod sample validates.

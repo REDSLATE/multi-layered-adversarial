@@ -47,5 +47,5 @@ async def outcomes_resolve(
 
 @router.get("/status")
 async def outcomes_status(_user: dict = Depends(get_current_user)):  # noqa: B008
-    from shared.outcome_engine.collector import get_status  # noqa: WPS433
-    return {"ok": True, **get_status()}
+    from shared.outcome_engine.collector import get_status_async  # noqa: WPS433
+    return {"ok": True, **await get_status_async()}
