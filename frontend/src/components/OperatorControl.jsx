@@ -10,6 +10,7 @@ import TapeQualityPanel from "@/components/TapeQualityPanel";
 import SellPointPanel from "@/components/SellPointPanel";
 import EntryModePanel from "@/components/EntryModePanel";
 import ForensicsPanel from "@/components/ForensicsPanel";
+import OutcomeEnginePanel from "@/components/OutcomeEnginePanel";
 import ExitMonitorPanel from "@/components/ExitMonitorPanel";
 import ExpectancyPanel from "@/components/ExpectancyPanel";
 import GainGoalPanel from "@/components/GainGoalPanel";
@@ -691,6 +692,7 @@ export default function OperatorControl() {
       <ExitMonitorPanel />
       <SellPointPanel />
       <ForensicsPanel />
+      <OutcomeEnginePanel />
       <ScannerPanel />
       <GainGoalPanel />
       <OptionsPanel />

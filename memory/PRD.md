@@ -4270,3 +4270,32 @@ missing piece: one hard gate.
   DEFAULTS remain True, so a PROD REDEPLOY will ARM exits there unless the
   operator flips lanes off in prod's Exit Policy panel. User will review/
   close the 15 open Webull lots manually, then arm when ready.
+
+## 2026-08-07 — RISE Outcome Engine (signal outcome + triple-barrier attribution)
+- Operator-designed post-signal attribution layer (PDF design doc honored).
+  NOT a brain, NOT in the broker hot path. Answers: was the SIGNAL good,
+  independent of whether the pipeline executed it well?
+- Files: shared/outcome_engine/{engine.py,store.py,collector.py},
+  routes/outcomes_admin.py, frontend OutcomeEnginePanel.jsx (in
+  OperatorControl below ForensicsPanel).
+- engine.py: TripleBarrierEngine (profit/stop/time barriers, stop-first
+  conservative within a bar, MFE/MAE) + ExecutionAttributionEngine
+  (9 attributions: BAD_SIGNAL, GOOD_SIGNAL_LATE_ENTRY/GATE_REJECTED/
+  NOT_EXECUTED, GOOD_ENTRY_BAD_EXIT, EXECUTION_SLIPPAGE, etc.
+  thresholds: min_edge 0.25%, late-entry slip 1%, capture 0.60).
+- store.py: SQLite hot store /app/backend/data/rise_outcomes.sqlite,
+  rollup() adds signal_execution_gap (theo WR − actual WR, first Kernel
+  metric) + kernel_ready min-sample gate (20).
+- collector.py: 5-min loop (OUTCOME_COLLECTOR_ENABLED env, default on,
+  started in lifespan). Feeds from shared_intents (frozen-at-birth
+  signal_price/signal_detected_at), bars from shared_ohlcv_bars
+  (low-then-high per bar), execution from executions + shared_exit_outcomes
+  ($or trade_id/origin_intent_id), Mongo mirror rise_signal_outcomes.
+- 4 production-safety fixes (user-confirmed): outcome_resolved stamping
+  (no stuck batch), relevance filter (executed/blocked/would-have-traded
+  only), $or exit linkage, SQLite hydration from Mongo mirror on redeploy.
+- Endpoints: GET/POST /api/admin/outcomes/{rollup,recent,resolve,status}.
+- Tested: 18/18 unit tests (tests/test_outcome_engine.py), live dry-run
+  end-to-end (HMSTR/USD → GOOD_SIGNAL_GATE_REJECTED), endpoints curl-verified,
+  panel screenshot-verified. Preview candidates defer until 48h windows
+  elapse (correct). PROD NEEDS REDEPLOY.

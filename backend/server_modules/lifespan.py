@@ -369,6 +369,8 @@ async def lifespan(app: FastAPI):
         _start_gain_goal()
         from shared.scanner.rth_scanner import start_if_enabled as _start_scanner
         _start_scanner()
+        from shared.outcome_engine.collector import start_if_enabled as _start_outcomes
+        _start_outcomes()
         logger.info("Exit monitor started")
     except Exception as e:  # noqa: BLE001
         logger.warning("Exit monitor start failed: %s", e)
