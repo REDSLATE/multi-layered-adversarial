@@ -115,10 +115,11 @@ async def promotion_funnel(_user: dict = Depends(get_current_user)):  # noqa: B0
     n_shadow = await db[SHADOW_FILLS].count_documents(
         {"ts": {"$gte": cut}, "_id": {"$not": {"$regex": "^shadow-test"}}},
         maxTimeMS=8000)
+    _counted = "exit_only_mode|insufficient_balance|no_balance_no_trade"
     n_ledger = await db[COLLECTION].count_documents(
-        {"block_reason": {"$regex": "exit_only_mode"}}, maxTimeMS=8000)
+        {"block_reason": {"$regex": _counted}}, maxTimeMS=8000)
     n_scored = await db[COLLECTION].count_documents(
-        {"block_reason": {"$regex": "exit_only_mode"},
+        {"block_reason": {"$regex": _counted},
          "outcome": {"$in": ["tp_hit", "sl_hit", "expired"]}}, maxTimeMS=8000)
     gate = await gate_status()
 

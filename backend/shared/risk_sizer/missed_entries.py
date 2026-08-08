@@ -31,10 +31,13 @@ DEFAULTS: dict[str, Any] = {
 
 # risk_sizer:{reason} blocks worth a counterfactual — opportunity
 # gates only, never mechanical invalidity (sized_to_zero etc.)
+# 2026-08-08: funds-blocked signals count too (operator decision) —
+# cash locked in stuck positions must not stop expectancy learning.
 _SIZER_SCOPE = {
     "not_in_buy_allowlist", "below_volume_floor", "spread_too_wide",
     "no_volume_data", "no_quote", "denylisted",
     "eligibility_cap_below_broker_min", "post_sell_cooldown",
+    "insufficient_balance", "no_balance_no_trade",
 }
 
 

@@ -91,15 +91,23 @@ async def gate_status() -> dict:
     cfg = await get_gate_config()
     cut = (datetime.now(timezone.utc)
            - timedelta(days=float(cfg["window_days"]))).isoformat()
+    # 2026-08-08 operator decision: funds-blocked BUYs are real strategy
+    # signals (cash locked in stuck positions must not stop learning) —
+    # they count alongside exit_only blocks, tagged by block_reason.
+    _COUNTED = "exit_only_mode|insufficient_balance|no_balance_no_trade"
     rows = await db[COLLECTION].find(
         {"evaluated_at": {"$gte": cut},
-         "block_reason": {"$regex": "exit_only_mode"},
+         "block_reason": {"$regex": _COUNTED},
          "outcome": {"$in": ["tp_hit", "sl_hit", "expired"]}},
         {"_id": 0, "lane": 1, "outcome": 1, "tp_pct": 1, "sl_pct": 1,
-         "end_pct": 1, "blocked_at": 1},
+         "end_pct": 1, "blocked_at": 1, "block_reason": 1},
     ).sort("blocked_at", 1).max_time_ms(8000).to_list(2000)
     lanes: dict[str, list[float]] = {"crypto": [], "equity": []}
+    tags: dict[str, int] = {}
     for r in rows:
+        tag = ("funds_blocked" if "balance" in (r.get("block_reason") or "")
+               else "exit_only")
+        tags[tag] = tags.get(tag, 0) + 1
         ret = counterfactual_return_pct(r, float(cfg["cost_pct"]))
         if ret is not None:
             lanes.setdefault(r.get("lane") or "crypto", []).append(ret)
@@ -107,10 +115,12 @@ async def gate_status() -> dict:
                 for lane, rets in lanes.items()}
     return {
         "config": cfg, "window_start": cut, "per_lane": per_lane,
+        "observation_tags": tags,
         "passed": bool(per_lane) and any(v["passed"]
                                          for v in per_lane.values()),
         "passed_lanes": [k for k, v in per_lane.items() if v["passed"]],
         "note": ("forward observations accrue while the system sits in "
-                 "exit_only — shadow-filled entries are scored by the "
-                 "missed-entry ledger 4h after each block"),
+                 "exit_only — shadow-filled entries AND funds-blocked "
+                 "signals are scored by the missed-entry ledger 4h after "
+                 "each block"),
     }

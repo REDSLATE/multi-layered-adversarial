@@ -56,7 +56,9 @@ def test_in_scope_opportunity_gates_only():
     assert in_scope("risk_sizer:below_volume_floor")
     assert in_scope("risk_sizer:post_sell_cooldown")
     assert not in_scope("risk_sizer:sized_to_zero")
-    assert not in_scope("risk_sizer:no_balance_no_trade")
+    # 2026-08-08 operator decision: funds-blocked signals now count
+    assert in_scope("risk_sizer:no_balance_no_trade")
+    assert in_scope("risk_sizer:insufficient_balance")
     assert not in_scope("seat_did_not_fire")
     assert not in_scope(None)
 

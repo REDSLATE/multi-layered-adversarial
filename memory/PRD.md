@@ -4327,3 +4327,30 @@ missing piece: one hard gate.
 - NOTE: shadow-test-* fixtures pollute preview shadow_fills (excluded
   in funnel counts). Promotion gate min_n is 30, not 20; 20 is the
   outcome-engine kernel gate.
+
+## 2026-08-08 — Prod incident diagnosis + SELL-flood & funds-blocked fixes
+- PROD FINDINGS (read via user's admin API on mission.risedual.ai):
+  master switch ARMED since 7/19; mode exit_only; shadow_fills=76 but
+  stopped 8/6 19:53. Promotion gate: equity n=17/30 (expectancy -0.069%,
+  PF 0.86 = negative edge so far), crypto n=0. Kill map 48h: 150k crypto
+  intents, 0 BUYs reached broker (risk_sizer below_volume_floor 68k +
+  no_balance — CASH LOCKED in 15 stuck positions). SELL flood: 74.5k
+  SELLs blocked/submitted for unheld symbols → 185k insufficient_funds +
+  302k unknown broker errors → Kraken rate-limited → exit monitor
+  reports crypto broker_unreachable. Exit lanes ARMED in prod (hold
+  never applied there); monitor idle only due to weekend/unreachable.
+- USER DECISIONS: (1) LEAVE exit lanes armed — Monday 9:30 ET stops fire
+  on stuck positions, freeing cash; (2) fix SELL flood; (3) count
+  funds-blocked BUYs as gate observations.
+- FIX SELL flood (broker_router.py): _kraken_base_balance falls back to
+  stale cache on fetch failure; guard now FAIL-CLOSED
+  (sell_inventory_unverifiable) when no snapshot ever taken — breaks the
+  rate-limit doom loop (flood → limit → guard fail-open → flood).
+- FIX funds-blocked learning: _SIZER_SCOPE += insufficient_balance,
+  no_balance_no_trade (missed_entries.py); promotion_gate counts regex
+  exit_only_mode|insufficient_balance|no_balance_no_trade with
+  observation_tags {exit_only, funds_blocked}; funnel endpoint matched.
+- Tests: test_ignition_missed updated, 20/20 pass. Pre-existing
+  test_broker_router_* failures (exit_only gate) unchanged.
+- PROD NEEDS REDEPLOY. NOTE: after redeploy, crypto exits act as soon as
+  Kraken recovers (24/7), equity at Monday 9:30 ET.

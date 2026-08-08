@@ -206,8 +206,11 @@ _INV_TTL_S = 15.0
 
 
 async def _kraken_base_balance(adapter, base: str) -> Optional[float]:
-    """FREE base-asset balance. None = balance unreadable → fail-open
-    (the broker remains the final guard)."""
+    """FREE base-asset balance. Falls back to the last successful
+    snapshot (any age) when the live fetch fails — under Kraken rate
+    limits the guard must keep working from stale data instead of
+    failing open and feeding the very flood that caused the limit.
+    Returns None only when NO snapshot has ever been taken."""
     now = time.monotonic()
     data = _INV_CACHE["data"] if now - _INV_CACHE["at"] <= _INV_TTL_S else None
     if data is None:
@@ -220,7 +223,9 @@ async def _kraken_base_balance(adapter, base: str) -> Optional[float]:
             _INV_CACHE.update(at=now, data=data)
         except Exception as exc:  # noqa: BLE001
             logger.warning("sell inventory balance fetch failed: %s", exc)
-            return None
+            data = _INV_CACHE["data"]  # stale-but-real beats fail-open
+            if data is None:
+                return None
     from shared.exits.monitor import _normalize_kraken_asset  # noqa: WPS433
     total = 0.0
     for code, raw in (data or {}).items():
@@ -584,6 +589,16 @@ async def route_order(
     if (side == "SELL" and not is_short
             and asset.lane == "crypto" and broker_name == "kraken"):
         held = await _kraken_base_balance(adapter, asset.base)
+        if held is None:
+            # 2026-08-08 fail-CLOSED: with inventory unverifiable, a
+            # blind spot SELL can only die at the broker — 70k+
+            # insufficient_funds submits in 48h rate-limited Kraken
+            # into broker_unreachable. Block terminally instead.
+            raise BrokerRouteBlocked(
+                "sell_inventory_unverifiable: Kraken balance has never "
+                "been readable — refusing blind spot SELL (would die at "
+                "the broker as insufficient_funds); NO_TRADE"
+            )
         if held is not None:
             px = None
             try:
