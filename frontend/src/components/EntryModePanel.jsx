@@ -15,6 +15,18 @@ export const EntryModePanel = () => {
   const [gate, setGate] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [funnel, setFunnel] = useState(null);
+  const [funnelBusy, setFunnelBusy] = useState(false);
+
+  const loadFunnel = async () => {
+    setFunnelBusy(true);
+    try {
+      const { data: f } = await api.get("/admin/entry-mode/funnel");
+      setFunnel(f);
+    } catch (e) {
+      setFunnel({ error: e?.response?.data?.detail || e.message });
+    } finally { setFunnelBusy(false); }
+  };
 
   const load = () => {
     api.get("/admin/entry-mode").then(({ data: d }) => setData(d)).catch(() => {});
@@ -79,9 +91,48 @@ export const EntryModePanel = () => {
           ))}
         </div>
       </div>
-      <div className="text-[10px] font-mono text-rd-dim mb-2">
-        Fully-gated entries blocked by exit-only are recorded as shadow fills ({data?.shadow_fills_total ?? 0} so far) and scored 4h later — that forward record is the only road back to canary/live.
+      <div className="text-[10px] font-mono text-rd-dim mb-2 flex items-center justify-between flex-wrap gap-2">
+        <span>Fully-gated entries blocked by exit-only are recorded as shadow fills ({data?.shadow_fills_total ?? 0} so far) and scored 4h later — that forward record is the only road back to canary/live.</span>
+        <button
+          onClick={loadFunnel}
+          disabled={funnelBusy}
+          className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border border-rd-border text-rd-muted hover:text-rd-text hover:border-rd-text transition-colors disabled:opacity-40"
+          data-testid="promotion-funnel-btn"
+        >
+          {funnelBusy ? "tracing…" : "why is the count stuck?"}
+        </button>
       </div>
+      {funnel && (
+        <div className="border border-rd-border bg-rd-bg px-2.5 py-2 mb-2" data-testid="promotion-funnel-result">
+          {funnel.error ? (
+            <div className="text-[10px] font-mono text-red-500">{funnel.error}</div>
+          ) : (
+            <>
+              <div className={`text-[10px] font-mono font-bold mb-1.5 ${funnel.verdict?.startsWith("FLOWING") ? "text-rd-success" : "text-red-500"}`} data-testid="promotion-funnel-verdict">
+                {funnel.verdict}
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] font-mono mb-1">
+                <span className={funnel.master_switch_armed === false ? "text-red-500 font-bold" : "text-rd-dim"}>
+                  master switch: {funnel.master_switch_armed == null ? "?" : funnel.master_switch_armed ? "ARMED" : "DISARMED"}
+                </span>
+                <span className="text-rd-dim">mode: {funnel.execution_mode}</span>
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] font-mono" data-testid="promotion-funnel-stages">
+                {Object.entries(funnel.funnel || {}).map(([k, v]) => (
+                  <span key={k} className={v === 0 ? "text-amber-500" : "text-rd-muted"}>
+                    {k.replaceAll("_", " ")}: <span className={v === 0 ? "font-bold" : "text-rd-text"}>{v}</span>
+                  </span>
+                ))}
+              </div>
+              {(funnel.top_blockers || []).length > 0 && (
+                <div className="mt-1.5 text-[9px] font-mono text-rd-dim">
+                  top blockers: {funnel.top_blockers.slice(0, 5).map((b) => `${b.reason} ×${b.n}`).join(" · ")}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
       {lanes.length > 0 && (
         <div className="flex flex-wrap gap-4" data-testid="promotion-gate-summary">
           {lanes.map(([lane, v]) => (

@@ -4307,3 +4307,23 @@ missing piece: one hard gate.
   Durable-queue proof point: preview's 7 crypto candidates auto-resolve as
   48h windows mature (~11-20h out). Kernel feedback loop = next step after
   first prod sample validates.
+
+## 2026-08-08 — Promotion-gate starvation diagnosed + funnel diagnostic
+- USER REPORT: "not recording the 20 it needs, been days" (prod).
+- ROOT CAUSE: two safeties cancel out. Shadow observations only record
+  when an intent reaches the broker router and is blocked by exit_only
+  THERE. Master switch DISARMED → intents die at stage 1 / expire
+  (EXPIRED_PENDING_TTL) → zero shadows → promotion gate (min_n 30/lane)
+  starves forever. Confirmed in preview: 12 intents, 12 expired, 0 routed.
+- FIX (operational, no redeploy): ARM master switch in prod, keep mode
+  exit_only — router blocks every real entry AND records shadows.
+- BUILT: GET /api/admin/entry-mode/funnel — full-chain diagnostic
+  (created → master-blocked → expired → reached router [executions
+  receipts] → blocked_by_exit_only → shadow_fills [test fixtures
+  excluded] → ledger rows → scored) + plain verdict naming the dead
+  link. UI: "why is the count stuck?" button on EntryModePanel.
+  Screenshot-verified. PROD NEEDS REDEPLOY for the button (the arm
+  action itself needs no redeploy).
+- NOTE: shadow-test-* fixtures pollute preview shadow_fills (excluded
+  in funnel counts). Promotion gate min_n is 30, not 20; 20 is the
+  outcome-engine kernel gate.
