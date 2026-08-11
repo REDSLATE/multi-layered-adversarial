@@ -117,7 +117,7 @@ def test_positive_edge_impossible_drawdown_becomes_recalibration_not_endless_fai
 
     assert d.net_expectancy_pct > 0
     assert d.profit_factor >= 1.0
-    assert "drawdown_per_100_observations" in d.recalibration_candidates
+    assert "observation_drawdown_per_100" in d.recalibration_candidates
     assert d.state == PromotionState.NEEDS_RECALIBRATION
 
 

@@ -79,7 +79,7 @@ def evaluate_lane(returns: list[float], cfg: dict) -> dict:
         {"name": "profit_factor", "value": (None if pf == float("inf") else pf),
          "threshold": f"> {cfg['min_profit_factor']}",
          "pass": pf is not None and pf > float(cfg["min_profit_factor"])},
-        {"name": "max_drawdown_per_100_obs", "value": round(dd_per_100, 3),
+        {"name": "observation_drawdown_per_100", "value": round(dd_per_100, 3),
          "threshold": f"<= {cfg['max_drawdown_pct_points']}",
          "pass": dd_per_100 <= float(cfg["max_drawdown_pct_points"])},
         {"name": "single_trade_dependence", "value": share,

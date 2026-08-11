@@ -22,6 +22,46 @@ export const EntryModePanel = () => {
   const [dd, setDd] = useState(null);
   const [ddBusy, setDdBusy] = useState(false);
   const [ew, setEw] = useState(null);
+  const [epochCmp, setEpochCmp] = useState(null);
+  const [recal, setRecal] = useState(null);
+  const [recalForm, setRecalForm] = useState({ threshold: "", reason: "" });
+
+  const loadEpochCmp = async () => {
+    try {
+      const { data: d } = await api.get("/admin/entry-mode/epoch-comparison?lane=crypto");
+      setEpochCmp(d);
+    } catch (e) {
+      setEpochCmp({ error: e?.response?.data?.detail || e.message });
+    }
+  };
+
+  const loadRecal = async () => {
+    try {
+      const { data: d } = await api.get("/admin/entry-mode/recalibration?lane=crypto");
+      setRecal(d);
+      const c = (d.candidates || [])[0];
+      if (c) setRecalForm({ threshold: String(c.suggested_range?.low ?? ""), reason: "" });
+    } catch (e) {
+      setRecal({ error: e?.response?.data?.detail || e.message });
+    }
+  };
+
+  const applyRecal = async (criterion) => {
+    try {
+      const { data: d } = await api.post("/admin/entry-mode/recalibration/apply", {
+        lane: "crypto",
+        criterion,
+        new_threshold: parseFloat(recalForm.threshold),
+        reason: recalForm.reason,
+      });
+      setMsg({ ok: true, text: `recalibration applied — gate state now ${d.new_state}` });
+      setRecal(null);
+      load();
+    } catch (e) {
+      const det = e?.response?.data?.detail;
+      setMsg({ ok: false, text: typeof det === "string" ? det : JSON.stringify(det || e.message) });
+    }
+  };
 
   const loadDd = async () => {
     setDdBusy(true);
@@ -155,6 +195,13 @@ export const EntryModePanel = () => {
           {ddBusy ? "dissecting…" : "explain the drawdown"}
         </button>
         <button
+          onClick={loadEpochCmp}
+          className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border border-sky-500/60 text-sky-400 hover:bg-sky-500/10 transition-colors"
+          data-testid="epoch-comparison-btn"
+        >
+          compare epochs
+        </button>
+        <button
           onClick={loadSlicer}
           disabled={slicerBusy}
           className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border border-emerald-500/60 text-emerald-500 hover:bg-emerald-500/10 transition-colors disabled:opacity-40"
@@ -283,6 +330,94 @@ export const EntryModePanel = () => {
           )}
         </div>
       )}
+      {epochCmp && (
+        <div className="border border-rd-border bg-rd-bg px-2.5 py-2 mb-2" data-testid="epoch-comparison-result">
+          {epochCmp.error ? (
+            <div className="text-[10px] font-mono text-red-500">{String(epochCmp.error)}</div>
+          ) : (
+            <>
+              <div className="text-[9px] font-mono uppercase tracking-widest text-rd-dim mb-1">
+                epoch comparison (crypto) — diagnostic only, never merged into one score
+              </div>
+              <div className="flex flex-wrap gap-4">
+                {Object.entries(epochCmp.buckets || {}).map(([eid, b]) => (
+                  <div key={eid} className="border border-rd-border px-2 py-1.5 text-[10px] font-mono min-w-[260px]">
+                    <div className="font-bold text-rd-text mb-0.5">{eid === "legacy" ? "legacy (pre-epoch)" : `active: ${eid}`} · {b.n ?? 0} obs</div>
+                    {b.n > 0 ? (
+                      <>
+                        <div>gross {b.gross_expectancy_pct}% → net <span className={b.net_expectancy_pct > 0 ? "text-rd-success" : "text-red-500"}>{b.net_expectancy_pct}%</span> · pf {b.profit_factor ?? "∞"} · wr {b.win_rate}</div>
+                        <div className="text-rd-dim">avg win {b.avg_winner_pct}% · avg loss {b.avg_loser_pct}% · obs-curve dd/100 {b.observation_drawdown_per_100}</div>
+                        <div className="text-rd-dim">cost {b.cost?.round_trip_cost_pct?.toFixed(3)}% ({b.cost?.source}) · fills {b.fills} ({b.maker_taker_ratio} m/t) · pairs {b.paired_round_trips}</div>
+                        <div className={b.realized_account_max_drawdown_pct != null ? "text-rd-muted" : "text-rd-dim"}>
+                          realized account: {b.realized_trades > 0 ? `${b.realized_total_return_pct}% total · max dd ${b.realized_account_max_drawdown_pct}%` : "no paired round trips yet"}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-rd-dim">no observations in this bucket yet</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+      {recal && (
+        <div className="border border-amber-500/50 bg-rd-bg px-2.5 py-2 mb-2" data-testid="recalibration-panel">
+          {recal.error ? (
+            <div className="text-[10px] font-mono text-red-500">{String(recal.error)}</div>
+          ) : (recal.candidates || []).length === 0 ? (
+            <div className="text-[10px] font-mono text-rd-dim">no criteria currently flagged NEEDS_RECALIBRATION on this epoch</div>
+          ) : (
+            recal.candidates.map((c) => (
+              <div key={c.criterion} className="text-[10px] font-mono space-y-1">
+                <div className="font-bold text-amber-500 uppercase tracking-wider text-[9px]">recalibration proposal — operator approval required</div>
+                <div>
+                  <span className="text-rd-dim">criterion </span>{c.criterion.replaceAll("_", " ")}
+                  <span className="text-rd-dim"> · current </span>{c.current_threshold}
+                  <span className="text-rd-dim"> · actual </span><span className="text-red-500">{c.actual}</span>
+                  <span className="text-rd-dim"> · suggested </span>{c.suggested_range?.low}–{c.suggested_range?.high}
+                  <span className="text-rd-dim"> · sample </span>{c.sample_size}
+                  <span className="text-rd-dim"> · epoch </span>{c.epoch}
+                </div>
+                <div className="text-rd-dim">{c.rationale}</div>
+                <div>
+                  <span className="text-rd-dim">state if accepted: </span>
+                  at {c.suggested_range?.low} → <span className="text-rd-success">{c.state_if_accepted_low}</span>
+                  <span className="text-rd-dim"> · </span>
+                  at {c.suggested_range?.high} → <span className="text-rd-success">{c.state_if_accepted_high}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={recalForm.threshold}
+                    onChange={(e) => setRecalForm((p) => ({ ...p, threshold: e.target.value }))}
+                    className="w-24 bg-rd-panel border border-rd-border px-2 py-1 text-[11px] font-mono text-rd-text focus:border-amber-500 outline-none"
+                    data-testid="recal-threshold-input"
+                  />
+                  <input
+                    type="text"
+                    placeholder="reason (required, min 10 chars — audited)"
+                    value={recalForm.reason}
+                    onChange={(e) => setRecalForm((p) => ({ ...p, reason: e.target.value }))}
+                    className="flex-1 min-w-[240px] bg-rd-panel border border-rd-border px-2 py-1 text-[11px] font-mono text-rd-text focus:border-amber-500 outline-none"
+                    data-testid="recal-reason-input"
+                  />
+                  <button
+                    onClick={() => applyRecal(c.criterion)}
+                    disabled={!recalForm.threshold || recalForm.reason.trim().length < 10}
+                    className="px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider border border-amber-500 text-amber-500 hover:bg-amber-500/10 transition-colors disabled:opacity-40"
+                    data-testid="recal-apply-btn"
+                  >
+                    approve & apply
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
       {ew && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-mono mb-2" data-testid="edge-weight-row">
           <span className="text-[9px] uppercase tracking-widest text-rd-dim">edge weight</span>
@@ -359,8 +494,19 @@ export const EntryModePanel = () => {
                     ))}
                   </div>
                   {(v.recalibration_candidates || []).length > 0 && (
-                    <div className="mt-1 text-[9px] font-mono text-amber-500" data-testid={`gate-v2-recal-${lane}`}>
-                      NEEDS RECALIBRATION: positive-edge sample keeps missing {v.recalibration_candidates.join(", ")} by a large multiple — the target is suspect, not the strategy. Threshold changes stay operator-owned.
+                    <div className="mt-1 flex items-center gap-2 flex-wrap" data-testid={`gate-v2-recal-${lane}`}>
+                      <span className="text-[9px] font-mono text-amber-500">
+                        NEEDS RECALIBRATION: positive-edge sample keeps missing {v.recalibration_candidates.join(", ")} by a large multiple — the target is suspect, not the strategy.
+                      </span>
+                      {lane === "crypto" && (
+                        <button
+                          onClick={loadRecal}
+                          className="px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider border border-amber-500/60 text-amber-500 hover:bg-amber-500/10 transition-colors"
+                          data-testid="review-recalibration-btn"
+                        >
+                          review recalibration
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

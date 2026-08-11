@@ -296,8 +296,13 @@ def _elapsed_hours(obs: Sequence[EvaluationObservation]) -> float:
 
 
 class PromotionGate:
-    def __init__(self, config: PromotionConfig | None = None):
+    def __init__(self, config: PromotionConfig | None = None,
+                 cost_feed: Optional[MeasuredCostFeed] = None):
         self.config = config or PromotionConfig()
+        # RISEDUAL integration (2026-06): injectable cost feed so exact
+        # paired round-trip costs can replace the 2×avg-leg estimate,
+        # per the MeasuredCostFeed docstring's own suggestion.
+        self.cost_feed = cost_feed
 
     def evaluate(
         self,
@@ -310,10 +315,10 @@ class PromotionGate:
         epoch_obs = [o for o in lifetime if o.epoch_id == epoch_id]
         recent = epoch_obs[-cfg.recent_window_observations:]
 
-        cost = MeasuredCostFeed(
+        cost = (self.cost_feed or MeasuredCostFeed(
             cfg.assumed_round_trip_cost_pct,
             cfg.min_measured_fills,
-        ).estimate(fills, epoch_id)
+        )).estimate(fills, epoch_id)
 
         gross = [o.gross_return_pct for o in recent]
         net = [r - cost.round_trip_cost_pct for r in gross]
@@ -430,15 +435,17 @@ class PromotionGate:
             dd_state = PromotionState.NEEDS_RECALIBRATION
 
         add(
-            "drawdown_per_100_observations",
+            "observation_drawdown_per_100",
             CriterionKind.PERFORMANCE,
             dd_state,
             round(dd100, 6),
             f"<= {cfg.max_drawdown_per_100_obs_pct:.6f}%",
             (
-                "Normalized additive observation-curve drawdown. "
-                "NEEDS_RECALIBRATION means the target is suspect given a sufficiently "
-                "large positive-edge sample; operator approval is still required."
+                "OBSERVATION-CURVE drawdown: cumulative percentage-point dip "
+                "across fixed-size counterfactual observations — NOT account "
+                "equity drawdown. NEEDS_RECALIBRATION means the target is "
+                "suspect given a sufficiently large positive-edge sample; "
+                "operator approval is still required."
             ),
         )
 

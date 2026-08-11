@@ -97,7 +97,7 @@ def test_promotion_gate_endpoint(H):
         assert isinstance(criteria, list) and len(criteria) == 5, f"expected 5 criteria list, got {criteria}"
         names = {c.get("name") for c in criteria}
         expected = {"observations", "expectancy_pct_after_costs", "profit_factor",
-                    "max_drawdown_per_100_obs", "single_trade_dependence"}
+                    "observation_drawdown_per_100", "single_trade_dependence"}
         assert expected == names, f"criteria mismatch: {names}"
 
 

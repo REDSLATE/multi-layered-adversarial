@@ -26,6 +26,7 @@ from typing import Optional
 from shared.forensics.promotion_gate_v2 import (
     EvaluationObservation,
     ExecutionFill,
+    MeasuredCostFeed,
     PromotionConfig,
     PromotionGate,
     begin_evaluation_epoch,
@@ -137,9 +138,43 @@ async def load_observations(lane: str, epoch: dict) -> list[EvaluationObservatio
 
 
 async def load_fills(lane: str, epoch: dict, fees: dict) -> list[ExecutionFill]:
-    """Real broker fills → measured-cost feed. Fee per leg comes from
-    the liquidity knob (maker/taker); slippage is measured fill vs the
-    intended limit price when both are present."""
+    """Measured-cost feed. PRIMARY source: `execution_fill_costs` rows
+    (Fill Cost Capture — ACTUAL Kraken fee + measured slippage).
+    Fallback (no captured fills yet): legacy estimate from executions
+    with fee knobs by liquidity."""
+    from db import db  # noqa: WPS433
+    rows = await db["execution_fill_costs"].find(
+        {"lane": lane, "status": "resolved", "fill_price": {"$gt": 0}},
+    ).sort("ts", 1).max_time_ms(8000).to_list(4000)
+    if rows:
+        out = []
+        for r in rows:
+            ts = str(r.get("ts") or "")
+            fee_pct = r.get("fee_pct")
+            if fee_pct is None:
+                fee_pct = float(
+                    fees["maker_leg_fee_pct"]
+                    if r.get("liquidity") == "maker"
+                    else fees["taker_leg_fee_pct"])
+            out.append(ExecutionFill(
+                fill_id=str(r["_id"]),
+                trade_id=r.get("intent_id") or str(r["_id"]),
+                timestamp=_parse_dt(ts),
+                side=(r.get("side") or "BUY").upper(),
+                fill_price=float(r["fill_price"]),
+                quantity=float(r.get("qty_filled") or 1.0),
+                fee_pct=float(fee_pct),
+                reference_price=(r.get("signal_price")
+                                 or r.get("submitted_limit_price")),
+                liquidity=r.get("liquidity") or "unknown",
+                epoch_id=_epoch_for(ts, epoch),
+            ))
+        return out
+    return await _load_fills_legacy(lane, epoch, fees)
+
+
+async def _load_fills_legacy(lane: str, epoch: dict,
+                             fees: dict) -> list[ExecutionFill]:
     from db import db  # noqa: WPS433
     rows = await db["executions"].find(
         {"ok": True, "lane": lane,
@@ -174,14 +209,61 @@ async def load_fills(lane: str, epoch: dict, fees: dict) -> list[ExecutionFill]:
     return out
 
 
+class PairedCostFeed(MeasuredCostFeed):
+    """Exact realized round-trip cost from FIFO-paired entry/exit legs
+    (2026-06 directive) — replaces the 2×avg-leg estimate once enough
+    pairs exist. Assumed cost stays authoritative below the fill
+    minimum, exactly as the module designed."""
+
+    MIN_PAIRS = 5
+
+    def __init__(self, assumed: float, min_fills: int, pairs: list[dict]):
+        super().__init__(assumed, min_fills)
+        self.pairs = [p for p in pairs
+                      if p.get("round_trip_cost_pct") is not None]
+
+    def estimate(self, fills, epoch_id):
+        base = super().estimate(fills, epoch_id)
+        if base.source != "measured" or len(self.pairs) < self.MIN_PAIRS:
+            return base
+        from statistics import mean as _mean  # noqa: WPS433
+        from shared.forensics.promotion_gate_v2 import CostEstimate  # noqa: WPS433
+        return CostEstimate(
+            source="measured",
+            round_trip_cost_pct=max(0.0, _mean(
+                p["round_trip_cost_pct"] for p in self.pairs)),
+            eligible_fill_count=base.eligible_fill_count,
+            maker_fill_count=base.maker_fill_count,
+            taker_fill_count=base.taker_fill_count,
+            avg_leg_cost_pct=base.avg_leg_cost_pct,
+        )
+
+
+async def _epoch_pairs(lane: str, epoch: dict,
+                       epoch_id: str) -> list[dict]:
+    from db import db  # noqa: WPS433
+    from shared.execution_costs import pair_round_trips  # noqa: WPS433
+    rows = await db["execution_fill_costs"].find(
+        {"lane": lane, "status": "resolved"},
+    ).sort("ts", 1).max_time_ms(8000).to_list(4000)
+    rows = [r for r in rows
+            if _epoch_for(str(r.get("ts") or ""), epoch) == epoch_id]
+    return pair_round_trips(rows)
+
+
 async def evaluate_lane(lane: str) -> dict:
     cfg, fees = await get_v2_config()
     epoch = await current_epoch()
     obs = await load_observations(lane, epoch)
     fills = await load_fills(lane, epoch, fees)
-    decision = PromotionGate(cfg).evaluate(
-        observations=obs, fills=fills, epoch_id=epoch["epoch_id"])
-    return decision.to_dict()
+    pairs = await _epoch_pairs(lane, epoch, epoch["epoch_id"])
+    decision = PromotionGate(
+        cfg, cost_feed=PairedCostFeed(
+            cfg.assumed_round_trip_cost_pct, cfg.min_measured_fills, pairs),
+    ).evaluate(observations=obs, fills=fills, epoch_id=epoch["epoch_id"])
+    d = decision.to_dict()
+    d["paired_round_trips"] = len(pairs)
+    return d
 
 
 async def v2_status() -> dict:
@@ -198,3 +280,72 @@ async def v2_status() -> dict:
         "passed_lanes": passed,
         "passed": bool(passed),
     }
+
+
+def _bucket_stats(grosses: list[float], cost_pct: float) -> dict:
+    """Comparison-view stats for one epoch bucket. Diagnostic only."""
+    from shared.forensics.promotion_gate_v2 import (  # noqa: WPS433
+        _drawdown_per_100, _max_drawdown_pct, _profit_factor,
+    )
+    n = len(grosses)
+    if n == 0:
+        return {"n": 0}
+    nets = [g - cost_pct for g in grosses]
+    wins = [x for x in nets if x > 0]
+    losses = [x for x in nets if x < 0]
+    dd = _max_drawdown_pct(nets)
+    pf = _profit_factor(nets)
+    return {
+        "n": n,
+        "gross_expectancy_pct": round(sum(grosses) / n, 4),
+        "net_expectancy_pct": round(sum(nets) / n, 4),
+        "profit_factor": (None if pf == float("inf") else round(pf, 3)),
+        "win_rate": round(len(wins) / n, 3),
+        "avg_winner_pct": round(sum(wins) / len(wins), 4) if wins else None,
+        "avg_loser_pct": round(sum(losses) / len(losses), 4) if losses else None,
+        "observation_drawdown_per_100": round(_drawdown_per_100(dd, n), 3),
+    }
+
+
+async def epoch_comparison(lane: str) -> dict:
+    """Active epoch vs legacy, side by side. NEVER merged into one
+    promotion score — diagnostic/comparative only (2026-06 directive)."""
+    cfg, fees = await get_v2_config()
+    epoch = await current_epoch()
+    obs = await load_observations(lane, epoch)
+    fills = await load_fills(lane, epoch, fees)
+    out = {"lane": lane, "epoch": epoch, "buckets": {}}
+    bucket_ids = ([epoch["epoch_id"], "legacy"]
+                  if epoch.get("started_at") else [epoch["epoch_id"]])
+    for eid in bucket_ids:
+        b_obs = [o.gross_return_pct for o in obs if o.epoch_id == eid]
+        b_fills = [f for f in fills if f.epoch_id == eid]
+        pairs = await _epoch_pairs(lane, epoch, eid)
+        cost = PairedCostFeed(
+            cfg.assumed_round_trip_cost_pct, cfg.min_measured_fills, pairs,
+        ).estimate(b_fills, eid)
+        maker = sum(1 for f in b_fills if f.liquidity == "maker")
+        taker = sum(1 for f in b_fills if f.liquidity == "taker")
+        # realized account curve from ACTUAL paired round trips —
+        # kept strictly separate from the observation-curve metric.
+        real_nets = [p["net_return_pct"] for p in pairs
+                     if p.get("net_return_pct") is not None]
+        from shared.forensics.promotion_gate_v2 import _max_drawdown_pct  # noqa: WPS433
+        realized_dd = (_max_drawdown_pct(real_nets) if real_nets else None)
+        out["buckets"][eid] = {
+            **_bucket_stats(b_obs, cost.round_trip_cost_pct),
+            "cost": cost.to_dict(),
+            "fills": len(b_fills),
+            "maker_taker_ratio": (f"{maker}/{taker}"),
+            "paired_round_trips": len(pairs),
+            "realized_trades": len(real_nets),
+            "realized_total_return_pct": (round(sum(real_nets), 3)
+                                          if real_nets else None),
+            "realized_account_max_drawdown_pct": (round(realized_dd, 3)
+                                                  if realized_dd is not None
+                                                  else None),
+        }
+    out["note"] = ("epochs are never merged into one promotion score — "
+                   "observation-curve drawdown and realized account "
+                   "drawdown are separate metrics by design")
+    return out

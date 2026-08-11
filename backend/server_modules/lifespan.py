@@ -898,6 +898,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("missed-entry ledger start failed: %s", e)
 
+    # ── Fill Cost Capture (2026-06): resolves pending Kraken legs
+    # (actual fee / fill price / slippage) for the measured-cost gate.
+    try:
+        from shared.execution_costs import worker_loop as _fc_loop
+        app.state.fill_cost_task = asyncio.create_task(_fc_loop())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("fill-cost capture start failed: %s", e)
+
     # ── Sell-Point Watcher (2026-08-04, v3.5 plan item 5): bearish
     # structures on HELD tickers. Ships in OBSERVE mode. Fail-soft.
     try:

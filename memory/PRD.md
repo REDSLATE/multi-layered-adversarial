@@ -4482,3 +4482,52 @@ missing piece: one hard gate.
   cleaned; preview epoch reset to "default". PROD NEEDS REDEPLOY.
 - POST-REDEPLOY OPERATOR STEP: begin a new epoch ("maker execution ladder
   enabled") so the new execution build is judged on fresh evidence.
+
+## 2026-06-11 (fork, 4) — Fill Cost Capture + Epoch Comparison + Recalibration Workflow + drawdown rename
+- USER ORDER: (1) fill cost capture, (2) epoch comparison, (3) recalibration
+  workflow (NOT one-tap), + rename observation drawdown; DO NOT change the
+  ≤10 threshold yet; after redeploy begin epoch "maker execution ladder
+  enabled"; then STOP adding trading logic and collect evidence.
+- FILL COST CAPTURE (shared/execution_costs.py): every Kraken route_order
+  records a leg (signal price, submitted limit, qty, notional, maker/taker
+  from order_style, intent link) into `execution_fill_costs` status=pending;
+  background resolver loop (180s, ≤8 lookups/cycle, registered in lifespan)
+  pulls ACTUAL fee/vol_exec/avg price via QueryOrders → fee_pct, slippage vs
+  signal AND vs limit, effective_leg_cost_pct; 5-attempt unresolvable cap.
+  pair_round_trips(): FIFO BUY→SELL per symbol → EXACT realized round-trip
+  cost + net realized return.
+- GATE V2 measured feed upgraded: load_fills now reads execution_fill_costs
+  (real fees) with legacy executions fallback; PairedCostFeed (module edit:
+  PromotionGate accepts optional cost_feed — invited by their docstring)
+  replaces 2×avg-leg with exact paired mean when ≥5 pairs; assumed cost
+  stays until min_measured_fills as designed. v2 per-lane adds
+  paired_round_trips count.
+- EPOCH COMPARISON: GET /api/admin/entry-mode/epoch-comparison?lane= —
+  active vs legacy buckets: n, gross/net expectancy, pf, wr, avg win/loss,
+  observation_drawdown_per_100, cost(source), fills, maker/taker ratio,
+  paired trips, realized_total_return_pct, realized_account_max_drawdown_pct
+  (from real pairs — kept separate from obs-curve metric). Never merged into
+  one score. UI: "compare epochs" button.
+- RECALIBRATION WORKFLOW: GET /recalibration → proposal (criterion, current,
+  actual, suggested range 1.05–1.25×actual, sample, epoch, rationale,
+  state-if-accepted at low/high via re-evaluation); POST /recalibration/apply
+  requires reason ≥10 chars, criterion MUST be currently flagged
+  NEEDS_RECALIBRATION (409 otherwise — "refusing to lower the bar"), only
+  performance criteria mapped (_RECAL_KEYS; hard safety never), audit doc in
+  `gate_recalibrations` (old/new/ts/operator/reason/epoch/sample). UI:
+  "review recalibration" button → proposal panel + threshold/reason inputs +
+  approve&apply (disabled until valid reason).
+- DRAWDOWN RENAME: criterion now "observation_drawdown_per_100" in BOTH
+  v2 module and legacy gate (explanation states NOT account equity dd);
+  realized_account_max_drawdown_pct computed separately from real fills.
+  Config knob key max_drawdown_per_100_obs_pct unchanged. Threshold ≤10 NOT
+  changed per directive.
+- TESTED: 71/71 pytest (incl new test_fill_cost_capture.py: side-aware
+  slippage, FIFO pairing, PairedCostFeed takeover/fallback, rename); live
+  curl: epoch-comparison, recal GET (state previews PASS), apply happy path
+  (audit + new_state PASS), guards (short reason 422, non-flagged 400,
+  re-apply after pass 409); UI screenshot all three panels. Synthetics
+  cleaned, config/audits reset. Fixed stale shadow_fills test artifacts
+  (test-1..6/i1..3/lie) that broke test_exit_only_iter36.
+- PROD NEEDS REDEPLOY → then operator begins epoch "maker execution ladder
+  enabled" → collect evidence; NO new trading logic until then (user).

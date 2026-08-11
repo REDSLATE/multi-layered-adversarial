@@ -772,6 +772,17 @@ async def route_order(
     order["mc_receipt_status"] = receipt_check["reason"]
     order["mc_receipt_enforced"] = receipt_check["enforced"]
 
+    # Fill Cost Capture (2026-06 directive): record the leg so the
+    # background resolver can pull ACTUAL fee/fill from Kraken.
+    # Observe-only — a failure here never touches the trade.
+    if asset.lane == "crypto" and broker_name == "kraken":
+        try:
+            from shared.execution_costs import record_fill_leg  # noqa: WPS433
+            await record_fill_leg(intent, order, notional_usd)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("fill-cost capture failed intent=%s: %s",
+                           intent_id, exc)
+
     # Bracket-outcome training signal capture (2026-02-19, P1).
     # When the brain's intent carries `target_price` + `stop_price`,
     # record the bracket thesis so the outcome resolver can later

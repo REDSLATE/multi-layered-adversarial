@@ -490,3 +490,143 @@ async def promotion_gate_v2_config(
     from dataclasses import fields as _f  # noqa: WPS433
     return {"ok": True, "config": {**{x.name: getattr(cfg, x.name)
                                       for x in _f(type(cfg))}, **fees}}
+
+
+@router.get("/epoch-comparison")
+async def epoch_comparison_get(
+    lane: str = "crypto",
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Active epoch vs legacy side by side — diagnostic only, epochs
+    are NEVER merged into one promotion score."""
+    from shared.forensics.gate_v2_adapter import epoch_comparison  # noqa: WPS433
+    return {"ok": True, **await epoch_comparison(lane)}
+
+
+_RECAL_KEYS = {
+    # criterion → operator-owned config knob. PERFORMANCE criteria only;
+    # hard safety criteria are NEVER recalibratable by construction.
+    "observation_drawdown_per_100": "max_drawdown_per_100_obs_pct",
+}
+
+
+@router.get("/recalibration")
+async def recalibration_get(
+    lane: str = "crypto",
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Recalibration proposals for criteria the gate flagged
+    NEEDS_RECALIBRATION: current threshold → suggested range →
+    evidence → resulting state. Approval + reason required to apply."""
+    from dataclasses import replace as dc_replace  # noqa: WPS433
+    from shared.forensics.gate_v2_adapter import (  # noqa: WPS433
+        PairedCostFeed, _epoch_pairs, current_epoch, evaluate_lane,
+        get_v2_config, load_fills, load_observations,
+    )
+    from shared.forensics.promotion_gate_v2 import PromotionGate  # noqa: WPS433
+    decision = await evaluate_lane(lane)
+    candidates = []
+    for name in decision.get("recalibration_candidates") or []:
+        key = _RECAL_KEYS.get(name)
+        if not key:
+            continue
+        cfg, fees = await get_v2_config()
+        crit = next((c for c in decision["criteria"] if c["name"] == name), {})
+        actual = float(crit.get("actual") or 0)
+        current = float(getattr(cfg, key))
+        low = round(actual * 1.05, 3)
+        high = round(actual * 1.25, 3)
+        epoch = await current_epoch()
+        obs = await load_observations(lane, epoch)
+        fills = await load_fills(lane, epoch, fees)
+        pairs = await _epoch_pairs(lane, epoch, epoch["epoch_id"])
+
+        async def _state_at(threshold: float) -> str:
+            d = PromotionGate(
+                dc_replace(cfg, **{key: threshold}),
+                cost_feed=PairedCostFeed(
+                    cfg.assumed_round_trip_cost_pct,
+                    cfg.min_measured_fills, pairs),
+            ).evaluate(observations=obs, fills=fills,
+                       epoch_id=epoch["epoch_id"])
+            return d.state.value
+
+        candidates.append({
+            "criterion": name,
+            "config_key": key,
+            "current_threshold": current,
+            "actual": actual,
+            "suggested_range": {"low": low, "high": high},
+            "sample_size": decision.get("evaluated_observations"),
+            "epoch": decision.get("epoch_id"),
+            "evidence": {
+                "net_expectancy_pct": decision.get("net_expectancy_pct"),
+                "profit_factor": decision.get("profit_factor"),
+                "cost": decision.get("cost"),
+            },
+            "rationale": crit.get("explanation"),
+            "state_if_accepted_low": await _state_at(low),
+            "state_if_accepted_high": await _state_at(high),
+        })
+    return {"ok": True, "lane": lane, "state": decision.get("state"),
+            "candidates": candidates,
+            "note": ("threshold changes are operator-owned and audited; "
+                     "hard safety criteria can never be recalibrated")}
+
+
+class RecalApply(BaseModel):
+    lane: str = "crypto"
+    criterion: str
+    new_threshold: float = Field(ge=0.5, le=500.0)
+    reason: str = Field(min_length=10, max_length=500)
+
+
+@router.post("/recalibration/apply")
+async def recalibration_apply(
+    body: RecalApply,
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    from shared.forensics.gate_v2_adapter import (  # noqa: WPS433
+        CONFIG_FLAG, current_epoch, evaluate_lane, get_v2_config,
+    )
+    key = _RECAL_KEYS.get(body.criterion)
+    if not key:
+        raise HTTPException(
+            400, f"'{body.criterion}' is not recalibratable — hard safety "
+                 "and non-flagged criteria stay operator-locked")
+    decision = await evaluate_lane(body.lane)
+    if body.criterion not in (decision.get("recalibration_candidates") or []):
+        raise HTTPException(
+            409, "gate has not flagged this criterion NEEDS_RECALIBRATION "
+                 "on the current epoch — refusing to lower the bar")
+    cfg, _fees = await get_v2_config()
+    old = float(getattr(cfg, key))
+    epoch = await current_epoch()
+    audit = {
+        "criterion": body.criterion,
+        "config_key": key,
+        "old_threshold": old,
+        "new_threshold": body.new_threshold,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "operator": user.get("email") or "operator",
+        "reason": body.reason,
+        "epoch_id": epoch["epoch_id"],
+        "lane": body.lane,
+        "sample": {
+            "n": decision.get("evaluated_observations"),
+            "actual": next((c["actual"] for c in decision["criteria"]
+                            if c["name"] == body.criterion), None),
+            "net_expectancy_pct": decision.get("net_expectancy_pct"),
+            "profit_factor": decision.get("profit_factor"),
+        },
+    }
+    await db["gate_recalibrations"].insert_one({**audit})
+    await db["runtime_flags"].update_one(
+        {"_id": CONFIG_FLAG},
+        {"$set": {key: body.new_threshold,
+                  "updated_at": audit["ts"],
+                  "updated_by": audit["operator"]}},
+        upsert=True)
+    fresh = await evaluate_lane(body.lane)
+    return {"ok": True, "audit": {k: v for k, v in audit.items()},
+            "new_state": fresh.get("state")}
