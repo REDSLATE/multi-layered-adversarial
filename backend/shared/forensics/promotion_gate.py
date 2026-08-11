@@ -63,6 +63,11 @@ def evaluate_lane(returns: list[float], cfg: dict) -> dict:
         cum += r
         peak = max(peak, cum)
         dd = max(dd, peak - cum)
+    # 2026-08-08 fix: raw cumulative drawdown grows with n for ANY noisy
+    # series (909 obs → 775 pts even near breakeven). Normalize per 100
+    # observations ONCE past 100 — below that the raw value stands, so
+    # small samples aren't unfairly inflated.
+    dd_per_100 = (dd * 100.0 / max(n, 100)) if n else 0.0
     share = round(max(wins) / gross_w, 3) if gross_w > 0 else None
     criteria = [
         {"name": "observations", "value": n,
@@ -73,9 +78,9 @@ def evaluate_lane(returns: list[float], cfg: dict) -> dict:
         {"name": "profit_factor", "value": (None if pf == float("inf") else pf),
          "threshold": f"> {cfg['min_profit_factor']}",
          "pass": pf is not None and pf > float(cfg["min_profit_factor"])},
-        {"name": "max_drawdown_pct_points", "value": round(dd, 3),
+        {"name": "max_drawdown_per_100_obs", "value": round(dd_per_100, 3),
          "threshold": f"<= {cfg['max_drawdown_pct_points']}",
-         "pass": dd <= float(cfg["max_drawdown_pct_points"])},
+         "pass": dd_per_100 <= float(cfg["max_drawdown_pct_points"])},
         {"name": "single_trade_dependence", "value": share,
          "threshold": f"<= {cfg['max_single_trade_share']}",
          "pass": share is None or n < 2

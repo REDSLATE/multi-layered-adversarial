@@ -4354,3 +4354,20 @@ missing piece: one hard gate.
   test_broker_router_* failures (exit_only gate) unchanged.
 - PROD NEEDS REDEPLOY. NOTE: after redeploy, crypto exits act as soon as
   Kraken recovers (24/7), equity at Monday 9:30 ET.
+
+## 2026-08-08 (2) — Gate verdict is in: strategy loses. Edge Slicer + Cost Autopsy built
+- PROD GATE RESULTS (post-redeploy, user screenshot): crypto 909 obs,
+  expectancy -0.137%, PF 0.923; equity 43 obs, -0.227%, PF 0.571.
+  GATE NOT MET = correct behavior — strategy has negative forward edge.
+- FIXED drawdown criterion mis-scaling: renamed max_drawdown_pct_points →
+  max_drawdown_per_100_obs, normalized dd*100/max(n,100) (raw below 100
+  obs, scaled above). Tests updated.
+- BUILT GET /api/admin/entry-mode/edge-slicer: cost autopsy (gross vs
+  net expectancy, verdict: COSTS EAT THE EDGE / SIGNALS LOSE GROSS /
+  POSITIVE NET EDGE) + slices by lane/hour-UTC/weekday/tag/confidence/
+  symbol (min 30 obs, 20 for symbols), positive_slices ranked. UI:
+  "where does edge hide?" button on EntryModePanel.
+- Ledger rows now store confidence (missed_entries.py) for future
+  confidence-bucket slicing (older rows lack it).
+- Tests 26/26 new-relevant pass (2 pre-existing fixture failures remain).
+- PROD NEEDS REDEPLOY to run the slicer on the real 950+ observations.

@@ -180,7 +180,7 @@ async def run_cycle() -> dict:
          "ingest_ts": {"$gte": oldest, "$lte": newest}},
         {"_id": 0, "intent_id": 1, "symbol": 1, "lane": 1, "stack": 1,
          "risk_reason": 1, "broker_reason": 1, "ingest_ts": 1,
-         "last_submit_ts": 1,
+         "last_submit_ts": 1, "confidence": 1,
          "price_at_signal": 1, "snapshot": 1, "entry_timing_receipt": 1},
     ).sort("ingest_ts", -1).max_time_ms(8000).to_list(200)
 
@@ -211,6 +211,7 @@ async def run_cycle() -> dict:
             "symbol": intent.get("symbol"), "lane": intent.get("lane"),
             "stack": intent.get("stack"), "block_reason": reason,
             "blocked_at": blocked_at, "horizon_h": horizon_h,
+            "confidence": intent.get("confidence"),
             "evaluated_at": _now().isoformat(),
         }
         if not entry:

@@ -17,6 +17,18 @@ export const EntryModePanel = () => {
   const [msg, setMsg] = useState(null);
   const [funnel, setFunnel] = useState(null);
   const [funnelBusy, setFunnelBusy] = useState(false);
+  const [slicer, setSlicer] = useState(null);
+  const [slicerBusy, setSlicerBusy] = useState(false);
+
+  const loadSlicer = async () => {
+    setSlicerBusy(true);
+    try {
+      const { data: s } = await api.get("/admin/entry-mode/edge-slicer");
+      setSlicer(s);
+    } catch (e) {
+      setSlicer({ error: e?.response?.data?.detail || e.message });
+    } finally { setSlicerBusy(false); }
+  };
 
   const loadFunnel = async () => {
     setFunnelBusy(true);
@@ -101,7 +113,49 @@ export const EntryModePanel = () => {
         >
           {funnelBusy ? "tracing…" : "why is the count stuck?"}
         </button>
+        <button
+          onClick={loadSlicer}
+          disabled={slicerBusy}
+          className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border border-emerald-500/60 text-emerald-500 hover:bg-emerald-500/10 transition-colors disabled:opacity-40"
+          data-testid="edge-slicer-btn"
+        >
+          {slicerBusy ? "slicing…" : "where does edge hide?"}
+        </button>
       </div>
+      {slicer && (
+        <div className="border border-rd-border bg-rd-bg px-2.5 py-2 mb-2" data-testid="edge-slicer-result">
+          {slicer.error ? (
+            <div className="text-[10px] font-mono text-red-500">{slicer.error}</div>
+          ) : (
+            <>
+              <div className={`text-[10px] font-mono font-bold mb-1 ${(slicer.cost_autopsy?.verdict || "").startsWith("POSITIVE") ? "text-rd-success" : (slicer.cost_autopsy?.verdict || "").startsWith("COSTS") ? "text-amber-500" : "text-red-500"}`} data-testid="edge-slicer-autopsy">
+                {slicer.cost_autopsy?.verdict}
+              </div>
+              <div className="text-[10px] font-mono text-rd-dim mb-1.5">
+                {slicer.scored_observations} scored · gross {slicer.cost_autopsy?.expectancy_gross}% → net {slicer.cost_autopsy?.expectancy_net}% at {slicer.cost_pct_assumed}% assumed costs · win rate {slicer.cost_autopsy?.win_rate}
+              </div>
+              {(slicer.positive_slices || []).length > 0 ? (
+                <div className="space-y-0.5" data-testid="edge-slicer-positive">
+                  <div className="text-[9px] font-mono uppercase tracking-widest text-emerald-500 mb-0.5">slices with positive net edge</div>
+                  {slicer.positive_slices.map((s, i) => (
+                    <div key={i} className="flex flex-wrap gap-x-3 text-[10px] font-mono">
+                      <span className="w-28 shrink-0 text-rd-dim">{s.dimension.replace("by_", "")}</span>
+                      <span className="w-32 text-rd-text">{s.slice}</span>
+                      <span className="text-rd-success">{s.expectancy_net > 0 ? "+" : ""}{s.expectancy_net}%</span>
+                      <span className="text-rd-muted">×{s.n}</span>
+                      <span className="text-rd-dim">pf {s.profit_factor ?? "—"} · wr {s.win_rate}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[10px] font-mono text-red-500" data-testid="edge-slicer-none">
+                  no slice with positive net edge found (min 30 obs, 20 for symbols) — the strategy loses across every dimension measured
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
       {funnel && (
         <div className="border border-rd-border bg-rd-bg px-2.5 py-2 mb-2" data-testid="promotion-funnel-result">
           {funnel.error ? (
