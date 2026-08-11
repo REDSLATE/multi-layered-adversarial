@@ -178,6 +178,18 @@ ADAPTER_LOADERS = {
 ROUTE_OVERRIDE_BROKERS: set[str] = {"webull"}
 
 
+async def _maker_entry_config() -> dict:
+    """runtime_flags `maker_entries` — post-only limit entries for
+    crypto BUYs (default ON, 60s self-cancel)."""
+    try:
+        from db import db  # noqa: WPS433
+        doc = await db["runtime_flags"].find_one({"_id": "maker_entries"}) or {}
+    except Exception:  # noqa: BLE001
+        doc = {}
+    return {"enabled": bool(doc.get("enabled", True)),
+            "expire_s": int(doc.get("expire_s", 60))}
+
+
 class BrokerRouteBlocked(Exception):
     """Raised when routing cannot complete. Surfaced as a gate failure
     by the calling layer. ALWAYS NO_TRADE — fail-closed."""
@@ -672,16 +684,49 @@ async def route_order(
                 adapter_kwargs["leverage"] = short_leverage
             order = await adapter.submit_limit_order(**adapter_kwargs)
         else:
-            adapter_kwargs = {
-                "symbol": broker_symbol if isinstance(broker_symbol, str) else asset.base,
-                "notional": notional_usd,
-                "side": side,
-                "client_order_id": client_order_id,
-                "mc_receipt": receipt_check.get("receipt"),
-            }
-            if short_leverage is not None:
-                adapter_kwargs["leverage"] = short_leverage
-            order = await adapter.submit_market_order(**adapter_kwargs)
+            # 2026-08-08 maker directive: crypto BUY entries go post-only
+            # limit at best bid (maker fees, no book-crossing) with a 60s
+            # self-cancel — taker fees were eating the thin edge (gate
+            # net -0.137% at PF 0.92). Falls back to market if the bid
+            # can't be fetched or the flag is off.
+            maker_used = False
+            if asset.lane == "crypto" and broker_name == "kraken" and side == "BUY":
+                maker_cfg = await _maker_entry_config()
+                if maker_cfg.get("enabled", True):
+                    try:
+                        from shared.crypto.broker_adapter import _ticker_bid  # noqa: WPS433
+                        from shared.crypto.kraken import to_kraken_pair  # noqa: WPS433
+                        sym = (broker_symbol if isinstance(broker_symbol, str)
+                               else asset.base)
+                        kp = to_kraken_pair(sym) if "/" in sym else sym
+                        bid = await _ticker_bid(kp)
+                        order = await adapter.submit_limit_order(
+                            symbol=sym,
+                            qty=float(notional_usd) / bid,
+                            limit_price=bid,
+                            side=side,
+                            client_order_id=client_order_id,
+                            mc_receipt=receipt_check.get("receipt"),
+                            post_only=True,
+                            expire_s=int(maker_cfg.get("expire_s", 60)),
+                        )
+                        order["order_style"] = "post_only_limit"
+                        maker_used = True
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "maker entry fallback to market %s: %s",
+                            asset.canonical, exc)
+            if not maker_used:
+                adapter_kwargs = {
+                    "symbol": broker_symbol if isinstance(broker_symbol, str) else asset.base,
+                    "notional": notional_usd,
+                    "side": side,
+                    "client_order_id": client_order_id,
+                    "mc_receipt": receipt_check.get("receipt"),
+                }
+                if short_leverage is not None:
+                    adapter_kwargs["leverage"] = short_leverage
+                order = await adapter.submit_market_order(**adapter_kwargs)
     except WebullCapBlocked as e:
         # Belt-and-braces re-check inside the adapter fired. Re-raise
         # as a clean route block so the auto-router treats it like

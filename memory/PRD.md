@@ -4371,3 +4371,16 @@ missing piece: one hard gate.
   confidence-bucket slicing (older rows lack it).
 - Tests 26/26 new-relevant pass (2 pre-existing fixture failures remain).
 - PROD NEEDS REDEPLOY to run the slicer on the real 950+ observations.
+
+## 2026-08-08 (3) — Maker entries + Gate Progress Bar
+- MAKER ORDERS (crypto BUY entries): broker_router converts market
+  entries to POST-ONLY LIMIT at best bid (oflags=post, expiretm=+60s
+  self-cancel) when runtime_flags `maker_entries` enabled (default ON).
+  Falls back to market if bid fetch fails. Adapter: submit_limit_order
+  gained post_only/expire_s params; _ticker_bid helper added. Exits
+  unchanged (market). Activates only when entries resume post-gate.
+- GATE PROGRESS BAR: GateProgressBar.jsx at top of OperatorControl —
+  per-lane n/min_n progress bar, criterion pass/fail dots (tooltip with
+  values), PASS / criteria unmet / collecting status; auto-refresh 60s.
+- Tests 91/91 relevant pass; syntax + lint clean; bar screenshot-verified
+  (0/30 collecting in preview — correct). PROD NEEDS REDEPLOY.

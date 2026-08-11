@@ -67,6 +67,28 @@ async def _ticker_price(pair: str) -> float:
     return last
 
 
+async def _ticker_bid(pair: str) -> float:
+    """Best bid via public ticker — anchor price for post-only entries."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.get(
+            f"{KRAKEN_BASE}/0/public/Ticker",
+            params={"pair": pair},
+            headers={"User-Agent": USER_AGENT},
+        )
+        r.raise_for_status()
+        data = r.json()
+    if data.get("error"):
+        raise KrakenError(data["error"])
+    result = data.get("result") or {}
+    if not result:
+        raise KrakenError([f"empty ticker for {pair}"])
+    _, payload = next(iter(result.items()))
+    bid = float(payload["b"][0])
+    if bid <= 0:
+        raise KrakenError([f"non-positive bid for {pair}: {bid}"])
+    return bid
+
+
 class KrakenLiveAdapter:
     """LIVE Kraken Pro trading adapter. Real money."""
 
@@ -258,6 +280,8 @@ class KrakenLiveAdapter:
         client_order_id: Optional[str] = None,
         mc_receipt: Optional[dict] = None,
         leverage: Optional[int] = None,
+        post_only: bool = False,
+        expire_s: Optional[int] = None,
     ) -> dict:
         """Paradox v3 (Step 5.b, 2026-02-22) — limit order on Kraken.
 
@@ -268,6 +292,8 @@ class KrakenLiveAdapter:
             optional for leveraged longs).
 
         Kraken's AddOrder uses `ordertype="limit"` + `price=<limit>`.
+        `post_only=True` adds `oflags=post` (maker-or-reject);
+        `expire_s` adds `expiretm=+N` so unfilled makers self-cancel.
         """
         if not isinstance(mc_receipt, dict) or not mc_receipt.get("signature") \
                 or not mc_receipt.get("mc_policy_hash"):
@@ -295,6 +321,12 @@ class KrakenLiveAdapter:
         }
         if leverage is not None and int(leverage) > 1:
             params["leverage"] = str(int(leverage))
+        if post_only:
+            # maker-or-cancel: Kraken rejects instead of crossing the
+            # book, guaranteeing maker fees (2026-08-08 cost directive)
+            params["oflags"] = "post"
+        if expire_s is not None and int(expire_s) > 0:
+            params["expiretm"] = f"+{int(expire_s)}"
         if client_order_id:
             params["userref"] = str(abs(hash(client_order_id)) % (2**31))
 

@@ -9,6 +9,7 @@ import WatchlistPanel from "@/components/WatchlistPanel";
 import TapeQualityPanel from "@/components/TapeQualityPanel";
 import SellPointPanel from "@/components/SellPointPanel";
 import EntryModePanel from "@/components/EntryModePanel";
+import GateProgressBar from "@/components/GateProgressBar";
 import ForensicsPanel from "@/components/ForensicsPanel";
 import OutcomeEnginePanel from "@/components/OutcomeEnginePanel";
 import ExitMonitorPanel from "@/components/ExitMonitorPanel";
@@ -290,6 +291,7 @@ export default function OperatorControl() {
 
   return (
     <Card className="mb-6" testid="operator-control-tile" accentColor={loopClosed ? "#10B981" : "#EF4444"}>
+      <GateProgressBar />
       <EntryModePanel />
       <div className="flex items-start justify-between gap-3 mb-4">
         <div>
