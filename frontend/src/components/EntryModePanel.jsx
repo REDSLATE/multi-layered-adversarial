@@ -62,7 +62,7 @@ export const EntryModePanel = () => {
 
   const load = () => {
     api.get("/admin/entry-mode").then(({ data: d }) => setData(d)).catch(() => {});
-    api.get("/admin/entry-mode/promotion-gate").then(({ data: g }) => setGate(g)).catch(() => {});
+    api.get("/admin/entry-mode/promotion-gate-v2").then(({ data: g }) => setGate(g)).catch(() => {});
     api.get("/admin/entry-mode/edge-weight").then(({ data: w }) => setEw(w)).catch(() => {});
   };
   useEffect(() => { load(); }, []);
@@ -87,6 +87,18 @@ export const EntryModePanel = () => {
         setMsg({ ok: false, text: typeof det === "string" ? det : String(e) });
       }
     } finally { setBusy(false); }
+  };
+
+  const beginEpoch = async () => {
+    const reason = window.prompt("New evaluation epoch — reason (material execution change, e.g. 'maker execution ladder enabled'):");
+    if (!reason || reason.trim().length < 4) return;
+    try {
+      await api.post("/admin/entry-mode/epoch", { reason: reason.trim() });
+      setMsg({ ok: true, text: "new evaluation epoch begun — readiness now measures the current build" });
+      load();
+    } catch (e) {
+      setMsg({ ok: false, text: String(e?.response?.data?.detail || e.message) });
+    }
   };
 
   const cfg = data?.config;
@@ -290,27 +302,71 @@ export const EntryModePanel = () => {
         </div>
       )}
       {lanes.length > 0 && (
-        <div className="flex flex-wrap gap-4" data-testid="promotion-gate-summary">
-          {lanes.map(([lane, v]) => (
-            <div key={lane} className="border border-rd-border px-2.5 py-1.5">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-[9px] font-mono uppercase tracking-widest text-rd-dim">{lane}</span>
-                <span
-                  className={`px-1.5 text-[9px] font-mono font-bold uppercase border ${v.passed ? "border-rd-success text-rd-success" : "border-red-500 text-red-500"}`}
-                  data-testid={`promotion-gate-${lane}`}
-                >
-                  {v.passed ? "GATE MET" : "GATE NOT MET"}
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                {(v.criteria || []).map((c) => (
-                  <span key={c.name} className={`text-[9px] font-mono ${c.pass ? "text-rd-success" : "text-red-500"}`}>
-                    {c.name.replaceAll("_", " ")} {c.value ?? "—"} ({c.threshold})
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
+        <div data-testid="promotion-gate-summary">
+          <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+            <span className="text-[9px] font-mono uppercase tracking-widest text-rd-dim">promotion gate v2</span>
+            <span className="text-[9px] font-mono text-rd-dim" data-testid="gate-v2-epoch">
+              epoch: {gate?.epoch?.epoch_id === "default" ? "default (all history)" : `${gate?.epoch?.epoch_id} · ${gate?.epoch?.reason || ""}`}
+            </span>
+            <button
+              onClick={beginEpoch}
+              className="px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider border border-rd-border text-rd-muted hover:text-rd-text hover:border-rd-text transition-colors"
+              data-testid="begin-epoch-btn"
+            >
+              begin new epoch
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-4">
+            {lanes.map(([lane, v]) => {
+              const stateStyle = {
+                PASS: "border-rd-success text-rd-success",
+                NEAR_PASS: "border-teal-500 text-teal-400",
+                NEEDS_RECALIBRATION: "border-amber-500 text-amber-500",
+                FAIL: "border-red-500 text-red-500",
+                HARD_STOP: "border-red-600 text-red-600 bg-red-600/10",
+              }[v.state] || "border-rd-border text-rd-dim";
+              const critStyle = (s) => ({
+                PASS: "text-rd-success",
+                NEAR_PASS: "text-teal-400",
+                NEEDS_RECALIBRATION: "text-amber-500",
+                FAIL: "text-red-500",
+                HARD_STOP: "text-red-600 font-bold",
+              }[s] || "text-rd-dim");
+              return (
+                <div key={lane} className="border border-rd-border px-2.5 py-1.5">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <span className="text-[9px] font-mono uppercase tracking-widest text-rd-dim">{lane}</span>
+                    <span
+                      className={`px-1.5 text-[9px] font-mono font-bold uppercase border ${stateStyle}`}
+                      data-testid={`promotion-gate-${lane}`}
+                    >
+                      {(v.state || "?").replaceAll("_", " ")}
+                    </span>
+                    <span className="text-[9px] font-mono text-rd-dim">
+                      {v.evaluated_observations}/{v.lifetime_observations} obs (epoch/lifetime)
+                    </span>
+                    {v.cost && (
+                      <span className={`text-[9px] font-mono ${v.cost.source === "measured" ? "text-rd-success" : "text-rd-dim"}`} data-testid={`gate-v2-cost-${lane}`}>
+                        cost: {v.cost.round_trip_cost_pct?.toFixed(3)}% {v.cost.source}{v.cost.source === "assumed" ? ` (${v.cost.eligible_fill_count}/${gate?.config?.min_measured_fills} fills to measured)` : ` (${v.cost.maker_fill_count}m/${v.cost.taker_fill_count}t)`}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                    {(v.criteria || []).map((c) => (
+                      <span key={c.name} className={`text-[9px] font-mono ${critStyle(c.state)}`} title={c.explanation}>
+                        {c.name.replaceAll("_", " ")} {c.actual ?? "—"} ({c.target}){c.state === "NEEDS_RECALIBRATION" ? " ⚠ recalibrate?" : ""}
+                      </span>
+                    ))}
+                  </div>
+                  {(v.recalibration_candidates || []).length > 0 && (
+                    <div className="mt-1 text-[9px] font-mono text-amber-500" data-testid={`gate-v2-recal-${lane}`}>
+                      NEEDS RECALIBRATION: positive-edge sample keeps missing {v.recalibration_candidates.join(", ")} by a large multiple — the target is suspect, not the strategy. Threshold changes stay operator-owned.
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
       {msg && (

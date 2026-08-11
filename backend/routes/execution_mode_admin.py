@@ -46,15 +46,18 @@ async def entry_mode_update(
     changes = {k: v for k, v in body.model_dump().items()
                if v is not None and k != "override"}
     if body.mode in ("live", "canary") and not body.override:
-        from shared.forensics.promotion_gate import gate_status  # noqa: WPS433
-        gate = await gate_status()
+        from shared.forensics.gate_v2_adapter import v2_status  # noqa: WPS433
+        gate = await v2_status()
         if not gate["passed"]:
             raise HTTPException(409, {
                 "error": "promotion_gate_not_met",
-                "detail": ("automated entries return only after "
-                           "forward-recorded expectancy is positive; "
-                           "send override=true to force (audited)"),
-                "gate": {k: gate[k] for k in ("per_lane", "passed_lanes")},
+                "detail": ("automated entries return only after the "
+                           "promotion gate (v2) reads PASS on the current "
+                           "evaluation epoch; send override=true to force "
+                           "(audited)"),
+                "gate": {"passed_lanes": gate["passed_lanes"],
+                         "states": {k: v["state"]
+                                    for k, v in gate["per_lane"].items()}},
             })
     if changes:
         changes["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -424,3 +427,66 @@ async def edge_weight_set(
         {"_id": ew.FLAG_ID}, {"$set": updates}, upsert=True)
     ew.reset_for_tests()
     return {"ok": True, "config": await ew.get_config()}
+
+
+# ───────────────── Promotion Gate v2 (operator module) ─────────────────
+
+@router.get("/promotion-gate-v2")
+async def promotion_gate_v2_get(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Anti-'never meets the goals' gate: epoch-scoped windows, measured
+    cost takeover, NEEDS_RECALIBRATION visibility, hard safety stays
+    hard. Readiness only — never a per-trade veto."""
+    from shared.forensics.gate_v2_adapter import v2_status  # noqa: WPS433
+    return {"ok": True, **await v2_status()}
+
+
+class EpochBody(BaseModel):
+    reason: str = Field(min_length=4, max_length=300)
+
+
+@router.post("/epoch")
+async def epoch_begin(
+    body: EpochBody,
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Begin a new evaluation epoch on a MATERIAL execution change
+    (maker ladder, fee model, broker adapter). Old observations stay in
+    lifetime reference; readiness restarts on fresh evidence."""
+    from shared.forensics.gate_v2_adapter import begin_epoch  # noqa: WPS433
+    doc = await begin_epoch(body.reason, user.get("email") or "operator")
+    return {"ok": True, "epoch": doc}
+
+
+class GateV2Config(BaseModel):
+    recent_window_observations: Optional[int] = Field(None, ge=30, le=2000)
+    min_observations: Optional[int] = Field(None, ge=10, le=1000)
+    min_elapsed_hours: Optional[float] = Field(None, ge=0, le=720)
+    assumed_round_trip_cost_pct: Optional[float] = Field(None, ge=0, le=2.0)
+    min_measured_fills: Optional[int] = Field(None, ge=5, le=1000)
+    min_net_expectancy_pct: Optional[float] = Field(None, ge=-1.0, le=5.0)
+    min_profit_factor: Optional[float] = Field(None, ge=0.5, le=5.0)
+    max_drawdown_per_100_obs_pct: Optional[float] = Field(None, ge=1.0, le=500.0)
+    maker_leg_fee_pct: Optional[float] = Field(None, ge=0, le=1.0)
+    taker_leg_fee_pct: Optional[float] = Field(None, ge=0, le=1.0)
+
+
+@router.post("/promotion-gate-v2/config")
+async def promotion_gate_v2_config(
+    body: GateV2Config,
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Threshold changes are OPERATOR-OWNED and explicit — the gate
+    never auto-relaxes; NEEDS_RECALIBRATION only surfaces candidates."""
+    from shared.forensics.gate_v2_adapter import CONFIG_FLAG  # noqa: WPS433
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(400, "no knobs provided")
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    updates["updated_by"] = user.get("email") or "operator"
+    await db["runtime_flags"].update_one(
+        {"_id": CONFIG_FLAG}, {"$set": updates}, upsert=True)
+    from shared.forensics.gate_v2_adapter import get_v2_config  # noqa: WPS433
+    cfg, fees = await get_v2_config()
+    from dataclasses import fields as _f  # noqa: WPS433
+    return {"ok": True, "config": {**{x.name: getattr(cfg, x.name)
+                                      for x in _f(type(cfg))}, **fees}}

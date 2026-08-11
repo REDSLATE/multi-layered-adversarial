@@ -4441,3 +4441,44 @@ missing piece: one hard gate.
 - Verified: curl config GET/POST/validation/revert, synthetic hunt doc →
   badge + hunt row + live toast screenshot-confirmed; unit suite 9/9;
   synthetic doc cleaned up. PROD NEEDS REDEPLOY.
+
+## 2026-06-11 (fork, 3) — Measurement layer + Edge Weight + Promotion Gate v2 (user zip)
+- USER DIRECTIVE: no hard allow/deny edge filter; measurement before eligibility
+  changes; sizing layer that never stops trading; separate signal vs execution
+  expectancy; no permanent symbol/time doctrine from 975 obs.
+- COST SCENARIOS in edge-slicer: gross / taker(0.30 knob) / maker
+  (promotion_gate.maker_cost_pct=0.16 knob) side-by-side + verdict "MAKER
+  EXECUTION RESCUES IT" when applicable. Diagnostic only.
+- DRAWDOWN AUTOPSY: shared/forensics/drawdown_autopsy.py (pure) + GET
+  /api/admin/entry-mode/drawdown-autopsy?lane= — explains metric (sum of pct
+  points, NOT account dd; $ at $5 sizing), dd at gross/maker/taker (cost
+  attribution %), dd window, loss contribution by symbol/hour/weekday,
+  repeated-obs clustering (60min same-symbol). UI: "explain the drawdown".
+- EDGE WEIGHT (shared/risk_sizer/edge_weight.py): sizing-only multiplier
+  0.25–1.0× from hour/weekday/symbol slice expectancy (rolling 30d, cached
+  5min, min_n 30/20) + live confidence adj (±0.15/-0.10). Hard floor 0.25,
+  fail-OPEN 1.0, NEVER rejects. Applied in sizer adjusted_risk (bump-to-min
+  unchanged → keeps trading at $5 floor). Receipt: edge_weight +
+  edge_weight_receipt. GET/POST /api/admin/entry-mode/edge-weight; UI row
+  with ON/OFF toggle.
+- PROMOTION GATE V2 (user-supplied zip → shared/forensics/promotion_gate_v2.py
+  verbatim + gate_v2_adapter.py): states PASS/NEAR_PASS/NEEDS_RECALIBRATION/
+  FAIL/HARD_STOP; evaluation EPOCHS (runtime_flags evaluation_epoch_v2,
+  timestamp-based assignment; old rows → "legacy", never poison new builds);
+  MEASURED COST takeover after min_measured_fills=30 real fills (fee knobs
+  maker_leg 0.08 / taker_leg 0.15 %/leg + slippage vs limit price, liquidity
+  from order_style); NEEDS_RECALIBRATION when big positive-edge sample misses
+  drawdown by >2× (surfaces threshold, never auto-relaxes). Endpoints:
+  GET /promotion-gate-v2, POST /epoch {reason}, POST /promotion-gate-v2/config.
+  ENFORCEMENT SWITCHED: entry-mode canary/live now consults v2 (any-lane PASS;
+  override still audited). Old gate_status kept for GateProgressBar counts.
+  UI: v2 block replaces legacy lane chips (state badges, per-criterion colors,
+  cost source + fills-to-measured progress, recalibration note, epoch line +
+  "begin new epoch" prompt).
+- TESTS: 72/72 (their 6 gate tests + edge_weight/autopsy 10 + regressions).
+  Verified live: v2 status/config/epoch flow (epoch resets evaluated obs to 0,
+  lifetime kept), NEEDS_RECALIBRATION with 260 synthetic rows (net +3.47, pf
+  7.8, dd100 50.8 → amber), canary blocked 409 with v2 states. Synthetics
+  cleaned; preview epoch reset to "default". PROD NEEDS REDEPLOY.
+- POST-REDEPLOY OPERATOR STEP: begin a new epoch ("maker execution ladder
+  enabled") so the new execution build is judged on fresh evidence.
