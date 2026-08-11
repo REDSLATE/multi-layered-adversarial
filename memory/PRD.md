@@ -4384,3 +4384,39 @@ missing piece: one hard gate.
   values), PASS / criteria unmet / collecting status; auto-refresh 60s.
 - Tests 91/91 relevant pass; syntax + lint clean; bar screenshot-verified
   (0/30 collecting in preview — correct). PROD NEEDS REDEPLOY.
+
+## 2026-06-11 (fork) — MC Directive "Capture the Move, Don't Return to HOLD" (Execution Recovery Ladder + ATR stops)
+- BUY ELIGIBILITY: spread_too_wide is NO LONGER a hard reject. Spread in
+  (max_spread_bps=50, hard_reject_spread_bps=300] → ADMITTED with
+  reason=wide_spread_ladder + execution_friction='spread_too_wide' +
+  notional_cap_usd. Spread >300bps (new knob hard_reject_spread_bps) →
+  hard reject 'spread_extreme'. below_volume_floor unchanged (hard gate
+  per user). File: shared/risk_sizer/buy_eligibility.py.
+- EXECUTION RECOVERY LADDER (NEW shared/execution_ladder.py): friction-
+  flagged crypto BUYs hunt fills: maker_bid → maker_reprice →
+  adaptive_maker (bid+25% spread, post-only) → aggressive LIMIT capped
+  at min(ask, signal×(1+100bps)) — NEVER market. Each stage ~7s wait,
+  2s polling, expire_s self-cancel + explicit cancel; partial fills
+  honored (vol_exec). Exhaustion raises LadderUnfilled → router raises
+  BrokerRouteBlocked('qualified_but_unexecuted: ...'). Every terminal
+  state recorded in Mongo `execution_ladder_events`. Knobs:
+  runtime_flags _id='execution_ladder' (enabled/stage_wait_s/poll_s/
+  adaptive_spread_frac/max_chase_bps).
+- ROUTER: broker_router route_order dispatches ladder when
+  intent.risk_sizing.execution_friction=='spread_too_wide' (crypto/
+  kraken/BUY); normal entries keep the single post-only maker flow.
+  Adapter gained cancel_order (Kraken CancelOrder) + _ticker_bid_ask.
+- ATR VOLATILITY STOPS: sizer.resolve_canonical_stop crypto fallback =
+  clamp(1.5 × 14-period ATR, 3%, 8%) source='ATR_VOL' (bars from
+  shared_ohlcv_bars); falls back to exit-policy SL% when bars missing;
+  brain stops in [1%,5%] still win. Dollar risk budget unchanged →
+  wider stops auto-shrink size. Receipt now carries execution_friction
+  + signal_spread_bps.
+- OBSERVABILITY: funnel endpoint adds ladder_recovered_fills +
+  qualified_but_unexecuted + ladder{by_stage}; EntryModePanel renders
+  "EXECUTION LADDER (7d)" line (data-testid ladder-stats /
+  qualified-but-unexecuted-count). missed_entries scope +
+  'spread_extreme'.
+- TESTS: tests/test_execution_ladder.py (ladder+ATR, 12 tests) +
+  updated test_buy_eligibility/test_risk_sizer. Testing agent iter 37:
+  37/37 pass, 0 issues. UI screenshot-verified. PROD NEEDS REDEPLOY.

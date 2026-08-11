@@ -35,7 +35,7 @@ DEFAULTS: dict[str, Any] = {
 # cash locked in stuck positions must not stop expectancy learning.
 _SIZER_SCOPE = {
     "not_in_buy_allowlist", "below_volume_floor", "spread_too_wide",
-    "no_volume_data", "no_quote", "denylisted",
+    "spread_extreme", "no_volume_data", "no_quote", "denylisted",
     "eligibility_cap_below_broker_min", "post_sell_cooldown",
     "insufficient_balance", "no_balance_no_trade",
 }

@@ -248,6 +248,19 @@ async def promotion_funnel(_user: dict = Depends(get_current_user)):  # noqa: B0
     n_scored = await db[COLLECTION].count_documents(
         {"block_reason": {"$regex": _counted},
          "outcome": {"$in": ["tp_hit", "sl_hit", "expired"]}}, maxTimeMS=8000)
+    # Execution Recovery Ladder observability (2026 MC directive):
+    # the ladder must never become a hidden rejection gate.
+    n_ladder_filled = await db["execution_ladder_events"].count_documents(
+        {"ts": {"$gte": cut}, "outcome": "filled"}, maxTimeMS=8000)
+    n_qual_unexec = await db["execution_ladder_events"].count_documents(
+        {"ts": {"$gte": cut}, "outcome": "qualified_but_unexecuted"},
+        maxTimeMS=8000)
+    ladder_stages = await db["execution_ladder_events"].aggregate([
+        {"$match": {"ts": {"$gte": cut}}},
+        {"$group": {"_id": {"outcome": "$outcome", "stage": "$final_stage"},
+                    "n": {"$sum": 1}}},
+        {"$sort": {"n": -1}}, {"$limit": 10},
+    ], maxTimeMS=8000).to_list(10)
     gate = await gate_status()
 
     if armed is False:
@@ -290,6 +303,17 @@ async def promotion_funnel(_user: dict = Depends(get_current_user)):  # noqa: B0
             "shadow_fills_recorded": n_shadow,
             "ledger_rows_exit_only": n_ledger,
             "scored_observations": n_scored,
+            "ladder_recovered_fills": n_ladder_filled,
+            "qualified_but_unexecuted": n_qual_unexec,
+        },
+        "ladder": {
+            "recovered_fills": n_ladder_filled,
+            "qualified_but_unexecuted": n_qual_unexec,
+            "by_stage": [
+                {"outcome": (b["_id"].get("outcome") or "?"),
+                 "stage": (b["_id"].get("stage") or "?"), "n": b["n"]}
+                for b in ladder_stages
+            ],
         },
         "top_blockers": [{"reason": str(b["_id"])[:120], "n": b["n"]}
                          for b in top_blockers],

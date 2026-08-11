@@ -60,6 +60,12 @@ def wired(monkeypatch):
     monkeypatch.setattr(
         "shared.risk_sizer.buy_eligibility.evaluate_buy_eligibility", fake_elig)
 
+    # pure sizing-math tests: neutralize the ATR volatility stop so
+    # policy-fallback math stays deterministic (ATR has its own suite)
+    async def fake_atr(sym, entry):
+        return None
+    monkeypatch.setattr("shared.risk_sizer.sizer._atr_fraction", fake_atr)
+
     async def fake_cooldown(mins):
         return 0.0, None
     monkeypatch.setattr(

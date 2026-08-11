@@ -110,10 +110,19 @@ async def test_volume_floor_and_spread_cap_reject(monkeypatch):
     _metrics(monkeypatch, 400_000, 10.0)
     ok, r = await elig.evaluate_buy_eligibility("TINY/USD")
     assert not ok and r["reason"] == "below_volume_floor"
+    # 2026 MC directive: wide (but not extreme) spread is execution
+    # friction — ADMITTED with a ladder flag, never returned to HOLD.
     elig.reset_for_tests()
     _metrics(monkeypatch, 5_000_000, 80.0)
     ok2, r2 = await elig.evaluate_buy_eligibility("WIDE/USD")
-    assert not ok2 and r2["reason"] == "spread_too_wide"
+    assert ok2 and r2["reason"] == "wide_spread_ladder"
+    assert r2["execution_friction"] == "spread_too_wide"
+    assert r2["notional_cap_usd"] == 5.0
+    # extreme/broken book still hard-rejects
+    elig.reset_for_tests()
+    _metrics(monkeypatch, 5_000_000, 350.0)
+    ok3, r3 = await elig.evaluate_buy_eligibility("BROKEN/USD")
+    assert not ok3 and r3["reason"] == "spread_extreme"
 
 
 @pytest.mark.asyncio

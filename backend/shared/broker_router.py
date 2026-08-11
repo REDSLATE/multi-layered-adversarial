@@ -690,7 +690,36 @@ async def route_order(
             # net -0.137% at PF 0.92). Falls back to market if the bid
             # can't be fetched or the flag is off.
             maker_used = False
+            # Execution Recovery Ladder (2026 MC directive): a signal
+            # admitted with spread_too_wide friction hunts a fill down
+            # maker → adaptive maker → capped aggressive limit instead
+            # of a single bid-anchored maker shot. Abandon = terminal
+            # qualified_but_unexecuted (recorded, never hidden).
             if asset.lane == "crypto" and broker_name == "kraken" and side == "BUY":
+                _friction = ((intent.get("risk_sizing") or {}).get(
+                    "execution_friction") or intent.get("execution_friction"))
+                if _friction == "spread_too_wide":
+                    from shared.execution_ladder import (  # noqa: WPS433
+                        LadderUnfilled, ladder_enabled, run_entry_ladder,
+                    )
+                    if await ladder_enabled():
+                        try:
+                            order = await run_entry_ladder(
+                                adapter,
+                                intent=intent,
+                                broker_symbol=(broker_symbol
+                                               if isinstance(broker_symbol, str)
+                                               else asset.base),
+                                notional_usd=notional_usd,
+                                client_order_id=client_order_id,
+                                mc_receipt=receipt_check.get("receipt"),
+                            )
+                            maker_used = True
+                        except LadderUnfilled as e:
+                            raise BrokerRouteBlocked(
+                                f"qualified_but_unexecuted: {e}") from e
+            if (not maker_used and asset.lane == "crypto"
+                    and broker_name == "kraken" and side == "BUY"):
                 maker_cfg = await _maker_entry_config()
                 if maker_cfg.get("enabled", True):
                     try:

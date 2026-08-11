@@ -13,6 +13,45 @@ from typing import Any, Optional
 
 logger = logging.getLogger("risedual.risk_sizer")
 
+# Volatility-scaled stops (2026 MC directive): fast momentum moves are
+# violent — the fixed -3% stop kicked valid trades out prematurely.
+# Stop distance = clamp(1.5 × ATR, 3%, 8%); the dollar risk budget is
+# unchanged, so wider stops automatically size smaller.
+ATR_STOP_MULT = 1.5
+ATR_STOP_MIN = 0.03
+ATR_STOP_MAX = 0.08
+ATR_PERIOD = 14
+
+
+async def _atr_fraction(symbol: str, entry: float) -> Optional[float]:
+    """14-period ATR as a fraction of entry, from shared_ohlcv_bars.
+    Returns None when bars are missing/insufficient (caller falls
+    back to the exit-policy SL%)."""
+    if not symbol or not entry or entry <= 0:
+        return None
+    try:
+        from db import db  # noqa: WPS433
+        bars = await db["shared_ohlcv_bars"].find(
+            {"symbol": symbol},
+            {"_id": 0, "h": 1, "l": 1, "c": 1, "ts": 1},
+        ).sort("ts", -1).limit(ATR_PERIOD + 1).to_list(ATR_PERIOD + 1)
+        if len(bars) < ATR_PERIOD + 1:
+            return None
+        bars.reverse()
+        trs = []
+        for i in range(1, len(bars)):
+            h = float(bars[i].get("h") or 0)
+            low = float(bars[i].get("l") or 0)
+            pc = float(bars[i - 1].get("c") or 0)
+            if h <= 0 or low <= 0 or pc <= 0:
+                return None
+            trs.append(max(h - low, abs(h - pc), abs(low - pc)))
+        atr = sum(trs) / len(trs)
+        return atr / entry if atr > 0 else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ATR fetch failed %s: %s", symbol, exc)
+        return None
+
 
 async def resolve_canonical_stop(intent: dict, lane_policy: dict) -> dict:
     """Returns {stop_fraction, stop_price|None, target_price|None,
@@ -54,13 +93,25 @@ async def resolve_canonical_stop(intent: dict, lane_policy: dict) -> dict:
         except (TypeError, ValueError) as exc:  # noqa: BLE001
             rejected = f"brain stop unparseable: {exc}"
 
-    # Fallback: live exit-policy SL% for the lane — the SAME value the
-    # Exit Monitor applies when adopting the position.
-    from shared.exits.policy import get_policy  # noqa: WPS433
-    pol = await get_policy()
+    # Volatility-scaled stop (2026 MC directive) — crypto lane uses
+    # clamp(1.5 × ATR, 3%, 8%) so violent momentum has room to breathe.
+    # Falls back to the live exit-policy SL% (the SAME value the Exit
+    # Monitor applies when adopting the position) when ATR is unknown.
     lane = (intent.get("lane") or "crypto").lower()
-    sl_pct = float((pol.get(lane) or {}).get("sl_pct") or 3.0)
-    frac = sl_pct / 100.0
+    source = "EXIT_POLICY"
+    frac = None
+    atr_frac = None
+    if lane == "crypto" and entry:
+        atr_frac = await _atr_fraction(intent.get("symbol") or "", entry)
+        if atr_frac is not None:
+            frac = min(max(ATR_STOP_MULT * atr_frac, ATR_STOP_MIN),
+                       ATR_STOP_MAX)
+            source = "ATR_VOL"
+    if frac is None:
+        from shared.exits.policy import get_policy  # noqa: WPS433
+        pol = await get_policy()
+        sl_pct = float((pol.get(lane) or {}).get("sl_pct") or 3.0)
+        frac = sl_pct / 100.0
     stop_price = None
     if entry:
         stop_price = entry * (1 - frac) if action == "BUY" else entry * (1 + frac)
@@ -68,7 +119,8 @@ async def resolve_canonical_stop(intent: dict, lane_policy: dict) -> dict:
         "stop_fraction": frac,
         "stop_price": stop_price,
         "target_price": None,
-        "source": "EXIT_POLICY",
+        "source": source,
+        "atr_fraction": round(atr_frac, 6) if atr_frac is not None else None,
         "entry_price": entry,
         "rejected_brain_stop": rejected,
     }
@@ -125,6 +177,8 @@ async def build_position_plan(
     # must cool before the crypto lane BUYs again — stops the instant
     # redeploy of sale proceeds into fresh 24h-mover intents.
     _elig_cap: float | None = None
+    _friction: str | None = None
+    _spread_bps = None
     if lane == "crypto" and (intent.get("action") or "").upper() == "BUY":
         try:
             from shared.risk_sizer.sell_cooldown import (  # noqa: WPS433
@@ -155,6 +209,8 @@ async def build_position_plan(
                 intent.get("symbol") or "")
             if _allowed and _al.get("notional_cap_usd") is not None:
                 _elig_cap = float(_al["notional_cap_usd"])
+            _friction = _al.get("execution_friction")
+            _spread_bps = _al.get("spread_bps")
         except Exception:  # noqa: BLE001
             _allowed, _al = True, {}
         if not _allowed:
@@ -335,6 +391,8 @@ async def build_position_plan(
         "min_notional_bump": min_notional_bump,
         "eligibility_cap_usd": round(_elig_cap, 2) if _elig_cap is not None else None,
         "eligibility_cap_applied": _elig_cap_applied,
+        "execution_friction": _friction,
+        "signal_spread_bps": _spread_bps,
         "projected_loss_at_stop": round(projected_loss, 4),
     }
     if intent_id:

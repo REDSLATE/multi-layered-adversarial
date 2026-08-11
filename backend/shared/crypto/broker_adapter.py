@@ -89,6 +89,28 @@ async def _ticker_bid(pair: str) -> float:
     return bid
 
 
+async def _ticker_bid_ask(pair: str) -> tuple[float, float]:
+    """Best (bid, ask) via public ticker — execution-ladder pricing."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.get(
+            f"{KRAKEN_BASE}/0/public/Ticker",
+            params={"pair": pair},
+            headers={"User-Agent": USER_AGENT},
+        )
+        r.raise_for_status()
+        data = r.json()
+    if data.get("error"):
+        raise KrakenError(data["error"])
+    result = data.get("result") or {}
+    if not result:
+        raise KrakenError([f"empty ticker for {pair}"])
+    _, payload = next(iter(result.items()))
+    bid, ask = float(payload["b"][0]), float(payload["a"][0])
+    if bid <= 0 or ask <= 0 or ask < bid:
+        raise KrakenError([f"bad bid/ask for {pair}: {bid}/{ask}"])
+    return bid, ask
+
+
 class KrakenLiveAdapter:
     """LIVE Kraken Pro trading adapter. Real money."""
 
@@ -126,6 +148,17 @@ class KrakenLiveAdapter:
         return await query_order(
             str(order_id), self.public_key, self.private_key,
         )
+
+    async def cancel_order(self, order_id: str) -> dict:
+        """Cancel an open Kraken order by txid (execution-ladder
+        repricing). Kraken returns `count` of canceled orders."""
+        result = await call_private(
+            "/0/private/CancelOrder",
+            self.public_key, self.private_key,
+            {"txid": str(order_id)},
+        )
+        return {"ok": True, "order_id": str(order_id),
+                "count": (result or {}).get("count")}
 
     # ─── account / positions ─────────────────────────────────────────
 

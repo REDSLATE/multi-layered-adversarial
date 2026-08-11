@@ -35,6 +35,7 @@ DEFAULTS: dict[str, Any] = {
     "max_spread_bps": 50.0,
     "max_notional_usd": 5.0,
     "max_pct_of_24h_vol": 0.5,
+    "hard_reject_spread_bps": 300.0,
     "denylist": [],
 }
 _CACHE_TTL_S = 30.0
@@ -153,14 +154,29 @@ async def evaluate_buy_eligibility(symbol: str) -> tuple[bool, dict]:
     if spread is None:
         return False, {**base, "reason": "no_quote",
                        "dollar_vol_24h": round(dvol)}  # never cache quote gaps
-    if spread > float(cfg["max_spread_bps"]):
-        rec = {"reason": "spread_too_wide", "spread_bps": round(spread, 1),
+    # 2026 MC directive "Capture the Move": a wide spread is execution
+    # FRICTION, not a rejection — the signal is ADMITTED with a ladder
+    # flag so the router hunts a fill instead of returning to HOLD.
+    # Only a truly extreme/broken book (hard_reject_spread_bps) still
+    # hard-rejects.
+    if spread > float(cfg.get("hard_reject_spread_bps")
+                      or DEFAULTS["hard_reject_spread_bps"]):
+        rec = {"reason": "spread_extreme", "spread_bps": round(spread, 1),
                "dollar_vol_24h": round(dvol), "_allowed": False}
         _sym_cache[sym] = (now, rec)
         return False, {**base, **{k: v for k, v in rec.items() if k != "_allowed"}}
 
     cap = min(cap_all,
               float(cfg["max_pct_of_24h_vol"]) / 100.0 * dvol)
+    if spread > float(cfg["max_spread_bps"]):
+        rec = {"reason": "wide_spread_ladder",
+               "execution_friction": "spread_too_wide",
+               "spread_bps": round(spread, 1),
+               "dollar_vol_24h": round(dvol),
+               "notional_cap_usd": round(cap, 2), "_allowed": True}
+        _sym_cache[sym] = (now, rec)
+        return True, {**base, **{k: v for k, v in rec.items() if k != "_allowed"}}
+
     rec = {"reason": "rules_admitted", "dollar_vol_24h": round(dvol),
            "spread_bps": round(spread, 1),
            "notional_cap_usd": round(cap, 2), "_allowed": True}

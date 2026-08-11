@@ -178,6 +178,19 @@ export const EntryModePanel = () => {
                   </span>
                 ))}
               </div>
+              {funnel.ladder && (
+                <div className="mt-1 text-[10px] font-mono" data-testid="ladder-stats">
+                  <span className="text-rd-dim uppercase tracking-widest text-[9px]">execution ladder (7d): </span>
+                  <span className="text-rd-success" data-testid="ladder-recovered-fills">recovered fills {funnel.ladder.recovered_fills}</span>
+                  <span className="text-rd-dim"> · </span>
+                  <span className={funnel.ladder.qualified_but_unexecuted > 0 ? "text-amber-500" : "text-rd-dim"} data-testid="qualified-but-unexecuted-count">
+                    qualified-but-unexecuted {funnel.ladder.qualified_but_unexecuted}
+                  </span>
+                  {(funnel.ladder.by_stage || []).length > 0 && (
+                    <span className="text-rd-dim"> · {funnel.ladder.by_stage.map((s) => `${s.outcome === "filled" ? "fill" : "abandon"}@${s.stage}×${s.n}`).join(" ")}</span>
+                  )}
+                </div>
+              )}
               {(funnel.top_blockers || []).length > 0 && (
                 <div className="mt-1.5 text-[9px] font-mono text-rd-dim">
                   top blockers: {funnel.top_blockers.slice(0, 5).map((b) => `${b.reason} ×${b.n}`).join(" · ")}
