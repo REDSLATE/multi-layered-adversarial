@@ -4420,3 +4420,24 @@ missing piece: one hard gate.
 - TESTS: tests/test_execution_ladder.py (ladder+ATR, 12 tests) +
   updated test_buy_eligibility/test_risk_sizer. Testing agent iter 37:
   37/37 pass, 0 issues. UI screenshot-verified. PROD NEEDS REDEPLOY.
+
+## 2026-06-11 (fork, 2) — Ladder Live Tuning panel + real-time hunt toasts
+- USER: NO Alpaca equity migration — dropped from backlog permanently.
+- NEW routes/execution_ladder_admin.py: GET/POST /api/admin/execution-ladder/config
+  (knobs: enabled, stage_wait_s 2-60, poll_s 0.5-10, adaptive_spread_frac 0-1,
+  max_chase_bps 0-1000 → runtime_flags execution_ladder; max_spread_bps /
+  hard_reject_spread_bps → runtime_flags buy_eligibility with cache bust;
+  validates hard_reject > max_spread). GET /activity: live hunts (<3min) +
+  last 10 terminal events.
+- execution_ladder.py: _set_active/_clear_active heartbeat per stage into
+  Mongo `execution_ladder_active` (upsert on submit, delete on fill/abandon).
+- NEW LadderControlPanel.jsx (mounted in OperatorControl under EntryModePanel):
+  knob inputs + "apply live" + ON/OFF toggle, amber "hunting ×N" pulse badge,
+  active hunt rows, 8s activity polling with sonner toasts — info on new hunt
+  stage, success on ladder fill, warning on qualified_but_unexecuted.
+- FIXED missing <Toaster> — sonner toasts were silently no-ops app-wide;
+  mounted in App.js (bottom-right, richColors). All existing toast() calls
+  now render too.
+- Verified: curl config GET/POST/validation/revert, synthetic hunt doc →
+  badge + hunt row + live toast screenshot-confirmed; unit suite 9/9;
+  synthetic doc cleaned up. PROD NEEDS REDEPLOY.

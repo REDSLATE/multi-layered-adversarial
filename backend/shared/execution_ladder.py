@@ -27,6 +27,7 @@ logger = logging.getLogger("risedual.execution_ladder")
 
 FLAG_ID = "execution_ladder"
 EVENTS = "execution_ladder_events"
+ACTIVE = "execution_ladder_active"
 DEFAULTS: dict[str, Any] = {
     "enabled": True,
     "stage_wait_s": 7.0,
@@ -85,6 +86,35 @@ async def _record_event(intent: dict, *, outcome: str, stage: str,
         })
     except Exception as exc:  # noqa: BLE001
         logger.warning("ladder event record failed: %s", exc)
+
+
+async def _set_active(intent: dict, *, stage: str, limit_price: float,
+                      notional_usd: float) -> None:
+    """Live hunt heartbeat — the UI polls this for real-time toasts."""
+    try:
+        from db import db  # noqa: WPS433
+        now = datetime.now(timezone.utc).isoformat()
+        await db[ACTIVE].update_one(
+            {"intent_id": intent.get("intent_id")},
+            {"$set": {
+                "symbol": intent.get("symbol"),
+                "lane": (intent.get("lane") or "crypto").lower(),
+                "stage": stage,
+                "limit_price": limit_price,
+                "notional_usd": round(float(notional_usd), 2),
+                "updated_at": now,
+            }, "$setOnInsert": {"started_at": now}},
+            upsert=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ladder active upsert failed: %s", exc)
+
+
+async def _clear_active(intent: dict) -> None:
+    try:
+        from db import db  # noqa: WPS433
+        await db[ACTIVE].delete_one({"intent_id": intent.get("intent_id")})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ladder active clear failed: %s", exc)
 
 
 def _fill_qty(info: Optional[dict]) -> float:
@@ -181,6 +211,8 @@ async def run_entry_ladder(
             px = bid
         attempted.append(stage)
         qty = float(notional_usd) / px
+        await _set_active(intent, stage=stage, limit_price=px,
+                          notional_usd=notional_usd)
         try:
             order = await adapter.submit_limit_order(
                 symbol=broker_symbol,
@@ -220,6 +252,7 @@ async def run_entry_ladder(
             await _record_event(intent, outcome="filled", stage=stage,
                                 stages=attempted, notional_usd=notional_usd,
                                 detail=f"limit={px} state={state}")
+            await _clear_active(intent)
             logger.info("ladder FILLED %s at stage=%s px=%s (%s)",
                         pair, stage, px, state)
             return order
@@ -229,6 +262,7 @@ async def run_entry_ladder(
     await _record_event(intent, outcome="qualified_but_unexecuted",
                         stage=final_stage, stages=attempted,
                         notional_usd=notional_usd, detail=last_detail)
+    await _clear_active(intent)
     logger.info("ladder ABANDONED %s after %s: %s", pair, attempted, last_detail)
     raise LadderUnfilled(
         f"ladder exhausted after {'/'.join(attempted) or 'no stages'}: "

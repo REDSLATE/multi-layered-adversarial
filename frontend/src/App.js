@@ -32,6 +32,7 @@ import RdScanner from "@/risedual/pages/Scanner";
 import RdHeatmap from "@/risedual/pages/Heatmap";
 import RdAgentActivity from "@/risedual/pages/AgentActivity";
 import RdMarkets from "@/risedual/pages/Markets";
+import { Toaster } from "@/components/ui/sonner";
 import "@/App.css";
 
 function Protected({ children }) {
@@ -61,6 +62,7 @@ function App() {
   return (
     <HostGuard>
       <AuthProvider>
+        <Toaster position="bottom-right" richColors />
         <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
