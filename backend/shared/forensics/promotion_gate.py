@@ -24,6 +24,7 @@ DEFAULTS: dict[str, Any] = {
     "max_drawdown_pct_points": 10.0,
     "max_single_trade_share": 0.5,
     "cost_pct": 0.30,
+    "maker_cost_pct": 0.16,
     "window_days": 30,
 }
 

@@ -19,6 +19,26 @@ export const EntryModePanel = () => {
   const [funnelBusy, setFunnelBusy] = useState(false);
   const [slicer, setSlicer] = useState(null);
   const [slicerBusy, setSlicerBusy] = useState(false);
+  const [dd, setDd] = useState(null);
+  const [ddBusy, setDdBusy] = useState(false);
+  const [ew, setEw] = useState(null);
+
+  const loadDd = async () => {
+    setDdBusy(true);
+    try {
+      const { data: d } = await api.get("/admin/entry-mode/drawdown-autopsy?lane=crypto");
+      setDd(d);
+    } catch (e) {
+      setDd({ error: e?.response?.data?.detail || e.message });
+    } finally { setDdBusy(false); }
+  };
+
+  const toggleEw = async () => {
+    try {
+      const { data: d } = await api.post("/admin/entry-mode/edge-weight", { enabled: !(ew?.config?.enabled ?? true) });
+      setEw((p) => ({ ...p, config: d.config }));
+    } catch { /* silent */ }
+  };
 
   const loadSlicer = async () => {
     setSlicerBusy(true);
@@ -43,6 +63,7 @@ export const EntryModePanel = () => {
   const load = () => {
     api.get("/admin/entry-mode").then(({ data: d }) => setData(d)).catch(() => {});
     api.get("/admin/entry-mode/promotion-gate").then(({ data: g }) => setGate(g)).catch(() => {});
+    api.get("/admin/entry-mode/edge-weight").then(({ data: w }) => setEw(w)).catch(() => {});
   };
   useEffect(() => { load(); }, []);
 
@@ -114,6 +135,14 @@ export const EntryModePanel = () => {
           {funnelBusy ? "tracing…" : "why is the count stuck?"}
         </button>
         <button
+          onClick={loadDd}
+          disabled={ddBusy}
+          className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border border-amber-500/60 text-amber-500 hover:bg-amber-500/10 transition-colors disabled:opacity-40"
+          data-testid="drawdown-autopsy-btn"
+        >
+          {ddBusy ? "dissecting…" : "explain the drawdown"}
+        </button>
+        <button
           onClick={loadSlicer}
           disabled={slicerBusy}
           className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border border-emerald-500/60 text-emerald-500 hover:bg-emerald-500/10 transition-colors disabled:opacity-40"
@@ -134,6 +163,16 @@ export const EntryModePanel = () => {
               <div className="text-[10px] font-mono text-rd-dim mb-1.5">
                 {slicer.scored_observations} scored · gross {slicer.cost_autopsy?.expectancy_gross}% → net {slicer.cost_autopsy?.expectancy_net}% at {slicer.cost_pct_assumed}% assumed costs · win rate {slicer.cost_autopsy?.win_rate}
               </div>
+              {(slicer.cost_scenarios || []).length > 0 && (
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] font-mono mb-1.5" data-testid="cost-scenarios">
+                  <span className="text-[9px] uppercase tracking-widest text-rd-dim">cost scenarios:</span>
+                  {slicer.cost_scenarios.map((s) => (
+                    <span key={s.label} className={(s.expectancy_net ?? 0) > 0 ? "text-rd-success" : "text-red-500"}>
+                      {s.label} ({s.cost_pct}%): {(s.expectancy_net ?? 0) > 0 ? "+" : ""}{s.expectancy_net}% · pf {s.profit_factor ?? "—"}
+                    </span>
+                  ))}
+                </div>
+              )}
               {(slicer.positive_slices || []).length > 0 ? (
                 <div className="space-y-0.5" data-testid="edge-slicer-positive">
                   <div className="text-[9px] font-mono uppercase tracking-widest text-emerald-500 mb-0.5">slices with positive net edge</div>
@@ -197,6 +236,56 @@ export const EntryModePanel = () => {
                 </div>
               )}
             </>
+          )}
+        </div>
+      )}
+      {dd && (
+        <div className="border border-rd-border bg-rd-bg px-2.5 py-2 mb-2" data-testid="drawdown-autopsy-result">
+          {dd.error ? (
+            <div className="text-[10px] font-mono text-red-500">{dd.error}</div>
+          ) : (
+            <>
+              {(dd.verdicts || []).map((v, i) => (
+                <div key={i} className={`text-[10px] font-mono mb-1 ${i === 0 ? "text-rd-text font-bold" : "text-amber-500"}`}>{v}</div>
+              ))}
+              {dd.scenarios && (
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] font-mono mb-1" data-testid="dd-scenarios">
+                  {Object.entries(dd.scenarios).map(([k, s]) => (
+                    <span key={k} className="text-rd-muted">
+                      {k.replaceAll("_", " ")} ({s.cost_pct}%): dd/100 <span className={s.dd_per_100_obs <= 10 ? "text-rd-success" : "text-red-500"}>{s.dd_per_100_obs}</span> · ${s.max_dd_dollars_at_fixed_size} at $5 sizing · exp {s.expectancy_pct}%
+                    </span>
+                  ))}
+                </div>
+              )}
+              {(dd.loss_contributions?.by_symbol || []).length > 0 && (
+                <div className="text-[9px] font-mono text-rd-dim">
+                  top loss contributors: {dd.loss_contributions.by_symbol.slice(0, 5).map((s) => `${s.slice} ${s.loss_pct_points} (${Math.round((s.share_of_losses || 0) * 100)}%)`).join(" · ")}
+                </div>
+              )}
+              {dd.clustering && (
+                <div className="text-[9px] font-mono text-rd-dim">
+                  clustering: {dd.clustering.repeat_obs_within_60min_same_symbol} repeat obs within 60min ({Math.round((dd.clustering.repeat_share || 0) * 100)}%) · {dd.clustering.distinct_symbols} distinct symbols · top: {(dd.clustering.top_symbols_by_obs || []).slice(0, 4).map((s) => `${s.symbol}×${s.n}`).join(" ")}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {ew && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-mono mb-2" data-testid="edge-weight-row">
+          <span className="text-[9px] uppercase tracking-widest text-rd-dim">edge weight</span>
+          <button
+            onClick={toggleEw}
+            className={`px-1.5 text-[9px] font-mono font-bold uppercase border transition-colors ${(ew.config?.enabled ?? true) ? "border-rd-success text-rd-success" : "border-red-500 text-red-500"}`}
+            data-testid="edge-weight-toggle"
+          >
+            {(ew.config?.enabled ?? true) ? "ON" : "OFF"}
+          </button>
+          <span className="text-rd-dim">sizing only, never a gate · floor {ew.config?.floor}× · now {ew.current_receipt?.weight ?? "—"}×</span>
+          {ew.current_receipt?.components && (
+            <span className="text-rd-muted">
+              {Object.entries(ew.current_receipt.components).map(([d, c]) => `${d}:${c.slice}${c.n ? ` ${c.expectancy_net > 0 ? "+" : ""}${c.expectancy_net}%×${c.n}` : " (no data)"}→${c.score}`).join(" · ")}
+            </span>
           )}
         </div>
       )}

@@ -87,6 +87,7 @@ async def edge_slicer(_user: dict = Depends(get_current_user)):  # noqa: B008
 
     cfg = await get_gate_config()
     cost = float(cfg["cost_pct"])
+    maker_cost = float(cfg.get("maker_cost_pct") or 0.16)
     cut = (datetime.now(timezone.utc)
            - timedelta(days=float(cfg["window_days"]))).isoformat()
     rows = await db[COLLECTION].find(
@@ -174,15 +175,42 @@ async def edge_slicer(_user: dict = Depends(get_current_user)):  # noqa: B008
     positive.sort(key=lambda s: s["expectancy_net"], reverse=True)
 
     overall = _stats(scored) or {}
+    # Cost-scenario side-by-side (2026-06 directive): separate SIGNAL
+    # expectancy from EXECUTION cost. Diagnostic only — never a gate.
+    def _stats_at(cost_x: float):
+        if not scored:
+            return None
+        nets = [r["_gross"] - cost_x for r in scored]
+        wins = [x for x in nets if x > 0]
+        losses = [x for x in nets if x < 0]
+        gl = abs(sum(losses))
+        return {"cost_pct": cost_x,
+                "expectancy_net": round(sum(nets) / len(nets), 4),
+                "win_rate": round(len(wins) / len(nets), 3),
+                "profit_factor": round(sum(wins) / gl, 3) if gl > 0 else None}
+    cost_scenarios = [
+        {"label": "gross (signal only)", **(_stats_at(0.0) or {})},
+        {"label": "taker (assumed)", **(_stats_at(cost) or {})},
+        {"label": "maker", **(_stats_at(maker_cost) or {})},
+    ] if scored else []
+    maker_net = (_stats_at(maker_cost) or {}).get("expectancy_net")
     gross_e = overall.get("expectancy_gross")
     net_e = overall.get("expectancy_net")
     if gross_e is None:
         autopsy_verdict = "no scored observations yet"
+    elif gross_e > 0 and (net_e or 0) <= 0 and (maker_net or 0) > 0:
+        autopsy_verdict = (f"COSTS EAT THE EDGE — MAKER EXECUTION RESCUES "
+                           f"IT: gross {gross_e:+.3f}%, taker "
+                           f"({cost:.2f}%) {net_e:+.3f}%, maker "
+                           f"({maker_cost:.2f}%) {maker_net:+.3f}% — the "
+                           "maker/ladder entry path flips expectancy "
+                           "positive without cutting trade frequency")
     elif gross_e > 0 and (net_e or 0) <= 0:
         autopsy_verdict = (f"COSTS EAT THE EDGE: gross {gross_e:+.3f}% is "
                            f"positive but {cost:.2f}% assumed costs flip it to "
-                           f"{net_e:+.3f}% — cost engineering (maker/limit "
-                           "orders, larger min notional) can rescue this")
+                           f"{net_e:+.3f}% — even maker costs "
+                           f"({maker_cost:.2f}%) leave {maker_net:+.3f}%; "
+                           "execution quality AND selection both need work")
     elif gross_e <= 0:
         autopsy_verdict = (f"SIGNALS LOSE GROSS: {gross_e:+.3f}% before any "
                            "costs — the entry logic itself needs work; cost "
@@ -194,6 +222,7 @@ async def edge_slicer(_user: dict = Depends(get_current_user)):  # noqa: B008
         "ok": True, "window_days": cfg["window_days"],
         "cost_pct_assumed": cost, "scored_observations": len(scored),
         "cost_autopsy": {**overall, "verdict": autopsy_verdict},
+        "cost_scenarios": cost_scenarios,
         "positive_slices": positive[:12],
         "slices": slices,
     }
@@ -320,3 +349,78 @@ async def promotion_funnel(_user: dict = Depends(get_current_user)):  # noqa: B0
         "gate_per_lane": gate.get("per_lane"),
         "verdict": verdict,
     }
+
+
+@router.get("/drawdown-autopsy")
+async def drawdown_autopsy(
+    lane: str = "crypto",
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    """Decompose max_drawdown_per_100_obs BEFORE anyone engineers
+    around it (2026-06 directive): what the metric IS, cost scenarios,
+    the dd window, loss contributions, repeated-obs clustering."""
+    from datetime import timedelta  # noqa: WPS433
+    from shared.forensics.drawdown_autopsy import compute_autopsy  # noqa: WPS433
+    from shared.forensics.promotion_gate import get_gate_config  # noqa: WPS433
+    from shared.risk_sizer.missed_entries import COLLECTION  # noqa: WPS433
+
+    cfg = await get_gate_config()
+    cut = (datetime.now(timezone.utc)
+           - timedelta(days=float(cfg["window_days"]))).isoformat()
+    rows = await db[COLLECTION].find(
+        {"evaluated_at": {"$gte": cut}, "lane": lane,
+         "block_reason": {"$regex":
+                          "exit_only_mode|insufficient_balance|no_balance_no_trade"},
+         "outcome": {"$in": ["tp_hit", "sl_hit", "expired"]}},
+        {"_id": 0, "outcome": 1, "tp_pct": 1, "sl_pct": 1, "end_pct": 1,
+         "blocked_at": 1, "symbol": 1},
+    ).sort("blocked_at", 1).max_time_ms(10000).to_list(5000)
+    return {"ok": True, "lane": lane, "window_days": cfg["window_days"],
+            **compute_autopsy(rows, cost_pct=float(cfg["cost_pct"]),
+                              maker_cost_pct=float(
+                                  cfg.get("maker_cost_pct") or 0.16))}
+
+
+class EdgeWeightUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    floor: Optional[float] = Field(None, ge=0.05, le=1.0)
+    neutral: Optional[float] = Field(None, ge=0.1, le=1.0)
+    window_days: Optional[float] = Field(None, ge=7, le=90)
+
+
+@router.get("/edge-weight")
+async def edge_weight_get(_user: dict = Depends(get_current_user)):  # noqa: B008
+    """Edge Weight status: config + current slice stats + the weight a
+    hypothetical intent would receive RIGHT NOW (sizing only, never
+    a gate)."""
+    from shared.risk_sizer.edge_weight import (  # noqa: WPS433
+        get_config, get_edge_weight, slice_stats,
+    )
+    cfg = await get_config()
+    weight, receipt = await get_edge_weight({"lane": "crypto"})
+    stats = await slice_stats("crypto", cfg)
+    trimmed = {dim: dict(sorted(
+        b.items(), key=lambda kv: kv[1]["expectancy_net"], reverse=True))
+        for dim, b in stats.items()}
+    return {"ok": True, "config": cfg,
+            "current_weight_no_symbol": weight,
+            "current_receipt": receipt,
+            "slices": {dim: dict(list(b.items())[:10])
+                       for dim, b in trimmed.items()}}
+
+
+@router.post("/edge-weight")
+async def edge_weight_set(
+    body: EdgeWeightUpdate,
+    user: dict = Depends(get_current_user),  # noqa: B008
+):
+    from shared.risk_sizer import edge_weight as ew  # noqa: WPS433
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(400, "no knobs provided")
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    updates["updated_by"] = user.get("email") or "operator"
+    await db["runtime_flags"].update_one(
+        {"_id": ew.FLAG_ID}, {"$set": updates}, upsert=True)
+    ew.reset_for_tests()
+    return {"ok": True, "config": await ew.get_config()}

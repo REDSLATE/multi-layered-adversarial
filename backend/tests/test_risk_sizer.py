@@ -66,6 +66,12 @@ def wired(monkeypatch):
         return None
     monkeypatch.setattr("shared.risk_sizer.sizer._atr_fraction", fake_atr)
 
+    # neutralize the edge-weight sizing layer (own suite covers it)
+    async def fake_ew(intent):
+        return 1.0, None
+    monkeypatch.setattr(
+        "shared.risk_sizer.edge_weight.get_edge_weight", fake_ew)
+
     async def fake_cooldown(mins):
         return 0.0, None
     monkeypatch.setattr(
@@ -109,6 +115,19 @@ async def test_wrong_side_brain_stop_falls_back(wired):
 
 
 # ───────────────────────── sizing math ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_edge_weight_scales_size_but_never_blocks(wired):
+    # 0.5× edge weight halves the risk-based notional at the same stop
+    async def half_ew(intent):
+        return 0.5, {"weight": 0.5}
+    wired.setattr("shared.risk_sizer.edge_weight.get_edge_weight", half_ew)
+    plan = await build_position_plan(
+        _intent(stop_price=115640.0), governor_multiplier=1.0)
+    assert plan["approved"] is True  # NEVER a gate
+    assert plan["edge_weight"] == 0.5
+    assert plan["final_notional"] == pytest.approx(562.5)
+
 
 @pytest.mark.asyncio
 async def test_operator_example_2pct_stop_1125(wired):

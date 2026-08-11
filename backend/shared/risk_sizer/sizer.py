@@ -152,6 +152,17 @@ async def build_position_plan(
     if gm <= 0:
         return _reject("governor_multiplier_zero")
 
+    # Edge Weight / Opportunity Multiplier (2026-06 directive): lean
+    # capital toward historically strong slices. SIZING ONLY — hard
+    # floor, fail-open to 1.0, can never reject or zero a trade.
+    _ew, _ew_receipt = 1.0, None
+    if (intent.get("action") or "").upper() == "BUY":
+        try:
+            from shared.risk_sizer.edge_weight import get_edge_weight  # noqa: WPS433
+            _ew, _ew_receipt = await get_edge_weight(intent)
+        except Exception:  # noqa: BLE001
+            _ew, _ew_receipt = 1.0, None
+
     # RoadGuard hard block — same authority the router's master-switch
     # gate enforces, consulted here so a sizer-level plan can NEVER be
     # approved while trading is frozen (final notional forced to 0).
@@ -282,7 +293,7 @@ async def build_position_plan(
         return _reject("insufficient_balance", balance_source=snap["source"])
 
     base_risk = equity * float(lane_pol["risk_fraction"])
-    adjusted_risk = base_risk * gm
+    adjusted_risk = base_risk * gm * _ew
 
     open_r = open_risk.total_open_risk(lane)
     remaining_capacity = max(
@@ -386,6 +397,8 @@ async def build_position_plan(
         "spendable_cash": round(spendable, 2),
         "portfolio_open_risk": round(open_r, 2),
         "governor_multiplier": gm,
+        "edge_weight": round(_ew, 3),
+        "edge_weight_receipt": _ew_receipt,
         "gross_notional": round(risk_based, 2),
         "final_notional": final_notional,
         "min_notional_bump": min_notional_bump,
