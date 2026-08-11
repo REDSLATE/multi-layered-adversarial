@@ -4531,3 +4531,49 @@ missing piece: one hard gate.
   (test-1..6/i1..3/lie) that broke test_exit_only_iter36.
 - PROD NEEDS REDEPLOY → then operator begins epoch "maker execution ladder
   enabled" → collect evidence; NO new trading logic until then (user).
+
+## 2026-06-11 (fork, 5) — Broker-Fill Reconciliation + Repeat-Intent Dedup
+- USER: broker fill = SOURCE OF TRUTH; a real trade may never disappear
+  silently from measurement; reconcile on boot + periodically; no gate
+  loosening. Also: multi-brain repeat intents suspected as the 95%-repeats
+  cause — CONFIRMED (missed_entries creates one row PER intent_id, no
+  symbol dedup).
+- NEW shared/reconciliation.py: `broker_fills_ledger` (idempotent by broker
+  fill id; Kraken TradesHistory paginated w/ real fee+maker flag, Webull
+  list_history 7d incremental / 365d full) → link_fills (executions by
+  order_id/client_order_id/broker_order_id → intent/brain/stack; leg_only;
+  retry→unmatched_internal after 10 tries; NEVER discarded) →
+  pair_fills (pure FIFO lot allocation per lane+symbol; partial fills +
+  multi-leg exits; orphan sells = explicit exceptions) → finalize_outcomes
+  (`trade_outcomes`: realized P&L from actual fills, pro-rata fees, fee_pct,
+  entry slippage from captured legs, holding time, brain/stack/intent,
+  epoch by ENTRY ts, measured_cost_eligible; deterministic _id rt:{sell})
+  → counters (all 9 requested) + health (amber unlinked>0, red oldest>24h).
+  Worker loop: boot(+45s) + every 600s (lifespan-registered).
+- GATE FEED: gate_v2_adapter.load_fills primary source now
+  broker_fills_ledger (ACTUAL broker fees, maker flag); _epoch_pairs prefers
+  trade_outcomes (broker-truth exact round-trip cost) over captured legs.
+- REPEAT-INTENT DEDUP (missed_entries): repeat_window_min=60 knob — a
+  same-(lane,symbol) signal within the window increments repeat_count/
+  repeat_stacks/repeat_intent_ids on the ONE independent observation +
+  writes a repeat_suppressed tombstone (never rescanned, excluded from all
+  scoring which filters outcome in tp/sl/expired). Fixes 95% observation
+  inflation GOING FORWARD.
+- ROUTES: GET /api/admin/reconciliation (counters+health+unresolved+recent
+  outcomes), POST /run {full} (backfill), GET /repeat-intents (dedup
+  evidence by symbol/stack). UI: ReconciliationPanel (health badge,
+  counters, exceptions w/ retry counts, outcomes w/ P&L, run now/backfill).
+- PREVIEW BACKFILL RESULT (REAL Webull account data): 94 broker fills
+  found (365d), 28 completed round trips recovered that never reached
+  learning (SNAP +2.1%, IWM -0.06%, AHCO -2.4%, SNAP -8.4%, BWEN -15.8%,
+  EHGO -3.5%, PN -26.4%, TCX -6.6% ...), 17 orphan exits (entries pre-
+  history/adopted), 94 unlinked (CORRECT in preview: executions are mocks;
+  prod has real receipts so linkage will bind there), 28 measured-cost
+  samples recovered. Kraken skipped in preview (no creds — prod only).
+- TESTED: 71/71 pytest (new test_reconciliation.py: FIFO/partial/multi-leg/
+  orphans/pair normalization/wiring); live full+incremental runs; UI
+  screenshot (RED health, real outcomes visible). Synthetics cleaned; real
+  Webull ledger data KEPT (it is broker truth).
+- PROD NEEDS REDEPLOY → then run FULL BACKFILL in production (button) —
+  Kraken creds exist there, so crypto history + fee data will ingest and
+  linkage will bind to real execution receipts.

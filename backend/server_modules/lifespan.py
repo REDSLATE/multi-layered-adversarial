@@ -906,6 +906,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("fill-cost capture start failed: %s", e)
 
+    # ── Broker-fill reconciliation (2026-06): broker fills are the
+    # source of truth — reconcile on boot and every 10 min so a crash,
+    # deploy or missed callback can never lose a trade from measurement.
+    try:
+        from shared.reconciliation import worker_loop as _rec_loop
+        app.state.reconciliation_task = asyncio.create_task(_rec_loop())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("reconciliation start failed: %s", e)
+
     # ── Sell-Point Watcher (2026-08-04, v3.5 plan item 5): bearish
     # structures on HELD tickers. Ships in OBSERVE mode. Fail-soft.
     try:

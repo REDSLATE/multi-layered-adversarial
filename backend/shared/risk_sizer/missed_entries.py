@@ -27,6 +27,7 @@ DEFAULTS: dict[str, Any] = {
     "enabled": True,
     "horizon_h": 4.0,
     "max_eval_per_cycle": 25,
+    "repeat_window_min": 60.0,
 }
 
 # risk_sizer:{reason} blocks worth a counterfactual — opportunity
@@ -205,6 +206,48 @@ async def run_cycle() -> dict:
                                          max_time_ms=3000):
             continue
         blocked_at = intent.get("last_submit_ts") or intent["ingest_ts"]
+        # Repeat-intent dedup (2026-06): multiple brains re-emit the
+        # same signal every tick — 95% of production observations were
+        # same-symbol repeats within 60min, inflating every statistic.
+        # One independent observation per (lane, symbol, window); the
+        # repeats increment a counter on it instead of new rows.
+        window_min = float(cfg.get("repeat_window_min") or 60.0)
+        if window_min > 0:
+            try:
+                cutoff = (datetime.fromisoformat(
+                    str(blocked_at).replace("Z", "+00:00"))
+                    - timedelta(minutes=window_min)).isoformat()
+            except Exception:  # noqa: BLE001
+                cutoff = None
+            if cutoff:
+                dup = await db[COLLECTION].find_one(
+                    {"symbol": intent.get("symbol"),
+                     "lane": intent.get("lane"),
+                     "outcome": {"$ne": "repeat_suppressed"},
+                     "blocked_at": {"$gte": cutoff, "$lte": str(blocked_at)}},
+                    {"_id": 1}, max_time_ms=3000)
+                if dup:
+                    await db[COLLECTION].update_one(
+                        {"_id": dup["_id"]},
+                        {"$inc": {"repeat_count": 1},
+                         "$set": {"last_repeat_at": str(blocked_at)},
+                         "$addToSet": {
+                             "repeat_stacks": intent.get("stack"),
+                             "repeat_intent_ids": intent_id}})
+                    # tombstone so this intent is never re-scanned
+                    await db[COLLECTION].update_one(
+                        {"_id": doc_id},
+                        {"$set": {"_id": doc_id, "intent_id": intent_id,
+                                  "outcome": "repeat_suppressed",
+                                  "dedup_of": dup["_id"],
+                                  "symbol": intent.get("symbol"),
+                                  "lane": intent.get("lane"),
+                                  "blocked_at": blocked_at,
+                                  "evaluated_at": _now().isoformat()}},
+                        upsert=True)
+                    stats["repeats_suppressed"] = (
+                        stats.get("repeats_suppressed", 0) + 1)
+                    continue
         entry = block_price(intent)
         base = {
             "_id": doc_id, "intent_id": intent_id,

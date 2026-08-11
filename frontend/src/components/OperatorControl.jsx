@@ -10,6 +10,7 @@ import TapeQualityPanel from "@/components/TapeQualityPanel";
 import SellPointPanel from "@/components/SellPointPanel";
 import EntryModePanel from "@/components/EntryModePanel";
 import LadderControlPanel from "@/components/LadderControlPanel";
+import ReconciliationPanel from "@/components/ReconciliationPanel";
 import GateProgressBar from "@/components/GateProgressBar";
 import ForensicsPanel from "@/components/ForensicsPanel";
 import OutcomeEnginePanel from "@/components/OutcomeEnginePanel";
@@ -295,6 +296,7 @@ export default function OperatorControl() {
       <GateProgressBar />
       <EntryModePanel />
       <LadderControlPanel />
+      <ReconciliationPanel />
       <div className="flex items-start justify-between gap-3 mb-4">
         <div>
           <div className="flex items-center gap-2">

@@ -138,11 +138,48 @@ async def load_observations(lane: str, epoch: dict) -> list[EvaluationObservatio
 
 
 async def load_fills(lane: str, epoch: dict, fees: dict) -> list[ExecutionFill]:
-    """Measured-cost feed. PRIMARY source: `execution_fill_costs` rows
-    (Fill Cost Capture — ACTUAL Kraken fee + measured slippage).
-    Fallback (no captured fills yet): legacy estimate from executions
-    with fee knobs by liquidity."""
+    """Measured-cost feed. PRIMARY source: `broker_fills_ledger`
+    (broker-confirmed fills with ACTUAL exchange fees — 2026-06
+    reconciliation directive). Fallbacks: execution_fill_costs legs,
+    then legacy executions estimate."""
     from db import db  # noqa: WPS433
+    ledger = await db["broker_fills_ledger"].find(
+        {"lane": lane, "price": {"$gt": 0}, "qty": {"$gt": 0}},
+    ).sort("ts", 1).max_time_ms(8000).to_list(4000)
+    if ledger:
+        out = []
+        for r in ledger:
+            ts = str(r.get("ts") or "")
+            cost = float(r.get("cost_usd") or 0) or (
+                float(r["price"]) * float(r["qty"]))
+            fee_usd = r.get("fee_usd")
+            if fee_usd is not None and cost > 0:
+                fee_pct = float(fee_usd) / cost * 100.0
+            else:
+                fee_pct = float(fees["maker_leg_fee_pct"] if r.get("maker")
+                                else fees["taker_leg_fee_pct"])
+            liq = ("maker" if r.get("maker")
+                   else "taker" if r.get("maker") is False else "unknown")
+            out.append(ExecutionFill(
+                fill_id=str(r["_id"]),
+                trade_id=(r.get("link") or {}).get("intent_id")
+                or str(r["_id"]),
+                timestamp=_parse_dt(ts),
+                side=(r.get("side") or "BUY").upper(),
+                fill_price=float(r["price"]),
+                quantity=float(r["qty"]),
+                fee_pct=round(fee_pct, 6),
+                reference_price=(r.get("signal_price")
+                                 or r.get("submitted_limit_price")),
+                liquidity=liq,
+                epoch_id=_epoch_for(ts, epoch),
+            ))
+        return out
+    return await _load_fills_captured(lane, epoch, fees)
+
+
+async def _load_fills_captured(lane: str, epoch: dict,
+                               fees: dict) -> list[ExecutionFill]:
     rows = await db["execution_fill_costs"].find(
         {"lane": lane, "status": "resolved", "fill_price": {"$gt": 0}},
     ).sort("ts", 1).max_time_ms(8000).to_list(4000)
@@ -242,6 +279,15 @@ class PairedCostFeed(MeasuredCostFeed):
 async def _epoch_pairs(lane: str, epoch: dict,
                        epoch_id: str) -> list[dict]:
     from db import db  # noqa: WPS433
+    # Authoritative pairs: reconciled trade_outcomes (broker truth).
+    outs = await db["trade_outcomes"].find(
+        {"lane": lane, "measured_cost_eligible": True},
+        {"round_trip_cost_pct": 1, "net_return_pct": 1, "entry_ts": 1},
+    ).sort("entry_ts", 1).max_time_ms(8000).to_list(4000)
+    outs = [o for o in outs
+            if _epoch_for(str(o.get("entry_ts") or ""), epoch) == epoch_id]
+    if outs:
+        return outs
     from shared.execution_costs import pair_round_trips  # noqa: WPS433
     rows = await db["execution_fill_costs"].find(
         {"lane": lane, "status": "resolved"},
