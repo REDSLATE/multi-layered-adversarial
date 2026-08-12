@@ -4619,3 +4619,53 @@ missing piece: one hard gate.
 - NOT DONE (needs user's OpenD host): live OpenD connectivity, SIMULATE
   paper order test, tick-push streaming context, L2 wiring into entry
   confirmation. User reported production currently DOWN (their side).
+
+## 2026-06 — Regime Engine V1 (HMM+GMM market-state context layer)
+- OPERATOR DIRECTIVE: regime recognition is a CONTEXT layer, never a
+  gate. V1 is ADVISORY ONLY — zero sizing/gating authority. Full
+  probability vector is the product, never just argmax.
+- ARCHITECTURE (pinned): feeds → feature builder → HMM+GMM → cached
+  RegimeSnapshot → intent/outcome stamping → regime-conditioned
+  Outcome Engine → dashboard. NEVER intent→wait-for-model→permission.
+  get_cached() is a local dict read; model failure returns None and
+  execution proceeds.
+- TWO LANES: equity (SPY/QQQ/^VIX via keyless Yahoo chart API, 5y) and
+  crypto (XBTUSD/ETHUSD via Kraken public OHLC, ~720d). Feature defs
+  in shared/regime/features.py are the contract (8 equity, 6 crypto:
+  ret_1d, rvol_10d, vol_ratio_10_30, volume_rel_20d, trend_20d, rel_5d
+  cross-asset, +vix_level/vix_chg_5d equity-only).
+- MODEL: hmmlearn GaussianHMM diag-cov, BIC auto-select 3-6 states
+  with min-occupancy constraint (max(5%, 15/T)); BIC/AIC reported per
+  candidate; GMM (sklearn) benchmark mapped to HMM states by nearest
+  mean → agreement {argmax_match, overlap}. States characterized
+  POST-training (labels like low_vol_trend_up; duplicates suffixed
+  _sN). Stability note vs previous refit recorded (report-only V1).
+  Bundles: joblib at /app/backend/data/regime_models/{lane}_regime.joblib.
+- SNAPSHOT WORKER: shared/regime/snapshot.py — refresh hourly
+  (REGIME_REFRESH_INTERVAL_SEC), walk-forward retrain every
+  REGIME_RETRAIN_DAYS (7), REGIME_ENGINE_ENABLED (default true).
+  Snapshot → in-mem cache + JSON warm-start file + Mongo
+  `regime_snapshots` history. Includes probs, deltas vs prev
+  (transition diagnostic — first-class), transition_row, gmm_probs,
+  agreement, entropy, model_version, feature_asof.
+- STAMPING: both intent ingest paths (runtime_token + admin_proxy)
+  stamp `regime_ctx` {probs, top_state, top_label, entropy,
+  model_version, feature_asof}; outcome collector copies it into
+  metadata_json → SQLite rise_signal_outcomes.
+- BRAIN MATRIX: shared/regime/brain_matrix.py — probability-weighted
+  edge per brain×state: edge = Σp·r/Σp, eff_n = Σp. Filters to
+  current model_version by default (all_versions=true to widen).
+- ROUTES: GET /api/admin/regime/state|history|brain-matrix|model-info,
+  POST /api/admin/regime/refresh {lane?, retrain?}. Auth: bearer.
+- UI: RegimeEnginePanel.jsx in OperatorControl (after
+  OutcomeEnginePanel) — per-lane prob bars w/ delta arrows, transition
+  alert (|Δ|≥0.15), HMM≈GMM badge, uncertainty (entropy), ADVISORY
+  badge, brain×regime matrix table. testids: regime-engine-panel,
+  regime-lane-{lane}, regime-top-label-{lane}, regime-refresh-btn.
+- TESTED: 4/4 pytest tests/test_regime_engine.py; live curl train+
+  infer both lanes (equity n=6, crypto n=4, BIC report valid); UI
+  screenshot verified. Matrix empty until stamped intents resolve.
+- V2 PROMOTION PATH (pinned rules): regime-conditioned expectancy →
+  Edge Weight as CONTINUOUS multiplier blending prob-weighted state
+  edges. Regime uncertainty pulls multiplier toward NEUTRAL 1.0x,
+  never zero. Never a kill switch.

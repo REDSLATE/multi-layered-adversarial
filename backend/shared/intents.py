@@ -55,6 +55,7 @@ from shared.intent_envelope_v3 import (  # 2026-02 Paradox v3 schema (Step 1)
     ExecutionBlock,
     PlanBlock,
 )
+from shared.regime.snapshot import regime_ctx_for_intent
 from shared.regime_keys import (  # canonical regime/crypto primitives
     REGIME_FP_KEYS,
     _looks_like_crypto,
@@ -1273,6 +1274,12 @@ async def _post_intent_impl(
         "ingest_ts": _now_iso(),
         "ttl_at": _ttl_at_dt(),
         "ingest_method": "runtime_token",
+        # ─── Regime Engine stamp (2026-06, advisory context layer) ───
+        # Full probability vector + model_version + feature_asof from
+        # the cached RegimeSnapshot (local read, never blocks). None
+        # when the engine is warming up — execution is never gated on
+        # regime availability.
+        "regime_ctx": regime_ctx_for_intent(effective_lane),
         # MARKET SNAPSHOT — persisted so gates that need ground-truth
         # market structure (RoadGuard reads `spread_bps`, future gates
         # may read more) can find it on the intent doc. The brain's
@@ -2072,6 +2079,7 @@ async def admin_post_intent(
         "ingest_ts": _now_iso(),
         "ttl_at": _ttl_at_dt(),
         "ingest_method": "admin_proxy",
+        "regime_ctx": regime_ctx_for_intent(effective_lane),
         "ingest_admin_email": user.get("email"),
         # See doctrine note on the runtime-token ingest path: the
         # brain's `doctrine_snapshot` is enriched with `spread_bps`

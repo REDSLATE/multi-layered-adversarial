@@ -14,6 +14,7 @@ import ReconciliationPanel from "@/components/ReconciliationPanel";
 import GateProgressBar from "@/components/GateProgressBar";
 import ForensicsPanel from "@/components/ForensicsPanel";
 import OutcomeEnginePanel from "@/components/OutcomeEnginePanel";
+import RegimeEnginePanel from "@/components/RegimeEnginePanel";
 import ExitMonitorPanel from "@/components/ExitMonitorPanel";
 import ExpectancyPanel from "@/components/ExpectancyPanel";
 import GainGoalPanel from "@/components/GainGoalPanel";
@@ -699,6 +700,7 @@ export default function OperatorControl() {
       <SellPointPanel />
       <ForensicsPanel />
       <OutcomeEnginePanel />
+      <RegimeEnginePanel />
       <ScannerPanel />
       <GainGoalPanel />
       <OptionsPanel />

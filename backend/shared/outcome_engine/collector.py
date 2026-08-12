@@ -10,6 +10,7 @@ one record per signal to the SQLite hot store (Mongo mirror in
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import uuid
@@ -229,7 +230,8 @@ async def resolve_batch(limit: int = BATCH) -> dict:
                 attr_engine.calculate_actual_return(signal, execution)),
             "attribution": attribution.value,
             "gate_rejection_reason": execution.gate_rejection_reason,
-            "metadata_json": "{}",
+            "metadata_json": (json.dumps({"regime_ctx": intent["regime_ctx"]})
+                              if intent.get("regime_ctx") else "{}"),
             "created_at": now.isoformat(),
         }
         store.save(record)
