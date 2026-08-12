@@ -4577,3 +4577,45 @@ missing piece: one hard gate.
 - PROD NEEDS REDEPLOY → then run FULL BACKFILL in production (button) —
   Kraken creds exist there, so crypto history + fee data will ingest and
   linkage will bind to real execution receipts.
+
+## 2026-06-12 (fork, 6) — Moomoo US broker integration (V1)
+- SDK: moomoo-api 10.9.6908 installed (requirements frozen). OpenD is
+  USER-HOSTED (VPS/home) — NEVER a subprocess in the pod (integration
+  playbook §1); backend connects OPEND_HOST:OPEND_PORT, RSA-encrypted.
+- shared/broker/moomoo_adapter.py: TWO adapters per directive —
+  MoomooMarketDataAdapter (quote/bid-ask/order book/1m candles/market
+  state/entitlements/option_chain; subscribe-before-query; sync SDK via
+  to_thread + semaphore(2)) and MoomooBrokerAdapter (account/buying
+  power/positions/submit_market_order(as marketable LIMIT at touch,
+  router-compatible signature)/cancel/get_order(status map)/fills;
+  unlock_trade md5 for REAL). V1 GUARDRAILS in adapter (runtime_flags
+  moomoo_limits): enabled, max_notional_usd=25, one_position_at_a_time,
+  rth_only; options schema present but submit_option_limit_order hard-
+  blocked until allow_autonomous_options (API refuses to enable it —
+  409 until options execution policy ships).
+- NO FALLBACK: unconfigured/unreachable → loader None → BrokerRouteBlocked
+  (observable, never re-venued). broker_router ADAPTER_LOADERS["moomoo"];
+  selection flows through existing broker_selection singleton
+  (VALID_EQUITY={"webull","moomoo"}); UI dropdown (Intents → Broker
+  Selection) shows "Moomoo US" — verified via screenshot.
+- CREDENTIALS: env-only (OPEND_HOST/PORT, MOOMOO_RSA_PRIVATE_KEY_PEM,
+  MOOMOO_TRADE_PASSWORD_MD5 (never plaintext), MOOMOO_TRADING_ENV
+  SIMULATE|REAL, MOOMOO_ACC_ID). Production: Deploy → Environment
+  Variables. Nothing broker-secret in Mongo/logs/UI (status endpoint
+  returns booleans/host only; tested no secret leakage).
+- TELEMETRY: shared/broker_telemetry.py — SQLite table
+  broker_exec_telemetry in rise_outcomes.sqlite (quote age, bid/ask/
+  spread, trigger ts, submit/ack/fill latency, fill price, slippage,
+  rejection reason). record_submit on every moomoo submit (success AND
+  rejection); record_fill computes slippage. No HF data into Mongo.
+- ROUTES: GET /api/admin/moomoo/status (creds state + OpenD probe +
+  buying power + deployment note), GET /quote/{symbol}, POST /limits
+  (options enable refused), GET /telemetry.
+- TESTED: 23/23 pytest (test_moomoo.py: symbol norm, env config, no
+  secret leakage, tiny-safe defaults, fail-closed loader, wiring);
+  curl: status/limits/options-guard/selection round-trip (moomoo→
+  webull reverted); telemetry insert+fill+slippage verified then
+  cleaned; UI dropdown screenshot. Selection left on WEBULL default.
+- NOT DONE (needs user's OpenD host): live OpenD connectivity, SIMULATE
+  paper order test, tick-push streaming context, L2 wiring into entry
+  confirmation. User reported production currently DOWN (their side).

@@ -37,9 +37,10 @@ router = APIRouter(prefix="/admin/broker-selection", tags=["broker-selection"])
 COLLECTION = "broker_selection"
 DEFAULT = {"equity": "webull", "crypto": "kraken"}
 
-# Equity is single-broker (Webull) post-Alpaca-and-Public-deprecation.
+# Equity: Webull default + Moomoo US as operator-selected option
+# (2026-06 directive — no automatic cross-broker fallback in V1).
 # Crypto can be Kraken or Webull (Webull as parallel route).
-VALID_EQUITY = {"webull"}
+VALID_EQUITY = {"webull", "moomoo"}
 VALID_CRYPTO = {"kraken", "webull"}
 
 # Legacy → current broker coercions. Production DB carries historical

@@ -24,6 +24,7 @@ import { toast } from "sonner";
 const BROKER_META = {
   webull: { label: "Webull",      color: "amber" },
   kraken: { label: "Kraken Pro",  color: "violet" },
+  moomoo: { label: "Moomoo US",   color: "emerald" },
 };
 
 function BrokerPicker({ lane, value, options, onChange, defaultBroker }) {

@@ -161,11 +161,20 @@ async def _get_equity_adapter():
     return await get_webull_adapter()
 
 
+async def _get_moomoo_adapter_loader():
+    """Moomoo US (2026-06): operator-selected equity broker. NO
+    automatic fallback — unconfigured/unreachable fails CLOSED so a
+    broker rejection stays observable, never silently re-venued."""
+    from shared.broker.moomoo_adapter import get_moomoo_adapter  # noqa: WPS433
+    return await get_moomoo_adapter()
+
+
 ADAPTER_LOADERS = {
     "kraken": get_kraken_adapter,
     "public": _get_public_adapter,
     "ibkr": _get_ibkr_adapter,
     "webull": get_webull_adapter,
+    "moomoo": _get_moomoo_adapter_loader,
 }
 
 

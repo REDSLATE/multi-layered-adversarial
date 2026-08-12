@@ -356,6 +356,7 @@ def _bucket_stats(grosses: list[float], cost_pct: float) -> dict:
 async def epoch_comparison(lane: str) -> dict:
     """Active epoch vs legacy, side by side. NEVER merged into one
     promotion score — diagnostic/comparative only (2026-06 directive)."""
+    from db import db  # noqa: WPS433
     cfg, fees = await get_v2_config()
     epoch = await current_epoch()
     obs = await load_observations(lane, epoch)
@@ -372,10 +373,20 @@ async def epoch_comparison(lane: str) -> dict:
         ).estimate(b_fills, eid)
         maker = sum(1 for f in b_fills if f.liquidity == "maker")
         taker = sum(1 for f in b_fills if f.liquidity == "taker")
-        # realized account curve from ACTUAL paired round trips —
-        # kept strictly separate from the observation-curve metric.
-        real_nets = [p["net_return_pct"] for p in pairs
-                     if p.get("net_return_pct") is not None]
+        # realized account curve from ACTUAL round trips (incl manual
+        # orphan resolutions) — separate from the observation metric.
+        pairs_all = await db["trade_outcomes"].find(
+            {"lane": lane},
+            {"net_return_pct": 1, "entry_ts": 1, "exit_ts": 1},
+        ).sort("exit_ts", 1).max_time_ms(8000).to_list(4000)
+        real_nets = [p["net_return_pct"] for p in pairs_all
+                     if p.get("net_return_pct") is not None
+                     and _epoch_for(str(p.get("entry_ts")
+                                        or p.get("exit_ts") or ""),
+                                    epoch) == eid]
+        if not real_nets:
+            real_nets = [p["net_return_pct"] for p in pairs
+                         if p.get("net_return_pct") is not None]
         from shared.forensics.promotion_gate_v2 import _max_drawdown_pct  # noqa: WPS433
         realized_dd = (_max_drawdown_pct(real_nets) if real_nets else None)
         out["buckets"][eid] = {

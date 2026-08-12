@@ -316,8 +316,12 @@ async def finalize_outcomes() -> dict:
     for o in outcomes:
         o["epoch_id"] = _epoch_for(str(o.get("entry_ts") or ""), epoch)
         o["finalized_at"] = _now_iso()
+        # never clobber an operator's manual orphan resolution
         await db[OUTCOMES].update_one(
-            {"_id": o["_id"]}, {"$set": o}, upsert=True)
+            {"_id": o["_id"], "resolution": {"$ne": "manual"}},
+            {"$set": o}, upsert=False)
+        await db[OUTCOMES].update_one(
+            {"_id": o["_id"]}, {"$setOnInsert": o}, upsert=True)
     orphan_ids = {f["_id"] for f in orphans}
     for oid in orphan_ids:
         await db[LEDGER].update_one(
@@ -340,7 +344,9 @@ async def reconciliation_counters() -> dict:
         {"link.status": {"$in": ["unlinked", "retry",
                                  "unmatched_internal"]}})
     orphan_exits = await db[LEDGER].count_documents(
-        {"link.exit_orphan": True})
+        {"link.exit_orphan": True, "link.orphan_resolved": {"$ne": True}})
+    orphan_resolved = await db[LEDGER].count_documents(
+        {"link.orphan_resolved": True})
     outcomes = await db[OUTCOMES].count_documents({})
     eligible = await db[OUTCOMES].count_documents(
         {"measured_cost_eligible": True})
@@ -374,6 +380,7 @@ async def reconciliation_counters() -> dict:
         "measured_cost_eligible": eligible,
         "measured_cost_count": eligible,
         "exit_linkage_miss_count": orphan_exits,
+        "orphan_resolved_count": orphan_resolved,
         "reconciliation_oldest_unresolved_age_h": oldest_age_h,
         "health": {"status": health, "reasons": reasons},
     }
@@ -395,6 +402,81 @@ async def run_reconciliation(full: bool = False) -> dict:
         upsert=True)
     logger.info("reconciliation run: %s", report["counters"])
     return report
+
+
+async def resolve_orphan_exit(
+    fill_id: str,
+    entry_price: float,
+    *,
+    operator: str,
+    entry_ts: Optional[str] = None,
+    note: str = "",
+    position_id: Optional[str] = None,
+    intent_id: Optional[str] = None,
+) -> dict:
+    """Operator manually matches an orphan SELL to a known adopted
+    position by supplying the entry cost basis. Produces a MANUAL
+    outcome so the P&L counts in realized reporting — but it is NOT
+    measured-cost eligible (entry-side fees unknown by definition)."""
+    from db import db  # noqa: WPS433
+    from shared.forensics.gate_v2_adapter import (  # noqa: WPS433
+        _epoch_for, current_epoch,
+    )
+    f = await db[LEDGER].find_one({"_id": fill_id})
+    if not f:
+        raise ValueError(f"unknown ledger fill {fill_id}")
+    link = f.get("link") or {}
+    if not link.get("exit_orphan"):
+        raise ValueError("fill is not an orphan exit")
+    if link.get("orphan_resolved"):
+        raise ValueError("orphan already resolved")
+    if entry_price <= 0:
+        raise ValueError("entry_price must be positive")
+    qty = float(f["qty"])
+    notional = entry_price * qty
+    exit_fee = float(f.get("fee_usd") or 0.0)
+    pnl = (float(f["price"]) - entry_price) * qty - exit_fee
+    epoch = await current_epoch()
+    basis_ts = entry_ts or str(f.get("ts") or "")
+    outcome = {
+        "_id": f"rt:{fill_id}",
+        "lane": f.get("lane"), "symbol": f.get("symbol"),
+        "qty": round(qty, 10),
+        "entry_avg_price": entry_price,
+        "exit_price": f["price"],
+        "entry_fill_ids": [],
+        "exit_fill_id": fill_id,
+        "entry_ts": entry_ts, "exit_ts": f.get("ts"),
+        "holding_s": _holding_s(entry_ts, f.get("ts")) if entry_ts else None,
+        "realized_pnl_usd": round(pnl, 6),
+        "gross_return_pct": round(
+            (float(f["price"]) - entry_price) / entry_price * 100.0, 6),
+        "net_return_pct": round(pnl / notional * 100.0, 6),
+        "fees_usd": round(exit_fee, 6),
+        "fee_pct": None,
+        "round_trip_cost_pct": None,
+        "intent_id": intent_id or link.get("intent_id"),
+        "brain": link.get("brain"), "stack": link.get("stack"),
+        "position_id": position_id,
+        "measured_cost_eligible": False,
+        "resolution": "manual",
+        "resolved_by": operator,
+        "resolution_note": (note or "")[:300],
+        "epoch_id": _epoch_for(basis_ts, epoch),
+        "finalized_at": _now_iso(),
+    }
+    await db[OUTCOMES].update_one(
+        {"_id": outcome["_id"]}, {"$set": outcome}, upsert=True)
+    await db[LEDGER].update_one(
+        {"_id": fill_id},
+        {"$set": {"link.orphan_resolved": True,
+                  "link.orphan_resolution": {
+                      "entry_price": entry_price, "entry_ts": entry_ts,
+                      "by": operator, "at": _now_iso(),
+                      "note": (note or "")[:300]}}})
+    logger.info("orphan exit resolved manually: %s @ basis %s by %s",
+                fill_id, entry_price, operator)
+    return outcome
 
 
 async def worker_loop() -> None:

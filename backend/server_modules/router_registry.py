@@ -136,6 +136,7 @@ ROUTER_SPECS: tuple[str, ...] = (
     "routes.execution_mode_admin:router",
     "routes.execution_ladder_admin:router",
     "routes.reconciliation_admin:router",
+    "routes.moomoo_admin:router",
     "routes.forensics_admin:router",
     "routes.outcomes_admin:router",
     "routes.exit_admin:router",
