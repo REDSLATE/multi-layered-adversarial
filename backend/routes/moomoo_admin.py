@@ -103,3 +103,32 @@ async def moomoo_limits(
 async def moomoo_telemetry(_user: dict = Depends(get_current_user)):  # noqa: B008
     from shared.broker_telemetry import recent  # noqa: WPS433
     return {"ok": True, "rows": await recent(limit=25)}
+
+
+@router.get("/stream/status")
+async def moomoo_stream_status(_user: dict = Depends(get_current_user)):  # noqa: B008
+    from shared.broker.moomoo_stream import stream_status  # noqa: WPS433
+    return {"ok": True, "stream": stream_status()}
+
+
+class StreamSubscribeBody(BaseModel):
+    symbols: list[str] = Field(min_length=1, max_length=30)
+
+
+@router.post("/stream/subscribe")
+async def moomoo_stream_subscribe(
+    body: StreamSubscribeBody,
+    _user: dict = Depends(get_current_user),  # noqa: B008
+):
+    from shared.broker.moomoo_stream import subscribe_symbols  # noqa: WPS433
+    return await subscribe_symbols(body.symbols)
+
+
+@router.get("/stream/depth/{symbol}")
+async def moomoo_stream_depth(symbol: str,
+                              _user: dict = Depends(get_current_user)):  # noqa: B008
+    from shared.broker.moomoo_stream import (  # noqa: WPS433
+        get_depth_context, get_live_quote,
+    )
+    return {"ok": True, "quote": get_live_quote(symbol),
+            "depth": get_depth_context(symbol)}

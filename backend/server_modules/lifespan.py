@@ -104,6 +104,10 @@ from shared.regime.snapshot import (
     start_worker_if_enabled as start_regime_worker,
     stop_worker as stop_regime_worker,
 )
+from shared.broker.moomoo_stream import (
+    start_worker_if_enabled as start_moomoo_stream_worker,
+    stop_worker as stop_moomoo_stream_worker,
+)
 from shared.alt_data.quiver_quant import (
     start_worker_if_enabled as start_quiver_worker,
     stop_worker as stop_quiver_worker,
@@ -541,6 +545,9 @@ async def lifespan(app: FastAPI):
         # 2026-06 Regime Engine: HMM+GMM market-state context layer.
         # Advisory only — cached RegimeSnapshot, never in hot path.
         start_regime_worker()
+        # 2026-06 MooMoo push streaming: idle no-op until OpenD is
+        # reachable; feeds spread ladder + depth confirmation cache.
+        start_moomoo_stream_worker()
     except Exception as e:  # noqa: BLE001
         logger.warning("data_stack workers start failed: %s", e)
     # Per-Lane Capital Cap Ledger — atomic reservation store
@@ -1041,6 +1048,7 @@ async def lifespan(app: FastAPI):
         await stop_kraken_ohlc_worker()
         await stop_webull_ohlc_worker()
         await stop_regime_worker()
+        await stop_moomoo_stream_worker()
     except Exception:  # noqa: BLE001
         pass
     try:

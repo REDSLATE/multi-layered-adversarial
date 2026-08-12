@@ -180,6 +180,7 @@ async def load_fills(lane: str, epoch: dict, fees: dict) -> list[ExecutionFill]:
 
 async def _load_fills_captured(lane: str, epoch: dict,
                                fees: dict) -> list[ExecutionFill]:
+    from db import db  # noqa: WPS433
     rows = await db["execution_fill_costs"].find(
         {"lane": lane, "status": "resolved", "fill_price": {"$gt": 0}},
     ).sort("ts", 1).max_time_ms(8000).to_list(4000)

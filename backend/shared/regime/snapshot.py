@@ -118,6 +118,8 @@ async def refresh_lane(lane: str, force_retrain: bool = False) -> Optional[dict[
             hmm_engine.train_lane, lane, X, dates, feature_names)
 
     result = await asyncio.to_thread(hmm_engine.infer, bundle, X)
+    timeline = await asyncio.to_thread(
+        hmm_engine.decode_timeline, bundle, X, dates, 90)
     prev = _cache.get(lane)
     prev_probs = prev["probs"] if prev and prev.get("model_version") == bundle["model_version"] else None
     deltas = ([round(c - p, 4) for c, p in zip(result["probs"], prev_probs)]
@@ -144,6 +146,7 @@ async def refresh_lane(lane: str, force_retrain: bool = False) -> Optional[dict[
         "transition_row": result["transition_row"],
         "gmm_probs": result["gmm_probs"],
         "agreement": result["agreement"],
+        "timeline": timeline,
         "advisory_only": True,
     }
     _cache[lane] = snap

@@ -54,6 +54,27 @@ async def regime_model_info(lane: str = "equity",
     return {"ok": meta is not None, "lane": lane, "model": meta}
 
 
+@router.get("/edge-preview")
+async def regime_edge_preview(_user: dict = Depends(get_current_user)):  # noqa: B008
+    from shared.regime.regime_edge import preview_all
+    return {"ok": True, **(await preview_all())}
+
+
+@router.get("/setups")
+async def regime_setups(status: str = "active", limit: int = 30,
+                        _user: dict = Depends(get_current_user)):  # noqa: B008
+    from shared.setup_coalescer import COLLECTION
+    q = {"status": status} if status != "all" else {}
+    rows = await db[COLLECTION].find(
+        q, {"_id": 0, "confidence_series": 0},
+    ).sort("last_seen", -1).max_time_ms(5000).to_list(min(int(limit), 200))
+    counts = {
+        "active": await db[COLLECTION].count_documents({"status": "active"}),
+        "terminated": await db[COLLECTION].count_documents({"status": "terminated"}),
+    }
+    return {"ok": True, "rows": rows, "counts": counts}
+
+
 class RefreshBody(BaseModel):
     lane: Optional[str] = None
     retrain: bool = False

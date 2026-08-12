@@ -4669,3 +4669,53 @@ missing piece: one hard gate.
   Edge Weight as CONTINUOUS multiplier blending prob-weighted state
   edges. Regime uncertainty pulls multiplier toward NEUTRAL 1.0x,
   never zero. Never a kill switch.
+
+## 2026-06 — Setup Coalescing + Regime Edge (shadow) + Timeline + MooMoo Stream
+- SETUP-AWARE INTENT COALESCING (operator directive, STACK-LEVEL key):
+  shared/setup_coalescer.py, hook in intents.py runtime-token path
+  before 3-clock bookkeeping. setup_key = lane:symbol:action (NOT
+  per-brain — all brains reacting to the same move share one setup).
+  First qualified intent = primary (stamped setup_id/setup_role);
+  repeats from ANY brain → shared_setups update (signal_count,
+  per-brain contributions{first/last_seen, counts, confidences},
+  confidence_series capped 50) + primary intent repeat_count bump;
+  ingest returns {coalesced:true, gate_state:"coalesced",
+  primary_intent_id}. New setup on: TTL 90min, price drift >5%,
+  side flip, position_cycle_complete, regime top-state change.
+  NEVER a gate — fail-open everywhere. Kill switch runtime_flags
+  _id=setup_coalescer {enabled}. Outcome collector stamps setup_id
+  into metadata_json.
+- CLUSTER-ADJUSTED BRAIN MATRIX: brain_matrix.py rewritten — setup_id
+  clusters win; historical rows time-chain (90min) per lane+symbol+
+  side ACROSS brains; per-brain weight in cluster = 1/n → each brain
+  counts each independent move once (PUMP×227 → eff 1). Outputs
+  per-brain n_raw/n_eff/independent_clusters/overall_edge/sigma.
+- REGIME EDGE MULTIPLIER V2 (shared/regime/regime_edge.py), SHADOW:
+  m_s=1+(edge_s−overall)/sigma (states with eff_n≥20 only, else 1.0);
+  raw=Σp_s·m_s; conf=min(1,eff_n_weighted/20);
+  shrunk=1+(raw−1)(1−entropy)·conf; clamp [0.7,1.3]. Neutral 1.0 when
+  brain n_eff<60, no snapshot, or zero sigma. runtime_flags
+  _id=regime_edge {armed:false default}. Stamped on primary entry
+  intents as regime_edge_shadow; sizer.py computes always, MULTIPLIES
+  adjusted_risk ONLY when armed; receipt in sizer output
+  (regime_edge_multiplier/applied/receipt). Formula pinned by
+  test_regime_edge_math. ARMING RULE: only after walk-forward on
+  genuinely independent moves convinces operator.
+- TIMELINE: hmm_engine.decode_timeline (90-day posterior argmax) in
+  every snapshot; UI ribbon per lane (regime-timeline-{lane}).
+- MOOMOO STREAM (shared/broker/moomoo_stream.py): push worker, idle
+  until OpenD reachable (60s reconnect); QUOTE+ORDER_BOOK handlers →
+  _quotes/_books caches; get_live_quote (10s freshness),
+  get_depth_context (NEUTRAL 0.50 fallback, operator pin); universe
+  from 24h equity intents cap 30 or MOOMOO_STREAM_SYMBOLS env.
+  Spread ladder Step 3.5 SRC_MC_MOOMOO_STREAM (equity only, skipped
+  when no fresh data). Routes: /api/admin/moomoo/stream/status,
+  /stream/subscribe, /stream/depth/{symbol}. Env:
+  MOOMOO_STREAM_ENABLED default true.
+- ROUTES ADDED: /api/admin/regime/edge-preview, /api/admin/regime/setups.
+- UI: RegimeEnginePanel — EDGE SHADOW/ARMED badge, timeline ribbons,
+  matrix with n_eff/raw + shadow × column (edge-preview).
+- BUGFIX: gate_v2_adapter._load_fills_captured missing local
+  `from db import db` → 500 on /api/admin/entry-mode/promotion-gate-v2. Fixed.
+- TESTED: iteration_38.json — 37/37 backend pytest + 10 new endpoint
+  tests, frontend 100%. OpenD offline degradation verified as designed.

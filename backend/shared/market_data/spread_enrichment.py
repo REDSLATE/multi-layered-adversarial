@@ -64,6 +64,7 @@ KRAKEN_FALLBACK_TIMEOUT_S: float = float(
 # Diagnostic source tags — stable wire constants. Tripwires assert on these.
 SRC_BRAIN = "brain"
 SRC_MC_DERIVED = "mc_derived_bid_ask"
+SRC_MC_MOOMOO_STREAM = "mc_moomoo_stream"
 SRC_MC_INDICATOR_CACHE = "mc_indicator_cache"
 SRC_MC_KRAKEN = "mc_kraken_public"
 SRC_SENTINEL = "sentinel_unknown"
@@ -292,6 +293,26 @@ async def enrich_snapshot_spread(
         _finalize_quality(SRC_MC_INDICATOR_CACHE)
         diag["elapsed_ms"] = round((time.monotonic() - t0) * 1000.0, 2)
         return enriched, diag
+
+    # Step 3.5 — equity-only MooMoo live stream (2026-06). Push-fed
+    # local cache, zero network here. Silently skipped while OpenD
+    # is offline (get_live_quote returns None on stale/absent data).
+    if (lane or "").lower() == "equity":
+        mv = None
+        try:
+            from shared.broker.moomoo_stream import get_live_quote  # noqa: WPS433
+            mq = get_live_quote(symbol)
+            mv = mq.get("spread_bps") if mq else None
+        except Exception:  # noqa: BLE001
+            mv = None
+        diag["attempts"].append({"source": SRC_MC_MOOMOO_STREAM, "got": mv})
+        if mv is not None:
+            enriched["spread_bps"] = float(mv)
+            enriched["spread_source"] = SRC_MC_MOOMOO_STREAM
+            enriched["spread_quality"] = "live"
+            _finalize_quality(SRC_MC_MOOMOO_STREAM)
+            diag["elapsed_ms"] = round((time.monotonic() - t0) * 1000.0, 2)
+            return enriched, diag
 
     # Step 4 — crypto-only Kraken public fallback (opt-in).
     if (lane or "").lower() == "crypto":

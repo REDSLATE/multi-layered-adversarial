@@ -1341,6 +1341,47 @@ async def _post_intent_impl(
             "_post_intent_impl: setup_memory apply failed intent_id=%s err=%s",
             intent_id, _sm_err,
         )
+    # ── Setup-aware intent coalescing (2026-06 operator directive) ──
+    # One market-opportunity record per lane+symbol+side+active setup
+    # ACROSS THE WHOLE STACK. First qualified stack decision creates
+    # the actionable intent; subsequent brain outputs attach to the
+    # setup as per-brain contributions instead of independent
+    # executable intents / outcome observations. NEVER a gate — the
+    # first qualified intent always proceeds, errors fail open.
+    try:
+        from shared.setup_coalescer import coalesce_or_register
+        _coalesced = await coalesce_or_register(doc)
+    except Exception as _co_err:  # noqa: BLE001
+        logger.warning(
+            "_post_intent_impl: setup coalescer failed intent_id=%s err=%s",
+            intent_id, _co_err,
+        )
+        _coalesced = None
+    if _coalesced is not None:
+        return {
+            "ok": True,
+            "intent_id": _coalesced["primary_intent_id"],
+            "stack": body.stack,
+            "seat_at_post_time": seat,
+            "gate_state": "coalesced",
+            "ingest_ts": doc["ingest_ts"],
+            "coalesced": True,
+            "setup_id": _coalesced["setup_id"],
+            "signal_count": _coalesced["signal_count"],
+            "doctrine_packet": doctrine_packet,
+        }
+
+    # ── Regime Edge shadow stamp (2026-06 V2, primary intents only) ──
+    # Computed & stamped always; applied to sizing only when armed.
+    try:
+        from shared.regime.regime_edge import get_regime_edge
+        _, doc["regime_edge_shadow"] = await get_regime_edge(doc)
+    except Exception as _re_err:  # noqa: BLE001
+        logger.warning(
+            "_post_intent_impl: regime_edge stamp failed intent_id=%s err=%s",
+            intent_id, _re_err,
+        )
+
     # ── 3-clock intent-write bookkeeping (2026-02-20 operator directive) ──
     # Wrap the `shared_intents.insert_one` so the operator can tell
     # apart the three failure modes on the Brain Console:

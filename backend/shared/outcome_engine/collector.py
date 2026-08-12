@@ -230,8 +230,12 @@ async def resolve_batch(limit: int = BATCH) -> dict:
                 attr_engine.calculate_actual_return(signal, execution)),
             "attribution": attribution.value,
             "gate_rejection_reason": execution.gate_rejection_reason,
-            "metadata_json": (json.dumps({"regime_ctx": intent["regime_ctx"]})
-                              if intent.get("regime_ctx") else "{}"),
+            "metadata_json": json.dumps({
+                k: v for k, v in (
+                    ("regime_ctx", intent.get("regime_ctx")),
+                    ("setup_id", intent.get("setup_id")),
+                ) if v
+            }),
             "created_at": now.isoformat(),
         }
         store.save(record)

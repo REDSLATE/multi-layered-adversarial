@@ -159,6 +159,23 @@ def load_bundle(lane: str) -> Optional[dict[str, Any]]:
         return None
 
 
+def decode_timeline(bundle: dict[str, Any], X: np.ndarray,
+                    dates: list[str], days: int = 90) -> list[dict[str, Any]]:
+    """Posterior-decoded state per day for the trailing window —
+    powers the dashboard regime ribbon."""
+    Z = (X - bundle["scaler_mean"]) / bundle["scaler_std"]
+    post = bundle["hmm"].predict_proba(Z)
+    labels = {s["state"]: s["label"] for s in bundle["states_meta"]}
+    take = min(days, len(dates))
+    out = []
+    for i in range(len(dates) - take, len(dates)):
+        s = int(np.argmax(post[i]))
+        out.append({"date": dates[i], "state": s,
+                    "label": labels.get(s, f"state_{s}"),
+                    "prob": round(float(post[i][s]), 3)})
+    return out
+
+
 def infer(bundle: dict[str, Any], X: np.ndarray) -> dict[str, Any]:
     """Posterior probability vector for the LAST observation, plus
     transition diagnostics and GMM benchmark agreement."""

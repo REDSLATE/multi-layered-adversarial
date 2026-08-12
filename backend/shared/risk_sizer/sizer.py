@@ -163,6 +163,20 @@ async def build_position_plan(
         except Exception:  # noqa: BLE001
             _ew, _ew_receipt = 1.0, None
 
+    # Regime Edge multiplier (2026-06 V2): probability-weighted regime
+    # edge blended over the current HMM state distribution. SHADOW by
+    # default — computed and stamped ALWAYS, applied to sizing only
+    # when runtime_flags `regime_edge.armed=true`. Uncertainty pulls
+    # toward neutral 1.0×, never zero. Fail-open, never a gate.
+    _re, _re_receipt, _re_applied = 1.0, None, False
+    if (intent.get("action") or "").upper() in ("BUY", "SHORT"):
+        try:
+            from shared.regime.regime_edge import get_regime_edge  # noqa: WPS433
+            _re, _re_receipt = await get_regime_edge(intent)
+            _re_applied = bool(_re_receipt and _re_receipt.get("armed"))
+        except Exception:  # noqa: BLE001
+            _re, _re_receipt, _re_applied = 1.0, None, False
+
     # RoadGuard hard block — same authority the router's master-switch
     # gate enforces, consulted here so a sizer-level plan can NEVER be
     # approved while trading is frozen (final notional forced to 0).
@@ -293,7 +307,7 @@ async def build_position_plan(
         return _reject("insufficient_balance", balance_source=snap["source"])
 
     base_risk = equity * float(lane_pol["risk_fraction"])
-    adjusted_risk = base_risk * gm * _ew
+    adjusted_risk = base_risk * gm * _ew * (_re if _re_applied else 1.0)
 
     open_r = open_risk.total_open_risk(lane)
     remaining_capacity = max(
@@ -399,6 +413,9 @@ async def build_position_plan(
         "governor_multiplier": gm,
         "edge_weight": round(_ew, 3),
         "edge_weight_receipt": _ew_receipt,
+        "regime_edge_multiplier": round(_re, 3),
+        "regime_edge_applied": _re_applied,
+        "regime_edge_receipt": _re_receipt,
         "gross_notional": round(risk_based, 2),
         "final_notional": final_notional,
         "min_notional_bump": min_notional_bump,
