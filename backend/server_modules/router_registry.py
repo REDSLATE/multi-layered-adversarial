@@ -138,6 +138,7 @@ ROUTER_SPECS: tuple[str, ...] = (
     "routes.reconciliation_admin:router",
     "routes.moomoo_admin:router",
     "routes.regime_admin:router",
+    "routes.account_context_admin:router",
     "routes.forensics_admin:router",
     "routes.outcomes_admin:router",
     "routes.exit_admin:router",

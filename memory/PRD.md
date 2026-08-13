@@ -4719,3 +4719,22 @@ missing piece: one hard gate.
   `from db import db` → 500 on /api/admin/entry-mode/promotion-gate-v2. Fixed.
 - TESTED: iteration_38.json — 37/37 backend pytest + 10 new endpoint
   tests, frontend 100%. OpenD offline degradation verified as designed.
+
+## 2026-06 — Account-Aware Decision Patch (operator-supplied zip) INSTALLED
+- Files: shared/account_context.py (10s process-local snapshot cache,
+  NEVER persisted to Mongo), shared/account_fit.py (PASS/REDUCE/BLOCK,
+  feasibility-only blocks: DUPLICATE_OPEN_ORDER, NO_BUYING_POWER,
+  BUYING_POWER_RESERVE 5%, SINGLE_NAME_CAP 25%, NO_POSITION_TO_SELL),
+  shared/account_aware_decision.py, routes/account_context_admin.py
+  (GET /api/admin/account-context/{lane}?force=).
+- Adaptations vs patch draft: adapter method resolution via fallback
+  names (Kraken has no list_open_orders → degrade to (); MooMoo uses
+  account()/positions()); lazy broker_router import to avoid cycles.
+- PATCH_POINT wired in auto_router_stages._route_and_submit: overlay
+  after final_notional, before route_order; BLOCK → existing
+  BrokerRouteBlocked path; compact account_fit stamped on ctx.intent;
+  snapshot failure fails OPEN ({verdict:"UNAVAILABLE"}); snapshot cache
+  invalidated after successful route_order.
+- Router registered. Tests: tests/test_account_fit.py 6/6 pass,
+  backend boots clean. NOT live-fired (env DISARMED; user's production
+  down on their side) — full live validation pending.

@@ -996,11 +996,40 @@ async def _route_and_submit(ctx: RouteContext) -> Optional[dict]:
     sd = ctx.sd
     rc = ctx.rc
     try:
+        # ── Account-aware overlay (operator patch 2026-06) ──
+        # After market/risk/gate chose final_notional, before
+        # route_order. BLOCK raises through the EXISTING
+        # BrokerRouteBlocked path; snapshot failure fails open.
+        try:
+            from shared.account_aware_decision import (  # noqa: WPS433
+                apply_account_awareness,
+            )
+            _aa_intent, _aa_notional = await apply_account_awareness(
+                ctx.intent, requested_notional=ctx.final_notional)
+            _fit = _aa_intent["account_fit"]
+            ctx.intent["account_fit"] = _fit
+            if _fit["verdict"] == "BLOCK":
+                raise BrokerRouteBlocked(
+                    "account_fit:" + ",".join(_fit["reasons"]))
+            ctx.final_notional = min(ctx.final_notional, _aa_notional)
+        except BrokerRouteBlocked:
+            raise
+        except Exception:  # noqa: BLE001
+            ctx.intent["account_fit"] = {"verdict": "UNAVAILABLE"}
         order = await route_order(
             ctx.intent,
             notional_usd=ctx.final_notional,
             client_order_id=f"ar-{ctx.intent_id[:24]}",
         )
+        try:
+            from shared.account_context import (  # noqa: WPS433
+                invalidate_account_snapshot,
+            )
+            invalidate_account_snapshot(
+                ctx.intent.get("lane") or "",
+                ctx.intent.get("broker_override"))
+        except Exception:  # noqa: BLE001
+            pass
     except BrokerRouteBlocked as exc:
         await executions.record(
             intent=ctx.intent,
