@@ -105,6 +105,19 @@ def gate_enabled() -> bool:
     return _env_bool("ENTRY_TIMING_GATE_ENABLED", False)
 
 
+def quote_max_age_sec() -> float:
+    """Freshness demanded of the submit-time quote, in seconds.
+
+    The quotes client caches equity snapshots for 30s and the emit-time
+    `snapshot.price` was written from that same cache, so the default
+    TTL would return the very row we are revalidating against and every
+    extension check would read 0.00%. 2s keeps the extra Webull calls
+    bounded (one per late-phase BUY) while making the price genuinely
+    current.
+    """
+    return _env_float("ENTRY_TIMING_QUOTE_MAX_AGE_SEC", 2.0)
+
+
 def stale_age_sec() -> float:
     """Age (seconds since emit) above which an extension breach is
     reported as STALE_BUY_INTENT rather than MOVE_ALREADY_EXTENDED.

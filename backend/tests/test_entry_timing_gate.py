@@ -589,3 +589,52 @@ def test_score_delta_default_tracks_the_gate_flag(monkeypatch):
     # Explicit override wins either way.
     monkeypatch.setenv("PARABOLIC_SCORE_DELTA_ENABLED", "true")
     assert base_labels.parabolic_score_deltas_enabled() is True
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 11. The submit-time quote must NOT come from the emit-time cache
+# ═══════════════════════════════════════════════════════════════════
+# `webull_quotes` memoises equity snapshots for 30s and the enricher
+# fills that cache when it stamps `snapshot.price` at emit. The router
+# ticks every ~30s (plus force_one_tick on insert), so at the default
+# TTL the "fresh" price would be the SAME row the emit price came from
+# and extension_pct would read 0.00% for exactly the fast intents this
+# revalidation exists to catch.
+
+@pytest.mark.asyncio
+async def test_fresh_price_bypasses_the_snapshot_cache(monkeypatch):
+    from shared import auto_router_stages as stages
+    from shared.market_data import webull_quotes as wq
+
+    calls = []
+
+    class _Client:
+        def equity_snapshot(self, symbol, max_age_sec=None):
+            calls.append((symbol, max_age_sec))
+            return {"price": 5.42}
+
+    monkeypatch.setattr(wq, "get_quotes_client", lambda: _Client())
+    monkeypatch.setenv("ENTRY_TIMING_QUOTE_MAX_AGE_SEC", "2.0")
+
+    assert await stages._fetch_fresh_price("hoth", "equity") == 5.42
+    assert calls == [("HOTH", 2.0)]
+    assert calls[0][1] < wq.SNAPSHOT_TTL_SEC, "must not reuse the 30s cache"
+
+
+def test_equity_snapshot_honours_max_age(monkeypatch):
+    """The client-side half: a tightened max_age must miss a cache
+    entry the default TTL would still serve."""
+    import time
+
+    from shared.market_data import webull_quotes as wq
+
+    wq._CACHE.set(("eq_snap", "HOTH"), {"price": 5.00})
+    # Backdate the entry to 3s old — inside the 30s TTL, outside a 2s one.
+    with wq._CACHE._lock:
+        _ts, val = wq._CACHE._data[("eq_snap", "HOTH")]
+        wq._CACHE._data[("eq_snap", "HOTH")] = (time.time() - 3.0, val)
+
+    assert wq._CACHE.get(("eq_snap", "HOTH"), wq.SNAPSHOT_TTL_SEC) == {
+        "price": 5.00,
+    }
+    assert wq._CACHE.get(("eq_snap", "HOTH"), 2.0) is None

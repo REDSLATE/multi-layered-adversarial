@@ -422,7 +422,19 @@ class WebullQuotesClient:
             return False
 
     # ── snapshots ──────────────────────────────────────────────────
-    def equity_snapshot(self, symbol: str) -> Optional[Dict[str, Any]]:
+    def equity_snapshot(
+        self, symbol: str, max_age_sec: Optional[float] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Snapshot row for `symbol`, served from the 30s cache.
+
+        `max_age_sec` tightens (or with 0.0 bypasses) the cache for
+        callers that need a genuinely current price rather than a
+        near-real-time one. The entry-timing gate revalidates an
+        intent against the price the enricher stamped at emit — both
+        go through this method, so a shared 30s TTL would hand the
+        gate back the very row it is comparing against and every
+        extension check would read exactly 0.0%.
+        """
         sym = (symbol or "").upper()
         if not sym:
             return None
@@ -445,7 +457,8 @@ class WebullQuotesClient:
         # snapshot budget on tickers Webull will never resolve.
         if is_symbol_unsupported(sym):
             return None
-        cached = _CACHE.get(("eq_snap", sym), SNAPSHOT_TTL_SEC)
+        ttl = SNAPSHOT_TTL_SEC if max_age_sec is None else max(0.0, max_age_sec)
+        cached = _CACHE.get(("eq_snap", sym), ttl)
         if cached is not None:
             return cached
         r = _guarded_call(

@@ -674,19 +674,32 @@ async def _fetch_fresh_price(symbol: str, lane: str) -> Optional[float]:
     `broker/webull.py::_resolve_instrument_id` reads its `last_price`
     from and the same one the equity snapshot enricher uses. No new
     data source. Returns None on any failure (fail-open).
+
+    Bypasses the client's 30s snapshot cache
+    (`ENTRY_TIMING_QUOTE_MAX_AGE_SEC`, default 2s). The enricher fills
+    that cache when it stamps `snapshot.price` at emit, and the router
+    ticks every ~30s with a `force_one_tick()` on insert — so at the
+    default TTL this call would hand back the exact row the emit price
+    came from and every extension check would read 0.00% for precisely
+    the fast-path intents the revalidation exists to catch.
     """
     sym = (symbol or "").upper().strip()
     if not sym or (lane or "").lower() != "equity":
         return None
     try:
         import asyncio  # noqa: WPS433
+        from functools import partial  # noqa: WPS433
 
+        from shared import entry_timing  # noqa: WPS433
         from shared.market_data.webull_quotes import (  # noqa: WPS433
             get_quotes_client,
         )
         client = get_quotes_client()
         loop = asyncio.get_running_loop()
-        snap = await loop.run_in_executor(None, client.equity_snapshot, sym)
+        max_age = entry_timing.quote_max_age_sec()
+        snap = await loop.run_in_executor(
+            None, partial(client.equity_snapshot, sym, max_age_sec=max_age),
+        )
         snap = snap or {}
         price = float(snap.get("price") or snap.get("ask") or 0.0)
         return price if price > 0 else None
