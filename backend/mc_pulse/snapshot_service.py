@@ -66,6 +66,20 @@ DAILY_BASELINE_LOOKBACK = 20
 _WAVE_MACHINE = WaveIntelligenceMachine()
 
 
+def current_wave_mode(lane: str, symbol: str) -> Optional[dict]:
+    """Latest wave mode for a symbol from the process-local machine.
+    OBSERVE_ONLY consumer surface (setup-boundary bookkeeping). None
+    when the symbol hasn't been evaluated or data was insufficient."""
+    try:
+        obs = _WAVE_MACHINE.latest_observation(lane=lane, symbol=symbol)
+    except Exception:  # noqa: BLE001
+        return None
+    if obs is None or obs.data_quality != "READY":
+        return None
+    return {"mode": str(obs.mode.value), "as_of": obs.as_of,
+            "bias": str(obs.bias.value)}
+
+
 def _default_universe(lane: str) -> list[str]:
     """Env-driven cold-boot universe. Used only as fallback when the
     admin-curated `patterns_universe` query fails or is empty.

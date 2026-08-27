@@ -151,6 +151,19 @@ class WaveIntelligenceMachine:
     def clear(self) -> None:
         self._states.clear()
 
+    def latest_observation(self, *, lane: str, symbol: str) -> Optional["WaveObservation"]:
+        """Read-only accessor: most recent observation for a symbol
+        regardless of timeframe. OBSERVE_ONLY — bookkeeping consumers
+        (e.g. setup-boundary detection) only; never authority."""
+        prefix = f"{(lane or '').strip().lower()}:{(symbol or '').strip().upper()}:"
+        best: Optional[WaveObservation] = None
+        for key, state in self._states.items():
+            obs = state.last_observation
+            if key.startswith(prefix) and obs is not None:
+                if best is None or obs.as_of > best.as_of:
+                    best = obs
+        return best
+
     def evaluate(
         self,
         *,

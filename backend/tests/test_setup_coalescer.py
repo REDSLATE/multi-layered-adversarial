@@ -66,3 +66,33 @@ async def test_exits_never_coalesced(_clean):
     assert await sc.coalesce_or_register(_doc(_clean, action="SELL")) is None
     assert await sc.coalesce_or_register(_doc(_clean, action="SELL")) is None
     assert await db[sc.COLLECTION].count_documents({"symbol": _clean}) == 0
+
+
+@pytest.mark.asyncio
+async def test_wave_mode_change_starts_new_setup(_clean, monkeypatch):
+    monkeypatch.setattr(sc, "_wave_mode",
+                        lambda lane, sym: {"mode": "TREND_FOLLOW", "as_of": "t1"})
+    d1 = _doc(_clean, price=100.0)
+    assert await sc.coalesce_or_register(d1) is None
+    setup = await db[sc.COLLECTION].find_one({"setup_id": d1["setup_id"]})
+    assert setup["wave_mode"] == "TREND_FOLLOW"
+    # structure flip → terminate + new setup
+    monkeypatch.setattr(sc, "_wave_mode",
+                        lambda lane, sym: {"mode": "RANGE_GRID", "as_of": "t2"})
+    d2 = _doc(_clean, price=100.5)
+    assert await sc.coalesce_or_register(d2) is None
+    old = await db[sc.COLLECTION].find_one({"setup_id": d1["setup_id"]})
+    assert old["terminated_reason"] == "wave_mode_change"
+
+
+@pytest.mark.asyncio
+async def test_unchanged_wave_mode_skips_price_drift(_clean, monkeypatch):
+    monkeypatch.setattr(sc, "_wave_mode",
+                        lambda lane, sym: {"mode": "TREND_FOLLOW", "as_of": "t1"})
+    d1 = _doc(_clean, price=100.0)
+    assert await sc.coalesce_or_register(d1) is None
+    # 7% continuation move INSIDE the same trend leg → still same setup
+    d2 = _doc(_clean, price=107.0, brain="hellcat")
+    res = await sc.coalesce_or_register(d2)
+    assert res is not None and res["coalesced"]
+    assert res["primary_intent_id"] == d1["intent_id"]

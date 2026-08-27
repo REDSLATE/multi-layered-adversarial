@@ -4757,3 +4757,17 @@ missing piece: one hard gate.
 - VERIFIED LIVE: 192/192 pytest (tests/test_wave_intelligence.py +
   all mc_pulse tests); latest `mc_pulses` receipt carries
   wave_machine_summary (10 obs, mode counts, danger list, OBSERVE_ONLY).
+
+## 2026-06 — Wave-Mode Setup Boundaries (operator-approved)
+- WaveIntelligenceMachine.latest_observation() accessor (read-only) +
+  mc_pulse.snapshot_service.current_wave_mode(lane, symbol) (None
+  unless data_quality READY). OBSERVE_ONLY pin intact — bookkeeping
+  consumer only, never authority.
+- setup_coalescer: setups stamp wave_mode/wave_as_of at creation.
+  Termination logic: wave mode available on both sides → mode change
+  = "wave_mode_change" terminate; mode UNCHANGED → price-drift check
+  SKIPPED (continuation moves no longer split setups); wave
+  unavailable → original 5% price-drift fallback. TTL/side-flip/
+  position-cycle/regime checks unchanged.
+- Tests: test_setup_coalescer.py 6/6 (incl. wave_mode_change + 7%
+  continuation-move coalesce). Backend boots clean.

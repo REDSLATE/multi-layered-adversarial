@@ -83,6 +83,16 @@ def _price_of(doc: dict) -> Optional[float]:
     return None
 
 
+def _wave_mode(lane: str, symbol: str) -> Optional[dict]:
+    """Read-only wave-mode lookup (OBSERVE_ONLY consumer). None on any
+    failure — setup logic then falls back to the price-drift heuristic."""
+    try:
+        from mc_pulse.snapshot_service import current_wave_mode  # noqa: WPS433
+        return current_wave_mode(lane, symbol)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def _termination_reason(active: dict, doc: dict, cfg: dict) -> Optional[str]:
     from db import db  # noqa: WPS433
     now = datetime.now(timezone.utc)
@@ -93,12 +103,27 @@ async def _termination_reason(active: dict, doc: dict, cfg: dict) -> Optional[st
     except (KeyError, ValueError):
         pass
 
-    price = _price_of(doc)
-    anchor = active.get("anchor_price")
-    if price and anchor:
-        drift = abs(price / float(anchor) - 1.0) * 100.0
-        if drift > float(cfg["price_drift_pct"]):
-            return "price_structure_change"
+    # Wave-mode structure boundary (2026-06, operator-approved):
+    # the per-symbol closed-bar mode (hysteresis built in) is a cleaner
+    # "did the market genuinely reset?" signal than raw price drift.
+    #   * mode changed since setup anchor → new structure → terminate
+    #   * mode unchanged → continuation move → SKIP the price-drift
+    #     check (price continuing inside the same trend leg must not
+    #     split the setup artificially)
+    #   * wave unavailable → fall back to the price-drift heuristic
+    wave_now = _wave_mode(active.get("lane") or doc.get("lane") or "",
+                          doc.get("symbol") or "")
+    wave_anchor = active.get("wave_mode")
+    if wave_now and wave_anchor:
+        if wave_now["mode"] != wave_anchor:
+            return "wave_mode_change"
+    else:
+        price = _price_of(doc)
+        anchor = active.get("anchor_price")
+        if price and anchor:
+            drift = abs(price / float(anchor) - 1.0) * 100.0
+            if drift > float(cfg["price_drift_pct"]):
+                return "price_structure_change"
 
     try:
         flip = await db["shared_intents"].find_one(
@@ -208,6 +233,7 @@ async def _impl(doc: dict, action: str) -> Optional[dict]:
                     "primary_brain": active.get("primary_brain")}
 
     setup_id = f"{setup_key}:{uuid.uuid4().hex[:8]}"
+    wave = _wave_mode(lane, symbol)
     await db[COLLECTION].insert_one({
         "setup_id": setup_id, "setup_key": setup_key,
         "lane": lane, "symbol": symbol, "side": action,
@@ -220,6 +246,8 @@ async def _impl(doc: dict, action: str) -> Optional[dict]:
         "max_confidence": conf,
         "anchor_price": _price_of(doc),
         "regime_top_state": (doc.get("regime_ctx") or {}).get("top_state"),
+        "wave_mode": (wave or {}).get("mode"),
+        "wave_as_of": (wave or {}).get("as_of"),
         "contributions": {brain: {
             "first_seen": now, "last_seen": now, "signal_count": 1,
             "initial_confidence": conf, "latest_confidence": conf,
