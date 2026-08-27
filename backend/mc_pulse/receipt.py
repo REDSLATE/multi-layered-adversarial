@@ -125,6 +125,9 @@ class PulseReceipt:
     arbitration_outcomes: dict = field(default_factory=dict)
     grader_enqueued: int = 0
     runtime_mode: str = "DISARMED"
+    # Compact observation-only MTR-style context. Stores counts and a short
+    # danger-symbol list, never one duplicated payload per brain/opinion.
+    wave_machine_summary: dict = field(default_factory=dict)
     overrun: bool = False
     # 2026-07-15 (iter-30 P2): captured exception summary when the
     # pulse orchestrator itself throws (as opposed to a brain failing).

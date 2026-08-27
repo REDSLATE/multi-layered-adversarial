@@ -56,6 +56,10 @@ class MarketSnapshot:
                        had available. Manifest field — a runner
                        building on 120 bars vs a pulse building
                        on 3 bars are NOT comparable inputs.
+        wave_intelligence — read-only MTR-inspired market-state
+                       observation. It is provenance only: brains,
+                       Seat, Risk, RoadGuard, and brokers do not
+                       consume it for authority decisions.
     """
     symbol: str
     lane: str
@@ -94,6 +98,9 @@ class MarketSnapshot:
     # `brain.evaluate` — stale snapshots produce NO opinion. See
     # `mc_pulse.freshness` for the contract.
     health: Optional[SnapshotHealth] = None
+    wave_intelligence: Mapping[str, object] = field(
+        default_factory=lambda: MappingProxyType({}),
+    )
 
 
 def freeze_indicators(d: Optional[dict]) -> Mapping[str, float]:
@@ -108,6 +115,25 @@ def freeze_indicators(d: Optional[dict]) -> Mapping[str, float]:
       * mutation attempts raise `TypeError` immediately
     """
     return MappingProxyType(dict(d or {}))
+
+
+def freeze_context(d: Optional[dict]) -> Mapping[str, object]:
+    """Recursively freeze an observation payload for snapshot sharing."""
+    return MappingProxyType({
+        str(key): _freeze_context_value(value)
+        for key, value in (d or {}).items()
+    })
+
+
+def _freeze_context_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType({
+            str(key): _freeze_context_value(nested)
+            for key, nested in value.items()
+        })
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_context_value(item) for item in value)
+    return value
 
 
 def build_snapshot(
@@ -126,6 +152,7 @@ def build_snapshot(
     feature_snapshot: Optional[dict] = None,
     fallback_used: bool = False,
     health: Optional[SnapshotHealth] = None,
+    wave_intelligence: Optional[dict] = None,
 ) -> MarketSnapshot:
     """Factory that enforces the small handful of invariants
     (uppercase symbol, aware timestamp, indicators frozen) so
@@ -158,4 +185,5 @@ def build_snapshot(
         feature_snapshot=MappingProxyType(dict(feature_snapshot or {})),
         fallback_used=bool(fallback_used),
         health=health,
+        wave_intelligence=freeze_context(wave_intelligence),
     )

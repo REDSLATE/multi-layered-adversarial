@@ -4738,3 +4738,22 @@ missing piece: one hard gate.
 - Router registered. Tests: tests/test_account_fit.py 6/6 pass,
   backend boots clean. NOT live-fired (env DISARMED; user's production
   down on their side) — full live validation pending.
+
+## 2026-06 — Wave Intelligence (operator zip `risedual-wave-intelligence`) INSTALLED
+- shared/wave_intelligence.py: MTR-inspired observe-only machine —
+  trend/range/danger scores, mode hysteresis + cooldowns, ATR grid
+  spacing, AUTHORITY="OBSERVE_ONLY", can_execute/size/block=False.
+  MUST NOT be wired into broker submission/sizing/blocking/intent
+  creation without a separate reviewed promotion step (README pin).
+- mc_pulse grafts (verified purely additive vs current files):
+  snapshot.py (+frozen wave_intelligence field, freeze_context),
+  snapshot_service.py (+closed-bar-only evaluation, fail-soft ERROR
+  payload), pulse.py (+receipt.wave_machine_summary), receipt.py
+  (+wave_machine_summary field). Tests copied (3 files).
+- FIXED STALE TEST: mc_pulse/tests/test_idempotency.py
+  test_different_pulses_produce_separate_rows pinned the PRE-iter-30
+  upsert doctrine; renamed to test_same_bucket_pulses_collapse_to_one_row
+  asserting (seat_key, brain) upsert = 1 row, latest pulse wins.
+- VERIFIED LIVE: 192/192 pytest (tests/test_wave_intelligence.py +
+  all mc_pulse tests); latest `mc_pulses` receipt carries
+  wave_machine_summary (10 obs, mode counts, danger list, OBSERVE_ONLY).

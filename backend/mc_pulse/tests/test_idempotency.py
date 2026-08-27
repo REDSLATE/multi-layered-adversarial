@@ -73,10 +73,12 @@ async def test_upsert_is_idempotent_on_retry(compare_collection_cleanup):
 
 
 @pytest.mark.asyncio
-async def test_different_pulses_produce_separate_rows(compare_collection_cleanup):
-    """Two pulses on the same seat / brain / symbol / lane MUST
-    produce two rows — different `pulse_id` values are distinct
-    executable decisions."""
+async def test_same_bucket_pulses_collapse_to_one_row(compare_collection_cleanup):
+    """2026-07-14 iter-30 doctrine: upsert key is `(seat_key, brain)`.
+    Two pulses landing in the SAME 5-min seat bucket for the same
+    brain/symbol/lane must UPDATE one row (latest pulse wins), never
+    insert a duplicate — the old pulse_id-scoped filter caused the
+    E11000 flood. (This test previously pinned the old behavior.)"""
     env_a = _envelope("p_diff_A", "camino", symbol="TESTIDEMB")
     env_b = _envelope("p_diff_B", "camino", symbol="TESTIDEMB")
     await _upsert_envelopes([env_a], "mc_opinions_compare")
@@ -84,8 +86,8 @@ async def test_different_pulses_produce_separate_rows(compare_collection_cleanup
     rows = await db["mc_opinions_compare"].find(
         {"symbol": "TESTIDEMB"},
     ).to_list(10)
-    assert len(rows) == 2
-    assert {r["pulse_id"] for r in rows} == {"p_diff_A", "p_diff_B"}
+    assert len(rows) == 1
+    assert rows[0]["pulse_id"] == "p_diff_B"
 
 
 @pytest.mark.asyncio

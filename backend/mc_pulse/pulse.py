@@ -23,6 +23,7 @@ from typing import Iterable
 
 from db import db
 from shared.retention import ttl_stamp
+from shared.wave_intelligence import summarize_wave_observations
 from mc_arbiter.arbiter import MC_SEATS
 from mc_arbiter.seat_key import build_seat_key
 from mc_brains.camino import CaminoBrain, CaminoManifestHint
@@ -169,6 +170,11 @@ async def _pulse_tick_impl(
     receipt.snapshot_count = len(snapshots)
     receipt.brains_expected = len(registry)
     receipt.runtime_mode = runtime_mode
+    receipt.wave_machine_summary = summarize_wave_observations(
+        dict(snap.wave_intelligence)
+        for snap in snapshots
+        if snap.wave_intelligence
+    )
 
     # Fan out: every (brain, snapshot) pair where the brain wants
     # a shot at this snapshot AND trades this lane.

@@ -38,6 +38,7 @@ from mc_pulse.parity_key import (
     intraday_bar_identity,
 )
 from mc_pulse.snapshot import MarketSnapshot, build_snapshot
+from shared.wave_intelligence import AUTHORITY, MODEL_VERSION, WaveIntelligenceMachine
 
 logger = logging.getLogger("mc_pulse.snapshot_service")
 
@@ -58,6 +59,11 @@ BAR_WINDOW = 30
 # from `shared_ohlcv_bars` at `tf=1d` (same source that endpoint
 # reads from).
 DAILY_BASELINE_LOOKBACK = 20
+
+# Observation-only state. It is process-local and bounded; no extra Mongo
+# collection is created. Duplicate evaluations of the same source bar are
+# idempotent inside the machine.
+_WAVE_MACHINE = WaveIntelligenceMachine()
 
 
 def _default_universe(lane: str) -> list[str]:
@@ -280,6 +286,23 @@ def _parse_iso(raw) -> Optional[datetime]:
         return None
 
 
+def _closed_bars_for_wave(bars: list[dict], tf: str, now: datetime) -> list[dict]:
+    """Return only bars whose source-timeframe window has completed."""
+    duration = {
+        "1m": timedelta(minutes=1),
+        "5m": timedelta(minutes=5),
+        "1d": timedelta(days=1),
+    }.get(tf)
+    if duration is None:
+        return []
+    closed: list[dict] = []
+    for candidate in bars:
+        opened_at = _parse_iso(candidate.get("ts"))
+        if opened_at is not None and opened_at + duration <= now:
+            closed.append(candidate)
+    return closed
+
+
 async def _build_one(
     lane: str, symbol: str, now: datetime,
     *,
@@ -372,6 +395,40 @@ async def _build_one(
         and v is not None
     }
 
+    # MTR-inspired market-state context. Fail-soft by doctrine: this sidecar
+    # must never stop snapshot construction or become a trading roadblock.
+    try:
+        raw_spread = feature_snapshot.get("spread_bps")
+        spread_bps = float(raw_spread) if raw_spread is not None else None
+        wave_bars = _closed_bars_for_wave(bars, used_tf, now)
+        wave_intelligence = _WAVE_MACHINE.evaluate(
+            symbol=symbol,
+            lane=lane,
+            timeframe=used_tf,
+            bars=wave_bars,
+            spread_bps=spread_bps,
+        ).to_dict()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "wave intelligence failed lane=%s symbol=%s tf=%s err=%s",
+            lane, symbol, used_tf, exc,
+        )
+        wave_intelligence = {
+            "model_version": MODEL_VERSION,
+            "authority": AUTHORITY,
+            "can_execute": False,
+            "can_size": False,
+            "can_block": False,
+            "symbol": symbol.upper(),
+            "lane": lane,
+            "timeframe": used_tf,
+            "as_of": str(latest.get("ts") or ""),
+            "data_quality": "ERROR",
+            "mode": "WAIT",
+            "scores": {},
+            "reason_codes": ["WAVE_EVALUATION_ERROR"],
+        }
+
     return build_snapshot(
         symbol=symbol,
         lane=lane,
@@ -389,6 +446,7 @@ async def _build_one(
         health=evaluate_snapshot_health(
             lane=lane, tf=used_tf, latest_bar_at=latest_ts, now=now,
         ),
+        wave_intelligence=wave_intelligence,
     )
 
 
